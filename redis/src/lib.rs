@@ -214,6 +214,31 @@
 //! # }
 //! ```
 //!
+//! ## Pre-typed Commands
+//!
+//! In some cases, you may not have a desired return type for a high-level command, and would
+//! instead like to use defaults provided by the library, to avoid the clutter and development overhead
+//! of specifying types for each command.
+//!
+//! The library facilitates this by providing the `TypedCommands` and `AsyncTypedCommands`
+//! as alternatives to `Commands` and `AsyncCommands` respectively. These traits provide functions
+//! with pre-defined and opinionated return types. For example, `set` returns `()`, avoiding the need
+//! for developers to explicitly type each call as returning `()`.
+//!
+//! ```rust,no_run
+//! use redis::TypedCommands;
+//!
+//! fn fetch_an_integer() -> redis::RedisResult<isize> {
+//!     // connect to redis
+//!     let client = redis::Client::open("redis://127.0.0.1/")?;
+//!     let mut con = client.get_connection()?;
+//!     // `set` returns a `()`, so we don't need to specify the return type manually unlike in the previous example.
+//!     con.set("my_key", 42)?;
+//!     // `get_int` returns Result<Option<isize>>, as the key may not be found, or some error may occur.
+//!     Ok(con.get_int("my_key").unwrap().unwrap())
+//! }
+//! ```
+//!
 //! # RESP3 support
 //! Since Redis / Valkey version 6, a newer communication protocol called RESP3 is supported.
 //! Using this protocol allows the user both to receive a more varied `Value` results, for users
@@ -553,7 +578,7 @@ pub use crate::cmd::CommandCacheConfig;
 pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter};
 pub use crate::commands::{
     Commands, ControlFlow, Direction, FlushAllOptions, FlushDbOptions, HashFieldExpirationOptions,
-    LposOptions, PubSubCommands, ScanOptions, SetOptions,
+    LposOptions, PubSubCommands, ScanOptions, SetOptions, TypedCommands,
 };
 pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
@@ -591,6 +616,8 @@ pub use crate::types::{
     ExpireOption,
     Role,
     ReplicaInfo,
+    IntegerReplyOrNoOp,
+	ValueType,
 
     // error and result types
     RedisError,
@@ -603,13 +630,14 @@ pub use crate::types::{
     PushKind,
     VerbatimFormat,
     ProtocolVersion,
-    PushInfo
+    PushInfo,
 };
 
 #[cfg(feature = "aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 pub use crate::{
-    cmd::AsyncIter, commands::AsyncCommands, parser::parse_redis_value_async, types::RedisFuture,
+    cmd::AsyncIter, commands::AsyncCommands, commands::AsyncTypedCommands,
+    parser::parse_redis_value_async, types::RedisFuture,
 };
 
 mod macros;

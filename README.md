@@ -50,6 +50,24 @@ Variables are converted to and from the Redis format for a wide variety of types
 you can implement the `FromRedisValue` and `ToRedisArgs` traits, or derive it with the
 [redis-macros](https://github.com/daniel7grant/redis-macros/#json-wrapper-with-redisjson) crate.
 
+If you wish to avoid having to specify a return type for every command, you can use the `TypedCommands` trait instead,
+which has
+pre-specified and opinionated return types.
+
+```rust
+use redis::TypedCommands;
+
+fn fetch_an_integer() -> redis::RedisResult<isize> {
+	// connect to redis
+	let client = redis::Client::open("redis://127.0.0.1/")?;
+	let mut con = client.get_connection()?;
+	// `set` returns a `()`, so we don't need to specify the return type manually unlike in the previous example.
+	con.set("my_key", 42)?;
+	// `get_int` returns Option<isize>, as the key may not be found.
+	con.get_int("my_key").unwrap()
+}
+```
+
 ## Async support
 
 To enable asynchronous clients, enable the relevant feature in your Cargo.toml,
@@ -65,6 +83,8 @@ redis = { version = "0.31.0", features = ["smol-comp"] }
 # if you use async-std
 redis = { version = "0.31.0", features = ["async-std-comp"] }
 ```
+
+You can then use either the `AsyncCommands` or `AsyncTypedCommands` trait.
 
 ## Connection Pooling
 
