@@ -323,7 +323,7 @@ implement_commands! {
     fn get_del<K: ToRedisArgs>(key: K) -> (Option<String>) {
         cmd("GETDEL").arg(key)
     }
-    
+
     /// Copy the value from one key to another, returning whether the copy was successful.
     /// [Redis Docs](https://redis.io/commands/COPY)
     fn copy<KSrc: ToRedisArgs, KDst: ToRedisArgs, Db: ToString>(
