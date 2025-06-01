@@ -196,7 +196,7 @@ tokio = { version = "1", features = [
   "test-util",
   "time",
 ] }
-tempfile = "=3.19.1"
+tempfile = "=3.20.0"
 once_cell = "1"
 anyhow = "1"
 redis-test = { path = "../redis-test" }
