@@ -92,7 +92,7 @@ tokio-rustls = { version = "0.26", optional = true, default-features = false }
 futures-rustls = { version = "0.26", optional = true, default-features = false }
 
 # Only needed for RedisJSON Support
-serde = { version = "1.0.218", optional = true }
+serde = { version = "1.0.219", optional = true }
 serde_json = { version = "1.0.140", optional = true }
 
 # Only needed for bignum Support
