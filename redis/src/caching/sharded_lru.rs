@@ -94,6 +94,7 @@ impl ShardedLRU {
                 }
             }
         }
+        drop(lru_cache);
         self.statistics.increase_miss(1);
         None
     }
@@ -138,7 +139,9 @@ impl ShardedLRU {
     }
 
     pub(crate) fn invalidate(&self, cache_key: &Vec<u8>) {
-        if let Some(cache_holder) = self.get_shard(cache_key).pop(cache_key) {
+        // Use a separate binding for this to release the lock guard before calling increase_invalidate.
+        let maybe_cache_holder = self.get_shard(cache_key).pop(cache_key);
+        if let Some(cache_holder) = maybe_cache_holder {
             self.statistics
                 .increase_invalidate(cache_holder.value_list.len());
         }

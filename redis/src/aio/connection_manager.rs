@@ -607,11 +607,14 @@ impl ConnectionManager {
         let Some(subscription_tracker) = &self.0.subscription_tracker else {
             return;
         };
-        let mut guard = subscription_tracker.lock().await;
-        guard.update_with_request(action, args.to_redis_args().into_iter());
+        let args = args.to_redis_args().into_iter();
+        subscription_tracker
+            .lock()
+            .await
+            .update_with_request(action, args);
     }
 
-    /// Subscribes to a new channel(s).    
+    /// Subscribes to a new channel(s).
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the manager.
     /// If the manager was configured without a push sender, the connection won't be able to pass messages back to the user.
