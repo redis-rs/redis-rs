@@ -1058,7 +1058,7 @@ where
                 };
             match request_handling {
                 Some(Retry::MoveToPending { request }) => {
-                    self.inner.pending_requests.lock().unwrap().push(request)
+                    self.inner.pending_requests.lock().unwrap().push(request);
                 }
                 Some(Retry::Immediately { request }) => {
                     let future = Self::try_request(request.cmd.clone(), self.inner.clone());
@@ -1105,8 +1105,12 @@ where
                 (*request)
                     .as_mut()
                     .respond(Err(self.refresh_error.take().unwrap()));
-            } else if let Some(request) = self.inner.pending_requests.lock().unwrap().pop() {
-                request.sender.send(Err(self.refresh_error.take().unwrap()));
+            } else {
+                // Use a separate binding for this to release the lock guard before calling send.
+                let maybe_request = self.inner.pending_requests.lock().unwrap().pop();
+                if let Some(request) = maybe_request {
+                    request.sender.send(Err(self.refresh_error.take().unwrap()));
+                }
             }
         }
     }
