@@ -1102,7 +1102,7 @@ impl SentinelClient {
                         .first_mut()
                         .unwrap_or(&mut None),
                 ) {
-                    Ok(role) if matches!(role, Role::Sentinel { .. }) => {
+                    Ok(Role::Sentinel { .. }) => {
                         return Ok(client);
                     }
                     Ok(_) => {
@@ -1183,7 +1183,7 @@ impl SentinelClient {
                 )
                 .await
                 {
-                    Ok(role) if matches!(role, Role::Sentinel { .. }) => {
+                    Ok(Role::Sentinel { .. }) => {
                         return Ok(client);
                     }
                     Ok(_) => {

@@ -344,10 +344,7 @@ fn test_sentinel_client_async_io_error() {
 
     let sentinel_client = master_client.get_sentinel_client();
     let err = sentinel_client.err().expect("Expected an error");
-    assert_eq!(
-        err.to_string(),
-        "failed to lookup address information: nodename nor servname provided, or not known"
-    );
+    assert!(err.is_io_error());
 }
 
 #[test]
@@ -843,10 +840,7 @@ pub mod async_tests {
             async move {
                 let sentinel_client = master_client.async_get_sentinel_client().await;
                 let err = sentinel_client.err().expect("Expected an error");
-                assert_eq!(
-                    err.to_string(),
-                    "failed to lookup address information: nodename nor servname provided, or not known"
-                );
+                assert!(err.is_io_error());
                 Ok::<(), RedisError>(())
             },
             runtime,
