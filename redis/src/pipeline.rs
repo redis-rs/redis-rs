@@ -72,8 +72,9 @@ impl Pipeline {
         self
     }
 
+    /// Returns `true` if the pipeline is in transaction mode (aka atomic mode).
     #[cfg(feature = "aio")]
-    pub(crate) fn is_transaction(&self) -> bool {
+    pub fn is_transaction(&self) -> bool {
         self.transaction_mode
     }
 
