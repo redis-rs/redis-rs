@@ -8,7 +8,7 @@ mod types {
         sync::Arc,
     };
 
-    use redis::{ErrorKind, FromRedisValue, RedisError, RedisResult, ToRedisArgs, Value};
+    use redis::{ErrorKind, FromRedisValue, RedisError, ToRedisArgs, Value};
 
     #[test]
     fn test_is_io_error() {
@@ -96,7 +96,7 @@ mod types {
         fn parse_redis_value<T: redis::FromRedisValue>(
             &self,
             value: redis::Value,
-        ) -> Result<T, redis::RedisError> {
+        ) -> Result<T, redis::ParsingError> {
             match self {
                 Self::Owned => redis::FromRedisValue::from_owned_redis_value(value),
                 Self::Ref => redis::FromRedisValue::from_redis_value(&value),
@@ -224,11 +224,11 @@ mod types {
 
             let bad_i: Result<i32, _> =
                 parse_mode.parse_redis_value(Value::SimpleString(everything_str_x.into()));
-            assert_eq!(bad_i.unwrap_err().kind(), ErrorKind::TypeError);
+            assert!(bad_i.is_err());
 
             let bad_i_deref: Result<Box<i32>, _> =
                 parse_mode.parse_redis_value(Value::SimpleString(everything_str_x.into()));
-            assert_eq!(bad_i_deref.unwrap_err().kind(), ErrorKind::TypeError);
+            assert!(bad_i_deref.is_err());
         }
     }
 
@@ -240,7 +240,7 @@ mod types {
 
             let bad_i: Result<u32, _> =
                 parse_mode.parse_redis_value(Value::SimpleString("-1".into()));
-            assert_eq!(bad_i.unwrap_err().kind(), ErrorKind::TypeError);
+            assert!(bad_i.is_err());
         }
     }
 
@@ -329,7 +329,7 @@ mod types {
         Box::<[i32]>::from_redis_value(
             &Value::BulkString("just a string".into())
         ).unwrap_err().to_string(),
-        "Response was of incompatible type - TypeError: \"Conversion to alloc::boxed::Box<[i32]> failed.\" (response was bulk-string('\"just a string\"'))",
+        "Incompatible type - \"Conversion to alloc::boxed::Box<[i32]> failed.\" (value was bulk-string('\"just a string\"'))",
     );
         }
     }
@@ -362,7 +362,7 @@ mod types {
             Arc::<[i32]>::from_redis_value(
                 &Value::BulkString("just a string".into())
             ).unwrap_err().to_string(),
-            "Response was of incompatible type - TypeError: \"Conversion to alloc::sync::Arc<[i32]> failed.\" (response was bulk-string('\"just a string\"'))",
+            "Incompatible type - \"Conversion to alloc::sync::Arc<[i32]> failed.\" (value was bulk-string('\"just a string\"'))",
         );
         }
     }
@@ -458,7 +458,7 @@ mod types {
 
             let v: Result<Hm, _> =
                 parse_mode.parse_redis_value(Value::Array(vec![Value::BulkString("a".into())]));
-            assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+            assert!(v.is_err());
         }
     }
 
@@ -501,7 +501,7 @@ mod types {
 
             let v: Result<Hm, _> =
                 parse_mode.parse_redis_value(Value::Array(vec![Value::BulkString("a".into())]));
-            assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+            assert!(v.is_err());
         }
     }
 
@@ -525,7 +525,7 @@ mod types {
             assert_eq!(v, Ok(expected));
 
             let v: Result<HashSet<i32>, _> = parse_mode.parse_redis_value(Value::Int(42));
-            assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+            assert!(v.is_err());
 
             let mut set = HashSet::new();
             set.insert("x".to_string());
@@ -553,7 +553,7 @@ mod types {
 
             let v: Result<bool, _> =
                 parse_mode.parse_redis_value(Value::BulkString("garbage".into()));
-            assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+            assert!(v.is_err());
 
             let v = parse_mode.parse_redis_value(Value::SimpleString("1".into()));
             assert_eq!(v, Ok(true));
@@ -563,7 +563,7 @@ mod types {
 
             let v: Result<bool, _> =
                 parse_mode.parse_redis_value(Value::SimpleString("garbage".into()));
-            assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+            assert!(v.is_err());
 
             let v = parse_mode.parse_redis_value(Value::Okay);
             assert_eq!(v, Ok(true));
@@ -589,25 +589,24 @@ mod types {
             let content_vec: Vec<u8> = Vec::from(content);
             let content_bytes = Bytes::from_static(content);
 
-            let v: RedisResult<Bytes> =
-                parse_mode.parse_redis_value(Value::BulkString(content_vec));
+            let v: Result<Bytes, _> = parse_mode.parse_redis_value(Value::BulkString(content_vec));
             assert_eq!(v, Ok(content_bytes));
 
-            let v: RedisResult<Bytes> =
+            let v: Result<Bytes, _> =
                 parse_mode.parse_redis_value(Value::SimpleString("garbage".into()));
-            assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+            assert!(v.is_err());
 
-            let v: RedisResult<Bytes> = parse_mode.parse_redis_value(Value::Okay);
-            assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+            let v: Result<Bytes, _> = parse_mode.parse_redis_value(Value::Okay);
+            assert!(v.is_err());
 
-            let v: RedisResult<Bytes> = parse_mode.parse_redis_value(Value::Nil);
-            assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+            let v: Result<Bytes, _> = parse_mode.parse_redis_value(Value::Nil);
+            assert!(v.is_err());
 
-            let v: RedisResult<Bytes> = parse_mode.parse_redis_value(Value::Int(0));
-            assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+            let v: Result<Bytes, _> = parse_mode.parse_redis_value(Value::Int(0));
+            assert!(v.is_err());
 
-            let v: RedisResult<Bytes> = parse_mode.parse_redis_value(Value::Int(42));
-            assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+            let v: Result<Bytes, _> = parse_mode.parse_redis_value(Value::Int(42));
+            assert!(v.is_err());
         }
     }
 
@@ -621,24 +620,24 @@ mod types {
         let uuid = Uuid::from_str("abab64b7-e265-4052-a41b-23e1e28674bf").unwrap();
         let bytes = uuid.as_bytes().to_vec();
 
-        let v: RedisResult<Uuid> = FromRedisValue::from_redis_value(&Value::BulkString(bytes));
+        let v: Result<Uuid, _> = FromRedisValue::from_redis_value(&Value::BulkString(bytes));
         assert_eq!(v, Ok(uuid));
 
-        let v: RedisResult<Uuid> =
+        let v: Result<Uuid, _> =
             FromRedisValue::from_redis_value(&Value::SimpleString("garbage".into()));
-        assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+        assert!(v.is_err());
 
-        let v: RedisResult<Uuid> = FromRedisValue::from_redis_value(&Value::Okay);
-        assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+        let v: Result<Uuid, _> = FromRedisValue::from_redis_value(&Value::Okay);
+        assert!(v.is_err());
 
-        let v: RedisResult<Uuid> = FromRedisValue::from_redis_value(&Value::Nil);
-        assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+        let v: Result<Uuid, _> = FromRedisValue::from_redis_value(&Value::Nil);
+        assert!(v.is_err());
 
-        let v: RedisResult<Uuid> = FromRedisValue::from_redis_value(&Value::Int(0));
-        assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+        let v: Result<Uuid, _> = FromRedisValue::from_redis_value(&Value::Int(0));
+        assert!(v.is_err());
 
-        let v: RedisResult<Uuid> = FromRedisValue::from_redis_value(&Value::Int(42));
-        assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+        let v: Result<Uuid, _> = FromRedisValue::from_redis_value(&Value::Int(42));
+        assert!(v.is_err());
     }
 
     #[test]
@@ -649,29 +648,29 @@ mod types {
             let content: &[u8] = b"\x01\x02\x03\x04";
             let content_vec: Vec<u8> = Vec::from(content);
 
-            let v: RedisResult<CString> =
+            let v: Result<CString, _> =
                 parse_mode.parse_redis_value(Value::BulkString(content_vec));
             assert_eq!(v, Ok(CString::new(content).unwrap()));
 
-            let v: RedisResult<CString> =
+            let v: Result<CString, _> =
                 parse_mode.parse_redis_value(Value::SimpleString("garbage".into()));
             assert_eq!(v, Ok(CString::new("garbage").unwrap()));
 
-            let v: RedisResult<CString> = parse_mode.parse_redis_value(Value::Okay);
+            let v: Result<CString, _> = parse_mode.parse_redis_value(Value::Okay);
             assert_eq!(v, Ok(CString::new("OK").unwrap()));
 
-            let v: RedisResult<CString> =
+            let v: Result<CString, _> =
                 parse_mode.parse_redis_value(Value::SimpleString("gar\0bage".into()));
-            assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+            assert!(v.is_err());
 
-            let v: RedisResult<CString> = parse_mode.parse_redis_value(Value::Nil);
-            assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+            let v: Result<CString, _> = parse_mode.parse_redis_value(Value::Nil);
+            assert!(v.is_err());
 
-            let v: RedisResult<CString> = parse_mode.parse_redis_value(Value::Int(0));
-            assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+            let v: Result<CString, _> = parse_mode.parse_redis_value(Value::Int(0));
+            assert!(v.is_err());
 
-            let v: RedisResult<CString> = parse_mode.parse_redis_value(Value::Int(42));
-            assert_eq!(v.unwrap_err().kind(), ErrorKind::TypeError);
+            let v: Result<CString, _> = parse_mode.parse_redis_value(Value::Int(42));
+            assert!(v.is_err());
         }
     }
 
