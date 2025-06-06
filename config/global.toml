@@ -1,2 +1,2 @@
-max_combo_size=4
-skip_optional_deps=false
+max_combo_size = 3
+skip_optional_deps = false

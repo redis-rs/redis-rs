@@ -86,30 +86,10 @@ pub struct Cmd {
     cache: Option<CommandCacheConfig>,
 }
 
-#[cfg_attr(
-    not(feature = "safe_iterators"),
-    deprecated(
-        note = "Deprecated due to the fact that this implementation silently stops at the first value that can't be converted to T. Enable the feature `safe_iterators` for a safe version."
-    )
-)]
 /// Represents a redis iterator.
 pub struct Iter<'a, T: FromRedisValue> {
     iter: CheckedIter<'a, T>,
 }
-
-#[cfg(not(feature = "safe_iterators"))]
-impl<T: FromRedisValue> Iterator for Iter<'_, T> {
-    type Item = T;
-
-    #[inline]
-    fn next(&mut self) -> Option<T> {
-        // use the checked iterator, but keep the behavior of the deprecated
-        // iterator.  This will return silently `None` if an error occurs.
-        self.iter.next()?.ok()
-    }
-}
-
-#[cfg(feature = "safe_iterators")]
 impl<T: FromRedisValue> Iterator for Iter<'_, T> {
     type Item = RedisResult<T>;
 
@@ -180,12 +160,6 @@ enum IterOrFuture<'a, T: FromRedisValue + 'a> {
 
 /// Represents a redis iterator that can be used with async connections.
 #[cfg(feature = "aio")]
-#[cfg_attr(
-    all(feature = "aio", not(feature = "safe_iterators")),
-    deprecated(
-        note = "Deprecated due to the fact that this implementation silently stops at the first value that can't be converted to T. Enable the feature `safe_iterators` for a safe version."
-    )
-)]
 pub struct AsyncIter<'a, T: FromRedisValue + 'a> {
     inner: IterOrFuture<'a, T>,
 }
@@ -239,39 +213,15 @@ impl<'a, T: FromRedisValue + 'a + Unpin + Send> AsyncIter<'a, T> {
     /// # Ok(())
     /// # }
     /// ```
-    #[cfg(feature = "safe_iterators")]
     #[inline]
     pub async fn next_item(&mut self) -> Option<RedisResult<T>> {
-        StreamExt::next(self).await
-    }
-
-    /// ```rust,no_run
-    /// # use redis::AsyncCommands;
-    /// # async fn scan_set() -> redis::RedisResult<()> {
-    /// # let client = redis::Client::open("redis://127.0.0.1/")?;
-    /// # let mut con = client.get_multiplexed_async_connection().await?;
-    /// let _: () = con.sadd("my_set", 42i32).await?;
-    /// let _: () = con.sadd("my_set", 43i32).await?;
-    /// let mut iter: redis::AsyncIter<i32> = con.sscan("my_set").await?;
-    /// while let Some(element) = iter.next_item().await {
-    ///     assert!(element == 42 || element == 43);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[cfg(not(feature = "safe_iterators"))]
-    #[inline]
-    pub async fn next_item(&mut self) -> Option<T> {
         StreamExt::next(self).await
     }
 }
 
 #[cfg(feature = "aio")]
 impl<'a, T: FromRedisValue + Unpin + Send + 'a> Stream for AsyncIter<'a, T> {
-    #[cfg(feature = "safe_iterators")]
     type Item = RedisResult<T>;
-    #[cfg(not(feature = "safe_iterators"))]
-    type Item = T;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
@@ -293,10 +243,7 @@ impl<'a, T: FromRedisValue + Unpin + Send + 'a> Stream for AsyncIter<'a, T> {
                 Poll::Ready((iter, value)) => {
                     this.inner = IterOrFuture::Iter(iter);
 
-                    #[cfg(feature = "safe_iterators")]
-                    return Poll::Ready(value);
-                    #[cfg(not(feature = "safe_iterators"))]
-                    Poll::Ready(value.map(|res| res.ok()).flatten())
+                    Poll::Ready(value)
                 }
             },
             IterOrFuture::Empty => unreachable!(),
