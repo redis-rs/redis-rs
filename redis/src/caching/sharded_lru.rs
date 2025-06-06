@@ -59,7 +59,7 @@ impl ShardedLRU {
     }
 
     /// get_shard will get MutexGuard for a shard determined by key, if lock is poisoned it'll be recovered.
-    pub(crate) fn get_shard(&self, key: &[u8]) -> std::sync::MutexGuard<LRUCacheShard> {
+    pub(crate) fn get_shard(&self, key: &[u8]) -> std::sync::MutexGuard<'_, LRUCacheShard> {
         let mut s = DefaultHasher::new();
         s.write(key);
         let lock = &self.shards[s.finish() as usize % self.shards.len()];
