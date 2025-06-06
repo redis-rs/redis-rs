@@ -586,7 +586,6 @@ mod basic_async {
                     .unwrap();
 
                 while let Some(x) = iter.next_item().await {
-                    #[cfg(feature = "safe_iterators")]
                     let x = x?;
 
                     // if this assertion fails, too many items were returned by the iterator.
@@ -634,7 +633,6 @@ mod basic_async {
                     .unwrap();
 
                 while let Some(item) = iter.next_item().await {
-                    #[cfg(feature = "safe_iterators")]
                     let item = item?;
 
                     // if this assertion fails, too many items were returned by the iterator.
@@ -682,7 +680,6 @@ mod basic_async {
                     .unwrap();
 
                 while let Some(item) = iter.next_item().await {
-                    #[cfg(feature = "safe_iterators")]
                     let item = item?;
 
                     // if this assertion fails, too many items were returned by the iterator.
@@ -939,9 +936,6 @@ mod basic_async {
                 }
 
                 let iter: redis::AsyncIter<String> = con.scan().await.unwrap();
-                #[cfg(not(feature = "safe_iterators"))]
-                let mut keys_from_redis: Vec<String> = iter.collect().await;
-                #[cfg(feature = "safe_iterators")]
                 let mut keys_from_redis: Vec<_> =
                     iter.map(std::result::Result::unwrap).collect().await;
                 keys_from_redis.sort();
@@ -1021,7 +1015,6 @@ mod basic_async {
             .unwrap();
         }
 
-        #[cfg(feature = "safe_iterators")]
         #[rstest]
         // Test issue of AsyncCommands::scan not returning keys because wrong assumptions about the key type were made
         // https://github.com/redis-rs/redis-rs/issues/1309
