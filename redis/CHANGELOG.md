@@ -1,3 +1,15 @@
+### 0.32.0 (2025-05-30)
+
+#### Changes & Bug fixes
+
+* Add missing `u128`/`i128` for ToRedisArgs ([#1637](https://github.com/redis-rs/redis-rs/pull/1637) by @Kriskras99)
+* Allow for buffer reuse with `Cmd` ([#1636](https://github.com/redis-rs/redis-rs/pull/1636) by @Kriskras99)
+* Fix new version lints. ([#1640](https://github.com/redis-rs/redis-rs/pull/1640) by @nihohit)
+* Make iterator return an Option<RedisResult> v2 ([#1641](https://github.com/redis-rs/redis-rs/pull/1641) by @threema-donat)
+* Add Client Side Caching for async Cluster Connections ([#1642](https://github.com/redis-rs/redis-rs/pull/1642) by @altanozlu)
+* Add new set of typed commands ([#1480](https://github.com/redis-rs/redis-rs/pull/1480) by @MurrayGroves)
+* Minimize the lifetime of mutex lock guards ([#1658](https://github.com/redis-rs/redis-rs/pull/1658) by @svix-jplatte)
+
 ### 0.31.0 (2025-05-08)
 
 #### Changes & Bug fixes
