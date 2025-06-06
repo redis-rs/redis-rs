@@ -1,6 +1,6 @@
 [package]
 name = "redis"
-version = "0.32.6"
+version = "1.0.0-alpha"
 keywords = ["redis", "valkey", "cluster", "sentinel", "pubsub"]
 description = "Redis driver for Rust."
 homepage = "https://github.com/redis-rs/redis-rs"

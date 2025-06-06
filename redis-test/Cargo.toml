@@ -13,7 +13,7 @@ rust-version = "1.80"
 bench = false
 
 [dependencies]
-redis = { version = "0.32", path = "../redis" }
+redis = { version = "1.0.0-alpha", path = "../redis" }
 bytes = { version = "1", optional = true }
 futures = { version = "0.3", optional = true }
 tempfile = "=3.21.0"
@@ -24,7 +24,7 @@ rand = "0.9"
 aio = ["futures", "redis/aio"]
 
 [dev-dependencies]
-redis = { version = "0.32", path = "../redis", features = [
+redis = { version = "1.0.0-alpha", path = "../redis", features = [
     "aio",
     "tokio-comp",
     "safe_iterators",
