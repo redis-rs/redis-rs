@@ -152,7 +152,7 @@ impl Pipeline {
             self.execute_pipelined(con)?
         };
 
-        from_owned_redis_value(value.extract_error()?)
+        Ok(from_owned_redis_value(value.extract_error()?)?)
     }
 
     #[cfg(feature = "aio")]
@@ -193,13 +193,13 @@ impl Pipeline {
         con: &mut impl crate::aio::ConnectionLike,
     ) -> RedisResult<T> {
         let value = if self.commands.is_empty() {
-            return from_owned_redis_value(Value::Array(vec![]));
+            return Ok(from_owned_redis_value(Value::Array(vec![]))?);
         } else if self.transaction_mode {
             self.execute_transaction_async(con).await?
         } else {
             self.execute_pipelined_async(con).await?
         };
-        from_owned_redis_value(value.extract_error()?)
+        Ok(from_owned_redis_value(value.extract_error()?)?)
     }
 
     /// This is a shortcut to `query()` that does not return a value and

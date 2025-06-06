@@ -1,17 +1,8 @@
 //! Defines types to use with the geospatial commands.
 
-use super::{ErrorKind, RedisResult};
-use crate::types::{FromRedisValue, RedisWrite, ToRedisArgs, Value};
-
-macro_rules! invalid_type_error {
-    ($v:expr, $det:expr) => {{
-        fail!((
-            ErrorKind::TypeError,
-            "Response was of incompatible type",
-            format!("{:?} (response was {:?})", $det, $v)
-        ));
-    }};
-}
+use crate::types::{
+    invalid_type_error, FromRedisValue, ParsingError, RedisWrite, ToRedisArgs, Value,
+};
 
 /// Units used by [`geo_dist`][1] and [`geo_radius`][2].
 ///
@@ -73,7 +64,7 @@ impl<T> Coord<T> {
 }
 
 impl<T: FromRedisValue> FromRedisValue for Coord<T> {
-    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
         let values: Vec<T> = FromRedisValue::from_redis_value(v)?;
         let mut values = values.into_iter();
         let (longitude, latitude) = match (values.next(), values.next(), values.next()) {
@@ -274,7 +265,7 @@ pub struct RadiusSearchResult {
 }
 
 impl FromRedisValue for RadiusSearchResult {
-    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
         // If we receive only the member name, it will be a plain string
         if let Ok(name) = FromRedisValue::from_redis_value(v) {
             return Ok(RadiusSearchResult {
