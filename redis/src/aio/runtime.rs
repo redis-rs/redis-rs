@@ -29,6 +29,16 @@ pub(crate) enum TaskHandle {
     Smol(smol::Task<()>),
 }
 
+impl TaskHandle {
+    pub(crate) fn detach(self) {
+        match self {
+            #[cfg(feature = "smol-comp")]
+            TaskHandle::Smol(task) => task.detach(),
+            _ => {}
+        }
+    }
+}
+
 pub(crate) struct HandleContainer(Option<TaskHandle>);
 
 impl HandleContainer {
@@ -126,7 +136,7 @@ impl Runtime {
         }
     }
 
-    #[allow(dead_code)]
+    #[must_use]
     pub(crate) fn spawn(&self, f: impl Future<Output = ()> + Send + 'static) -> TaskHandle {
         match self {
             #[cfg(feature = "tokio-comp")]
