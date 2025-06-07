@@ -160,6 +160,8 @@ impl Pipeline {
     where
         C: crate::aio::ConnectionLike,
     {
+        // As the pipeline is not a transaction, the pipeline's commands got executed as is, and we
+        // can grab the results one by one (offset 0, and count is the commands' length).
         let value = con
             .req_packed_commands(self, 0, self.commands.len())
             .await?;
@@ -171,6 +173,12 @@ impl Pipeline {
     where
         C: crate::aio::ConnectionLike,
     {
+        // As the pipeline is a transaction pipeline, a `MULTI` got inserted in the beginning, and
+        // an `EXEC` added at the end. The `MULTI` received an `Ok` response. The individual
+        // commands received `QUEUED` responses. And the proper results of the commands are in the
+        // response to `EXEC` (A Redis Array of the results of the individual commands in the
+        // pipeline). So when getting the result, we skip straight to `EXEC`'s result (offset is
+        // length + 1), and only extract the result of the `EXEC` (count is 1).
         let mut resp = con
             .req_packed_commands(self, self.commands.len() + 1, 1)
             .await?;
