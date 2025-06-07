@@ -48,6 +48,18 @@ pub(crate) enum TaskHandle {
     Smol(smol::Task<()>),
 }
 
+impl TaskHandle {
+    #[cfg(feature = "connection-manager")]
+    pub(crate) fn detach(self) {
+        match self {
+            #[cfg(feature = "smol-comp")]
+            TaskHandle::Smol(task) => task.detach(),
+            #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
+            _ => {}
+        }
+    }
+}
+
 pub(crate) struct HandleContainer(Option<TaskHandle>);
 
 impl HandleContainer {
@@ -66,7 +78,7 @@ impl Drop for HandleContainer {
             Some(TaskHandle::AsyncStd(handle)) => {
                 // schedule for cancellation without waiting for result.
                 // TODO - can we cancel the task without awaiting its completion?
-                Runtime::locate().spawn(async move { handle.cancel().await.unwrap_or_default() });
+                async_std::task::spawn(async move { handle.cancel().await.unwrap_or_default() });
             }
             #[cfg(feature = "smol-comp")]
             Some(TaskHandle::Smol(task)) => drop(task),
@@ -241,7 +253,7 @@ impl Runtime {
         }
     }
 
-    #[allow(dead_code)]
+    #[must_use]
     pub(crate) fn spawn(&self, f: impl Future<Output = ()> + Send + 'static) -> TaskHandle {
         match self {
             #[cfg(feature = "tokio-comp")]
