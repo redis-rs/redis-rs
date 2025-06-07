@@ -537,7 +537,7 @@ impl ConnectionManager {
         // If the swap happened...
         if Arc::ptr_eq(&prev, &current) {
             // ...start the connection attempt immediately but do not wait on it.
-            self.0.runtime.spawn(new_connection.map(|_| ()));
+            self.0.runtime.spawn(new_connection.map(|_| ())).detach();
         }
     }
 
