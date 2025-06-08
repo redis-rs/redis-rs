@@ -1172,7 +1172,6 @@ mod basic {
             .iter(&mut con)
             .unwrap();
 
-        #[cfg(feature = "safe_iterators")]
         let iter = iter.map(std::result::Result::unwrap);
 
         for x in iter {
@@ -1183,7 +1182,6 @@ mod basic {
         assert_eq!(unseen.len(), 0);
     }
 
-    #[cfg(feature = "safe_iterators")]
     #[test]
     fn test_checked_scanning_error() {
         const KEY_COUNT: u32 = 1000;
@@ -1255,7 +1253,6 @@ mod basic {
             .hscan_match::<&str, &str, (String, usize)>("foo", "key_0_*")
             .unwrap();
 
-        #[cfg(feature = "safe_iterators")]
         let iter = iter.map(std::result::Result::unwrap);
 
         for (_field, value) in iter {
@@ -2077,7 +2074,6 @@ mod basic {
         let iter: redis::Iter<'_, (String, isize)> = con.hscan("my_hash").unwrap();
         let mut found = HashSet::new();
 
-        #[cfg(feature = "safe_iterators")]
         let iter = iter.map(std::result::Result::unwrap);
 
         for item in iter {
@@ -2160,7 +2156,6 @@ mod basic {
 
         let mut counter = 0;
         for kv in iter {
-            #[cfg(feature = "safe_iterators")]
             let kv = kv.unwrap();
 
             let (key, num) = kv;

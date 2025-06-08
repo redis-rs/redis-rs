@@ -138,8 +138,3 @@ forbid = [
   "OR",
   "num-bigint",
 ]
-
-# Since the omission of the feature `safe_iterators` will produce deprecation errors, it is always required.
-[[rule]]
-when = true
-require = ["safe_iterators"]
