@@ -62,19 +62,10 @@ fn do_show_scanning(con: &mut redis::Connection) -> redis::RedisResult<()> {
     let iter = cmd.iter::<i32>(con)?;
 
     // as a simple exercise we just sum up the iterator.
-    let sum: i32 = {
-        #[cfg(feature = "safe_iterators")]
-        {
-            let mut sum = 0;
-            for result in iter {
-                sum += result?;
-            }
-            sum
-        }
-
-        #[cfg(not(feature = "safe_iterators"))]
-        iter.sum()
-    };
+    let mut sum = 0;
+    for result in iter {
+        sum += result?;
+    }
 
     println!("The sum of all numbers in the set 0-1000: {sum}");
 
