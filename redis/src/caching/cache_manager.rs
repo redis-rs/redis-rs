@@ -150,12 +150,7 @@ impl CacheManager {
     ) {
         let mut arguments = self.extract_simple_arguments(cmd);
         let json_path_key = is_json_command
-            .then(|| {
-                arguments.pop().map(|k| {
-                    tail_args.push(k);
-                    k
-                })
-            })
+            .then(|| arguments.pop().inspect(|k| tail_args.push(k)))
             .flatten();
         let mut key_test_buffer: Vec<u8> = Vec::new();
 
