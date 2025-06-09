@@ -35,8 +35,6 @@ pub fn current_thread_runtime() -> tokio::runtime::Runtime {
 pub enum RuntimeType {
     #[cfg(feature = "tokio-comp")]
     Tokio,
-    #[cfg(feature = "async-std-comp")]
-    AsyncStd,
     #[cfg(feature = "smol-comp")]
     Smol,
 }
@@ -78,8 +76,6 @@ where
     let res = match runtime {
         #[cfg(feature = "tokio-comp")]
         RuntimeType::Tokio => block_on_all_using_tokio(f),
-        #[cfg(feature = "async-std-comp")]
-        RuntimeType::AsyncStd => block_on_all_using_async_std(f),
         #[cfg(feature = "smol-comp")]
         RuntimeType::Smol => block_on_all_using_smol(f),
     };
@@ -95,7 +91,7 @@ where
 #[cfg(feature = "aio")]
 #[rstest::rstest]
 #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 #[should_panic(expected = "Internal thread panicked")]
 fn test_block_on_all_panics_from_spawns(#[case] runtime: RuntimeType) {
@@ -129,19 +125,9 @@ fn block_on_all_using_tokio<F>(f: F) -> F::Output
 where
     F: Future,
 {
-    #[cfg(any(feature = "async-std-comp", feature = "smol-comp"))]
+    #[cfg(feature = "smol-comp")]
     redis::aio::prefer_tokio().unwrap();
     current_thread_runtime().block_on(f)
-}
-
-#[cfg(feature = "async-std-comp")]
-fn block_on_all_using_async_std<F>(f: F) -> F::Output
-where
-    F: Future,
-{
-    #[cfg(any(feature = "tokio-comp", feature = "smol-comp"))]
-    redis::aio::prefer_async_std().unwrap();
-    async_std::task::block_on(f)
 }
 
 #[cfg(feature = "smol-comp")]
@@ -149,7 +135,7 @@ fn block_on_all_using_smol<F>(f: F) -> F::Output
 where
     F: Future,
 {
-    #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
+    #[cfg(feature = "tokio-comp")]
     redis::aio::prefer_smol().unwrap();
     smol::block_on(f)
 }
@@ -617,11 +603,11 @@ where
         Ok(tokio_runtime) => {
             tokio_runtime.spawn(fut);
         }
-        #[cfg(feature = "async-std-comp")]
         Err(_) => {
-            async_std::task::spawn(fut);
+            #[cfg(feature = "smol-comp")]
+            smol::spawn(fut).detach();
+            #[cfg(not(feature = "smol-comp"))]
+            unreachable!()
         }
-        #[cfg(not(feature = "async-std-comp"))]
-        Err(_) => unreachable!(),
     }
 }
