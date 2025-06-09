@@ -1964,15 +1964,15 @@ impl<'a> PubSub<'a> {
 
     /// Sends a ping with a message to the server
     pub fn ping_message<T: FromRedisValue>(&mut self, message: impl ToRedisArgs) -> RedisResult<T> {
-        from_owned_redis_value(
+        Ok(from_owned_redis_value(
             self.cache_messages_until_received_response(cmd("PING").arg(message), false)?,
-        )
+        )?)
     }
     /// Sends a ping to the server
     pub fn ping<T: FromRedisValue>(&mut self) -> RedisResult<T> {
-        from_owned_redis_value(
+        Ok(from_owned_redis_value(
             self.cache_messages_until_received_response(&mut cmd("PING"), false)?,
-        )
+        )?)
     }
 
     /// Fetches the next message from the pubsub connection.  Blocks until
@@ -2075,7 +2075,7 @@ impl Msg {
 
     /// Returns the channel this message came on.
     pub fn get_channel<T: FromRedisValue>(&self) -> RedisResult<T> {
-        from_redis_value(&self.channel)
+        Ok(from_redis_value(&self.channel)?)
     }
 
     /// Convenience method to get a string version of the channel.  Unless
@@ -2091,7 +2091,7 @@ impl Msg {
 
     /// Returns the message's payload in a specific format.
     pub fn get_payload<T: FromRedisValue>(&self) -> RedisResult<T> {
-        from_redis_value(&self.payload)
+        Ok(from_redis_value(&self.payload)?)
     }
 
     /// Returns the bytes that are the message's payload.  This can be used
@@ -2116,10 +2116,10 @@ impl Msg {
     /// an `Option<String>` so that you do not need to use `from_pattern`
     /// to figure out if a pattern was set.
     pub fn get_pattern<T: FromRedisValue>(&self) -> RedisResult<T> {
-        match self.pattern {
+        Ok(match self.pattern {
             None => from_redis_value(&Value::Nil),
             Some(ref x) => from_redis_value(x),
-        }
+        }?)
     }
 }
 

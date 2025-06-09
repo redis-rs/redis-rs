@@ -1,21 +1,11 @@
 //! Defines types to use with the streams commands.
 
+#[cfg(feature = "streams")]
 use crate::{
-    from_redis_value, types::HashMap, ErrorKind, FromRedisValue, RedisError, RedisResult,
-    RedisWrite, ToRedisArgs, Value,
+    from_redis_value,
+    types::{invalid_type_error, HashMap, ParsingError},
+    FromRedisValue, RedisWrite, ToRedisArgs, Value,
 };
-
-use std::io::Error;
-
-macro_rules! invalid_type_error {
-    ($v:expr, $det:expr) => {{
-        fail!((
-            $crate::ErrorKind::TypeError,
-            "Response was of incompatible type",
-            format!("{:?} (response was {:?})", $det, $v)
-        ));
-    }};
-}
 
 // Stream Maxlen Enum
 
@@ -688,7 +678,7 @@ pub struct StreamId {
 
 impl StreamId {
     /// Converts a `Value::Array` into a `StreamId`.
-    fn from_array_value(v: &Value) -> RedisResult<Self> {
+    fn from_array_value(v: &Value) -> Result<Self, ParsingError> {
         let mut stream_id = StreamId::default();
         if let Value::Array(ref values) = *v {
             if let Some(v) = values.first() {
@@ -730,7 +720,7 @@ impl StreamId {
 type SACRows = Vec<HashMap<String, HashMap<String, Value>>>;
 
 impl FromRedisValue for StreamAutoClaimReply {
-    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
         match *v {
             Value::Array(ref items) => {
                 if let 2..=3 = items.len() {
@@ -783,7 +773,7 @@ impl FromRedisValue for StreamAutoClaimReply {
 
 type SRRows = Vec<HashMap<String, Vec<HashMap<String, HashMap<String, Value>>>>>;
 impl FromRedisValue for StreamReadReply {
-    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
         let rows: SRRows = from_redis_value(v)?;
         let keys = rows
             .into_iter()
@@ -802,7 +792,7 @@ impl FromRedisValue for StreamReadReply {
 }
 
 impl FromRedisValue for StreamRangeReply {
-    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
         let rows: Vec<HashMap<String, HashMap<String, Value>>> = from_redis_value(v)?;
         let ids: Vec<StreamId> = rows
             .into_iter()
@@ -813,7 +803,7 @@ impl FromRedisValue for StreamRangeReply {
 }
 
 impl FromRedisValue for StreamClaimReply {
-    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
         let rows: Vec<HashMap<String, HashMap<String, Value>>> = from_redis_value(v)?;
         let ids: Vec<StreamId> = rows
             .into_iter()
@@ -830,7 +820,7 @@ type SPRInner = (
     Vec<Option<(String, String)>>,
 );
 impl FromRedisValue for StreamPendingReply {
-    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
         let (count, start, end, consumer_data): SPRInner = from_redis_value(v)?;
 
         if count == 0 {
@@ -838,11 +828,13 @@ impl FromRedisValue for StreamPendingReply {
         } else {
             let mut result = StreamPendingData::default();
 
-            let start_id = start
-                .ok_or_else(|| Error::other("IllegalState: Non-zero pending expects start id"))?;
+            let start_id = start.ok_or_else(|| ParsingError {
+                description: "IllegalState: Non-zero pending expects start id".into(),
+            })?;
 
-            let end_id =
-                end.ok_or_else(|| Error::other("IllegalState: Non-zero pending expects end id"))?;
+            let end_id = end.ok_or_else(|| ParsingError {
+                description: "IllegalState: Non-zero pending expects end id".into(),
+            })?;
 
             result.count = count;
             result.start_id = start_id;
@@ -864,7 +856,7 @@ impl FromRedisValue for StreamPendingReply {
 }
 
 impl FromRedisValue for StreamPendingCountReply {
-    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
         let mut reply = StreamPendingCountReply::default();
         match v {
             Value::Array(outer_tuple) => {
@@ -884,29 +876,26 @@ impl FromRedisValue for StreamPendingCountReply {
                                     times_delivered,
                                 });
                             }
-                            _ => fail!((
-                                crate::types::ErrorKind::TypeError,
-                                "Cannot parse redis data (3)"
-                            )),
+                            _ => fail!(ParsingError {
+                                description: "Cannot parse redis data (3)".into()
+                            }),
                         },
-                        _ => fail!((
-                            crate::types::ErrorKind::TypeError,
-                            "Cannot parse redis data (2)"
-                        )),
+                        _ => fail!(ParsingError {
+                            description: "Cannot parse redis data (2)".into()
+                        }),
                     }
                 }
             }
-            _ => fail!((
-                crate::types::ErrorKind::TypeError,
-                "Cannot parse redis data (1)"
-            )),
+            _ => fail!(ParsingError {
+                description: "Cannot parse redis data (1)".into()
+            }),
         };
         Ok(reply)
     }
 }
 
 impl FromRedisValue for StreamInfoStreamReply {
-    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
         let map: HashMap<String, Value> = from_redis_value(v)?;
         let mut reply = StreamInfoStreamReply::default();
         if let Some(v) = &map.get("last-generated-id") {
@@ -932,7 +921,7 @@ impl FromRedisValue for StreamInfoStreamReply {
 }
 
 impl FromRedisValue for StreamInfoConsumersReply {
-    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
         let consumers: Vec<HashMap<String, Value>> = from_redis_value(v)?;
         let mut reply = StreamInfoConsumersReply::default();
         for map in consumers {
@@ -954,7 +943,7 @@ impl FromRedisValue for StreamInfoConsumersReply {
 }
 
 impl FromRedisValue for StreamInfoGroupsReply {
-    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
         let groups: Vec<HashMap<String, Value>> = from_redis_value(v)?;
         let mut reply = StreamInfoGroupsReply::default();
         for map in groups {
@@ -1032,22 +1021,19 @@ pub enum XDelExStatusCode {
 
 #[cfg(feature = "streams")]
 impl FromRedisValue for XDelExStatusCode {
-    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
         match v {
             Value::Int(code) => match *code {
                 -1 => Ok(XDelExStatusCode::IdNotFound),
                 1 => Ok(XDelExStatusCode::Deleted),
                 2 => Ok(XDelExStatusCode::NotDeletedUnacknowledgedOrStillReferenced),
-                _ => Err(RedisError::from((
-                    ErrorKind::TypeError,
-                    "Invalid XDelExStatusCode status code",
-                    format!("Unknown status code: {code}"),
-                ))),
+                _ => Err(ParsingError {
+                    description: format!("Invalid XDelExStatusCode status code: {code}").into(),
+                }),
             },
-            _ => Err(RedisError::from((
-                ErrorKind::TypeError,
-                "Response type not XDelExStatusCode compatible",
-            ))),
+            _ => Err(ParsingError {
+                description: "Response type not XAckDelStatusCode compatible".into(),
+            }),
         }
     }
 }
@@ -1067,22 +1053,19 @@ pub enum XAckDelStatusCode {
 
 #[cfg(feature = "streams")]
 impl FromRedisValue for XAckDelStatusCode {
-    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
         match v {
             Value::Int(code) => match *code {
                 -1 => Ok(XAckDelStatusCode::IdNotFound),
                 1 => Ok(XAckDelStatusCode::AcknowledgedAndDeleted),
                 2 => Ok(XAckDelStatusCode::AcknowledgedNotDeletedStillReferenced),
-                _ => Err(RedisError::from((
-                    ErrorKind::TypeError,
-                    "Invalid XAckDelStatusCode status code",
-                    format!("Unknown status code: {code}"),
-                ))),
+                _ => Err(ParsingError {
+                    description: format!("Invalid XAckDelStatusCode status code: {code}").into(),
+                }),
             },
-            _ => Err(RedisError::from((
-                ErrorKind::TypeError,
-                "Response type not XAckDelStatusCode compatible",
-            ))),
+            _ => Err(ParsingError {
+                description: "Response type not XAckDelStatusCode compatible".into(),
+            }),
         }
     }
 }
@@ -1116,9 +1099,7 @@ mod tests {
         fn short_response() {
             let value = Value::Array(vec![Value::BulkString("1713465536578-0".into())]);
 
-            let reply: RedisResult<StreamAutoClaimReply> = FromRedisValue::from_redis_value(&value);
-
-            assert!(reply.is_err());
+            StreamAutoClaimReply::from_redis_value(&value).unwrap_err();
         }
 
         #[test]
@@ -1129,11 +1110,7 @@ mod tests {
                 Value::Array(vec![]),
             ]);
 
-            let reply: RedisResult<StreamAutoClaimReply> = FromRedisValue::from_redis_value(&value);
-
-            assert!(reply.is_ok());
-
-            let reply = reply.unwrap();
+            let reply: StreamAutoClaimReply = FromRedisValue::from_redis_value(&value).unwrap();
 
             assert_eq!(reply.next_stream_id.as_str(), "0-0");
             assert_eq!(reply.claimed.len(), 0);
@@ -1168,11 +1145,7 @@ mod tests {
                 Value::Array(vec![Value::BulkString("123456789-0".into())]),
             ]);
 
-            let reply: RedisResult<StreamAutoClaimReply> = FromRedisValue::from_redis_value(&value);
-
-            assert!(reply.is_ok());
-
-            let reply = reply.unwrap();
+            let reply: StreamAutoClaimReply = FromRedisValue::from_redis_value(&value).unwrap();
 
             assert_eq!(reply.next_stream_id.as_str(), "1713465536578-0");
             assert_eq!(reply.claimed.len(), 2);
@@ -1212,11 +1185,7 @@ mod tests {
                 // V6 and lower lack the deleted_ids array
             ]);
 
-            let reply: RedisResult<StreamAutoClaimReply> = FromRedisValue::from_redis_value(&value);
-
-            assert!(reply.is_ok());
-
-            let reply = reply.unwrap();
+            let reply: StreamAutoClaimReply = FromRedisValue::from_redis_value(&value).unwrap();
 
             assert_eq!(reply.next_stream_id.as_str(), "1713465536578-0");
             assert_eq!(reply.claimed.len(), 2);
@@ -1237,11 +1206,7 @@ mod tests {
                 Value::Array(vec![Value::BulkString("123456789-0".into())]),
             ]);
 
-            let reply: RedisResult<StreamAutoClaimReply> = FromRedisValue::from_redis_value(&value);
-
-            assert!(reply.is_ok());
-
-            let reply = reply.unwrap();
+            let reply: StreamAutoClaimReply = FromRedisValue::from_redis_value(&value).unwrap();
 
             assert_eq!(reply.next_stream_id.as_str(), "1713465536578-0");
             assert_eq!(reply.claimed.len(), 2);
@@ -1263,11 +1228,7 @@ mod tests {
                 // V6 and lower lack the deleted_ids array
             ]);
 
-            let reply: RedisResult<StreamAutoClaimReply> = FromRedisValue::from_redis_value(&value);
-
-            assert!(reply.is_ok());
-
-            let reply = reply.unwrap();
+            let reply: StreamAutoClaimReply = FromRedisValue::from_redis_value(&value).unwrap();
 
             assert_eq!(reply.next_stream_id.as_str(), "1713465536578-0");
             assert_eq!(reply.claimed.len(), 2);
