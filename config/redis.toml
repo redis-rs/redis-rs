@@ -109,22 +109,7 @@ forbid = "bb8"
 when = true
 forbid = "aio"
 
-# deprecated
-[[rule]]
-when = true
-forbid = [
-  "tls",
-  "OR",
-  "async-std-tls-comp",
-  "OR",
-  "async-std-comp",
-  "OR",
-  "async-std-native-tls-comp",
-  "OR",
-  "async-std-rustls-comp",
-]
-
-# If you're using the library with sentinel or targetiing 
+# If you're using the library with sentinel or targeting connection manager, you probably don't want cluster connections
 [[rule]]
 when = ["sentinel", "OR", "connection-manager"]
 forbid = ["cluster", "OR", "cluster-async"]
