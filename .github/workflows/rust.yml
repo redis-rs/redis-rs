@@ -69,7 +69,7 @@ jobs:
               db-version: 7.2.4
             },
             {
-              rust: 1.75.0,
+              rust: 1.80.0,
               db-org: redis,
               db-name: redis,
               db-version: 7.2.4
