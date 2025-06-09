@@ -163,7 +163,7 @@ jobs:
         sed -i '/dev-dependencies/,/dev-dependencies/d' Cargo.toml
         cargo check -p redis --all-features
 
-        cargo check -p redis --no-default-features --features async-std-comp
+        cargo check -p redis --no-default-features --features smol-comp
 
   examples:
     if: ${{ github.event_name == 'pull_request' }}

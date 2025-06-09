@@ -29,7 +29,7 @@
 //! The user can enable TLS support using either RusTLS or native support (usually OpenSSL),
 //! using the `tls-rustls` or `tls-native-tls` features respectively. In order to enable TLS
 //! for async usage, the user must enable matching features for their runtime - either `tokio-native-tls-comp`,
-//! `tokio-rustls-comp`, `async-std-native-tls-comp`, or `async-std-rustls-comp`. Additionally, the
+//! `tokio-rustls-comp`, `smol-native-tls-comp`, or `smol-rustls-comp`. Additionally, the
 //! `tls-rustls-webpki-roots` allows usage of of webpki-roots for the root certificate store.
 //!
 //! # TCP settings
@@ -92,7 +92,6 @@
 //!
 //! * `acl`: enables acl support (enabled by default)
 //! * `tokio-comp`: enables support for async usage with the Tokio runtime (optional)
-//! * `async-std-comp`: enables support for async usage with any runtime which is async-std compliant. (optional)
 //! * `smol-comp`: enables support for async usage with the Smol runtime (optional)
 //! * `geospatial`: enables geospatial support (enabled by default)
 //! * `script`: enables script support (enabled by default)
@@ -463,8 +462,7 @@ it will not automatically be loaded and retried. The script can be loaded using 
 # Async
 
 In addition to the synchronous interface that's been explained above there also exists an
-asynchronous interface based on [`futures`][] and [`tokio`][], [`smol`](https://docs.rs/smol/latest/smol/), or [`async-std`][].
- All async connections are cheap to clone, and clones can be used concurrently from multiple threads.
+asynchronous interface based on [`futures`][] and [`tokio`][] or [`smol`](https://docs.rs/smol/latest/smol/). All async connections are cheap to clone, and clones can be used concurrently from multiple threads.
 
 This interface exists under the `aio` (async io) module (which requires that the `aio` feature
 is enabled) and largely mirrors the synchronous with a few concessions to make it fit the
@@ -492,10 +490,10 @@ assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
 ```
 
 ## Runtime support
-The crate supports multiple runtimes, including `tokio`, `async-std`, and `smol`. For Tokio, the crate will
-spawn tasks on the current thread runtime. For async-std & smol, the crate will spawn tasks on the the global runtime.
+The crate supports multiple runtimes, including `tokio` and `smol`. For Tokio, the crate will
+spawn tasks on the current thread runtime. For smol, the crate will spawn tasks on the the global runtime.
 It is recommended that the crate be used with support only for a single runtime. If the crate is compiled with multiple runtimes,
-the user should call [`crate::aio::prefer_tokio`], [`crate::aio::prefer_async_std`] or [`crate::aio::prefer_smol`] to set the preferred runtime.
+the user should call [`crate::aio::prefer_tokio`] or [`crate::aio::prefer_smol`] to set the preferred runtime.
 These functions set global state which automatically chooses the correct runtime for the async connection.
 
 "##
@@ -503,7 +501,6 @@ These functions set global state which automatically chooses the correct runtime
 //!
 //! [`futures`]:https://crates.io/crates/futures
 //! [`tokio`]:https://tokio.rs
-//! [`async-std`]:https://async.rs/
 #![cfg_attr(
     feature = "sentinel",
     doc = r##"
