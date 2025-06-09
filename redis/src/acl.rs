@@ -1,16 +1,12 @@
 //! Defines types to use with the ACL commands.
 
-use crate::types::{
-    ErrorKind, FromRedisValue, RedisError, RedisResult, RedisWrite, ToRedisArgs, Value,
-};
+use crate::types::{FromRedisValue, ParsingError, RedisWrite, ToRedisArgs, Value};
 
 macro_rules! not_convertible_error {
     ($v:expr, $det:expr) => {
-        RedisError::from((
-            ErrorKind::TypeError,
-            "Response type not convertible",
-            format!("{:?} (response was {:?})", $det, $v),
-        ))
+        ParsingError {
+            description: format!("{:?} (response was {:?})", $det, $v).into(),
+        }
     };
 }
 
@@ -143,7 +139,7 @@ pub struct AclInfo {
 }
 
 impl FromRedisValue for AclInfo {
-    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
         let mut it = v
             .as_sequence()
             .ok_or_else(|| not_convertible_error!(v, ""))?
@@ -176,7 +172,7 @@ impl FromRedisValue for AclInfo {
                             "Expect an arbitrary binary data"
                         )),
                     })
-                    .collect::<RedisResult<_>>()?;
+                    .collect::<Result<_, _>>()?;
 
                 let passwords = passwords
                     .as_sequence()
@@ -185,7 +181,7 @@ impl FromRedisValue for AclInfo {
                     })?
                     .iter()
                     .map(|pass| Ok(Rule::AddHashedPass(String::from_redis_value(pass)?)))
-                    .collect::<RedisResult<_>>()?;
+                    .collect::<Result<_, ParsingError>>()?;
 
                 let commands = match commands {
                     Value::BulkString(cmd) => std::str::from_utf8(cmd)?,
@@ -207,14 +203,14 @@ impl FromRedisValue for AclInfo {
                         "Expect a command addition/removal"
                     )),
                 })
-                .collect::<RedisResult<_>>()?;
+                .collect::<Result<_, _>>()?;
 
                 let keys = keys
                     .as_sequence()
                     .ok_or_else(|| not_convertible_error!(keys, ""))?
                     .iter()
                     .map(|pat| Ok(Rule::Pattern(String::from_redis_value(pat)?)))
-                    .collect::<RedisResult<_>>()?;
+                    .collect::<Result<_, ParsingError>>()?;
 
                 (flags, passwords, commands, keys)
             }

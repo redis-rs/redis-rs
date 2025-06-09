@@ -118,11 +118,11 @@ impl ClusterPipeline {
             }
         }
 
-        from_owned_redis_value(if self.commands.is_empty() {
+        Ok(from_owned_redis_value(if self.commands.is_empty() {
             Value::Array(vec![])
         } else {
             self.make_pipeline_results(con.execute_pipeline(self)?)?
-        })
+        })?)
     }
 
     /// This is a shortcut to `query()` that does not return a value and

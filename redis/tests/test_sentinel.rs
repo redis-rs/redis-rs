@@ -899,7 +899,6 @@ pub mod async_tests {
 
     #[rstest]
     #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_client_async_not_sentinel_error(#[case] runtime: RuntimeType) {
         let master_name = "master1";
@@ -940,7 +939,6 @@ pub mod async_tests {
 
     #[rstest]
     #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_client_async_io_error(#[case] runtime: RuntimeType) {
         let master_name = "master1";
@@ -967,7 +965,6 @@ pub mod async_tests {
 
     #[rstest]
     #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_client_async_with_connection_timeout(#[case] runtime: RuntimeType) {
         let master_name = "master1";
@@ -1146,7 +1143,6 @@ pub mod async_tests {
 
     #[rstest]
     #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_get_replica_clients_success_async(#[case] runtime: RuntimeType) {
         let number_of_replicas = 3;
@@ -1170,7 +1166,6 @@ pub mod async_tests {
 
     #[rstest]
     #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_get_replica_clients_invalid_master_name_async(#[case] runtime: RuntimeType) {
         let mut context = TestSentinelContext::new(2, 2, 3);
@@ -1198,7 +1193,6 @@ pub mod async_tests {
 
     #[rstest]
     #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_get_replica_clients_report_correct_master_async(#[case] runtime: RuntimeType) {
         let number_of_replicas = 3;
@@ -1231,7 +1225,6 @@ pub mod async_tests {
 
     #[rstest]
     #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_get_replica_clients_with_one_replica_down_async(#[case] runtime: RuntimeType) {
         let number_of_replicas = 3;

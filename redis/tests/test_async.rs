@@ -996,6 +996,8 @@ mod basic_async {
         #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
         #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
         fn test_issue_async_commands_scan_finishing_prematurely(#[case] runtime: RuntimeType) {
+            use redis::ParsingError;
+
             const PREFIX: &str = "async-key";
             const NUM_KEYS: usize = 100;
 
@@ -1003,14 +1005,13 @@ mod basic_async {
             struct Container(String);
 
             impl redis::FromRedisValue for Container {
-                fn from_redis_value(v: &Value) -> RedisResult<Self> {
+                fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
                     let text = String::from_redis_value(v)?;
 
                     // If container does not start with [`PREFIX`], return error
                     if !text.starts_with(PREFIX) {
-                        return Err(
-                            (ErrorKind::TypeError, "Does not start with correct prefix").into()
-                        );
+                        // hack to create a parsing error
+                        return Err(u64::from_redis_value(v).unwrap_err());
                     }
 
                     Ok(Container(text))
@@ -1885,7 +1886,6 @@ mod basic_async {
     #[cfg(feature = "connection-manager")]
     #[rstest]
     #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn manager_should_reconnect_without_actions_if_push_sender_is_set_even_after_sender_returns_error(
         #[case] runtime: RuntimeType,
