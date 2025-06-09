@@ -556,6 +556,7 @@ let primary = sentinel.get_async_connection().await.unwrap();
 //! # Upgrading to version 1
 //!
 //! * Iterators are now safe by default, without an opt-out. This means that the iterators return `RedisResult<Value>` instead of `Value` (see [this PR](https://github.com/redis-rs/redis-rs/pull/1641) for background). If you previously used the "safe_iterators" feature to opt-in to this behavior, just remove the feature declaration. Otherwise you will need to adjust your usage of iterators to account for potential conversion failures.
+//! * Parsing values using [FromRedisValue] no longer returns `RedisError` on failure, in order to save the users checking for various server & client errors in such scenarios. if you rely on the error type when using this trait, you'll need to adjust your error handling code. [ParsingError] should only be printed - it doesn't contain any user-actionable info outside of its error message.
 //!
 
 #![deny(non_camel_case_types)]
@@ -624,6 +625,7 @@ pub use crate::types::{
 	ValueType,
 
     // error and result types
+    ParsingError,
     RedisError,
     RedisResult,
     RedisWrite,
