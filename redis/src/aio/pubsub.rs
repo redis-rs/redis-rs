@@ -357,14 +357,14 @@ impl PubSubSink {
     ) -> RedisResult<T> {
         let cmd = cmd("PING").arg(message).get_packed_command();
         let response = self.send_recv(cmd).await?;
-        from_owned_redis_value(response)
+        Ok(from_owned_redis_value(response)?)
     }
 
     /// Sends a ping to the server
     pub async fn ping<T: FromRedisValue>(&mut self) -> RedisResult<T> {
         let cmd = cmd("PING").get_packed_command();
         let response = self.send_recv(cmd).await?;
-        from_owned_redis_value(response)
+        Ok(from_owned_redis_value(response)?)
     }
 }
 

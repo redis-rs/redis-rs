@@ -127,7 +127,7 @@ impl<T: FromRedisValue> Iterator for CheckedIter<'_, T> {
             let (cursor, batch) = match self
                 .con
                 .req_packed_command(&self.cmd.get_packed_command())
-                .and_then(from_owned_redis_value::<(u64, _)>)
+                .and_then(|val| Ok(from_owned_redis_value::<(u64, _)>(val)?))
             {
                 Ok((cursor, values)) => (cursor, T::from_each_owned_redis_values(values)),
                 Err(e) => return Some(Err(e)),
@@ -184,7 +184,7 @@ impl<'a, T: FromRedisValue + 'a> AsyncIterInner<'a, T> {
                 .con
                 .req_packed_command(&self.cmd)
                 .await
-                .and_then(from_owned_redis_value::<(u64, _)>)
+                .and_then(|val| Ok(from_owned_redis_value::<(u64, _)>(val)?))
             {
                 Ok((cursor, items)) => (cursor, T::from_each_owned_redis_values(items)),
                 Err(e) => return Some(Err(e)),
@@ -608,7 +608,7 @@ impl Cmd {
     #[inline]
     pub fn query<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
         match con.req_command(self) {
-            Ok(val) => from_owned_redis_value(val.extract_error()?),
+            Ok(val) => Ok(from_owned_redis_value(val.extract_error()?)?),
             Err(e) => Err(e),
         }
     }
@@ -621,7 +621,7 @@ impl Cmd {
         con: &mut impl crate::aio::ConnectionLike,
     ) -> RedisResult<T> {
         let val = con.req_packed_command(self).await?;
-        from_owned_redis_value(val.extract_error()?)
+        Ok(from_owned_redis_value(val.extract_error()?)?)
     }
 
     /// Sets the cursor and converts the passed value to a batch used by the
