@@ -71,7 +71,7 @@ fn fetch_an_integer() -> redis::RedisResult<isize> {
 ## Async support
 
 To enable asynchronous clients, enable the relevant feature in your Cargo.toml,
-`tokio-comp` for tokio users, `smol-comp` for smol users, or `async-std-comp` for async-std users.
+`tokio-comp` for tokio users, `smol-comp` for smol users.
 
 ```
 # if you use tokio
@@ -79,9 +79,6 @@ redis = { version = "1.0", features = ["tokio-comp"] }
 
 # if you use smol
 redis = { version = "1.0", features = ["smol-comp"] }
-
-# if you use async-std
-redis = { version = "1.0", features = ["async-std-comp"] }
 ```
 
 You can then use either the `AsyncCommands` or `AsyncTypedCommands` trait.
@@ -121,9 +118,6 @@ redis = { version = "1.0", features = ["tokio-native-tls-comp"] }
 
 # if you use smol
 redis = { version = "1.0", features = ["smol-native-tls-comp"] }
-
-# if you use async-std
-redis = { version = "1.0", features = ["async-std-native-tls-comp"] }
 ```
 
 To use `rustls`:
@@ -136,9 +130,6 @@ redis = { version = "1.0", features = ["tokio-rustls-comp"] }
 
 # if you use smol
 redis = { version = "1.0", features = ["smol-rustls-comp"] }
-
-# if you use async-std
-redis = { version = "1.0", features = ["async-std-rustls-comp"] }
 ```
 
 Add `rustls` to dependencies
@@ -172,8 +163,6 @@ To enable insecure mode, append `#insecure` at the end of the URL:
 ```rust
 let client = redis::Client::open("rediss://127.0.0.1/#insecure")?;
 ```
-
-**Deprecation Notice:** If you were using the `tls` or `async-std-tls-comp` features, please use the `tls-native-tls` or `async-std-native-tls-comp` features respectively.
 
 ## Cluster Support
 

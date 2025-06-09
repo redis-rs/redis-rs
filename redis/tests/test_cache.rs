@@ -36,7 +36,7 @@ macro_rules! assert_invalidate {
 // Basic testing should work with both CacheMode::All and CacheMode::OptIn if commands has called cache()
 #[rstest]
 #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 fn test_cache_basic(#[case] runtime: RuntimeType, #[values(true, false)] test_with_optin: bool) {
     let ctx = TestContext::new();
     if ctx.protocol == ProtocolVersion::RESP2 {
@@ -99,7 +99,7 @@ fn test_cache_basic(#[case] runtime: RuntimeType, #[values(true, false)] test_wi
 
 #[rstest]
 #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 fn test_cache_mget(#[case] runtime: RuntimeType) {
     let ctx = TestContext::new();
     if ctx.protocol == ProtocolVersion::RESP2 {
@@ -157,7 +157,7 @@ fn test_cache_mget(#[case] runtime: RuntimeType) {
 #[rstest]
 #[cfg(feature = "json")]
 #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 fn test_module_cache_json_get_mget(#[case] runtime: RuntimeType) {
     let ctx = TestContext::with_modules(&[Module::Json], false);
     if ctx.protocol == ProtocolVersion::RESP2 {
@@ -230,7 +230,7 @@ fn test_module_cache_json_get_mget(#[case] runtime: RuntimeType) {
 #[rstest]
 #[cfg(feature = "json")]
 #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 fn test_module_cache_json_get_mget_different_paths(#[case] runtime: RuntimeType) {
     let ctx = TestContext::with_modules(&[Module::Json], false);
     if ctx.protocol == ProtocolVersion::RESP2 {
@@ -342,7 +342,7 @@ fn test_module_cache_json_get_mget_different_paths(#[case] runtime: RuntimeType)
 
 #[rstest]
 #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 fn test_cache_is_not_target_type_dependent(#[case] runtime: RuntimeType) {
     let ctx = TestContext::new();
     if ctx.protocol == ProtocolVersion::RESP2 {
@@ -370,7 +370,7 @@ fn test_cache_is_not_target_type_dependent(#[case] runtime: RuntimeType) {
 
 #[rstest]
 #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 fn test_cache_with_pipeline(#[case] runtime: RuntimeType, #[values(true, false)] atomic: bool) {
     let ctx = TestContext::new();
     if ctx.protocol == ProtocolVersion::RESP2 {
@@ -424,7 +424,7 @@ fn test_cache_with_pipeline(#[case] runtime: RuntimeType, #[values(true, false)]
 
 #[rstest]
 #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 fn test_cache_basic_partial_opt_in(#[case] runtime: RuntimeType) {
     // In OptIn mode cache must not be utilized without explicit per command configuration.
     let ctx = TestContext::new();
@@ -495,7 +495,7 @@ fn test_cache_basic_partial_opt_in(#[case] runtime: RuntimeType) {
 
 #[rstest]
 #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 fn test_cache_pipeline_partial_opt_in(
     #[case] runtime: RuntimeType,
     #[values(true, false)] atomic: bool,
@@ -558,7 +558,7 @@ fn test_cache_pipeline_partial_opt_in(
 
 #[rstest]
 #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 fn test_cache_different_commands(
     #[case] runtime: RuntimeType,
     #[values(true, false)] test_with_opt_in: bool,
@@ -629,7 +629,7 @@ fn test_cache_different_commands(
 
 #[rstest]
 #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 #[cfg(feature = "connection-manager")]
 fn test_connection_manager_maintains_statistics_after_crashes(
     #[case] runtime: RuntimeType,
@@ -700,7 +700,7 @@ fn test_connection_manager_maintains_statistics_after_crashes(
 
 #[rstest]
 #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 #[cfg(feature = "cluster-async")]
 fn test_cache_async_cluster_reconnect_all_nodes(#[case] runtime: RuntimeType) {
     let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
@@ -758,7 +758,7 @@ fn test_cache_async_cluster_reconnect_all_nodes(#[case] runtime: RuntimeType) {
 
 #[rstest]
 #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 #[cfg(feature = "cluster-async")]
 fn test_cache_async_cluster_mget(#[case] runtime: RuntimeType) {
     let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
@@ -819,7 +819,7 @@ fn get_pipe(atomic: bool) -> redis::Pipeline {
 
 #[rstest]
 #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 #[cfg(feature = "cluster-async")]
 fn test_cache_async_cluster_slot_change(
     #[case] runtime: RuntimeType,

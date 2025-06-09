@@ -71,9 +71,6 @@ rand = { version = "0.9", optional = true }
 # Only needed for cluster-async
 futures-sink = { version = "0.3.31", optional = true }
 
-# Only needed for async_std support
-async-std = { version = "1.13.1", optional = true }
-
 #only needed for smol support
 smol = { version = "2", optional = true }
 async-io = { version = "2", optional = true }
@@ -155,19 +152,7 @@ cache-aio = ["aio", "dep:lru"]
 r2d2 = ["dep:r2d2"]
 bb8 = ["dep:bb8"]
 
-# Deprecated features
-tls = ["tls-native-tls"] # use "tls-native-tls" instead
-async-std-tls-comp = [
-  "async-std-native-tls-comp",
-] # use "async-std-native-tls-comp" instead
-async-std-comp = ["aio", "dep:async-std"]
-async-std-native-tls-comp = [
-  "async-std-comp",
-  "dep:async-native-tls",
-  "tls-native-tls",
-]
-async-std-rustls-comp = ["async-std-comp", "dep:futures-rustls", "tls-rustls"]
-# Instead of specifying "aio", use either "tokio-comp" or "async-std-comp".
+# Instead of specifying "aio", use either "tokio-comp" or "smol-comp".
 aio = [
   "bytes",
   "dep:pin-project-lite",

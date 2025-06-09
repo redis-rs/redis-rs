@@ -107,21 +107,6 @@ forbid = "bb8"
 when = true
 forbid = "aio"
 
-# deprecated
-[[rule]]
-when = true
-forbid = [
-  "tls",
-  "OR",
-  "async-std-tls-comp",
-  "OR",
-  "async-std-comp",
-  "OR",
-  "async-std-native-tls-comp",
-  "OR",
-  "async-std-rustls-comp",
-]
-
 # these are all included in the `default` feature, so in order to reduce combinatoric explosion, we don't check them individually.
 [[rule]]
 when = true
