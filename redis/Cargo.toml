@@ -8,7 +8,7 @@ repository = "https://github.com/redis-rs/redis-rs"
 documentation = "https://docs.rs/redis"
 license = "BSD-3-Clause"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.80"
 readme = "../README.md"
 
 [package.metadata.docs.rs]
@@ -170,7 +170,7 @@ assert_approx_eq = "1.0"
 fnv = "1.0.5"
 futures = "0.3"
 futures-time = "3"
-criterion = "0.5"
+criterion = "0.6"
 partial-io = { version = "0.5", features = ["tokio", "quickcheck1"] }
 quickcheck = "1.0.3"
 tokio = { version = "1", features = [
