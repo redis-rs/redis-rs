@@ -296,7 +296,7 @@ fn test_sentinel_redis_client() {
 }
 
 #[test]
-fn test_sentinel_client_async() {
+fn test_sentinel_client() {
     let master_name = "master1";
     let context = TestSentinelContext::new(2, 3, 3);
     let mut master_client = SentinelClient::build(
@@ -331,7 +331,7 @@ fn test_sentinel_client_async() {
 }
 
 #[test]
-fn test_sentinel_client_async_io_error() {
+fn test_sentinel_client_io_error() {
     let master_name = "master1";
 
     let mut master_client = SentinelClient::build(
