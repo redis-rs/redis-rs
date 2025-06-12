@@ -1058,7 +1058,7 @@ impl SentinelClient {
         })
     }
 
-    /// Returns a `redis::Client` considering the server type.
+    /// Returns a [`Client`] considering the server type.
     pub fn get_client(&mut self) -> RedisResult<Client> {
         match self.server_type {
             SentinelServerType::Master => self
@@ -1070,13 +1070,13 @@ impl SentinelClient {
         }
     }
 
-    /// Returns a [`redis::Client`] connected to **the first Sentinel node that
+    /// Returns a [`Client`] connected to **the first Sentinel node that
     /// responds successfully to `ROLE` with the expected value**.
     ///
     /// The function walks through the list supplied in
     /// `Sentinel::sentinels_connection_info`, trying each address in order:
     ///
-    /// 1. `Client::open` attempts to build a client for that Sentinel.
+    /// 1. [Client::open] attempts to build a client for that Sentinel.
     /// 2. We immediately issue `ROLE` to confirm the node is reachable and is a Setinel node.
     /// 3. The **first** node that passes both checks, the client is returned.
     ///
@@ -1133,7 +1133,7 @@ impl SentinelClient {
 #[cfg(feature = "aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 impl SentinelClient {
-    /// Returns a `redis::Client` considering the server type.
+    /// Returns a [`Client`] considering the server type.
     pub async fn async_get_client(&mut self) -> RedisResult<Client> {
         match self.server_type {
             SentinelServerType::Master => {
@@ -1149,13 +1149,13 @@ impl SentinelClient {
         }
     }
 
-    /// Returns a [`redis::Client`] connected to **the first Sentinel node that
+    /// Returns a [`Client`] connected to **the first Sentinel node that
     /// responds successfully to `ROLE` with the expected value**.
     ///
     /// The function walks through the list supplied in
     /// `Sentinel::sentinels_connection_info`, trying each address in order:
     ///
-    /// 1. `Client::open` attempts to build a client for that Sentinel.
+    /// 1. [`Client::open`] attempts to build a client for that Sentinel.
     /// 2. We immediately issue `ROLE` to confirm the node is reachable and is a Setinel node.
     /// 3. The **first** node that passes both checks, the client is returned.
     ///
