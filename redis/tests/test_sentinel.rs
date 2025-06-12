@@ -343,7 +343,7 @@ fn test_sentinel_client_io_error() {
     .unwrap();
 
     let sentinel_client = master_client.get_sentinel_client();
-    let err = sentinel_client.err().expect("Expected an error");
+    let err = sentinel_client.expect_err("Expected an error");
     assert!(err.is_io_error());
 }
 
@@ -367,7 +367,7 @@ fn test_sentinel_client_not_sentinel_error() {
     .unwrap();
 
     let sentinel_client = master_client.get_sentinel_client();
-    let err = sentinel_client.err().expect("Expected an error");
+    let err = sentinel_client.expect_err("Expected an error");
     assert_eq!(
         err,
         RedisError::from((
@@ -806,7 +806,7 @@ pub mod async_tests {
         block_on_all(
             async move {
                 let sentinel_client = master_client.async_get_sentinel_client().await;
-                let err = sentinel_client.err().expect("Expected an error");
+                let err = sentinel_client.expect_err("Expected an error");
                 assert_eq!(
                     err,
                     RedisError::from((
@@ -839,7 +839,7 @@ pub mod async_tests {
         block_on_all(
             async move {
                 let sentinel_client = master_client.async_get_sentinel_client().await;
-                let err = sentinel_client.err().expect("Expected an error");
+                let err = sentinel_client.expect_err("Expected an error");
                 assert!(err.is_io_error());
                 Ok::<(), RedisError>(())
             },
