@@ -310,14 +310,14 @@ pub struct RedisConnectionInfo {
 
 impl RedisConnectionInfo {
     /// Sets the username for the connection's ACL
-    pub fn set_username(mut self, username: String) -> Self {
-        self.username = Some(username);
+    pub fn set_username(mut self, username: impl Into<String>) -> Self {
+        self.username = Some(username.into());
         self
     }
 
     /// Sets the password for the connection's ACL
-    pub fn set_password(mut self, password: String) -> Self {
-        self.password = Some(password);
+    pub fn set_password(mut self, password: impl Into<String>) -> Self {
+        self.password = Some(password.into());
         self
     }
 

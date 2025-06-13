@@ -142,7 +142,7 @@ impl ConnectionManagerConfig {
     /// Sets sender sender for push values.
     ///
     /// The sender can be a channel, or an arbitrary function that handles [crate::PushInfo] values.
-    /// This will fail client creation if the connection isn't configured for RESP3 communications via the [crate::RedisConnectionInfo::protocol] field.
+    /// This will fail client creation if the connection isn't configured for RESP3 communications via the [crate::ConnectionInfo::set_protocol] function.
     ///
     /// # Examples
     ///
