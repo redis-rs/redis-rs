@@ -34,8 +34,7 @@
 //!
 //! # TCP settings
 //!
-//! The user can set parameters of the underlying TCP connection by using the `tcp_nodelay` and `keep-alive` features.
-//! Alternatively, users of async connections can set [crate::io::tcp::TcpSettings] on the connection configuration objects,
+//! The user can set parameters of the underlying TCP connection by setting [crate::io::tcp::TcpSettings] on the connection configuration objects,
 //! and set the TCP parameters in a more specific manner there.
 //!
 //! ## Connection Handling
@@ -101,8 +100,6 @@
 //! * `cluster`: enables redis cluster support (optional)
 //! * `cluster-async`: enables async redis cluster support (optional)
 //! * `connection-manager`: enables support for automatic reconnection (optional)
-//! * `keep-alive`: enables keep-alive option on socket by means of `socket2` crate (enabled by default)
-//! * `tcp_nodelay`: enables the no-delay flag on  communication sockets (optional)
 //! * `rust_decimal`, `bigdecimal`, `num-bigint`: enables type conversions to large number representation from different crates (optional)
 //! * `uuid`: enables type conversion to UUID (optional)
 //! * `sentinel`: enables high-level interfaces for communication with Redis sentinels (optional)
@@ -557,6 +554,9 @@ let primary = sentinel.get_async_connection().await.unwrap();
 //!
 //! * Iterators are now safe by default, without an opt-out. This means that the iterators return `RedisResult<Value>` instead of `Value` (see [this PR](https://github.com/redis-rs/redis-rs/pull/1641) for background). If you previously used the "safe_iterators" feature to opt-in to this behavior, just remove the feature declaration. Otherwise you will need to adjust your usage of iterators to account for potential conversion failures.
 //! * Parsing values using [FromRedisValue] no longer returns `RedisError` on failure, in order to save the users checking for various server & client errors in such scenarios. if you rely on the error type when using this trait, you'll need to adjust your error handling code. [ParsingError] should only be printed - it doesn't contain any user-actionable info outside of its error message.
+//! * If you used the `num-bigint` feature, it is now a part of the crate, and doesn't require adding a feature.
+//! * If you used the `tcp_nodelay`, `keep-alive`, or `disable-client-setinfo` features, you'll need to set these values on the connection info you pass to the client.
+//! * If you create `ConnectionInfo` or `RedisConnectionInfo` objects explicitly, now you need to use the builder pattern setters.
 //!
 
 #![deny(non_camel_case_types)]

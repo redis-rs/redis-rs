@@ -119,7 +119,5 @@ forbid = [
   "OR",
   "script",
   "OR",
-  "keep-alive",
-  "OR",
   "num-bigint",
 ]
