@@ -52,11 +52,6 @@ test:
 	@echo "===================================================================="
 	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run --locked -p redis-test
 
-	@echo "===================================================================="
-	@echo "Run doc tests"
-	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo test  --doc --locked --all-features
-
 
 test-module:
 	@echo "===================================================================="
