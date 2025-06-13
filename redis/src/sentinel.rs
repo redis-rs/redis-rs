@@ -143,7 +143,7 @@ use crate::tls::retrieve_tls_certificates;
 #[cfg(feature = "tls-rustls")]
 use crate::TlsCertificates;
 use crate::{
-    connection::ConnectionInfo, types::RedisResult, Client, Cmd, Connection, ConnectionAddr,
+    cmd, connection::ConnectionInfo, types::RedisResult, Client, Cmd, Connection, ConnectionAddr,
     ErrorKind, FromRedisValue, IntoConnectionInfo, ProtocolVersion, RedisConnectionInfo,
     RedisError, Role, TlsMode,
 };
@@ -1058,7 +1058,8 @@ impl SentinelClient {
         })
     }
 
-    fn get_client(&mut self) -> RedisResult<Client> {
+    /// Returns a [`Client`] considering the server type.
+    pub fn get_client(&mut self) -> RedisResult<Client> {
         match self.server_type {
             SentinelServerType::Master => self
                 .sentinel
@@ -1067,6 +1068,55 @@ impl SentinelClient {
                 .sentinel
                 .replica_for(self.service_name.as_str(), Some(&self.node_connection_info)),
         }
+    }
+
+    /// Returns a [`Client`] connected to **the first Sentinel node that
+    /// responds successfully to `ROLE` with the expected value**.
+    ///
+    /// The function walks through the list supplied in
+    /// `Sentinel::sentinels_connection_info`, trying each address in order:
+    ///
+    /// 1. [Client::open] attempts to build a client for that Sentinel.
+    /// 2. We immediately issue `ROLE` to confirm the node is reachable and is a Setinel node.
+    /// 3. The **first** node that passes both checks, the client is returned.
+    ///
+    /// If **none** of the Sentinel addresses respond successfully or, an error occurs when
+    /// establishing a connection, the method returns the appropriate error.
+    ///
+    /// Use this client when you need Sentinel-specific features—e.g.
+    /// subscribing to `+switch-master` Pub/Sub events or running topology
+    /// queries—rather than talking to the Redis master itself.
+    pub fn get_sentinel_client(&mut self) -> RedisResult<Client> {
+        let mut err = Err(RedisError::from((
+            ErrorKind::InvalidClientConfig,
+            "Couldn't open connection to a sentinel node.",
+        )));
+
+        for connection_info in &self.sentinel.sentinels_connection_info {
+            if let Ok(client) = Client::open(connection_info.clone()) {
+                match try_single_sentinel::<Role>(
+                    cmd::cmd("ROLE"),
+                    connection_info,
+                    self.sentinel
+                        .connections_cache
+                        .first_mut()
+                        .unwrap_or(&mut None),
+                ) {
+                    Ok(Role::Sentinel { .. }) => {
+                        return Ok(client);
+                    }
+                    Ok(_) => {
+                        // Do nothing, the node is not a sentinel node. If no Sentinel node is found
+                        // the client will receive the appropriate error
+                    }
+                    Err(e) => {
+                        err = Err(e);
+                    }
+                }
+            }
+        }
+
+        err
     }
 
     /// Creates a new connection to the desired type of server (based on the
@@ -1083,7 +1133,8 @@ impl SentinelClient {
 #[cfg(feature = "aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 impl SentinelClient {
-    async fn async_get_client(&mut self) -> RedisResult<Client> {
+    /// Returns a [`Client`] considering the server type.
+    pub async fn async_get_client(&mut self) -> RedisResult<Client> {
         match self.server_type {
             SentinelServerType::Master => {
                 self.sentinel
@@ -1096,6 +1147,57 @@ impl SentinelClient {
                     .await
             }
         }
+    }
+
+    /// Returns a [`Client`] connected to **the first Sentinel node that
+    /// responds successfully to `ROLE` with the expected value**.
+    ///
+    /// The function walks through the list supplied in
+    /// `Sentinel::sentinels_connection_info`, trying each address in order:
+    ///
+    /// 1. [`Client::open`] attempts to build a client for that Sentinel.
+    /// 2. We immediately issue `ROLE` to confirm the node is reachable and is a Setinel node.
+    /// 3. The **first** node that passes both checks, the client is returned.
+    ///
+    /// If **none** of the Sentinel addresses respond successfully or, an error occurs when
+    /// establishing a connection, the method returns the appropriate error.
+    ///
+    /// Use this client when you need Sentinel-specific features—e.g.
+    /// subscribing to `+switch-master` Pub/Sub events or running topology
+    /// queries—rather than talking to the Redis master itself.
+    pub async fn async_get_sentinel_client(&mut self) -> RedisResult<Client> {
+        let mut err = Err(RedisError::from((
+            ErrorKind::InvalidClientConfig,
+            "Couldn't open connection to a sentinel node.",
+        )));
+
+        for connection_info in &self.sentinel.sentinels_connection_info {
+            if let Ok(client) = Client::open(connection_info.clone()) {
+                match async_try_single_sentinel::<Role>(
+                    cmd::cmd("ROLE"),
+                    connection_info,
+                    self.sentinel
+                        .async_connections_cache
+                        .first_mut()
+                        .unwrap_or(&mut None),
+                )
+                .await
+                {
+                    Ok(Role::Sentinel { .. }) => {
+                        return Ok(client);
+                    }
+                    Ok(_) => {
+                        // Do nothing, the node is not a sentinel node. If no Sentinel node is found
+                        // the client will receive the appropriate error
+                    }
+                    Err(e) => {
+                        err = Err(e);
+                    }
+                }
+            }
+        }
+
+        err
     }
 
     /// Returns an async connection from the client, using the same logic from
