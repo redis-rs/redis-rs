@@ -105,6 +105,7 @@ pub enum TlsMode {
 /// to connect to a unix socket you need to run this on an operating system
 /// that supports them.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum ConnectionAddr {
     /// Format for this is `(host, port)`.
     Tcp(String, u16),
@@ -235,25 +236,108 @@ impl fmt::Display for ConnectionAddr {
 #[derive(Clone, Debug)]
 pub struct ConnectionInfo {
     /// A connection address for where to connect to.
-    pub addr: ConnectionAddr,
+    pub(crate) addr: ConnectionAddr,
 
-    /// A redis connection info for how to handshake with redis.
-    pub redis: RedisConnectionInfo,
     /// The settings for the TCP connection
-    pub tcp_settings: TcpSettings,
+    pub(crate) tcp_settings: TcpSettings,
+    /// A redis connection info for how to handshake with redis.
+    pub(crate) redis: RedisConnectionInfo,
+}
+
+impl ConnectionInfo {
+    /// Returns the connection address
+    pub fn addr(&self) -> &ConnectionAddr {
+        &self.addr
+    }
+
+    /// Sets the TCP settings for the connection.
+    pub fn set_tcp_settings(mut self, tcp_settings: TcpSettings) -> Self {
+        self.tcp_settings = tcp_settings;
+        self
+    }
+
+    /// Sets the username for the connection's ACL
+    pub fn set_username(mut self, username: impl Into<String>) -> Self {
+        self.redis.username = Some(username.into());
+        self
+    }
+
+    /// Sets the password for the connection's ACL
+    pub fn set_password(mut self, password: impl Into<String>) -> Self {
+        self.redis.password = Some(password.into());
+        self
+    }
+
+    /// Sets the version of the RESP to use
+    pub fn set_protocol(mut self, protocol: ProtocolVersion) -> Self {
+        self.redis.protocol = protocol;
+        self
+    }
+
+    /// Removes the pipelined CLIENT SETINFO call from the connection creation.
+    pub fn set_skip_set_lib_name(mut self) -> Self {
+        self.redis.skip_set_lib_name = true;
+        self
+    }
+
+    /// Set all redis connection info fields at once
+    pub fn set_redis_settings(mut self, redis: RedisConnectionInfo) -> Self {
+        self.redis = redis;
+        self
+    }
+
+    /// Sets the database number to use
+    pub fn set_db(mut self, db: i64) -> Self {
+        self.redis.db = db;
+        self
+    }
 }
 
 /// Redis specific/connection independent information used to establish a connection to redis.
 #[derive(Clone, Debug, Default)]
 pub struct RedisConnectionInfo {
     /// The database number to use.  This is usually `0`.
-    pub db: i64,
+    pub(crate) db: i64,
     /// Optionally a username that should be used for connection.
-    pub username: Option<String>,
+    pub(crate) username: Option<String>,
     /// Optionally a password that should be used for connection.
-    pub password: Option<String>,
+    pub(crate) password: Option<String>,
     /// Version of the protocol to use.
-    pub protocol: ProtocolVersion,
+    pub(crate) protocol: ProtocolVersion,
+    /// If set, the connection shouldn't send the library name to the server.
+    pub(crate) skip_set_lib_name: bool,
+}
+
+impl RedisConnectionInfo {
+    /// Sets the username for the connection's ACL
+    pub fn set_username(mut self, username: String) -> Self {
+        self.username = Some(username);
+        self
+    }
+
+    /// Sets the password for the connection's ACL
+    pub fn set_password(mut self, password: String) -> Self {
+        self.password = Some(password);
+        self
+    }
+
+    /// Sets the version of the RESP to use
+    pub fn set_protocol(mut self, protocol: ProtocolVersion) -> Self {
+        self.protocol = protocol;
+        self
+    }
+
+    /// Removes the pipelined CLIENT SETINFO call from the connection creation.
+    pub fn set_skip_set_lib_name(mut self) -> Self {
+        self.skip_set_lib_name = true;
+        self
+    }
+
+    /// Sets the database number to use
+    pub fn set_db(mut self, db: i64) -> Self {
+        self.db = db;
+        self
+    }
 }
 
 impl FromStr for ConnectionInfo {
@@ -275,6 +359,16 @@ pub trait IntoConnectionInfo {
 impl IntoConnectionInfo for ConnectionInfo {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         Ok(self)
+    }
+}
+
+impl IntoConnectionInfo for ConnectionAddr {
+    fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
+        Ok(ConnectionInfo {
+            addr: self,
+            redis: Default::default(),
+            tcp_settings: Default::default(),
+        })
     }
 }
 
@@ -432,6 +526,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 None => None,
             },
             protocol: parse_protocol(&query)?,
+            skip_set_lib_name: false,
         },
         tcp_settings: TcpSettings::default(),
     })
@@ -455,6 +550,7 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             username: query.get("user").map(|username| username.to_string()),
             password: query.get("pass").map(|password| password.to_string()),
             protocol: parse_protocol(&query)?,
+            ..Default::default()
         },
         tcp_settings: TcpSettings::default(),
     })
@@ -1195,20 +1291,20 @@ pub(crate) fn connection_setup_pipeline(
 
     // result is ignored, as per the command's instructions.
     // https://redis.io/commands/client-setinfo/
-    #[cfg(not(feature = "disable-client-setinfo"))]
-    pipeline
-        .cmd("CLIENT")
-        .arg("SETINFO")
-        .arg("LIB-NAME")
-        .arg("redis-rs")
-        .ignore();
-    #[cfg(not(feature = "disable-client-setinfo"))]
-    pipeline
-        .cmd("CLIENT")
-        .arg("SETINFO")
-        .arg("LIB-VER")
-        .arg(env!("CARGO_PKG_VERSION"))
-        .ignore();
+    if !connection_info.skip_set_lib_name {
+        pipeline
+            .cmd("CLIENT")
+            .arg("SETINFO")
+            .arg("LIB-NAME")
+            .arg("redis-rs")
+            .ignore();
+        pipeline
+            .cmd("CLIENT")
+            .arg("SETINFO")
+            .arg("LIB-VER")
+            .arg(env!("CARGO_PKG_VERSION"))
+            .ignore();
+    }
 
     #[cfg(feature = "cache-aio")]
     if cache_cmd_index.is_some() {
@@ -2393,6 +2489,7 @@ mod tests {
                         username: None,
                         password: None,
                         protocol: ProtocolVersion::RESP2,
+                        skip_set_lib_name: false,
                     },
                     tcp_settings: Default::default(),
                 },

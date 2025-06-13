@@ -258,7 +258,7 @@ mod cluster_async {
 
                 let mut cluster_addresses: Vec<_> = cluster_addresses
                     .into_iter()
-                    .map(|info| info.addr.to_string())
+                    .map(|info| info.addr().to_string())
                     .collect();
                 cluster_addresses.sort();
 
@@ -2078,17 +2078,7 @@ mod cluster_async {
 
         block_on_all(
             async move {
-                let ports: Vec<_> = cluster
-                    .nodes
-                    .iter()
-                    .map(|info| match info.addr {
-                        redis::ConnectionAddr::Tcp(_, port) => port,
-                        redis::ConnectionAddr::TcpTls { port, .. } => port,
-                        redis::ConnectionAddr::Unix(_) => {
-                            panic!("no unix sockets in cluster tests")
-                        }
-                    })
-                    .collect();
+                let ports: Vec<_> = cluster.get_ports();
 
                 let mut connection = cluster.async_connection().await;
                 drop(cluster);
@@ -2133,17 +2123,7 @@ mod cluster_async {
 
         block_on_all(
             async move {
-                let ports: Vec<_> = cluster
-                    .nodes
-                    .iter()
-                    .map(|info| match info.addr {
-                        redis::ConnectionAddr::Tcp(_, port) => port,
-                        redis::ConnectionAddr::TcpTls { port, .. } => port,
-                        redis::ConnectionAddr::Unix(_) => {
-                            panic!("no unix sockets in cluster tests")
-                        }
-                    })
-                    .collect();
+                let ports: Vec<_> = cluster.get_ports();
 
                 let mut connection = cluster.async_connection().await;
                 drop(cluster);
@@ -2853,17 +2833,7 @@ mod cluster_async {
 
             block_on_all(
                 async move {
-                    let ports: Vec<_> = ctx
-                        .nodes
-                        .iter()
-                        .map(|info| match info.addr {
-                            redis::ConnectionAddr::Tcp(_, port) => port,
-                            redis::ConnectionAddr::TcpTls { port, .. } => port,
-                            redis::ConnectionAddr::Unix(_) => {
-                                panic!("no unix sockets in cluster tests")
-                            }
-                        })
-                        .collect();
+                    let ports: Vec<_> = ctx.get_ports();
 
                     let (mut publish_conn, mut pubsub_conn) =
                         join!(ctx.async_connection(), ctx.async_connection());
@@ -2951,7 +2921,6 @@ mod cluster_async {
     #[cfg(feature = "tls-rustls")]
     mod mtls_test {
         use crate::support::mtls_test::create_cluster_client_from_cluster;
-        use redis::ConnectionInfo;
 
         use super::*;
 
@@ -2992,20 +2961,17 @@ mod cluster_async {
             block_on_all(async move {
             let client = create_cluster_client_from_cluster(&cluster, false).unwrap();
             let connection = client.get_async_connection().await;
-            match cluster.cluster.servers.first().unwrap().connection_info() {
-                ConnectionInfo {
-                    addr: redis::ConnectionAddr::TcpTls { .. },
-                    ..
-            } => {
-                if connection.is_ok() {
-                    panic!("Must NOT be able to connect without client credentials if server accepts TLS");
+            match cluster.cluster.servers.first().unwrap().connection_info().addr() {
+                redis::ConnectionAddr::TcpTls { .. } => {
+                    if connection.is_ok() {
+                        panic!("Must NOT be able to connect without client credentials if server accepts TLS");
+                    }
                 }
-            }
-            _ => {
-                if let Err(e) = connection {
-                    panic!("Must be able to connect without client credentials if server does NOT accept TLS: {e:?}");
+                _ => {
+                    if let Err(e) = connection {
+                        panic!("Must be able to connect without client credentials if server does NOT accept TLS: {e:?}");
+                    }
                 }
-            }
             }
             Ok::<_, RedisError>(())
         },

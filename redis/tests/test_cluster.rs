@@ -1052,15 +1052,7 @@ mod cluster {
             builder.retries(3)
         });
 
-        let ports: Vec<_> = cluster
-            .nodes
-            .iter()
-            .map(|info| match info.addr {
-                redis::ConnectionAddr::Tcp(_, port) => port,
-                redis::ConnectionAddr::TcpTls { port, .. } => port,
-                redis::ConnectionAddr::Unix(_) => panic!("no unix sockets in cluster tests"),
-            })
-            .collect();
+        let ports: Vec<_> = cluster.get_ports();
 
         let mut connection = cluster.connection();
         drop(cluster);
@@ -1078,7 +1070,7 @@ mod cluster {
         assert!(result.is_err());
 
         let _cluster = RedisCluster::new(RedisClusterConfiguration {
-            ports: ports.clone(),
+            ports,
             ..Default::default()
         });
 
@@ -1094,22 +1086,14 @@ mod cluster {
             builder.retries(3)
         });
 
-        let ports: Vec<_> = cluster
-            .nodes
-            .iter()
-            .map(|info| match info.addr {
-                redis::ConnectionAddr::Tcp(_, port) => port,
-                redis::ConnectionAddr::TcpTls { port, .. } => port,
-                redis::ConnectionAddr::Unix(_) => panic!("no unix sockets in cluster tests"),
-            })
-            .collect();
+        let ports: Vec<_> = cluster.get_ports();
 
         let mut connection = cluster.connection();
         drop(cluster);
 
         // recreate cluster
-        let _cluster = RedisCluster::new(RedisClusterConfiguration {
-            ports: ports.clone(),
+        let _cluster: RedisCluster = RedisCluster::new(RedisClusterConfiguration {
+            ports,
             ..Default::default()
         });
 
@@ -1131,7 +1115,6 @@ mod cluster {
     mod mtls_test {
         use super::*;
         use crate::support::mtls_test::create_cluster_client_from_cluster;
-        use redis::ConnectionInfo;
 
         #[test]
         fn test_cluster_basics_with_mtls() {
@@ -1165,11 +1148,15 @@ mod cluster {
             let client = create_cluster_client_from_cluster(&cluster, false).unwrap();
             let connection = client.get_connection();
 
-            match cluster.cluster.servers.first().unwrap().connection_info() {
-                ConnectionInfo {
-                    addr: redis::ConnectionAddr::TcpTls { .. },
-                    ..
-                } => {
+            match cluster
+                .cluster
+                .servers
+                .first()
+                .unwrap()
+                .connection_info()
+                .addr()
+            {
+                redis::ConnectionAddr::TcpTls { .. } => {
                     if connection.is_ok() {
                         panic!("Must NOT be able to connect without client credentials if server accepts TLS");
                     }

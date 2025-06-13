@@ -10,8 +10,8 @@ mod basic_async {
     use redis::aio::ConnectionManager;
     use redis::{
         aio::{ConnectionLike, MultiplexedConnection},
-        cmd, pipe, AsyncCommands, ConnectionInfo, ErrorKind, ProtocolVersion, PushKind,
-        RedisConnectionInfo, RedisError, RedisFuture, RedisResult, ScanOptions, ToRedisArgs, Value,
+        cmd, pipe, AsyncCommands, ErrorKind, IntoConnectionInfo, ProtocolVersion, PushKind,
+        RedisError, RedisFuture, RedisResult, ScanOptions, ToRedisArgs, Value,
     };
     use redis_test::server::use_protocol;
     use rstest::rstest;
@@ -215,19 +215,19 @@ mod basic_async {
                     .arg(format!(">{password}"));
                 assert_eq!(con.req_packed_command(&set_user_cmd).await, Ok(Value::Okay));
 
-                let mut conn = redis::Client::open(ConnectionInfo {
-                    addr: ctx.server.client_addr().clone(),
-                    redis: RedisConnectionInfo {
-                        username: Some(username.to_string()),
-                        password: Some(password.to_string()),
-                        ..Default::default()
-                    },
-                    tcp_settings: Default::default(),
-                })
-                .unwrap()
-                .get_multiplexed_async_connection()
-                .await
-                .unwrap();
+                let connection_info = ctx
+                    .server
+                    .client_addr()
+                    .clone()
+                    .into_connection_info()
+                    .unwrap()
+                    .set_username(username)
+                    .set_password(password);
+                let mut conn = redis::Client::open(connection_info)
+                    .unwrap()
+                    .get_multiplexed_async_connection()
+                    .await
+                    .unwrap();
 
                 let result: String = cmd("ACL")
                     .arg("whoami")
@@ -813,15 +813,16 @@ mod basic_async {
         let ctx = TestContext::new();
         block_on_all(
             async move {
-                let coninfo = redis::ConnectionInfo {
-                    addr: ctx.server.client_addr().clone(),
-                    redis: redis::RedisConnectionInfo {
-                        password: Some("asdcasc".to_string()),
-                        ..Default::default()
-                    },
-                    tcp_settings: Default::default(),
-                };
-                let client = redis::Client::open(coninfo).unwrap();
+                use redis::IntoConnectionInfo;
+
+                let connection_info = ctx
+                    .server
+                    .client_addr()
+                    .clone()
+                    .into_connection_info()
+                    .unwrap()
+                    .set_password("asdcasc".to_string());
+                let client = redis::Client::open(connection_info).unwrap();
 
                 let err = client
                     .get_multiplexed_async_connection()
@@ -1451,8 +1452,10 @@ mod basic_async {
             use redis::RedisError;
 
             let ctx = TestContext::new();
-            let mut connection_info = ctx.server.connection_info();
-            connection_info.redis.protocol = ProtocolVersion::RESP3;
+            let connection_info = ctx
+                .server
+                .connection_info()
+                .set_protocol(ProtocolVersion::RESP3);
             let client = redis::Client::open(connection_info).unwrap();
 
             block_on_all(
@@ -1548,8 +1551,10 @@ mod basic_async {
             use redis::RedisError;
 
             let ctx = TestContext::new();
-            let mut connection_info = ctx.server.connection_info();
-            connection_info.redis.protocol = ProtocolVersion::RESP3;
+            let connection_info = ctx
+                .server
+                .connection_info()
+                .set_protocol(ProtocolVersion::RESP3);
             let client = redis::Client::open(connection_info).unwrap();
 
             block_on_all(
@@ -2024,11 +2029,8 @@ mod basic_async {
             );
 
             // depends on server type set (REDISRS_SERVER_TYPE)
-            match ctx.server.connection_info() {
-                redis::ConnectionInfo {
-                    addr: redis::ConnectionAddr::TcpTls { .. },
-                    ..
-                } => {
+            match ctx.server.connection_info().addr() {
+                redis::ConnectionAddr::TcpTls { .. } => {
                     if result.is_ok() {
                         panic!("Must NOT be able to connect without client credentials if server accepts TLS");
                     }
@@ -2048,8 +2050,10 @@ mod basic_async {
     #[cfg(feature = "connection-manager")]
     fn test_resp3_pushes_connection_manager(#[case] runtime: RuntimeType) {
         let ctx = TestContext::new();
-        let mut connection_info = ctx.server.connection_info();
-        connection_info.redis.protocol = ProtocolVersion::RESP3;
+        let connection_info = ctx
+            .server
+            .connection_info()
+            .set_protocol(ProtocolVersion::RESP3);
         let client = redis::Client::open(connection_info).unwrap();
 
         block_on_all(
@@ -2089,8 +2093,7 @@ mod basic_async {
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_select_db(#[case] runtime: RuntimeType) {
         let ctx = TestContext::new();
-        let mut connection_info = ctx.client.get_connection_info().clone();
-        connection_info.redis.db = 5;
+        let connection_info = ctx.client.get_connection_info().clone().set_db(5);
         let client = redis::Client::open(connection_info).unwrap();
         block_on_all(
             async move {

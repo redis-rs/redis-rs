@@ -314,7 +314,7 @@ impl RedisCluster {
             let conn_info = server.connection_info();
             eprintln!(
                 "waiting until {:?} knows required number of replicas",
-                conn_info.addr
+                conn_info.addr()
             );
 
             let client = redis::Client::open(server.connection_info()).unwrap();

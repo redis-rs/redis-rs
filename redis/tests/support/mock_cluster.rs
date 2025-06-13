@@ -44,7 +44,7 @@ impl cluster_async::Connect for MockConnection {
     {
         let info = info.into_connection_info().unwrap();
 
-        let (name, port) = match &info.addr {
+        let (name, port) = match &info.addr() {
             redis::ConnectionAddr::Tcp(addr, port) => (addr, *port),
             _ => unreachable!(),
         };
@@ -67,7 +67,7 @@ impl cluster::Connect for MockConnection {
     {
         let info = info.into_connection_info().unwrap();
 
-        let (name, port) = match &info.addr {
+        let (name, port) = match &info.addr() {
             redis::ConnectionAddr::Tcp(addr, port) => (addr, *port),
             _ => unreachable!(),
         };
