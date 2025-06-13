@@ -222,6 +222,7 @@ mod basic_async {
                         password: Some(password.to_string()),
                         ..Default::default()
                     },
+                    tcp_settings: Default::default(),
                 })
                 .unwrap()
                 .get_multiplexed_async_connection()
@@ -818,6 +819,7 @@ mod basic_async {
                         password: Some("asdcasc".to_string()),
                         ..Default::default()
                     },
+                    tcp_settings: Default::default(),
                 };
                 let client = redis::Client::open(coninfo).unwrap();
 

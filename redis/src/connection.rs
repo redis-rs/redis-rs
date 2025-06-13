@@ -57,15 +57,19 @@ pub struct TlsConnParams {
 static DEFAULT_PORT: u16 = 6379;
 
 #[inline(always)]
-fn connect_tcp(addr: (&str, u16)) -> io::Result<TcpStream> {
+fn connect_tcp(addr: (&str, u16), tcp_settings: &TcpSettings) -> io::Result<TcpStream> {
     let socket = TcpStream::connect(addr)?;
-    stream_with_settings(socket, &TcpSettings::default())
+    stream_with_settings(socket, tcp_settings)
 }
 
 #[inline(always)]
-fn connect_tcp_timeout(addr: &SocketAddr, timeout: Duration) -> io::Result<TcpStream> {
+fn connect_tcp_timeout(
+    addr: &SocketAddr,
+    timeout: Duration,
+    tcp_settings: &TcpSettings,
+) -> io::Result<TcpStream> {
     let socket = TcpStream::connect_timeout(addr, timeout)?;
-    stream_with_settings(socket, &TcpSettings::default())
+    stream_with_settings(socket, tcp_settings)
 }
 
 /// This function takes a redis URL string and parses it into a URL
@@ -235,6 +239,8 @@ pub struct ConnectionInfo {
 
     /// A redis connection info for how to handshake with redis.
     pub redis: RedisConnectionInfo,
+    /// The settings for the TCP connection
+    pub tcp_settings: TcpSettings,
 }
 
 /// Redis specific/connection independent information used to establish a connection to redis.
@@ -298,6 +304,7 @@ where
         Ok(ConnectionInfo {
             addr: ConnectionAddr::Tcp(self.0.into(), self.1),
             redis: RedisConnectionInfo::default(),
+            tcp_settings: TcpSettings::default(),
         })
     }
 }
@@ -426,6 +433,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             },
             protocol: parse_protocol(&query)?,
         },
+        tcp_settings: TcpSettings::default(),
     })
 }
 
@@ -448,6 +456,7 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             password: query.get("pass").map(|password| password.to_string()),
             protocol: parse_protocol(&query)?,
         },
+        tcp_settings: TcpSettings::default(),
     })
 }
 
@@ -669,17 +678,21 @@ pub struct Msg {
 }
 
 impl ActualConnection {
-    pub fn new(addr: &ConnectionAddr, timeout: Option<Duration>) -> RedisResult<ActualConnection> {
+    pub fn new(
+        addr: &ConnectionAddr,
+        timeout: Option<Duration>,
+        tcp_settings: &TcpSettings,
+    ) -> RedisResult<ActualConnection> {
         Ok(match *addr {
             ConnectionAddr::Tcp(ref host, ref port) => {
                 let addr = (host.as_str(), *port);
                 let tcp = match timeout {
-                    None => connect_tcp(addr)?,
+                    None => connect_tcp(addr, tcp_settings)?,
                     Some(timeout) => {
                         let mut tcp = None;
                         let mut last_error = None;
                         for addr in addr.to_socket_addrs()? {
-                            match connect_tcp_timeout(&addr, timeout) {
+                            match connect_tcp_timeout(&addr, timeout, tcp_settings) {
                                 Ok(l) => {
                                     tcp = Some(l);
                                     break;
@@ -731,7 +744,7 @@ impl ActualConnection {
                 let addr = (host.as_str(), port);
                 let tls = match timeout {
                     None => {
-                        let tcp = connect_tcp(addr)?;
+                        let tcp = connect_tcp(addr, tcp_settings)?;
                         match tls_connector.connect(host, tcp) {
                             Ok(res) => res,
                             Err(e) => {
@@ -743,7 +756,7 @@ impl ActualConnection {
                         let mut tcp = None;
                         let mut last_error = None;
                         for addr in (host.as_str(), port).to_socket_addrs()? {
-                            match connect_tcp_timeout(&addr, timeout) {
+                            match connect_tcp_timeout(&addr, timeout, tcp_settings) {
                                 Ok(l) => {
                                     tcp = Some(l);
                                     break;
@@ -787,14 +800,14 @@ impl ActualConnection {
                 )?;
                 let reader = match timeout {
                     None => {
-                        let tcp = connect_tcp((host, port))?;
+                        let tcp = connect_tcp((host, port), tcp_settings)?;
                         StreamOwned::new(conn, tcp)
                     }
                     Some(timeout) => {
                         let mut tcp = None;
                         let mut last_error = None;
                         for addr in (host, port).to_socket_addrs()? {
-                            match connect_tcp_timeout(&addr, timeout) {
+                            match connect_tcp_timeout(&addr, timeout, tcp_settings) {
                                 Ok(l) => {
                                     tcp = Some(l);
                                     break;
@@ -1097,7 +1110,11 @@ pub fn connect(
     timeout: Option<Duration>,
 ) -> RedisResult<Connection> {
     let start = Instant::now();
-    let con: ActualConnection = ActualConnection::new(&connection_info.addr, timeout)?;
+    let con: ActualConnection = ActualConnection::new(
+        &connection_info.addr,
+        timeout,
+        &connection_info.tcp_settings,
+    )?;
 
     // we temporarily set the timeout, and will remove it after finishing setup.
     let remaining_timeout = timeout.and_then(|timeout| timeout.checked_sub(start.elapsed()));
@@ -2257,6 +2274,7 @@ mod tests {
                 ConnectionInfo {
                     addr: ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379),
                     redis: Default::default(),
+                    tcp_settings: TcpSettings::default(),
                 },
             ),
             (
@@ -2264,6 +2282,7 @@ mod tests {
                 ConnectionInfo {
                     addr: ConnectionAddr::Tcp("::1".to_string(), 6379),
                     redis: Default::default(),
+                    tcp_settings: TcpSettings::default(),
                 },
             ),
             (
@@ -2276,6 +2295,7 @@ mod tests {
                         password: Some("#@<>$".to_string()),
                         ..Default::default()
                     },
+                    tcp_settings: TcpSettings::default(),
                 },
             ),
             (
@@ -2283,6 +2303,7 @@ mod tests {
                 ConnectionInfo {
                     addr: ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379),
                     redis: Default::default(),
+                    tcp_settings: TcpSettings::default(),
                 },
             ),
             (
@@ -2293,6 +2314,7 @@ mod tests {
                         protocol: ProtocolVersion::RESP3,
                         ..Default::default()
                     },
+                    tcp_settings: TcpSettings::default(),
                 },
             ),
         ];
@@ -2372,6 +2394,7 @@ mod tests {
                         password: None,
                         protocol: ProtocolVersion::RESP2,
                     },
+                    tcp_settings: Default::default(),
                 },
             ),
             (
@@ -2382,6 +2405,7 @@ mod tests {
                         db: 1,
                         ..Default::default()
                     },
+                    tcp_settings: TcpSettings::default(),
                 },
             ),
             (
@@ -2397,6 +2421,7 @@ mod tests {
                         password: Some("#@<>$".to_string()),
                         ..Default::default()
                     },
+                    tcp_settings: TcpSettings::default(),
                 },
             ),
             (
@@ -2412,6 +2437,7 @@ mod tests {
                         password: Some("&?= *+".to_string()),
                         ..Default::default()
                     },
+                    tcp_settings: TcpSettings::default(),
                 },
             ),
             (
@@ -2422,6 +2448,7 @@ mod tests {
                         protocol: ProtocolVersion::RESP3,
                         ..Default::default()
                     },
+                    tcp_settings: TcpSettings::default(),
                 },
             ),
         ];

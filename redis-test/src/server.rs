@@ -260,6 +260,7 @@ impl RedisServer {
                 protocol: use_protocol(),
                 ..Default::default()
             },
+            tcp_settings: Default::default(),
         }
     }
 

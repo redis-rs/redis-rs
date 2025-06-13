@@ -1098,6 +1098,7 @@ pub(crate) fn get_connection_info(
             protocol: cluster_params.protocol.unwrap_or_default(),
             db: 0,
         },
+        tcp_settings: cluster_params.tcp_settings,
     })
 }
 

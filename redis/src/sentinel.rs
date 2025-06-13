@@ -201,6 +201,7 @@ impl SentinelNodeConnectionInfo {
         Ok(ConnectionInfo {
             addr,
             redis: self.redis_connection_info.clone().unwrap_or_default(),
+            tcp_settings: Default::default(),
         })
     }
 }
@@ -1388,6 +1389,7 @@ impl SentinelClientBuilder {
             .map(|connection_addr| ConnectionInfo {
                 addr: connection_addr,
                 redis: client_to_sentinel_redis_connection_info.clone(),
+                tcp_settings: Default::default(),
             })
             .collect();
 

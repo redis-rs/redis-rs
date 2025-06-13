@@ -484,6 +484,7 @@ pub(crate) mod mtls_test {
                 ConnectionInfo {
                     addr: redis::ConnectionAddr::TcpTls { host, port, .. },
                     redis,
+                    tcp_settings,
                 } => ConnectionInfo {
                     addr: redis::ConnectionAddr::TcpTls {
                         host: host.to_owned(),
@@ -492,6 +493,7 @@ pub(crate) mod mtls_test {
                         tls_params: None,
                     },
                     redis: redis.clone(),
+                    tcp_settings: tcp_settings.clone(),
                 },
                 _ => node.clone(),
             })
