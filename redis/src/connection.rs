@@ -1289,6 +1289,20 @@ pub(crate) fn connection_setup_pipeline(
         pipeline.cmd("SELECT").arg(connection_info.db);
     }
 
+    #[cfg(feature = "cache-aio")]
+    if cache_cmd_index.is_some() {
+        let cache_config = cache_config.expect(
+            "It's expected to have cache_config if cache_cmd_index is Some, please create an issue about this.",
+        );
+        pipeline.cmd("CLIENT").arg("TRACKING").arg("ON");
+        match cache_config.mode {
+            crate::caching::CacheMode::All => {}
+            crate::caching::CacheMode::OptIn => {
+                pipeline.arg("OPTIN");
+            }
+        }
+    }
+
     // result is ignored, as per the command's instructions.
     // https://redis.io/commands/client-setinfo/
     if !connection_info.skip_set_lib_name {
@@ -1304,20 +1318,6 @@ pub(crate) fn connection_setup_pipeline(
             .arg("LIB-VER")
             .arg(env!("CARGO_PKG_VERSION"))
             .ignore();
-    }
-
-    #[cfg(feature = "cache-aio")]
-    if cache_cmd_index.is_some() {
-        let cache_config = cache_config.expect(
-            "It's expected to have cache_config if cache_cmd_index is Some, please create an issue about this.",
-        );
-        pipeline.cmd("CLIENT").arg("TRACKING").arg("ON");
-        match cache_config.mode {
-            crate::caching::CacheMode::All => {}
-            crate::caching::CacheMode::OptIn => {
-                pipeline.arg("OPTIN");
-            }
-        }
     }
 
     (
@@ -1401,6 +1401,7 @@ fn check_caching(result: &Value) -> RedisResult<()> {
         _ => Err((
             ErrorKind::ResponseError,
             "Client-side caching returned unknown response",
+            format!("{result:?}"),
         )
             .into()),
     }
