@@ -1096,7 +1096,7 @@ pub(crate) fn get_connection_info(
             password: cluster_params.password,
             username: cluster_params.username,
             protocol: cluster_params.protocol.unwrap_or_default(),
-            db: 0,
+            ..Default::default()
         },
         tcp_settings: cluster_params.tcp_settings,
     })

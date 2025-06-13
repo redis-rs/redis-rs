@@ -25,7 +25,7 @@ mod basic {
     use rand::{rng, Rng};
     use redis::IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply};
     use redis::{
-        cmd, Client, Connection, CopyOptions, ProtocolVersion, PushInfo, RedisConnectionInfo, Role,
+        cmd, Client, Connection, CopyOptions, IntoConnectionInfo, ProtocolVersion, PushInfo, Role,
         ScanOptions, UpdateCheck, ValueType,
     };
     use redis::{
@@ -124,15 +124,15 @@ mod basic {
             .arg(format!(">{password}"));
         assert_eq!(con.req_command(&set_user_cmd), Ok(Value::Okay));
 
-        let mut conn = redis::Client::open(ConnectionInfo {
-            addr: ctx.server.client_addr().clone(),
-            redis: RedisConnectionInfo {
-                username: Some(username.to_string()),
-                password: Some(password.to_string()),
-                ..Default::default()
-            },
-            tcp_settings: Default::default(),
-        })
+        let mut conn = redis::Client::open(
+            ctx.server
+                .client_addr()
+                .clone()
+                .into_connection_info()
+                .unwrap()
+                .set_password(password)
+                .set_username(username),
+        )
         .unwrap()
         .get_connection()
         .unwrap();
@@ -2676,24 +2676,22 @@ mod basic {
             let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
 
             // handle initial handshake if sent
-            #[cfg(not(feature = "disable-client-setinfo"))]
-            {
-                let mut pipeline = redis::pipe();
-                pipeline
-                    .cmd("CLIENT")
-                    .arg("SETINFO")
-                    .arg("LIB-NAME")
-                    .arg("redis-rs");
-                pipeline
-                    .cmd("CLIENT")
-                    .arg("SETINFO")
-                    .arg("LIB-VER")
-                    .arg(env!("CARGO_PKG_VERSION"));
-                let expected_length = pipeline.get_packed_pipeline().len();
-                let mut buf = vec![0; expected_length];
-                reader.read_exact(&mut buf).unwrap();
-                stream.write_all(b"$2\r\nOK\r\n$2\r\nOK\r\n").unwrap();
-            }
+
+            let mut pipeline = redis::pipe();
+            pipeline
+                .cmd("CLIENT")
+                .arg("SETINFO")
+                .arg("LIB-NAME")
+                .arg("redis-rs");
+            pipeline
+                .cmd("CLIENT")
+                .arg("SETINFO")
+                .arg("LIB-VER")
+                .arg(env!("CARGO_PKG_VERSION"));
+            let expected_length = pipeline.get_packed_pipeline().len();
+            let mut buf = vec![0; expected_length];
+            reader.read_exact(&mut buf).unwrap();
+            stream.write_all(b"$2\r\nOK\r\n$2\r\nOK\r\n").unwrap();
 
             // reply with canned responses to known requests.
             loop {
@@ -2854,8 +2852,11 @@ mod basic {
     #[test]
     fn test_push_manager() {
         let ctx = TestContext::new();
-        let mut connection_info = ctx.server.connection_info();
-        connection_info.redis.protocol = ProtocolVersion::RESP3;
+        let connection_info = ctx
+            .server
+            .connection_info()
+            .set_protocol(ProtocolVersion::RESP3);
+
         let client = redis::Client::open(connection_info).unwrap();
 
         let mut con = client.get_connection().unwrap();
@@ -2910,8 +2911,10 @@ mod basic {
     #[test]
     fn test_push_manager_disconnection() {
         let ctx = TestContext::new();
-        let mut connection_info = ctx.server.connection_info();
-        connection_info.redis.protocol = ProtocolVersion::RESP3;
+        let connection_info = ctx
+            .server
+            .connection_info()
+            .set_protocol(ProtocolVersion::RESP3);
         let client = redis::Client::open(connection_info).unwrap();
 
         let mut con = client.get_connection().unwrap();
@@ -3000,8 +3003,8 @@ mod basic {
     #[test]
     fn test_select_db() {
         let ctx = TestContext::new();
-        let mut connection_info = ctx.client.get_connection_info().clone();
-        connection_info.redis.db = 5;
+        let connection_info = ctx.client.get_connection_info().clone().set_db(5);
+
         let client = redis::Client::open(connection_info).unwrap();
         let mut connection = client.get_connection().unwrap();
         let info: String = redis::cmd("CLIENT")
@@ -3064,8 +3067,8 @@ mod basic {
         // we wait, to ensure that the debug sleep has started.
         thread::sleep(Duration::from_millis(5));
         // we set a DB, in order to force calling requests on the server.
-        let mut addr = ctx.server.connection_info().clone();
-        addr.redis.db = 1;
+        let addr = ctx.server.connection_info().clone().set_db(1);
+
         let client = Client::open(addr).unwrap();
         let try_connect = client.get_connection_with_timeout(Duration::from_millis(2));
 
