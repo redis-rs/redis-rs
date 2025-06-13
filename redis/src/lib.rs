@@ -579,7 +579,7 @@ pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter};
 pub use crate::commands::{
     Commands, ControlFlow, CopyOptions, Direction, FlushAllOptions, FlushDbOptions,
     HashFieldExpirationOptions, LposOptions, PubSubCommands, ScanOptions, SetOptions,
-    TypedCommands,
+    SortedSetAddOptions, TypedCommands, UpdateCheck,
 };
 pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,

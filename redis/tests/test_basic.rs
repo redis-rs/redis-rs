@@ -26,12 +26,12 @@ mod basic {
     use redis::IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply};
     use redis::{
         cmd, Client, Connection, CopyOptions, ProtocolVersion, PushInfo, RedisConnectionInfo, Role,
-        ScanOptions, ValueType,
+        ScanOptions, UpdateCheck, ValueType,
     };
     use redis::{
         ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck, ExpireOption,
         Expiry, FieldExistenceCheck, HashFieldExpirationOptions, PubSubCommands, PushKind,
-        RedisResult, SetExpiry, SetOptions, ToRedisArgs, TypedCommands, Value,
+        RedisResult, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs, TypedCommands, Value,
     };
     use redis_test::utils::get_listener_on_free_port;
     use std::collections::{BTreeMap, BTreeSet};
@@ -2778,6 +2778,81 @@ mod basic {
             assert_eq!(min.unwrap().unwrap().1[0], (String::from("1a"), 1.0));
             assert_eq!(max.unwrap().unwrap().1[0], (String::from("5a"), 5.0));
         }
+    }
+
+    #[test]
+    fn test_sorted_set_add_options() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        // Scenario 1
+        // Add only, no update
+        let options = SortedSetAddOptions::add_only();
+        assert_eq!(con.zadd_options("1", "1a", 1, &options), Ok(1));
+        assert_eq!(con.zscore("1", "1a"), Ok(Some(1.0)));
+
+        assert_eq!(con.zadd_options("1", "1a", 100, &options), Ok(0));
+        assert_eq!(con.zscore("1", "1a"), Ok(Some(1.0)));
+
+        // Scenario 2
+        // Update only, no add
+        let options = SortedSetAddOptions::update_only(None);
+        assert_eq!(con.zadd_options("1", "1a", 5, &options), Ok(0));
+        assert_eq!(con.zscore("1", "1a"), Ok(Some(5.0)));
+
+        assert_eq!(con.zadd_options("1", "1b", 5, &options), Ok(0));
+        assert_eq!(con.zscore("1", "1b"), Ok(None));
+
+        let options = options.include_changed_count();
+
+        assert_eq!(con.zadd_options("1", "1a", 6, &options), Ok(1));
+        assert_eq!(con.zscore("1", "1a"), Ok(Some(6.0)));
+
+        assert_eq!(con.zadd_options("1", "1b", 5, &options), Ok(0));
+        assert_eq!(con.zscore("1", "1b"), Ok(None));
+
+        // Scenario 3
+        // Update only if less
+        let options = SortedSetAddOptions::update_only(Some(UpdateCheck::LT));
+        assert_eq!(con.zadd_options("1", "1a", 10, &options), Ok(0));
+        assert_eq!(con.zscore("1", "1a"), Ok(Some(6.0)));
+
+        assert_eq!(con.zadd_options("1", "1a", 1, &options), Ok(0));
+        assert_eq!(con.zscore("1", "1a"), Ok(Some(1.0)));
+
+        // Scenario 4
+        // Update only if greater
+        let options = SortedSetAddOptions::update_only(Some(UpdateCheck::GT));
+        assert_eq!(con.zadd_options("1", "1a", 0, &options), Ok(0));
+        assert_eq!(con.zscore("1", "1a"), Ok(Some(1.0)));
+
+        assert_eq!(con.zadd_options("1", "1a", 5, &options), Ok(0));
+        assert_eq!(con.zscore("1", "1a"), Ok(Some(5.0)));
+
+        // Scenario 5
+        // Add or Update
+        let options = SortedSetAddOptions::add_or_update(None);
+        assert_eq!(con.zscore("5", "5a"), Ok(None));
+        assert_eq!(con.zadd_options("5", "5a", 5, &options), Ok(1));
+        assert_eq!(con.zscore("5", "5a"), Ok(Some(5.0)));
+
+        assert_eq!(con.zadd_options("5", "5a", 10, &options), Ok(0));
+        assert_eq!(con.zscore("5", "5a"), Ok(Some(10.0)));
+
+        let options = options.include_changed_count();
+        assert_eq!(con.zadd_options("5", "5a", 5, &options), Ok(1));
+        assert_eq!(con.zscore("5", "5a"), Ok(Some(5.0)));
+
+        // Scenario 6
+        // Increment
+        let options = SortedSetAddOptions::default()
+            .increment_score()
+            .include_changed_count();
+        assert_eq!(con.zadd_options("6", "6a", 6, &options), Ok(6));
+        assert_eq!(con.zscore("6", "6a"), Ok(Some(6.0)));
+
+        assert_eq!(con.zadd_options("6", "6a", 6, &options), Ok(12));
+        assert_eq!(con.zscore("6", "6a"), Ok(Some(12.0)));
     }
 
     #[test]
