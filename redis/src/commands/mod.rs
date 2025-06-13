@@ -1264,13 +1264,13 @@ implement_commands! {
 
     /// Add a new element into the vector set specified by key.
     /// [Redis Docs](https://redis.io/commands/VADD)
-    fn vadd<K: ToRedisArgs, V: ToRedisArgs, E: ToRedisArgs>(key: K, input: VectorAddInput<'a, V>, element: E) -> (bool) {
+    fn vadd<K: ToRedisArgs, E: ToRedisArgs>(key: K, input: VectorAddInput<'a>, element: E) -> (bool) {
         cmd("VADD").arg(key).arg(input).arg(element)
     }
 
     /// Add a new element into the vector set specified by key with optional parameters for fine-tuning the insertion process.
     /// [Redis Docs](https://redis.io/commands/VADD)
-    fn vadd_extended<K: ToRedisArgs, V: ToRedisArgs, E: ToRedisArgs>(key: K, input: VectorAddInput<'a, V>, element: E, options: &'a VAddOptions) -> (bool) {
+    fn vadd_extended<K: ToRedisArgs, E: ToRedisArgs>(key: K, input: VectorAddInput<'a>, element: E, options: &'a VAddOptions) -> (bool) {
         cmd("VADD").arg(key).arg(options.reduction_dimension.map(|_| "REDUCE")).arg(options.reduction_dimension).arg(input).arg(element).arg(options)
     }
 
@@ -1367,13 +1367,13 @@ implement_commands! {
 
     /// Perform vector similarity search.
     /// [Redis Docs](https://redis.io/commands/VSIM)
-    fn vsim<K: ToRedisArgs, V: ToRedisArgs>(key: K, input: VectorSimilaritySearchInput<'a, V>) -> Generic {
+    fn vsim<K: ToRedisArgs>(key: K, input: VectorSimilaritySearchInput<'a>) -> Generic {
         cmd("VSIM").arg(key).arg(input)
     }
 
     /// Performs a vector similarity search with optional parameters for customization.
     /// [Redis Docs](https://redis.io/commands/VSIM)
-    fn vsim_extended<K: ToRedisArgs, V: ToRedisArgs>(key: K, input: VectorSimilaritySearchInput<'a, V>, options: &'a VSimOptions) -> Generic {
+    fn vsim_extended<K: ToRedisArgs>(key: K, input: VectorSimilaritySearchInput<'a>, options: &'a VSimOptions) -> Generic {
         cmd("VSIM").arg(key).arg(input).arg(options)
     }
 
@@ -3393,7 +3393,7 @@ impl ToRedisArgs for SortedSetAddOptions {
 ///         .set_build_exploration_factor(300)
 ///         .set_attributes(serde_json::json!({"name": "Vector attribute name", "description": "Vector attribute description"}))
 ///         .set_max_number_of_links(16);
-///     con.vadd_extended(key, redis::VectorAddInput::Values(vector), element, &opts)
+///     con.vadd_extended(key, redis::VectorAddInput::Values(redis::EmbeddingInput::Float64(vector)), element, &opts)
 /// }
 /// ```
 #[derive(Clone, Default)]
@@ -3506,7 +3506,7 @@ impl ToRedisArgs for VAddOptions {
 ///         .set_max_filtering_effort(10)
 ///         .set_truth(true)
 ///         .set_no_thread(true);
-///     con.vsim_extended(key, redis::VectorSimilaritySearchInput::<&str>::Element(element), &opts)
+///     con.vsim_extended(key, redis::VectorSimilaritySearchInput::Element(element), &opts)
 /// }
 /// ```
 #[derive(Clone, Default)]

@@ -2922,16 +2922,59 @@ impl ToRedisArgs for ExpireOption {
     }
 }
 
-/// Represents different ways to input data for vector add commands
+/// Input data formats that can be used to generate vector embeddings:
+///
+/// - 32-bit floats
+/// - 64-bit floats
+/// - Strings (e.g., numbers as strings)
 #[derive(Clone)]
-pub enum VectorAddInput<'a, V: ToRedisArgs> {
-    /// Binary representation of 32-bit floating point values
-    Fp32(&'a [f32]),
-    /// List of values that implement ToRedisArgs
-    Values(&'a [V]),
+pub enum EmbeddingInput<'a> {
+    /// 32-bit floating point input
+    Float32(&'a [f32]),
+    /// 64-bit floating point input
+    Float64(&'a [f64]),
+    /// String input (e.g., numbers as strings)
+    String(&'a [&'a str]),
 }
 
-impl<'a, V: ToRedisArgs> ToRedisArgs for VectorAddInput<'a, V> {
+impl<'a> ToRedisArgs for EmbeddingInput<'a> {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            EmbeddingInput::Float32(vector) => {
+                out.write_arg_fmt(vector.len());
+                for &f in *vector {
+                    out.write_arg_fmt(f);
+                }
+            }
+            EmbeddingInput::Float64(vector) => {
+                out.write_arg_fmt(vector.len());
+                for &f in *vector {
+                    out.write_arg_fmt(f);
+                }
+            }
+            EmbeddingInput::String(vector) => {
+                out.write_arg_fmt(vector.len());
+                for v in *vector {
+                    v.write_redis_args(out);
+                }
+            }
+        }
+    }
+}
+
+/// Represents different ways to input data for vector add commands
+#[derive(Clone)]
+pub enum VectorAddInput<'a> {
+    /// Binary representation of 32-bit floating point values
+    Fp32(&'a [f32]),
+    /// A list of values whose types are supported for embedding generation
+    Values(EmbeddingInput<'a>),
+}
+
+impl<'a> ToRedisArgs for VectorAddInput<'a> {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -2945,12 +2988,9 @@ impl<'a, V: ToRedisArgs> ToRedisArgs for VectorAddInput<'a, V> {
                     writer.write_all(&f.to_le_bytes()).unwrap();
                 }
             }
-            VectorAddInput::Values(vector) => {
+            VectorAddInput::Values(embedding_input) => {
                 out.write_arg(b"VALUES");
-                out.write_arg_fmt(vector.len());
-                for v in *vector {
-                    v.write_redis_args(out);
-                }
+                embedding_input.write_redis_args(out);
             }
         }
     }
@@ -2958,16 +2998,16 @@ impl<'a, V: ToRedisArgs> ToRedisArgs for VectorAddInput<'a, V> {
 
 /// Represents different ways to input query data for vector similarity search commands
 #[derive(Clone)]
-pub enum VectorSimilaritySearchInput<'a, V: ToRedisArgs> {
-    /// Binary representation of 32-bit floating point values
+pub enum VectorSimilaritySearchInput<'a> {
+    /// Binary representation of 32-bit floating point values to use as a reference
     Fp32(&'a [f32]),
-    /// List of values that implement ToRedisArgs
-    Values(&'a [V]),
+    /// List of values to use as a reference
+    Values(EmbeddingInput<'a>),
     /// Element to use as a reference
     Element(&'a str),
 }
 
-impl<'a, V: ToRedisArgs> ToRedisArgs for VectorSimilaritySearchInput<'a, V> {
+impl<'a> ToRedisArgs for VectorSimilaritySearchInput<'a> {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -2981,12 +3021,9 @@ impl<'a, V: ToRedisArgs> ToRedisArgs for VectorSimilaritySearchInput<'a, V> {
                     writer.write_all(&f.to_le_bytes()).unwrap();
                 }
             }
-            VectorSimilaritySearchInput::Values(vector) => {
+            VectorSimilaritySearchInput::Values(embedding_input) => {
                 out.write_arg(b"VALUES");
-                out.write_arg_fmt(vector.len());
-                for v in *vector {
-                    v.write_redis_args(out);
-                }
+                embedding_input.write_redis_args(out);
             }
             VectorSimilaritySearchInput::Element(element) => {
                 out.write_arg(b"ELE");

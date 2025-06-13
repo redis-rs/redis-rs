@@ -580,7 +580,7 @@ pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter};
 pub use crate::commands::{
     Commands, ControlFlow, CopyOptions, Direction, FlushAllOptions, FlushDbOptions,
     HashFieldExpirationOptions, LposOptions, PubSubCommands, ScanOptions, SetOptions,
-    SortedSetAddOptions, TypedCommands, UpdateCheck, VAddOptions, VSimOptions, 
+    SortedSetAddOptions, TypedCommands, UpdateCheck, VAddOptions, VSimOptions,
 };
 pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
@@ -611,6 +611,7 @@ pub use crate::types::{
     // utility types
     InfoDict,
     NumericBehavior,
+    EmbeddingInput,
     Expiry,
     SetExpiry,
     ExistenceCheck,
