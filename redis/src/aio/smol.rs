@@ -103,7 +103,7 @@ where
 }
 
 /// Represents an Smol connectable
-pub enum Smol {
+pub(crate) enum Smol {
     /// Represents aa TCP connection.
     Tcp(SmolWrapped<TcpStream>),
     /// Represents a TLS encrypted TCP connection.
