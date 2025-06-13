@@ -322,13 +322,13 @@ fn test_sentinel_client() {
     let first_configured_sentinel = context.sentinels_connection_info.first().unwrap();
 
     assert_eq!(
-        sentinel_client_1.get_connection_info().addr,
-        sentinel_client_2.get_connection_info().addr
+        sentinel_client_1.get_connection_info().addr(),
+        sentinel_client_2.get_connection_info().addr()
     );
 
     assert_eq!(
-        first_configured_sentinel.addr,
-        sentinel_client_2.get_connection_info().addr
+        first_configured_sentinel.addr(),
+        sentinel_client_2.get_connection_info().addr()
     );
 }
 
@@ -750,13 +750,13 @@ pub mod async_tests {
                 let first_configured_sentinel = context.sentinels_connection_info.first().unwrap();
 
                 assert_eq!(
-                    sentinel_client_1.get_connection_info().addr,
-                    sentinel_client_2.get_connection_info().addr
+                    sentinel_client_1.get_connection_info().addr(),
+                    sentinel_client_2.get_connection_info().addr()
                 );
 
                 assert_eq!(
-                    first_configured_sentinel.addr,
-                    sentinel_client_2.get_connection_info().addr
+                    first_configured_sentinel.addr(),
+                    sentinel_client_2.get_connection_info().addr()
                 );
 
                 Ok::<(), RedisError>(())
