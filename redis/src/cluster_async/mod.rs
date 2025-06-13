@@ -1339,10 +1339,9 @@ where
     let dns_resolver = params.async_dns_resolver.clone();
     #[cfg(feature = "cache-aio")]
     let cache_manager = params.cache_manager.clone();
-    let info = get_connection_info(node, params)?;
-    let mut config = AsyncConnectionConfig::default()
-        .set_connection_timeout(connection_timeout)
-        .set_tcp_settings(tcp_settings);
+    let mut info = get_connection_info(node, params)?;
+    info.tcp_settings = tcp_settings;
+    let mut config = AsyncConnectionConfig::default().set_connection_timeout(connection_timeout);
     if let Some(response_timeout) = response_timeout {
         config = config.set_response_timeout(response_timeout);
     };

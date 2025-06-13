@@ -3,8 +3,9 @@ use crate::aio::AsyncPushSender;
 #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
 use crate::caching::{CacheConfig, CacheManager};
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
+use crate::io::tcp::TcpSettings;
 #[cfg(feature = "cluster-async")]
-use crate::io::{tcp::TcpSettings, AsyncDNSResolver};
+use crate::io::AsyncDNSResolver;
 use crate::types::{ErrorKind, ProtocolVersion, RedisError, RedisResult};
 use crate::{cluster, cluster::TlsMode};
 use rand::Rng;
@@ -39,7 +40,6 @@ struct BuilderParams {
     protocol: Option<ProtocolVersion>,
     #[cfg(feature = "cluster-async")]
     async_push_sender: Option<Arc<dyn AsyncPushSender>>,
-    #[cfg(feature = "cluster-async")]
     pub(crate) tcp_settings: TcpSettings,
     #[cfg(feature = "cluster-async")]
     async_dns_resolver: Option<Arc<dyn AsyncDNSResolver>>,
@@ -101,7 +101,6 @@ pub(crate) struct ClusterParams {
     pub(crate) protocol: Option<ProtocolVersion>,
     #[cfg(feature = "cluster-async")]
     pub(crate) async_push_sender: Option<Arc<dyn AsyncPushSender>>,
-    #[cfg(feature = "cluster-async")]
     pub(crate) tcp_settings: TcpSettings,
     #[cfg(feature = "cluster-async")]
     pub(crate) async_dns_resolver: Option<Arc<dyn AsyncDNSResolver>>,
@@ -154,7 +153,6 @@ impl ClusterParams {
             protocol: value.protocol,
             #[cfg(feature = "cluster-async")]
             async_push_sender: value.async_push_sender,
-            #[cfg(feature = "cluster-async")]
             tcp_settings: value.tcp_settings,
             #[cfg(feature = "cluster-async")]
             async_dns_resolver: value.async_dns_resolver,
@@ -459,14 +457,13 @@ impl ClusterClientBuilder {
         self
     }
 
-    /// Set the behavior of the underlying TCP connection.
-    #[cfg(feature = "cluster-async")]
+    /// Set the behavior of the underlying TCP connections.
     pub fn tcp_settings(mut self, tcp_settings: TcpSettings) -> ClusterClientBuilder {
         self.builder_params.tcp_settings = tcp_settings;
         self
     }
 
-    /// Set asynchronous DNS resolver for the underlying TCP connection.
+    /// Set asynchronous DNS resolver for the underlying TCP connections.
     ///
     /// The parameter resolver must implement the [`crate::io::AsyncDNSResolver`] trait.
     #[cfg(feature = "cluster-async")]

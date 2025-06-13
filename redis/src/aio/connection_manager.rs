@@ -40,7 +40,6 @@ pub struct ConnectionManagerConfig {
     push_sender: Option<Arc<dyn AsyncPushSender>>,
     /// if true, the manager should resubscribe automatically to all pubsub channels after reconnect.
     resubscribe_automatically: bool,
-    tcp_settings: crate::io::tcp::TcpSettings,
     #[cfg(feature = "cache-aio")]
     pub(crate) cache_config: Option<crate::caching::CacheConfig>,
 }
@@ -56,7 +55,6 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             connection_timeout,
             push_sender,
             resubscribe_automatically,
-            tcp_settings,
             #[cfg(feature = "cache-aio")]
             cache_config,
         } = &self;
@@ -75,8 +73,7 @@ impl std::fmt::Debug for ConnectionManagerConfig {
                 } else {
                     &"not set"
                 },
-            )
-            .field("tcp_settings", &tcp_settings);
+            );
 
         #[cfg(feature = "cache-aio")]
         str.field("cache_config", &cache_config);
@@ -178,14 +175,6 @@ impl ConnectionManagerConfig {
         self
     }
 
-    /// Set the behavior of the underlying TCP connection.
-    pub fn set_tcp_settings(self, tcp_settings: crate::io::tcp::TcpSettings) -> Self {
-        Self {
-            tcp_settings,
-            ..self
-        }
-    }
-
     /// Set the cache behavior.
     #[cfg(feature = "cache-aio")]
     pub fn set_cache_config(self, cache_config: crate::caching::CacheConfig) -> Self {
@@ -207,7 +196,6 @@ impl Default for ConnectionManagerConfig {
             max_delay: None,
             push_sender: None,
             resubscribe_automatically: false,
-            tcp_settings: Default::default(),
             #[cfg(feature = "cache-aio")]
             cache_config: None,
         }
@@ -344,7 +332,6 @@ impl ConnectionManager {
         if let Some(response_timeout) = config.response_timeout {
             connection_config = connection_config.set_response_timeout(response_timeout);
         }
-        connection_config = connection_config.set_tcp_settings(config.tcp_settings);
         #[cfg(feature = "cache-aio")]
         let cache_manager = config
             .cache_config

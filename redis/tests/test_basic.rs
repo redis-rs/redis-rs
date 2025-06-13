@@ -131,6 +131,7 @@ mod basic {
                 password: Some(password.to_string()),
                 ..Default::default()
             },
+            tcp_settings: Default::default(),
         })
         .unwrap()
         .get_connection()
