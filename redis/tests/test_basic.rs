@@ -25,14 +25,15 @@ mod basic {
     use rand::{rng, Rng};
     use redis::IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply};
     use redis::{
-        cmd, Client, Connection, CopyOptions, ProtocolVersion, PushInfo, RedisConnectionInfo, Role,
-        ScanOptions, UpdateCheck, Value, ValueType, VectorAddInput, VectorSimilaritySearchInput,
+        cmd, Client, Connection, CopyOptions, EmbeddingInput, ProtocolVersion, PushInfo,
+        RedisConnectionInfo, Role, ScanOptions, UpdateCheck, Value, ValueType, VectorAddInput,
+        VectorQuantization, VectorSimilaritySearchInput,
     };
     use redis::{
         ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck, ExpireOption,
         Expiry, FieldExistenceCheck, HashFieldExpirationOptions, PubSubCommands, PushKind,
-        RedisResult, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs, TypedCommands, VAddOptions, VSimOptions,
-        VectorQuantization,
+        RedisResult, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs, TypedCommands,
+        VAddOptions, VSimOptions,
     };
     use redis_test::utils::get_listener_on_free_port;
     use serde_json::json;
@@ -2877,7 +2878,11 @@ mod basic {
         // Add the point vectors to a set.
         for (name, coordinates) in &points_data {
             assert_eq!(
-                con.vadd(key, VectorAddInput::Values(coordinates), name),
+                con.vadd(
+                    key,
+                    VectorAddInput::Values(EmbeddingInput::Float64(coordinates)),
+                    name
+                ),
                 Ok(true)
             );
 
@@ -2891,15 +2896,21 @@ mod basic {
             }
         }
 
-        // Test 2: Verify that the vector set contains the correct number of points and that the dimensionality is correct
+        // Test 2: Verify that the vector set contains the expected number of vectors
+        // and that all of them share the correct dimensionality.
         assert_eq!(con.vcard(key), Ok(points_data.len()));
         assert_eq!(con.vdim(key), Ok(points_data[0].1.len()));
 
         // Test 3: Adding and removing a point
         let point_to_remove = "pt:F";
 
+        // Specifying the coordinates of the point as an array of strings is valid.
         assert_eq!(
-            con.vadd(key, VectorAddInput::Values(&[0, 0]), point_to_remove),
+            con.vadd(
+                key,
+                VectorAddInput::Values(EmbeddingInput::String(&["0", "0"])),
+                point_to_remove
+            ),
             Ok(true)
         );
         assert_eq!(con.vcard(key), Ok(points_data.len() + 1));
@@ -2973,17 +2984,19 @@ mod basic {
         for (name, coordinates, attributes) in &points_data {
             let opts = VAddOptions::default().set_attributes(attributes.clone());
             assert_eq!(
-                con.vadd_extended(key, VectorAddInput::Values(coordinates), name, &opts),
+                con.vadd_extended(
+                    key,
+                    VectorAddInput::Values(EmbeddingInput::Float64(coordinates)),
+                    name,
+                    &opts
+                ),
                 Ok(true)
             );
         }
 
         // Test 1: Search using Element variant (ELE)
         let element_search_results: Value = con
-            .vsim(
-                key,
-                VectorSimilaritySearchInput::<&str>::Element(point_of_interest),
-            )
+            .vsim(key, VectorSimilaritySearchInput::Element(point_of_interest))
             .unwrap();
         if let Value::Array(results_array) = &element_search_results {
             assert_eq!(
@@ -3003,26 +3016,34 @@ mod basic {
         let query_vector_strings = vec!["0.9", "0.1"];
 
         // FP32 variant
+        let fp32_search_results: Value = con
+            .vsim(key, VectorSimilaritySearchInput::Fp32(&query_vector_f32))
+            .unwrap();
+        // Values variant with f32
         let f32_search_results: Value = con
             .vsim(
                 key,
-                VectorSimilaritySearchInput::<f32>::Fp32(&query_vector_f32),
+                VectorSimilaritySearchInput::Values(EmbeddingInput::Float32(&query_vector_f32)),
             )
             .unwrap();
         // Values variant with f64
         let f64_search_results: Value = con
-            .vsim(key, VectorSimilaritySearchInput::Values(&query_vector_f64))
-            .unwrap();
-        // Values variant with strings
-        let string_search_results: Value = con
             .vsim(
                 key,
-                VectorSimilaritySearchInput::Values(&query_vector_strings),
+                VectorSimilaritySearchInput::Values(EmbeddingInput::Float64(&query_vector_f64)),
+            )
+            .unwrap();
+        // Values variant with strings
+        let strings_search_results: Value = con
+            .vsim(
+                key,
+                VectorSimilaritySearchInput::Values(EmbeddingInput::String(&query_vector_strings)),
             )
             .unwrap();
 
+        assert_eq!(fp32_search_results, f32_search_results);
         assert_eq!(f32_search_results, f64_search_results);
-        assert_eq!(f64_search_results, string_search_results);
+        assert_eq!(f64_search_results, strings_search_results);
 
         // Test 3: Search using the VSIM options to perform a similarity search with scores and a limited number of results
         let elements_count = 4;
@@ -3033,7 +3054,7 @@ mod basic {
         let element_search_results: Value = con
             .vsim_extended(
                 key,
-                VectorSimilaritySearchInput::<&str>::Element(point_of_interest),
+                VectorSimilaritySearchInput::Element(point_of_interest),
                 &opts,
             )
             .unwrap();
@@ -3058,7 +3079,7 @@ mod basic {
         let element_search_results: Value = con
             .vsim_extended(
                 key,
-                VectorSimilaritySearchInput::<&str>::Element(point_of_interest),
+                VectorSimilaritySearchInput::Element(point_of_interest),
                 &opts,
             )
             .unwrap();
@@ -3089,7 +3110,7 @@ mod basic {
         let element_search_results: Value = con
             .vsim_extended(
                 key,
-                VectorSimilaritySearchInput::<&str>::Element(point_of_interest),
+                VectorSimilaritySearchInput::Element(point_of_interest),
                 &opts,
             )
             .unwrap();
@@ -3152,7 +3173,7 @@ mod basic {
             }
 
             assert_eq!(
-                con.vadd_extended(key, VectorAddInput::<f32>::Fp32(coordinates), name, &opts),
+                con.vadd_extended(key, VectorAddInput::Fp32(coordinates), name, &opts),
                 Ok(true)
             );
 
@@ -3378,14 +3399,22 @@ mod basic {
 
         for (name, coordinates) in &points_data {
             assert_eq!(
-                con.vadd(key, VectorAddInput::Values(coordinates), name),
+                con.vadd(
+                    key,
+                    VectorAddInput::Values(EmbeddingInput::Float64(coordinates)),
+                    name
+                ),
                 Ok(true)
             );
         }
 
         // VADD returns an error when it fails.
         // Force the dimensionality mismatch by adding a 3D vector.
-        let result = con.vadd(key, VectorAddInput::Values(&[1.0, 1.0, 1.0]), "pt:F");
+        let result = con.vadd(
+            key,
+            VectorAddInput::Values(EmbeddingInput::Float32(&[1.0, 1.5, 2.0])),
+            "pt:F",
+        );
         assert!(
             result.is_err(),
             "Expected an error for dimensionality mismatch"
@@ -3407,17 +3436,17 @@ mod basic {
         // VSETATTR returns false when setting attributes to non-existent keys or elements.
         let sample_attribute = json!({"name": "Sample attribute"});
         assert_eq!(
-            con.vsetattr(key, non_existent_element, &sample_attribute),
+            con.vsetattr(non_existent_key, point_of_interest, &sample_attribute),
             Ok(false)
         );
         assert_eq!(
-            con.vsetattr(non_existent_key, point_of_interest, &sample_attribute),
+            con.vsetattr(key, non_existent_element, &sample_attribute),
             Ok(false)
         );
 
         // VGETATTR returns false when attempting to get attributes from non-existent keys or elements.
-        assert_eq!(con.vgetattr(key, non_existent_element), Ok(None));
         assert_eq!(con.vgetattr(non_existent_key, point_of_interest), Ok(None));
+        assert_eq!(con.vgetattr(key, non_existent_element), Ok(None));
 
         // VLINKS returns NIL for non-existent keys or elements.
         assert_eq!(
@@ -3436,7 +3465,7 @@ mod basic {
         let search_results: Value = con
             .vsim(
                 non_existent_key,
-                VectorSimilaritySearchInput::Values(&points_data[0].1),
+                VectorSimilaritySearchInput::Values(EmbeddingInput::Float64(&points_data[0].1)),
             )
             .unwrap();
         assert_eq!(search_results, Value::Array(Vec::<Value>::new()));
@@ -3444,7 +3473,7 @@ mod basic {
         let search_results: Value = con
             .vsim(
                 non_existent_key,
-                VectorSimilaritySearchInput::<&str>::Element(point_of_interest),
+                VectorSimilaritySearchInput::Element(point_of_interest),
             )
             .unwrap();
         assert_eq!(search_results, Value::Array(Vec::<Value>::new()));
@@ -3452,7 +3481,7 @@ mod basic {
         // VSIM returns an error for similarity searches with non-existent elements.
         let result: RedisResult<Value> = con.vsim(
             key,
-            VectorSimilaritySearchInput::<&str>::Element(non_existent_element),
+            VectorSimilaritySearchInput::Element(non_existent_element),
         );
         assert!(
             result.is_err(),
