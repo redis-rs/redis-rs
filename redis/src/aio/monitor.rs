@@ -42,12 +42,6 @@ impl Monitor {
         Ok(Self { stream })
     }
 
-    /// Deliver the MONITOR command to this [`Monitor`]ing wrapper.
-    #[deprecated(note = "A monitor now sends the MONITOR command automatically")]
-    pub async fn monitor(&mut self) -> RedisResult<()> {
-        Ok(())
-    }
-
     /// Returns [`Stream`] of [`FromRedisValue`] values from this [`Monitor`]ing connection
     pub fn on_message<'a, T: FromRedisValue + 'a>(&'a mut self) -> impl Stream<Item = T> + 'a {
         MonitorStreamRef {

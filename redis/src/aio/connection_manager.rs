@@ -312,58 +312,6 @@ impl ConnectionManager {
     /// In case of reconnection issues, the manager will retry reconnection
     /// number_of_retries times, with an exponentially increasing delay, calculated as
     /// rand(0 .. factor * (exponent_base ^ current-try)).
-    #[deprecated(note = "Use `new_with_config`")]
-    pub async fn new_with_backoff(
-        client: Client,
-        exponent_base: u64,
-        factor: u64,
-        number_of_retries: usize,
-    ) -> RedisResult<Self> {
-        let config = ConnectionManagerConfig::new()
-            .set_exponent_base(exponent_base)
-            .set_factor(factor)
-            .set_number_of_retries(number_of_retries);
-        Self::new_with_config(client, config).await
-    }
-
-    /// Connect to the server and store the connection inside the returned `ConnectionManager`.
-    ///
-    /// This requires the `connection-manager` feature, which will also pull in
-    /// the Tokio executor.
-    ///
-    /// In case of reconnection issues, the manager will retry reconnection
-    /// number_of_retries times, with an exponentially increasing delay, calculated as
-    /// rand(0 .. factor * (exponent_base ^ current-try)).
-    ///
-    /// The new connection will time out operations after `response_timeout` has passed.
-    /// Each connection attempt to the server will time out after `connection_timeout`.
-    #[deprecated(note = "Use `new_with_config`")]
-    pub async fn new_with_backoff_and_timeouts(
-        client: Client,
-        exponent_base: u64,
-        factor: u64,
-        number_of_retries: usize,
-        response_timeout: std::time::Duration,
-        connection_timeout: std::time::Duration,
-    ) -> RedisResult<Self> {
-        let config = ConnectionManagerConfig::new()
-            .set_exponent_base(exponent_base)
-            .set_factor(factor)
-            .set_number_of_retries(number_of_retries)
-            .set_response_timeout(response_timeout)
-            .set_connection_timeout(connection_timeout);
-
-        Self::new_with_config(client, config).await
-    }
-
-    /// Connect to the server and store the connection inside the returned `ConnectionManager`.
-    ///
-    /// This requires the `connection-manager` feature, which will also pull in
-    /// the Tokio executor.
-    ///
-    /// In case of reconnection issues, the manager will retry reconnection
-    /// number_of_retries times, with an exponentially increasing delay, calculated as
-    /// rand(0 .. factor * (exponent_base ^ current-try)).
     ///
     /// Apply a maximum delay. No retry delay will be longer than this  ConnectionManagerConfig.max_delay` .
     ///
