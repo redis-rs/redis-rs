@@ -707,24 +707,6 @@ impl Cmd {
         })
     }
 
-    /// This is a shortcut to `query()` that does not return a value and
-    /// will fail the task if the query fails because of an error.  This is
-    /// mainly useful in examples and for simple commands like setting
-    /// keys.
-    ///
-    /// This is equivalent to a call of query like this:
-    ///
-    /// ```rust,no_run
-    /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    /// # let mut con = client.get_connection().unwrap();
-    /// redis::cmd("PING").query::<()>(&mut con).unwrap();
-    /// ```
-    #[inline]
-    #[deprecated(note = "Use Cmd::exec + unwrap, instead")]
-    pub fn execute(&self, con: &mut dyn ConnectionLike) {
-        self.exec(con).unwrap();
-    }
-
     /// This is an alternative to `query`` that can be used if you want to be able to handle a
     /// command's success or failure but don't care about the command's response. For example,
     /// this is useful for "SET" commands for which the response's content is not important.

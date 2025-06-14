@@ -1013,19 +1013,6 @@ impl RedisError {
         Some((addr, slot_id))
     }
 
-    /// Returns the extension error code.
-    ///
-    /// This method should not be used because every time the redis library
-    /// adds support for a new error code it would disappear form this method.
-    /// `code()` always returns the code.
-    #[deprecated(note = "use code() instead")]
-    pub fn extension_error_code(&self) -> Option<&str> {
-        match self.repr {
-            ErrorRepr::ExtensionError(ref code, _) => Some(code),
-            _ => None,
-        }
-    }
-
     /// Clone the `RedisError`, throwing away non-cloneable parts of an `IoError`.
     ///
     /// Deriving `Clone` is not possible because the wrapped `io::Error` is not
