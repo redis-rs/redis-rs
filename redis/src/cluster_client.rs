@@ -424,19 +424,6 @@ impl ClusterClientBuilder {
         self
     }
 
-    /// Use `build()`.
-    #[deprecated(since = "0.22.0", note = "Use build()")]
-    pub fn open(self) -> RedisResult<ClusterClient> {
-        self.build()
-    }
-
-    /// Use `read_from_replicas()`.
-    #[deprecated(since = "0.22.0", note = "Use read_from_replicas()")]
-    pub fn readonly(mut self, read_from_replicas: bool) -> ClusterClientBuilder {
-        self.builder_params.read_from_replicas = read_from_replicas;
-        self
-    }
-
     #[cfg(feature = "cluster-async")]
     /// Sets sender sender for push values.
     ///
@@ -606,12 +593,6 @@ impl ClusterClient {
     {
         cluster_async::ClusterConnection::new(&self.initial_nodes, self.cluster_params.clone())
             .await
-    }
-
-    /// Use `new()`.
-    #[deprecated(since = "0.22.0", note = "Use new()")]
-    pub fn open<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> RedisResult<ClusterClient> {
-        Self::new(initial_nodes)
     }
 }
 
