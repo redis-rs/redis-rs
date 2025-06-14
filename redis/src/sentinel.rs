@@ -54,12 +54,11 @@
 //!         "master_name",
 //!         Some(&SentinelNodeConnectionInfo {
 //!             tls_mode: None,
-//!             redis_connection_info: Some(RedisConnectionInfo {
-//!                 db: 1,
-//!                 username: Some(String::from("foo")),
-//!                 password: Some(String::from("bar")),
-//!                 ..Default::default()
-//!             }),
+//!             redis_connection_info: Some(RedisConnectionInfo::default()
+//!                 .set_db(1)
+//!                 .set_username("user")
+//!                 .set_password("pass")
+//!             ),
 //!         }),
 //!     )
 //!     .unwrap()
@@ -90,12 +89,10 @@
 //!     String::from("master1"),
 //!     Some(SentinelNodeConnectionInfo {
 //!         tls_mode: Some(redis::TlsMode::Insecure),
-//!         redis_connection_info: Some(RedisConnectionInfo {
-//!             db: 0,
-//!             username: Some(String::from("user")),
-//!             password: Some(String::from("pass")),
-//!             ..Default::default()
-//!         }),
+//!         redis_connection_info: Some(RedisConnectionInfo::default()
+//!             .set_username("user")
+//!             .set_password("pass")
+//!         ),
 //!     }),
 //!     redis::sentinel::SentinelServerType::Master,
 //! )
@@ -201,6 +198,7 @@ impl SentinelNodeConnectionInfo {
         Ok(ConnectionInfo {
             addr,
             redis: self.redis_connection_info.clone().unwrap_or_default(),
+            tcp_settings: Default::default(),
         })
     }
 }
@@ -1388,6 +1386,7 @@ impl SentinelClientBuilder {
             .map(|connection_addr| ConnectionInfo {
                 addr: connection_addr,
                 redis: client_to_sentinel_redis_connection_info.clone(),
+                tcp_settings: Default::default(),
             })
             .collect();
 
