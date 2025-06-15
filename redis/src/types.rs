@@ -1,5 +1,6 @@
 #[cfg(feature = "ahash")]
 pub(crate) use ahash::{AHashMap as HashMap, AHashSet as HashSet};
+#[cfg(feature = "num-bigint")]
 use num_bigint::BigInt;
 use std::borrow::Cow;
 #[cfg(not(feature = "ahash"))]
@@ -303,8 +304,12 @@ pub enum Value {
         /// Remaining string check format before using!
         text: String,
     },
+    #[cfg(feature = "num-bigint")]
     /// Very large number that out of the range of the signed 64 bit numbers
     BigNumber(BigInt),
+    #[cfg(not(feature = "num-bigint"))]
+    /// Very large number that out of the range of the signed 64 bit numbers
+    BigNumber(Vec<u8>),
     /// Push data from the server.
     Push {
         /// Push Kind
