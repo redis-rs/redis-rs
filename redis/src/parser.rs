@@ -23,7 +23,6 @@ use combine::{
     },
     unexpected_any, ParseError, Parser as _,
 };
-use num_bigint::BigInt;
 
 const MAX_RECURSE_DEPTH: usize = 100;
 
@@ -290,11 +289,18 @@ where
                 };
                 let big_number = || {
                     line().and_then(|line| {
-                        BigInt::parse_bytes(line.as_bytes(), 10).ok_or_else(|| {
-                            StreamErrorFor::<I>::message_static_message(
-                                "Expected bigint, got garbage",
-                            )
-                        })
+                        #[cfg(not(feature = "num-bigint"))]
+                        return Ok::<_, StreamErrorFor<I>>(Value::BigNumber(
+                            line.as_bytes().to_vec(),
+                        ));
+                        #[cfg(feature = "num-bigint")]
+                        num_bigint::BigInt::parse_bytes(line.as_bytes(), 10)
+                            .ok_or_else(|| {
+                                StreamErrorFor::<I>::message_static_message(
+                                    "Expected bigint, got garbage",
+                                )
+                            })
+                            .map(Value::BigNumber)
                     })
                 };
                 combine::dispatch!(b;
@@ -311,7 +317,7 @@ where
                     b'#' => boolean().map(Value::Boolean),
                     b'!' => blob_error().map(Value::ServerError),
                     b'=' => verbatim(),
-                    b'(' => big_number().map(Value::BigNumber),
+                    b'(' => big_number(),
                     b'>' => push(),
                     b => combine::unexpected_any(combine::error::Token(b))
                 )
@@ -623,12 +629,14 @@ mod tests {
     #[test]
     fn decode_resp3_big_number() {
         let val = parse_redis_value(b"(3492890328409238509324850943850943825024385\r\n").unwrap();
-        assert_eq!(
-            val,
-            Value::BigNumber(
-                BigInt::parse_bytes(b"3492890328409238509324850943850943825024385", 10).unwrap()
-            )
+        #[cfg(feature = "num-bigint")]
+        let expected = Value::BigNumber(
+            num_bigint::BigInt::parse_bytes(b"3492890328409238509324850943850943825024385", 10)
+                .unwrap(),
         );
+        #[cfg(not(feature = "num-bigint"))]
+        let expected = Value::BigNumber(b"3492890328409238509324850943850943825024385".to_vec());
+        assert_eq!(val, expected);
     }
 
     #[test]
