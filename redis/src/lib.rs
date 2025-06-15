@@ -35,14 +35,14 @@
 //! # TCP settings
 //!
 //! The user can set parameters of the underlying TCP connection by using the `tcp_nodelay` and `keep-alive` features.
-//! Alternatively, users of async connections can set [crate::io::tcp::TcpSettings] on the connection configuration objects,
+//! Alternatively, users of async connections can set [io::tcp::TcpSettings] on the connection configuration objects,
 //! and set the TCP parameters in a more specific manner there.
 //!
 //! ## Connection Handling
 //!
 //! For connecting to redis you can use a client object which then can produce
 //! actual connections.  Connections and clients as well as results of
-//! connections and clients are considered `ConnectionLike` objects and
+//! connections and clients are considered [ConnectionLike] objects and
 //! can be used anywhere a request is made.
 //!
 //! The full canonical way to get a connection is to create a client and
@@ -113,12 +113,12 @@
 //! ## Connection Parameters
 //!
 //! redis-rs knows different ways to define where a connection should
-//! go.  The parameter to `Client::open` needs to implement the
-//! `IntoConnectionInfo` trait of which there are three implementations:
+//! go.  The parameter to [Client::open] needs to implement the
+//! [IntoConnectionInfo] trait of which there are three implementations:
 //!
 //! * string slices in `redis://` URL format.
 //! * URL objects from the redis-url crate.
-//! * `ConnectionInfo` objects.
+//! * [ConnectionInfo] objects.
 //!
 //! The URL format is `redis://[<username>][:<password>@]<hostname>[:port][/[<db>][?protocol=<protocol>]]`
 //!
@@ -133,9 +133,9 @@
 //!
 //! ## Executing Low-Level Commands
 //!
-//! To execute low-level commands you can use the `cmd` function which allows
+//! To execute low-level commands you can use the [cmd::cmd] function which allows
 //! you to build redis requests.  Once you have configured a command object
-//! to your liking you can send a query into any `ConnectionLike` object:
+//! to your liking you can send a query into any [ConnectionLike] object:
 //!
 //! ```rust,no_run
 //! fn do_something(con: &mut redis::Connection) -> redis::RedisResult<()> {
@@ -186,12 +186,12 @@
 //!
 //! Because redis inherently is mostly type-less and the protocol is not
 //! exactly friendly to developers, this library provides flexible support
-//! for casting values to the intended results.  This is driven through the `FromRedisValue` and `ToRedisArgs` traits.
+//! for casting values to the intended results.  This is driven through the [FromRedisValue] and [ToRedisArgs] traits.
 //!
 //! The `arg` method of the command will accept a wide range of types through
-//! the `ToRedisArgs` trait and the `query` method of a command can convert the
-//! value to what you expect the function to return through the `FromRedisValue`
-//! trait.  This is quite flexible and allows vectors, tuples, hashsets, hashmaps
+//! the [ToRedisArgs] trait and the `query` method of a command can convert the
+//! value to what you expect the function to return through the [FromRedisValue]
+//! trait. This is quite flexible and allows vectors, tuples, hashsets, hashmaps
 //! as well as optional values:
 //!
 //! ```rust,no_run
@@ -219,8 +219,8 @@
 //! instead like to use defaults provided by the library, to avoid the clutter and development overhead
 //! of specifying types for each command.
 //!
-//! The library facilitates this by providing the `TypedCommands` and `AsyncTypedCommands`
-//! as alternatives to `Commands` and `AsyncCommands` respectively. These traits provide functions
+//! The library facilitates this by providing the [commands::TypedCommands] and [commands::AsyncTypedCommands]
+//! as alternatives to [commands::Commands] and [commands::AsyncCommands] respectively. These traits provide functions
 //! with pre-defined and opinionated return types. For example, `set` returns `()`, avoiding the need
 //! for developers to explicitly type each call as returning `()`.
 //!
@@ -574,14 +574,14 @@ let mut sentinel = SentinelClient::build(
 
 let primary = sentinel.get_async_connection().await.unwrap();
 # Ok(()) }
+```
 "##
 )]
-//!```
 //!
 //! # Upgrading to version 1
 //!
-//! * Iterators are now safe by default, without an opt-out. This means that the iterators return `RedisResult<Value>` instead of `Value` (see [this PR](https://github.com/redis-rs/redis-rs/pull/1641) for background). If you previously used the "safe_iterators" feature to opt-in to this behavior, just remove the feature declaration. Otherwise you will need to adjust your usage of iterators to account for potential conversion failures.
-//! * Parsing values using [FromRedisValue] no longer returns `RedisError` on failure, in order to save the users checking for various server & client errors in such scenarios. if you rely on the error type when using this trait, you'll need to adjust your error handling code. [ParsingError] should only be printed - it doesn't contain any user-actionable info outside of its error message.
+//! * Iterators are now safe by default, without an opt out. This means that the iterators return `RedisResult<Value>` instead of `Value`. See [this PR](https://github.com/redis-rs/redis-rs/pull/1641) for background. If you previously used the "safe_iterators" feature to opt-in to this behavior, just remove the feature declaration. Otherwise you will need to adjust your usage of iterators to account for potential conversion failures.
+//! * Parsing values using [FromRedisValue] no longer returns [RedisError] on failure, in order to save the users checking for various server & client errors in such scenarios. if you rely on the error type when using this trait, you will need to adjust your error handling code. [ParsingError] should only be printed, since it does not contain any user actionable info outside of its error message.
 //!
 
 #![deny(non_camel_case_types)]

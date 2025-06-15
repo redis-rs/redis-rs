@@ -386,7 +386,18 @@ where
             // format is always 3 bytes
             write!(writer, "={}\r\n{}:{}\r\n", 3 + text.len(), format, text)
         }
-        Value::BigNumber(ref val) => write!(writer, "({val}\r\n"),
+        Value::BigNumber(ref val) => {
+            #[cfg(feature = "num-bigint")]
+            return write!(writer, "({val}\r\n");
+            #[cfg(not(feature = "num-bigint"))]
+            {
+                write!(writer, "(")?;
+                for byte in val {
+                    write!(writer, "{byte}")?;
+                }
+                write!(writer, "\r\n")
+            }
+        }
         Value::Push { ref kind, ref data } => {
             write!(writer, ">{}\r\n+{kind}\r\n", data.len() + 1)?;
             for val in data.iter() {
