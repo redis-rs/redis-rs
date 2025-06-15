@@ -95,7 +95,7 @@ serde_json = { version = "1.0.140", optional = true }
 # Only needed for bignum Support
 rust_decimal = { version = "1.37.1", optional = true }
 bigdecimal = { version = "0.4.7", optional = true }
-num-bigint = "0.4.6"
+num-bigint = { version = "0.4.6", optional = true }
 
 # Optional aHash support
 ahash = { version = "0.8.11", optional = true }
@@ -147,7 +147,6 @@ cluster-async = ["aio", "cluster", "dep:futures-sink", "dep:log"]
 keep-alive = []
 sentinel = ["dep:rand"]
 tcp_nodelay = []
-num-bigint = []
 disable-client-setinfo = []
 cache-aio = ["aio", "dep:lru"]
 r2d2 = ["dep:r2d2"]
