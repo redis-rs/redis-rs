@@ -3059,19 +3059,41 @@ mod basic {
             )
             .unwrap();
 
-        if let Value::Array(results_array) = &element_search_results {
-            assert_eq!(results_array.len(), elements_count * 2);
-            // Expect an exact match with the point of interest.
-            assert_eq!(
-                results_array[0],
-                Value::BulkString(point_of_interest.as_bytes().to_vec())
-            );
-            assert_eq!(results_array[1], Value::BulkString("1".as_bytes().to_vec()));
-        } else {
-            panic!(
-                "Expected array result from VSIM, got {:?}",
-                element_search_results
-            );
+        // The WITHSCORES option changes the output format of the response, based on the version of the RESP protocol in use.
+        match &element_search_results {
+            Value::Array(results_array) => {
+                assert_eq!(results_array.len(), elements_count * 2);
+                // Expect an exact match with the point of interest.
+                assert_eq!(
+                    results_array[0],
+                    Value::BulkString(point_of_interest.as_bytes().to_vec())
+                );
+                assert_eq!(results_array[1], Value::BulkString("1".as_bytes().to_vec()));
+            }
+            Value::Map(results_map) => {
+                assert_eq!(results_map.len(), elements_count);
+                // Find the point of interest.
+                let point_key = Value::BulkString(point_of_interest.as_bytes().to_vec());
+                let score =
+                    results_map
+                        .iter()
+                        .find_map(|(k, v)| if k == &point_key { Some(v) } else { None });
+
+                assert!(
+                    score.is_some(),
+                    "Point of interest not found in results map"
+                );
+
+                // Verify the point of interest is present with score 1.0.
+                // In RESP3, the score would be a Double (1.0) instead of a BulkString.
+                match score.unwrap() {
+                    Value::Double(val) => assert_approx_eq!(*val, 1.0, 0.001),
+                    other => panic!("Unexpected score format: {:?}", other),
+                }
+            }
+            other => {
+                panic!("Expected array or map result from VSIM, got {:?}", other);
+            }
         }
 
         // Test 4: Search using the VSIM options to perform a similarity search with a filter
@@ -3156,6 +3178,12 @@ mod basic {
 
         let reduction_dimension = 3;
         let quantization = VectorQuantization::Q8;
+        let (expected_embedding_response_length, expected_embedding_response_quantization) =
+            match quantization {
+                VectorQuantization::NoQuant => (3, "f32"),
+                VectorQuantization::Q8 => (4, "int8"),
+                VectorQuantization::Bin => (3, "bin"),
+            };
         let max_number_of_links = 4;
 
         // Add the point vectors to a set using the extended version of the VADD command with the FP32 variant.
@@ -3184,16 +3212,10 @@ mod basic {
             let current_point_embeddings_raw: Value = con.vemb_raw(key, name).unwrap();
 
             if let Value::Array(embeddings_array) = &current_point_embeddings_raw {
-                let (expected_length, expected_quantization) = match quantization {
-                    VectorQuantization::NoQuant => (3, "f32"),
-                    VectorQuantization::Q8 => (4, "int8"),
-                    VectorQuantization::Bin => (3, "bin"),
-                };
-
-                assert_eq!(embeddings_array.len(), expected_length);
+                assert_eq!(embeddings_array.len(), expected_embedding_response_length);
                 assert_eq!(
                     embeddings_array[0],
-                    Value::SimpleString(expected_quantization.to_string())
+                    Value::SimpleString(expected_embedding_response_quantization.to_string())
                 );
             } else {
                 panic!(
@@ -3204,7 +3226,7 @@ mod basic {
         }
 
         // VINFO testing section
-        let vector_set_information: Vec<String> = con.vinfo(key).unwrap();
+        let vector_set_information: Value = con.vinfo(key).unwrap();
 
         let (mut hnsw_m, mut vector_dimensions, mut vector_size, mut attributes_count): (
             Option<usize>,
@@ -3213,23 +3235,47 @@ mod basic {
             Option<usize>,
         ) = (None, None, None, None);
 
-        // The response is structured as a list of key-value pairs.
-        // Extract some properties from the response and validate that they match the expected values.
-        for i in (0..vector_set_information.len()).step_by(2) {
-            let info_key = vector_set_information[i].as_str();
-            let info_value = vector_set_information.get(i + 1).map(|v| v.as_str());
-
-            let assign = |target: &mut Option<usize>| {
-                *target = info_value.and_then(|v| v.parse().ok());
+        let mut process_kv_pair = |key: &Value, value: &Value| {
+            let key = match key {
+                Value::SimpleString(s) => s.clone(),
+                _ => return,
             };
 
-            match info_key {
-                "hnsw-m" => assign(&mut hnsw_m),
-                "vector-dim" => assign(&mut vector_dimensions),
-                "size" => assign(&mut vector_size),
-                "attributes-count" => assign(&mut attributes_count),
+            let parse_value = |v: &Value| -> Option<usize> {
+                match v {
+                    Value::Int(num) => Some(*num as usize),
+                    _ => None,
+                }
+            };
+
+            match key.as_str() {
+                "hnsw-m" => hnsw_m = parse_value(value),
+                "vector-dim" => vector_dimensions = parse_value(value),
+                "size" => vector_size = parse_value(value),
+                "attributes-count" => attributes_count = parse_value(value),
                 _ => {}
             }
+        };
+
+        // The response is structured as a list of key-value pairs,
+        // however based on the version of the RESP protocol in use, it can be returned as either an array or a map.
+        // Extract some properties from the response and validate that they match the expected values.
+        match &vector_set_information {
+            // [RESP 2] Process as list of key-value pairs.
+            Value::Array(items) => {
+                for i in (0..items.len()).step_by(2) {
+                    if let (Some(key), Some(value)) = (items.get(i), items.get(i + 1)) {
+                        process_kv_pair(key, value);
+                    }
+                }
+            }
+            // [RESP 3] Process as map of key-value pairs.
+            Value::Map(items) => {
+                for (key, value) in items {
+                    process_kv_pair(key, value);
+                }
+            }
+            _ => {}
         }
 
         assert_eq!(hnsw_m, Some(max_number_of_links));
@@ -3237,9 +3283,9 @@ mod basic {
         assert_eq!(vector_size, Some(points_data.len()));
         assert_eq!(attributes_count, Some(1));
 
-        // VINFO returns NIL for non-existent keys, which maps to None when represented as an Option.
-        let vector_set_information: Option<Vec<String>> = con.vinfo(non_existent_key).unwrap();
-        assert_eq!(vector_set_information, None);
+        // VINFO returns NIL for non-existent keys.
+        let vector_set_information: Value = con.vinfo(non_existent_key).unwrap();
+        assert_eq!(vector_set_information, Value::Nil);
 
         // VLINKS testing section
         let links: Value = con.vlinks(key, point_of_interest).unwrap();
@@ -3282,24 +3328,41 @@ mod basic {
                     .zip(layers_without_scores.iter())
                     .enumerate()
                 {
-                    assert!(matches!(layer_with_scores, Value::Array(_)),
-                        "[VLINKS WITH SCORES] Expected an array result representing the links in layer {} along with their scores, got {:?}",
+                    assert!(matches!(layer_with_scores, Value::Array(_) | Value::Map(_)),
+                        "[VLINKS WITH SCORES] Expected an array or map result representing the links in layer {} along with their scores, got {:?}",
                         i, layer_with_scores);
 
                     println!("Layer {} without scores: {:?}", i, layer_without_scores);
                     println!("Layer {} with scores: {:?}", i, layer_with_scores);
 
                     // Layers must have twice as many elements than normal when scores are included.
-                    if let (
-                        Value::Array(connections_with_scores),
-                        Value::Array(connections_without_scores),
-                    ) = (layer_with_scores, layer_without_scores)
-                    {
-                        assert_eq!(
-                            connections_with_scores.len(),
-                            connections_without_scores.len() * 2,
-                            "[VLINKS WITH SCORES] Layer {} must have twice as many elements when returning scores", i
-                        );
+                    match (layer_with_scores, layer_without_scores) {
+                        (
+                            Value::Array(connections_with_scores),
+                            Value::Array(connections_without_scores),
+                        ) => {
+                            assert_eq!(
+                                connections_with_scores.len(),
+                                connections_without_scores.len() * 2,
+                                "[VLINKS WITH SCORES] Layer {} must have twice as many elements when returning scores", i
+                            );
+                        }
+                        (
+                            Value::Map(connections_with_scores),
+                            Value::Array(connections_without_scores),
+                        ) => {
+                            assert_eq!(
+                                connections_with_scores.len(),
+                                connections_without_scores.len(),
+                                "[VLINKS WITH SCORES] Layer {} must have the same number of entries in map format when returning scores", i
+                            );
+                        }
+                        _ => {
+                            panic!(
+                                "[VLINKS WITH SCORES] Unexpected format combination for layer {}: {:?} and {:?}",
+                                i, layer_with_scores, layer_without_scores
+                            );
+                        }
                     }
                 }
             }
