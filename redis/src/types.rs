@@ -78,6 +78,8 @@ pub enum FieldExistenceCheck {
 }
 
 /// Quantization options for vector storage
+#[cfg(feature = "vector-sets")]
+#[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
 #[derive(Clone, Copy)]
 pub enum VectorQuantization {
     /// In the first VADD call for a given key, NOQUANT forces the vector to be created without int8 quantization, which is otherwise the default.
@@ -2927,6 +2929,8 @@ impl ToRedisArgs for ExpireOption {
 /// - 32-bit floats
 /// - 64-bit floats
 /// - Strings (e.g., numbers as strings)
+#[cfg(feature = "vector-sets")]
+#[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
 #[derive(Clone)]
 pub enum EmbeddingInput<'a> {
     /// 32-bit floating point input
@@ -2937,6 +2941,7 @@ pub enum EmbeddingInput<'a> {
     String(&'a [&'a str]),
 }
 
+#[cfg(feature = "vector-sets")]
 impl<'a> ToRedisArgs for EmbeddingInput<'a> {
     fn write_redis_args<W>(&self, out: &mut W)
     where
@@ -2966,6 +2971,8 @@ impl<'a> ToRedisArgs for EmbeddingInput<'a> {
 }
 
 /// Represents different ways to input data for vector add commands
+#[cfg(feature = "vector-sets")]
+#[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
 #[derive(Clone)]
 pub enum VectorAddInput<'a> {
     /// Binary representation of 32-bit floating point values
@@ -2974,6 +2981,7 @@ pub enum VectorAddInput<'a> {
     Values(EmbeddingInput<'a>),
 }
 
+#[cfg(feature = "vector-sets")]
 impl<'a> ToRedisArgs for VectorAddInput<'a> {
     fn write_redis_args<W>(&self, out: &mut W)
     where
@@ -2997,6 +3005,8 @@ impl<'a> ToRedisArgs for VectorAddInput<'a> {
 }
 
 /// Represents different ways to input query data for vector similarity search commands
+#[cfg(feature = "vector-sets")]
+#[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
 #[derive(Clone)]
 pub enum VectorSimilaritySearchInput<'a> {
     /// Binary representation of 32-bit floating point values to use as a reference
@@ -3007,6 +3017,7 @@ pub enum VectorSimilaritySearchInput<'a> {
     Element(&'a str),
 }
 
+#[cfg(feature = "vector-sets")]
 impl<'a> ToRedisArgs for VectorSimilaritySearchInput<'a> {
     fn write_redis_args<W>(&self, out: &mut W)
     where
