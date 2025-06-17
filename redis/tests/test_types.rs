@@ -889,6 +889,31 @@ mod types {
     }
 
     #[test]
+    fn arrays_to_tuples() {
+        for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+            let value = Value::Array(vec![
+                Value::Array(vec![
+                    Value::BulkString(b"Hi1".to_vec()),
+                    Value::BulkString(b"Bye1".to_vec()),
+                ]),
+                Value::Array(vec![
+                    Value::BulkString(b"Hi2".to_vec()),
+                    Value::BulkString(b"Bye2".to_vec()),
+                ]),
+            ]);
+            let res: Vec<(String, String)> = parse_mode.parse_redis_value(value).unwrap();
+
+            assert_eq!(
+                res,
+                vec![
+                    ("Hi1".to_string(), "Bye1".to_string()),
+                    ("Hi2".to_string(), "Bye2".to_string()),
+                ]
+            );
+        }
+    }
+
+    #[test]
     fn test_complex_nested_tuples() {
         for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
             let value = Value::Array(vec![
@@ -908,12 +933,18 @@ mod types {
                     Value::BulkString(b"Bye3".to_vec()),
                     Value::BulkString(b"Hi4".to_vec()),
                     Value::BulkString(b"Bye4".to_vec()),
+                    Value::BulkString(b"Hi5".to_vec()),
+                    Value::BulkString(b"Bye5".to_vec()),
                 ]),
                 Value::Array(vec![
                     Value::BulkString(b"S4".to_vec()),
                     Value::BulkString(b"S5".to_vec()),
-                    Value::BulkString(b"S6".to_vec()),
                 ]),
+                Value::Array(vec![
+                    Value::BulkString(b"Hi6".to_vec()),
+                    Value::BulkString(b"Bye6".to_vec()),
+                ]),
+                Value::Array(vec![Value::BulkString(b"S6".to_vec())]),
             ]);
             let res: Vec<(HashMap<String, String>, Vec<String>)> =
                 parse_mode.parse_redis_value(value).unwrap();
@@ -925,6 +956,10 @@ mod types {
             let mut expected_map2 = HashMap::new();
             expected_map2.insert("Hi3".to_string(), "Bye3".to_string());
             expected_map2.insert("Hi4".to_string(), "Bye4".to_string());
+            expected_map2.insert("Hi5".to_string(), "Bye5".to_string());
+
+            let mut expected_map3 = HashMap::new();
+            expected_map3.insert("Hi6".to_string(), "Bye6".to_string());
 
             assert_eq!(
                 res,
@@ -933,10 +968,8 @@ mod types {
                         expected_map1,
                         vec!["S1".to_string(), "S2".to_string(), "S3".to_string()]
                     ),
-                    (
-                        expected_map2,
-                        vec!["S4".to_string(), "S5".to_string(), "S6".to_string()]
-                    )
+                    (expected_map2, vec!["S4".to_string(), "S5".to_string()]),
+                    (expected_map3, vec!["S6".to_string()])
                 ]
             );
         }
