@@ -580,7 +580,7 @@ pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter};
 pub use crate::commands::{
     Commands, ControlFlow, CopyOptions, Direction, FlushAllOptions, FlushDbOptions,
     HashFieldExpirationOptions, LposOptions, PubSubCommands, ScanOptions, SetOptions,
-    SortedSetAddOptions, TypedCommands, UpdateCheck, VAddOptions, VSimOptions,
+    SortedSetAddOptions, TypedCommands, UpdateCheck,
 };
 pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
@@ -611,7 +611,6 @@ pub use crate::types::{
     // utility types
     InfoDict,
     NumericBehavior,
-    EmbeddingInput,
     Expiry,
     SetExpiry,
     ExistenceCheck,
@@ -621,9 +620,6 @@ pub use crate::types::{
     ReplicaInfo,
     IntegerReplyOrNoOp,
 	ValueType,
-    VectorAddInput,
-    VectorSimilaritySearchInput,
-    VectorQuantization,
 
     // error and result types
     RedisError,
@@ -664,6 +660,16 @@ pub use crate::commands::JsonCommands;
 #[cfg(all(feature = "json", feature = "aio"))]
 #[cfg_attr(docsrs, doc(cfg(all(feature = "json", feature = "aio"))))]
 pub use crate::commands::JsonAsyncCommands;
+
+#[cfg(feature = "vector-sets")]
+#[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
+pub use crate::commands::{VAddOptions, VSimOptions};
+
+#[cfg(feature = "vector-sets")]
+#[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
+pub use crate::types::{
+    EmbeddingInput, VectorAddInput, VectorQuantization, VectorSimilaritySearchInput,
+};
 
 #[cfg(feature = "geospatial")]
 #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]

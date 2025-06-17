@@ -25,17 +25,23 @@ mod basic {
     use rand::{rng, Rng};
     use redis::IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply};
     use redis::{
-        cmd, Client, Connection, CopyOptions, EmbeddingInput, ProtocolVersion, PushInfo,
-        RedisConnectionInfo, Role, ScanOptions, UpdateCheck, Value, ValueType, VectorAddInput,
-        VectorQuantization, VectorSimilaritySearchInput,
+        cmd, Client, Connection, CopyOptions, ProtocolVersion, PushInfo, RedisConnectionInfo, Role,
+        ScanOptions, UpdateCheck, Value, ValueType,
     };
     use redis::{
         ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck, ExpireOption,
         Expiry, FieldExistenceCheck, HashFieldExpirationOptions, PubSubCommands, PushKind,
         RedisResult, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs, TypedCommands,
-        VAddOptions, VSimOptions,
+    };
+
+    #[cfg(feature = "vector-sets")]
+    use redis::{
+        EmbeddingInput, VAddOptions, VSimOptions, VectorAddInput, VectorQuantization,
+        VectorSimilaritySearchInput,
     };
     use redis_test::utils::get_listener_on_free_port;
+
+    #[cfg(feature = "vector-sets")]
     use serde_json::json;
     use std::collections::{BTreeMap, BTreeSet};
     use std::collections::{HashMap, HashSet};
@@ -45,6 +51,7 @@ mod basic {
     use std::vec;
 
     const REDIS_VERSION_CE_8_0_RC1: (u16, u16, u16) = (7, 9, 240);
+    #[cfg(feature = "vector-sets")]
     const REDIS_VERSION_CE_8_0: (u16, u16, u16) = (8, 0, 0);
 
     const HASH_KEY: &str = "testing_hash";
@@ -2861,6 +2868,7 @@ mod basic {
     }
 
     #[test]
+    #[cfg(feature = "vector-sets")]
     fn test_vector_sets_basic_operations() {
         let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
         let mut con = ctx.connection();
@@ -2944,6 +2952,7 @@ mod basic {
     }
 
     #[test]
+    #[cfg(feature = "vector-sets")]
     fn test_vector_sets_similarity_search() {
         let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
         let mut con = ctx.connection();
@@ -3155,6 +3164,7 @@ mod basic {
     }
 
     #[test]
+    #[cfg(feature = "vector-sets")]
     fn test_vector_sets_auxiliary_commands() {
         let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
         let mut con = ctx.connection();
@@ -3427,6 +3437,7 @@ mod basic {
     }
 
     #[test]
+    #[cfg(feature = "vector-sets")]
     fn test_vector_sets_edge_cases() {
         let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
         let mut con = ctx.connection();

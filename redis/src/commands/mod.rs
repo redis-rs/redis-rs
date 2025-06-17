@@ -5,12 +5,15 @@ use crate::connection::{Connection, ConnectionLike, Msg};
 use crate::pipeline::Pipeline;
 use crate::types::{
     ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, IntegerReplyOrNoOp,
-    NumericBehavior, RedisResult, RedisWrite, SetExpiry, ToRedisArgs, VectorAddInput,
-    VectorQuantization, VectorSimilaritySearchInput,
+    NumericBehavior, RedisResult, RedisWrite, SetExpiry, ToRedisArgs,
 };
-use std::collections::HashSet;
 
+#[cfg(feature = "vector-sets")]
+use crate::types::{VectorAddInput, VectorQuantization, VectorSimilaritySearchInput};
+
+#[cfg(feature = "vector-sets")]
 use serde::ser::Serialize;
+use std::collections::HashSet;
 
 #[macro_use]
 mod macros;
@@ -1260,34 +1263,44 @@ implement_commands! {
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MAX").arg("WEIGHTS").arg(weights)
     }
 
-    /// vector set commands
+    // vector set commands
 
     /// Add a new element into the vector set specified by key.
     /// [Redis Docs](https://redis.io/commands/VADD)
+    #[cfg(feature = "vector-sets")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vadd<K: ToRedisArgs, E: ToRedisArgs>(key: K, input: VectorAddInput<'a>, element: E) -> (bool) {
         cmd("VADD").arg(key).arg(input).arg(element)
     }
 
     /// Add a new element into the vector set specified by key with optional parameters for fine-tuning the insertion process.
     /// [Redis Docs](https://redis.io/commands/VADD)
+    #[cfg(feature = "vector-sets")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vadd_extended<K: ToRedisArgs, E: ToRedisArgs>(key: K, input: VectorAddInput<'a>, element: E, options: &'a VAddOptions) -> (bool) {
         cmd("VADD").arg(key).arg(options.reduction_dimension.map(|_| "REDUCE")).arg(options.reduction_dimension).arg(input).arg(element).arg(options)
     }
 
     /// Get the number of members in a vector set.
     /// [Redis Docs](https://redis.io/commands/VCARD)
+    #[cfg(feature = "vector-sets")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vcard<K: ToRedisArgs>(key: K) -> (usize) {
         cmd("VCARD").arg(key)
     }
 
     /// Return the number of dimensions of the vectors in the specified vector set.
     /// [Redis Docs](https://redis.io/commands/VDIM)
+    #[cfg(feature = "vector-sets")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vdim<K: ToRedisArgs>(key: K) -> (usize) {
         cmd("VDIM").arg(key)
     }
 
     /// Return the approximate vector associated with a given element in the vector set.
     /// [Redis Docs](https://redis.io/commands/VEMB)
+    #[cfg(feature = "vector-sets")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vemb<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> Generic {
         cmd("VEMB").arg(key).arg(element)
     }
@@ -1296,12 +1309,16 @@ implement_commands! {
     /// Vector sets normalize and may quantize vectors on insertion.
     /// VEMB reverses this process to approximate the original vector by de-normalizing and de-quantizing it.
     /// [Redis Docs](https://redis.io/commands/VEMB)
+    #[cfg(feature = "vector-sets")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vemb_raw<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> Generic {
         cmd("VEMB").arg(key).arg(element).arg("RAW")
     }
 
     /// Remove an element from a vector set.
     /// [Redis Docs](https://redis.io/commands/VREM)
+    #[cfg(feature = "vector-sets")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vrem<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> (bool) {
         cmd("VREM").arg(key).arg(element)
     }
@@ -1309,6 +1326,8 @@ implement_commands! {
     /// Associate a JSON object with an element in a vector set.
     /// Use this command to store attributes that can be used in filtered similarity searches with VSIM.
     /// [Redis Docs](https://redis.io/commands/VSETATTR)
+    #[cfg(feature = "vector-sets")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vsetattr<K: ToRedisArgs, E: ToRedisArgs, J: Serialize>(key: K, element: E, json_object: &'a J) -> (bool) {
         let attributes_json = match serde_json::to_value(json_object) {
             Ok(serde_json::Value::String(s)) if s.is_empty() => "".to_string(),
@@ -1321,12 +1340,16 @@ implement_commands! {
     /// Delete the JSON attributes associated with an element in a vector set.
     /// This is an utility function that uses VSETATTR with an empty string.
     /// [Redis Docs](https://redis.io/commands/VSETATTR)
+    #[cfg(feature = "vector-sets")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vdelattr<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> (bool) {
         cmd("VSETATTR").arg(key).arg(element).arg("")
     }
 
     /// Return the JSON attributes associated with an element in a vector set.
     /// [Redis Docs](https://redis.io/commands/VGETATTR)
+    #[cfg(feature = "vector-sets")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vgetattr<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> (Option<String>) {
         cmd("VGETATTR").arg(key).arg(element)
     }
@@ -1334,6 +1357,8 @@ implement_commands! {
     /// Return metadata and internal details about a vector set, including
     /// size, dimensions, quantization type, and graph structure.
     /// [Redis Docs](https://redis.io/commands/VINFO)
+    #[cfg(feature = "vector-sets")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vinfo<K: ToRedisArgs>(key: K) -> Generic {
         cmd("VINFO").arg(key)
     }
@@ -1341,6 +1366,8 @@ implement_commands! {
     /// Return the neighbors of a specified element in a vector set.
     /// The command shows the connections for each layer of the HNSW graph.
     /// [Redis Docs](https://redis.io/commands/VLINKS)
+    #[cfg(feature = "vector-sets")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vlinks<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> Generic {
         cmd("VLINKS").arg(key).arg(element)
     }
@@ -1349,30 +1376,40 @@ implement_commands! {
     /// The command shows the connections for each layer of the HNSW graph
     /// and includes similarity scores for each neighbor.
     /// [Redis Docs](https://redis.io/commands/VLINKS)]
+    #[cfg(feature = "vector-sets")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vlinks_with_scores<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> Generic {
         cmd("VLINKS").arg(key).arg(element).arg("WITHSCORES")
     }
 
     /// Return one random elements from a vector set.
     /// [Redis Docs](https://redis.io/commands/VRANDMEMBER)
+    #[cfg(feature = "vector-sets")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vrandmember<K: ToRedisArgs>(key: K) -> (Option<Vec<String>>) {
         cmd("VRANDMEMBER").arg(key)
     }
 
     /// Return multiple random elements from a vector set.
     /// [Redis Docs](https://redis.io/commands/VRANDMEMBER)
+    #[cfg(feature = "vector-sets")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vrandmember_multiple<K: ToRedisArgs>(key: K, count: usize) -> (Option<Vec<String>>) {
         cmd("VRANDMEMBER").arg(key).arg(count)
     }
 
     /// Perform vector similarity search.
     /// [Redis Docs](https://redis.io/commands/VSIM)
+    #[cfg(feature = "vector-sets")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vsim<K: ToRedisArgs>(key: K, input: VectorSimilaritySearchInput<'a>) -> Generic {
         cmd("VSIM").arg(key).arg(input)
     }
 
     /// Performs a vector similarity search with optional parameters for customization.
     /// [Redis Docs](https://redis.io/commands/VSIM)
+    #[cfg(feature = "vector-sets")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vsim_extended<K: ToRedisArgs>(key: K, input: VectorSimilaritySearchInput<'a>, options: &'a VSimOptions) -> Generic {
         cmd("VSIM").arg(key).arg(input).arg(options)
     }
@@ -3396,6 +3433,8 @@ impl ToRedisArgs for SortedSetAddOptions {
 ///     con.vadd_extended(key, redis::VectorAddInput::Values(redis::EmbeddingInput::Float64(vector)), element, &opts)
 /// }
 /// ```
+#[cfg(feature = "vector-sets")]
+#[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
 #[derive(Clone, Default)]
 pub struct VAddOptions {
     /// Implements random projection to reduce the dimensionality of the vector.
@@ -3416,6 +3455,7 @@ pub struct VAddOptions {
     max_number_of_links: Option<usize>,
 }
 
+#[cfg(feature = "vector-sets")]
 impl VAddOptions {
     /// Set reduction dimension value
     pub fn set_reduction_dimension(mut self, dimension: usize) -> Self {
@@ -3454,6 +3494,7 @@ impl VAddOptions {
     }
 }
 
+#[cfg(feature = "vector-sets")]
 impl ToRedisArgs for VAddOptions {
     fn write_redis_args<W>(&self, out: &mut W)
     where
@@ -3509,6 +3550,8 @@ impl ToRedisArgs for VAddOptions {
 ///     con.vsim_extended(key, redis::VectorSimilaritySearchInput::Element(element), &opts)
 /// }
 /// ```
+#[cfg(feature = "vector-sets")]
+#[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
 #[derive(Clone, Default)]
 pub struct VSimOptions {
     /// Include similarity scores in the results
@@ -3531,6 +3574,7 @@ pub struct VSimOptions {
     no_thread: bool,
 }
 
+#[cfg(feature = "vector-sets")]
 impl VSimOptions {
     /// Include similarity scores in the results
     pub fn set_with_scores(mut self, enabled: bool) -> Self {
@@ -3575,6 +3619,7 @@ impl VSimOptions {
     }
 }
 
+#[cfg(feature = "vector-sets")]
 impl ToRedisArgs for VSimOptions {
     fn write_redis_args<W>(&self, out: &mut W)
     where
