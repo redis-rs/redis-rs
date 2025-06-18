@@ -462,7 +462,8 @@ it will not automatically be loaded and retried. The script can be loaded using 
 # Async
 
 In addition to the synchronous interface that's been explained above there also exists an
-asynchronous interface based on [`futures`][] and [`tokio`][] or [`smol`](https://docs.rs/smol/latest/smol/). All async connections are cheap to clone, and clones can be used concurrently from multiple threads.
+asynchronous interface based on [`futures`][] and [`tokio`][] or [`smol`](https://docs.rs/smol/latest/smol/).
+ All async connections are cheap to clone, and clones can be used concurrently from multiple threads.
 
 This interface exists under the `aio` (async io) module (which requires that the `aio` feature
 is enabled) and largely mirrors the synchronous with a few concessions to make it fit the
