@@ -566,6 +566,15 @@ impl Value {
         }
         Ok(vec)
     }
+
+    fn is_collection_of_len(&self, len: usize) -> bool {
+        match self {
+            Value::Array(values) => values.len() == len,
+            Value::Map(items) => items.len() * 2 == len,
+            Value::Set(values) => values.len() == len,
+            _ => false,
+        }
+    }
 }
 
 impl fmt::Debug for Value {
@@ -2124,10 +2133,10 @@ pub trait FromRedisValue: Sized {
 
     /// The same as `from_owned_redis_values`, but returns a result for each
     /// conversion to make handling them case-by-case possible.
-    fn from_each_owned_redis_values(items: Vec<Value>) -> Vec<RedisResult<Self>> {
+    fn from_each_owned_redis_values(items: Vec<Value>) -> Vec<Result<Self, ParsingError>> {
         items
             .into_iter()
-            .map(|val| Ok(FromRedisValue::from_owned_redis_value(val)?))
+            .map(FromRedisValue::from_owned_redis_value)
             .collect()
     }
 
@@ -2597,41 +2606,42 @@ macro_rules! from_redis_value_for_tuple {
             #[allow(non_snake_case, unused_variables)]
             fn from_redis_value(v: &Value) -> Result<($($name,)*), ParsingError> {
                 let v = get_inner_value(v);
+                // hacky way to count the tuple size
+                let mut n = 0;
+                $(let $name = (); n += 1;)*
+
                 match *v {
                     Value::Array(ref items) => {
-                        // hacky way to count the tuple size
-                        let mut n = 0;
-                        $(let $name = (); n += 1;)*
                         if items.len() != n {
                             invalid_type_error!(v, "Array response of wrong dimension")
                         }
 
-                        // this is pretty ugly too.  The { i += 1; i - 1} is rust's
-                        // postfix increment :)
+                        // The { i += 1; i - 1} is rust's postfix increment :)
+                        let mut i = 0;
+                        Ok(($({let $name = (); from_redis_value(
+                             &items[{ i += 1; i - 1 }])?},)*))
+                    }
+
+                    Value::Set(ref items) => {
+                        if items.len() != n {
+                            invalid_type_error!(v, "Set response of wrong dimension")
+                        }
+
+                        // The { i += 1; i - 1} is rust's postfix increment :)
                         let mut i = 0;
                         Ok(($({let $name = (); from_redis_value(
                              &items[{ i += 1; i - 1 }])?},)*))
                     }
 
                     Value::Map(ref items) => {
-                        // hacky way to count the tuple size
-                        let mut n = 0;
-                        $(let $name = (); n += 1;)*
-                        if n != 2 {
+                        if n != items.len() * 2 {
                             invalid_type_error!(v, "Map response of wrong dimension")
                         }
 
-                        let mut flatten_items = vec![];
-                        for (k,v) in items {
-                            flatten_items.push(k);
-                            flatten_items.push(v);
-                        }
+                        let mut flatten_items = items.iter().map(|(a,b)|[a,b]).flatten();
 
-                        // this is pretty ugly too.  The { i += 1; i - 1} is rust's
-                        // postfix increment :)
-                        let mut i = 0;
                         Ok(($({let $name = (); from_redis_value(
-                             &flatten_items[{ i += 1; i - 1 }])?},)*))
+                             &flatten_items.next().unwrap())?},)*))
                     }
 
                     _ => invalid_type_error!(v, "Not a Array response")
@@ -2643,17 +2653,28 @@ macro_rules! from_redis_value_for_tuple {
             #[allow(non_snake_case, unused_variables)]
             fn from_owned_redis_value(v: Value) -> Result<($($name,)*), ParsingError> {
                 let v = get_owned_inner_value(v);
+                // hacky way to count the tuple size
+                let mut n = 0;
+                $(let $name = (); n += 1;)*
                 match v {
                     Value::Array(mut items) => {
-                        // hacky way to count the tuple size
-                        let mut n = 0;
-                        $(let $name = (); n += 1;)*
                         if items.len() != n {
                             invalid_type_error!(Value::Array(items), "Array response of wrong dimension")
                         }
 
-                        // this is pretty ugly too.  The { i += 1; i - 1} is rust's
-                        // postfix increment :)
+                        // The { i += 1; i - 1} is rust's postfix increment :)
+                        let mut i = 0;
+                        Ok(($({let $name = (); from_owned_redis_value(
+                            ::std::mem::replace(&mut items[{ i += 1; i - 1 }], Value::Nil)
+                        )?},)*))
+                    }
+
+                    Value::Set(mut items) => {
+                        if items.len() != n {
+                            invalid_type_error!(Value::Array(items), "Set response of wrong dimension")
+                        }
+
+                        // The { i += 1; i - 1} is rust's postfix increment :)
                         let mut i = 0;
                         Ok(($({let $name = (); from_owned_redis_value(
                             ::std::mem::replace(&mut items[{ i += 1; i - 1 }], Value::Nil)
@@ -2661,24 +2682,15 @@ macro_rules! from_redis_value_for_tuple {
                     }
 
                     Value::Map(items) => {
-                        // hacky way to count the tuple size
-                        let mut n = 0;
-                        $(let $name = (); n += 1;)*
-                        if n != 2 {
+                        if n != items.len() * 2 {
                             invalid_type_error!(Value::Map(items), "Map response of wrong dimension")
                         }
 
-                        let mut flatten_items = vec![];
-                        for (k,v) in items {
-                            flatten_items.push(k);
-                            flatten_items.push(v);
-                        }
+                        let mut flatten_items = items.into_iter().map(|(a,b)|[a,b]).flatten();
 
-                        // this is pretty ugly too.  The { i += 1; i - 1} is rust's
-                        // postfix increment :)
-                        let mut i = 0;
-                        Ok(($({let $name = (); from_redis_value(
-                             &flatten_items[{ i += 1; i - 1 }])?},)*))
+                        Ok(($({let $name = (); from_owned_redis_value(
+                            ::std::mem::replace(&mut flatten_items.next().unwrap(), Value::Nil)
+                        )?},)*))
                     }
 
                     _ => invalid_type_error!(v, "Not a Array response")
@@ -2690,31 +2702,20 @@ macro_rules! from_redis_value_for_tuple {
                 // hacky way to count the tuple size
                 let mut n = 0;
                 $(let $name = (); n += 1;)*
-                let mut rv = vec![];
                 if items.len() == 0 {
-                    return Ok(rv)
-                }
-                //It's uglier then before!
-                for item in items {
-                    match item {
-                        Value::Array(ch) => {
-                           if  let [$($name),*] = &ch[..] {
-                            rv.push(($(from_redis_value(&$name)?),*),)
-                           };
-                        },
-                        _ => {},
-
-                    }
-                }
-                if !rv.is_empty(){
-                    return Ok(rv);
+                    return Ok(vec![]);
                 }
 
-                if let  [$($name),*] = items{
+                if items.iter().all(|item|item.is_collection_of_len(n)) {
+                    return items.iter().map(|item|from_redis_value(item)).collect();
+                }
+
+                let mut rv = Vec::with_capacity(items.len() / n);
+                if let [$($name),*] = items{
                     rv.push(($(from_redis_value($name)?),*),);
                     return Ok(rv);
                 }
-                 for chunk in items.chunks_exact(n) {
+                for chunk in items.chunks_exact(n) {
                     match chunk {
                         [$($name),*] => rv.push(($(from_redis_value($name)?),*),),
                          _ => {},
@@ -2724,10 +2725,10 @@ macro_rules! from_redis_value_for_tuple {
             }
 
             #[allow(non_snake_case, unused_variables)]
-            fn from_each_owned_redis_values(mut items: Vec<Value>) -> Vec<RedisResult<($($name,)*)>> {
+            fn from_each_owned_redis_values(mut items: Vec<Value>) -> Vec<Result<($($name,)*), ParsingError>> {
 
                 #[allow(unused_parens)]
-                let extract = |val: ($(Result<$name, ParsingError>),*)| -> RedisResult<($($name,)*)> {
+                let extract = |val: ($(Result<$name, ParsingError>),*)| -> Result<($($name,)*), ParsingError> {
                     let ($($name),*) = val;
                     Ok(($($name?),*,))
                 };
@@ -2736,23 +2737,12 @@ macro_rules! from_redis_value_for_tuple {
                 let mut n = 0;
                 $(let $name = (); n += 1;)*
 
-                let mut rv = vec![];
+                // let mut rv = vec![];
                 if items.len() == 0 {
-                    return rv
+                    return vec![];
                 }
-                //It's uglier then before!
-                for item in items.iter_mut() {
-                    match item {
-                        Value::Array(ref mut ch) => {
-                            if let [$($name),*] = &mut ch[..] {
-                                rv.push(extract(($(from_owned_redis_value(std::mem::replace($name, Value::Nil)).into()),*)));
-                            };
-                        },
-                        _ => {},
-                    }
-                }
-                if !rv.is_empty(){
-                    return rv;
+                if items.iter().all(|item|item.is_collection_of_len(n)) {
+                    return items.into_iter().map(|item|from_owned_redis_value(item)).collect();
                 }
 
                 let mut rv = Vec::with_capacity(items.len() / n);
@@ -2776,29 +2766,15 @@ macro_rules! from_redis_value_for_tuple {
                 let mut n = 0;
                 $(let $name = (); n += 1;)*
 
-                let mut rv = vec![];
+                // let mut rv = vec![];
                 if items.len() == 0 {
-                    return Ok(rv)
+                    return Ok(vec![])
                 }
-                //It's uglier then before!
-                for item in items.iter_mut() {
-                    match item {
-                        Value::Array(ref mut ch) => {
-                        if  let [$($name),*] = &mut ch[..] {
-                            rv.push(($(from_owned_redis_value(std::mem::replace($name, Value::Nil))?),*),);
-                           };
-                        },
-                        _ => {},
-                    }
-                }
-                if !rv.is_empty(){
-                    return Ok(rv);
+                if items.iter().all(|item|item.is_collection_of_len(n)) {
+                    return items.into_iter().map(|item|from_owned_redis_value(item)).collect();
                 }
 
                 let mut rv = Vec::with_capacity(items.len() / n);
-                if items.len() == 0 {
-                    return Ok(rv)
-                }
                 for chunk in items.chunks_mut(n) {
                     match chunk {
                         // Take each element out of the chunk with `std::mem::replace`, leaving a `Value::Nil`
