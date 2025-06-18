@@ -84,7 +84,7 @@ redis = { version = "0.32.1", features = ["smol-comp"] }
 redis = { version = "0.32.1", features = ["async-std-comp"] }
 ```
 
-You can then use either the `AsyncCommands` or `AsyncTypedCommands` trait.
+You can then use either the `AsyncCommands` or `AsyncTypedCommands` trait. All async connections are cheap to clone, and clones can be used concurrently from multiple threads.
 
 ## Connection Pooling
 
@@ -96,7 +96,7 @@ redis = { version = "0.32.1", features = ["r2d2"] }
 ```
 
 For async connections, connection pooling isn't necessary, unless blocking commands are used.
-The `MultiplexedConnection` is cloneable and can be used safely from multiple threads, so a 
+The `MultiplexedConnection` is cheaply cloneable and can be used safely from multiple threads, so a 
 single connection can be easily reused. For automatic reconnections consider using 
 `ConnectionManager` with the `connection-manager` feature.
 Async cluster connections also don't require pooling and are thread-safe and reusable.

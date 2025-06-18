@@ -81,7 +81,7 @@
 //! ```
 //!
 //! For async connections, connection pooling isn't necessary. The `MultiplexedConnection` is
-//! cloneable and can be used safely from multiple threads, so a single connection can be easily
+//! cheap to clone and can be used safely concurrently from multiple threads, so a single connection can be easily
 //! reused. For automatic reconnections consider using `ConnectionManager` with the `connection-manager` feature.
 //! Async cluster connections also don't require pooling and are thread-safe and reusable.
 //!
@@ -464,10 +464,11 @@ it will not automatically be loaded and retried. The script can be loaded using 
 
 In addition to the synchronous interface that's been explained above there also exists an
 asynchronous interface based on [`futures`][] and [`tokio`][], [`smol`](https://docs.rs/smol/latest/smol/), or [`async-std`][].
+ All async connections are cheap to clone, and clones can be used concurrently from multiple threads.
 
 This interface exists under the `aio` (async io) module (which requires that the `aio` feature
 is enabled) and largely mirrors the synchronous with a few concessions to make it fit the
-constraints of `futures`.
+constraints of `futures`. 
 
 ```rust,no_run
 use futures::prelude::*;
