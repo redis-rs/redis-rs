@@ -1,3 +1,15 @@
+### 0.32.1 (2025-06-18)
+
+#### Changes & Bug fixes
+
+* Make transaction status of pipelines public ([#1663](https://github.com/redis-rs/redis-rs/pull/1663) by @somechris)
+* Pipeline: Add comments explaining offset and count ([#1664](https://github.com/redis-rs/redis-rs/pull/1664) by @somechris)
+* prevent Smol tasks from being cancelled when dropped. ([#1665](https://github.com/redis-rs/redis-rs/pull/1665) by @nihohit)
+* extend sentinel api to be a bit more flexible ([#1638](https://github.com/redis-rs/redis-rs/pull/1638) by @hugobpx)
+* Run doc tests once, not on every test action. ([#1671](https://github.com/redis-rs/redis-rs/pull/1671) by @nihohit)
+* support extended options for ZADD ([#1667](https://github.com/redis-rs/redis-rs/pull/1667) by @eakoli)
+* Fix handling of nested tuples. ([#1675](https://github.com/redis-rs/redis-rs/pull/1675) by @nihohit)
+
 ### 0.32.0 (2025-05-30)
 
 #### Changes & Bug fixes
