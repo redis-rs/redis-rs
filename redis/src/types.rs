@@ -2598,8 +2598,7 @@ macro_rules! from_redis_value_for_tuple {
                             invalid_type_error!(v, "Array response of wrong dimension")
                         }
 
-                        // this is pretty ugly too.  The { i += 1; i - 1} is rust's
-                        // postfix increment :)
+                        // The { i += 1; i - 1} is rust's postfix increment :)
                         let mut i = 0;
                         Ok(($({let $name = (); from_redis_value(
                              &items[{ i += 1; i - 1 }])?},)*))
@@ -2610,29 +2609,21 @@ macro_rules! from_redis_value_for_tuple {
                             invalid_type_error!(v, "Set response of wrong dimension")
                         }
 
-                        // this is pretty ugly too.  The { i += 1; i - 1} is rust's
-                        // postfix increment :)
+                        // The { i += 1; i - 1} is rust's postfix increment :)
                         let mut i = 0;
                         Ok(($({let $name = (); from_redis_value(
                              &items[{ i += 1; i - 1 }])?},)*))
                     }
 
                     Value::Map(ref items) => {
-                        if n != 2 {
+                        if n != items.len() * 2 {
                             invalid_type_error!(v, "Map response of wrong dimension")
                         }
 
-                        let mut flatten_items = vec![];
-                        for (k,v) in items {
-                            flatten_items.push(k);
-                            flatten_items.push(v);
-                        }
+                        let mut flatten_items = items.iter().map(|(a,b)|[a,b]).flatten();
 
-                        // this is pretty ugly too.  The { i += 1; i - 1} is rust's
-                        // postfix increment :)
-                        let mut i = 0;
                         Ok(($({let $name = (); from_redis_value(
-                             &flatten_items[{ i += 1; i - 1 }])?},)*))
+                             &flatten_items.next().unwrap())?},)*))
                     }
 
                     _ => invalid_type_error!(v, "Not a Array response")
@@ -2653,8 +2644,7 @@ macro_rules! from_redis_value_for_tuple {
                             invalid_type_error!(Value::Array(items), "Array response of wrong dimension")
                         }
 
-                        // this is pretty ugly too.  The { i += 1; i - 1} is rust's
-                        // postfix increment :)
+                        // The { i += 1; i - 1} is rust's postfix increment :)
                         let mut i = 0;
                         Ok(($({let $name = (); from_owned_redis_value(
                             ::std::mem::replace(&mut items[{ i += 1; i - 1 }], Value::Nil)
@@ -2666,8 +2656,7 @@ macro_rules! from_redis_value_for_tuple {
                             invalid_type_error!(Value::Array(items), "Set response of wrong dimension")
                         }
 
-                        // this is pretty ugly too.  The { i += 1; i - 1} is rust's
-                        // postfix increment :)
+                        // The { i += 1; i - 1} is rust's postfix increment :)
                         let mut i = 0;
                         Ok(($({let $name = (); from_owned_redis_value(
                             ::std::mem::replace(&mut items[{ i += 1; i - 1 }], Value::Nil)
@@ -2675,21 +2664,15 @@ macro_rules! from_redis_value_for_tuple {
                     }
 
                     Value::Map(items) => {
-                        if n != 2 {
+                        if n != items.len() * 2 {
                             invalid_type_error!(Value::Map(items), "Map response of wrong dimension")
                         }
 
-                        let mut flatten_items = vec![];
-                        for (k,v) in items {
-                            flatten_items.push(k);
-                            flatten_items.push(v);
-                        }
+                        let mut flatten_items = items.into_iter().map(|(a,b)|[a,b]).flatten();
 
-                        // this is pretty ugly too.  The { i += 1; i - 1} is rust's
-                        // postfix increment :)
-                        let mut i = 0;
-                        Ok(($({let $name = (); from_redis_value(
-                             &flatten_items[{ i += 1; i - 1 }])?},)*))
+                        Ok(($({let $name = (); from_owned_redis_value(
+                            ::std::mem::replace(&mut flatten_items.next().unwrap(), Value::Nil)
+                        )?},)*))
                     }
 
                     _ => invalid_type_error!(v, "Not a Array response")
