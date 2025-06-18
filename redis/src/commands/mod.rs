@@ -892,6 +892,18 @@ implement_commands! {
         cmd("ZADD").arg(key).arg(items)
     }
 
+     /// Add one member to a sorted set, or update its score if it already exists.
+     /// [Redis Docs](https://redis.io/commands/ZADD)
+    fn zadd_options<K: ToRedisArgs, S: ToRedisArgs, M: ToRedisArgs>(key: K, member: M, score: S, options:&'a SortedSetAddOptions) -> usize{
+        cmd("ZADD").arg(key).arg(options).arg(score).arg(member)
+    }
+
+    /// Add multiple members to a sorted set, or update its score if it already exists.
+    /// [Redis Docs](https://redis.io/commands/ZADD)
+    fn zadd_multiple_options<K: ToRedisArgs, S: ToRedisArgs, M: ToRedisArgs>(key: K, items: &'a [(S, M)], options:&'a SortedSetAddOptions) -> (usize) {
+        cmd("ZADD").arg(key).arg(options).arg(items)
+    }
+
     /// Get the number of members in a sorted set.
     /// [Redis Docs](https://redis.io/commands/ZCARD)
     fn zcard<K: ToRedisArgs>(key: K) -> (usize) {
@@ -3132,6 +3144,103 @@ impl ToRedisArgs for Expiry {
             Expiry::PERSIST => {
                 out.write_arg(b"PERSIST");
             }
+        }
+    }
+}
+
+/// Helper enum that is used to define update checks
+#[derive(Clone, Copy)]
+pub enum UpdateCheck {
+    /// LT -- Only update if the new score is less than the current.
+    LT,
+    /// GT -- Only update if the new score is greater than the current.
+    GT,
+}
+
+/// Options for the [ZADD](https://redis.io/commands/zadd) command
+#[derive(Clone, Copy, Default)]
+pub struct SortedSetAddOptions {
+    conditional_set: Option<ExistenceCheck>,
+    conditional_update: Option<UpdateCheck>,
+    include_changed: bool,
+    increment: bool,
+}
+
+impl SortedSetAddOptions {
+    /// Sets the NX option for the ZADD command
+    /// Only add a member if it does not already exist.
+    pub fn add_only() -> Self {
+        Self {
+            conditional_set: Some(ExistenceCheck::NX),
+            ..Default::default()
+        }
+    }
+
+    /// Sets the XX option and optionally the GT/LT option for the ZADD command
+    /// Only update existing members
+    pub fn update_only(conditional_update: Option<UpdateCheck>) -> Self {
+        Self {
+            conditional_set: Some(ExistenceCheck::XX),
+            conditional_update,
+            ..Default::default()
+        }
+    }
+
+    /// Optionally sets the GT/LT option for the ZADD command
+    /// Add new member or update existing
+    pub fn add_or_update(conditional_update: Option<UpdateCheck>) -> Self {
+        Self {
+            conditional_update,
+            ..Default::default()
+        }
+    }
+
+    /// Sets the CH option for the ZADD command
+    /// Return the number of elements changed (not just added).
+    pub fn include_changed_count(mut self) -> Self {
+        self.include_changed = true;
+        self
+    }
+
+    /// Sets the INCR option for the ZADD command
+    /// Increment the score of the member instead of setting it.
+    pub fn increment_score(mut self) -> Self {
+        self.increment = true;
+        self
+    }
+}
+
+impl ToRedisArgs for SortedSetAddOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if let Some(ref conditional_set) = self.conditional_set {
+            match conditional_set {
+                ExistenceCheck::NX => {
+                    out.write_arg(b"NX");
+                }
+                ExistenceCheck::XX => {
+                    out.write_arg(b"XX");
+                }
+            }
+        }
+
+        if let Some(ref conditional_update) = self.conditional_update {
+            match conditional_update {
+                UpdateCheck::LT => {
+                    out.write_arg(b"LT");
+                }
+                UpdateCheck::GT => {
+                    out.write_arg(b"GT");
+                }
+            }
+        }
+        if self.include_changed {
+            out.write_arg(b"CH")
+        }
+        if self.increment {
+            out.write_arg(b"INCR")
         }
     }
 }
