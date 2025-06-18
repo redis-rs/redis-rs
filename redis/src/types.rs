@@ -2133,10 +2133,10 @@ pub trait FromRedisValue: Sized {
 
     /// The same as `from_owned_redis_values`, but returns a result for each
     /// conversion to make handling them case-by-case possible.
-    fn from_each_owned_redis_values(items: Vec<Value>) -> Vec<RedisResult<Self>> {
+    fn from_each_owned_redis_values(items: Vec<Value>) -> Vec<Result<Self, ParsingError>> {
         items
             .into_iter()
-            .map(|val| Ok(FromRedisValue::from_owned_redis_value(val)?))
+            .map(FromRedisValue::from_owned_redis_value)
             .collect()
     }
 
@@ -2725,10 +2725,10 @@ macro_rules! from_redis_value_for_tuple {
             }
 
             #[allow(non_snake_case, unused_variables)]
-            fn from_each_owned_redis_values(mut items: Vec<Value>) -> Vec<RedisResult<($($name,)*)>> {
+            fn from_each_owned_redis_values(mut items: Vec<Value>) -> Vec<Result<($($name,)*), ParsingError>> {
 
                 #[allow(unused_parens)]
-                let extract = |val: ($(Result<$name, ParsingError>),*)| -> RedisResult<($($name,)*)> {
+                let extract = |val: ($(Result<$name, ParsingError>),*)| -> Result<($($name,)*), ParsingError> {
                     let ($($name),*) = val;
                     Ok(($($name?),*,))
                 };

@@ -10,9 +10,9 @@ use std::pin::Pin;
 use std::time::Duration;
 use std::{fmt, io};
 
-use crate::connection::ConnectionLike;
 use crate::pipeline::Pipeline;
 use crate::types::{from_owned_redis_value, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs};
+use crate::{connection::ConnectionLike, ParsingError};
 
 /// An argument to a redis command
 #[derive(Clone)]
@@ -101,7 +101,7 @@ impl<T: FromRedisValue> Iterator for Iter<'_, T> {
 
 /// Represents a safe(r) redis iterator.
 struct CheckedIter<'a, T: FromRedisValue> {
-    batch: std::vec::IntoIter<RedisResult<T>>,
+    batch: std::vec::IntoIter<Result<T, ParsingError>>,
     con: &'a mut (dyn ConnectionLike + 'a),
     cmd: Cmd,
 }
@@ -117,7 +117,7 @@ impl<T: FromRedisValue> Iterator for CheckedIter<'_, T> {
         // chunk is not matching the pattern and thus yielding empty results.
         loop {
             if let Some(value) = self.batch.next() {
-                return Some(value);
+                return Some(value.map_err(|err| err.into()));
             };
 
             if self.cmd.cursor? == 0 {
@@ -145,7 +145,7 @@ use crate::aio::ConnectionLike as AsyncConnection;
 /// The inner future of AsyncIter
 #[cfg(feature = "aio")]
 struct AsyncIterInner<'a, T: FromRedisValue + 'a> {
-    batch: std::vec::IntoIter<RedisResult<T>>,
+    batch: std::vec::IntoIter<Result<T, ParsingError>>,
     con: &'a mut (dyn AsyncConnection + Send + 'a),
     cmd: Cmd,
 }
@@ -173,7 +173,7 @@ impl<'a, T: FromRedisValue + 'a> AsyncIterInner<'a, T> {
         // chunk is not matching the pattern and thus yielding empty results.
         loop {
             if let Some(v) = self.batch.next() {
-                return Some(v);
+                return Some(v.map_err(|err| err.into()));
             };
 
             if self.cmd.cursor? == 0 {
@@ -629,7 +629,7 @@ impl Cmd {
     fn set_cursor_and_get_batch<T: FromRedisValue>(
         &mut self,
         value: crate::Value,
-    ) -> RedisResult<Vec<RedisResult<T>>> {
+    ) -> RedisResult<Vec<Result<T, ParsingError>>> {
         let (cursor, values) = if value.looks_like_cursor() {
             let (cursor, values) = from_owned_redis_value::<(u64, _)>(value)?;
             (cursor, values)
