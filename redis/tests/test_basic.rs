@@ -182,8 +182,15 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        redis::cmd("SET").arg("foo").arg(random_string.clone()).exec(&mut con).unwrap();
-        assert_eq!(redis::cmd("GET").arg("foo").query(&mut con), Ok(random_string));
+        redis::cmd("SET")
+            .arg("foo")
+            .arg(random_string.clone())
+            .exec(&mut con)
+            .unwrap();
+        assert_eq!(
+            redis::cmd("GET").arg("foo").query(&mut con),
+            Ok(random_string)
+        );
     }
 
     //unit test for key_type function

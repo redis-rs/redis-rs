@@ -723,8 +723,8 @@ mod basic_async {
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_async_getset(#[case] runtime: RuntimeType) {
-       test_with_all_connection_types(
-           |mut con: Wrapper|  async move {
+        test_with_all_connection_types(
+            |mut con: Wrapper| async move {
                 const TARGET_SIZE: usize = 512 * 1024 * 1024; // 512 MB
                 let pattern = "deadbeef";
                 let pattern_len = pattern.len();
@@ -737,8 +737,16 @@ mod basic_async {
                     random_string.push_str(pattern);
                 }
 
-                redis::cmd("SET").arg("foo").arg(random_string.clone()).exec_async(&mut con).await.unwrap();
-                assert_eq!(redis::cmd("GET").arg("foo").query_async(&mut con).await, Ok(random_string));
+                redis::cmd("SET")
+                    .arg("foo")
+                    .arg(random_string.clone())
+                    .exec_async(&mut con)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    redis::cmd("GET").arg("foo").query_async(&mut con).await,
+                    Ok(random_string)
+                );
                 Ok(())
             },
             runtime,
