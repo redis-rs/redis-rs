@@ -506,7 +506,7 @@ impl ConnectionManager {
         };
         let internals_clone = internals.clone();
         #[cfg(not(feature = "cache-aio"))]
-        let connection_config = self_clone.0.connection_config.clone();
+        let connection_config = internals.connection_config.clone();
         #[cfg(feature = "cache-aio")]
         let mut connection_config = internals.connection_config.clone();
         #[cfg(feature = "cache-aio")]
