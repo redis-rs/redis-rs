@@ -10,9 +10,9 @@ mod basic_async {
     use redis::aio::ConnectionManager;
     use redis::{
         aio::{ConnectionLike, MultiplexedConnection},
-        cmd, pipe, AsyncCommands, ErrorKind, IntoConnectionInfo, ParsingError, ProtocolVersion,
-        PushKind, RedisConnectionInfo, RedisError, RedisFuture, RedisResult, ScanOptions,
-        ServerErrorKind, ToRedisArgs, Value,
+        cmd, pipe, AsyncCommands, AsyncConnectionConfig, ErrorKind, IntoConnectionInfo,
+        ParsingError, ProtocolVersion, PushKind, RedisConnectionInfo, RedisError, RedisFuture,
+        RedisResult, ScanOptions, ServerErrorKind, ToRedisArgs, Value,
     };
     use redis_test::server::{redis_settings, use_protocol};
     use rstest::rstest;
@@ -679,41 +679,46 @@ mod basic_async {
 
     #[async_test]
     async fn async_scanning_stream() -> RedisResult<()> {
-        test_with_all_connection_types(|mut con| async move {
-            let mut unseen = std::collections::HashSet::new();
+        let ctx = TestContext::new();
+        let mut conn = ctx
+            .client
+            .get_multiplexed_async_connection_with_config(
+                // the timeout expires on TLS tests.
+                &AsyncConnectionConfig::default().set_response_timeout(None),
+            )
+            .await?;
+        let mut unseen = std::collections::HashSet::new();
 
-            for x in 0..1000 {
-                let key_name = format!("key.{x}");
-                redis::cmd("SET")
-                    .arg(key_name.clone())
-                    .arg("foo")
-                    .exec_async(&mut con)
-                    .await?;
-                unseen.insert(key_name.clone());
-            }
+        for x in 0..1000 {
+            let key_name = format!("key.{x}");
+            redis::cmd("SET")
+                .arg(key_name.clone())
+                .arg("foo")
+                .exec_async(&mut conn)
+                .await?;
+            unseen.insert(key_name.clone());
+        }
 
-            let mut iter = redis::cmd("SCAN")
-                .cursor_arg(0)
-                .arg("MATCH")
-                .arg("key*")
-                .arg("COUNT")
-                .arg(1)
-                .clone()
-                .iter_async::<String>(&mut con)
-                .await
-                .unwrap();
+        let mut iter = redis::cmd("SCAN")
+            .cursor_arg(0)
+            .arg("MATCH")
+            .arg("key*")
+            .arg("COUNT")
+            .arg(1)
+            .clone()
+            .iter_async::<String>(&mut conn)
+            .await
+            .unwrap();
 
-            while let Some(item) = iter.next_item().await {
-                let item = item?;
+        while let Some(item) = iter.next_item().await {
+            let item = item?;
 
-                // if this assertion fails, too many items were returned by the iterator.
-                assert!(unseen.remove(&item));
-            }
+            // if this assertion fails, too many items were returned by the iterator.
+            assert!(unseen.remove(&item));
+        }
 
-            assert!(unseen.is_empty());
-            Ok(())
-        })
-        .await
+        assert!(unseen.is_empty());
+        Ok(())
     }
 
     #[async_test]
@@ -728,6 +733,36 @@ mod basic_async {
         assert!(result.is_err());
         assert!(result.unwrap_err().is_timeout());
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn async_getset() -> RedisResult<()> {
+        test_with_all_connection_types(|mut con: Wrapper| async move {
+            const TARGET_SIZE: usize = 512 * 1024 * 1024; // 512 MB
+            let pattern = "deadbeef";
+            let pattern_len = pattern.len();
+
+            // Compute how many times to repeat the pattern
+            let repeats = TARGET_SIZE / pattern_len;
+
+            let mut random_string = String::with_capacity(TARGET_SIZE);
+            for _ in 0..repeats {
+                random_string.push_str(pattern);
+            }
+
+            redis::cmd("SET")
+                .arg("foo")
+                .arg(random_string.clone())
+                .exec_async(&mut con)
+                .await
+                .unwrap();
+            assert_eq!(
+                redis::cmd("GET").arg("foo").query_async(&mut con).await,
+                Ok(random_string)
+            );
+            Ok(())
+        })
+        .await
     }
 
     #[async_test]

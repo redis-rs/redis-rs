@@ -152,6 +152,40 @@ mod basic {
         );
     }
 
+    #[test]
+    fn test_getset_large() {
+        const TARGET_SIZE: usize = 512 * 1024 * 1024; // 512 MB
+        let pattern = "deadbeef";
+        let pattern_len = pattern.len();
+
+        // Compute how many times to repeat the pattern
+        let repeats = TARGET_SIZE / pattern_len;
+
+        let mut random_string = String::with_capacity(TARGET_SIZE);
+        for _ in 0..repeats {
+            random_string.push_str(pattern);
+        }
+
+        // Pad remainder
+        let remaining = TARGET_SIZE % pattern_len;
+        if remaining > 0 {
+            random_string.push_str(&pattern[..remaining]);
+        }
+
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        redis::cmd("SET")
+            .arg("foo")
+            .arg(random_string.clone())
+            .exec(&mut con)
+            .unwrap();
+        assert_eq!(
+            redis::cmd("GET").arg("foo").query(&mut con),
+            Ok(random_string)
+        );
+    }
+
     //unit test for key_type function
     #[test]
     fn test_key_type() {
