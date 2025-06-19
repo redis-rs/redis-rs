@@ -33,7 +33,7 @@ use crate::streams;
 
 #[cfg(feature = "acl")]
 use crate::acl;
-use crate::{RedisConnectionInfo, Value};
+use crate::RedisConnectionInfo;
 
 #[cfg(any(feature = "cluster", feature = "cache-aio"))]
 pub(crate) fn is_readonly_cmd(cmd: &[u8]) -> bool {
@@ -1377,7 +1377,7 @@ implement_commands! {
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     /// [Redis Docs](https://redis.io/commands/ACL)
-    fn acl_getuser<K: ToRedisArgs>(username: K) -> (Option<std::collections::HashMap<String, Value>>) {
+    fn acl_getuser<K: ToRedisArgs>(username: K) -> (Option<acl::AclInfo>) {
         cmd("ACL").arg("GETUSER").arg(username)
     }
 
@@ -1419,7 +1419,7 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/ACL)
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
-    fn acl_cat<>() -> (Vec<String>) {
+    fn acl_cat<>() -> (HashSet<String>) {
         cmd("ACL").arg("CAT")
     }
 
@@ -1427,7 +1427,7 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/ACL)
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
-    fn acl_cat_categoryname<K: ToRedisArgs>(categoryname: K) -> (Vec<String>) {
+    fn acl_cat_categoryname<K: ToRedisArgs>(categoryname: K) -> (HashSet<String>) {
         cmd("ACL").arg("CAT").arg(categoryname)
     }
 
@@ -1476,7 +1476,7 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/ACL)
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
-    fn acl_help<>() -> (String) {
+    fn acl_help<>() -> (Vec<String>) {
         cmd("ACL").arg("HELP")
     }
 
@@ -1563,7 +1563,7 @@ implement_commands! {
         member1: M1,
         member2: M2,
         unit: geo::Unit
-    ) -> (Option<String>) {
+    ) -> (Option<f64>) {
         cmd("GEODIST")
             .arg(key)
             .arg(member1)
@@ -1623,7 +1623,7 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/GEOPOS)
     #[cfg(feature = "geospatial")]
     #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
-    fn geo_pos<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) -> (Vec<Option<(f64, f64)>>) {
+    fn geo_pos<K: ToRedisArgs, M: ToRedisArgs>(key: K, members: M) -> (Vec<Option<geo::Coord<f64>>>) {
         cmd("GEOPOS").arg(key).arg(members)
     }
 
@@ -1656,7 +1656,7 @@ implement_commands! {
         radius: f64,
         unit: geo::Unit,
         options: geo::RadiusOptions
-    ) -> Generic {
+    ) -> (Vec<geo::RadiusSearchResult>) {
         cmd("GEORADIUS")
             .arg(key)
             .arg(longitude)
@@ -1677,7 +1677,7 @@ implement_commands! {
         radius: f64,
         unit: geo::Unit,
         options: geo::RadiusOptions
-    ) -> Generic {
+    ) -> (Vec<geo::RadiusSearchResult>) {
         cmd("GEORADIUSBYMEMBER")
             .arg(key)
             .arg(member)
@@ -1859,7 +1859,7 @@ implement_commands! {
         min_idle_time: MIT,
         start: S,
         options: streams::StreamAutoClaimOptions
-    ) -> (String, Vec<String>, Vec<String>) {
+    ) -> (streams::StreamAutoClaimReply) {
         cmd("XAUTOCLAIM")
             .arg(key)
             .arg(group)
@@ -1887,7 +1887,7 @@ implement_commands! {
         consumer: C,
         min_idle_time: MIT,
         ids: &'a [ID]
-    ) -> (Vec<(String, Value)>) {
+    ) -> (streams::StreamClaimReply) {
         cmd("XCLAIM")
             .arg(key)
             .arg(group)
@@ -2121,7 +2121,7 @@ implement_commands! {
     fn xinfo_consumers<K: ToRedisArgs, G: ToRedisArgs>(
         key: K,
         group: G
-    ) -> (Vec<std::collections::HashMap<String, Value>>) {
+    ) -> (streams::StreamInfoConsumersReply) {
         cmd("XINFO")
             .arg("CONSUMERS")
             .arg(key)
@@ -2142,7 +2142,7 @@ implement_commands! {
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     /// [Redis Docs](https://redis.io/commands/XINFO").arg("GROUPS)
-    fn xinfo_groups<K: ToRedisArgs>(key: K) -> (Vec<std::collections::HashMap<String, Value>>) {
+    fn xinfo_groups<K: ToRedisArgs>(key: K) -> (streams::StreamInfoGroupsReply) {
         cmd("XINFO").arg("GROUPS").arg(key)
     }
 
@@ -2160,7 +2160,7 @@ implement_commands! {
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     /// [Redis Docs](https://redis.io/commands/XINFO").arg("STREAM)
-    fn xinfo_stream<K: ToRedisArgs>(key: K) -> Generic {
+    fn xinfo_stream<K: ToRedisArgs>(key: K) -> (streams::StreamInfoStreamReply) {
         cmd("XINFO").arg("STREAM").arg(key)
     }
 
@@ -2197,7 +2197,7 @@ implement_commands! {
     fn xpending<K: ToRedisArgs, G: ToRedisArgs>(
         key: K,
         group: G
-    ) -> Generic {
+    ) -> (streams::StreamPendingReply) {
         cmd("XPENDING").arg(key).arg(group)
     }
 
@@ -2228,7 +2228,7 @@ implement_commands! {
         start: S,
         end: E,
         count: C
-    ) -> Generic {
+    ) -> (streams::StreamPendingCountReply) {
         cmd("XPENDING")
             .arg(key)
             .arg(group)
@@ -2265,7 +2265,7 @@ implement_commands! {
         end: E,
         count: C,
         consumer: CN
-    ) -> Generic {
+    ) -> (streams::StreamPendingCountReply) {
         cmd("XPENDING")
             .arg(key)
             .arg(group)
@@ -2293,7 +2293,7 @@ implement_commands! {
         key: K,
         start: S,
         end: E
-    ) -> Generic {
+    ) -> (streams::StreamRangeReply) {
         cmd("XRANGE").arg(key).arg(start).arg(end)
     }
 
@@ -2307,7 +2307,7 @@ implement_commands! {
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     /// [Redis Docs](https://redis.io/commands/XRANGE").arg(key).arg("-").arg("+)
-    fn xrange_all<K: ToRedisArgs>(key: K) -> Generic {
+    fn xrange_all<K: ToRedisArgs>(key: K) -> (streams::StreamRangeReply) {
         cmd("XRANGE").arg(key).arg("-").arg("+")
     }
 
@@ -2325,7 +2325,7 @@ implement_commands! {
         start: S,
         end: E,
         count: C
-    ) -> Generic {
+    ) -> (streams::StreamRangeReply) {
         cmd("XRANGE")
             .arg(key)
             .arg(start)
@@ -2349,7 +2349,7 @@ implement_commands! {
     fn xread<K: ToRedisArgs, ID: ToRedisArgs>(
         keys: &'a [K],
         ids: &'a [ID]
-    ) -> (Option<std::collections::HashMap<String, Value>>) {
+    ) -> (Option<streams::StreamReadReply>) {
         cmd("XREAD").arg("STREAMS").arg(keys).arg(ids)
     }
 
@@ -2396,7 +2396,7 @@ implement_commands! {
         keys: &'a [K],
         ids: &'a [ID],
         options: &'a streams::StreamReadOptions
-    ) -> (Option<std::collections::HashMap<String, Value>>) {
+    ) -> (Option<streams::StreamReadReply>) {
         cmd(if options.read_only() {
             "XREAD"
         } else {
@@ -2421,7 +2421,7 @@ implement_commands! {
         key: K,
         end: E,
         start: S
-    ) -> (Vec<Value>) {
+    ) -> (streams::StreamRangeReply) {
         cmd("XREVRANGE").arg(key).arg(end).arg(start)
     }
 
@@ -2432,7 +2432,7 @@ implement_commands! {
     /// XREVRANGE key + -
     /// ```
     /// [Redis Docs](https://redis.io/commands/XREVRANGE").arg(key).arg("+").arg("-)
-    fn xrevrange_all<K: ToRedisArgs>(key: K) -> (Vec<Value>) {
+    fn xrevrange_all<K: ToRedisArgs>(key: K) -> (streams::StreamRangeReply) {
         cmd("XREVRANGE").arg(key).arg("+").arg("-")
     }
 
@@ -2450,7 +2450,7 @@ implement_commands! {
         end: E,
         start: S,
         count: C
-    ) -> (Vec<Value>) {
+    ) -> (streams::StreamRangeReply) {
         cmd("XREVRANGE")
             .arg(key)
             .arg(end)

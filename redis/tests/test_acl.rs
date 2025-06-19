@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use redis::acl::{AclInfo, Rule};
-use redis::{Commands, Value};
+use redis::TypedCommands;
 
 mod support;
 use crate::support::*;
@@ -19,7 +19,7 @@ fn test_acl_whoami() {
 fn test_acl_help() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
-    let res: Vec<String> = con.acl_help().expect("Got help manual");
+    let res = con.acl_help().expect("Got help manual");
     assert!(!res.is_empty());
 }
 
@@ -56,7 +56,7 @@ fn test_acl_getsetdel_users() {
         ),
         Ok(())
     );
-    let acl_info: AclInfo = con.acl_getuser("bob").expect("Got user");
+    let acl_info = con.acl_getuser("bob").expect("Got user").unwrap();
     assert_eq!(
         acl_info,
         AclInfo {
@@ -126,7 +126,7 @@ fn test_acl_cat() {
     }
 
     let expects = ["pfmerge", "pfcount", "pfselftest", "pfadd"];
-    let res: HashSet<String> = con
+    let res = con
         .acl_cat_categoryname("hyperloglog")
         .expect("Got commands of a category");
     for cmd in expects.iter() {
@@ -149,7 +149,7 @@ fn test_acl_genpass() {
 fn test_acl_log() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
-    let logs: Vec<Value> = con.acl_log(1).expect("Got logs");
+    let logs: Vec<String> = con.acl_log(1).expect("Got logs");
     assert_eq!(logs.len(), 0);
     assert_eq!(con.acl_log_reset(), Ok(()));
 }
@@ -172,8 +172,9 @@ fn test_acl_dryrun() {
         .unwrap();
 
     assert_eq!(
-        con.acl_dryrun(b"VIRGINIA", String::from("SET"), &["foo", "bar"]),
-        Ok(())
+        con.acl_dryrun(b"VIRGINIA", String::from("SET"), &["foo", "bar"])
+            .unwrap(),
+        "OK"
     );
 
     let res: String = con
