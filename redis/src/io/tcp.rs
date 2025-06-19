@@ -3,6 +3,8 @@ use std::{io, net::TcpStream};
 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
 use std::time::Duration;
 
+pub use socket2;
+
 /// Settings for a TCP stream.
 #[derive(Clone, Debug)]
 pub struct TcpSettings {
@@ -38,6 +40,7 @@ impl TcpSettings {
     }
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for TcpSettings {
     fn default() -> Self {
         Self {

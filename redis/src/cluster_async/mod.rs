@@ -119,6 +119,8 @@ use crate::{
     RedisFuture, RedisResult, ToRedisArgs, Value,
 };
 
+#[cfg(feature = "cache-aio")]
+use crate::caching::{CacheManager, CacheStatistics};
 use crate::ProtocolVersion;
 use futures_sink::Sink;
 use futures_util::{
@@ -137,6 +139,8 @@ struct ClientSideState {
     _task_handle: HandleContainer,
     response_timeout: Option<Duration>,
     runtime: Runtime,
+    #[cfg(feature = "cache-aio")]
+    cache_manager: Option<CacheManager>,
 }
 
 /// This represents an async Redis Cluster connection.
@@ -159,6 +163,8 @@ where
     ) -> RedisResult<ClusterConnection<C>> {
         let protocol = cluster_params.protocol.unwrap_or_default();
         let response_timeout = cluster_params.response_timeout;
+        #[cfg(feature = "cache-aio")]
+        let cache_manager = cluster_params.cache_manager.clone();
         let runtime = Runtime::locate();
         ClusterConnInner::new(initial_nodes, cluster_params)
             .await
@@ -179,6 +185,8 @@ where
                         _task_handle,
                         response_timeout,
                         runtime,
+                        #[cfg(feature = "cache-aio")]
+                        cache_manager,
                     }),
                 }
             })
@@ -270,7 +278,7 @@ where
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that the subscription will be automatically resubscribed after disconnections, so the user might
-    /// receive additional pushes with [crate::PushKind::Subcribe], later after the subscription completed.
+    /// receive additional pushes with [crate::PushKind::Subscribe], later after the subscription completed.
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.state.protocol);
         let mut cmd = cmd("SUBSCRIBE");
@@ -297,7 +305,7 @@ where
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that the subscription will be automatically resubscribed after disconnections, so the user might
-    /// receive additional pushes with [crate::PushKind::PSubcribe], later after the subscription completed.
+    /// receive additional pushes with [crate::PushKind::PSubscribe], later after the subscription completed.
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.state.protocol);
         let mut cmd = cmd("PSUBSCRIBE");
@@ -324,7 +332,7 @@ where
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that the subscription will be automatically resubscribed after disconnections, so the user might
-    /// receive additional pushes with [crate::PushKind::SSubcribe], later after the subscription completed.
+    /// receive additional pushes with [crate::PushKind::SSubscribe], later after the subscription completed.
     pub async fn ssubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.state.protocol);
         let mut cmd = cmd("SSUBSCRIBE");
@@ -342,6 +350,12 @@ where
         cmd.arg(channel_name);
         cmd.exec_async(self).await?;
         Ok(())
+    }
+    /// Gets [`CacheStatistics`] for cluster connection if caching is enabled.
+    #[cfg(feature = "cache-aio")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
+    pub fn get_cache_statistics(&self) -> Option<CacheStatistics> {
+        self.state.cache_manager.as_ref().map(|cm| cm.statistics())
     }
 }
 
@@ -1044,7 +1058,7 @@ where
                 };
             match request_handling {
                 Some(Retry::MoveToPending { request }) => {
-                    self.inner.pending_requests.lock().unwrap().push(request)
+                    self.inner.pending_requests.lock().unwrap().push(request);
                 }
                 Some(Retry::Immediately { request }) => {
                     let future = Self::try_request(request.cmd.clone(), self.inner.clone());
@@ -1091,8 +1105,12 @@ where
                 (*request)
                     .as_mut()
                     .respond(Err(self.refresh_error.take().unwrap()));
-            } else if let Some(request) = self.inner.pending_requests.lock().unwrap().pop() {
-                request.sender.send(Err(self.refresh_error.take().unwrap()));
+            } else {
+                // Use a separate binding for this to release the lock guard before calling send.
+                let maybe_request = self.inner.pending_requests.lock().unwrap().pop();
+                if let Some(request) = maybe_request {
+                    request.sender.send(Err(self.refresh_error.take().unwrap()));
+                }
             }
         }
     }
@@ -1318,6 +1336,9 @@ where
     let response_timeout = params.response_timeout;
     let push_sender = params.async_push_sender.clone();
     let tcp_settings = params.tcp_settings.clone();
+    let dns_resolver = params.async_dns_resolver.clone();
+    #[cfg(feature = "cache-aio")]
+    let cache_manager = params.cache_manager.clone();
     let info = get_connection_info(node, params)?;
     let mut config = AsyncConnectionConfig::default()
         .set_connection_timeout(connection_timeout)
@@ -1327,6 +1348,13 @@ where
     };
     if let Some(push_sender) = push_sender {
         config = config.set_push_sender_internal(push_sender);
+    }
+    if let Some(resolver) = dns_resolver {
+        config = config.set_dns_resolver_internal(resolver.clone());
+    }
+    #[cfg(feature = "cache-aio")]
+    if let Some(cache_manager) = cache_manager {
+        config = config.set_cache_manager(cache_manager.clone_and_increase_epoch());
     }
     let mut conn = match C::connect_with_config(info, config).await {
         Ok(conn) => conn,

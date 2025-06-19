@@ -81,7 +81,7 @@
 //! ```
 //!
 //! For async connections, connection pooling isn't necessary. The `MultiplexedConnection` is
-//! cloneable and can be used safely from multiple threads, so a single connection can be easily
+//! cheap to clone and can be used safely concurrently from multiple threads, so a single connection can be easily
 //! reused. For automatic reconnections consider using `ConnectionManager` with the `connection-manager` feature.
 //! Async cluster connections also don't require pooling and are thread-safe and reusable.
 //!
@@ -92,7 +92,8 @@
 //!
 //! * `acl`: enables acl support (enabled by default)
 //! * `tokio-comp`: enables support for async usage with the Tokio runtime (optional)
-//! * `async-std-comp`: enables support for async usage with any runtime which is async-std compliant, such as Smol. (optional)
+//! * `async-std-comp`: enables support for async usage with any runtime which is async-std compliant. (optional)
+//! * `smol-comp`: enables support for async usage with the Smol runtime (optional)
 //! * `geospatial`: enables geospatial support (enabled by default)
 //! * `script`: enables script support (enabled by default)
 //! * `streams`: enables high-level interface for interaction with Redis streams (enabled by default)
@@ -107,7 +108,7 @@
 //! * `uuid`: enables type conversion to UUID (optional)
 //! * `sentinel`: enables high-level interfaces for communication with Redis sentinels (optional)
 //! * `json`: enables high-level interfaces for communication with the JSON module (optional)
-//! * `cache-aio`: enables **experimental** client side caching for MultiplexedConnection (optional)
+//! * `cache-aio`: enables **experimental** client side caching for MultiplexedConnection, ConnectionManager and async ClusterConnection (optional)
 //! * `disable-client-setinfo`: disables the `CLIENT SETINFO` handshake during connection initialization
 //!
 //! ## Connection Parameters
@@ -211,6 +212,31 @@
 //! let (k1, k2) : (String, String) = con.get(&["k1", "k2"])?;
 //! # Ok(())
 //! # }
+//! ```
+//!
+//! ## Pre-typed Commands
+//!
+//! In some cases, you may not have a desired return type for a high-level command, and would
+//! instead like to use defaults provided by the library, to avoid the clutter and development overhead
+//! of specifying types for each command.
+//!
+//! The library facilitates this by providing the `TypedCommands` and `AsyncTypedCommands`
+//! as alternatives to `Commands` and `AsyncCommands` respectively. These traits provide functions
+//! with pre-defined and opinionated return types. For example, `set` returns `()`, avoiding the need
+//! for developers to explicitly type each call as returning `()`.
+//!
+//! ```rust,no_run
+//! use redis::TypedCommands;
+//!
+//! fn fetch_an_integer() -> redis::RedisResult<isize> {
+//!     // connect to redis
+//!     let client = redis::Client::open("redis://127.0.0.1/")?;
+//!     let mut con = client.get_connection()?;
+//!     // `set` returns a `()`, so we don't need to specify the return type manually unlike in the previous example.
+//!     con.set("my_key", 42)?;
+//!     // `get_int` returns Result<Option<isize>>, as the key may not be found, or some error may occur.
+//!     Ok(con.get_int("my_key").unwrap().unwrap())
+//! }
 //! ```
 //!
 //! # RESP3 support
@@ -426,7 +452,7 @@ assert_eq!(b, 5);
 ```
 
 Note: unlike a call to [`invoke`](ScriptInvocation::invoke), if the script isn't loaded during the pipeline operation,
-it will not automatically be loaded and retried. The script can be loaded using the 
+it will not automatically be loaded and retried. The script can be loaded using the
 [`load`](ScriptInvocation::load) operation.
 "##
 )]
@@ -437,11 +463,12 @@ it will not automatically be loaded and retried. The script can be loaded using 
 # Async
 
 In addition to the synchronous interface that's been explained above there also exists an
-asynchronous interface based on [`futures`][] and [`tokio`][], or [`async-std`][].
+asynchronous interface based on [`futures`][] and [`tokio`][], [`smol`](https://docs.rs/smol/latest/smol/), or [`async-std`][].
+ All async connections are cheap to clone, and clones can be used concurrently from multiple threads.
 
 This interface exists under the `aio` (async io) module (which requires that the `aio` feature
 is enabled) and largely mirrors the synchronous with a few concessions to make it fit the
-constraints of `futures`.
+constraints of `futures`. 
 
 ```rust,no_run
 use futures::prelude::*;
@@ -463,6 +490,14 @@ let result = redis::cmd("MGET")
 assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
 # Ok(()) }
 ```
+
+## Runtime support
+The crate supports multiple runtimes, including `tokio`, `async-std`, and `smol`. For Tokio, the crate will
+spawn tasks on the current thread runtime. For async-std & smol, the crate will spawn tasks on the the global runtime.
+It is recommended that the crate be used with support only for a single runtime. If the crate is compiled with multiple runtimes,
+the user should call [`crate::aio::prefer_tokio`], [`crate::aio::prefer_async_std`] or [`crate::aio::prefer_smol`] to set the preferred runtime.
+These functions set global state which automatically chooses the correct runtime for the async connection.
+
 "##
 )]
 //!
@@ -524,7 +559,16 @@ let primary = sentinel.get_async_connection().await.unwrap();
 #![deny(non_camel_case_types)]
 #![warn(missing_docs)]
 #![cfg_attr(docsrs, warn(rustdoc::broken_intra_doc_links))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
+// When on docs.rs we want to show tuple variadics in the docs.
+// This currently requires internal/unstable features in Rustdoc.
+#![cfg_attr(
+    docsrs,
+    feature(doc_cfg, rustdoc_internals),
+    expect(
+        internal_features,
+        reason = "rustdoc_internals is needed for fake_variadic"
+    )
+)]
 
 // public api
 #[cfg(feature = "aio")]
@@ -534,7 +578,9 @@ pub use crate::client::Client;
 pub use crate::cmd::CommandCacheConfig;
 pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter};
 pub use crate::commands::{
-    Commands, ControlFlow, Direction, LposOptions, PubSubCommands, ScanOptions, SetOptions,
+    Commands, ControlFlow, CopyOptions, Direction, FlushAllOptions, FlushDbOptions,
+    HashFieldExpirationOptions, LposOptions, PubSubCommands, ScanOptions, SetOptions,
+    SortedSetAddOptions, TypedCommands, UpdateCheck,
 };
 pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
@@ -553,6 +599,7 @@ pub use crate::types::{
     // utility functions
     from_redis_value,
     from_owned_redis_value,
+    make_extension_error,
 
     // error kinds
     ErrorKind,
@@ -567,9 +614,12 @@ pub use crate::types::{
     Expiry,
     SetExpiry,
     ExistenceCheck,
+    FieldExistenceCheck,
     ExpireOption,
     Role,
     ReplicaInfo,
+    IntegerReplyOrNoOp,
+	ValueType,
 
     // error and result types
     RedisError,
@@ -582,13 +632,14 @@ pub use crate::types::{
     PushKind,
     VerbatimFormat,
     ProtocolVersion,
-    PushInfo
+    PushInfo,
 };
 
 #[cfg(feature = "aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 pub use crate::{
-    cmd::AsyncIter, commands::AsyncCommands, parser::parse_redis_value_async, types::RedisFuture,
+    cmd::AsyncIter, commands::AsyncCommands, commands::AsyncTypedCommands,
+    parser::parse_redis_value_async, types::RedisFuture,
 };
 
 mod macros;
@@ -677,3 +728,16 @@ pub mod io;
 mod parser;
 mod script;
 mod types;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_is_send() {
+        const fn assert_send<T: Send>() {}
+
+        assert_send::<Connection>();
+        #[cfg(feature = "cluster")]
+        assert_send::<cluster::ClusterConnection>();
+    }
+}

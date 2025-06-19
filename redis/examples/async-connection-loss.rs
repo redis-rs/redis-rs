@@ -16,20 +16,8 @@ use redis::RedisResult;
 use tokio::time::interval;
 
 enum Mode {
-    Deprecated,
     Default,
     Reconnect,
-}
-
-async fn run_single<C: ConnectionLike>(mut con: C) -> RedisResult<()> {
-    let mut interval = interval(Duration::from_millis(100));
-    loop {
-        interval.tick().await;
-        println!();
-        println!("> PING");
-        let result: RedisResult<String> = redis::cmd("PING").query_async(&mut con).await;
-        println!("< {result:?}");
-    }
 }
 
 async fn run_multi<C: ConnectionLike + Clone>(mut con: C) -> RedisResult<()> {
@@ -67,10 +55,6 @@ async fn main() -> RedisResult<()> {
             println!("Using reconnect manager mode\n");
             Mode::Reconnect
         }
-        Some("deprecated") => {
-            println!("Using deprecated connection mode\n");
-            Mode::Deprecated
-        }
         Some(_) | None => {
             println!("Usage: reconnect-manager (default|multiplexed|reconnect)");
             process::exit(1);
@@ -81,8 +65,6 @@ async fn main() -> RedisResult<()> {
     match mode {
         Mode::Default => run_multi(client.get_multiplexed_async_connection().await?).await?,
         Mode::Reconnect => run_multi(client.get_connection_manager().await?).await?,
-        #[allow(deprecated)]
-        Mode::Deprecated => run_single(client.get_async_connection().await?).await?,
     };
     Ok(())
 }

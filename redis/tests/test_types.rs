@@ -3,6 +3,7 @@ mod support;
 mod types {
     use std::{
         collections::{HashMap, HashSet},
+        error::Error,
         rc::Rc,
         sync::Arc,
     };
@@ -16,6 +17,43 @@ mod types {
             "Multiplexed connection driver unexpectedly terminated",
         ));
         assert!(err.is_io_error());
+    }
+
+    #[test]
+    fn test_redis_error_source_presence_for_io_wrapped_errors() {
+        let io_error = RedisError::from(std::io::Error::other("I/O failure"));
+        let source = io_error.source();
+        assert_eq!(io_error.kind(), redis::ErrorKind::IoError);
+
+        assert!(source.is_some());
+        assert_eq!(source.unwrap().to_string(), "I/O failure");
+    }
+
+    #[test]
+    fn test_redis_error_source_absence_for_non_io_wrapped_errors() {
+        // Even though the ErrorKind is IoError, no actual I/O error is wrapped, so the source should be None.
+        let simulated_io_error = RedisError::from((ErrorKind::IoError, "Simulated I/O error"));
+        // Similarly this error is not an Extension error, even though it's ErrorKind is ExtensionError
+        let simulated_extension_error =
+            RedisError::from((ErrorKind::ExtensionError, "Simulated extension error"));
+        let simulated_type_error_with_details = RedisError::from((
+            ErrorKind::TypeError,
+            "Simulated type error",
+            "Type error details".to_string(),
+        ));
+
+        let an_extension_error =
+            redis::make_extension_error("A true extension error".to_string(), None);
+        assert_eq!(an_extension_error.kind(), redis::ErrorKind::ExtensionError);
+
+        for error in [
+            simulated_io_error,
+            simulated_extension_error,
+            simulated_type_error_with_details,
+            an_extension_error,
+        ] {
+            assert!(error.source().is_none());
+        }
     }
 
     #[test]
@@ -851,6 +889,31 @@ mod types {
     }
 
     #[test]
+    fn arrays_to_tuples() {
+        for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+            let value = Value::Array(vec![
+                Value::Array(vec![
+                    Value::BulkString(b"Hi1".to_vec()),
+                    Value::BulkString(b"Bye1".to_vec()),
+                ]),
+                Value::Array(vec![
+                    Value::BulkString(b"Hi2".to_vec()),
+                    Value::BulkString(b"Bye2".to_vec()),
+                ]),
+            ]);
+            let res: Vec<(String, String)> = parse_mode.parse_redis_value(value).unwrap();
+
+            assert_eq!(
+                res,
+                vec![
+                    ("Hi1".to_string(), "Bye1".to_string()),
+                    ("Hi2".to_string(), "Bye2".to_string()),
+                ]
+            );
+        }
+    }
+
+    #[test]
     fn test_complex_nested_tuples() {
         for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
             let value = Value::Array(vec![
@@ -870,12 +933,18 @@ mod types {
                     Value::BulkString(b"Bye3".to_vec()),
                     Value::BulkString(b"Hi4".to_vec()),
                     Value::BulkString(b"Bye4".to_vec()),
+                    Value::BulkString(b"Hi5".to_vec()),
+                    Value::BulkString(b"Bye5".to_vec()),
                 ]),
                 Value::Array(vec![
                     Value::BulkString(b"S4".to_vec()),
                     Value::BulkString(b"S5".to_vec()),
-                    Value::BulkString(b"S6".to_vec()),
                 ]),
+                Value::Array(vec![
+                    Value::BulkString(b"Hi6".to_vec()),
+                    Value::BulkString(b"Bye6".to_vec()),
+                ]),
+                Value::Array(vec![Value::BulkString(b"S6".to_vec())]),
             ]);
             let res: Vec<(HashMap<String, String>, Vec<String>)> =
                 parse_mode.parse_redis_value(value).unwrap();
@@ -887,6 +956,10 @@ mod types {
             let mut expected_map2 = HashMap::new();
             expected_map2.insert("Hi3".to_string(), "Bye3".to_string());
             expected_map2.insert("Hi4".to_string(), "Bye4".to_string());
+            expected_map2.insert("Hi5".to_string(), "Bye5".to_string());
+
+            let mut expected_map3 = HashMap::new();
+            expected_map3.insert("Hi6".to_string(), "Bye6".to_string());
 
             assert_eq!(
                 res,
@@ -895,10 +968,8 @@ mod types {
                         expected_map1,
                         vec!["S1".to_string(), "S2".to_string(), "S3".to_string()]
                     ),
-                    (
-                        expected_map2,
-                        vec!["S4".to_string(), "S5".to_string(), "S6".to_string()]
-                    )
+                    (expected_map2, vec!["S4".to_string(), "S5".to_string()]),
+                    (expected_map3, vec!["S6".to_string()])
                 ]
             );
         }

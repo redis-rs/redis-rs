@@ -670,7 +670,7 @@ pub enum SlotAddr {
 }
 
 /// This is just a simplified version of [`Slot`],
-/// which stores only the master and [optional] replica
+/// which stores only the master and optional replica
 /// to avoid the need to choose a replica each time
 /// a command is executed
 #[derive(Debug)]

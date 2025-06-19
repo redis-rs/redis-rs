@@ -231,6 +231,8 @@ pub struct ClusterConfig {
     pub(crate) response_timeout: Option<Duration>,
     #[cfg(feature = "cluster-async")]
     pub(crate) async_push_sender: Option<std::sync::Arc<dyn crate::aio::AsyncPushSender>>,
+    #[cfg(feature = "cluster-async")]
+    pub(crate) async_dns_resolver: Option<std::sync::Arc<dyn crate::io::AsyncDNSResolver>>,
 }
 
 impl ClusterConfig {
@@ -278,6 +280,15 @@ impl ClusterConfig {
     /// });
     pub fn set_push_sender(mut self, sender: impl crate::aio::AsyncPushSender) -> Self {
         self.async_push_sender = Some(std::sync::Arc::new(sender));
+        self
+    }
+
+    /// Set asynchronous DNS resolver for the underlying TCP connection.
+    ///
+    /// The parameter resolver must implement the [`crate::io::AsyncDNSResolver`] trait.
+    #[cfg(feature = "cluster-async")]
+    pub fn set_dns_resolver(mut self, resolver: impl crate::io::AsyncDNSResolver) -> Self {
+        self.async_dns_resolver = Some(std::sync::Arc::new(resolver));
         self
     }
 }

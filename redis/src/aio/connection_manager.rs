@@ -6,7 +6,7 @@ use crate::{
     cmd,
     subscription_tracker::{SubscriptionAction, SubscriptionTracker},
     types::{RedisError, RedisResult, Value},
-    AsyncConnectionConfig, Client, Cmd, Pipeline, PushInfo, PushKind, ToRedisArgs,
+    AsyncConnectionConfig, Client, Cmd, Pipeline, ProtocolVersion, PushInfo, PushKind, ToRedisArgs,
 };
 use arc_swap::ArcSwap;
 use backon::{ExponentialBuilder, Retryable};
@@ -15,6 +15,8 @@ use futures_util::future::{self, BoxFuture, FutureExt, Shared};
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::Mutex;
+
+type OptionalPushSender = Option<Arc<dyn AsyncPushSender>>;
 
 /// The configuration for reconnect mechanism and request timing for the [ConnectionManager]
 #[derive(Clone)]
@@ -144,9 +146,6 @@ impl ConnectionManagerConfig {
     ///
     /// The sender can be a channel, or an arbitrary function that handles [crate::PushInfo] values.
     /// This will fail client creation if the connection isn't configured for RESP3 communications via the [crate::RedisConnectionInfo::protocol] field.
-    /// Setting this will mean that the connection manager actively listens to updates from the
-    /// server, and so it will cause the manager to reconnect after a disconnection, even if the manager was unused at
-    /// the time of the disconnect.
     ///
     /// # Examples
     ///
@@ -256,6 +255,9 @@ struct Internals {
 ///   initiated, will have to await the connection future.
 /// - If reconnecting fails, all pending commands will be failed as well. A
 ///   new reconnection attempt will be triggered if the error is an I/O error.
+/// - If the connection manager uses RESP3 connection,it actively listens to updates from the
+///   server, and so it will cause the manager to reconnect after a disconnection, even if the manager was unused at
+///   the time of the disconnect.
 ///
 /// [multiplexed-connection]: struct.MultiplexedConnection.html
 #[derive(Clone)]
@@ -418,7 +420,13 @@ impl ConnectionManager {
             );
 
             let (internal_sender, internal_receiver) = unbounded_channel();
-            components_for_reconnection_on_push = Some((internal_receiver, push_sender));
+            components_for_reconnection_on_push = Some((internal_receiver, Some(push_sender)));
+
+            connection_config =
+                connection_config.set_push_sender_internal(Arc::new(internal_sender));
+        } else if client.connection_info.redis.protocol != ProtocolVersion::RESP2 {
+            let (internal_sender, internal_receiver) = unbounded_channel();
+            components_for_reconnection_on_push = Some((internal_receiver, None));
 
             connection_config =
                 connection_config.set_push_sender_internal(Arc::new(internal_sender));
@@ -453,7 +461,7 @@ impl ConnectionManager {
                         "Failed to set automatic resubscription",
                     ))
                 })?;
-        }
+        };
 
         Ok(new_self)
     }
@@ -486,11 +494,16 @@ impl ConnectionManager {
     /// The `current` guard points to the shared future that was active
     /// when the connection loss was detected.
     fn reconnect(&self, current: arc_swap::Guard<Arc<SharedRedisFuture<MultiplexedConnection>>>) {
+        let self_clone = self.clone();
+        #[cfg(not(feature = "cache-aio"))]
+        let connection_config = self_clone.0.connection_config.clone();
+        #[cfg(feature = "cache-aio")]
+        let mut connection_config = self_clone.0.connection_config.clone();
         #[cfg(feature = "cache-aio")]
         if let Some(manager) = self.0.cache_manager.as_ref() {
-            manager.invalidate_all();
+            let new_cache_manager = manager.clone_and_increase_epoch();
+            connection_config = connection_config.set_cache_manager(new_cache_manager);
         }
-        let self_clone = self.clone();
         let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
             let additional_commands = match &self_clone.0.subscription_tracker {
                 Some(subscription_tracker) => Some(
@@ -501,10 +514,11 @@ impl ConnectionManager {
                 ),
                 None => None,
             };
+
             let con = Self::new_connection(
                 &self_clone.0.client,
                 self_clone.0.retry_strategy,
-                &self_clone.0.connection_config,
+                &connection_config,
                 additional_commands,
             )
             .await?;
@@ -523,7 +537,7 @@ impl ConnectionManager {
         // If the swap happened...
         if Arc::ptr_eq(&prev, &current) {
             // ...start the connection attempt immediately but do not wait on it.
-            self.0.runtime.spawn(new_connection.map(|_| ()));
+            self.0.runtime.spawn(new_connection.map(|_| ())).detach();
         }
     }
 
@@ -531,7 +545,7 @@ impl ConnectionManager {
         receiver: oneshot::Receiver<(
             ConnectionManager,
             UnboundedReceiver<PushInfo>,
-            Arc<dyn AsyncPushSender>,
+            OptionalPushSender,
         )>,
     ) {
         let Ok((this, mut internal_receiver, external_sender)) = receiver.await else {
@@ -541,8 +555,8 @@ impl ConnectionManager {
             if push_info.kind == PushKind::Disconnection {
                 this.reconnect(this.0.connection.load());
             }
-            if external_sender.send(push_info).is_err() {
-                return;
+            if let Some(sender) = external_sender.as_ref() {
+                let _ = sender.send(push_info);
             }
         }
     }
@@ -593,11 +607,14 @@ impl ConnectionManager {
         let Some(subscription_tracker) = &self.0.subscription_tracker else {
             return;
         };
-        let mut guard = subscription_tracker.lock().await;
-        guard.update_with_request(action, args.to_redis_args().into_iter());
+        let args = args.to_redis_args().into_iter();
+        subscription_tracker
+            .lock()
+            .await
+            .update_with_request(action, args);
     }
 
-    /// Subscribes to a new channel(s).    
+    /// Subscribes to a new channel(s).
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the manager.
     /// If the manager was configured without a push sender, the connection won't be able to pass messages back to the user.
@@ -660,7 +677,7 @@ impl ConnectionManager {
         Ok(())
     }
 
-    /// Gets [`CacheStatistics`] for current connection if caching is enabled.
+    /// Gets [`crate::caching::CacheStatistics`] for current connection if caching is enabled.
     #[cfg(feature = "cache-aio")]
     #[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
     pub fn get_cache_statistics(&self) -> Option<crate::caching::CacheStatistics> {

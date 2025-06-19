@@ -9,6 +9,9 @@
 //! TTL is for key and not per command, when TTL of redis key gets updated, all command pairs of that redis key will use the new one.
 //!
 //! For more information please read <https://redis.io/docs/manual/client-side-caching/>
+//!
+//! **Note:** ClusterConnection usage with Redis instances using 6.x version might give stale duration when resharding happens,
+//! therefore it's recommended to use version 7.x and above.
 
 mod cache_manager;
 pub(crate) mod cmd;

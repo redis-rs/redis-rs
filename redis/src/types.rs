@@ -68,6 +68,15 @@ pub enum ExistenceCheck {
     XX,
 }
 
+/// Helper enum that is used to define field existence checks
+#[derive(Clone, Copy)]
+pub enum FieldExistenceCheck {
+    /// FNX -- Only set the fields if all do not already exist.
+    FNX,
+    /// FXX -- Only set the fields if all already exist.
+    FXX,
+}
+
 /// Helper enum that is used in some situations to describe
 /// the behavior of arguments in a numeric context.
 #[derive(PartialEq, Eq, Clone, Debug, Copy)]
@@ -542,6 +551,15 @@ impl Value {
         }
         Ok(vec)
     }
+
+    fn is_collection_of_len(&self, len: usize) -> bool {
+        match self {
+            Value::Array(values) => values.len() == len,
+            Value::Map(items) => items.len() * 2 == len,
+            Value::Set(values) => values.len() == len,
+            _ => false,
+        }
+    }
 }
 
 impl fmt::Debug for Value {
@@ -754,6 +772,13 @@ impl error::Error for RedisError {
     fn cause(&self) -> Option<&dyn error::Error> {
         match self.repr {
             ErrorRepr::IoError(ref err) => Some(err as &dyn error::Error),
+            _ => None,
+        }
+    }
+
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        match self.repr {
+            ErrorRepr::IoError(ref err) => Some(err),
             _ => None,
         }
     }
@@ -1078,6 +1103,19 @@ impl RedisError {
     }
 }
 
+/// Creates a new Redis error with the `ExtensionError` kind.
+///
+/// This function is used to create Redis errors for extension error codes
+/// that are not directly understood by the library.
+///
+/// # Arguments
+///
+/// * `code` - The error code string returned by the Redis server
+/// * `detail` - Optional detailed error message. If None, a default message is used.
+///
+/// # Returns
+///
+/// A `RedisError` with the `ExtensionError` kind.
 pub fn make_extension_error(code: String, detail: Option<String>) -> RedisError {
     RedisError {
         repr: ErrorRepr::ExtensionError(
@@ -1341,7 +1379,118 @@ pub trait RedisWrite {
 
     /// Appends an empty argument to the command, and returns a
     /// [`std::io::Write`] instance that can write to it.
+    ///
+    /// Writing multiple arguments into this buffer is unsupported. The resulting
+    /// data will be interpreted as one argument by Redis.
+    ///
+    /// Writing no data is supported and is similar to having an empty bytestring
+    /// as an argument.
     fn writer_for_next_arg(&mut self) -> impl std::io::Write + '_;
+
+    /// Reserve space for `additional` arguments in the command
+    ///
+    /// `additional` is a list of the byte sizes of the arguments.
+    ///
+    /// # Examples
+    /// Sending some Protobufs with `prost` to Redis.
+    /// ```rust,ignore
+    /// use prost::Message;
+    ///
+    /// let to_send: Vec<SomeType> = todo!();
+    /// let mut cmd = Cmd::new();
+    ///
+    /// // Calculate and reserve the space for the args
+    /// cmd.reserve_space_for_args(to_send.iter().map(Message::encoded_len));
+    ///
+    /// // Write the args to the buffer
+    /// for arg in to_send {
+    ///     // Encode the type directly into the Cmd buffer
+    ///     // Supplying the required capacity again is not needed for Cmd,
+    ///     // but can be useful for other implementers like Vec<Vec<u8>>.
+    ///     arg.encode(cmd.bufmut_for_next_arg(arg.encoded_len()));
+    /// }
+    ///
+    /// ```
+    ///
+    /// # Implementation note
+    /// The default implementation provided by this trait is a no-op. It's therefore strongly
+    /// recommended to implement this function. Depending on the internal buffer it might only
+    /// be possible to use the numbers of arguments (`additional.len()`) or the total expected
+    /// capacity (`additional.iter().sum()`). Implementors should assume that the caller will
+    /// be wrong and might over or under specify the amount of arguments and space required.
+    fn reserve_space_for_args(&mut self, additional: impl IntoIterator<Item = usize>) {
+        // _additional would show up in the documentation, so we assign it
+        // to make it used.
+        let _do_nothing = additional;
+    }
+
+    #[cfg(feature = "bytes")]
+    /// Appends an empty argument to the command, and returns a
+    /// [`bytes::BufMut`] instance that can write to it.
+    ///
+    /// `capacity` should be equal or greater to the amount of bytes
+    /// expected, as some implementations might not be able to resize
+    /// the returned buffer.
+    ///
+    /// Writing multiple arguments into this buffer is unsupported. The resulting
+    /// data will be interpreted as one argument by Redis.
+    ///
+    /// Writing no data is supported and is similar to having an empty bytestring
+    /// as an argument.
+    fn bufmut_for_next_arg(&mut self, capacity: usize) -> impl bytes::BufMut + '_ {
+        // This default implementation is not the most efficient, but does
+        // allow for implementers to skip this function. This means that
+        // upstream libraries that implement this trait don't suddenly
+        // stop working because someone enabled one of the async features.
+
+        /// Has a temporary buffer that is written to [`writer_for_next_arg`]
+        /// on drop.
+        struct Wrapper<'a> {
+            /// The buffer, implements [`bytes::BufMut`] allowing passthrough
+            buf: Vec<u8>,
+            /// The writer to the command, used on drop
+            writer: Box<dyn std::io::Write + 'a>,
+        }
+        unsafe impl bytes::BufMut for Wrapper<'_> {
+            fn remaining_mut(&self) -> usize {
+                self.buf.remaining_mut()
+            }
+
+            unsafe fn advance_mut(&mut self, cnt: usize) {
+                self.buf.advance_mut(cnt);
+            }
+
+            fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {
+                self.buf.chunk_mut()
+            }
+
+            // Vec specializes these methods, so we do too
+            fn put<T: bytes::buf::Buf>(&mut self, src: T)
+            where
+                Self: Sized,
+            {
+                self.buf.put(src);
+            }
+
+            fn put_slice(&mut self, src: &[u8]) {
+                self.buf.put_slice(src);
+            }
+
+            fn put_bytes(&mut self, val: u8, cnt: usize) {
+                self.buf.put_bytes(val, cnt);
+            }
+        }
+        impl Drop for Wrapper<'_> {
+            fn drop(&mut self) {
+                self.writer.write_all(&self.buf).unwrap()
+            }
+        }
+
+        Wrapper {
+            buf: Vec::with_capacity(capacity),
+            writer: Box::new(self.writer_for_next_arg()),
+        }
+    }
 }
 
 impl RedisWrite for Vec<Vec<u8>> {
@@ -1355,6 +1504,20 @@ impl RedisWrite for Vec<Vec<u8>> {
 
     fn writer_for_next_arg(&mut self) -> impl std::io::Write + '_ {
         self.push(Vec::new());
+        self.last_mut().unwrap()
+    }
+
+    fn reserve_space_for_args(&mut self, additional: impl IntoIterator<Item = usize>) {
+        // It would be nice to do this, but there's no way to store where we currently are.
+        // Checking for the first empty Vec is not possible, as it's valid to write empty args.
+        // self.extend(additional.iter().copied().map(Vec::with_capacity));
+        // So we just reserve space for the extra args and have to forgo the extra optimisation
+        self.reserve(additional.into_iter().count());
+    }
+
+    #[cfg(feature = "bytes")]
+    fn bufmut_for_next_arg(&mut self, capacity: usize) -> impl bytes::BufMut + '_ {
+        self.push(Vec::with_capacity(capacity));
         self.last_mut().unwrap()
     }
 }
@@ -1516,6 +1679,8 @@ itoa_based_to_redis_impl!(i32, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(u32, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(i64, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(u64, NumericBehavior::NumberIsInteger);
+itoa_based_to_redis_impl!(i128, NumericBehavior::NumberIsInteger);
+itoa_based_to_redis_impl!(u128, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(isize, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(usize, NumericBehavior::NumberIsInteger);
 
@@ -1527,6 +1692,8 @@ non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU32, NumericBehavior::Numbe
 non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI32, NumericBehavior::NumberIsInteger);
 non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU64, NumericBehavior::NumberIsInteger);
 non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI64, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroU128, NumericBehavior::NumberIsInteger);
+non_zero_itoa_based_to_redis_impl!(core::num::NonZeroI128, NumericBehavior::NumberIsInteger);
 non_zero_itoa_based_to_redis_impl!(core::num::NonZeroUsize, NumericBehavior::NumberIsInteger);
 non_zero_itoa_based_to_redis_impl!(core::num::NonZeroIsize, NumericBehavior::NumberIsInteger);
 
@@ -1811,8 +1978,8 @@ impl_to_redis_args_for_map!(
 
 macro_rules! to_redis_args_for_tuple {
     () => ();
-    ($($name:ident,)+) => (
-        #[doc(hidden)]
+    ($(#[$meta:meta],)*$($name:ident,)+) => (
+        $(#[$meta])*
         impl<$($name: ToRedisArgs),*> ToRedisArgs for ($($name,)*) {
             // we have local variables named T1 as dummies and those
             // variables are unused.
@@ -1829,18 +1996,21 @@ macro_rules! to_redis_args_for_tuple {
                 n
             }
         }
-        to_redis_args_for_tuple_peel!($($name,)*);
     )
 }
 
-/// This chips of the leading one and recurses for the rest.  So if the first
-/// iteration was T1, T2, T3 it will recurse to T2, T3.  It stops for tuples
-/// of size 1 (does not implement down to unit).
-macro_rules! to_redis_args_for_tuple_peel {
-    ($name:ident, $($other:ident,)*) => (to_redis_args_for_tuple!($($other,)*);)
-}
-
-to_redis_args_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
+to_redis_args_for_tuple! { #[cfg_attr(docsrs, doc(fake_variadic))], #[doc = "This trait is implemented for tuples up to 12 items long."], T, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, }
+to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
 
 impl<T: ToRedisArgs, const N: usize> ToRedisArgs for &[T; N] {
     fn write_redis_args<W>(&self, out: &mut W)
@@ -1937,6 +2107,15 @@ pub trait FromRedisValue: Sized {
     /// The same as `from_redis_values`, but takes a `Vec<Value>` instead
     /// of a `&[Value]`.
     fn from_owned_redis_values(items: Vec<Value>) -> RedisResult<Vec<Self>> {
+        items
+            .into_iter()
+            .map(FromRedisValue::from_owned_redis_value)
+            .collect()
+    }
+
+    /// The same as `from_owned_redis_values`, but returns a result for each
+    /// conversion to make handling them case-by-case possible.
+    fn from_each_owned_redis_values(items: Vec<Value>) -> Vec<RedisResult<Self>> {
         items
             .into_iter()
             .map(FromRedisValue::from_owned_redis_value)
@@ -2401,49 +2580,50 @@ impl FromRedisValue for () {
 
 macro_rules! from_redis_value_for_tuple {
     () => ();
-    ($($name:ident,)+) => (
-        #[doc(hidden)]
+    ($(#[$meta:meta],)*$($name:ident,)+) => (
+        $(#[$meta])*
         impl<$($name: FromRedisValue),*> FromRedisValue for ($($name,)*) {
             // we have local variables named T1 as dummies and those
             // variables are unused.
             #[allow(non_snake_case, unused_variables)]
             fn from_redis_value(v: &Value) -> RedisResult<($($name,)*)> {
                 let v = get_inner_value(v);
+                // hacky way to count the tuple size
+                let mut n = 0;
+                $(let $name = (); n += 1;)*
+
                 match *v {
                     Value::Array(ref items) => {
-                        // hacky way to count the tuple size
-                        let mut n = 0;
-                        $(let $name = (); n += 1;)*
                         if items.len() != n {
                             invalid_type_error!(v, "Array response of wrong dimension")
                         }
 
-                        // this is pretty ugly too.  The { i += 1; i - 1} is rust's
-                        // postfix increment :)
+                        // The { i += 1; i - 1} is rust's postfix increment :)
+                        let mut i = 0;
+                        Ok(($({let $name = (); from_redis_value(
+                             &items[{ i += 1; i - 1 }])?},)*))
+                    }
+
+                    Value::Set(ref items) => {
+                        if items.len() != n {
+                            invalid_type_error!(v, "Set response of wrong dimension")
+                        }
+
+                        // The { i += 1; i - 1} is rust's postfix increment :)
                         let mut i = 0;
                         Ok(($({let $name = (); from_redis_value(
                              &items[{ i += 1; i - 1 }])?},)*))
                     }
 
                     Value::Map(ref items) => {
-                        // hacky way to count the tuple size
-                        let mut n = 0;
-                        $(let $name = (); n += 1;)*
-                        if n != 2 {
+                        if n != items.len() * 2 {
                             invalid_type_error!(v, "Map response of wrong dimension")
                         }
 
-                        let mut flatten_items = vec![];
-                        for (k,v) in items {
-                            flatten_items.push(k);
-                            flatten_items.push(v);
-                        }
+                        let mut flatten_items = items.iter().map(|(a,b)|[a,b]).flatten();
 
-                        // this is pretty ugly too.  The { i += 1; i - 1} is rust's
-                        // postfix increment :)
-                        let mut i = 0;
                         Ok(($({let $name = (); from_redis_value(
-                             &flatten_items[{ i += 1; i - 1 }])?},)*))
+                             &flatten_items.next().unwrap())?},)*))
                     }
 
                     _ => invalid_type_error!(v, "Not a Array response")
@@ -2455,17 +2635,28 @@ macro_rules! from_redis_value_for_tuple {
             #[allow(non_snake_case, unused_variables)]
             fn from_owned_redis_value(v: Value) -> RedisResult<($($name,)*)> {
                 let v = get_owned_inner_value(v);
+                // hacky way to count the tuple size
+                let mut n = 0;
+                $(let $name = (); n += 1;)*
                 match v {
                     Value::Array(mut items) => {
-                        // hacky way to count the tuple size
-                        let mut n = 0;
-                        $(let $name = (); n += 1;)*
                         if items.len() != n {
                             invalid_type_error!(Value::Array(items), "Array response of wrong dimension")
                         }
 
-                        // this is pretty ugly too.  The { i += 1; i - 1} is rust's
-                        // postfix increment :)
+                        // The { i += 1; i - 1} is rust's postfix increment :)
+                        let mut i = 0;
+                        Ok(($({let $name = (); from_owned_redis_value(
+                            ::std::mem::replace(&mut items[{ i += 1; i - 1 }], Value::Nil)
+                        )?},)*))
+                    }
+
+                    Value::Set(mut items) => {
+                        if items.len() != n {
+                            invalid_type_error!(Value::Array(items), "Set response of wrong dimension")
+                        }
+
+                        // The { i += 1; i - 1} is rust's postfix increment :)
                         let mut i = 0;
                         Ok(($({let $name = (); from_owned_redis_value(
                             ::std::mem::replace(&mut items[{ i += 1; i - 1 }], Value::Nil)
@@ -2473,24 +2664,15 @@ macro_rules! from_redis_value_for_tuple {
                     }
 
                     Value::Map(items) => {
-                        // hacky way to count the tuple size
-                        let mut n = 0;
-                        $(let $name = (); n += 1;)*
-                        if n != 2 {
+                        if n != items.len() * 2 {
                             invalid_type_error!(Value::Map(items), "Map response of wrong dimension")
                         }
 
-                        let mut flatten_items = vec![];
-                        for (k,v) in items {
-                            flatten_items.push(k);
-                            flatten_items.push(v);
-                        }
+                        let mut flatten_items = items.into_iter().map(|(a,b)|[a,b]).flatten();
 
-                        // this is pretty ugly too.  The { i += 1; i - 1} is rust's
-                        // postfix increment :)
-                        let mut i = 0;
-                        Ok(($({let $name = (); from_redis_value(
-                             &flatten_items[{ i += 1; i - 1 }])?},)*))
+                        Ok(($({let $name = (); from_owned_redis_value(
+                            ::std::mem::replace(&mut flatten_items.next().unwrap(), Value::Nil)
+                        )?},)*))
                     }
 
                     _ => invalid_type_error!(v, "Not a Array response")
@@ -2502,31 +2684,20 @@ macro_rules! from_redis_value_for_tuple {
                 // hacky way to count the tuple size
                 let mut n = 0;
                 $(let $name = (); n += 1;)*
-                let mut rv = vec![];
                 if items.len() == 0 {
-                    return Ok(rv)
-                }
-                //It's uglier then before!
-                for item in items {
-                    match item {
-                        Value::Array(ch) => {
-                           if  let [$($name),*] = &ch[..] {
-                            rv.push(($(from_redis_value(&$name)?),*),)
-                           };
-                        },
-                        _ => {},
-
-                    }
-                }
-                if !rv.is_empty(){
-                    return Ok(rv);
+                    return Ok(vec![]);
                 }
 
-                if let  [$($name),*] = items{
+                if items.iter().all(|item|item.is_collection_of_len(n)) {
+                    return items.iter().map(|item|from_redis_value(item)).collect();
+                }
+
+                let mut rv = Vec::with_capacity(items.len() / n);
+                if let [$($name),*] = items{
                     rv.push(($(from_redis_value($name)?),*),);
                     return Ok(rv);
                 }
-                 for chunk in items.chunks_exact(n) {
+                for chunk in items.chunks_exact(n) {
                     match chunk {
                         [$($name),*] => rv.push(($(from_redis_value($name)?),*),),
                          _ => {},
@@ -2536,34 +2707,56 @@ macro_rules! from_redis_value_for_tuple {
             }
 
             #[allow(non_snake_case, unused_variables)]
+            fn from_each_owned_redis_values(mut items: Vec<Value>) -> Vec<RedisResult<($($name,)*)>> {
+
+                #[allow(unused_parens)]
+                let extract = |val: ($(RedisResult<$name>),*)| -> RedisResult<($($name,)*)> {
+                    let ($($name),*) = val;
+                    Ok(($($name?),*,))
+                };
+
+                // hacky way to count the tuple size
+                let mut n = 0;
+                $(let $name = (); n += 1;)*
+
+                // let mut rv = vec![];
+                if items.len() == 0 {
+                    return vec![];
+                }
+                if items.iter().all(|item|item.is_collection_of_len(n)) {
+                    return items.into_iter().map(|item|from_owned_redis_value(item)).collect();
+                }
+
+                let mut rv = Vec::with_capacity(items.len() / n);
+
+                for chunk in items.chunks_mut(n) {
+                    match chunk {
+                        // Take each element out of the chunk with `std::mem::replace`, leaving a `Value::Nil`
+                        // in its place. This allows each `Value` to be parsed without being copied.
+                        // Since `items` is consumed by this function and not used later, this replacement
+                        // is not observable to the rest of the code.
+                        [$($name),*] => rv.push(extract(($(from_owned_redis_value(std::mem::replace($name, Value::Nil))),*))),
+                         _ => unreachable!(),
+                    }
+                }
+                rv
+            }
+
+            #[allow(non_snake_case, unused_variables)]
             fn from_owned_redis_values(mut items: Vec<Value>) -> RedisResult<Vec<($($name,)*)>> {
                 // hacky way to count the tuple size
                 let mut n = 0;
                 $(let $name = (); n += 1;)*
 
-                let mut rv = vec![];
+                // let mut rv = vec![];
                 if items.len() == 0 {
-                    return Ok(rv)
+                    return Ok(vec![])
                 }
-                //It's uglier then before!
-                for item in items.iter_mut() {
-                    match item {
-                        Value::Array(ref mut ch) => {
-                        if  let [$($name),*] = &mut ch[..] {
-                            rv.push(($(from_owned_redis_value(std::mem::replace($name, Value::Nil))?),*),);
-                           };
-                        },
-                        _ => {},
-                    }
-                }
-                if !rv.is_empty(){
-                    return Ok(rv);
+                if items.iter().all(|item|item.is_collection_of_len(n)) {
+                    return items.into_iter().map(|item|from_owned_redis_value(item)).collect();
                 }
 
                 let mut rv = Vec::with_capacity(items.len() / n);
-                if items.len() == 0 {
-                    return Ok(rv)
-                }
                 for chunk in items.chunks_mut(n) {
                     match chunk {
                         // Take each element out of the chunk with `std::mem::replace`, leaving a `Value::Nil`
@@ -2577,18 +2770,21 @@ macro_rules! from_redis_value_for_tuple {
                 Ok(rv)
             }
         }
-        from_redis_value_for_tuple_peel!($($name,)*);
     )
 }
 
-/// This chips of the leading one and recurses for the rest.  So if the first
-/// iteration was T1, T2, T3 it will recurse to T2, T3.  It stops for tuples
-/// of size 1 (does not implement down to unit).
-macro_rules! from_redis_value_for_tuple_peel {
-    ($name:ident, $($other:ident,)*) => (from_redis_value_for_tuple!($($other,)*);)
-}
-
-from_redis_value_for_tuple! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
+from_redis_value_for_tuple! { #[cfg_attr(docsrs, doc(fake_variadic))], #[doc = "This trait is implemented for tuples up to 12 items long."], T, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, }
+from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
 
 impl FromRedisValue for InfoDict {
     fn from_redis_value(v: &Value) -> RedisResult<InfoDict> {
@@ -2737,4 +2933,139 @@ pub(crate) type SyncPushSender = std::sync::mpsc::Sender<PushInfo>;
 #[cfg(any(feature = "aio", feature = "r2d2"))]
 pub(crate) fn closed_connection_error() -> RedisError {
     RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
+}
+
+/// Possible types of value held in Redis: [Redis Docs](https://redis.io/docs/latest/commands/type/)
+#[derive(Debug, Clone, PartialEq)]
+pub enum ValueType {
+    /// Generally returned by anything that returns a single element. [Redis Docs](https://redis.io/docs/latest/develop/data-types/strings/)
+    String,
+    /// A list of String values. [Redis Docs](https://redis.io/docs/latest/develop/data-types/lists/)
+    List,
+    /// A set of unique String values. [Redis Docs](https://redis.io/docs/latest/develop/data-types/sets/)
+    Set,
+    /// A sorted set of String values. [Redis Docs](https://redis.io/docs/latest/develop/data-types/sorted-sets/)
+    ZSet,
+    /// A collection of field-value pairs. [Redis Docs](https://redis.io/docs/latest/develop/data-types/hashes/)
+    Hash,
+    /// A Redis Stream. [Redis Docs](https://redis.io/docs/latest/develop/data-types/stream)
+    Stream,
+    /// Any other value type not explicitly defined in [Redis Docs](https://redis.io/docs/latest/commands/type/)
+    Unknown(String),
+}
+
+impl FromRedisValue for ValueType {
+    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+        match v {
+            Value::SimpleString(s) => match s.as_str() {
+                "string" => Ok(ValueType::String),
+                "list" => Ok(ValueType::List),
+                "set" => Ok(ValueType::Set),
+                "zset" => Ok(ValueType::ZSet),
+                "hash" => Ok(ValueType::Hash),
+                "stream" => Ok(ValueType::Stream),
+                _ => Ok(ValueType::Unknown(s.clone())),
+            },
+            _ => invalid_type_error!(v, "Value type should be a simple string"),
+        }
+    }
+
+    fn from_owned_redis_value(v: Value) -> RedisResult<Self> {
+        match v {
+            Value::SimpleString(s) => match s.as_str() {
+                "string" => Ok(ValueType::String),
+                "list" => Ok(ValueType::List),
+                "set" => Ok(ValueType::Set),
+                "zset" => Ok(ValueType::ZSet),
+                "hash" => Ok(ValueType::Hash),
+                "stream" => Ok(ValueType::Stream),
+                _ => Ok(ValueType::Unknown(s)),
+            },
+            _ => invalid_type_error!(v, "Value type should be a simple string"),
+        }
+    }
+}
+
+/// Returned by typed commands which either return a positive integer or some negative integer indicating some kind of no-op.
+#[derive(Debug, PartialEq, Clone)]
+pub enum IntegerReplyOrNoOp {
+    /// A positive integer reply indicating success of some kind.
+    IntegerReply(usize),
+    /// The field/key you are trying to operate on does not exist.
+    NotExists,
+    /// The field/key you are trying to operate on exists but is not of the correct type or does not have some property you are trying to affect.
+    ExistsButNotRelevant,
+}
+
+impl IntegerReplyOrNoOp {
+    /// Returns the integer value of the reply.
+    pub fn raw(&self) -> isize {
+        match self {
+            IntegerReplyOrNoOp::IntegerReply(s) => *s as isize,
+            IntegerReplyOrNoOp::NotExists => -2,
+            IntegerReplyOrNoOp::ExistsButNotRelevant => -1,
+        }
+    }
+}
+
+impl FromRedisValue for IntegerReplyOrNoOp {
+    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+        match v {
+            Value::Int(s) => match s {
+                -2 => Ok(IntegerReplyOrNoOp::NotExists),
+                -1 => Ok(IntegerReplyOrNoOp::ExistsButNotRelevant),
+                _ => Ok(IntegerReplyOrNoOp::IntegerReply(*s as usize)),
+            },
+            _ => invalid_type_error!(v, "Value should be an integer"),
+        }
+    }
+
+    fn from_owned_redis_value(v: Value) -> RedisResult<Self> {
+        match v {
+            Value::Int(s) => match s {
+                -2 => Ok(IntegerReplyOrNoOp::NotExists),
+                -1 => Ok(IntegerReplyOrNoOp::ExistsButNotRelevant),
+                _ => Ok(IntegerReplyOrNoOp::IntegerReply(s as usize)),
+            },
+            _ => invalid_type_error!(v, "Value should be an integer"),
+        }
+    }
+}
+
+impl PartialEq<isize> for IntegerReplyOrNoOp {
+    fn eq(&self, other: &isize) -> bool {
+        match self {
+            IntegerReplyOrNoOp::IntegerReply(s) => *s as isize == *other,
+            IntegerReplyOrNoOp::NotExists => *other == -2,
+            IntegerReplyOrNoOp::ExistsButNotRelevant => *other == -1,
+        }
+    }
+}
+
+impl PartialEq<usize> for IntegerReplyOrNoOp {
+    fn eq(&self, other: &usize) -> bool {
+        match self {
+            IntegerReplyOrNoOp::IntegerReply(s) => *s == *other,
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq<i32> for IntegerReplyOrNoOp {
+    fn eq(&self, other: &i32) -> bool {
+        match self {
+            IntegerReplyOrNoOp::IntegerReply(s) => *s as i32 == *other,
+            IntegerReplyOrNoOp::NotExists => *other == -2,
+            IntegerReplyOrNoOp::ExistsButNotRelevant => *other == -1,
+        }
+    }
+}
+
+impl PartialEq<u32> for IntegerReplyOrNoOp {
+    fn eq(&self, other: &u32) -> bool {
+        match self {
+            IntegerReplyOrNoOp::IntegerReply(s) => *s as u32 == *other,
+            _ => false,
+        }
+    }
 }

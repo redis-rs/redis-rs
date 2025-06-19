@@ -7,7 +7,7 @@ use crate::support::*;
 use redis::sentinel::SentinelClientBuilder;
 use redis::{
     sentinel::{Sentinel, SentinelClient, SentinelNodeConnectionInfo},
-    Client, Connection, ConnectionAddr, ConnectionInfo, Role,
+    Client, Connection, ConnectionAddr, ConnectionInfo, ErrorKind, RedisError, Role,
 };
 
 fn parse_replication_info(value: &str) -> HashMap<&str, &str> {
@@ -246,7 +246,7 @@ fn test_sentinel_server_down() {
 }
 
 #[test]
-fn test_sentinel_client() {
+fn test_sentinel_redis_client() {
     let master_name = "master1";
     let mut context = TestSentinelContext::new(2, 3, 3);
     for sentinel in context.sentinels_connection_info() {
@@ -293,6 +293,88 @@ fn test_sentinel_client() {
 
         assert_connection_is_replica_of_correct_master(&mut replica_con, &master_client);
     }
+}
+
+#[test]
+fn test_sentinel_client() {
+    let master_name = "master1";
+    let context = TestSentinelContext::new(2, 3, 3);
+    let mut master_client = SentinelClient::build(
+        context.sentinels_connection_info().clone(),
+        String::from(master_name),
+        Some(context.sentinel_node_connection_info()),
+        redis::sentinel::SentinelServerType::Master,
+    )
+    .unwrap();
+
+    let mut replica_client = SentinelClient::build(
+        context.sentinels_connection_info().clone(),
+        String::from(master_name),
+        Some(context.sentinel_node_connection_info()),
+        redis::sentinel::SentinelServerType::Replica,
+    )
+    .unwrap();
+
+    let sentinel_client_1 = master_client.get_sentinel_client().unwrap();
+    let sentinel_client_2 = replica_client.get_sentinel_client().unwrap();
+    let first_configured_sentinel = context.sentinels_connection_info.first().unwrap();
+
+    assert_eq!(
+        sentinel_client_1.get_connection_info().addr,
+        sentinel_client_2.get_connection_info().addr
+    );
+
+    assert_eq!(
+        first_configured_sentinel.addr,
+        sentinel_client_2.get_connection_info().addr
+    );
+}
+
+#[test]
+fn test_sentinel_client_io_error() {
+    let master_name = "master1";
+
+    let mut master_client = SentinelClient::build(
+        vec!["redis://test:6379"],
+        String::from(master_name),
+        None,
+        redis::sentinel::SentinelServerType::Master,
+    )
+    .unwrap();
+
+    let sentinel_client = master_client.get_sentinel_client();
+    let err = sentinel_client.expect_err("Expected an error");
+    assert!(err.is_io_error());
+}
+
+#[test]
+fn test_sentinel_client_not_sentinel_error() {
+    let master_name = "master1";
+    let mut context = TestSentinelContext::new(2, 3, 3);
+    // Change the context with incorrect sentinel servers
+    context.sentinels_connection_info = context
+        .cluster
+        .servers
+        .iter()
+        .map(|redis_server| redis_server.connection_info().clone())
+        .collect::<Vec<_>>();
+    let mut master_client = SentinelClient::build(
+        context.sentinels_connection_info().clone(),
+        String::from(master_name),
+        None,
+        redis::sentinel::SentinelServerType::Master,
+    )
+    .unwrap();
+
+    let sentinel_client = master_client.get_sentinel_client();
+    let err = sentinel_client.expect_err("Expected an error");
+    assert_eq!(
+        err,
+        RedisError::from((
+            ErrorKind::InvalidClientConfig,
+            "Couldn't open connection to a sentinel node."
+        ))
+    );
 }
 
 #[test]
@@ -375,7 +457,7 @@ pub mod async_tests {
     use redis::{
         aio::MultiplexedConnection,
         sentinel::{Sentinel, SentinelClient, SentinelNodeConnectionInfo},
-        AsyncConnectionConfig, Client, ConnectionAddr, RedisError,
+        AsyncConnectionConfig, Client, ConnectionAddr, ErrorKind, RedisError,
     };
     use rstest::rstest;
 
@@ -465,8 +547,9 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_connect_to_random_replica_async(#[case] runtime: RuntimeType) {
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);
@@ -501,8 +584,9 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_connect_to_multiple_replicas_async(#[case] runtime: RuntimeType) {
         let number_of_replicas = 3;
         let master_name = "master1";
@@ -546,8 +630,9 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_server_down_async(#[case] runtime: RuntimeType) {
         let number_of_replicas = 3;
         let master_name = "master1";
@@ -597,9 +682,10 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
-    fn test_sentinel_client_async(#[case] runtime: RuntimeType) {
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+    fn test_sentinel_redis_client_async(#[case] runtime: RuntimeType) {
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);
         let mut master_client = SentinelClient::build(
@@ -649,8 +735,123 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+    fn test_sentinel_client_async(#[case] runtime: RuntimeType) {
+        let master_name = "master1";
+        let context = TestSentinelContext::new(2, 3, 3);
+        let mut master_client = SentinelClient::build(
+            context.sentinels_connection_info().clone(),
+            String::from(master_name),
+            Some(context.sentinel_node_connection_info()),
+            redis::sentinel::SentinelServerType::Master,
+        )
+        .unwrap();
+
+        let mut replica_client = SentinelClient::build(
+            context.sentinels_connection_info().clone(),
+            String::from(master_name),
+            Some(context.sentinel_node_connection_info()),
+            redis::sentinel::SentinelServerType::Replica,
+        )
+        .unwrap();
+
+        block_on_all(
+            async move {
+                let sentinel_client_1 = master_client.async_get_sentinel_client().await?;
+                let sentinel_client_2 = replica_client.async_get_sentinel_client().await?;
+                let first_configured_sentinel = context.sentinels_connection_info.first().unwrap();
+
+                assert_eq!(
+                    sentinel_client_1.get_connection_info().addr,
+                    sentinel_client_2.get_connection_info().addr
+                );
+
+                assert_eq!(
+                    first_configured_sentinel.addr,
+                    sentinel_client_2.get_connection_info().addr
+                );
+
+                Ok::<(), RedisError>(())
+            },
+            runtime,
+        )
+        .unwrap();
+    }
+
+    #[rstest]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+    fn test_sentinel_client_async_not_sentinel_error(#[case] runtime: RuntimeType) {
+        let master_name = "master1";
+
+        let mut context = TestSentinelContext::new(2, 3, 3);
+        // Change the context with incorrect sentinel servers
+        context.sentinels_connection_info = context
+            .cluster
+            .servers
+            .iter()
+            .map(|redis_server| redis_server.connection_info().clone())
+            .collect::<Vec<_>>();
+        let mut master_client = SentinelClient::build(
+            context.sentinels_connection_info().clone(),
+            String::from(master_name),
+            Some(context.sentinel_node_connection_info()),
+            redis::sentinel::SentinelServerType::Master,
+        )
+        .unwrap();
+
+        block_on_all(
+            async move {
+                let sentinel_client = master_client.async_get_sentinel_client().await;
+                let err = sentinel_client.expect_err("Expected an error");
+                assert_eq!(
+                    err,
+                    RedisError::from((
+                        ErrorKind::InvalidClientConfig,
+                        "Couldn't open connection to a sentinel node."
+                    ))
+                );
+                Ok::<(), RedisError>(())
+            },
+            runtime,
+        )
+        .unwrap();
+    }
+
+    #[rstest]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+    fn test_sentinel_client_async_io_error(#[case] runtime: RuntimeType) {
+        let master_name = "master1";
+
+        let mut master_client = SentinelClient::build(
+            vec!["redis://test:6379"],
+            String::from(master_name),
+            None,
+            redis::sentinel::SentinelServerType::Master,
+        )
+        .unwrap();
+
+        block_on_all(
+            async move {
+                let sentinel_client = master_client.async_get_sentinel_client().await;
+                let err = sentinel_client.expect_err("Expected an error");
+                assert!(err.is_io_error());
+                Ok::<(), RedisError>(())
+            },
+            runtime,
+        )
+        .unwrap();
+    }
+
+    #[rstest]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_client_async_with_connection_timeout(#[case] runtime: RuntimeType) {
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);
@@ -708,8 +909,9 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_client_async_with_response_timeout(#[case] runtime: RuntimeType) {
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);
@@ -767,8 +969,9 @@ pub mod async_tests {
     }
 
     #[rstest]
-    #[case::tokio(RuntimeType::Tokio)]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_sentinel_client_async_with_timeouts(#[case] runtime: RuntimeType) {
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);

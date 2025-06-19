@@ -3,7 +3,6 @@ use crate::aio::{check_resp3, setup_connection};
 #[cfg(feature = "cache-aio")]
 use crate::caching::{CacheManager, CacheStatistics, PrepareCacheResult};
 use crate::cmd::Cmd;
-#[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use crate::parser::ValueCodec;
 use crate::types::{closed_connection_error, RedisError, RedisFuture, RedisResult, Value};
 use crate::{
@@ -27,7 +26,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{self, Poll};
 use std::time::Duration;
-#[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
 use tokio_util::codec::Decoder;
 
 // Senders which the result of a single request are sent through
@@ -357,11 +355,9 @@ impl Pipeline {
         #[cfg(feature = "cache-aio")] cache_manager: Option<CacheManager>,
     ) -> (Self, impl Future<Output = ()>)
     where
-        T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
-        T: Send + 'static,
-        T::Item: Send,
-        T::Error: Send,
-        T::Error: ::std::fmt::Debug,
+        T: Sink<Vec<u8>, Error = RedisError>,
+        T: Stream<Item = RedisResult<Value>>,
+        T: Unpin + Send + 'static,
     {
         const BUFFER_SIZE: usize = 50;
         let (sender, mut receiver) = mpsc::channel(BUFFER_SIZE);
@@ -496,10 +492,7 @@ impl MultiplexedConnection {
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
-        #[cfg(all(not(feature = "tokio-comp"), not(feature = "async-std-comp")))]
-        compile_error!("tokio-comp or async-std-comp features required for aio feature");
-
-        let codec = ValueCodec::default().framed(stream);
+        let mut codec = ValueCodec::default().framed(stream);
         if config.push_sender.is_some() {
             check_resp3!(
                 connection_info.protocol,
@@ -510,7 +503,7 @@ impl MultiplexedConnection {
         #[cfg(feature = "cache-aio")]
         let cache_config = config.cache.as_ref().map(|cache| match cache {
             crate::client::Cache::Config(cache_config) => *cache_config,
-            #[cfg(feature = "connection-manager")]
+            #[cfg(any(feature = "connection-manager", feature = "cluster-async"))]
             crate::client::Cache::Manager(cache_manager) => cache_manager.cache_config,
         });
         #[cfg(feature = "cache-aio")]
@@ -525,11 +518,25 @@ impl MultiplexedConnection {
                     crate::client::Cache::Config(cache_config) => {
                         Ok(CacheManager::new(cache_config))
                     }
-                    #[cfg(feature = "connection-manager")]
+                    #[cfg(any(feature = "connection-manager", feature = "cluster-async"))]
                     crate::client::Cache::Manager(cache_manager) => Ok(cache_manager),
                 }
             })
             .transpose()?;
+
+        setup_connection(
+            &mut codec,
+            connection_info,
+            #[cfg(feature = "cache-aio")]
+            cache_config,
+        )
+        .await?;
+        if config.push_sender.is_some() {
+            check_resp3!(
+                connection_info.protocol,
+                "Can only pass push sender to a connection using RESP3"
+            );
+        }
 
         let (pipeline, driver) = Pipeline::new(
             codec,
@@ -537,7 +544,7 @@ impl MultiplexedConnection {
             #[cfg(feature = "cache-aio")]
             cache_manager_opt.clone(),
         );
-        let mut con = MultiplexedConnection {
+        let con = MultiplexedConnection {
             pipeline,
             db: connection_info.db,
             response_timeout: config.response_timeout,
@@ -546,29 +553,7 @@ impl MultiplexedConnection {
             #[cfg(feature = "cache-aio")]
             cache_manager: cache_manager_opt,
         };
-        let driver = {
-            let auth = setup_connection(
-                connection_info,
-                &mut con,
-                #[cfg(feature = "cache-aio")]
-                cache_config,
-            );
 
-            futures_util::pin_mut!(auth);
-
-            match futures_util::future::select(auth, driver).await {
-                futures_util::future::Either::Left((result, driver)) => {
-                    result?;
-                    driver
-                }
-                futures_util::future::Either::Right(((), _)) => {
-                    return Err(RedisError::from((
-                        crate::ErrorKind::IoError,
-                        "Multiplexed connection driver unexpectedly terminated",
-                    )));
-                }
-            }
-        };
         Ok((con, driver))
     }
 
@@ -698,6 +683,7 @@ impl MultiplexedConnection {
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     ///
+    /// ```rust,no_run
     /// # async fn func() -> redis::RedisResult<()> {
     /// let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
     /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -705,7 +691,7 @@ impl MultiplexedConnection {
     /// let mut con = client.get_multiplexed_async_connection_with_config(&config).await?;
     /// con.subscribe(&["channel_1", "channel_2"]).await?;
     /// # Ok(()) }
-    /// # }
+    /// ```
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
         let mut cmd = cmd("SUBSCRIBE");
@@ -718,6 +704,7 @@ impl MultiplexedConnection {
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     ///
+    /// ```rust,no_run
     /// # async fn func() -> redis::RedisResult<()> {
     /// let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
     /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -726,7 +713,7 @@ impl MultiplexedConnection {
     /// con.subscribe(&["channel_1", "channel_2"]).await?;
     /// con.unsubscribe(&["channel_1", "channel_2"]).await?;
     /// # Ok(()) }
-    /// # }
+    /// ```
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
         let mut cmd = cmd("UNSUBSCRIBE");
@@ -742,6 +729,7 @@ impl MultiplexedConnection {
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     ///
+    /// ```rust,no_run
     /// # async fn func() -> redis::RedisResult<()> {
     /// let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
     /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -750,7 +738,7 @@ impl MultiplexedConnection {
     /// con.subscribe(&["channel_1", "channel_2"]).await?;
     /// con.unsubscribe(&["channel_1", "channel_2"]).await?;
     /// # Ok(()) }
-    /// # }
+    /// ```
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
         let mut cmd = cmd("PSUBSCRIBE");

@@ -86,36 +86,74 @@ pub struct Cmd {
     cache: Option<CommandCacheConfig>,
 }
 
+#[cfg_attr(
+    not(feature = "safe_iterators"),
+    deprecated(
+        note = "Deprecated due to the fact that this implementation silently stops at the first value that can't be converted to T. Enable the feature `safe_iterators` for a safe version."
+    )
+)]
 /// Represents a redis iterator.
 pub struct Iter<'a, T: FromRedisValue> {
-    batch: std::vec::IntoIter<T>,
-    cursor: u64,
-    con: &'a mut (dyn ConnectionLike + 'a),
-    cmd: Cmd,
+    iter: CheckedIter<'a, T>,
 }
 
+#[cfg(not(feature = "safe_iterators"))]
 impl<T: FromRedisValue> Iterator for Iter<'_, T> {
     type Item = T;
 
     #[inline]
     fn next(&mut self) -> Option<T> {
+        // use the checked iterator, but keep the behavior of the deprecated
+        // iterator.  This will return silently `None` if an error occurs.
+        self.iter.next()?.ok()
+    }
+}
+
+#[cfg(feature = "safe_iterators")]
+impl<T: FromRedisValue> Iterator for Iter<'_, T> {
+    type Item = RedisResult<T>;
+
+    #[inline]
+    fn next(&mut self) -> Option<RedisResult<T>> {
+        self.iter.next()
+    }
+}
+
+/// Represents a safe(r) redis iterator.
+struct CheckedIter<'a, T: FromRedisValue> {
+    batch: std::vec::IntoIter<RedisResult<T>>,
+    con: &'a mut (dyn ConnectionLike + 'a),
+    cmd: Cmd,
+}
+
+impl<T: FromRedisValue> Iterator for CheckedIter<'_, T> {
+    type Item = RedisResult<T>;
+
+    #[inline]
+    fn next(&mut self) -> Option<RedisResult<T>> {
         // we need to do this in a loop until we produce at least one item
         // or we find the actual end of the iteration.  This is necessary
         // because with filtering an iterator it is possible that a whole
         // chunk is not matching the pattern and thus yielding empty results.
         loop {
-            if let Some(v) = self.batch.next() {
-                return Some(v);
+            if let Some(value) = self.batch.next() {
+                return Some(value);
             };
-            if self.cursor == 0 {
+
+            if self.cmd.cursor? == 0 {
                 return None;
             }
 
-            let pcmd = self.cmd.get_packed_command_with_cursor(self.cursor)?;
-            let rv = self.con.req_packed_command(&pcmd).ok()?;
-            let (cur, batch): (u64, Vec<T>) = from_owned_redis_value(rv).ok()?;
+            let (cursor, batch) = match self
+                .con
+                .req_packed_command(&self.cmd.get_packed_command())
+                .and_then(from_owned_redis_value::<(u64, _)>)
+            {
+                Ok((cursor, values)) => (cursor, T::from_each_owned_redis_values(values)),
+                Err(e) => return Some(Err(e)),
+            };
 
-            self.cursor = cur;
+            self.cmd.cursor = Some(cursor);
             self.batch = batch.into_iter();
         }
     }
@@ -127,7 +165,7 @@ use crate::aio::ConnectionLike as AsyncConnection;
 /// The inner future of AsyncIter
 #[cfg(feature = "aio")]
 struct AsyncIterInner<'a, T: FromRedisValue + 'a> {
-    batch: std::vec::IntoIter<T>,
+    batch: std::vec::IntoIter<RedisResult<T>>,
     con: &'a mut (dyn AsyncConnection + Send + 'a),
     cmd: Cmd,
 }
@@ -136,20 +174,25 @@ struct AsyncIterInner<'a, T: FromRedisValue + 'a> {
 #[cfg(feature = "aio")]
 enum IterOrFuture<'a, T: FromRedisValue + 'a> {
     Iter(AsyncIterInner<'a, T>),
-    Future(BoxFuture<'a, (AsyncIterInner<'a, T>, Option<T>)>),
+    Future(BoxFuture<'a, (AsyncIterInner<'a, T>, Option<RedisResult<T>>)>),
     Empty,
 }
 
 /// Represents a redis iterator that can be used with async connections.
 #[cfg(feature = "aio")]
+#[cfg_attr(
+    all(feature = "aio", not(feature = "safe_iterators")),
+    deprecated(
+        note = "Deprecated due to the fact that this implementation silently stops at the first value that can't be converted to T. Enable the feature `safe_iterators` for a safe version."
+    )
+)]
 pub struct AsyncIter<'a, T: FromRedisValue + 'a> {
     inner: IterOrFuture<'a, T>,
 }
 
 #[cfg(feature = "aio")]
 impl<'a, T: FromRedisValue + 'a> AsyncIterInner<'a, T> {
-    #[inline]
-    pub async fn next_item(&mut self) -> Option<T> {
+    async fn next_item(&mut self) -> Option<RedisResult<T>> {
         // we need to do this in a loop until we produce at least one item
         // or we find the actual end of the iteration.  This is necessary
         // because with filtering an iterator it is possible that a whole
@@ -158,18 +201,22 @@ impl<'a, T: FromRedisValue + 'a> AsyncIterInner<'a, T> {
             if let Some(v) = self.batch.next() {
                 return Some(v);
             };
-            if let Some(cursor) = self.cmd.cursor {
-                if cursor == 0 {
-                    return None;
-                }
-            } else {
+
+            if self.cmd.cursor? == 0 {
                 return None;
             }
 
-            let rv = self.con.req_packed_command(&self.cmd).await.ok()?;
-            let (cur, batch): (u64, Vec<T>) = from_owned_redis_value(rv).ok()?;
+            let (cursor, batch) = match self
+                .con
+                .req_packed_command(&self.cmd)
+                .await
+                .and_then(from_owned_redis_value::<(u64, _)>)
+            {
+                Ok((cursor, items)) => (cursor, T::from_each_owned_redis_values(items)),
+                Err(e) => return Some(Err(e)),
+            };
 
-            self.cmd.cursor = Some(cur);
+            self.cmd.cursor = Some(cursor);
             self.batch = batch.into_iter();
         }
     }
@@ -186,11 +233,33 @@ impl<'a, T: FromRedisValue + 'a + Unpin + Send> AsyncIter<'a, T> {
     /// let _: () = con.sadd("my_set", 43i32).await?;
     /// let mut iter: redis::AsyncIter<i32> = con.sscan("my_set").await?;
     /// while let Some(element) = iter.next_item().await {
+    ///     let element = element?;
     ///     assert!(element == 42 || element == 43);
     /// }
     /// # Ok(())
     /// # }
     /// ```
+    #[cfg(feature = "safe_iterators")]
+    #[inline]
+    pub async fn next_item(&mut self) -> Option<RedisResult<T>> {
+        StreamExt::next(self).await
+    }
+
+    /// ```rust,no_run
+    /// # use redis::AsyncCommands;
+    /// # async fn scan_set() -> redis::RedisResult<()> {
+    /// # let client = redis::Client::open("redis://127.0.0.1/")?;
+    /// # let mut con = client.get_multiplexed_async_connection().await?;
+    /// let _: () = con.sadd("my_set", 42i32).await?;
+    /// let _: () = con.sadd("my_set", 43i32).await?;
+    /// let mut iter: redis::AsyncIter<i32> = con.sscan("my_set").await?;
+    /// while let Some(element) = iter.next_item().await {
+    ///     assert!(element == 42 || element == 43);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(not(feature = "safe_iterators"))]
     #[inline]
     pub async fn next_item(&mut self) -> Option<T> {
         StreamExt::next(self).await
@@ -199,9 +268,12 @@ impl<'a, T: FromRedisValue + 'a + Unpin + Send> AsyncIter<'a, T> {
 
 #[cfg(feature = "aio")]
 impl<'a, T: FromRedisValue + Unpin + Send + 'a> Stream for AsyncIter<'a, T> {
+    #[cfg(feature = "safe_iterators")]
+    type Item = RedisResult<T>;
+    #[cfg(not(feature = "safe_iterators"))]
     type Item = T;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<T>> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
         let inner = std::mem::replace(&mut this.inner, IterOrFuture::Empty);
         match inner {
@@ -220,7 +292,11 @@ impl<'a, T: FromRedisValue + Unpin + Send + 'a> Stream for AsyncIter<'a, T> {
                 }
                 Poll::Ready((iter, value)) => {
                     this.inner = IterOrFuture::Iter(iter);
-                    Poll::Ready(value)
+
+                    #[cfg(feature = "safe_iterators")]
+                    return Poll::Ready(value);
+                    #[cfg(not(feature = "safe_iterators"))]
+                    Poll::Ready(value.map(|res| res.ok()).flatten())
                 }
             },
             IterOrFuture::Empty => unreachable!(),
@@ -353,6 +429,59 @@ impl RedisWrite for Cmd {
 
         CmdBufferedArgGuard(self)
     }
+
+    fn reserve_space_for_args(&mut self, additional: impl IntoIterator<Item = usize>) {
+        let mut capacity = 0;
+        let mut args = 0;
+        for add in additional {
+            capacity += add;
+            args += 1;
+        }
+        self.data.reserve(capacity);
+        self.args.reserve(args);
+    }
+
+    #[cfg(feature = "bytes")]
+    fn bufmut_for_next_arg(&mut self, capacity: usize) -> impl bytes::BufMut + '_ {
+        self.data.reserve(capacity);
+        struct CmdBufferedArgGuard<'a>(&'a mut Cmd);
+        impl Drop for CmdBufferedArgGuard<'_> {
+            fn drop(&mut self) {
+                self.0.args.push(Arg::Simple(self.0.data.len()));
+            }
+        }
+        unsafe impl bytes::BufMut for CmdBufferedArgGuard<'_> {
+            fn remaining_mut(&self) -> usize {
+                self.0.data.remaining_mut()
+            }
+
+            unsafe fn advance_mut(&mut self, cnt: usize) {
+                self.0.data.advance_mut(cnt);
+            }
+
+            fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {
+                self.0.data.chunk_mut()
+            }
+
+            // Vec specializes these methods, so we do too
+            fn put<T: bytes::buf::Buf>(&mut self, src: T)
+            where
+                Self: Sized,
+            {
+                self.0.data.put(src);
+            }
+
+            fn put_slice(&mut self, src: &[u8]) {
+                self.0.data.put_slice(src);
+            }
+
+            fn put_bytes(&mut self, val: u8, cnt: usize) {
+                self.0.data.put_bytes(val, cnt);
+            }
+        }
+
+        CmdBufferedArgGuard(self)
+    }
 }
 
 impl Default for Cmd {
@@ -420,6 +549,35 @@ impl Cmd {
         (self.args.capacity(), self.data.capacity())
     }
 
+    /// Clears the command, resetting it completely.
+    ///
+    /// This is equivalent to [`Cmd::new`], except the buffer capacity is kept.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use redis::{Client, Cmd};
+    /// # let client = Client::open("redis://127.0.0.1/").unwrap();
+    /// # let mut con = client.get_connection().expect("Failed to connect to Redis");
+    /// let mut cmd = Cmd::new();
+    /// cmd.arg("SET").arg("foo").arg("42");
+    /// cmd.query::<()>(&mut con).expect("Query failed");
+    /// cmd.clear();
+    /// // This reuses the allocations of the previous command
+    /// cmd.arg("SET").arg("bar").arg("42");
+    /// cmd.query::<()>(&mut con).expect("Query failed");
+    /// ```
+    pub fn clear(&mut self) {
+        self.data.clear();
+        self.args.clear();
+        self.cursor = None;
+        self.no_response = false;
+        #[cfg(feature = "cache-aio")]
+        {
+            self.cache = None;
+        }
+    }
+
     /// Appends an argument to the command.  The argument passed must
     /// be a type that implements `ToRedisArgs`.  Most primitive types as
     /// well as vectors of primitive types implement it.
@@ -463,6 +621,10 @@ impl Cmd {
     }
 
     /// Returns the packed command as a byte vector.
+    ///
+    /// This is a wrapper around [`write_packed_command`] that creates a [`Vec`] to write to.
+    ///
+    /// [`write_packed_command`]: Self::write_packed_command
     #[inline]
     pub fn get_packed_command(&self) -> Vec<u8> {
         let mut cmd = Vec::new();
@@ -470,24 +632,20 @@ impl Cmd {
         cmd
     }
 
-    pub(crate) fn write_packed_command(&self, cmd: &mut Vec<u8>) {
-        write_command_to_vec(cmd, self.args_iter(), self.cursor.unwrap_or(0))
+    /// Writes the packed command to `dst`.
+    ///
+    /// This will *append* the packed command.
+    ///
+    /// See also [`get_packed_command`].
+    ///
+    /// [`get_packed_command`]: Self::get_packed_command.
+    #[inline]
+    pub fn write_packed_command(&self, dst: &mut Vec<u8>) {
+        write_command_to_vec(dst, self.args_iter(), self.cursor.unwrap_or(0))
     }
 
     pub(crate) fn write_packed_command_preallocated(&self, cmd: &mut Vec<u8>) {
         write_command(cmd, self.args_iter(), self.cursor.unwrap_or(0)).unwrap()
-    }
-
-    /// Like `get_packed_command` but replaces the cursor with the
-    /// provided value.  If the command is not in scan mode, `None`
-    /// is returned.
-    #[inline]
-    fn get_packed_command_with_cursor(&self, cursor: u64) -> Option<Vec<u8>> {
-        if !self.in_scan_mode() {
-            None
-        } else {
-            Some(encode_command(self.args_iter(), cursor))
-        }
     }
 
     /// Returns true if the command is in scan mode.
@@ -518,6 +676,24 @@ impl Cmd {
         from_owned_redis_value(val.extract_error()?)
     }
 
+    /// Sets the cursor and converts the passed value to a batch used by the
+    /// iterators.
+    fn set_cursor_and_get_batch<T: FromRedisValue>(
+        &mut self,
+        value: crate::Value,
+    ) -> RedisResult<Vec<RedisResult<T>>> {
+        let (cursor, values) = if value.looks_like_cursor() {
+            let (cursor, values) = from_owned_redis_value::<(u64, _)>(value)?;
+            (cursor, values)
+        } else {
+            (0, from_owned_redis_value(value)?)
+        };
+
+        self.cursor = Some(cursor);
+
+        Ok(T::from_each_owned_redis_values(values))
+    }
+
     /// Similar to `query()` but returns an iterator over the items of the
     /// bulk result or iterator.  In normal mode this is not in any way more
     /// efficient than just querying into a `Vec<T>` as it's internally
@@ -533,20 +709,20 @@ impl Cmd {
     /// format of `KEYS` (just a list) as well as `SSCAN` (which returns a
     /// tuple of cursor and list).
     #[inline]
-    pub fn iter<T: FromRedisValue>(self, con: &mut dyn ConnectionLike) -> RedisResult<Iter<'_, T>> {
+    pub fn iter<T: FromRedisValue>(
+        mut self,
+        con: &mut dyn ConnectionLike,
+    ) -> RedisResult<Iter<'_, T>> {
         let rv = con.req_command(&self)?;
 
-        let (cursor, batch) = if rv.looks_like_cursor() {
-            from_owned_redis_value::<(u64, Vec<T>)>(rv)?
-        } else {
-            (0, from_owned_redis_value(rv)?)
-        };
+        let batch = self.set_cursor_and_get_batch(rv)?;
 
         Ok(Iter {
-            batch: batch.into_iter(),
-            cursor,
-            con,
-            cmd: self,
+            iter: CheckedIter {
+                batch: batch.into_iter(),
+                con,
+                cmd: self,
+            },
         })
     }
 
@@ -573,16 +749,7 @@ impl Cmd {
     ) -> RedisResult<AsyncIter<'a, T>> {
         let rv = con.req_packed_command(&self).await?;
 
-        let (cursor, batch) = if rv.looks_like_cursor() {
-            from_owned_redis_value::<(u64, Vec<T>)>(rv)?
-        } else {
-            (0, from_owned_redis_value(rv)?)
-        };
-        if cursor == 0 {
-            self.cursor = None;
-        } else {
-            self.cursor = Some(cursor);
-        }
+        let batch = self.set_cursor_and_get_batch(rv)?;
 
         Ok(AsyncIter {
             inner: IterOrFuture::Iter(AsyncIterInner {
@@ -741,9 +908,48 @@ pub fn pipe() -> Pipeline {
 #[cfg(test)]
 mod tests {
     use super::Cmd;
+    #[cfg(feature = "bytes")]
+    use bytes::BufMut;
 
     use crate::RedisWrite;
     use std::io::Write;
+
+    #[test]
+    fn test_cmd_clean() {
+        let mut cmd = Cmd::new();
+        cmd.arg("key").arg("value");
+        cmd.set_no_response(true);
+        cmd.cursor_arg(24);
+        cmd.clear();
+
+        // Everything should be reset, but the capacity should still be there
+        assert!(cmd.data.is_empty());
+        assert!(cmd.data.capacity() > 0);
+        assert!(cmd.args.is_empty());
+        assert!(cmd.args.capacity() > 0);
+        assert_eq!(cmd.cursor, None);
+        assert!(!cmd.no_response);
+    }
+
+    #[test]
+    #[cfg(feature = "cache-aio")]
+    fn test_cmd_clean_cache_aio() {
+        let mut cmd = Cmd::new();
+        cmd.arg("key").arg("value");
+        cmd.set_no_response(true);
+        cmd.cursor_arg(24);
+        cmd.set_cache_config(crate::CommandCacheConfig::default());
+        cmd.clear();
+
+        // Everything should be reset, but the capacity should still be there
+        assert!(cmd.data.is_empty());
+        assert!(cmd.data.capacity() > 0);
+        assert!(cmd.args.is_empty());
+        assert!(cmd.args.capacity() > 0);
+        assert_eq!(cmd.cursor, None);
+        assert!(!cmd.no_response);
+        assert!(cmd.cache.is_none());
+    }
 
     #[test]
     fn test_cmd_writer_for_next_arg() {
@@ -799,6 +1005,69 @@ mod tests {
         {
             let mut c1_writer = c1.writer_for_next_arg();
             c1_writer.flush().unwrap();
+        }
+        let v1 = c1.get_packed_command();
+
+        let mut c2 = Cmd::new();
+        c2.write_arg(b"");
+        let v2 = c2.get_packed_command();
+
+        assert_eq!(v1, v2);
+    }
+
+    #[cfg(feature = "bytes")]
+    /// Test that a write split across multiple calls to `write` produces the
+    /// same result as a single call to `write_arg`
+    #[test]
+    fn test_cmd_bufmut_for_next_arg() {
+        let mut c1 = Cmd::new();
+        {
+            let mut c1_writer = c1.bufmut_for_next_arg(6);
+            c1_writer.put_slice(b"foo");
+            c1_writer.put_slice(b"bar");
+        }
+        let v1 = c1.get_packed_command();
+
+        let mut c2 = Cmd::new();
+        c2.write_arg(b"foobar");
+        let v2 = c2.get_packed_command();
+
+        assert_eq!(v1, v2);
+    }
+
+    #[cfg(feature = "bytes")]
+    /// Test that multiple writers to the same command produce the same
+    /// result as the same multiple calls to `write_arg`
+    #[test]
+    fn test_cmd_bufmut_for_next_arg_multiple() {
+        let mut c1 = Cmd::new();
+        {
+            let mut c1_writer = c1.bufmut_for_next_arg(6);
+            c1_writer.put_slice(b"foo");
+            c1_writer.put_slice(b"bar");
+        }
+        {
+            let mut c1_writer = c1.bufmut_for_next_arg(6);
+            c1_writer.put_slice(b"baz");
+            c1_writer.put_slice(b"qux");
+        }
+        let v1 = c1.get_packed_command();
+
+        let mut c2 = Cmd::new();
+        c2.write_arg(b"foobar");
+        c2.write_arg(b"bazqux");
+        let v2 = c2.get_packed_command();
+
+        assert_eq!(v1, v2);
+    }
+
+    #[cfg(feature = "bytes")]
+    /// Test that an "empty" write produces the equivalent to `write_arg(b"")`
+    #[test]
+    fn test_cmd_bufmut_for_next_arg_empty() {
+        let mut c1 = Cmd::new();
+        {
+            let _c1_writer = c1.bufmut_for_next_arg(0);
         }
         let v1 = c1.get_packed_command();
 

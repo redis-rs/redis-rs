@@ -75,7 +75,9 @@ fn connect_tcp_timeout(addr: &SocketAddr, timeout: Duration) -> io::Result<TcpSt
 pub fn parse_redis_url(input: &str) -> Option<url::Url> {
     match url::Url::parse(input) {
         Ok(result) => match result.scheme() {
-            "redis" | "rediss" | "valkey" | "valkeys" | "redis+unix" | "unix" => Some(result),
+            "redis" | "rediss" | "valkey" | "valkeys" | "redis+unix" | "valkey+unix" | "unix" => {
+                Some(result)
+            }
             _ => None,
         },
         Err(_) => None,
@@ -270,7 +272,7 @@ impl IntoConnectionInfo for ConnectionInfo {
     }
 }
 
-/// URL format: `{redis|rediss}://[<username>][:<password>@]<hostname>[:port][/<db>]`
+/// URL format: `{redis|rediss|valkey|valkeys}://[<username>][:<password>@]<hostname>[:port][/<db>]`
 ///
 /// - Basic: `redis://127.0.0.1:6379`
 /// - Username & Password: `redis://user:password@127.0.0.1:6379`
@@ -300,7 +302,7 @@ where
     }
 }
 
-/// URL format: `{redis|rediss}://[<username>][:<password>@]<hostname>[:port][/<db>]`
+/// URL format: `{redis|rediss|valkey|valkeys}://[<username>][:<password>@]<hostname>[:port][/<db>]`
 ///
 /// - Basic: `redis://127.0.0.1:6379`
 /// - Username & Password: `redis://user:password@127.0.0.1:6379`
@@ -360,7 +362,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
         None => fail!((ErrorKind::InvalidClientConfig, "Missing hostname")),
     };
     let port = url.port().unwrap_or(DEFAULT_PORT);
-    let addr = if url.scheme() == "rediss" {
+    let addr = if url.scheme() == "rediss" || url.scheme() == "valkeys" {
         #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
         {
             match url.fragment() {
@@ -460,8 +462,8 @@ fn url_to_unix_connection_info(_: url::Url) -> RedisResult<ConnectionInfo> {
 impl IntoConnectionInfo for url::Url {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         match self.scheme() {
-            "redis" | "rediss" => url_to_tcp_connection_info(self),
-            "unix" | "redis+unix" => url_to_unix_connection_info(self),
+            "redis" | "rediss" | "valkey" | "valkeys" => url_to_tcp_connection_info(self),
+            "unix" | "redis+unix" | "valkey+unix" => url_to_unix_connection_info(self),
             _ => fail!((
                 ErrorKind::InvalidClientConfig,
                 "URL provided is not a redis URL"
@@ -562,7 +564,10 @@ struct AcceptInvalidHostnamesCertVerifier {
 fn is_hostname_error(err: &rustls::Error) -> bool {
     matches!(
         err,
-        rustls::Error::InvalidCertificate(rustls::CertificateError::NotValidForName)
+        rustls::Error::InvalidCertificate(
+            rustls::CertificateError::NotValidForName
+                | rustls::CertificateError::NotValidForNameContext { .. }
+        )
     )
 }
 
@@ -1048,11 +1053,16 @@ pub(crate) fn create_rustls_config(
         (true, true) => {
             let mut config = config;
             config.enable_sni = false;
+            let Some(crypto_provider) = rustls::crypto::CryptoProvider::get_default() else {
+                return Err(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "No crypto provider available for rustls",
+                )));
+            };
             config
                 .dangerous()
                 .set_certificate_verifier(Arc::new(NoCertificateVerification {
-                    supported: rustls::crypto::ring::default_provider()
-                        .signature_verification_algorithms,
+                    supported: crypto_provider.signature_verification_algorithms,
                 }));
 
             Ok(config)
@@ -2217,9 +2227,14 @@ mod tests {
         let cases = vec![
             ("redis://127.0.0.1", true),
             ("redis://[::1]", true),
+            ("rediss://127.0.0.1", true),
+            ("rediss://[::1]", true),
             ("valkey://127.0.0.1", true),
             ("valkey://[::1]", true),
+            ("valkeys://127.0.0.1", true),
+            ("valkeys://[::1]", true),
             ("redis+unix:///run/redis.sock", true),
+            ("valkey+unix:///run/valkey.sock", true),
             ("unix:///run/redis.sock", true),
             ("http://127.0.0.1", false),
             ("tcp://127.0.0.1", false),

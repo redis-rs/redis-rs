@@ -1,3 +1,81 @@
+### 0.32.1 (2025-06-18)
+
+#### Changes & Bug fixes
+
+* Make transaction status of pipelines public ([#1663](https://github.com/redis-rs/redis-rs/pull/1663) by @somechris)
+* Pipeline: Add comments explaining offset and count ([#1664](https://github.com/redis-rs/redis-rs/pull/1664) by @somechris)
+* prevent Smol tasks from being cancelled when dropped. ([#1665](https://github.com/redis-rs/redis-rs/pull/1665) by @nihohit)
+* extend sentinel api to be a bit more flexible ([#1638](https://github.com/redis-rs/redis-rs/pull/1638) by @hugobpx)
+* Run doc tests once, not on every test action. ([#1671](https://github.com/redis-rs/redis-rs/pull/1671) by @nihohit)
+* support extended options for ZADD ([#1667](https://github.com/redis-rs/redis-rs/pull/1667) by @eakoli)
+* Fix handling of nested tuples. ([#1675](https://github.com/redis-rs/redis-rs/pull/1675) by @nihohit)
+
+### 0.32.0 (2025-05-30)
+
+#### Changes & Bug fixes
+
+* Add missing `u128`/`i128` for ToRedisArgs ([#1637](https://github.com/redis-rs/redis-rs/pull/1637) by @Kriskras99)
+* Allow for buffer reuse with `Cmd` ([#1636](https://github.com/redis-rs/redis-rs/pull/1636) by @Kriskras99)
+* Fix new version lints. ([#1640](https://github.com/redis-rs/redis-rs/pull/1640) by @nihohit)
+* Make iterator return an Option<RedisResult> v2 ([#1641](https://github.com/redis-rs/redis-rs/pull/1641) by @threema-donat)
+* Add Client Side Caching for async Cluster Connections ([#1642](https://github.com/redis-rs/redis-rs/pull/1642) by @altanozlu)
+* Add new set of typed commands ([#1480](https://github.com/redis-rs/redis-rs/pull/1480) by @MurrayGroves)
+* Minimize the lifetime of mutex lock guards ([#1658](https://github.com/redis-rs/redis-rs/pull/1658) by @svix-jplatte)
+
+### 0.31.0 (2025-05-08)
+
+#### Changes & Bug fixes
+
+* Document variadic tuple implementations for FromRedisValue and ToRedisValue ([#1617](https://github.com/redis-rs/redis-rs/pull/1617) by @Kriskras99)
+* Add an optional bytes::BufMut function to RedisWrite ([#1618](https://github.com/redis-rs/redis-rs/pull/1618) by @Kriskras99)
+* Reorganize flag-frenzy comnfiguration ([#1620](https://github.com/redis-rs/redis-rs/pull/1620) by @nihohit)
+* Make `reserve_space_for_args` take a `IntoIterator` ([#1622](https://github.com/redis-rs/redis-rs/pull/1622) by @Kriskras99)
+* Improve Send/Sync checks. ([#1623](https://github.com/redis-rs/redis-rs/pull/1623) by @nihohit)
+* **BREAKING CHANGE** Remove the `ring` dependency from `rustls`. ([#1632](https://github.com/redis-rs/redis-rs/pull/1632) by @nihohit)
+* Implement Error::source for the RedisError struct ([#1634](https://github.com/redis-rs/redis-rs/pull/1634) by @StefanPalashev)
+* ConnectionManager: Reconnect when RESP3 is set. ([#1612](https://github.com/redis-rs/redis-rs/pull/1612) by @nihohit)
+
+### 0.30.0 (2025-04-22)
+
+#### Changes & Bug fixes
+
+* Add epoch for CacheManager ([#1583](https://github.com/redis-rs/redis-rs/pull/1583) by @altanozlu)
+* **Breaking change** Add support for the Smol runtime. ([#1606](https://github.com/redis-rs/redis-rs/pull/1606) by @nihohit)
+* Add support for hash field expiration commands ([#1611](https://github.com/redis-rs/redis-rs/pull/1611) by @StefanPalashev)
+* **Breaking change** Remove deprecated aio::Connection. ([#1613](https://github.com/redis-rs/redis-rs/pull/1613) by @nihohit)
+
+#### Documentation & CI improvements
+
+* Reduce number of flag-frenzy checks and format file. ([#1608](https://github.com/redis-rs/redis-rs/pull/1608) by @nihohit)
+* Fix `make docs` ([#1607](https://github.com/redis-rs/redis-rs/pull/1607) by @somechris)
+* Fail CI on warnings in docs. ([#1609](https://github.com/redis-rs/redis-rs/pull/1609) by @nihohit)
+
+### 0.29.5 (2025-04-06)
+
+#### Changes & Bug fixes
+
+* Fix build on Windows. ([#1601](https://github.com/redis-rs/redis-rs/pull/1601) by @nihohit)
+
+### 0.29.4 (2025-04-06)
+
+#### Changes & Bug fixes
+
+* Add async dns resolver for cluster config and fix doc ([#1595](https://github.com/redis-rs/redis-rs/pull/1595) by @wiserfz)
+* Fix error kind declaration on non-unix machines. ([#1598](https://github.com/redis-rs/redis-rs/pull/1598) by @nihohit)
+
+
+### 0.29.3 (2025-04-04)
+
+#### Changes & Bug fixes
+
+* re-export socket2. ([#1573](https://github.com/redis-rs/redis-rs/pull/1573) by @nihohit)
+* Add commands to flush database(s) ([#1576](https://github.com/redis-rs/redis-rs/pull/1576) by @somechris)
+* Fix valkey(s) url schemes not able to be converted to connection infos; Add valkey+unix url scheme ([#1574](https://github.com/redis-rs/redis-rs/pull/1574) by @MarkusTieger)
+* A spec compliant version, with less changed code. ([#1572](https://github.com/redis-rs/redis-rs/pull/1572) by @65001)
+* Support bb8 for cluster client ([#1577](https://github.com/redis-rs/redis-rs/pull/1577) by @wiserfz)
+* Support custom DNS resolver for async client ([#1581](https://github.com/redis-rs/redis-rs/pull/1581) by @wiserfz)
+* Update danger_accept_invalid_hostnames for rustls 0.23.24 ([#1592](https://github.com/redis-rs/redis-rs/pull/1592) by @jorendorff)
+
 ### 0.29.2 (2025-03-21)
 
 #### Changes & Bug fixes
