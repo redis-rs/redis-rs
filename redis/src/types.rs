@@ -2889,6 +2889,7 @@ pub fn from_owned_redis_value<T: FromRedisValue>(v: Value) -> Result<T, ParsingE
 /// This enum represents the types of data that the server can send to the client,
 /// and the capabilities that the client can use.
 #[derive(Clone, Eq, PartialEq, Default, Debug, Copy)]
+#[non_exhaustive]
 pub enum ProtocolVersion {
     /// <https://github.com/redis/redis-specifications/blob/master/protocol/RESP2.md>
     #[default]

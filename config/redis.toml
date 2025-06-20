@@ -104,6 +104,16 @@ require = ["tokio-rustls-comp"]
 when = "r2d2"
 forbid = "bb8"
 
+# The users are expected to use only one hashmap
+[[rule]]
+when = "ahash"
+forbid = "hashbrown"
+
+# The users are expected to use only one big decimal implementation
+[[rule]]
+when = "rust_decimal"
+forbid = "bigdecimal"
+
 # This feature can't run by itself
 [[rule]]
 when = true
@@ -125,8 +135,6 @@ forbid = [
   "geospatial",
   "OR",
   "script",
-  "OR",
-  "keep-alive",
   "OR",
   "num-bigint",
 ]

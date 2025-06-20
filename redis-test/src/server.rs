@@ -1,4 +1,4 @@
-use redis::{ConnectionAddr, ProtocolVersion, RedisConnectionInfo};
+use redis::{ConnectionAddr, IntoConnectionInfo, ProtocolVersion, RedisConnectionInfo};
 use std::path::Path;
 use std::{env, fs, path::PathBuf, process};
 
@@ -12,6 +12,10 @@ pub fn use_protocol() -> ProtocolVersion {
     } else {
         ProtocolVersion::RESP2
     }
+}
+
+pub fn redis_settings() -> RedisConnectionInfo {
+    RedisConnectionInfo::default().set_protocol(use_protocol())
 }
 
 #[derive(PartialEq)]
@@ -246,6 +250,7 @@ impl RedisServer {
                     tls_paths: None,
                 }
             }
+            _ => panic!("Unknown address format: {addr:?}"),
         }
     }
 
@@ -254,13 +259,11 @@ impl RedisServer {
     }
 
     pub fn connection_info(&self) -> redis::ConnectionInfo {
-        redis::ConnectionInfo {
-            addr: self.client_addr().clone(),
-            redis: RedisConnectionInfo {
-                protocol: use_protocol(),
-                ..Default::default()
-            },
-        }
+        self.client_addr()
+            .clone()
+            .into_connection_info()
+            .unwrap()
+            .set_redis_settings(redis_settings())
     }
 
     pub fn stop(&mut self) {

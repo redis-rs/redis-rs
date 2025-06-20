@@ -196,4 +196,17 @@ impl TestClusterContext {
         let mut conn = self.connection();
         super::get_version(&mut conn)
     }
+
+    pub fn get_ports(&self) -> Vec<u16> {
+        self.nodes
+            .iter()
+            .map(|info| match info.addr() {
+                redis::ConnectionAddr::Tcp(_, port) => *port,
+                redis::ConnectionAddr::TcpTls { port, .. } => *port,
+                _ => {
+                    panic!("Unsupported address type for cluster tests")
+                }
+            })
+            .collect()
+    }
 }
