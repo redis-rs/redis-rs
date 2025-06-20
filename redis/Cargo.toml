@@ -111,7 +111,7 @@ hashbrown = { version = "0.16", optional = true }
 lru = { version = "0.16", optional = true }
 
 [features]
-default = ["acl", "streams", "geospatial", "script", "keep-alive", "num-bigint"]
+default = ["acl", "streams", "geospatial", "script", "num-bigint"]
 acl = []
 geospatial = []
 json = ["dep:serde", "serde/derive", "dep:serde_json"]
@@ -144,10 +144,8 @@ connection-manager = [
 ]
 streams = []
 cluster-async = ["aio", "cluster", "dep:futures-sink", "dep:log"]
-keep-alive = []
 sentinel = ["dep:rand"]
-tcp_nodelay = []
-disable-client-setinfo = []
+num-bigint = ["dep:num-bigint"]
 cache-aio = ["aio", "dep:lru"]
 r2d2 = ["dep:r2d2"]
 bb8 = ["dep:bb8"]
