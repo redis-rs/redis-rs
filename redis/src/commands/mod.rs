@@ -2432,6 +2432,8 @@ implement_commands! {
     /// XREVRANGE key + -
     /// ```
     /// [Redis Docs](https://redis.io/commands/XREVRANGE").arg(key).arg("+").arg("-)
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xrevrange_all<K: ToRedisArgs>(key: K) -> (streams::StreamRangeReply) {
         cmd("XREVRANGE").arg(key).arg("+").arg("-")
     }
