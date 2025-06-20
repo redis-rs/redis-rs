@@ -44,9 +44,6 @@ impl TcpSettings {
 impl Default for TcpSettings {
     fn default() -> Self {
         Self {
-            #[cfg(feature = "tcp_nodelay")]
-            nodelay: true,
-            #[cfg(not(feature = "tcp_nodelay"))]
             nodelay: false,
             keepalive: None,
             #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]

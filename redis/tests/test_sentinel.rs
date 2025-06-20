@@ -9,6 +9,7 @@ use redis::{
     sentinel::{Sentinel, SentinelClient, SentinelNodeConnectionInfo},
     Client, Connection, ConnectionAddr, ConnectionInfo, ErrorKind, RedisError, Role,
 };
+use redis_test::server::use_protocol;
 
 fn parse_replication_info(value: &str) -> HashMap<&str, &str> {
     let info_map: std::collections::HashMap<&str, &str> = value
@@ -29,7 +30,7 @@ fn assert_replica_role_and_master_addr(replication_info: String, expected_master
 
     assert_eq!(info_map.get("role"), Some(&"slave"));
 
-    let (master_host, master_port) = match &expected_master.addr {
+    let (master_host, master_port) = match expected_master.addr() {
         ConnectionAddr::Tcp(host, port) => (host, port),
         ConnectionAddr::TcpTls {
             host,
@@ -38,6 +39,7 @@ fn assert_replica_role_and_master_addr(replication_info: String, expected_master
             tls_params: _,
         } => (host, port),
         ConnectionAddr::Unix(..) => panic!("Unexpected master connection type"),
+        _ => panic!("Unknown address type"),
     };
 
     assert_eq!(info_map.get("master_host"), Some(&master_host.as_str()));
@@ -74,8 +76,8 @@ fn connect_to_all_replicas(
             .unwrap();
         let mut replica_con = replica_client.get_connection().unwrap();
 
-        assert!(!replica_conn_infos.contains(&replica_client.get_connection_info().addr));
-        replica_conn_infos.push(replica_client.get_connection_info().addr.clone());
+        assert!(!replica_conn_infos.contains(replica_client.get_connection_info().addr()));
+        replica_conn_infos.push(replica_client.get_connection_info().addr().clone());
 
         assert_connection_is_replica_of_correct_master(&mut replica_con, master_client);
     }
@@ -97,7 +99,7 @@ fn assert_connect_to_known_replicas(
             .unwrap();
         let mut replica_con = replica_client.get_connection().unwrap();
 
-        assert!(replica_conn_infos.contains(&replica_client.get_connection_info().addr));
+        assert!(replica_conn_infos.contains(replica_client.get_connection_info().addr()));
 
         assert_connection_is_replica_of_correct_master(&mut replica_con, master_client);
     }
@@ -442,13 +444,13 @@ fn test_sentinel_client() {
     let first_configured_sentinel = context.sentinels_connection_info.first().unwrap();
 
     assert_eq!(
-        sentinel_client_1.get_connection_info().addr,
-        sentinel_client_2.get_connection_info().addr
+        sentinel_client_1.get_connection_info().addr(),
+        sentinel_client_2.get_connection_info().addr()
     );
 
     assert_eq!(
-        first_configured_sentinel.addr,
-        sentinel_client_2.get_connection_info().addr
+        first_configured_sentinel.addr(),
+        sentinel_client_2.get_connection_info().addr()
     );
 }
 
@@ -516,7 +518,7 @@ fn test_sentinel_client_builder() {
         context
             .sentinels_connection_info
             .iter()
-            .map(|sentinel| sentinel.addr.clone()),
+            .map(|sentinel| sentinel.addr().clone()),
         String::from(master_name),
         redis::sentinel::SentinelServerType::Master,
     )
@@ -526,24 +528,13 @@ fn test_sentinel_client_builder() {
         context
             .sentinels_connection_info
             .iter()
-            .map(|sentinel| sentinel.addr.clone()),
+            .map(|sentinel| sentinel.addr().clone()),
         String::from(master_name),
         redis::sentinel::SentinelServerType::Replica,
     )
     .unwrap();
 
-    if let Some(username) = &context.sentinels_connection_info[0].redis.username.clone() {
-        master_client_builder =
-            master_client_builder.set_client_to_sentinel_username(username.clone());
-    }
-
-    if let Some(password) = &context.sentinels_connection_info[0].redis.password {
-        master_client_builder =
-            master_client_builder.set_client_to_sentinel_password(password.clone());
-    }
-
-    master_client_builder = master_client_builder
-        .set_client_to_sentinel_protocol(context.sentinels_connection_info[0].redis.protocol);
+    master_client_builder = master_client_builder.set_client_to_sentinel_protocol(use_protocol());
 
     if let Some(tls_mode) = context.tls_mode() {
         master_client_builder = master_client_builder.set_client_to_redis_tls_mode(tls_mode);
@@ -629,12 +620,12 @@ pub mod async_tests {
                 .unwrap();
 
             assert!(
-                !replica_conn_infos.contains(&replica_client.get_connection_info().addr),
+                !replica_conn_infos.contains(replica_client.get_connection_info().addr()),
                 "pushing {:?} into {:?}",
-                replica_client.get_connection_info().addr,
+                replica_client.get_connection_info().addr(),
                 replica_conn_infos
             );
-            replica_conn_infos.push(replica_client.get_connection_info().addr.clone());
+            replica_conn_infos.push(replica_client.get_connection_info().addr().clone());
 
             async_assert_connection_is_replica_of_correct_master(&mut replica_con, master_client)
                 .await;
@@ -661,7 +652,7 @@ pub mod async_tests {
                 .await
                 .unwrap();
 
-            assert!(replica_conn_infos.contains(&replica_client.get_connection_info().addr));
+            assert!(replica_conn_infos.contains(replica_client.get_connection_info().addr()));
 
             async_assert_connection_is_replica_of_correct_master(&mut replica_con, master_client)
                 .await;
@@ -881,13 +872,13 @@ pub mod async_tests {
                 let first_configured_sentinel = context.sentinels_connection_info.first().unwrap();
 
                 assert_eq!(
-                    sentinel_client_1.get_connection_info().addr,
-                    sentinel_client_2.get_connection_info().addr
+                    sentinel_client_1.get_connection_info().addr(),
+                    sentinel_client_2.get_connection_info().addr()
                 );
 
                 assert_eq!(
-                    first_configured_sentinel.addr,
-                    sentinel_client_2.get_connection_info().addr
+                    first_configured_sentinel.addr(),
+                    sentinel_client_2.get_connection_info().addr()
                 );
 
                 Ok::<(), RedisError>(())
