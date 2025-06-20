@@ -1,3 +1,10 @@
+### 0.32.2 (2025-06-20)
+
+#### Changes & Bug fixes
+
+* Fix connection leak when connection_manager is dropped. ([#1681](https://github.com/redis-rs/redis-rs/pull/1681) by @magec)
+* Fix typed commands for submodules. ([#1684](https://github.com/redis-rs/redis-rs/pull/1684) by @nihohit)
+
 ### 0.32.1 (2025-06-18)
 
 #### Changes & Bug fixes
