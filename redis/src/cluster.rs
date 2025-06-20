@@ -257,7 +257,7 @@ impl ClusterConfig {
     /// Sets a sender to receive pushed values.
     ///
     /// The sender can be a channel, or an arbitrary function that handles [crate::PushInfo] values.
-    /// This will fail client creation if the connection isn't configured for RESP3 communications via the [crate::RedisConnectionInfo::protocol] field.
+    /// This will fail client creation if the connection isn't configured for RESP3 communications via the [crate::RedisConnectionInfo::set_protocol] function.
     ///
     /// # Examples
     ///
@@ -1096,8 +1096,9 @@ pub(crate) fn get_connection_info(
             password: cluster_params.password,
             username: cluster_params.username,
             protocol: cluster_params.protocol.unwrap_or_default(),
-            db: 0,
+            ..Default::default()
         },
+        tcp_settings: cluster_params.tcp_settings,
     })
 }
 
