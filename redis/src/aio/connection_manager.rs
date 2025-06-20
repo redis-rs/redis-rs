@@ -3,6 +3,7 @@ use super::{AsyncPushSender, HandleContainer, RedisFuture};
 use crate::caching::CacheManager;
 use crate::{
     aio::{check_resp3, ConnectionLike, MultiplexedConnection, Runtime},
+    client::{DEFAULT_CONNECTION_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT},
     cmd,
     subscription_tracker::{SubscriptionAction, SubscriptionTracker},
     types::{RedisError, RedisResult, Value},
@@ -13,6 +14,7 @@ use backon::{ExponentialBuilder, Retryable};
 use futures_channel::oneshot;
 use futures_util::future::{self, BoxFuture, FutureExt, Shared};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::Mutex;
 
@@ -33,9 +35,9 @@ pub struct ConnectionManagerConfig {
     /// Apply a maximum delay between connection attempts. The delay between attempts won't be longer than max_delay milliseconds.
     max_delay: Option<u64>,
     /// The new connection will time out operations after `response_timeout` has passed.
-    response_timeout: Option<std::time::Duration>,
+    response_timeout: Option<Duration>,
     /// Each connection attempt to the server will time out after `connection_timeout`.
-    connection_timeout: Option<std::time::Duration>,
+    connection_timeout: Option<Duration>,
     /// sender channel for push values
     push_sender: Option<Arc<dyn AsyncPushSender>>,
     /// if true, the manager should resubscribe automatically to all pubsub channels after reconnect.
@@ -86,8 +88,6 @@ impl ConnectionManagerConfig {
     const DEFAULT_CONNECTION_RETRY_EXPONENT_BASE: u64 = 2;
     const DEFAULT_CONNECTION_RETRY_FACTOR: u64 = 100;
     const DEFAULT_NUMBER_OF_CONNECTION_RETRIES: usize = 6;
-    const DEFAULT_RESPONSE_TIMEOUT: Option<std::time::Duration> = None;
-    const DEFAULT_CONNECTION_TIMEOUT: Option<std::time::Duration> = None;
 
     /// Creates a new instance of the options with nothing set
     pub fn new() -> Self {
@@ -122,20 +122,18 @@ impl ConnectionManagerConfig {
     }
 
     /// The new connection will time out operations after `response_timeout` has passed.
-    pub fn set_response_timeout(
-        mut self,
-        duration: std::time::Duration,
-    ) -> ConnectionManagerConfig {
-        self.response_timeout = Some(duration);
+    ///
+    /// Set `None` if you don't want requests to time out.
+    pub fn set_response_timeout(mut self, duration: Option<Duration>) -> ConnectionManagerConfig {
+        self.response_timeout = duration;
         self
     }
 
     /// Each connection attempt to the server will time out after `connection_timeout`.
-    pub fn set_connection_timeout(
-        mut self,
-        duration: std::time::Duration,
-    ) -> ConnectionManagerConfig {
-        self.connection_timeout = Some(duration);
+    ///
+    /// Set `None` if you don't want the connection attempt to time out.
+    pub fn set_connection_timeout(mut self, duration: Option<Duration>) -> ConnectionManagerConfig {
+        self.connection_timeout = duration;
         self
     }
 
@@ -191,8 +189,8 @@ impl Default for ConnectionManagerConfig {
             exponent_base: Self::DEFAULT_CONNECTION_RETRY_EXPONENT_BASE,
             factor: Self::DEFAULT_CONNECTION_RETRY_FACTOR,
             number_of_retries: Self::DEFAULT_NUMBER_OF_CONNECTION_RETRIES,
-            response_timeout: Self::DEFAULT_RESPONSE_TIMEOUT,
-            connection_timeout: Self::DEFAULT_CONNECTION_TIMEOUT,
+            response_timeout: DEFAULT_RESPONSE_TIMEOUT,
+            connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
             max_delay: None,
             push_sender: None,
             resubscribe_automatically: false,
@@ -321,17 +319,13 @@ impl ConnectionManager {
             .with_max_times(config.number_of_retries)
             .with_jitter();
         if let Some(max_delay) = config.max_delay {
-            retry_strategy =
-                retry_strategy.with_max_delay(std::time::Duration::from_millis(max_delay));
+            retry_strategy = retry_strategy.with_max_delay(Duration::from_millis(max_delay));
         }
 
-        let mut connection_config = AsyncConnectionConfig::new();
-        if let Some(connection_timeout) = config.connection_timeout {
-            connection_config = connection_config.set_connection_timeout(connection_timeout);
-        }
-        if let Some(response_timeout) = config.response_timeout {
-            connection_config = connection_config.set_response_timeout(response_timeout);
-        }
+        let mut connection_config = AsyncConnectionConfig::new()
+            .set_connection_timeout(config.connection_timeout)
+            .set_response_timeout(config.response_timeout);
+
         #[cfg(feature = "cache-aio")]
         let cache_manager = config
             .cache_config

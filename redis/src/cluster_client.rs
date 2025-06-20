@@ -2,6 +2,7 @@
 use crate::aio::AsyncPushSender;
 #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
 use crate::caching::{CacheConfig, CacheManager};
+use crate::client::DEFAULT_CONNECTION_TIMEOUT;
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::io::tcp::TcpSettings;
 #[cfg(feature = "cluster-async")]
@@ -148,7 +149,9 @@ impl ClusterParams {
             tls: value.tls,
             retry_params: value.retries_configuration,
             tls_params,
-            connection_timeout: value.connection_timeout.unwrap_or(Duration::from_secs(1)),
+            connection_timeout: value
+                .connection_timeout
+                .unwrap_or(DEFAULT_CONNECTION_TIMEOUT.unwrap()),
             response_timeout: value.response_timeout,
             protocol: value.protocol,
             #[cfg(feature = "cluster-async")]

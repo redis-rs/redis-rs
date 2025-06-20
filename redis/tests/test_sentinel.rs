@@ -2,6 +2,7 @@
 mod support;
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use crate::support::*;
 use redis::sentinel::SentinelClientBuilder;
@@ -225,7 +226,7 @@ fn test_sentinel_server_down() {
     assert_is_connection_to_master(&mut master_con);
 
     context.cluster.sentinel_servers[0].stop();
-    std::thread::sleep(std::time::Duration::from_millis(25));
+    std::thread::sleep(Duration::from_millis(25));
 
     let sentinel = context.sentinel_mut();
 
@@ -445,14 +446,11 @@ fn test_sentinel_client_builder() {
 
 #[cfg(feature = "aio")]
 pub mod async_tests {
-    use redis::{
-        aio::MultiplexedConnection,
-        sentinel::{Sentinel, SentinelClient, SentinelNodeConnectionInfo},
-        AsyncConnectionConfig, Client, ConnectionAddr, ErrorKind, RedisError,
-    };
+    use super::*;
+    use redis::{aio::MultiplexedConnection, AsyncConnectionConfig};
     use rstest::rstest;
 
-    use crate::{assert_is_master_role, assert_replica_role_and_master_addr, support::*};
+    use crate::{assert_is_master_role, assert_replica_role_and_master_addr};
 
     async fn async_assert_is_connection_to_master(conn: &mut MultiplexedConnection) {
         let info: String = redis::cmd("INFO")
@@ -639,7 +637,7 @@ pub mod async_tests {
                 async_assert_is_connection_to_master(&mut master_con).await;
 
                 context.cluster.sentinel_servers[0].stop();
-                std::thread::sleep(std::time::Duration::from_millis(25));
+                std::thread::sleep(Duration::from_millis(25));
 
                 let sentinel = context.sentinel_mut();
 
@@ -855,7 +853,7 @@ pub mod async_tests {
         .unwrap();
 
         let connection_options =
-            AsyncConnectionConfig::new().set_connection_timeout(std::time::Duration::from_secs(1));
+            AsyncConnectionConfig::new().set_connection_timeout(Some(Duration::from_secs(1)));
 
         block_on_all(
             async move {
@@ -913,8 +911,7 @@ pub mod async_tests {
         )
         .unwrap();
 
-        let connection_options =
-            AsyncConnectionConfig::new().set_response_timeout(std::time::Duration::from_secs(1));
+        let connection_options = AsyncConnectionConfig::new();
 
         block_on_all(
             async move {
@@ -972,9 +969,7 @@ pub mod async_tests {
         )
         .unwrap();
 
-        let connection_options = AsyncConnectionConfig::new()
-            .set_connection_timeout(std::time::Duration::from_secs(1))
-            .set_response_timeout(std::time::Duration::from_secs(1));
+        let connection_options = AsyncConnectionConfig::new();
 
         block_on_all(
             async move {
