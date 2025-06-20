@@ -11,9 +11,9 @@ mod basic_async {
     use redis::{
         aio::{ConnectionLike, MultiplexedConnection},
         cmd, pipe, AsyncCommands, ErrorKind, IntoConnectionInfo, ProtocolVersion, PushKind,
-        RedisError, RedisFuture, RedisResult, ScanOptions, ToRedisArgs, Value,
+        RedisConnectionInfo, RedisError, RedisFuture, RedisResult, ScanOptions, ToRedisArgs, Value,
     };
-    use redis_test::server::use_protocol;
+    use redis_test::server::{redis_settings, use_protocol};
     use rstest::rstest;
     use tokio::sync::mpsc::error::TryRecvError;
 
@@ -215,14 +215,10 @@ mod basic_async {
                     .arg(format!(">{password}"));
                 assert_eq!(con.req_packed_command(&set_user_cmd).await, Ok(Value::Okay));
 
-                let connection_info = ctx
-                    .server
-                    .client_addr()
-                    .clone()
-                    .into_connection_info()
-                    .unwrap()
+                let redis = redis_settings()
                     .set_username(username)
                     .set_password(password);
+                let connection_info = ctx.server.connection_info().set_redis_settings(redis);
                 let mut conn = redis::Client::open(connection_info)
                     .unwrap()
                     .get_multiplexed_async_connection()
@@ -813,15 +809,15 @@ mod basic_async {
         let ctx = TestContext::new();
         block_on_all(
             async move {
-                use redis::IntoConnectionInfo;
-
+                let redis = RedisConnectionInfo::default().set_password("asdcasc".to_string());
                 let connection_info = ctx
                     .server
                     .client_addr()
                     .clone()
                     .into_connection_info()
                     .unwrap()
-                    .set_password("asdcasc".to_string());
+                    .set_redis_settings(redis);
+
                 let client = redis::Client::open(connection_info).unwrap();
 
                 let err = client
@@ -1452,10 +1448,8 @@ mod basic_async {
             use redis::RedisError;
 
             let ctx = TestContext::new();
-            let connection_info = ctx
-                .server
-                .connection_info()
-                .set_protocol(ProtocolVersion::RESP3);
+            let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);
+            let connection_info = ctx.server.connection_info().set_redis_settings(redis);
             let client = redis::Client::open(connection_info).unwrap();
 
             block_on_all(
@@ -1551,10 +1545,8 @@ mod basic_async {
             use redis::RedisError;
 
             let ctx = TestContext::new();
-            let connection_info = ctx
-                .server
-                .connection_info()
-                .set_protocol(ProtocolVersion::RESP3);
+            let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);
+            let connection_info = ctx.server.connection_info().set_redis_settings(redis);
             let client = redis::Client::open(connection_info).unwrap();
 
             block_on_all(
@@ -2050,10 +2042,8 @@ mod basic_async {
     #[cfg(feature = "connection-manager")]
     fn test_resp3_pushes_connection_manager(#[case] runtime: RuntimeType) {
         let ctx = TestContext::new();
-        let connection_info = ctx
-            .server
-            .connection_info()
-            .set_protocol(ProtocolVersion::RESP3);
+        let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);
+        let connection_info = ctx.server.connection_info().set_redis_settings(redis);
         let client = redis::Client::open(connection_info).unwrap();
 
         block_on_all(
@@ -2093,7 +2083,8 @@ mod basic_async {
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_select_db(#[case] runtime: RuntimeType) {
         let ctx = TestContext::new();
-        let connection_info = ctx.client.get_connection_info().clone().set_db(5);
+        let redis = redis_settings().set_db(5);
+        let connection_info = ctx.server.connection_info().set_redis_settings(redis);
         let client = redis::Client::open(connection_info).unwrap();
         block_on_all(
             async move {

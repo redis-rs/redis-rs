@@ -23,16 +23,17 @@ mod basic {
     use assert_approx_eq::assert_approx_eq;
     use rand::distr::Alphanumeric;
     use rand::{rng, Rng};
-    use redis::IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply};
+
     use redis::{
-        cmd, Client, Connection, CopyOptions, IntoConnectionInfo, ProtocolVersion, PushInfo, Role,
-        ScanOptions, UpdateCheck, ValueType,
+        cmd, Client, Connection, ConnectionInfo, ConnectionLike, ControlFlow, CopyOptions,
+        ErrorKind, ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck,
+        HashFieldExpirationOptions,
+        IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply},
+        ProtocolVersion, PubSubCommands, PushInfo, PushKind, RedisConnectionInfo, RedisResult,
+        Role, ScanOptions, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs, TypedCommands,
+        UpdateCheck, Value, ValueType,
     };
-    use redis::{
-        ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck, ExpireOption,
-        Expiry, FieldExistenceCheck, HashFieldExpirationOptions, PubSubCommands, PushKind,
-        RedisResult, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs, TypedCommands, Value,
-    };
+    use redis_test::server::redis_settings;
     use redis_test::utils::get_listener_on_free_port;
     use std::collections::{BTreeMap, BTreeSet};
     use std::collections::{HashMap, HashSet};
@@ -124,18 +125,13 @@ mod basic {
             .arg(format!(">{password}"));
         assert_eq!(con.req_command(&set_user_cmd), Ok(Value::Okay));
 
-        let mut conn = redis::Client::open(
-            ctx.server
-                .client_addr()
-                .clone()
-                .into_connection_info()
-                .unwrap()
-                .set_password(password)
-                .set_username(username),
-        )
-        .unwrap()
-        .get_connection()
-        .unwrap();
+        let redis = redis_settings()
+            .set_password(password)
+            .set_username(username);
+        let mut conn = redis::Client::open(ctx.server.connection_info().set_redis_settings(redis))
+            .unwrap()
+            .get_connection()
+            .unwrap();
 
         let result: String = cmd("ACL").arg("whoami").query(&mut conn).unwrap();
         assert_eq!(result, username)
@@ -2852,10 +2848,8 @@ mod basic {
     #[test]
     fn test_push_manager() {
         let ctx = TestContext::new();
-        let connection_info = ctx
-            .server
-            .connection_info()
-            .set_protocol(ProtocolVersion::RESP3);
+        let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);
+        let connection_info = ctx.server.connection_info().set_redis_settings(redis);
 
         let client = redis::Client::open(connection_info).unwrap();
 
@@ -2911,10 +2905,8 @@ mod basic {
     #[test]
     fn test_push_manager_disconnection() {
         let ctx = TestContext::new();
-        let connection_info = ctx
-            .server
-            .connection_info()
-            .set_protocol(ProtocolVersion::RESP3);
+        let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);
+        let connection_info = ctx.server.connection_info().set_redis_settings(redis);
         let client = redis::Client::open(connection_info).unwrap();
 
         let mut con = client.get_connection().unwrap();
@@ -3003,7 +2995,8 @@ mod basic {
     #[test]
     fn test_select_db() {
         let ctx = TestContext::new();
-        let connection_info = ctx.client.get_connection_info().clone().set_db(5);
+        let redis = redis_settings().set_db(5);
+        let connection_info = ctx.server.connection_info().set_redis_settings(redis);
 
         let client = redis::Client::open(connection_info).unwrap();
         let mut connection = client.get_connection().unwrap();
@@ -3067,9 +3060,10 @@ mod basic {
         // we wait, to ensure that the debug sleep has started.
         thread::sleep(Duration::from_millis(5));
         // we set a DB, in order to force calling requests on the server.
-        let addr = ctx.server.connection_info().clone().set_db(1);
+        let redis = redis_settings().set_db(1);
+        let connection_info = ctx.server.connection_info().set_redis_settings(redis);
 
-        let client = Client::open(addr).unwrap();
+        let client = Client::open(connection_info).unwrap();
         let try_connect = client.get_connection_with_timeout(Duration::from_millis(2));
 
         assert!(try_connect.is_err_and(|err| { err.is_timeout() }));

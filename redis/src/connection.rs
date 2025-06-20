@@ -256,39 +256,9 @@ impl ConnectionInfo {
         self
     }
 
-    /// Sets the username for the connection's ACL
-    pub fn set_username(mut self, username: impl Into<String>) -> Self {
-        self.redis.username = Some(username.into());
-        self
-    }
-
-    /// Sets the password for the connection's ACL
-    pub fn set_password(mut self, password: impl Into<String>) -> Self {
-        self.redis.password = Some(password.into());
-        self
-    }
-
-    /// Sets the version of the RESP to use
-    pub fn set_protocol(mut self, protocol: ProtocolVersion) -> Self {
-        self.redis.protocol = protocol;
-        self
-    }
-
-    /// Removes the pipelined CLIENT SETINFO call from the connection creation.
-    pub fn set_skip_set_lib_name(mut self) -> Self {
-        self.redis.skip_set_lib_name = true;
-        self
-    }
-
     /// Set all redis connection info fields at once
     pub fn set_redis_settings(mut self, redis: RedisConnectionInfo) -> Self {
         self.redis = redis;
-        self
-    }
-
-    /// Sets the database number to use
-    pub fn set_db(mut self, db: i64) -> Self {
-        self.redis.db = db;
         self
     }
 }
