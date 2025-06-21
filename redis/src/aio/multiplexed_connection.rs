@@ -458,28 +458,7 @@ impl MultiplexedConnection {
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
-        Self::new_with_response_timeout(connection_info, stream, None).await
-    }
-
-    /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
-    /// and a `RedisConnectionInfo`. The new object will wait on operations for the given `response_timeout`.
-    pub async fn new_with_response_timeout<C>(
-        connection_info: &RedisConnectionInfo,
-        stream: C,
-        response_timeout: Option<std::time::Duration>,
-    ) -> RedisResult<(Self, impl Future<Output = ()>)>
-    where
-        C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
-    {
-        Self::new_with_config(
-            connection_info,
-            stream,
-            AsyncConnectionConfig {
-                response_timeout,
-                ..Default::default()
-            },
-        )
-        .await
+        Self::new_with_config(connection_info, stream, AsyncConnectionConfig::default()).await
     }
 
     /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
