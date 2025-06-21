@@ -557,6 +557,9 @@ let primary = sentinel.get_async_connection().await.unwrap();
 //! * Parsing values using [FromRedisValue] no longer returns [RedisError] on failure, in order to save the users checking for various server & client errors in such scenarios. if you rely on the error type when using this trait, you will need to adjust your error handling code. [ParsingError] should only be printed, since it does not contain any user actionable info outside of its error message.
 //! * If you used the `tcp_nodelay`, `keep-alive`, or `disable-client-setinfo` features, you'll need to set these values on the connection info you pass to the client use [ConnectionInfo::set_tcp_settings].
 //! * If you create [ConnectionInfo] or [RedisConnectionInfo] objects explicitly, now you need to use the builder pattern setters.
+//! * if you used `MultiplexedConnection::new_with_response_timeout`, it is replaced by [aio::MultiplexedConnection::new_with_config]. `Client::get_multiplexed_tokio_connection_with_response_timeouts`, `Client::get_multiplexed_tokio_connection`, `Client::create_multiplexed_tokio_connection_with_response_timeout`, `Client::create_multiplexed_tokio_connection` were replaced by [Client::get_multiplexed_async_connection_with_config].
+//! * If you're using `tokio::time::pause()` or otherwise manipulating time, you might need to opt out of timeouts using `AsyncConnectionConfig::new().set_connection_timeout(None).set_response_timeout(None)`.
+//!
 //!
 
 #![deny(non_camel_case_types)]
