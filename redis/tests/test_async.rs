@@ -92,7 +92,9 @@ mod basic_async {
             async move {
                 setup();
                 let ctx = TestContext::new();
+                println!("connect");
                 let conn = ctx.async_connection().await.unwrap().into();
+                println!("connected");
                 test(ctx, conn).await.unwrap();
 
                 #[cfg(feature = "connection-manager")]
@@ -162,18 +164,18 @@ mod basic_async {
         );
     }
 
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    fn test_works_with_paused_time(#[case] runtime: RuntimeType) {
-        test_with_all_connection_types_with_setup(
-            || tokio::time::pause(),
-            |mut conn| async move {
-                // Force the Redis command to take enough time that we have to park the task.  If
-                // any timeouts have been created, Tokio will then auto-advance the paused clock to
-                // the timeout's expiry time, resulting in a "timed out" error.
-                redis::cmd("EVAL")
-                    .arg(
-                        r#"
+    #[cfg(feature = "tokio-comp")]
+    #[tokio::test]
+    async fn test_works_with_paused_time_when_no_timeouts_are_set() {
+        use redis::AsyncConnectionConfig;
+        tokio::time::pause();
+        async fn test(mut conn: impl ConnectionLike) {
+            // Force the Redis command to take enough time that we have to park the task.  If
+            // any timeouts have been created, Tokio will then auto-advance the paused clock to
+            // the timeout's expiry time, resulting in a "timed out" error.
+            redis::cmd("EVAL")
+                .arg(
+                    r#"
                           local function now()
                              local t = redis.call("TIME")
                              return t[1] + 0.000001 * t[2]
@@ -181,15 +183,40 @@ mod basic_async {
                           local t = now() + 0.5
                           while now() < t do end
                         "#,
-                    )
-                    .arg(0)
-                    .exec_async(&mut conn)
-                    .await
-                    .unwrap();
-                Ok(())
-            },
-            runtime,
-        );
+                )
+                .arg(0)
+                .exec_async(&mut conn)
+                .await
+                .unwrap();
+        }
+        let ctx = TestContext::new();
+
+        let conn = ctx
+            .client
+            .get_multiplexed_async_connection_with_config(
+                &AsyncConnectionConfig::new()
+                    .set_connection_timeout(None)
+                    .set_response_timeout(None),
+            )
+            .await
+            .unwrap();
+        test(conn).await;
+
+        #[cfg(feature = "connection-manager")]
+        {
+            use redis::aio::ConnectionManagerConfig;
+
+            let conn = ctx
+                .client
+                .get_connection_manager_with_config(
+                    ConnectionManagerConfig::new()
+                        .set_connection_timeout(None)
+                        .set_response_timeout(None),
+                )
+                .await
+                .unwrap();
+            test(conn).await
+        };
     }
 
     #[rstest]

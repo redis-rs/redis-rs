@@ -1383,10 +1383,10 @@ where
     let cache_manager = params.cache_manager.clone();
     let mut info = get_connection_info(node, params)?;
     info.tcp_settings = tcp_settings;
-    let mut config = AsyncConnectionConfig::default().set_connection_timeout(connection_timeout);
-    if let Some(response_timeout) = response_timeout {
-        config = config.set_response_timeout(response_timeout);
-    };
+    let mut config =
+        AsyncConnectionConfig::default().set_connection_timeout(Some(connection_timeout));
+    config = config.set_response_timeout(response_timeout);
+
     if let Some(push_sender) = push_sender {
         config = config.set_push_sender_internal(push_sender);
     }
