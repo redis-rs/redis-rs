@@ -36,7 +36,7 @@ mod basic {
 
     #[cfg(feature = "vector-sets")]
     use redis::{
-        EmbeddingInput, VAddOptions, VSimOptions, VectorAddInput, VectorQuantization,
+        EmbeddingInput, VAddOptions, VEmbOptions, VSimOptions, VectorAddInput, VectorQuantization,
         VectorSimilaritySearchInput,
     };
     use redis_test::utils::get_listener_on_free_port;
@@ -2993,7 +2993,7 @@ mod basic {
         for (name, coordinates, attributes) in &points_data {
             let opts = VAddOptions::default().set_attributes(attributes.clone());
             assert_eq!(
-                con.vadd_extended(
+                con.vadd_options(
                     key,
                     VectorAddInput::Values(EmbeddingInput::Float64(coordinates)),
                     name,
@@ -3061,7 +3061,7 @@ mod basic {
             .set_count(elements_count);
 
         let element_search_results: Value = con
-            .vsim_extended(
+            .vsim_options(
                 key,
                 VectorSimilaritySearchInput::Element(point_of_interest),
                 &opts,
@@ -3108,7 +3108,7 @@ mod basic {
         // Test 4: Search using the VSIM options to perform a similarity search with a filter
         let opts = VSimOptions::default().set_filter_expression(".size == \"large\"");
         let element_search_results: Value = con
-            .vsim_extended(
+            .vsim_options(
                 key,
                 VectorSimilaritySearchInput::Element(point_of_interest),
                 &opts,
@@ -3139,7 +3139,7 @@ mod basic {
         let opts =
             VSimOptions::default().set_filter_expression(".size == \"large\" && .price > 20.00");
         let element_search_results: Value = con
-            .vsim_extended(
+            .vsim_options(
                 key,
                 VectorSimilaritySearchInput::Element(point_of_interest),
                 &opts,
@@ -3211,7 +3211,7 @@ mod basic {
             }
 
             assert_eq!(
-                con.vadd_extended(key, VectorAddInput::Fp32(coordinates), name, &opts),
+                con.vadd_options(key, VectorAddInput::Fp32(coordinates), name, &opts),
                 Ok(true)
             );
 
@@ -3219,7 +3219,13 @@ mod basic {
             // Check that the embeddings have been reduced to the specified dimension.
             assert_eq!(current_point_embeddings.len(), reduction_dimension);
 
-            let current_point_embeddings_raw: Value = con.vemb_raw(key, name).unwrap();
+            let current_point_embeddings_raw: Value = con
+                .vemb_options(
+                    key,
+                    name,
+                    &VEmbOptions::default().set_raw_representation(true),
+                )
+                .unwrap();
 
             if let Value::Array(embeddings_array) = &current_point_embeddings_raw {
                 assert_eq!(embeddings_array.len(), expected_embedding_response_length);
@@ -3236,66 +3242,33 @@ mod basic {
         }
 
         // VINFO testing section
-        let vector_set_information: Value = con.vinfo(key).unwrap();
-
-        let (mut hnsw_m, mut vector_dimensions, mut vector_size, mut attributes_count): (
-            Option<usize>,
-            Option<usize>,
-            Option<usize>,
-            Option<usize>,
-        ) = (None, None, None, None);
-
-        let mut process_kv_pair = |key: &Value, value: &Value| {
-            let key = match key {
-                Value::SimpleString(s) => s.clone(),
-                _ => return,
-            };
-
-            let parse_value = |v: &Value| -> Option<usize> {
-                match v {
-                    Value::Int(num) => Some(*num as usize),
-                    _ => None,
-                }
-            };
-
-            match key.as_str() {
-                "hnsw-m" => hnsw_m = parse_value(value),
-                "vector-dim" => vector_dimensions = parse_value(value),
-                "size" => vector_size = parse_value(value),
-                "attributes-count" => attributes_count = parse_value(value),
-                _ => {}
-            }
-        };
-
-        // The response is structured as a list of key-value pairs,
-        // however based on the version of the RESP protocol in use, it can be returned as either an array or a map.
+        let vector_set_information = con.vinfo(key).unwrap().unwrap();
+        // The response is structured as a list of key-value pairs.
         // Extract some properties from the response and validate that they match the expected values.
-        match &vector_set_information {
-            // [RESP 2] Process as list of key-value pairs.
-            Value::Array(items) => {
-                for i in (0..items.len()).step_by(2) {
-                    if let (Some(key), Some(value)) = (items.get(i), items.get(i + 1)) {
-                        process_kv_pair(key, value);
-                    }
-                }
-            }
-            // [RESP 3] Process as map of key-value pairs.
-            Value::Map(items) => {
-                for (key, value) in items {
-                    process_kv_pair(key, value);
-                }
-            }
-            _ => {}
-        }
-
-        assert_eq!(hnsw_m, Some(max_number_of_links));
-        assert_eq!(vector_dimensions, Some(reduction_dimension));
-        assert_eq!(vector_size, Some(points_data.len()));
-        assert_eq!(attributes_count, Some(1));
-
-        // VINFO returns NIL for non-existent keys.
-        let vector_set_information: Value = con.vinfo(non_existent_key).unwrap();
-        assert_eq!(vector_set_information, Value::Nil);
+        assert_eq!(
+            vector_set_information.get("quant-type"),
+            Some(&Value::SimpleString(
+                expected_embedding_response_quantization.to_string()
+            ))
+        );
+        assert_eq!(
+            vector_set_information.get("hnsw-m"),
+            Some(&Value::Int(max_number_of_links as i64))
+        );
+        assert_eq!(
+            vector_set_information.get("vector-dim"),
+            Some(&Value::Int(reduction_dimension as i64))
+        );
+        assert_eq!(
+            vector_set_information.get("size"),
+            Some(&Value::Int(points_data.len() as i64))
+        );
+        assert_eq!(
+            vector_set_information.get("attributes-count"),
+            Some(&Value::Int(1))
+        );
+        // VINFO returns NIL for non-existent keys, which is represented as None.
+        assert_eq!(con.vinfo(non_existent_key), Ok(None));
 
         // VLINKS testing section
         let links: Value = con.vlinks(key, point_of_interest).unwrap();
@@ -3389,41 +3362,31 @@ mod basic {
             .map(|(name, _)| name.to_string())
             .collect();
 
-        let random_member: Option<Vec<String>> = con.vrandmember(key).unwrap();
-        assert_eq!(random_member.as_ref().unwrap().len(), 1);
-        assert!(point_names.contains(&random_member.unwrap()[0]));
+        let random_member: Option<String> = con.vrandmember(key).unwrap();
+        assert!(point_names.contains(&random_member.unwrap()));
 
         // When called with a positive count, returns up to that many distinct elements.
-        let random_members: Option<Vec<String>> = con
+        let random_members: Vec<String> = con
             .vrandmember_multiple(key, points_data.len() / 2)
             .unwrap();
-        assert_eq!(
-            random_members.as_ref().unwrap().len(),
-            points_data.len() / 2
-        );
+        assert_eq!(random_members.len(), points_data.len() / 2);
 
-        let all_points_present = random_members
-            .unwrap()
-            .iter()
-            .all(|name| point_names.contains(name));
+        let all_points_present = random_members.iter().all(|name| point_names.contains(name));
         assert!(all_points_present);
 
         // When the count exceeds the number of elements, the entire set is returned.
-        let random_members: Option<Vec<String>> = con
+        let random_members: Vec<String> = con
             .vrandmember_multiple(key, points_data.len() + 1)
             .unwrap();
-        assert_eq!(random_members.as_ref().unwrap().len(), points_data.len());
-        let all_points_present = random_members
-            .unwrap()
-            .iter()
-            .all(|name| point_names.contains(name));
+        assert_eq!(random_members.len(), points_data.len());
+        let all_points_present = random_members.iter().all(|name| point_names.contains(name));
         assert!(all_points_present);
 
         // When the key does not exist, the command returns NIL if no count is given, or an empty array if a count is provided.
         assert_eq!(con.vrandmember(non_existent_key), Ok(None));
         assert_eq!(
             con.vrandmember_multiple(non_existent_key, 1),
-            Ok(Some(Vec::<String>::new()))
+            Ok(Vec::<String>::new())
         );
 
         // VDELATTR testing section
@@ -3532,7 +3495,7 @@ mod basic {
         // VRANDMEMBER with count 0 returns an empty array (vector).
         assert_eq!(
             con.vrandmember_multiple(non_existent_key, 0),
-            Ok(Some(Vec::<String>::new()))
+            Ok(Vec::<String>::new())
         );
 
         // VSIM returns an empty array for similarity searches with non-existent keys.

@@ -663,7 +663,7 @@ pub use crate::commands::JsonAsyncCommands;
 
 #[cfg(feature = "vector-sets")]
 #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
-pub use crate::commands::{VAddOptions, VSimOptions};
+pub use crate::commands::{VAddOptions, VEmbOptions, VSimOptions};
 
 #[cfg(feature = "vector-sets")]
 #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
