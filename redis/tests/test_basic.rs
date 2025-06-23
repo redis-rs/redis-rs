@@ -36,7 +36,7 @@ mod basic {
 
     #[cfg(feature = "vector-sets")]
     use redis::{
-        EmbeddingInput, VAddOptions, VSimOptions, VectorAddInput, VectorQuantization,
+        EmbeddingInput, VAddOptions, VEmbOptions, VSimOptions, VectorAddInput, VectorQuantization,
         VectorSimilaritySearchInput,
     };
     use redis_test::utils::get_listener_on_free_port;
@@ -2993,7 +2993,7 @@ mod basic {
         for (name, coordinates, attributes) in &points_data {
             let opts = VAddOptions::default().set_attributes(attributes.clone());
             assert_eq!(
-                con.vadd_extended(
+                con.vadd_options(
                     key,
                     VectorAddInput::Values(EmbeddingInput::Float64(coordinates)),
                     name,
@@ -3013,10 +3013,7 @@ mod basic {
                 Value::BulkString(point_of_interest.as_bytes().to_vec())
             );
         } else {
-            panic!(
-                "Expected array result from VSIM, got {:?}",
-                element_search_results
-            );
+            panic!("Expected array result from VSIM, got {element_search_results:?}");
         }
 
         // Test 2: Search using the FP32 and VALUES variants
@@ -3061,7 +3058,7 @@ mod basic {
             .set_count(elements_count);
 
         let element_search_results: Value = con
-            .vsim_extended(
+            .vsim_options(
                 key,
                 VectorSimilaritySearchInput::Element(point_of_interest),
                 &opts,
@@ -3097,18 +3094,18 @@ mod basic {
                 // In RESP3, the score would be a Double (1.0) instead of a BulkString.
                 match score.unwrap() {
                     Value::Double(val) => assert_approx_eq!(*val, 1.0, 0.001),
-                    other => panic!("Unexpected score format: {:?}", other),
+                    other => panic!("Unexpected score format: {other:?}"),
                 }
             }
             other => {
-                panic!("Expected array or map result from VSIM, got {:?}", other);
+                panic!("Expected array or map result from VSIM, got {other:?}");
             }
         }
 
         // Test 4: Search using the VSIM options to perform a similarity search with a filter
         let opts = VSimOptions::default().set_filter_expression(".size == \"large\"");
         let element_search_results: Value = con
-            .vsim_extended(
+            .vsim_options(
                 key,
                 VectorSimilaritySearchInput::Element(point_of_interest),
                 &opts,
@@ -3130,16 +3127,13 @@ mod basic {
                 Value::BulkString("pt:B".as_bytes().to_vec())
             );
         } else {
-            panic!(
-                "Expected array result from VSIM, got {:?}",
-                element_search_results
-            );
+            panic!("Expected array result from VSIM, got {element_search_results:?}");
         }
 
         let opts =
             VSimOptions::default().set_filter_expression(".size == \"large\" && .price > 20.00");
         let element_search_results: Value = con
-            .vsim_extended(
+            .vsim_options(
                 key,
                 VectorSimilaritySearchInput::Element(point_of_interest),
                 &opts,
@@ -3156,10 +3150,7 @@ mod basic {
                 Value::BulkString("pt:B".as_bytes().to_vec())
             );
         } else {
-            panic!(
-                "Expected array result from VSIM, got {:?}",
-                element_search_results
-            );
+            panic!("Expected array result from VSIM, got {element_search_results:?}");
         }
     }
 
@@ -3211,7 +3202,7 @@ mod basic {
             }
 
             assert_eq!(
-                con.vadd_extended(key, VectorAddInput::Fp32(coordinates), name, &opts),
+                con.vadd_options(key, VectorAddInput::Fp32(coordinates), name, &opts),
                 Ok(true)
             );
 
@@ -3219,7 +3210,13 @@ mod basic {
             // Check that the embeddings have been reduced to the specified dimension.
             assert_eq!(current_point_embeddings.len(), reduction_dimension);
 
-            let current_point_embeddings_raw: Value = con.vemb_raw(key, name).unwrap();
+            let current_point_embeddings_raw: Value = con
+                .vemb_options(
+                    key,
+                    name,
+                    &VEmbOptions::default().set_raw_representation(true),
+                )
+                .unwrap();
 
             if let Value::Array(embeddings_array) = &current_point_embeddings_raw {
                 assert_eq!(embeddings_array.len(), expected_embedding_response_length);
@@ -3228,78 +3225,42 @@ mod basic {
                     Value::SimpleString(expected_embedding_response_quantization.to_string())
                 );
             } else {
-                panic!(
-                    "Expected array result from VEMB RAW, got {:?}",
-                    current_point_embeddings_raw
-                );
+                panic!("Expected array result from VEMB RAW, got {current_point_embeddings_raw:?}");
             }
         }
 
         // VINFO testing section
-        let vector_set_information: Value = con.vinfo(key).unwrap();
-
-        let (mut hnsw_m, mut vector_dimensions, mut vector_size, mut attributes_count): (
-            Option<usize>,
-            Option<usize>,
-            Option<usize>,
-            Option<usize>,
-        ) = (None, None, None, None);
-
-        let mut process_kv_pair = |key: &Value, value: &Value| {
-            let key = match key {
-                Value::SimpleString(s) => s.clone(),
-                _ => return,
-            };
-
-            let parse_value = |v: &Value| -> Option<usize> {
-                match v {
-                    Value::Int(num) => Some(*num as usize),
-                    _ => None,
-                }
-            };
-
-            match key.as_str() {
-                "hnsw-m" => hnsw_m = parse_value(value),
-                "vector-dim" => vector_dimensions = parse_value(value),
-                "size" => vector_size = parse_value(value),
-                "attributes-count" => attributes_count = parse_value(value),
-                _ => {}
-            }
-        };
-
-        // The response is structured as a list of key-value pairs,
-        // however based on the version of the RESP protocol in use, it can be returned as either an array or a map.
+        let vector_set_information = con.vinfo(key).unwrap().unwrap();
+        // The response is structured as a list of key-value pairs.
         // Extract some properties from the response and validate that they match the expected values.
-        match &vector_set_information {
-            // [RESP 2] Process as list of key-value pairs.
-            Value::Array(items) => {
-                for i in (0..items.len()).step_by(2) {
-                    if let (Some(key), Some(value)) = (items.get(i), items.get(i + 1)) {
-                        process_kv_pair(key, value);
-                    }
-                }
-            }
-            // [RESP 3] Process as map of key-value pairs.
-            Value::Map(items) => {
-                for (key, value) in items {
-                    process_kv_pair(key, value);
-                }
-            }
-            _ => {}
-        }
-
-        assert_eq!(hnsw_m, Some(max_number_of_links));
-        assert_eq!(vector_dimensions, Some(reduction_dimension));
-        assert_eq!(vector_size, Some(points_data.len()));
-        assert_eq!(attributes_count, Some(1));
-
-        // VINFO returns NIL for non-existent keys.
-        let vector_set_information: Value = con.vinfo(non_existent_key).unwrap();
-        assert_eq!(vector_set_information, Value::Nil);
+        assert_eq!(
+            vector_set_information.get("quant-type"),
+            Some(&Value::SimpleString(
+                expected_embedding_response_quantization.to_string()
+            ))
+        );
+        assert_eq!(
+            vector_set_information.get("hnsw-m"),
+            Some(&Value::Int(max_number_of_links as i64))
+        );
+        assert_eq!(
+            vector_set_information.get("vector-dim"),
+            Some(&Value::Int(reduction_dimension as i64))
+        );
+        assert_eq!(
+            vector_set_information.get("size"),
+            Some(&Value::Int(points_data.len() as i64))
+        );
+        assert_eq!(
+            vector_set_information.get("attributes-count"),
+            Some(&Value::Int(1))
+        );
+        // VINFO returns NIL for non-existent keys, which is represented as None.
+        assert_eq!(con.vinfo(non_existent_key), Ok(None));
 
         // VLINKS testing section
         let links: Value = con.vlinks(key, point_of_interest).unwrap();
-        println!("vlinks: {:?}\n", links);
+        println!("vlinks: {links:?}\n");
         if let Value::Array(layers) = &links {
             assert!(
                 !layers.is_empty(),
@@ -3307,19 +3268,16 @@ mod basic {
             );
 
             for (i, layer) in layers.iter().enumerate() {
-                println!("Layer {}: {:?}", i, layer);
+                println!("Layer {i}: {layer:?}");
                 assert!(matches!(layer, Value::Array(_)),
-                    "[VLINKS] Expected an array result representing the links in layer {}, got {:?}", i, layer);
+                    "[VLINKS] Expected an array result representing the links in layer {i}, got {layer:?}");
             }
         } else {
-            panic!(
-                "[VLINKS] Expected an array result representing the layers, got {:?}",
-                links
-            );
+            panic!("[VLINKS] Expected an array result representing the layers, got {links:?}");
         }
 
         let links_with_scores: Value = con.vlinks_with_scores(key, point_of_interest).unwrap();
-        println!("vlinks_with_scores: {:?}\n", links_with_scores);
+        println!("vlinks_with_scores: {links_with_scores:?}\n");
         if let Value::Array(layers_with_scores) = &links_with_scores {
             assert!(
                 !layers_with_scores.is_empty(),
@@ -3339,11 +3297,10 @@ mod basic {
                     .enumerate()
                 {
                     assert!(matches!(layer_with_scores, Value::Array(_) | Value::Map(_)),
-                        "[VLINKS WITH SCORES] Expected an array or map result representing the links in layer {} along with their scores, got {:?}",
-                        i, layer_with_scores);
+                        "[VLINKS WITH SCORES] Expected an array or map result representing the links in layer {i} along with their scores, got {layer_with_scores:?}");
 
-                    println!("Layer {} without scores: {:?}", i, layer_without_scores);
-                    println!("Layer {} with scores: {:?}", i, layer_with_scores);
+                    println!("Layer {i} without scores: {layer_without_scores:?}");
+                    println!("Layer {i} with scores: {layer_with_scores:?}");
 
                     // Layers must have twice as many elements than normal when scores are included.
                     match (layer_with_scores, layer_without_scores) {
@@ -3354,7 +3311,7 @@ mod basic {
                             assert_eq!(
                                 connections_with_scores.len(),
                                 connections_without_scores.len() * 2,
-                                "[VLINKS WITH SCORES] Layer {} must have twice as many elements when returning scores", i
+                                "[VLINKS WITH SCORES] Layer {i} must have twice as many elements when returning scores"
                             );
                         }
                         (
@@ -3364,23 +3321,17 @@ mod basic {
                             assert_eq!(
                                 connections_with_scores.len(),
                                 connections_without_scores.len(),
-                                "[VLINKS WITH SCORES] Layer {} must have the same number of entries in map format when returning scores", i
+                                "[VLINKS WITH SCORES] Layer {i} must have the same number of entries in map format when returning scores"
                             );
                         }
                         _ => {
-                            panic!(
-                                "[VLINKS WITH SCORES] Unexpected format combination for layer {}: {:?} and {:?}",
-                                i, layer_with_scores, layer_without_scores
-                            );
+                            panic!("[VLINKS WITH SCORES] Unexpected format combination for layer {i}: {layer_with_scores:?} and {layer_without_scores:?}");
                         }
                     }
                 }
             }
         } else {
-            panic!(
-                "[VLINKS WITH SCORES] Expected an array result representing the layers, got {:?}",
-                links_with_scores
-            );
+            panic!("[VLINKS WITH SCORES] Expected an array result representing the layers, got {links_with_scores:?}");
         }
 
         // VRANDMEMBER testing section
@@ -3389,41 +3340,31 @@ mod basic {
             .map(|(name, _)| name.to_string())
             .collect();
 
-        let random_member: Option<Vec<String>> = con.vrandmember(key).unwrap();
-        assert_eq!(random_member.as_ref().unwrap().len(), 1);
-        assert!(point_names.contains(&random_member.unwrap()[0]));
+        let random_member: Option<String> = con.vrandmember(key).unwrap();
+        assert!(point_names.contains(&random_member.unwrap()));
 
         // When called with a positive count, returns up to that many distinct elements.
-        let random_members: Option<Vec<String>> = con
+        let random_members: Vec<String> = con
             .vrandmember_multiple(key, points_data.len() / 2)
             .unwrap();
-        assert_eq!(
-            random_members.as_ref().unwrap().len(),
-            points_data.len() / 2
-        );
+        assert_eq!(random_members.len(), points_data.len() / 2);
 
-        let all_points_present = random_members
-            .unwrap()
-            .iter()
-            .all(|name| point_names.contains(name));
+        let all_points_present = random_members.iter().all(|name| point_names.contains(name));
         assert!(all_points_present);
 
         // When the count exceeds the number of elements, the entire set is returned.
-        let random_members: Option<Vec<String>> = con
+        let random_members: Vec<String> = con
             .vrandmember_multiple(key, points_data.len() + 1)
             .unwrap();
-        assert_eq!(random_members.as_ref().unwrap().len(), points_data.len());
-        let all_points_present = random_members
-            .unwrap()
-            .iter()
-            .all(|name| point_names.contains(name));
+        assert_eq!(random_members.len(), points_data.len());
+        let all_points_present = random_members.iter().all(|name| point_names.contains(name));
         assert!(all_points_present);
 
         // When the key does not exist, the command returns NIL if no count is given, or an empty array if a count is provided.
         assert_eq!(con.vrandmember(non_existent_key), Ok(None));
         assert_eq!(
             con.vrandmember_multiple(non_existent_key, 1),
-            Ok(Some(Vec::<String>::new()))
+            Ok(Vec::<String>::new())
         );
 
         // VDELATTR testing section
@@ -3455,8 +3396,7 @@ mod basic {
         assert_eq!(error.kind(), redis::ErrorKind::ResponseError);
         assert!(
             error.to_string().contains("key does not exist"),
-            "Expected error message = 'key does not exist', got: {}",
-            error
+            "Expected error message = 'key does not exist', got: {error}"
         );
 
         let key = "test_points_for_edge_cases";
@@ -3532,7 +3472,7 @@ mod basic {
         // VRANDMEMBER with count 0 returns an empty array (vector).
         assert_eq!(
             con.vrandmember_multiple(non_existent_key, 0),
-            Ok(Some(Vec::<String>::new()))
+            Ok(Vec::<String>::new())
         );
 
         // VSIM returns an empty array for similarity searches with non-existent keys.

@@ -9,7 +9,7 @@ use crate::types::{
 };
 
 #[cfg(feature = "vector-sets")]
-use crate::types::{VectorAddInput, VectorQuantization, VectorSimilaritySearchInput};
+use crate::types::Value;
 
 #[cfg(feature = "vector-sets")]
 use serde::ser::Serialize;
@@ -1277,7 +1277,7 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/VADD)
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
-    fn vadd_extended<K: ToRedisArgs, E: ToRedisArgs>(key: K, input: VectorAddInput<'a>, element: E, options: &'a VAddOptions) -> (bool) {
+    fn vadd_options<K: ToRedisArgs, E: ToRedisArgs>(key: K, input: VectorAddInput<'a>, element: E, options: &'a VAddOptions) -> (bool) {
         cmd("VADD").arg(key).arg(options.reduction_dimension.map(|_| "REDUCE")).arg(options.reduction_dimension).arg(input).arg(element).arg(options)
     }
 
@@ -1311,8 +1311,8 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/VEMB)
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
-    fn vemb_raw<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> Generic {
-        cmd("VEMB").arg(key).arg(element).arg("RAW")
+    fn vemb_options<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E, options: &'a VEmbOptions) -> Generic {
+        cmd("VEMB").arg(key).arg(element).arg(options)
     }
 
     /// Remove an element from a vector set.
@@ -1359,7 +1359,7 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/VINFO)
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
-    fn vinfo<K: ToRedisArgs>(key: K) -> Generic {
+    fn vinfo<K: ToRedisArgs>(key: K) -> (Option<std::collections::HashMap<String, Value>>) {
         cmd("VINFO").arg(key)
     }
 
@@ -1386,7 +1386,7 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/VRANDMEMBER)
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
-    fn vrandmember<K: ToRedisArgs>(key: K) -> (Option<Vec<String>>) {
+    fn vrandmember<K: ToRedisArgs>(key: K) -> (Option<String>) {
         cmd("VRANDMEMBER").arg(key)
     }
 
@@ -1394,7 +1394,7 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/VRANDMEMBER)
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
-    fn vrandmember_multiple<K: ToRedisArgs>(key: K, count: usize) -> (Option<Vec<String>>) {
+    fn vrandmember_multiple<K: ToRedisArgs>(key: K, count: usize) -> (Vec<String>) {
         cmd("VRANDMEMBER").arg(key).arg(count)
     }
 
@@ -1410,7 +1410,7 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/VSIM)
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
-    fn vsim_extended<K: ToRedisArgs>(key: K, input: VectorSimilaritySearchInput<'a>, options: &'a VSimOptions) -> Generic {
+    fn vsim_options<K: ToRedisArgs>(key: K, input: VectorSimilaritySearchInput<'a>, options: &'a VSimOptions) -> Generic {
         cmd("VSIM").arg(key).arg(input).arg(options)
     }
 
@@ -3412,6 +3412,103 @@ impl ToRedisArgs for SortedSetAddOptions {
     }
 }
 
+// Vector sets types
+
+/// Input data formats that can be used to generate vector embeddings:
+///
+/// - 32-bit floats
+/// - 64-bit floats
+/// - Strings (e.g., numbers as strings)
+#[cfg(feature = "vector-sets")]
+#[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
+#[derive(Clone)]
+pub enum EmbeddingInput<'a> {
+    /// 32-bit floating point input
+    Float32(&'a [f32]),
+    /// 64-bit floating point input
+    Float64(&'a [f64]),
+    /// String input (e.g., numbers as strings)
+    String(&'a [&'a str]),
+}
+
+#[cfg(feature = "vector-sets")]
+impl<'a> ToRedisArgs for EmbeddingInput<'a> {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            EmbeddingInput::Float32(vector) => {
+                out.write_arg_fmt(vector.len());
+                for &f in *vector {
+                    out.write_arg_fmt(f);
+                }
+            }
+            EmbeddingInput::Float64(vector) => {
+                out.write_arg_fmt(vector.len());
+                for &f in *vector {
+                    out.write_arg_fmt(f);
+                }
+            }
+            EmbeddingInput::String(vector) => {
+                out.write_arg_fmt(vector.len());
+                for v in *vector {
+                    v.write_redis_args(out);
+                }
+            }
+        }
+    }
+}
+
+/// Represents different ways to input data for vector add commands
+#[cfg(feature = "vector-sets")]
+#[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
+#[derive(Clone)]
+pub enum VectorAddInput<'a> {
+    /// Binary representation of 32-bit floating point values
+    Fp32(&'a [f32]),
+    /// A list of values whose types are supported for embedding generation
+    Values(EmbeddingInput<'a>),
+}
+
+#[cfg(feature = "vector-sets")]
+impl<'a> ToRedisArgs for VectorAddInput<'a> {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            VectorAddInput::Fp32(vector) => {
+                use std::io::Write;
+                out.write_arg(b"FP32");
+                let mut writer = out.writer_for_next_arg();
+                for &f in *vector {
+                    writer.write_all(&f.to_le_bytes()).unwrap();
+                }
+            }
+            VectorAddInput::Values(embedding_input) => {
+                out.write_arg(b"VALUES");
+                embedding_input.write_redis_args(out);
+            }
+        }
+    }
+}
+
+/// Quantization options for vector storage
+#[cfg(feature = "vector-sets")]
+#[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
+#[derive(Clone, Copy)]
+pub enum VectorQuantization {
+    /// In the first VADD call for a given key, NOQUANT forces the vector to be created without int8 quantization, which is otherwise the default.
+    NoQuant,
+    /// Forces the vector to use signed 8-bit quantization.
+    /// This is the default, and the option only exists to make sure to check at insertion time that the vector set is of the same format.
+    Q8,
+    /// Forces the vector to use binary quantization instead of int8.
+    /// This is much faster and uses less memory, but impacts the recall quality.
+    Bin,
+}
+
 /// Options for the VADD command
 ///
 /// # Example
@@ -3430,7 +3527,7 @@ impl ToRedisArgs for SortedSetAddOptions {
 ///         .set_build_exploration_factor(300)
 ///         .set_attributes(serde_json::json!({"name": "Vector attribute name", "description": "Vector attribute description"}))
 ///         .set_max_number_of_links(16);
-///     con.vadd_extended(key, redis::VectorAddInput::Values(redis::EmbeddingInput::Float64(vector)), element, &opts)
+///     con.vadd_options(key, redis::VectorAddInput::Values(redis::EmbeddingInput::Float64(vector)), element, &opts)
 /// }
 /// ```
 #[cfg(feature = "vector-sets")]
@@ -3529,6 +3626,89 @@ impl ToRedisArgs for VAddOptions {
     }
 }
 
+/// Options for the VEMB command
+///
+/// # Example
+/// ```rust,no_run
+/// use redis::{Commands, RedisResult, VEmbOptions};
+/// fn get_vector_embedding(
+///     con: &mut redis::Connection,
+///     key: &str,
+///     element: &str,
+/// ) -> RedisResult<redis::Value> {
+///     let opts = VEmbOptions::default().set_raw_representation(true);
+///     con.vemb_options(key, element, &opts)
+/// }
+/// ```
+#[cfg(feature = "vector-sets")]
+#[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
+#[derive(Clone, Default)]
+pub struct VEmbOptions {
+    /// Returns the raw internal representation of the approximate vector associated with a given element in the vector set
+    raw_representation: bool,
+}
+
+#[cfg(feature = "vector-sets")]
+impl VEmbOptions {
+    /// Set the raw representation flag
+    pub fn set_raw_representation(mut self, enabled: bool) -> Self {
+        self.raw_representation = enabled;
+        self
+    }
+}
+
+#[cfg(feature = "vector-sets")]
+impl ToRedisArgs for VEmbOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if self.raw_representation {
+            out.write_arg(b"RAW");
+        }
+    }
+}
+
+/// Represents different ways to input query data for vector similarity search commands
+#[cfg(feature = "vector-sets")]
+#[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
+#[derive(Clone)]
+pub enum VectorSimilaritySearchInput<'a> {
+    /// Binary representation of 32-bit floating point values to use as a reference
+    Fp32(&'a [f32]),
+    /// List of values to use as a reference
+    Values(EmbeddingInput<'a>),
+    /// Element to use as a reference
+    Element(&'a str),
+}
+
+#[cfg(feature = "vector-sets")]
+impl<'a> ToRedisArgs for VectorSimilaritySearchInput<'a> {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            VectorSimilaritySearchInput::Fp32(vector) => {
+                use std::io::Write;
+                out.write_arg(b"FP32");
+                let mut writer = out.writer_for_next_arg();
+                for &f in *vector {
+                    writer.write_all(&f.to_le_bytes()).unwrap();
+                }
+            }
+            VectorSimilaritySearchInput::Values(embedding_input) => {
+                out.write_arg(b"VALUES");
+                embedding_input.write_redis_args(out);
+            }
+            VectorSimilaritySearchInput::Element(element) => {
+                out.write_arg(b"ELE");
+                element.write_redis_args(out);
+            }
+        }
+    }
+}
+
 /// Options for the VSIM command
 ///
 /// # Example
@@ -3547,7 +3727,7 @@ impl ToRedisArgs for VAddOptions {
 ///         .set_max_filtering_effort(10)
 ///         .set_truth(true)
 ///         .set_no_thread(true);
-///     con.vsim_extended(key, redis::VectorSimilaritySearchInput::Element(element), &opts)
+///     con.vsim_options(key, redis::VectorSimilaritySearchInput::Element(element), &opts)
 /// }
 /// ```
 #[cfg(feature = "vector-sets")]

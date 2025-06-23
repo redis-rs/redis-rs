@@ -663,12 +663,9 @@ pub use crate::commands::JsonAsyncCommands;
 
 #[cfg(feature = "vector-sets")]
 #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
-pub use crate::commands::{VAddOptions, VSimOptions};
-
-#[cfg(feature = "vector-sets")]
-#[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
-pub use crate::types::{
-    EmbeddingInput, VectorAddInput, VectorQuantization, VectorSimilaritySearchInput,
+pub use crate::commands::{
+    EmbeddingInput, VAddOptions, VEmbOptions, VSimOptions, VectorAddInput, VectorQuantization,
+    VectorSimilaritySearchInput,
 };
 
 #[cfg(feature = "geospatial")]
