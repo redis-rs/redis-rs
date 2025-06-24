@@ -293,6 +293,12 @@ macro_rules! reconnect_if_io_error {
     };
 }
 
+impl AsRef<Client> for ConnectionManager {
+    fn as_ref(&self) -> &Client {
+        &self.0.client
+    }
+}
+
 impl ConnectionManager {
     /// Connect to the server and store the connection inside the returned `ConnectionManager`.
     ///
