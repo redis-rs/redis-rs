@@ -1,5 +1,3 @@
-use std::process::exit;
-
 use redis::RedisResult;
 
 #[cfg(feature = "geospatial")]
@@ -60,8 +58,5 @@ fn run() -> RedisResult<()> {
 }
 
 fn main() {
-    if let Err(e) = run() {
-        println!("{e:?}");
-        exit(1);
-    }
+    run().unwrap();
 }

@@ -69,7 +69,7 @@ jobs:
               db-version: 7.2.4
             },
             {
-              rust: 1.75.0,
+              rust: 1.80.0,
               db-org: redis,
               db-name: redis,
               db-version: 7.2.4
@@ -178,6 +178,66 @@ jobs:
 
         cargo check -p redis --no-default-features --features async-std-comp
 
+  examples:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    env:
+      redis_ver: 7.0.0
+      rust_ver: stable
+    steps:
+      - name: Cache redis
+        id: cache-redis
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/redis-cli
+            ~/redis-server
+          key: ${{ runner.os }}-${{ env.redis_ver }}-redis
+
+      - name: Install redis
+        if: steps.cache-redis.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          wget https://github.com/redis/redis/archive/${{ env.redis_ver }}.tar.gz;
+          tar -xzvf ${{ env.redis_ver }}.tar.gz;
+          pushd redis-${{ env.redis_ver }} && BUILD_TLS=yes make && sudo mv src/redis-server src/redis-cli /usr/bin/ && popd;
+          echo $PATH          
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain/@master
+        with:
+          toolchain: ${{ env.rust_ver }}
+  
+      - uses: Swatinem/rust-cache@v2
+  
+      - uses: actions/checkout@v4
+  
+      - name: start-redis
+        run: redis-server &
+
+      - name: basic
+        run: cargo run --example basic
+      - name: streams
+        run: cargo run --example streams
+      - name: typed
+        run: cargo run --example typed --features tokio-comp
+      - name: geospatial
+        run: cargo run --example geospatial
+      - name: async-await
+        run: cargo run --example async-await --features tokio-comp
+      - name: async-typed
+        run: cargo run --example async-typed --features tokio-comp
+      - name: async-caching
+        run: cargo run --example async-caching --features tokio-comp,cache-aio
+      - name: async-connection-loss
+        run: cargo run --example async-connection-loss --features tokio-comp,connection-manager -- reconnect
+      - name: async-multiplexed
+        run: cargo run --example async-multiplexed --features tokio-comp
+      - name: async-pub-sub
+        run: cargo run --example async-pub-sub --features tokio-comp
+      - name: async-scan
+        run: cargo run --example async-scan --features tokio-comp
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -205,7 +265,7 @@ jobs:
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     env:
-      redis_ver: 7.0.0
+      redis_ver: 8.0.2
       rust_ver: stable
     steps:
 

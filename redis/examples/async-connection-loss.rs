@@ -8,7 +8,7 @@
 
 use std::env;
 use std::process;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::future;
 use redis::aio::ConnectionLike;
@@ -21,8 +21,13 @@ enum Mode {
 }
 
 async fn run_multi<C: ConnectionLike + Clone>(mut con: C) -> RedisResult<()> {
+    let start = Instant::now();
     let mut interval = interval(Duration::from_millis(100));
     loop {
+        // finish after two minutes
+        if Instant::now().checked_duration_since(start).unwrap() > Duration::from_secs(120) {
+            return Ok(());
+        }
         interval.tick().await;
         println!();
         println!("> PING");
