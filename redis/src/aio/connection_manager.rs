@@ -13,7 +13,7 @@ use arc_swap::ArcSwap;
 use backon::{ExponentialBuilder, Retryable};
 use futures_channel::oneshot;
 use futures_util::future::{self, BoxFuture, FutureExt, Shared};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::Mutex;
@@ -260,7 +260,7 @@ macro_rules! reconnect_if_dropped {
     ($self:expr, $result:expr, $current:expr) => {
         if let Err(ref e) = $result {
             if e.is_unrecoverable_error() {
-                $self.reconnect($current);
+                Self::reconnect(Arc::downgrade(&$self.0), $current);
             }
         }
     };
@@ -272,7 +272,7 @@ macro_rules! reconnect_if_io_error {
     ($self:expr, $result:expr, $current:expr) => {
         if let Err(e) = $result {
             if e.is_io_error() {
-                $self.reconnect($current);
+                Self::reconnect(Arc::downgrade(&$self.0), $current);
             }
             return Err(e);
         }
@@ -383,7 +383,11 @@ impl ConnectionManager {
 
         if let Some((internal_receiver, external_sender)) = components_for_reconnection_on_push {
             oneshot_sender
-                .send((new_self.clone(), internal_receiver, external_sender))
+                .send((
+                    Arc::downgrade(&new_self.0),
+                    internal_receiver,
+                    external_sender,
+                ))
                 .map_err(|_| {
                     crate::RedisError::from((
                         crate::ErrorKind::ClientError,
@@ -422,19 +426,25 @@ impl ConnectionManager {
     ///
     /// The `current` guard points to the shared future that was active
     /// when the connection loss was detected.
-    fn reconnect(&self, current: arc_swap::Guard<Arc<SharedRedisFuture<MultiplexedConnection>>>) {
-        let self_clone = self.clone();
+    fn reconnect(
+        internals: Weak<Internals>,
+        current: arc_swap::Guard<Arc<SharedRedisFuture<MultiplexedConnection>>>,
+    ) {
+        let Some(internals) = internals.upgrade() else {
+            return;
+        };
+        let internals_clone = internals.clone();
         #[cfg(not(feature = "cache-aio"))]
-        let connection_config = self_clone.0.connection_config.clone();
+        let connection_config = internals.connection_config.clone();
         #[cfg(feature = "cache-aio")]
-        let mut connection_config = self_clone.0.connection_config.clone();
+        let mut connection_config = internals.connection_config.clone();
         #[cfg(feature = "cache-aio")]
-        if let Some(manager) = self.0.cache_manager.as_ref() {
+        if let Some(manager) = internals.cache_manager.as_ref() {
             let new_cache_manager = manager.clone_and_increase_epoch();
             connection_config = connection_config.set_cache_manager(new_cache_manager);
         }
         let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
-            let additional_commands = match &self_clone.0.subscription_tracker {
+            let additional_commands = match &internals_clone.subscription_tracker {
                 Some(subscription_tracker) => Some(
                     subscription_tracker
                         .lock()
@@ -445,8 +455,8 @@ impl ConnectionManager {
             };
 
             let con = Self::new_connection(
-                &self_clone.0.client,
-                self_clone.0.retry_strategy,
+                &internals_clone.client,
+                internals_clone.retry_strategy,
                 &connection_config,
                 additional_commands,
             )
@@ -458,21 +468,20 @@ impl ConnectionManager {
 
         // Update the connection in the connection manager
         let new_connection_arc = Arc::new(new_connection.clone());
-        let prev = self
-            .0
+        let prev = internals
             .connection
             .compare_and_swap(&current, new_connection_arc);
 
         // If the swap happened...
         if Arc::ptr_eq(&prev, &current) {
             // ...start the connection attempt immediately but do not wait on it.
-            self.0.runtime.spawn(new_connection.map(|_| ())).detach();
+            internals.runtime.spawn(new_connection.map(|_| ())).detach();
         }
     }
 
     async fn check_for_disconnect_pushes(
         receiver: oneshot::Receiver<(
-            ConnectionManager,
+            Weak<Internals>,
             UnboundedReceiver<PushInfo>,
             OptionalPushSender,
         )>,
@@ -482,7 +491,10 @@ impl ConnectionManager {
         };
         while let Some(push_info) = internal_receiver.recv().await {
             if push_info.kind == PushKind::Disconnection {
-                this.reconnect(this.0.connection.load());
+                let Some(internals) = this.upgrade() else {
+                    return;
+                };
+                Self::reconnect(Arc::downgrade(&internals), internals.connection.load());
             }
             if let Some(sender) = external_sender.as_ref() {
                 let _ = sender.send(push_info);

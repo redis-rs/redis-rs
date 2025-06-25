@@ -1866,6 +1866,53 @@ mod basic_async {
     #[rstest]
     #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+    fn manager_should_completely_disconnect_when_drop(#[case] runtime: RuntimeType) {
+        let ctx = TestContext::new();
+        let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);
+        let connection_info = ctx.server.connection_info().set_redis_settings(redis);
+        let client = redis::Client::open(connection_info).unwrap();
+
+        block_on_all(
+            async move {
+                let number_of_connections;
+
+                {
+                    let mut conn = client
+                        .get_connection_manager_with_config(
+                            redis::aio::ConnectionManagerConfig::new(),
+                        )
+                        .await?;
+                    let connections: String =
+                        cmd("CLIENT").arg("LIST").query_async(&mut conn).await?;
+
+                    number_of_connections = connections.lines().collect::<Vec<_>>().len();
+                }
+                {
+                    let mut conn = client
+                        .get_connection_manager_with_config(
+                            redis::aio::ConnectionManagerConfig::new(),
+                        )
+                        .await?;
+                    let connections: String =
+                        cmd("CLIENT").arg("LIST").query_async(&mut conn).await?;
+
+                    assert_eq!(
+                        number_of_connections,
+                        connections.lines().collect::<Vec<_>>().len()
+                    );
+
+                    Ok::<_, RedisError>(())
+                }
+            },
+            runtime,
+        )
+        .unwrap();
+    }
+
+    #[cfg(feature = "connection-manager")]
+    #[rstest]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn manager_should_reconnect_without_actions_if_push_sender_is_set_even_after_sender_returns_error(
         #[case] runtime: RuntimeType,
     ) {

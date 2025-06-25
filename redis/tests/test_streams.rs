@@ -1,7 +1,7 @@
 #![cfg(feature = "streams")]
 
 use redis::streams::*;
-use redis::{Commands, Connection, RedisResult, ToRedisArgs};
+use redis::{Connection, ToRedisArgs, TypedCommands};
 
 mod support;
 use crate::support::*;
@@ -12,16 +12,16 @@ use std::thread::sleep;
 use std::time::Duration;
 
 fn xadd(con: &mut Connection) {
-    let _: RedisResult<String> =
-        con.xadd("k1", "1000-0", &[("hello", "world"), ("redis", "streams")]);
-    let _: RedisResult<String> = con.xadd("k1", "1000-1", &[("hello", "world2")]);
-    let _: RedisResult<String> = con.xadd("k2", "2000-0", &[("hello", "world")]);
-    let _: RedisResult<String> = con.xadd("k2", "2000-1", &[("hello", "world2")]);
+    con.xadd("k1", "1000-0", &[("hello", "world"), ("redis", "streams")])
+        .unwrap();
+    con.xadd("k1", "1000-1", &[("hello", "world2")]).unwrap();
+    con.xadd("k2", "2000-0", &[("hello", "world")]).unwrap();
+    con.xadd("k2", "2000-1", &[("hello", "world2")]).unwrap();
 }
 
 fn xadd_keyrange(con: &mut Connection, key: &str, start: i32, end: i32) {
     for _i in start..end {
-        let _: RedisResult<String> = con.xadd(key, "*", &[("h", "w")]);
+        con.xadd(key, "*", &[("h", "w")]).unwrap();
     }
 }
 
@@ -105,11 +105,14 @@ fn test_assorted_1() {
     xadd(&mut con);
 
     // smoke test that we get the same id back
-    let result: RedisResult<String> = con.xadd("k0", "1000-0", &[("x", "y")]);
+    let result = con.xadd("k0", "1000-0", &[("x", "y")]).unwrap();
     assert_eq!(result.unwrap(), "1000-0");
 
     // xread reply
-    let reply: StreamReadReply = con.xread(&["k1", "k2", "k3"], &["0", "0", "0"]).unwrap();
+    let reply = con
+        .xread(&["k1", "k2", "k3"], &["0", "0", "0"])
+        .unwrap()
+        .unwrap();
 
     // verify reply contains 2 keys even though we asked for 3
     assert_eq!(&reply.keys.len(), &2usize);
@@ -120,7 +123,7 @@ fn test_assorted_1() {
     assert_eq!(&reply.keys[0].ids[0].id, "1000-0");
 
     // lookup the key in StreamId map
-    let hello: Option<String> = reply.keys[0].ids[0].get("hello");
+    let hello = reply.keys[0].ids[0].get("hello");
     assert_eq!(hello, Some("world".to_string()));
 
     // verify the second key was written
@@ -129,13 +132,13 @@ fn test_assorted_1() {
     assert_eq!(&reply.keys[1].ids[0].id, "2000-0");
 
     // test xadd_map
-    let mut map: BTreeMap<&str, &str> = BTreeMap::new();
+    let mut map = BTreeMap::new();
     map.insert("ab", "cd");
     map.insert("ef", "gh");
     map.insert("ij", "kl");
-    let _: RedisResult<String> = con.xadd_map("k3", "3000-0", map);
+    con.xadd_map("k3", "3000-0", map).unwrap();
 
-    let reply: StreamRangeReply = con.xrange_all("k3").unwrap();
+    let reply = con.xrange_all("k3").unwrap();
     assert!(reply.ids[0].contains_key("ab"));
     assert!(reply.ids[0].contains_key("ef"));
     assert!(reply.ids[0].contains_key("ij"));
@@ -146,13 +149,14 @@ fn test_assorted_1() {
     xadd_keyrange(&mut con, "k4", 0, 100);
 
     // test xlen.. should have 100 items
-    let result: RedisResult<usize> = con.xlen("k4");
+    let result = con.xlen("k4");
     assert_eq!(result, Ok(100));
 
     // test xadd_maxlen
-    let _: RedisResult<String> =
-        con.xadd_maxlen("k4", StreamMaxlen::Equals(10), "*", &[("h", "w")]);
-    let result: RedisResult<usize> = con.xlen("k4");
+
+    con.xadd_maxlen("k4", StreamMaxlen::Equals(10), "*", &[("h", "w")])
+        .unwrap();
+    let result = con.xlen("k4");
     assert_eq!(result, Ok(10));
 }
 
@@ -170,7 +174,7 @@ fn test_xgroup_create() {
     xadd(&mut con);
 
     // no key exists... this call breaks the connection pipe for some reason
-    let reply: RedisResult<StreamInfoStreamReply> = con.xinfo_stream("k10");
+    let reply = con.xinfo_stream("k10");
     assert!(
         matches!(&reply, Err(e) if e.kind() == redis::ErrorKind::ResponseError
             && e.code() == Some("ERR")
@@ -181,17 +185,17 @@ fn test_xgroup_create() {
     con = ctx.connection();
 
     // key should exist
-    let reply: StreamInfoStreamReply = con.xinfo_stream("k1").unwrap();
+    let reply = con.xinfo_stream("k1").unwrap();
     assert_eq!(&reply.first_entry.id, "1000-0");
     assert_eq!(&reply.last_entry.id, "1000-1");
     assert_eq!(&reply.last_generated_id, "1000-1");
 
     // xgroup create (existing stream)
-    let result: RedisResult<String> = con.xgroup_create("k1", "g1", "$");
+    let result = con.xgroup_create("k1", "g1", "$");
     assert!(result.is_ok());
 
     // xinfo groups (existing stream)
-    let result: RedisResult<StreamInfoGroupsReply> = con.xinfo_groups("k1");
+    let result = con.xinfo_groups("k1");
     assert!(result.is_ok());
     let reply = result.unwrap();
     assert_eq!(&reply.groups.len(), &1);
@@ -209,45 +213,45 @@ fn test_xgroup_createconsumer() {
     xadd(&mut con);
 
     // key should exist
-    let reply: StreamInfoStreamReply = con.xinfo_stream("k1").unwrap();
+    let reply = con.xinfo_stream("k1").unwrap();
     assert_eq!(&reply.first_entry.id, "1000-0");
     assert_eq!(&reply.last_entry.id, "1000-1");
     assert_eq!(&reply.last_generated_id, "1000-1");
 
     // xgroup create (existing stream)
-    let result: RedisResult<String> = con.xgroup_create("k1", "g1", "$");
+    let result = con.xgroup_create("k1", "g1", "$");
     assert!(result.is_ok());
 
     // xinfo groups (existing stream)
-    let result: RedisResult<StreamInfoGroupsReply> = con.xinfo_groups("k1");
+    let result = con.xinfo_groups("k1");
     assert!(result.is_ok());
     let reply = result.unwrap();
     assert_eq!(&reply.groups.len(), &1);
     assert_eq!(&reply.groups[0].name, &"g1");
 
     // xinfo consumers (consumer does not exist)
-    let result: RedisResult<StreamInfoConsumersReply> = con.xinfo_consumers("k1", "g1");
+    let result = con.xinfo_consumers("k1", "g1");
     assert!(result.is_ok());
     let reply = result.unwrap();
     assert_eq!(&reply.consumers.len(), &0);
 
     // xgroup_createconsumer
-    let result: RedisResult<i32> = con.xgroup_createconsumer("k1", "g1", "c1");
-    assert!(matches!(result, Ok(1)));
+    let result = con.xgroup_createconsumer("k1", "g1", "c1");
+    assert!(matches!(result, Ok(true)));
 
     // xinfo consumers (consumer was created)
-    let result: RedisResult<StreamInfoConsumersReply> = con.xinfo_consumers("k1", "g1");
+    let result = con.xinfo_consumers("k1", "g1");
     assert!(result.is_ok());
     let reply = result.unwrap();
     assert_eq!(&reply.consumers.len(), &1);
     assert_eq!(&reply.consumers[0].name, &"c1");
 
     // second call will not create consumer
-    let result: RedisResult<i32> = con.xgroup_createconsumer("k1", "g1", "c1");
-    assert!(matches!(result, Ok(0)));
+    let result = con.xgroup_createconsumer("k1", "g1", "c1");
+    assert!(matches!(result, Ok(false)));
 
     // xinfo consumers (consumer still exists)
-    let result: RedisResult<StreamInfoConsumersReply> = con.xinfo_consumers("k1", "g1");
+    let result = con.xinfo_consumers("k1", "g1");
     assert!(result.is_ok());
     let reply = result.unwrap();
     assert_eq!(&reply.consumers.len(), &1);
@@ -274,12 +278,12 @@ fn test_assorted_2() {
     xadd(&mut con);
 
     // test xgroup create w/ mkstream @ 0
-    let result: RedisResult<String> = con.xgroup_create_mkstream("k99", "g99", "0");
+    let result = con.xgroup_create_mkstream("k99", "g99", "0");
     assert!(result.is_ok());
 
     // Since nothing exists on this stream yet,
     // it should have the defaults returned by the client
-    let result: RedisResult<StreamInfoGroupsReply> = con.xinfo_groups("k99");
+    let result = con.xinfo_groups("k99");
     assert!(result.is_ok());
     let reply = result.unwrap();
     assert_eq!(&reply.groups.len(), &1);
@@ -291,12 +295,12 @@ fn test_assorted_2() {
 
     // call xadd on k99 just so we can read from it
     // using consumer g99 and test xinfo_consumers
-    let _: RedisResult<String> = con.xadd("k99", "1000-0", &[("a", "b"), ("c", "d")]);
-    let _: RedisResult<String> = con.xadd("k99", "1000-1", &[("e", "f"), ("g", "h")]);
+    let _ = con.xadd("k99", "1000-0", &[("a", "b"), ("c", "d")]);
+    let _ = con.xadd("k99", "1000-1", &[("e", "f"), ("g", "h")]);
 
     // Two messages have been added but not acked:
     // this should give us a `lag` of 2 (if the server supports it)
-    let result: RedisResult<StreamInfoGroupsReply> = con.xinfo_groups("k99");
+    let result = con.xinfo_groups("k99");
     assert!(result.is_ok());
     let reply = result.unwrap();
     assert_eq!(&reply.groups.len(), &1);
@@ -306,7 +310,7 @@ fn test_assorted_2() {
     }
 
     // test empty PEL
-    let empty_reply: StreamPendingReply = con.xpending("k99", "g99").unwrap();
+    let empty_reply = con.xpending("k99", "g99").unwrap();
 
     assert_eq!(empty_reply.count(), 0);
     if let StreamPendingReply::Empty = empty_reply {
@@ -319,42 +323,44 @@ fn test_assorted_2() {
     // using ID=">" means all undelivered ids
     // otherwise, ID="0 | ms-num" means all pending already
     // sent to this client
-    let reply: StreamReadReply = con
+    let reply = con
         .xread_options(
             &["k99"],
             &[">"],
             &StreamReadOptions::default().group("g99", "c99"),
         )
+        .unwrap()
         .unwrap();
     assert_eq!(reply.keys[0].ids.len(), 2);
 
     // read xinfo consumers again, should have 2 messages for the c99 consumer
-    let reply: StreamInfoConsumersReply = con.xinfo_consumers("k99", "g99").unwrap();
+    let reply = con.xinfo_consumers("k99", "g99").unwrap();
     assert_eq!(reply.consumers[0].pending, 2);
 
     // ack one of these messages
-    let result: RedisResult<i32> = con.xack("k99", "g99", &["1000-0"]);
+    let result = con.xack("k99", "g99", &["1000-0"]);
     assert_eq!(result, Ok(1));
 
     // get pending messages already seen by this client
     // we should only have one now..
-    let reply: StreamReadReply = con
+    let reply = con
         .xread_options(
             &["k99"],
             &["0"],
             &StreamReadOptions::default().group("g99", "c99"),
         )
+        .unwrap()
         .unwrap();
     assert_eq!(reply.keys.len(), 1);
 
     // we should also have one pending here...
-    let reply: StreamInfoConsumersReply = con.xinfo_consumers("k99", "g99").unwrap();
+    let reply = con.xinfo_consumers("k99", "g99").unwrap();
     assert_eq!(reply.consumers[0].pending, 1);
 
     // add more and read so we can test xpending
-    let _: RedisResult<String> = con.xadd("k99", "1001-0", &[("i", "j"), ("k", "l")]);
-    let _: RedisResult<String> = con.xadd("k99", "1001-1", &[("m", "n"), ("o", "p")]);
-    let _: StreamReadReply = con
+    let _ = con.xadd("k99", "1001-0", &[("i", "j"), ("k", "l")]);
+    let _ = con.xadd("k99", "1001-1", &[("m", "n"), ("o", "p")]);
+    let _ = con
         .xread_options(
             &["k99"],
             &[">"],
@@ -364,7 +370,7 @@ fn test_assorted_2() {
 
     // call xpending here...
     // this has a different reply from what the count variations return
-    let data_reply: StreamPendingReply = con.xpending("k99", "g99").unwrap();
+    let data_reply = con.xpending("k99", "g99").unwrap();
 
     assert_eq!(data_reply.count(), 3);
 
@@ -375,10 +381,10 @@ fn test_assorted_2() {
     }
 
     // both count variations have the same reply types
-    let reply: StreamPendingCountReply = con.xpending_count("k99", "g99", "-", "+", 10).unwrap();
+    let reply = con.xpending_count("k99", "g99", "-", "+", 10).unwrap();
     assert_eq!(reply.ids.len(), 3);
 
-    let reply: StreamPendingCountReply = con
+    let reply = con
         .xpending_consumer_count("k99", "g99", "-", "+", 10, "c99")
         .unwrap();
     assert_eq!(reply.ids.len(), 3);
@@ -409,16 +415,15 @@ fn test_xadd_maxlen_map() {
     let mut con = ctx.connection();
 
     for i in 0..10 {
-        let mut map: BTreeMap<&str, &str> = BTreeMap::new();
+        let mut map = BTreeMap::new();
         let idx = i.to_string();
         map.insert("idx", &idx);
-        let _: RedisResult<String> =
-            con.xadd_maxlen_map("maxlen_map", StreamMaxlen::Equals(3), "*", map);
+        let _ = con.xadd_maxlen_map("maxlen_map", StreamMaxlen::Equals(3), "*", map);
     }
 
-    let result: RedisResult<usize> = con.xlen("maxlen_map");
+    let result = con.xlen("maxlen_map");
     assert_eq!(result, Ok(3));
-    let reply: StreamRangeReply = con.xrange_all("maxlen_map").unwrap();
+    let reply = con.xrange_all("maxlen_map").unwrap();
 
     assert_eq!(reply.ids[0].get("idx"), Some("7".to_string()));
     assert_eq!(reply.ids[1].get("idx"), Some("8".to_string()));
@@ -431,15 +436,15 @@ fn test_xadd_options() {
     let mut con = ctx.connection();
 
     // NoMKStream will return a nil when the stream does not exist
-    let result: RedisResult<redis::Value> = con.xadd_options(
+    let result = con.xadd_options(
         "k1",
         "*",
         &[("h", "w")],
         &StreamAddOptions::default().nomkstream(),
     );
-    assert_eq!(result, Ok(redis::Value::Nil));
+    assert_eq!(result, Ok(None));
 
-    let result: RedisResult<StreamInfoStreamReply> = con.xinfo_stream("k1");
+    let result = con.xinfo_stream("k1");
     assert!(
         matches!(&result, Err(e) if e.kind() == redis::ErrorKind::ResponseError
             && e.code() == Some("ERR")
@@ -447,10 +452,10 @@ fn test_xadd_options() {
     );
 
     fn setup_stream(con: &mut Connection) {
-        let _: RedisResult<()> = con.del("k1");
+        let _ = con.del("k1");
 
         for i in 0..10 {
-            let _: RedisResult<String> = con.xadd_options(
+            let _ = con.xadd_options(
                 "k1",
                 format!("1-{i}"),
                 &[("h", "w")],
@@ -462,39 +467,39 @@ fn test_xadd_options() {
     // test trim by maxlen
     setup_stream(&mut con);
 
-    let _: RedisResult<String> = con.xadd_options(
+    let _ = con.xadd_options(
         "k1",
         "2-1",
         &[("h", "w")],
         &StreamAddOptions::default().trim(StreamTrimStrategy::maxlen(StreamTrimmingMode::Exact, 4)),
     );
 
-    let info: StreamInfoStreamReply = con.xinfo_stream("k1").unwrap();
+    let info = con.xinfo_stream("k1").unwrap();
     assert_eq!(info.length, 4);
     assert_eq!(info.first_entry.id, "1-7");
 
     // test with trim by minid
     setup_stream(&mut con);
 
-    let _: RedisResult<String> = con.xadd_options(
+    let _ = con.xadd_options(
         "k1",
         "2-1",
         &[("h", "w")],
         &StreamAddOptions::default()
             .trim(StreamTrimStrategy::minid(StreamTrimmingMode::Exact, "1-5")),
     );
-    let info: StreamInfoStreamReply = con.xinfo_stream("k1").unwrap();
+    let info = con.xinfo_stream("k1").unwrap();
     assert_eq!(info.length, 6);
     assert_eq!(info.first_entry.id, "1-5");
 
     // test adding from a map
-    let mut map: BTreeMap<&str, &str> = BTreeMap::new();
+    let mut map = BTreeMap::new();
     map.insert("ab", "cd");
     map.insert("ef", "gh");
     map.insert("ij", "kl");
-    let _: RedisResult<String> = con.xadd_options("k1", "3-1", map, &StreamAddOptions::default());
+    let _ = con.xadd_options("k1", "3-1", map, &StreamAddOptions::default());
 
-    let info: StreamInfoStreamReply = con.xinfo_stream("k1").unwrap();
+    let info = con.xinfo_stream("k1").unwrap();
     assert_eq!(info.length, 7);
     assert_eq!(info.first_entry.id, "1-5");
     assert_eq!(info.last_entry.id, "3-1");
@@ -505,27 +510,27 @@ fn test_xread_options_deleted_pel_entry() {
     // Test xread_options behaviour with deleted entry
     let ctx = TestContext::new();
     let mut con = ctx.connection();
-    let result: RedisResult<String> = con.xgroup_create_mkstream("k1", "g1", "$");
+    let result = con.xgroup_create_mkstream("k1", "g1", "$");
     assert!(result.is_ok());
-    let _: RedisResult<String> =
-        con.xadd_maxlen("k1", StreamMaxlen::Equals(1), "*", &[("h1", "w1")]);
+    let _ = con.xadd_maxlen("k1", StreamMaxlen::Equals(1), "*", &[("h1", "w1")]);
     // read the pending items for this key & group
-    let result: StreamReadReply = con
+    let result = con
         .xread_options(
             &["k1"],
             &[">"],
             &StreamReadOptions::default().group("g1", "c1"),
         )
+        .unwrap()
         .unwrap();
 
-    let _: RedisResult<String> =
-        con.xadd_maxlen("k1", StreamMaxlen::Equals(1), "*", &[("h2", "w2")]);
-    let result_deleted_entry: StreamReadReply = con
+    let _ = con.xadd_maxlen("k1", StreamMaxlen::Equals(1), "*", &[("h2", "w2")]);
+    let result_deleted_entry = con
         .xread_options(
             &["k1"],
             &["0"],
             &StreamReadOptions::default().group("g1", "c1"),
         )
+        .unwrap()
         .unwrap();
     assert_eq!(
         result.keys[0].ids.len(),
@@ -552,19 +557,20 @@ fn test_xautoclaim() {
     //    past the idle time and read them from a different consumer
 
     // create the group
-    let result: RedisResult<String> = con.xgroup_create_mkstream("k1", "g1", "$");
+    let result = con.xgroup_create_mkstream("k1", "g1", "$");
     assert!(result.is_ok());
 
     // add some keys
     xadd_keyrange(&mut con, "k1", 0, 10);
 
     // read the pending items for this key & group
-    let reply: StreamReadReply = con
+    let reply = con
         .xread_options(
             &["k1"],
             &[">"],
             &StreamReadOptions::default().group("g1", "c1"),
         )
+        .unwrap()
         .unwrap();
     // verify we have 10 ids
     assert_eq!(reply.keys[0].ids.len(), 10);
@@ -577,7 +583,7 @@ fn test_xautoclaim() {
     sleep(Duration::from_millis(10));
 
     // grab this id if > 4ms
-    let reply: StreamAutoClaimReply = con
+    let reply = con
         .xautoclaim_options(
             "k1",
             "g1",
@@ -598,7 +604,7 @@ fn test_xautoclaim() {
 
     // let's test some of the xautoclaim_options
     // call force on the same claim.id
-    let reply: StreamAutoClaimReply = con
+    let reply = con
         .xautoclaim_options(
             "k1",
             "g1",
@@ -635,19 +641,20 @@ fn test_xclaim() {
     //    past the idle time and read them from a different consumer
 
     // create the group
-    let result: RedisResult<String> = con.xgroup_create_mkstream("k1", "g1", "$");
+    let result = con.xgroup_create_mkstream("k1", "g1", "$");
     assert!(result.is_ok());
 
     // add some keys
     xadd_keyrange(&mut con, "k1", 0, 10);
 
     // read the pending items for this key & group
-    let reply: StreamReadReply = con
+    let reply = con
         .xread_options(
             &["k1"],
             &[">"],
             &StreamReadOptions::default().group("g1", "c1"),
         )
+        .unwrap()
         .unwrap();
     // verify we have 10 ids
     assert_eq!(reply.keys[0].ids.len(), 10);
@@ -664,7 +671,7 @@ fn test_xclaim() {
     sleep(Duration::from_millis(5));
 
     // grab this id if > 4ms
-    let reply: StreamClaimReply = con
+    let reply = con
         .xclaim("k1", "g1", "c2", 4, &[claim.id.clone()])
         .unwrap();
     assert_eq!(reply.ids.len(), 1);
@@ -672,7 +679,7 @@ fn test_xclaim() {
 
     // grab all pending ids for this key...
     // we should 9 in c1 and 1 in c2
-    let reply: StreamPendingReply = con.xpending("k1", "g1").unwrap();
+    let reply = con.xpending("k1", "g1").unwrap();
     if let StreamPendingReply::Data(data) = reply {
         assert_eq!(data.consumers[0].name, "c1");
         assert_eq!(data.consumers[0].pending, 9);
@@ -696,7 +703,7 @@ fn test_xclaim() {
         )
         .unwrap();
 
-    let reply: StreamPendingReply = con.xpending("k1", "g1").unwrap();
+    let reply = con.xpending("k1", "g1").unwrap();
     // we should have 9 w/ c1 and 1 w/ c3 now
     if let StreamPendingReply::Data(data) = reply {
         assert_eq!(data.consumers[1].name, "c3");
@@ -727,14 +734,15 @@ fn test_xclaim_last_id() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
 
-    let result: RedisResult<String> = con.xgroup_create_mkstream("k1", "g1", "$");
+    let result = con.xgroup_create_mkstream("k1", "g1", "$");
     assert!(result.is_ok());
 
     // add some keys
     xadd_keyrange(&mut con, "k1", 0, 10);
 
-    let reply: StreamReadReply = con
+    let reply = con
         .xread_options(&["k1"], &["0"], &StreamReadOptions::default())
+        .unwrap()
         .unwrap();
     // verify we have 10 ids
     assert_eq!(reply.keys[0].ids.len(), 10);
@@ -744,7 +752,7 @@ fn test_xclaim_last_id() {
     let claim_late_id = &reply.keys[0].ids[8];
 
     // get read up to the middle record
-    let _: StreamReadReply = con
+    let _ = con
         .xread_options(
             &["k1"],
             &[">"],
@@ -752,7 +760,7 @@ fn test_xclaim_last_id() {
         )
         .unwrap();
 
-    let info: StreamInfoGroupsReply = con.xinfo_groups("k1").unwrap();
+    let info = con.xinfo_groups("k1").unwrap();
     assert_eq!(info.groups[0].last_delivered_id, claim_middle_id.id.clone());
 
     // sleep for 5ms
@@ -772,7 +780,7 @@ fn test_xclaim_last_id() {
         .unwrap();
 
     // lastid is kept at the 6th entry as the 4th entry is OLDER than the last_delivered_id
-    let info: StreamInfoGroupsReply = con.xinfo_groups("k1").unwrap();
+    let info = con.xinfo_groups("k1").unwrap();
     assert_eq!(info.groups[0].last_delivered_id, claim_middle_id.id.clone());
 
     // sleep for 5ms
@@ -792,7 +800,7 @@ fn test_xclaim_last_id() {
         .unwrap();
 
     // lastid is moved to the 8th entry as it is NEWER than the last_delivered_id
-    let info: StreamInfoGroupsReply = con.xinfo_groups("k1").unwrap();
+    let info = con.xinfo_groups("k1").unwrap();
     assert_eq!(info.groups[0].last_delivered_id, claim_late_id.id.clone());
 }
 
@@ -807,11 +815,11 @@ fn test_xdel() {
     xadd(&mut con);
 
     // delete the first stream item for this key
-    let result: RedisResult<i32> = con.xdel("k1", &["1000-0"]);
+    let result = con.xdel("k1", &["1000-0"]);
     // returns the number of items deleted
     assert_eq!(result, Ok(1));
 
-    let result: RedisResult<i32> = con.xdel("k2", &["2000-0", "2000-1", "2000-2"]);
+    let result = con.xdel("k2", &["2000-0", "2000-1", "2000-2"]);
     // should equal 2 since the last id doesn't exist
     assert_eq!(result, Ok(2));
 }
@@ -828,10 +836,10 @@ fn test_xtrim() {
 
     // trim key to 50
     // returns the number of items remaining in the stream
-    let result: RedisResult<i32> = con.xtrim("k1", StreamMaxlen::Equals(50));
+    let result = con.xtrim("k1", StreamMaxlen::Equals(50));
     assert_eq!(result, Ok(50));
     // we should end up with 40 after this call
-    let result: RedisResult<i32> = con.xtrim("k1", StreamMaxlen::Equals(10));
+    let result = con.xtrim("k1", StreamMaxlen::Equals(10));
     assert_eq!(result, Ok(40));
 }
 
@@ -847,34 +855,34 @@ fn test_xtrim_options() {
 
     // trim key to 50
     // returns the number of items deleted from the stream
-    let result: RedisResult<i32> = con.xtrim_options(
+    let result = con.xtrim_options(
         "k1",
         &StreamTrimOptions::maxlen(StreamTrimmingMode::Exact, 50),
     );
     assert_eq!(result, Ok(50));
 
     // we should end up with 40 deleted this call
-    let result: RedisResult<i32> = con.xtrim_options(
+    let result = con.xtrim_options(
         "k1",
         &StreamTrimOptions::maxlen(StreamTrimmingMode::Exact, 10),
     );
     assert_eq!(result, Ok(40));
 
-    let _: RedisResult<()> = con.del("k1");
+    let _ = con.del("k1");
 
     for i in 1..100 {
-        let _: RedisResult<String> = con.xadd("k1", format!("1-{i}"), &[("h", "w")]);
+        let _ = con.xadd("k1", format!("1-{i}"), &[("h", "w")]);
     }
 
     // Trim to id 1-26
-    let result: RedisResult<i32> = con.xtrim_options(
+    let result = con.xtrim_options(
         "k1",
         &StreamTrimOptions::minid(StreamTrimmingMode::Exact, "1-26"),
     );
     assert_eq!(result, Ok(25));
 
     // we should end up with 50 deleted this call
-    let result: RedisResult<i32> = con.xtrim_options(
+    let result = con.xtrim_options(
         "k1",
         &StreamTrimOptions::minid(StreamTrimmingMode::Exact, "1-76"),
     );
@@ -892,36 +900,37 @@ fn test_xgroup() {
     let mut con = ctx.connection();
 
     // test xgroup create w/ mkstream @ 0
-    let result: RedisResult<String> = con.xgroup_create_mkstream("k1", "g1", "0");
+    let result = con.xgroup_create_mkstream("k1", "g1", "0");
     assert!(result.is_ok());
 
     // destroy this new stream group
-    let result: RedisResult<i32> = con.xgroup_destroy("k1", "g1");
-    assert_eq!(result, Ok(1));
+    let result = con.xgroup_destroy("k1", "g1");
+    assert_eq!(result, Ok(true));
 
     // add some keys
     xadd(&mut con);
 
     // create the group again using an existing stream
-    let result: RedisResult<String> = con.xgroup_create("k1", "g1", "0");
+    let result = con.xgroup_create("k1", "g1", "0");
     assert!(result.is_ok());
 
     // read from the group so we can register the consumer
-    let reply: StreamReadReply = con
+    let reply = con
         .xread_options(
             &["k1"],
             &[">"],
             &StreamReadOptions::default().group("g1", "c1"),
         )
+        .unwrap()
         .unwrap();
     assert_eq!(reply.keys[0].ids.len(), 2);
 
-    let result: RedisResult<i32> = con.xgroup_delconsumer("k1", "g1", "c1");
+    let result = con.xgroup_delconsumer("k1", "g1", "c1");
     // returns the number of pending message this client had open
     assert_eq!(result, Ok(2));
 
-    let result: RedisResult<i32> = con.xgroup_destroy("k1", "g1");
-    assert_eq!(result, Ok(1));
+    let result = con.xgroup_destroy("k1", "g1");
+    assert_eq!(result, Ok(true));
 }
 
 #[test]
@@ -937,16 +946,16 @@ fn test_xrange() {
     xadd(&mut con);
 
     // xrange replies
-    let reply: StreamRangeReply = con.xrange_all("k1").unwrap();
+    let reply = con.xrange_all("k1").unwrap();
     assert_eq!(reply.ids.len(), 2);
 
-    let reply: StreamRangeReply = con.xrange("k1", "1000-1", "+").unwrap();
+    let reply = con.xrange("k1", "1000-1", "+").unwrap();
     assert_eq!(reply.ids.len(), 1);
 
-    let reply: StreamRangeReply = con.xrange("k1", "-", "1000-0").unwrap();
+    let reply = con.xrange("k1", "-", "1000-0").unwrap();
     assert_eq!(reply.ids.len(), 1);
 
-    let reply: StreamRangeReply = con.xrange_count("k1", "-", "+", 1).unwrap();
+    let reply = con.xrange_count("k1", "-", "+", 1).unwrap();
     assert_eq!(reply.ids.len(), 1);
 }
 
@@ -963,15 +972,15 @@ fn test_xrevrange() {
     xadd(&mut con);
 
     // xrange replies
-    let reply: StreamRangeReply = con.xrevrange_all("k1").unwrap();
+    let reply = con.xrevrange_all("k1").unwrap();
     assert_eq!(reply.ids.len(), 2);
 
-    let reply: StreamRangeReply = con.xrevrange("k1", "1000-1", "-").unwrap();
+    let reply = con.xrevrange("k1", "1000-1", "-").unwrap();
     assert_eq!(reply.ids.len(), 2);
 
-    let reply: StreamRangeReply = con.xrevrange("k1", "+", "1000-1").unwrap();
+    let reply = con.xrevrange("k1", "+", "1000-1").unwrap();
     assert_eq!(reply.ids.len(), 1);
 
-    let reply: StreamRangeReply = con.xrevrange_count("k1", "+", "-", 1).unwrap();
+    let reply = con.xrevrange_count("k1", "+", "-", 1).unwrap();
     assert_eq!(reply.ids.len(), 1);
 }

@@ -3,7 +3,7 @@
 use assert_approx_eq::assert_approx_eq;
 
 use redis::geo::{Coord, RadiusOptions, RadiusOrder, RadiusSearchResult, Unit};
-use redis::{Commands, RedisResult};
+use redis::{RedisResult, TypedCommands};
 
 mod support;
 use crate::support::*;
@@ -35,8 +35,9 @@ fn test_geodist_existing_members() {
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
 
-    let dist: f64 = con
+    let dist = con
         .geo_dist("my_gis", PALERMO.2, CATANIA.2, Unit::Kilometers)
+        .unwrap()
         .unwrap();
     assert_approx_eq!(dist, 166.2742, 0.001);
 }
@@ -51,11 +52,10 @@ fn test_geodist_support_option() {
     // We should be able to extract the value as an Option<_>, so we can detect
     // if a member is missing
 
-    let result: RedisResult<Option<f64>> = con.geo_dist("my_gis", PALERMO.2, "none", Unit::Meters);
+    let result = con.geo_dist("my_gis", PALERMO.2, "none", Unit::Meters);
     assert_eq!(result, Ok(None));
 
-    let result: RedisResult<Option<f64>> =
-        con.geo_dist("my_gis", PALERMO.2, CATANIA.2, Unit::Meters);
+    let result = con.geo_dist("my_gis", PALERMO.2, CATANIA.2, Unit::Meters);
     assert_ne!(result, Ok(None));
 
     let dist = result.unwrap().unwrap();
@@ -88,21 +88,21 @@ fn test_geopos() {
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
 
-    let result: Vec<Vec<f64>> = con.geo_pos("my_gis", &[PALERMO.2]).unwrap();
+    let result = con.geo_pos("my_gis", &[PALERMO.2]).unwrap();
     assert_eq!(result.len(), 1);
 
-    assert_approx_eq!(result[0][0], 13.36138, 0.0001);
-    assert_approx_eq!(result[0][1], 38.11555, 0.0001);
+    assert_approx_eq!(result[0].as_ref().unwrap().longitude, 13.36138, 0.0001);
+    assert_approx_eq!(result[0].as_ref().unwrap().latitude, 38.11555, 0.0001);
 
     // Using the Coord struct
-    let result: Vec<Coord<f64>> = con.geo_pos("my_gis", &[PALERMO.2, CATANIA.2]).unwrap();
+    let result = con.geo_pos("my_gis", &[PALERMO.2, CATANIA.2]).unwrap();
     assert_eq!(result.len(), 2);
 
-    assert_approx_eq!(result[0].longitude, 13.36138, 0.0001);
-    assert_approx_eq!(result[0].latitude, 38.11555, 0.0001);
+    assert_approx_eq!(result[0].as_ref().unwrap().longitude, 13.36138, 0.0001);
+    assert_approx_eq!(result[0].as_ref().unwrap().latitude, 38.11555, 0.0001);
 
-    assert_approx_eq!(result[1].longitude, 15.08726, 0.0001);
-    assert_approx_eq!(result[1].latitude, 37.50266, 0.0001);
+    assert_approx_eq!(result[1].as_ref().unwrap().longitude, 15.08726, 0.0001);
+    assert_approx_eq!(result[1].as_ref().unwrap().latitude, 37.50266, 0.0001);
 }
 
 #[test]
@@ -118,11 +118,11 @@ fn test_use_coord_struct() {
         Ok(1)
     );
 
-    let result: Vec<Coord<f64>> = con.geo_pos("my_gis", "Palermo").unwrap();
+    let result = con.geo_pos("my_gis", "Palermo").unwrap();
     assert_eq!(result.len(), 1);
 
-    assert_approx_eq!(result[0].longitude, 13.36138, 0.0001);
-    assert_approx_eq!(result[0].latitude, 38.11555, 0.0001);
+    assert_approx_eq!(result[0].as_ref().unwrap().longitude, 13.36138, 0.0001);
+    assert_approx_eq!(result[0].as_ref().unwrap().latitude, 38.11555, 0.0001);
 }
 
 #[test]
@@ -188,7 +188,7 @@ fn test_georadius_by_member() {
 
     // Simple request, without extra data
     let opts = RadiusOptions::default().order(RadiusOrder::Asc);
-    let result: Vec<RadiusSearchResult> = con
+    let result = con
         .geo_radius_by_member("my_gis", AGRIGENTO.2, 100.0, Unit::Kilometers, opts)
         .unwrap();
     let names: Vec<_> = result.iter().map(|c| c.name.as_str()).collect();
