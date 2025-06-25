@@ -52,7 +52,7 @@ jobs:
               rust: stable,
               db-org: redis,
               db-name: redis,
-              db-version: 8.0-rc1
+              db-version: 8.0.2
             },
 
             # Different rust cases
@@ -78,14 +78,7 @@ jobs:
 
     steps:
 
-    - name: Cache DB
-      id: cache-redis
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/redis-cli
-          ~/redis-server
-        key: ${{ runner.os }}-${{ matrix.config.db-name }}-${{ matrix.config.db-version }}
+    - uses: actions/checkout@v4
 
     - name: Cache RedisJSON
       id: cache-redisjson
@@ -96,21 +89,11 @@ jobs:
         key: ${{ runner.os }}-redisjson
 
     - name: Install DB
-      if: steps.cache-redis.outputs.cache-hit != 'true'
-      run: |
-        sudo apt-get update
-        wget https://github.com/${{ matrix.config.db-org }}/${{ matrix.config.db-name }}/archive/${{ matrix.config.db-version }}.tar.gz;
-        tar -xzvf ${{ matrix.config.db-version }}.tar.gz;
-        pushd ${{ matrix.config.db-name }}-${{ matrix.config.db-version }} && 
-        BUILD_TLS=yes make install && 
-        sudo mv src/${{ matrix.config.db-name }}-server $HOME/redis-server &&
-        sudo mv src/${{ matrix.config.db-name }}-cli $HOME/redis-cli && 
-        popd;
-        echo $PATH
-
-    - name: set PATH
-      run: |
-        echo "$HOME" >> $GITHUB_PATH
+      uses: ./.github/actions/install-db
+      with:
+        db-org: ${{ matrix.config.db-org }}
+        db-name: ${{ matrix.config.db-name }}
+        db-version: ${{ matrix.config.db-version }} 
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain/@master
@@ -124,8 +107,6 @@ jobs:
       uses: taiki-e/install-action@v2
       with:
         tool: nextest
-
-    - uses: actions/checkout@v4
 
     - name: Run tests
       run: make test
@@ -181,36 +162,56 @@ jobs:
   examples:
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
-    env:
-      redis_ver: 7.0.0
-      rust_ver: stable
-    steps:
-      - name: Cache redis
-        id: cache-redis
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/redis-cli
-            ~/redis-server
-          key: ${{ runner.os }}-${{ env.redis_ver }}-redis
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          [
+            # Different DB cases:
+            {
+              db-org: redis,
+              db-name: redis,
+              db-version: 6.2.13
+            },
+            {
+              db-org: redis,
+              db-name: redis,
+              db-version: 7.2.4
+            },
+            {
+              db-org: valkey-io,
+              db-name: valkey,
+              db-version: 7.2.6
+            },
+            {
+              db-org: valkey-io,
+              db-name: valkey,
+              db-version: 8.0.1
+            },
+            {
+              db-org: redis,
+              db-name: redis,
+              db-version: 8.0.2
+            }
+          ]
 
-      - name: Install redis
-        if: steps.cache-redis.outputs.cache-hit != 'true'
-        run: |
-          sudo apt-get update
-          wget https://github.com/redis/redis/archive/${{ env.redis_ver }}.tar.gz;
-          tar -xzvf ${{ env.redis_ver }}.tar.gz;
-          pushd redis-${{ env.redis_ver }} && BUILD_TLS=yes make && sudo mv src/redis-server src/redis-cli /usr/bin/ && popd;
-          echo $PATH          
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install DB
+        uses: ./.github/actions/install-db
+        with:
+          db-org: ${{ matrix.config.db-org }}
+          db-name: ${{ matrix.config.db-name }}
+          db-version: ${{ matrix.config.db-version }} 
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain/@master
         with:
-          toolchain: ${{ env.rust_ver }}
+          toolchain: stable
   
       - uses: Swatinem/rust-cache@v2
-  
-      - uses: actions/checkout@v4
   
       - name: start-redis
         run: redis-server &
@@ -265,31 +266,17 @@ jobs:
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     env:
-      redis_ver: 8.0.2
       rust_ver: stable
     steps:
-
-    - name: Cache redis
-      id: cache-redis
-      uses: actions/cache@v4
+      
+    - uses: actions/checkout@v4
+    
+    - name: Install DB
+      uses: ./.github/actions/install-db
       with:
-        path: |
-          ~/redis-cli
-          ~/redis-server
-        key: ${{ runner.os }}-${{ env.redis_ver }}-redis
-
-    - name: Install redis
-      if: steps.cache-redis.outputs.cache-hit != 'true'
-      run: |
-        sudo apt-get update
-        wget https://github.com/redis/redis/archive/${{ env.redis_ver }}.tar.gz;
-        tar -xzvf ${{ env.redis_ver }}.tar.gz;
-        pushd redis-${{ env.redis_ver }} && BUILD_TLS=yes make && sudo mv src/redis-server src/redis-cli /usr/bin/ && popd;
-        echo $PATH
-
-    - name: set PATH
-      run: |
-        echo "$HOME" >> $GITHUB_PATH
+        db-org: "redis"
+        db-name: "redis"
+        db-version: 8.0.2
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain/@master
@@ -297,8 +284,6 @@ jobs:
         toolchain: ${{ env.rust_ver }}
 
     - uses: Swatinem/rust-cache@v2
-
-    - uses: actions/checkout@v4
 
     - name: Benchmark
       run: |
@@ -308,6 +293,9 @@ jobs:
         git checkout ${{ github.base_ref }} 
         cargo bench -p redis --all-features -- --measurement-time 15 --save-baseline base
         critcmp base changes
+
+    # We check out again, because we switched branches in the last step.
+    - uses: actions/checkout@v4        
 
   flag-frenzy:
       runs-on: ubuntu-latest

@@ -1,0 +1,43 @@
+name: "Install DB"
+inputs:
+  db-org: 
+    type: string,
+    required: true
+  db-name: 
+    type: string,
+    required: true
+  db-version: 
+    type: string,
+    required: true
+
+
+runs:
+  using: "composite"
+  steps:
+    - name: Cache DB
+      id: cache-redis
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/redis-cli
+          ~/redis-server
+        key: ${{ runner.os }}-${{ inputs.db-name }}-${{ inputs.db-version }}
+
+    - name: Install DB
+      if: steps.cache-redis.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        sudo apt-get update
+        wget https://github.com/${{ inputs.db-org }}/${{ inputs.db-name }}/archive/${{ inputs.db-version }}.tar.gz;
+        tar -xzvf ${{ inputs.db-version }}.tar.gz;
+        pushd ${{ inputs.db-name }}-${{ inputs.db-version }} && 
+        BUILD_TLS=yes make install && 
+        sudo mv src/${{ inputs.db-name }}-server $HOME/redis-server &&
+        sudo mv src/${{ inputs.db-name }}-cli $HOME/redis-cli && 
+        popd;
+        echo $PATH
+
+    - name: set PATH
+      shell: bash
+      run: |
+        echo "$HOME" >> $GITHUB_PATH        
