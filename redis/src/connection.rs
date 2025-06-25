@@ -1138,43 +1138,39 @@ pub(crate) fn connection_setup_pipeline(
     check_username: bool,
     #[cfg(feature = "cache-aio")] cache_config: Option<crate::caching::CacheConfig>,
 ) -> (crate::Pipeline, ConnectionSetupComponents) {
-    let mut last_cmd_index = 0;
-
-    let mut get_next_command_index = |condition| {
-        if condition {
-            last_cmd_index += 1;
-            Some(last_cmd_index - 1)
-        } else {
-            None
-        }
-    };
-
-    let authenticate_with_resp3_cmd_index =
-        get_next_command_index(connection_info.protocol != ProtocolVersion::RESP2);
-    let authenticate_with_resp2_cmd_index = get_next_command_index(
-        authenticate_with_resp3_cmd_index.is_none() && connection_info.password.is_some(),
-    );
-    let select_db_cmd_index = get_next_command_index(connection_info.db != 0);
-    #[cfg(feature = "cache-aio")]
-    let cache_cmd_index = get_next_command_index(
-        connection_info.protocol != ProtocolVersion::RESP2 && cache_config.is_some(),
-    );
-
     let mut pipeline = pipe();
+    let (authenticate_with_resp3_cmd_index, authenticate_with_resp2_cmd_index) =
+        if connection_info.protocol != ProtocolVersion::RESP2 {
+            pipeline.add_command(resp3_hello(connection_info));
+            (Some(0), None)
+        } else if connection_info.password.is_some() {
+            pipeline.add_command(authenticate_cmd(
+                connection_info,
+                check_username,
+                connection_info.password.as_ref().unwrap(),
+            ));
+            (None, Some(0))
+        } else {
+            (None, None)
+        };
 
-    if authenticate_with_resp3_cmd_index.is_some() {
-        pipeline.add_command(resp3_hello(connection_info));
-    } else if authenticate_with_resp2_cmd_index.is_some() {
-        pipeline.add_command(authenticate_cmd(
-            connection_info,
-            check_username,
-            connection_info.password.as_ref().unwrap(),
-        ));
-    }
+    let select_db_cmd_index = (connection_info.db != 0)
+        .then(|| pipeline.len())
+        .inspect(|_| {
+            pipeline.cmd("SELECT").arg(connection_info.db);
+        });
 
-    if select_db_cmd_index.is_some() {
-        pipeline.cmd("SELECT").arg(connection_info.db);
-    }
+    #[cfg(feature = "cache-aio")]
+    let cache_cmd_index = cache_config.map(|cache_config| {
+        pipeline.cmd("CLIENT").arg("TRACKING").arg("ON");
+        match cache_config.mode {
+            crate::caching::CacheMode::All => {}
+            crate::caching::CacheMode::OptIn => {
+                pipeline.arg("OPTIN");
+            }
+        }
+        pipeline.len() - 1
+    });
 
     // result is ignored, as per the command's instructions.
     // https://redis.io/commands/client-setinfo/
@@ -1192,20 +1188,6 @@ pub(crate) fn connection_setup_pipeline(
         .arg("LIB-VER")
         .arg(env!("CARGO_PKG_VERSION"))
         .ignore();
-
-    #[cfg(feature = "cache-aio")]
-    if cache_cmd_index.is_some() {
-        let cache_config = cache_config.expect(
-            "It's expected to have cache_config if cache_cmd_index is Some, please create an issue about this.",
-        );
-        pipeline.cmd("CLIENT").arg("TRACKING").arg("ON");
-        match cache_config.mode {
-            crate::caching::CacheMode::All => {}
-            crate::caching::CacheMode::OptIn => {
-                pipeline.arg("OPTIN");
-            }
-        }
-    }
 
     (
         pipeline,

@@ -173,8 +173,5 @@ fn main() {
         "redis://127.0.0.1:6379/"
     };
 
-    if let Err(err) = do_redis_code(url) {
-        println!("Could not execute example:");
-        println!("  {}: {}", err.category(), err);
-    }
+    do_redis_code(url).unwrap();
 }
