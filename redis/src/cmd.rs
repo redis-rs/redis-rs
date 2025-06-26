@@ -597,10 +597,12 @@ impl Cmd {
         self
     }
 
-    /// Works similar to `arg` but adds a cursor argument.  This is always
-    /// an integer and also flips the command implementation to support a
+    /// Works similar to `arg` but adds a cursor argument.
+    ///
+    /// This is always an integer and also flips the command implementation to support a
     /// different mode for the iterators where the iterator will ask for
     /// another batch of items when the local data is exhausted.
+    /// Calling this function more than once will overwrite the previous cursor with the latest set value.
     ///
     /// ```rust,no_run
     /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
@@ -614,7 +616,6 @@ impl Cmd {
     /// ```
     #[inline]
     pub fn cursor_arg(&mut self, cursor: u64) -> &mut Cmd {
-        assert!(!self.in_scan_mode());
         self.cursor = Some(cursor);
         self.args.push(Arg::Cursor);
         self
