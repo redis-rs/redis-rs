@@ -401,22 +401,54 @@ where
     /// `BrokenPipe` error.
     fn create_initial_connections(&self) -> RedisResult<()> {
         let mut connections = HashMap::with_capacity(self.initial_nodes.len());
+        let mut failed_connections = Vec::new();
 
         for info in self.initial_nodes.iter() {
             let addr = info.addr.to_string();
 
-            if let Ok(mut conn) = self.connect(&addr) {
-                if conn.check_connection() {
-                    connections.insert(addr, conn);
-                    break;
+            match self.connect(&addr) {
+                Ok(mut conn) => {
+                    if conn.check_connection() {
+                        connections.insert(addr, conn);
+                        break;
+                    } else {
+                        failed_connections.push((
+                            addr,
+                            RedisError::from((
+                                ErrorKind::IoError,
+                                "Node failed to respond to connection check,",
+                            )),
+                        ));
+                    }
+                }
+                Err(conn_err) => {
+                    failed_connections.push((addr, conn_err));
                 }
             }
         }
 
         if connections.is_empty() {
+            // Create a composite description of why connecting to each node failed.
+            let detail = if failed_connections.is_empty() {
+                "List of initial nodes is empty".to_string()
+            } else {
+                let mut formatted_detail = "Failed to connect to each cluster node (".to_string();
+
+                for (index, (addr, conn_err)) in failed_connections.into_iter().enumerate() {
+                    if index != 0 {
+                        formatted_detail += "; ";
+                    }
+                    use std::fmt::Write;
+                    let _ = write!(&mut formatted_detail, "{}: {}", addr, conn_err);
+                }
+                formatted_detail += ")";
+                formatted_detail
+            };
+
             return Err(RedisError::from((
                 ErrorKind::IoError,
                 "It failed to check startup nodes.",
+                detail,
             )));
         }
 
