@@ -22,6 +22,7 @@ mod basic {
     use crate::{assert_args, support::*};
     use assert_approx_eq::assert_approx_eq;
     use rand::distr::Alphanumeric;
+    use rand::prelude::IndexedRandom;
     use rand::{rng, Rng};
     use redis::IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply};
     use redis::{
@@ -53,6 +54,8 @@ mod basic {
     const REDIS_VERSION_CE_8_0_RC1: (u16, u16, u16) = (7, 9, 240);
     #[cfg(feature = "vector-sets")]
     const REDIS_VERSION_CE_8_0: (u16, u16, u16) = (8, 0, 0);
+
+    const REDIS_VERSION_CE_8_2: (u16, u16, u16) = (8, 1, 240);
 
     const HASH_KEY: &str = "testing_hash";
     const HASH_FIELDS_AND_VALUES: [(&str, u8); 5] =
@@ -2190,12 +2193,117 @@ mod basic {
     }
 
     #[test]
-    fn test_bit_operations() {
+    fn test_setbit_and_getbit_single_offset() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
         assert_eq!(con.setbit("bitvec", 10, true), Ok(false));
         assert_eq!(con.getbit("bitvec", 10), Ok(true));
+    }
+
+    #[test]
+    fn test_bit_operations() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
+        let mut con = ctx.connection();
+
+        fn perform_bitwise_operation<F>(str1: &str, str2: &str, op: F) -> String
+        where
+            F: Fn(u8, u8) -> u8,
+        {
+            let longer_string_length = str1.len().max(str2.len());
+
+            // Pad the shorter string with zeroes (ASCII value 0) to match the length of the longer string
+            let padded_str1 = format!("{str1:0<longer_string_length$}");
+            let padded_str2 = format!("{str2:0<longer_string_length$}");
+
+            padded_str1
+                .chars()
+                .zip(padded_str2.chars())
+                .map(|(c1, c2)| {
+                    let result = op(c1 as u8, c2 as u8);
+                    result as char
+                })
+                .collect()
+        }
+
+        let (foobar, foobaz, result) = ("foobar", "foobaz", "result");
+
+        assert_eq!(con.set(foobar, foobar), Ok(()));
+        assert_eq!(con.set(foobaz, foobaz), Ok(()));
+
+        assert_eq!(con.bit_and(result, &[foobar, foobaz]), Ok(foobar.len()));
+        assert_eq!(
+            con.get(result),
+            Ok(Some(perform_bitwise_operation(foobar, foobaz, |a, b| a & b)))
+        );
+
+        assert_eq!(con.bit_or(result, &[foobar, foobaz]), Ok(foobar.len()));
+        assert_eq!(
+            con.get(result),
+            Ok(Some(perform_bitwise_operation(foobar, foobaz, |a, b| a | b)))
+        );
+
+        assert_eq!(con.bit_xor(result, &[foobar, foobaz]), Ok(foobar.len()));
+        assert_eq!(
+            con.get(result),
+            Ok(Some(perform_bitwise_operation(foobar, foobaz, |a, b| a ^ b)))
+        );
+
+        let key_values = BTreeMap::from([("key1", b"\x0F"), ("key2", b"\xF0"), ("key3", b"\xFF")]);
+
+        for kv in key_values.iter() {
+            assert_eq!(con.set(kv.0, kv.1), Ok(()));
+        }
+
+        let keys = key_values.keys().cloned().collect::<Vec<_>>();
+
+        // BITOP AND
+        assert_eq!(con.bit_and(result, &keys), Ok(1));
+        let and_result: Vec<u8> = redis::Commands::get(&mut con, result).unwrap();
+        assert_eq!(and_result, vec![0x00]); // 00000000
+
+        // BITOP OR
+        assert_eq!(con.bit_or(result, &keys), Ok(1));
+        let or_result: Vec<u8> = redis::Commands::get(&mut con, result).unwrap();
+        assert_eq!(or_result, vec![0xFF]); // 11111111
+
+        // BITOP XOR
+        assert_eq!(con.bit_xor(result, &keys), Ok(1));
+        let xor_result: Vec<u8> = redis::Commands::get(&mut con, result).unwrap();
+        assert_eq!(xor_result, vec![0x00]); // 00000000
+
+        // BITOP NOT
+        let random_key = keys.choose(&mut rng()).unwrap();
+        assert_eq!(con.bit_not(result, random_key), Ok(1));
+        let not_result: Vec<u8> = redis::Commands::get(&mut con, result).unwrap();
+        assert_eq!(not_result, vec![!key_values.get(random_key).unwrap()[0]]);
+
+        // BITOP DIFF
+        // DIFF(K1, K2, K3) = K1 ∧ ¬(K2 ∨ K3) = Members of K1 that are not members of any of K2, K3
+        assert_eq!(con.bit_diff(result, &keys), Ok(1));
+        let diff_result: Vec<u8> = redis::Commands::get(&mut con, result).unwrap();
+        assert_eq!(diff_result, vec![0x00]); // 00000000
+        assert!(con.bit_diff(result, keys[0]).is_err());
+
+        // BITOP DIFF1
+        // DIFF1(K1, K2, K3) = ¬K1 ∧ (K2 ∨ K3) = Members of one or more of K2, K3, that are not members of K1
+        assert_eq!(con.bit_diff1(result, &keys), Ok(1));
+        let diff1_result: Vec<u8> = redis::Commands::get(&mut con, result).unwrap();
+        assert_eq!(diff1_result, vec![0xF0]); // 11110000
+        assert!(con.bit_diff1(result, keys[0]).is_err());
+
+        // BITOP ANDOR
+        // ANDOR(K1, K2, K3) = K1 ∧ (K2 ∨ K3) = Members of K1 that are also members of one or more of K2, K3
+        assert_eq!(con.bit_and_or(result, &keys), Ok(1));
+        let and_or_result: Vec<u8> = redis::Commands::get(&mut con, result).unwrap();
+        assert_eq!(and_or_result, vec![0x0F]); // 00001111
+        assert!(con.bit_and_or(result, keys[0]).is_err());
+
+        // BITOP ONE
+        // ONE(K1, K2, K3) =  { e | COUNT(e in K1, K2, K3) == 1 } = Members of exactly one of K1, K2, K3
+        assert_eq!(con.bit_one(result, &keys), Ok(1));
+        let one_result: Vec<u8> = redis::Commands::get(&mut con, result).unwrap();
+        assert_eq!(one_result, vec![0x00]); // 00000000
     }
 
     #[test]
