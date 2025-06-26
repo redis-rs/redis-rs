@@ -439,7 +439,7 @@ where
                         formatted_detail += "; ";
                     }
                     use std::fmt::Write;
-                    let _ = write!(&mut formatted_detail, "{}: {}", addr, conn_err);
+                    let _ = write!(&mut formatted_detail, "{addr}: {conn_err}");
                 }
                 formatted_detail += ")";
                 formatted_detail
