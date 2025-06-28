@@ -1194,7 +1194,7 @@ mod basic {
         // Insert a bunch of keys with legit UTF-8 first
         for x in 0..KEY_COUNT {
             redis::cmd("SET")
-                .arg(format!("foo{}", x))
+                .arg(format!("foo{x}"))
                 .arg(x)
                 .exec(&mut con)
                 .unwrap();
@@ -1856,7 +1856,7 @@ mod basic {
         assert_eq!(
             *received_clone.lock().unwrap(),
             (0..10)
-                .map(|index| format!("foo:{}", index))
+                .map(|index| format!("foo:{index}"))
                 .chain(std::iter::once("bar:-1".to_string()))
                 .collect::<Vec<_>>()
         );

@@ -533,7 +533,7 @@ mod cluster_async {
                 Ok(()) => break 'outer,
                 Err(err) => {
                     // Failed to clear the databases, retry
-                    log::warn!("{}", err);
+                    log::warn!("{err}");
                 }
             }
         }
@@ -1250,7 +1250,7 @@ mod cluster_async {
                     Err(Ok(Value::BulkString(b"123".to_vec())))
                 }
                 _ => {
-                    panic!("Unexpected request: {:?}", cmd);
+                    panic!("Unexpected request: {cmd:?}");
                 }
             }
         });

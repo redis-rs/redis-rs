@@ -620,7 +620,7 @@ mod cluster {
                     Err(Ok(Value::BulkString(b"123".to_vec())))
                 }
                 _ => {
-                    panic!("Unexpected request: {:?}", cmd);
+                    panic!("Unexpected request: {cmd:?}");
                 }
             }
         });

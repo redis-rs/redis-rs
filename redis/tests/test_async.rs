@@ -613,7 +613,7 @@ mod basic_async {
                 let mut unseen = std::collections::HashSet::new();
 
                 for x in 0..batch_size {
-                    let key_name = format!("key.{}", x);
+                    let key_name = format!("key.{x}");
                     redis::cmd("SET")
                         .arg(key_name.clone())
                         .arg("foo")
@@ -661,7 +661,7 @@ mod basic_async {
                 let mut unseen = std::collections::HashSet::new();
 
                 for x in 0..batch_size {
-                    let key_name = format!("key.{}", x);
+                    let key_name = format!("key.{x}");
                     redis::cmd("SET")
                         .arg(key_name.clone())
                         .arg("foo")
