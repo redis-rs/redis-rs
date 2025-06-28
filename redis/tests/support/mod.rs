@@ -372,7 +372,7 @@ where
             Ok(())
         }
         Value::Set(ref values) => encode_iter(values, writer, "~"),
-        Value::Double(val) => write!(writer, ",{}\r\n", val),
+        Value::Double(val) => write!(writer, ",{val}\r\n"),
         Value::Boolean(v) => {
             if v {
                 write!(writer, "#t\r\n")
@@ -387,7 +387,7 @@ where
             // format is always 3 bytes
             write!(writer, "={}\r\n{}:{}\r\n", 3 + text.len(), format, text)
         }
-        Value::BigNumber(ref val) => write!(writer, "({}\r\n", val),
+        Value::BigNumber(ref val) => write!(writer, "({val}\r\n"),
         Value::Push { ref kind, ref data } => {
             write!(writer, ">{}\r\n+{kind}\r\n", data.len() + 1)?;
             for val in data.iter() {

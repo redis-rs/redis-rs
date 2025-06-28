@@ -374,7 +374,7 @@ impl fmt::Display for VerbatimFormat {
 impl fmt::Display for PushKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PushKind::Other(kind) => write!(f, "{}", kind),
+            PushKind::Other(kind) => write!(f, "{kind}"),
             PushKind::Invalidate => write!(f, "invalidate"),
             PushKind::Message => write!(f, "message"),
             PushKind::PMessage => write!(f, "pmessage"),
@@ -587,9 +587,9 @@ impl fmt::Debug for Value {
                 ref format,
                 ref text,
             } => {
-                write!(fmt, "verbatim-string({:?},{:?})", format, text)
+                write!(fmt, "verbatim-string({format:?},{text:?})")
             }
-            Value::BigNumber(ref m) => write!(fmt, "big-number({:?})", m),
+            Value::BigNumber(ref m) => write!(fmt, "big-number({m:?})"),
             Value::ServerError(ref err) => match err.details() {
                 Some(details) => write!(fmt, "Server error: `{}: {details}`", err.code()),
                 None => write!(fmt, "Server error: `{}`", err.code()),

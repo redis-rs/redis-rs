@@ -10,5 +10,5 @@ fn main() {
     let data =
         std::fs::read(&args[1]).unwrap_or_else(|_| panic!("Could not open file {}", args[1]));
     let v = parse_redis_value(&data);
-    println!("Result: {:?}", v);
+    println!("Result: {v:?}");
 }

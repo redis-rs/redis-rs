@@ -480,7 +480,7 @@ where
                     match result {
                         Ok(conn) => Ok((addr, conn)),
                         Err(e) => {
-                            debug!("Failed to connect to initial node: {:?}", e);
+                            debug!("Failed to connect to initial node: {e:?}");
                             Err(e)
                         }
                     }
@@ -653,7 +653,7 @@ where
     fn build_slot_map(slot_map: &mut SlotMap, slots_data: Vec<Slot>) -> RedisResult<()> {
         slot_map.clear();
         slot_map.fill_slots(slots_data);
-        trace!("{:?}", slot_map);
+        trace!("{slot_map:?}");
         Ok(())
     }
 
@@ -1359,7 +1359,7 @@ where
     let mut conn = match C::connect_with_config(info, config).await {
         Ok(conn) => conn,
         Err(err) => {
-            warn!("Failed to connect to node: {:?}, due to: {:?}", node, err);
+            warn!("Failed to connect to node: {node:?}, due to: {err:?}");
             return Err(err);
         }
     };
