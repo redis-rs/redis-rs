@@ -3,10 +3,8 @@ use std::{
     str,
 };
 
-use crate::types::{
-    ErrorKind, PushKind, RedisError, RedisResult, ServerError, ServerErrorKind, Value,
-    VerbatimFormat,
-};
+use crate::errors::{ErrorKind, RedisError, ServerError, ServerErrorKind};
+use crate::types::{PushKind, RedisResult, Value, VerbatimFormat};
 
 use combine::{
     any,

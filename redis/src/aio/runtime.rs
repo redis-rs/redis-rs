@@ -10,7 +10,7 @@ use super::smol as crate_smol;
 #[cfg(feature = "tokio-comp")]
 use super::tokio as crate_tokio;
 use super::RedisRuntime;
-use crate::types::RedisError;
+use crate::errors::RedisError;
 #[cfg(feature = "smol-comp")]
 use smol_timeout::TimeoutExt;
 

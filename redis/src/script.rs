@@ -3,7 +3,8 @@ use sha1_smol::Sha1;
 
 use crate::cmd::cmd;
 use crate::connection::ConnectionLike;
-use crate::types::{ErrorKind, FromRedisValue, RedisResult, ToRedisArgs};
+use crate::errors::ErrorKind;
+use crate::types::{FromRedisValue, RedisResult, ToRedisArgs};
 use crate::Cmd;
 
 /// Represents a lua script.

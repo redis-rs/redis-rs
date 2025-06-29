@@ -5,8 +5,9 @@ use crate::{
     aio::{check_resp3, ConnectionLike, MultiplexedConnection, Runtime},
     client::{DEFAULT_CONNECTION_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT},
     cmd,
+    errors::RedisError,
     subscription_tracker::{SubscriptionAction, SubscriptionTracker},
-    types::{RedisError, RedisResult, Value},
+    types::{RedisResult, Value},
     AsyncConnectionConfig, Client, Cmd, Pipeline, ProtocolVersion, PushInfo, PushKind, ToRedisArgs,
 };
 use arc_swap::ArcSwap;

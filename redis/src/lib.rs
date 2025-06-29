@@ -608,11 +608,6 @@ pub use crate::types::{
     // utility functions
     from_redis_value,
     from_owned_redis_value,
-    make_extension_error,
-
-    // error kinds
-    ErrorKind,
-    RetryMethod,
 
     // conversion traits
     FromRedisValue,
@@ -629,10 +624,6 @@ pub use crate::types::{
     ReplicaInfo,
     IntegerReplyOrNoOp,
 	ValueType,
-
-    // error and result types
-    ParsingError,
-    RedisError,
     RedisResult,
     RedisWrite,
     ToRedisArgs,
@@ -644,6 +635,7 @@ pub use crate::types::{
     ProtocolVersion,
     PushInfo,
 };
+pub use crate::errors::{make_extension_error, ErrorKind, ParsingError, RedisError, RetryMethod};
 
 #[cfg(feature = "aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
@@ -737,6 +729,7 @@ mod client;
 mod cmd;
 mod commands;
 mod connection;
+mod errors;
 /// Module for defining I/O behavior.
 pub mod io;
 mod parser;
