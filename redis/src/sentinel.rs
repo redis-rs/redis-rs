@@ -415,20 +415,24 @@ async fn async_determine_slave_from_role_or_info_replication(
     let client = Client::open(connection_info.clone())?;
     let mut conn = client.get_multiplexed_async_connection().await?;
 
-    //Once the client discovered the address of the master instance, it should attempt a connection with the master, and call the ROLE command in order to verify the role of the instance is actually a master.
-    let role = async_check_role(&mut conn).await;
-    if role.is_ok_and(|x| matches!(x, Role::Replica { .. })) {
-        return Ok(true);
+    let role_result = async_check_role(&mut conn).await;
+    if let Ok(role) = role_result {
+        return Ok(matches!(role, Role::Replica { .. }));
     }
 
     //If the ROLE commands is not available (it was introduced in Redis 2.8.12), a client may resort to the INFO replication command parsing the role: field of the output.
-    let role = async_check_info_replication(&mut conn).await;
-    if role.is_ok_and(|x| x == "slave") {
-        return Ok(true);
+    let fallback_role_result = async_check_info_replication(&mut conn).await;
+    if let Ok(role) = fallback_role_result {
+        return Ok(role == "slave");
     }
 
-    //TODO: Maybe there should be some kind of error message if both role checks fail due to ACL permissions?
-    Ok(false)
+    let role_err = role_result.unwrap_err();
+    // unknown commands are expressed as response errors
+    if !matches!(role_err.kind(), ErrorKind::ResponseError) {
+        return Err(role_err);
+    }
+
+    Err(fallback_role_result.unwrap_err())
 }
 
 #[cfg(feature = "aio")]
@@ -937,7 +941,8 @@ impl Sentinel {
         Client::open(address)
     }
 
-    /// Connects to a randomly chosen replica of the given master name.
+    /// Connects to a randomly chosen replica of the given master name. Errors can originate
+    /// from interaction either with Sentinel or with the replica.
     pub async fn async_replica_for(
         &mut self,
         service_name: &str,
