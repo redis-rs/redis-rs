@@ -91,7 +91,7 @@ rustls-native-certs = { version = "0.8", optional = true }
 tokio-rustls = { version = "0.26", optional = true, default-features = false }
 futures-rustls = { version = "0.26", optional = true, default-features = false }
 
-# Only needed for RedisJSON Support
+# Needed for modules Support
 serde = { version = "1.0.219", optional = true }
 serde_json = { version = "1.0.140", optional = true }
 
@@ -118,6 +118,7 @@ default = ["acl", "streams", "geospatial", "script", "keep-alive", "num-bigint"]
 acl = []
 geospatial = []
 json = ["dep:serde", "serde/derive", "dep:serde_json"]
+vector-sets = ["dep:serde", "serde/derive", "dep:serde_json"]
 cluster = ["dep:crc16", "dep:rand"]
 script = ["dep:sha1_smol"]
 tls-native-tls = ["dep:native-tls"]
