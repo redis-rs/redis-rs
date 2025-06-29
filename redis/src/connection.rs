@@ -9,12 +9,13 @@ use std::str::{from_utf8, FromStr};
 use std::time::{Duration, Instant};
 
 use crate::cmd::{cmd, pipe, Cmd};
+use crate::errors::{ErrorKind, RedisError, ServerError, ServerErrorKind};
 use crate::io::tcp::{stream_with_settings, TcpSettings};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
 use crate::types::{
-    from_redis_value, ErrorKind, FromRedisValue, HashMap, PushKind, RedisError, RedisResult,
-    ServerError, ServerErrorKind, SyncPushSender, ToRedisArgs, Value,
+    from_redis_value, FromRedisValue, HashMap, PushKind, RedisResult, SyncPushSender, ToRedisArgs,
+    Value,
 };
 use crate::{from_owned_redis_value, ProtocolVersion};
 

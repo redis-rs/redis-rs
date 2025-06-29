@@ -46,7 +46,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
         #[cfg(not(any(feature = "tls-native-tls", feature = "tls-rustls")))]
         ConnectionAddr::TcpTls { .. } => {
             fail!((
-                crate::types::ErrorKind::InvalidClientConfig,
+                crate::errors::ErrorKind::InvalidClientConfig,
                 "Cannot connect to TCP with TLS without the tls feature"
             ));
         }
@@ -57,7 +57,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
         #[cfg(not(unix))]
         ConnectionAddr::Unix(_) => {
             fail!((
-                crate::types::ErrorKind::InvalidClientConfig,
+                crate::errors::ErrorKind::InvalidClientConfig,
                 "Cannot connect to unix sockets \
                  on this platform",
             ))

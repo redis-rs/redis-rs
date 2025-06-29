@@ -77,8 +77,9 @@ use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
 };
+use crate::errors::{ErrorKind, RedisError, RetryMethod};
 use crate::parser::parse_redis_value;
-use crate::types::{ErrorKind, HashMap, RedisError, RedisResult, Value};
+use crate::types::{HashMap, RedisResult, Value};
 use crate::IntoConnectionInfo;
 pub use crate::TlsMode; // Pub for backwards compatibility
 use crate::{
@@ -864,12 +865,12 @@ where
                     retries += 1;
 
                     match err.retry_method() {
-                        crate::types::RetryMethod::AskRedirect => {
+                        RetryMethod::AskRedirect => {
                             redirected = err
                                 .redirect_node()
                                 .map(|(node, _slot)| Redirect::Ask(node.to_string()));
                         }
-                        crate::types::RetryMethod::MovedRedirect => {
+                        RetryMethod::MovedRedirect => {
                             // Refresh slots.
                             self.refresh_slots()?;
                             // Request again.
@@ -877,7 +878,7 @@ where
                                 .redirect_node()
                                 .map(|(node, _slot)| Redirect::Moved(node.to_string()));
                         }
-                        crate::types::RetryMethod::WaitAndRetry => {
+                        RetryMethod::WaitAndRetry => {
                             // Sleep and retry.
                             let sleep_time = self
                                 .cluster_params
@@ -885,7 +886,7 @@ where
                                 .wait_time_for_retry(retries);
                             thread::sleep(sleep_time);
                         }
-                        crate::types::RetryMethod::Reconnect => {
+                        RetryMethod::Reconnect => {
                             if *self.auto_reconnect.borrow() {
                                 // if the connection is no longer valid, we should remove it.
                                 self.connections.borrow_mut().remove(&addr);
@@ -896,11 +897,11 @@ where
                                 }
                             }
                         }
-                        crate::types::RetryMethod::NoRetry => {
+                        RetryMethod::NoRetry => {
                             return Err(err);
                         }
-                        crate::types::RetryMethod::RetryImmediately => {}
-                        crate::types::RetryMethod::ReconnectFromInitialConnections => {
+                        RetryMethod::RetryImmediately => {}
+                        RetryMethod::ReconnectFromInitialConnections => {
                             // TODO - implement reconnect from initial connections
                             if *self.auto_reconnect.borrow() {
                                 if let Ok(mut conn) = self.connect(&addr) {

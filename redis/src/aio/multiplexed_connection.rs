@@ -3,8 +3,9 @@ use crate::aio::{check_resp3, setup_connection};
 #[cfg(feature = "cache-aio")]
 use crate::caching::{CacheManager, CacheStatistics, PrepareCacheResult};
 use crate::cmd::Cmd;
+use crate::errors::RedisError;
 use crate::parser::ValueCodec;
-use crate::types::{closed_connection_error, RedisError, RedisFuture, RedisResult, Value};
+use crate::types::{closed_connection_error, RedisFuture, RedisResult, Value};
 use crate::{
     cmd, AsyncConnectionConfig, ProtocolVersion, PushInfo, RedisConnectionInfo, ToRedisArgs,
 };
