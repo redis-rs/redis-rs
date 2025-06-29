@@ -1,5 +1,7 @@
 use std::{error, fmt, io};
 
+use arcstr::ArcStr;
+
 use crate::{
     errors::server_error::{ServerError, ServerErrorKind},
     ParsingError,
@@ -93,8 +95,8 @@ impl From<serde_json::Error> for RedisError {
 #[derive(Debug)]
 enum ErrorRepr {
     WithDescription(ErrorKind, &'static str),
-    WithDescriptionAndDetail(ErrorKind, &'static str, String),
-    ExtensionError(String, String),
+    WithDescriptionAndDetail(ErrorKind, &'static str, ArcStr),
+    ExtensionError(ArcStr, ArcStr),
     IoError(io::Error),
     ParsingError(ParsingError),
 }
@@ -130,7 +132,7 @@ impl From<rustls::pki_types::InvalidDnsNameError> for RedisError {
             repr: ErrorRepr::WithDescriptionAndDetail(
                 ErrorKind::IoError,
                 "TLS Error",
-                err.to_string(),
+                err.to_string().into(),
             ),
         }
     }
@@ -143,7 +145,7 @@ impl From<rustls_native_certs::Error> for RedisError {
             repr: ErrorRepr::WithDescriptionAndDetail(
                 ErrorKind::IoError,
                 "Fetch certs Error",
-                err.to_string(),
+                err.to_string().into(),
             ),
         }
     }
@@ -160,7 +162,7 @@ impl From<(ErrorKind, &'static str)> for RedisError {
 impl From<(ErrorKind, &'static str, String)> for RedisError {
     fn from((kind, desc, detail): (ErrorKind, &'static str, String)) -> RedisError {
         RedisError {
-            repr: ErrorRepr::WithDescriptionAndDetail(kind, desc, detail),
+            repr: ErrorRepr::WithDescriptionAndDetail(kind, desc, detail.into()),
         }
     }
 }
@@ -518,10 +520,10 @@ impl RedisError {
 pub fn make_extension_error(code: String, detail: Option<String>) -> RedisError {
     RedisError {
         repr: ErrorRepr::ExtensionError(
-            code,
+            code.into(),
             match detail {
-                Some(x) => x,
-                None => "Unknown extension error encountered".to_string(),
+                Some(x) => x.into(),
+                None => arcstr::literal!("Unknown extension error encountered"),
             },
         ),
     }
@@ -534,7 +536,7 @@ impl From<native_tls::Error> for RedisError {
             repr: ErrorRepr::WithDescriptionAndDetail(
                 ErrorKind::IoError,
                 "TLS error",
-                err.to_string(),
+                err.to_string().into(),
             ),
         }
     }
@@ -547,7 +549,7 @@ impl From<rustls::Error> for RedisError {
             repr: ErrorRepr::WithDescriptionAndDetail(
                 ErrorKind::IoError,
                 "TLS error",
-                err.to_string(),
+                err.to_string().into(),
             ),
         }
     }
@@ -557,7 +559,9 @@ impl From<ServerError> for RedisError {
     fn from(value: ServerError) -> Self {
         // TODO - Consider changing RedisError to explicitly represent whether an error came from the server or not. Today it is only implied.
         match value {
-            ServerError::ExtensionError { code, detail } => make_extension_error(code, detail),
+            ServerError::ExtensionError { code, detail } => {
+                make_extension_error(code.as_str().into(), detail.map(|str| str.as_str().into()))
+            }
             ServerError::KnownError { kind, detail } => {
                 let desc = "An error was signalled by the server";
                 let kind = match kind {
@@ -576,7 +580,7 @@ impl From<ServerError> for RedisError {
                     ServerErrorKind::NoSub => ErrorKind::NoSub,
                 };
                 match detail {
-                    Some(detail) => RedisError::from((kind, desc, detail)),
+                    Some(detail) => RedisError::from((kind, desc, detail.as_str().into())),
                     None => RedisError::from((kind, desc)),
                 }
             }

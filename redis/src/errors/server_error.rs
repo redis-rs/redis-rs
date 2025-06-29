@@ -1,3 +1,4 @@
+use arcstr::ArcStr;
 use std::fmt;
 
 #[derive(PartialEq, Debug, Clone, Copy, Eq)]
@@ -33,12 +34,12 @@ pub enum ServerErrorKind {
 #[derive(PartialEq, Debug, Clone)]
 pub enum ServerError {
     ExtensionError {
-        code: String,
-        detail: Option<String>,
+        code: ArcStr,
+        detail: Option<ArcStr>,
     },
     KnownError {
         kind: ServerErrorKind,
-        detail: Option<String>,
+        detail: Option<ArcStr>,
     },
 }
 
