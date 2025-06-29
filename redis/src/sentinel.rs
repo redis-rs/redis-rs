@@ -331,7 +331,10 @@ fn check_info_replication(conn: &mut Connection) -> RedisResult<String> {
     let info_map = parse_replication_info(info);
     match info_map.get("role") {
         Some(x) => Ok(x.clone()),
-        None => Err(RedisError::from((ErrorKind::ParseError, "parse error"))),
+        None => Err(RedisError::from((
+            ErrorKind::UnexpectedReturnType,
+            "Missing \"role\" field",
+        ))),
     }
 }
 
@@ -443,7 +446,10 @@ async fn async_check_info_replication(conn: &mut MultiplexedConnection) -> Redis
     let info_map = parse_replication_info(info);
     match info_map.get("role") {
         Some(x) => Ok(x.clone()),
-        None => Err(RedisError::from((ErrorKind::ParseError, "parse error"))),
+        None => Err(RedisError::from((
+            ErrorKind::UnexpectedReturnType,
+            "Missing \"role\" field",
+        ))),
     }
 }
 

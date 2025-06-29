@@ -16,7 +16,7 @@ pub enum ErrorKind {
     /// The authentication with the server failed.
     AuthenticationFailed,
     /// Operation failed because of a type mismatch.
-    TypeError,
+    UnexpectedReturnType,
     /// A script execution was aborted.
     ExecAbortError,
     /// The server cannot response because it's loading a dump.
@@ -252,7 +252,7 @@ impl RedisError {
             | ErrorRepr::WithDescriptionAndDetail(kind, _, _) => kind,
             ErrorRepr::ExtensionError(_, _) => ErrorKind::ExtensionError,
             ErrorRepr::IoError(_) => ErrorKind::IoError,
-            ErrorRepr::ParsingError(_) => ErrorKind::TypeError,
+            ErrorRepr::ParsingError(_) => ErrorKind::ParseError,
         }
     }
 
@@ -293,7 +293,7 @@ impl RedisError {
         match self.kind() {
             ErrorKind::ResponseError => "response error",
             ErrorKind::AuthenticationFailed => "authentication failed",
-            ErrorKind::TypeError => "type error",
+            ErrorKind::UnexpectedReturnType => "type error",
             ErrorKind::ExecAbortError => "script execution aborted",
             ErrorKind::BusyLoadingError => "busy loading",
             ErrorKind::NoScriptError => "no script",
@@ -465,7 +465,7 @@ impl RedisError {
             ErrorKind::ReadOnly => RetryMethod::NoRetry,
             ErrorKind::ExtensionError => RetryMethod::NoRetry,
             ErrorKind::ExecAbortError => RetryMethod::NoRetry,
-            ErrorKind::TypeError => RetryMethod::NoRetry,
+            ErrorKind::UnexpectedReturnType => RetryMethod::NoRetry,
             ErrorKind::NoScriptError => RetryMethod::NoRetry,
             ErrorKind::InvalidClientConfig => RetryMethod::NoRetry,
             ErrorKind::CrossSlot => RetryMethod::NoRetry,

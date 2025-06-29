@@ -37,7 +37,7 @@ mod types {
         let simulated_extension_error =
             RedisError::from((ErrorKind::ExtensionError, "Simulated extension error"));
         let simulated_type_error_with_details = RedisError::from((
-            ErrorKind::TypeError,
+            ErrorKind::UnexpectedReturnType,
             "Simulated type error",
             "Type error details".to_string(),
         ));
