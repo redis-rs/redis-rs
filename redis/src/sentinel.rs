@@ -313,13 +313,7 @@ fn determine_master_from_role_or_info_replication(
         return Ok(role == "master");
     }
 
-    let role_err = role_result.unwrap_err();
-    // unknown commands are expressed as response errors
-    if !matches!(role_err.kind(), ErrorKind::ResponseError) {
-        return Err(role_err);
-    }
-
-    Err(fallback_role_result.unwrap_err())
+    evaluate_role_check_errors(role_result.unwrap_err(), fallback_role_result.unwrap_err())
 }
 
 fn get_node_role(connection_info: &ConnectionInfo) -> RedisResult<Role> {
@@ -341,6 +335,18 @@ fn check_info_replication(conn: &mut Connection) -> RedisResult<String> {
         Some(x) => Ok(x.clone()),
         None => Err(RedisError::from((ErrorKind::ParseError, "parse error"))),
     }
+}
+
+fn evaluate_role_check_errors(
+    role_err: RedisError,
+    fallback_role_err: RedisError,
+) -> RedisResult<bool> {
+    // unknown commands are expressed as response errors
+    if !matches!(role_err.kind(), ErrorKind::ResponseError) {
+        return Err(role_err);
+    }
+
+    Err(fallback_role_err)
 }
 
 fn parse_replication_info(value: String) -> HashMap<String, String> {
@@ -399,13 +405,7 @@ async fn async_determine_master_from_role_or_info_replication(
         return Ok(role == "master");
     }
 
-    let role_err = role_result.unwrap_err();
-    // unknown commands are expressed as response errors
-    if !matches!(role_err.kind(), ErrorKind::ResponseError) {
-        return Err(role_err);
-    }
-
-    Err(fallback_role_result.unwrap_err())
+    evaluate_role_check_errors(role_result.unwrap_err(), fallback_role_result.unwrap_err())
 }
 
 #[cfg(feature = "aio")]
@@ -426,13 +426,7 @@ async fn async_determine_slave_from_role_or_info_replication(
         return Ok(role == "slave");
     }
 
-    let role_err = role_result.unwrap_err();
-    // unknown commands are expressed as response errors
-    if !matches!(role_err.kind(), ErrorKind::ResponseError) {
-        return Err(role_err);
-    }
-
-    Err(fallback_role_result.unwrap_err())
+    evaluate_role_check_errors(role_result.unwrap_err(), fallback_role_result.unwrap_err())
 }
 
 #[cfg(feature = "aio")]
