@@ -151,6 +151,40 @@ fn test_sentinel_role_no_permission() {
 }
 
 #[test]
+fn test_sentinel_no_role_or_info_permission() {
+    let number_of_replicas = 3;
+    let master_name = "master1";
+    let mut cluster = TestSentinelContext::new(2, number_of_replicas, 3);
+    let node_conn_info = cluster.sentinel_node_connection_info();
+    let sentinel = cluster.sentinel_mut();
+
+    let master_client = sentinel
+        .master_for(master_name, Some(&node_conn_info))
+        .unwrap();
+    let mut master_con = master_client.get_connection().unwrap();
+
+    let user: String = redis::cmd("ACL")
+        .arg("whoami")
+        .query(&mut master_con)
+        .unwrap();
+    //Remove both commands used to detect master
+    let _: () = redis::cmd("ACL")
+        .arg("SETUSER")
+        .arg(&user)
+        .arg("-role")
+        .arg("-info")
+        .query(&mut master_con)
+        .unwrap();
+
+    let err = sentinel
+        .master_for(master_name, Some(&node_conn_info))
+        .unwrap_err();
+    assert!(err.code() == Some("NOPERM"));
+    // Ensure we get the error returned by role command
+    assert!(err.detail().unwrap().contains("role"));
+}
+
+#[test]
 fn test_sentinel_connect_to_random_replica() {
     let number_of_replicas = 3;
     let master_name = "master1";
