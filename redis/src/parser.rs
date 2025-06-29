@@ -42,12 +42,12 @@ fn err_parser(line: &str) -> ServerError {
         "NOSUB" => ServerErrorKind::NoSub,
         code => {
             return ServerError::ExtensionError {
-                code: code.to_string(),
-                detail: pieces.next().map(|str| str.to_string()),
+                code: code.into(),
+                detail: pieces.next().map(|str| str.into()),
             }
         }
     };
-    let detail = pieces.next().map(|str| str.to_string());
+    let detail = pieces.next().map(|str| str.into());
     ServerError::KnownError { kind, detail }
 }
 
@@ -515,7 +515,7 @@ mod tests {
                 Value::Okay,
                 Value::ServerError(ServerError::KnownError {
                     kind: ServerErrorKind::BusyLoadingError,
-                    detail: Some("server is loading".to_string())
+                    detail: Some(arcstr::literal!("server is loading"))
                 }),
                 Value::Okay
             ])
@@ -541,7 +541,7 @@ mod tests {
                 Value::Okay,
                 Value::ServerError(ServerError::KnownError {
                     kind: ServerErrorKind::BusyLoadingError,
-                    detail: Some("server is loading".to_string())
+                    detail: Some(arcstr::literal!("server is loading"))
                 }),
                 Value::Okay
             ])
@@ -619,8 +619,8 @@ mod tests {
         assert_eq!(
             val.unwrap(),
             Value::ServerError(ServerError::ExtensionError {
-                code: "SYNTAX".to_string(),
-                detail: Some("invalid syntax".to_string())
+                code: arcstr::literal!("SYNTAX"),
+                detail: Some(arcstr::literal!("invalid syntax"))
             })
         )
     }

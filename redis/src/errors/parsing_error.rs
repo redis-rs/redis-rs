@@ -1,9 +1,9 @@
-use std::{borrow::Cow, ffi::NulError, fmt, str::Utf8Error, string::FromUtf8Error};
+use std::{ffi::NulError, fmt, str::Utf8Error, string::FromUtf8Error};
 
 /// Describes a type conversion or parsing failure.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParsingError {
-    pub(crate) description: Cow<'static, str>,
+    pub(crate) description: arcstr::ArcStr,
 }
 
 impl std::fmt::Display for ParsingError {
@@ -26,7 +26,7 @@ impl From<NulError> for ParsingError {
 impl From<Utf8Error> for ParsingError {
     fn from(_: Utf8Error) -> ParsingError {
         ParsingError {
-            description: "Invalid UTF-8".into(),
+            description: arcstr::literal!("Invalid UTF-8"),
         }
     }
 }
@@ -41,9 +41,9 @@ impl From<uuid::Error> for ParsingError {
 }
 
 impl From<FromUtf8Error> for ParsingError {
-    fn from(_: FromUtf8Error) -> ParsingError {
+    fn from(err: FromUtf8Error) -> ParsingError {
         ParsingError {
-            description: "Cannot convert from UTF-8".into(),
+            description: format!("Cannot convert from UTF-8: {err}").into(),
         }
     }
 }
