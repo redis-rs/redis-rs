@@ -3,7 +3,7 @@ use std::{
     str,
 };
 
-use crate::errors::{ErrorKind, RedisError, ServerError, ServerErrorKind};
+use crate::errors::{ParsingError, RedisError, ServerError, ServerErrorKind};
 use crate::types::{PushKind, RedisResult, Value, VerbatimFormat};
 
 use combine::{
@@ -336,7 +336,9 @@ macro_rules! to_redis_err {
                         .map_range(|range| format!("{range:?}"))
                         .map_position(|pos| pos.translate_position($decoder.buffer()))
                         .to_string();
-                    RedisError::from((ErrorKind::ParseError, "parse error", err))
+                    RedisError::from(ParsingError {
+                        description: err.into(),
+                    })
                 }
             }
         }
@@ -369,11 +371,9 @@ mod aio_support {
                             .map_position(|pos| pos.translate_position(buffer))
                             .map_range(|range| format!("{range:?}"))
                             .to_string();
-                        return Err(RedisError::from((
-                            ErrorKind::ParseError,
-                            "parse error",
-                            err,
-                        )));
+                        return Err(RedisError::from(ParsingError {
+                            description: err.into(),
+                        }));
                     }
                 }
             };
@@ -482,6 +482,7 @@ pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::errors::ErrorKind;
 
     #[cfg(feature = "aio")]
     #[test]

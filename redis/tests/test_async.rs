@@ -10,8 +10,9 @@ mod basic_async {
     use redis::aio::ConnectionManager;
     use redis::{
         aio::{ConnectionLike, MultiplexedConnection},
-        cmd, pipe, AsyncCommands, ErrorKind, IntoConnectionInfo, ProtocolVersion, PushKind,
-        RedisConnectionInfo, RedisError, RedisFuture, RedisResult, ScanOptions, ToRedisArgs, Value,
+        cmd, pipe, AsyncCommands, ErrorKind, IntoConnectionInfo, ParsingError, ProtocolVersion,
+        PushKind, RedisConnectionInfo, RedisError, RedisFuture, RedisResult, ScanOptions,
+        ToRedisArgs, Value,
     };
     use redis_test::server::{redis_settings, use_protocol};
     use rstest::rstest;
@@ -1022,8 +1023,6 @@ mod basic_async {
         #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
         #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
         fn test_issue_async_commands_scan_finishing_prematurely(#[case] runtime: RuntimeType) {
-            use redis::ParsingError;
-
             const PREFIX: &str = "async-key";
             const NUM_KEYS: usize = 100;
 
@@ -1079,7 +1078,7 @@ mod basic_async {
                     assert_eq!(count, NUM_KEYS - 1);
 
                     // Assert that the encountered error is a type error
-                    assert!(matches!(error, Some(ErrorKind::TypeError)));
+                    assert_eq!(error, Some(ErrorKind::ParseError));
 
                     Ok(())
                 },
