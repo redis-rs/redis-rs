@@ -924,20 +924,16 @@ mod cluster_async {
             },
         );
 
-        let value = runtime.block_on(
-            cmd("GET")
-                .arg("test")
-                .query_async::<Option<i32>>(&mut connection),
-        );
+        let value = runtime.block_on(cmd("GET").arg("test").query_async::<Value>(&mut connection));
 
         // The user should receive an initial error, because there are no retries and the first request failed.
         assert_eq!(
             value,
-            Err(RedisError::from((
-                ErrorKind::Moved,
-                "An error was signalled by the server",
-                "test_async_cluster_refresh_topology_even_with_zero_retries:6380".to_string()
-            )))
+            parse_redis_value(
+                b"-MOVED 123 test_async_cluster_refresh_topology_even_with_zero_retries:6380\r\n"
+            )
+            .unwrap()
+            .extract_error()
         );
 
         let value = runtime.block_on(

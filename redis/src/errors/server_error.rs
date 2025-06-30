@@ -102,3 +102,5 @@ impl fmt::Display for ServerError {
         }
     }
 }
+
+impl std::error::Error for ServerError {}
