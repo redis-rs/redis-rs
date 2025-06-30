@@ -2954,33 +2954,45 @@ pub enum ValueType {
     Unknown(String),
 }
 
+impl<T: AsRef<str>> From<T> for ValueType {
+    fn from(s: T) -> Self {
+        match s.as_ref() {
+            "string" => ValueType::String,
+            "list" => ValueType::List,
+            "set" => ValueType::Set,
+            "zset" => ValueType::ZSet,
+            "hash" => ValueType::Hash,
+            "stream" => ValueType::Stream,
+            s => ValueType::Unknown(s.to_string()),
+        }
+    }
+}
+
+impl From<ValueType> for String {
+    fn from(v: ValueType) -> Self {
+        match v {
+            ValueType::String => "string".to_string(),
+            ValueType::List => "list".to_string(),
+            ValueType::Set => "set".to_string(),
+            ValueType::ZSet => "zset".to_string(),
+            ValueType::Hash => "hash".to_string(),
+            ValueType::Stream => "stream".to_string(),
+            ValueType::Unknown(s) => s,
+        }
+    }
+}
+
 impl FromRedisValue for ValueType {
     fn from_redis_value(v: &Value) -> RedisResult<Self> {
         match v {
-            Value::SimpleString(s) => match s.as_str() {
-                "string" => Ok(ValueType::String),
-                "list" => Ok(ValueType::List),
-                "set" => Ok(ValueType::Set),
-                "zset" => Ok(ValueType::ZSet),
-                "hash" => Ok(ValueType::Hash),
-                "stream" => Ok(ValueType::Stream),
-                _ => Ok(ValueType::Unknown(s.clone())),
-            },
+            Value::SimpleString(s) => Ok(s.into()),
             _ => invalid_type_error!(v, "Value type should be a simple string"),
         }
     }
 
     fn from_owned_redis_value(v: Value) -> RedisResult<Self> {
         match v {
-            Value::SimpleString(s) => match s.as_str() {
-                "string" => Ok(ValueType::String),
-                "list" => Ok(ValueType::List),
-                "set" => Ok(ValueType::Set),
-                "zset" => Ok(ValueType::ZSet),
-                "hash" => Ok(ValueType::Hash),
-                "stream" => Ok(ValueType::Stream),
-                _ => Ok(ValueType::Unknown(s)),
-            },
+            Value::SimpleString(s) => Ok(s.into()),
             _ => invalid_type_error!(v, "Value type should be a simple string"),
         }
     }
