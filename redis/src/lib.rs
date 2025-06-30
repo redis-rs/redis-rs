@@ -661,6 +661,13 @@ pub use crate::commands::JsonCommands;
 #[cfg_attr(docsrs, doc(cfg(all(feature = "json", feature = "aio"))))]
 pub use crate::commands::JsonAsyncCommands;
 
+#[cfg(feature = "vector-sets")]
+#[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
+pub use crate::commands::{
+    EmbeddingInput, VAddOptions, VEmbOptions, VSimOptions, VectorAddInput, VectorQuantization,
+    VectorSimilaritySearchInput,
+};
+
 #[cfg(feature = "geospatial")]
 #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
 pub mod geo;

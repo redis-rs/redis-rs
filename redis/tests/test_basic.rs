@@ -26,14 +26,23 @@ mod basic {
     use redis::IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply};
     use redis::{
         cmd, Client, Connection, CopyOptions, ProtocolVersion, PushInfo, RedisConnectionInfo, Role,
-        ScanOptions, UpdateCheck, ValueType,
+        ScanOptions, UpdateCheck, Value, ValueType,
     };
     use redis::{
         ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck, ExpireOption,
         Expiry, FieldExistenceCheck, HashFieldExpirationOptions, PubSubCommands, PushKind,
-        RedisResult, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs, TypedCommands, Value,
+        RedisResult, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs, TypedCommands,
+    };
+
+    #[cfg(feature = "vector-sets")]
+    use redis::{
+        EmbeddingInput, VAddOptions, VEmbOptions, VSimOptions, VectorAddInput, VectorQuantization,
+        VectorSimilaritySearchInput,
     };
     use redis_test::utils::get_listener_on_free_port;
+
+    #[cfg(feature = "vector-sets")]
+    use serde_json::json;
     use std::collections::{BTreeMap, BTreeSet};
     use std::collections::{HashMap, HashSet};
     use std::io::Read;
@@ -42,6 +51,9 @@ mod basic {
     use std::vec;
 
     const REDIS_VERSION_CE_8_0_RC1: (u16, u16, u16) = (7, 9, 240);
+    #[cfg(feature = "vector-sets")]
+    const REDIS_VERSION_CE_8_0: (u16, u16, u16) = (8, 0, 0);
+
     const HASH_KEY: &str = "testing_hash";
     const HASH_FIELDS_AND_VALUES: [(&str, u8); 5] =
         [("f1", 1), ("f2", 2), ("f3", 4), ("f4", 8), ("f5", 16)];
@@ -2853,6 +2865,644 @@ mod basic {
 
         assert_eq!(con.zadd_options("6", "6a", 6, &options), Ok(12));
         assert_eq!(con.zscore("6", "6a"), Ok(Some(12.0)));
+    }
+
+    #[test]
+    #[cfg(feature = "vector-sets")]
+    fn test_vector_sets_basic_operations() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+        let mut con = ctx.connection();
+
+        let key = "test_points";
+
+        let points_data: Vec<(&'static str, [f64; 2])> = vec![
+            ("pt:A", [1.0, 1.0]),
+            ("pt:B", [-1.0, -1.0]),
+            ("pt:C", [-1.0, 1.0]),
+            ("pt:D", [1.0, -1.0]),
+            ("pt:E", [1.0, 0.0]),
+        ];
+
+        // Add the point vectors to a set.
+        for (name, coordinates) in &points_data {
+            assert_eq!(
+                con.vadd(
+                    key,
+                    VectorAddInput::Values(EmbeddingInput::Float64(coordinates)),
+                    name
+                ),
+                Ok(true)
+            );
+
+            // Test 1: Verify the embeddings of the point are correct
+            let current_point_embeddings: Vec<f64> = con.vemb(key, name).unwrap();
+
+            for (idx, current_point_embedding) in current_point_embeddings.iter().enumerate() {
+                // Note: The values will typically not be exactly the same as those supplied when the vector was added,
+                // as quantization is applied to improve performance. This is why an approximate equality check is used.
+                assert_approx_eq!(current_point_embedding, coordinates[idx], 0.001);
+            }
+        }
+
+        // Test 2: Verify that the vector set contains the expected number of vectors
+        // and that all of them share the correct dimensionality.
+        assert_eq!(con.vcard(key), Ok(points_data.len()));
+        assert_eq!(con.vdim(key), Ok(points_data[0].1.len()));
+
+        // Test 3: Adding and removing a point
+        let point_to_remove = "pt:F";
+
+        // Specifying the coordinates of the point as an array of strings is valid.
+        assert_eq!(
+            con.vadd(
+                key,
+                VectorAddInput::Values(EmbeddingInput::String(&["0", "0"])),
+                point_to_remove
+            ),
+            Ok(true)
+        );
+        assert_eq!(con.vcard(key), Ok(points_data.len() + 1));
+        assert_eq!(con.vrem(key, point_to_remove), Ok(true));
+        assert_eq!(con.vcard(key), Ok(points_data.len()));
+
+        // Test 4: Setting attributes to a point and retrieving them
+        let attributes_target_point = "pt:A";
+        let point_attributes = json!({
+            "name": "Point A",
+            "description": "First point added"
+        });
+
+        assert_eq!(
+            con.vsetattr(key, attributes_target_point, &point_attributes),
+            Ok(true)
+        );
+
+        assert_eq!(
+            con.vgetattr(key, attributes_target_point),
+            Ok(Some(point_attributes.to_string()))
+        );
+
+        // Test 5: Deleting attributes from a point
+        assert_eq!(
+            con.vsetattr(key, attributes_target_point, &String::new()),
+            Ok(true)
+        );
+
+        assert_eq!(con.vgetattr(key, attributes_target_point), Ok(None));
+    }
+
+    #[test]
+    #[cfg(feature = "vector-sets")]
+    fn test_vector_sets_similarity_search() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+        let mut con = ctx.connection();
+
+        let key = "test_points_for_similarity_search";
+
+        let points_data: Vec<(&'static str, [f64; 2], serde_json::Value)> = vec![
+            (
+                "pt:A",
+                [1.0, 1.0],
+                json!({ "size": "large", "price": 18.99 }),
+            ),
+            (
+                "pt:B",
+                [-1.0, -1.0],
+                json!({ "size": "large", "price": 35.99 }),
+            ),
+            (
+                "pt:C",
+                [-1.0, 1.0],
+                json!({ "size": "large", "price": 25.99 }),
+            ),
+            (
+                "pt:D",
+                [1.0, -1.0],
+                json!({ "size": "small", "price": 21.00 }),
+            ),
+            (
+                "pt:E",
+                [1.0, 0.0],
+                json!({ "size": "small", "price": 17.75 }),
+            ),
+        ];
+
+        let point_of_interest = "pt:A";
+
+        // Add the point vectors to a set.
+        for (name, coordinates, attributes) in &points_data {
+            let opts = VAddOptions::default().set_attributes(attributes.clone());
+            assert_eq!(
+                con.vadd_options(
+                    key,
+                    VectorAddInput::Values(EmbeddingInput::Float64(coordinates)),
+                    name,
+                    &opts
+                ),
+                Ok(true)
+            );
+        }
+
+        // Test 1: Search using Element variant (ELE)
+        let element_search_results: Value = con
+            .vsim(key, VectorSimilaritySearchInput::Element(point_of_interest))
+            .unwrap();
+        if let Value::Array(results_array) = &element_search_results {
+            assert_eq!(
+                results_array[0],
+                Value::BulkString(point_of_interest.as_bytes().to_vec())
+            );
+        } else {
+            panic!("Expected array result from VSIM, got {element_search_results:?}");
+        }
+
+        // Test 2: Search using the FP32 and VALUES variants
+        let query_vector_f32 = vec![0.9f32, 0.1f32];
+        let query_vector_f64 = vec![0.9, 0.1];
+        let query_vector_strings = vec!["0.9", "0.1"];
+
+        // FP32 variant
+        let fp32_search_results: Value = con
+            .vsim(key, VectorSimilaritySearchInput::Fp32(&query_vector_f32))
+            .unwrap();
+        // Values variant with f32
+        let f32_search_results: Value = con
+            .vsim(
+                key,
+                VectorSimilaritySearchInput::Values(EmbeddingInput::Float32(&query_vector_f32)),
+            )
+            .unwrap();
+        // Values variant with f64
+        let f64_search_results: Value = con
+            .vsim(
+                key,
+                VectorSimilaritySearchInput::Values(EmbeddingInput::Float64(&query_vector_f64)),
+            )
+            .unwrap();
+        // Values variant with strings
+        let strings_search_results: Value = con
+            .vsim(
+                key,
+                VectorSimilaritySearchInput::Values(EmbeddingInput::String(&query_vector_strings)),
+            )
+            .unwrap();
+
+        assert_eq!(fp32_search_results, f32_search_results);
+        assert_eq!(f32_search_results, f64_search_results);
+        assert_eq!(f64_search_results, strings_search_results);
+
+        // Test 3: Search using the VSIM options to perform a similarity search with scores and a limited number of results
+        let elements_count = 4;
+        let opts = VSimOptions::default()
+            .set_with_scores(true)
+            .set_count(elements_count);
+
+        let element_search_results: Value = con
+            .vsim_options(
+                key,
+                VectorSimilaritySearchInput::Element(point_of_interest),
+                &opts,
+            )
+            .unwrap();
+
+        // The WITHSCORES option changes the output format of the response, based on the version of the RESP protocol in use.
+        match &element_search_results {
+            Value::Array(results_array) => {
+                assert_eq!(results_array.len(), elements_count * 2);
+                // Expect an exact match with the point of interest.
+                assert_eq!(
+                    results_array[0],
+                    Value::BulkString(point_of_interest.as_bytes().to_vec())
+                );
+                assert_eq!(results_array[1], Value::BulkString("1".as_bytes().to_vec()));
+            }
+            Value::Map(results_map) => {
+                assert_eq!(results_map.len(), elements_count);
+                // Find the point of interest.
+                let point_key = Value::BulkString(point_of_interest.as_bytes().to_vec());
+                let score =
+                    results_map
+                        .iter()
+                        .find_map(|(k, v)| if k == &point_key { Some(v) } else { None });
+
+                assert!(
+                    score.is_some(),
+                    "Point of interest not found in results map"
+                );
+
+                // Verify the point of interest is present with score 1.0.
+                // In RESP3, the score would be a Double (1.0) instead of a BulkString.
+                match score.unwrap() {
+                    Value::Double(val) => assert_approx_eq!(*val, 1.0, 0.001),
+                    other => panic!("Unexpected score format: {other:?}"),
+                }
+            }
+            other => {
+                panic!("Expected array or map result from VSIM, got {other:?}");
+            }
+        }
+
+        // Test 4: Search using the VSIM options to perform a similarity search with a filter
+        let opts = VSimOptions::default().set_filter_expression(".size == \"large\"");
+        let element_search_results: Value = con
+            .vsim_options(
+                key,
+                VectorSimilaritySearchInput::Element(point_of_interest),
+                &opts,
+            )
+            .unwrap();
+
+        if let Value::Array(results_array) = &element_search_results {
+            assert_eq!(results_array.len(), 3);
+            assert_eq!(
+                results_array[0],
+                Value::BulkString("pt:A".as_bytes().to_vec())
+            );
+            assert_eq!(
+                results_array[1],
+                Value::BulkString("pt:C".as_bytes().to_vec())
+            );
+            assert_eq!(
+                results_array[2],
+                Value::BulkString("pt:B".as_bytes().to_vec())
+            );
+        } else {
+            panic!("Expected array result from VSIM, got {element_search_results:?}");
+        }
+
+        let opts =
+            VSimOptions::default().set_filter_expression(".size == \"large\" && .price > 20.00");
+        let element_search_results: Value = con
+            .vsim_options(
+                key,
+                VectorSimilaritySearchInput::Element(point_of_interest),
+                &opts,
+            )
+            .unwrap();
+        if let Value::Array(results_array) = &element_search_results {
+            assert_eq!(results_array.len(), 2);
+            assert_eq!(
+                results_array[0],
+                Value::BulkString("pt:C".as_bytes().to_vec())
+            );
+            assert_eq!(
+                results_array[1],
+                Value::BulkString("pt:B".as_bytes().to_vec())
+            );
+        } else {
+            panic!("Expected array result from VSIM, got {element_search_results:?}");
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "vector-sets")]
+    fn test_vector_sets_auxiliary_commands() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+        let mut con = ctx.connection();
+
+        let key = "test_points_for_auxiliary_commands";
+        let non_existent_key = "non_existent_key";
+
+        let points_data: Vec<(&'static str, [f32; 2])> = vec![
+            ("pt:A", [1.0f32, 1.0]),
+            ("pt:B", [-1.0f32, -1.0]),
+            ("pt:C", [-1.0f32, 1.0]),
+            ("pt:D", [1.0f32, -1.0]),
+            ("pt:E", [1.0f32, 0.0]),
+        ];
+
+        let point_of_interest = "pt:A";
+        let point_attributes = json!({
+            "name": "Point A",
+            "description": "First point added"
+        });
+
+        let reduction_dimension = 3;
+        let quantization = VectorQuantization::Q8;
+        let (expected_embedding_response_length, expected_embedding_response_quantization) =
+            match quantization {
+                VectorQuantization::NoQuant => (3, "f32"),
+                VectorQuantization::Q8 => (4, "int8"),
+                VectorQuantization::Bin => (3, "bin"),
+            };
+        let max_number_of_links = 4;
+
+        // Add the point vectors to a set using the extended version of the VADD command with the FP32 variant.
+        for (name, coordinates) in &points_data {
+            let mut opts = VAddOptions::default()
+                .set_reduction_dimension(reduction_dimension)
+                .set_check_and_set_style(true)
+                .set_quantization(quantization)
+                .set_build_exploration_factor(300)
+                .set_max_number_of_links(max_number_of_links);
+
+            // Add attributes to the point of interest.
+            if name == &point_of_interest {
+                opts = opts.set_attributes(point_attributes.clone());
+            }
+
+            assert_eq!(
+                con.vadd_options(key, VectorAddInput::Fp32(coordinates), name, &opts),
+                Ok(true)
+            );
+
+            let current_point_embeddings: Vec<f32> = con.vemb(key, name).unwrap();
+            // Check that the embeddings have been reduced to the specified dimension.
+            assert_eq!(current_point_embeddings.len(), reduction_dimension);
+
+            let current_point_embeddings_raw: Value = con
+                .vemb_options(
+                    key,
+                    name,
+                    &VEmbOptions::default().set_raw_representation(true),
+                )
+                .unwrap();
+
+            if let Value::Array(embeddings_array) = &current_point_embeddings_raw {
+                assert_eq!(embeddings_array.len(), expected_embedding_response_length);
+                assert_eq!(
+                    embeddings_array[0],
+                    Value::SimpleString(expected_embedding_response_quantization.to_string())
+                );
+            } else {
+                panic!("Expected array result from VEMB RAW, got {current_point_embeddings_raw:?}");
+            }
+        }
+
+        // VINFO testing section
+        let vector_set_information = con.vinfo(key).unwrap().unwrap();
+        // The response is structured as a list of key-value pairs.
+        // Extract some properties from the response and validate that they match the expected values.
+        assert_eq!(
+            vector_set_information.get("quant-type"),
+            Some(&Value::SimpleString(
+                expected_embedding_response_quantization.to_string()
+            ))
+        );
+        assert_eq!(
+            vector_set_information.get("hnsw-m"),
+            Some(&Value::Int(max_number_of_links as i64))
+        );
+        assert_eq!(
+            vector_set_information.get("vector-dim"),
+            Some(&Value::Int(reduction_dimension as i64))
+        );
+        assert_eq!(
+            vector_set_information.get("size"),
+            Some(&Value::Int(points_data.len() as i64))
+        );
+        assert_eq!(
+            vector_set_information.get("attributes-count"),
+            Some(&Value::Int(1))
+        );
+        // VINFO returns NIL for non-existent keys, which is represented as None.
+        assert_eq!(con.vinfo(non_existent_key), Ok(None));
+
+        // VLINKS testing section
+        let links: Value = con.vlinks(key, point_of_interest).unwrap();
+        println!("vlinks: {links:?}\n");
+        if let Value::Array(layers) = &links {
+            assert!(
+                !layers.is_empty(),
+                "[VLINKS] Should return at least one layer"
+            );
+
+            for (i, layer) in layers.iter().enumerate() {
+                println!("Layer {i}: {layer:?}");
+                assert!(matches!(layer, Value::Array(_)),
+                    "[VLINKS] Expected an array result representing the links in layer {i}, got {layer:?}");
+            }
+        } else {
+            panic!("[VLINKS] Expected an array result representing the layers, got {links:?}");
+        }
+
+        let links_with_scores: Value = con.vlinks_with_scores(key, point_of_interest).unwrap();
+        println!("vlinks_with_scores: {links_with_scores:?}\n");
+        if let Value::Array(layers_with_scores) = &links_with_scores {
+            assert!(
+                !layers_with_scores.is_empty(),
+                "[VLINKS WITH SCORES] Should return at least one layer"
+            );
+
+            if let Value::Array(layers_without_scores) = &links {
+                assert_eq!(
+                    layers_with_scores.len(),
+                    layers_without_scores.len(),
+                    "[VLINKS WITH SCORES] Should return the same number of layers as [VLINKS]"
+                );
+
+                for (i, (layer_with_scores, layer_without_scores)) in layers_with_scores
+                    .iter()
+                    .zip(layers_without_scores.iter())
+                    .enumerate()
+                {
+                    assert!(matches!(layer_with_scores, Value::Array(_) | Value::Map(_)),
+                        "[VLINKS WITH SCORES] Expected an array or map result representing the links in layer {i} along with their scores, got {layer_with_scores:?}");
+
+                    println!("Layer {i} without scores: {layer_without_scores:?}");
+                    println!("Layer {i} with scores: {layer_with_scores:?}");
+
+                    // Layers must have twice as many elements than normal when scores are included.
+                    match (layer_with_scores, layer_without_scores) {
+                        (
+                            Value::Array(connections_with_scores),
+                            Value::Array(connections_without_scores),
+                        ) => {
+                            assert_eq!(
+                                connections_with_scores.len(),
+                                connections_without_scores.len() * 2,
+                                "[VLINKS WITH SCORES] Layer {i} must have twice as many elements when returning scores"
+                            );
+                        }
+                        (
+                            Value::Map(connections_with_scores),
+                            Value::Array(connections_without_scores),
+                        ) => {
+                            assert_eq!(
+                                connections_with_scores.len(),
+                                connections_without_scores.len(),
+                                "[VLINKS WITH SCORES] Layer {i} must have the same number of entries in map format when returning scores"
+                            );
+                        }
+                        _ => {
+                            panic!("[VLINKS WITH SCORES] Unexpected format combination for layer {i}: {layer_with_scores:?} and {layer_without_scores:?}");
+                        }
+                    }
+                }
+            }
+        } else {
+            panic!("[VLINKS WITH SCORES] Expected an array result representing the layers, got {links_with_scores:?}");
+        }
+
+        // VRANDMEMBER testing section
+        let point_names: HashSet<String> = points_data
+            .iter()
+            .map(|(name, _)| name.to_string())
+            .collect();
+
+        let random_member: Option<String> = con.vrandmember(key).unwrap();
+        assert!(point_names.contains(&random_member.unwrap()));
+
+        // When called with a positive count, returns up to that many distinct elements.
+        let random_members: Vec<String> = con
+            .vrandmember_multiple(key, points_data.len() / 2)
+            .unwrap();
+        assert_eq!(random_members.len(), points_data.len() / 2);
+
+        let all_points_present = random_members.iter().all(|name| point_names.contains(name));
+        assert!(all_points_present);
+
+        // When the count exceeds the number of elements, the entire set is returned.
+        let random_members: Vec<String> = con
+            .vrandmember_multiple(key, points_data.len() + 1)
+            .unwrap();
+        assert_eq!(random_members.len(), points_data.len());
+        let all_points_present = random_members.iter().all(|name| point_names.contains(name));
+        assert!(all_points_present);
+
+        // When the key does not exist, the command returns NIL if no count is given, or an empty array if a count is provided.
+        assert_eq!(con.vrandmember(non_existent_key), Ok(None));
+        assert_eq!(
+            con.vrandmember_multiple(non_existent_key, 1),
+            Ok(Vec::<String>::new())
+        );
+
+        // VDELATTR testing section
+        assert_eq!(
+            con.vgetattr(key, point_of_interest),
+            Ok(Some(point_attributes.to_string()))
+        );
+        // Remove the attributes from the point of interest using the VDELATTR utility command.
+        assert_eq!(con.vdelattr(key, point_of_interest), Ok(true));
+        assert_eq!(con.vgetattr(key, point_of_interest), Ok(None));
+    }
+
+    #[test]
+    #[cfg(feature = "vector-sets")]
+    fn test_vector_sets_edge_cases() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+        let mut con = ctx.connection();
+
+        let non_existent_key = "non_existent_key";
+        let non_existent_element = "non_existent_element";
+
+        // VCARD returns 0 for non-existent keys.
+        assert_eq!(con.vcard(non_existent_key), Ok(0));
+
+        // VDIM returns an error for non-existent keys.
+        let result = con.vdim(non_existent_key);
+        assert!(result.is_err(), "Expected an error for non-existent key");
+        let error = result.unwrap_err();
+        assert_eq!(error.kind(), redis::ErrorKind::ResponseError);
+        assert!(
+            error.to_string().contains("key does not exist"),
+            "Expected error message = 'key does not exist', got: {error}"
+        );
+
+        let key = "test_points_for_edge_cases";
+
+        let points_data: Vec<(&'static str, [f64; 2])> = vec![
+            ("pt:A", [1.0, 1.0]),
+            ("pt:B", [-1.0, -1.0]),
+            ("pt:C", [-1.0, 1.0]),
+            ("pt:D", [1.0, -1.0]),
+            ("pt:E", [1.0, 0.0]),
+        ];
+
+        let point_of_interest = "pt:A";
+
+        for (name, coordinates) in &points_data {
+            assert_eq!(
+                con.vadd(
+                    key,
+                    VectorAddInput::Values(EmbeddingInput::Float64(coordinates)),
+                    name
+                ),
+                Ok(true)
+            );
+        }
+
+        // VADD returns an error when it fails.
+        // Force the dimensionality mismatch by adding a 3D vector.
+        let result = con.vadd(
+            key,
+            VectorAddInput::Values(EmbeddingInput::Float32(&[1.0, 1.5, 2.0])),
+            "pt:F",
+        );
+        assert!(
+            result.is_err(),
+            "Expected an error for dimensionality mismatch"
+        );
+        let error = result.unwrap_err();
+        assert_eq!(error.kind(), redis::ErrorKind::ResponseError);
+
+        // VEMB returns NIL for non-existent keys or elements.
+        assert_eq!(
+            con.vemb(non_existent_key, point_of_interest),
+            Ok(Value::Nil)
+        );
+        assert_eq!(con.vemb(key, non_existent_element), Ok(Value::Nil));
+
+        // VREM returns false for non-existent keys or elements.
+        assert_eq!(con.vrem(non_existent_key, point_of_interest), Ok(false));
+        assert_eq!(con.vrem(key, non_existent_element), Ok(false));
+
+        // VSETATTR returns false when setting attributes to non-existent keys or elements.
+        let sample_attribute = json!({"name": "Sample attribute"});
+        assert_eq!(
+            con.vsetattr(non_existent_key, point_of_interest, &sample_attribute),
+            Ok(false)
+        );
+        assert_eq!(
+            con.vsetattr(key, non_existent_element, &sample_attribute),
+            Ok(false)
+        );
+
+        // VGETATTR returns false when attempting to get attributes from non-existent keys or elements.
+        assert_eq!(con.vgetattr(non_existent_key, point_of_interest), Ok(None));
+        assert_eq!(con.vgetattr(key, non_existent_element), Ok(None));
+
+        // VLINKS returns NIL for non-existent keys or elements.
+        assert_eq!(
+            con.vlinks(non_existent_key, point_of_interest),
+            Ok(Value::Nil)
+        );
+        assert_eq!(con.vlinks(key, non_existent_element), Ok(Value::Nil));
+
+        // VRANDMEMBER with count 0 returns an empty array (vector).
+        assert_eq!(
+            con.vrandmember_multiple(non_existent_key, 0),
+            Ok(Vec::<String>::new())
+        );
+
+        // VSIM returns an empty array for similarity searches with non-existent keys.
+        let search_results: Value = con
+            .vsim(
+                non_existent_key,
+                VectorSimilaritySearchInput::Values(EmbeddingInput::Float64(&points_data[0].1)),
+            )
+            .unwrap();
+        assert_eq!(search_results, Value::Array(Vec::<Value>::new()));
+
+        let search_results: Value = con
+            .vsim(
+                non_existent_key,
+                VectorSimilaritySearchInput::Element(point_of_interest),
+            )
+            .unwrap();
+        assert_eq!(search_results, Value::Array(Vec::<Value>::new()));
+
+        // VSIM returns an error for similarity searches with non-existent elements.
+        let result: RedisResult<Value> = con.vsim(
+            key,
+            VectorSimilaritySearchInput::Element(non_existent_element),
+        );
+        assert!(
+            result.is_err(),
+            "Expected an error for non-existent element"
+        );
+        let error = result.unwrap_err();
+        assert_eq!(error.kind(), redis::ErrorKind::ResponseError);
     }
 
     #[test]
