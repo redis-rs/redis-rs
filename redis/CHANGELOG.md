@@ -1,3 +1,19 @@
+### 0.32.3 (2025-06-30)
+
+#### Changes & Bug fixes
+
+* Replace assert with comment. ([#1692](https://github.com/redis-rs/redis-rs/pull/1692) by @nihohit)
+* Ensure Sentinel#master_for propagates connection errors ([#1697](https://github.com/redis-rs/redis-rs/pull/1697) by @bittrance)
+* Add support for vector set commands ([#1673](https://github.com/redis-rs/redis-rs/pull/1673) by @StefanPalashev)
+* Implement conversions between ValueType and String and use it in its FromRedisValue implementation ([#1695](https://github.com/redis-rs/redis-rs/pull/1695) by @skyleo)
+* Propagate connection error when failing to connect to clustered redis ([#1694](https://github.com/redis-rs/redis-rs/pull/1694) by @Nathan-Fenner)
+
+#### Documentation & CI improvements
+
+* Run all examples as part of CI. ([#1690](https://github.com/redis-rs/redis-rs/pull/1690) by @nihohit)
+* Test examples on all redis instances. ([#1691](https://github.com/redis-rs/redis-rs/pull/1691) by @nihohit)
+* Fix new lints ([#1696](https://github.com/redis-rs/redis-rs/pull/1696) by @nihohit)
+
 ### 0.32.2 (2025-06-20)
 
 #### Changes & Bug fixes
