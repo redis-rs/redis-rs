@@ -302,19 +302,18 @@ fn determine_master_from_role_or_info_replication(
     let mut conn = client.get_connection()?;
 
     //Once the client discovered the address of the master instance, it should attempt a connection with the master, and call the ROLE command in order to verify the role of the instance is actually a master.
-    let role = check_role(&mut conn);
-    if role.is_ok_and(|x| matches!(x, Role::Primary { .. })) {
-        return Ok(true);
+    let role_result = check_role(&mut conn);
+    if let Ok(role) = role_result {
+        return Ok(matches!(role, Role::Primary { .. }));
     }
 
     //If the ROLE commands is not available (it was introduced in Redis 2.8.12), a client may resort to the INFO replication command parsing the role: field of the output.
-    let role = check_info_replication(&mut conn);
-    if role.is_ok_and(|x| x == "master") {
-        return Ok(true);
+    let fallback_role_result = check_info_replication(&mut conn);
+    if let Ok(role) = fallback_role_result {
+        return Ok(role == "master");
     }
 
-    //TODO: Maybe there should be some kind of error message if both role checks fail due to ACL permissions?
-    Ok(false)
+    evaluate_role_check_errors(role_result.unwrap_err(), fallback_role_result.unwrap_err())
 }
 
 fn get_node_role(connection_info: &ConnectionInfo) -> RedisResult<Role> {
@@ -336,6 +335,18 @@ fn check_info_replication(conn: &mut Connection) -> RedisResult<String> {
         Some(x) => Ok(x.clone()),
         None => Err(RedisError::from((ErrorKind::ParseError, "parse error"))),
     }
+}
+
+fn evaluate_role_check_errors(
+    role_err: RedisError,
+    fallback_role_err: RedisError,
+) -> RedisResult<bool> {
+    // unknown commands are expressed as response errors
+    if !matches!(role_err.kind(), ErrorKind::ResponseError) {
+        return Err(role_err);
+    }
+
+    Err(fallback_role_err)
 }
 
 fn parse_replication_info(value: String) -> HashMap<String, String> {
@@ -365,7 +376,7 @@ fn find_valid_master(
         let connection_info = node_connection_info.create_connection_info(ip, port)?;
         #[cfg(feature = "tls-rustls")]
         let connection_info = node_connection_info.create_connection_info(ip, port, certs)?;
-        if determine_master_from_role_or_info_replication(&connection_info).is_ok_and(|x| x) {
+        if determine_master_from_role_or_info_replication(&connection_info)? {
             return Ok(connection_info);
         }
     }
@@ -383,20 +394,18 @@ async fn async_determine_master_from_role_or_info_replication(
     let client = Client::open(connection_info.clone())?;
     let mut conn = client.get_multiplexed_async_connection().await?;
 
-    //Once the client discovered the address of the master instance, it should attempt a connection with the master, and call the ROLE command in order to verify the role of the instance is actually a master.
-    let role = async_check_role(&mut conn).await;
-    if role.is_ok_and(|x| matches!(x, Role::Primary { .. })) {
-        return Ok(true);
+    let role_result = async_check_role(&mut conn).await;
+    if let Ok(role) = role_result {
+        return Ok(matches!(role, Role::Primary { .. }));
     }
 
     //If the ROLE commands is not available (it was introduced in Redis 2.8.12), a client may resort to the INFO replication command parsing the role: field of the output.
-    let role = async_check_info_replication(&mut conn).await;
-    if role.is_ok_and(|x| x == "master") {
-        return Ok(true);
+    let fallback_role_result = async_check_info_replication(&mut conn).await;
+    if let Ok(role) = fallback_role_result {
+        return Ok(role == "master");
     }
 
-    //TODO: Maybe there should be some kind of error message if both role checks fail due to ACL permissions?
-    Ok(false)
+    evaluate_role_check_errors(role_result.unwrap_err(), fallback_role_result.unwrap_err())
 }
 
 #[cfg(feature = "aio")]
@@ -406,20 +415,18 @@ async fn async_determine_slave_from_role_or_info_replication(
     let client = Client::open(connection_info.clone())?;
     let mut conn = client.get_multiplexed_async_connection().await?;
 
-    //Once the client discovered the address of the master instance, it should attempt a connection with the master, and call the ROLE command in order to verify the role of the instance is actually a master.
-    let role = async_check_role(&mut conn).await;
-    if role.is_ok_and(|x| matches!(x, Role::Replica { .. })) {
-        return Ok(true);
+    let role_result = async_check_role(&mut conn).await;
+    if let Ok(role) = role_result {
+        return Ok(matches!(role, Role::Replica { .. }));
     }
 
     //If the ROLE commands is not available (it was introduced in Redis 2.8.12), a client may resort to the INFO replication command parsing the role: field of the output.
-    let role = async_check_info_replication(&mut conn).await;
-    if role.is_ok_and(|x| x == "slave") {
-        return Ok(true);
+    let fallback_role_result = async_check_info_replication(&mut conn).await;
+    if let Ok(role) = fallback_role_result {
+        return Ok(role == "slave");
     }
 
-    //TODO: Maybe there should be some kind of error message if both role checks fail due to ACL permissions?
-    Ok(false)
+    evaluate_role_check_errors(role_result.unwrap_err(), fallback_role_result.unwrap_err())
 }
 
 #[cfg(feature = "aio")]
@@ -455,10 +462,7 @@ async fn async_find_valid_master(
         let connection_info = node_connection_info.create_connection_info(ip, port)?;
         #[cfg(feature = "tls-rustls")]
         let connection_info = node_connection_info.create_connection_info(ip, port, certs)?;
-        if async_determine_master_from_role_or_info_replication(&connection_info)
-            .await
-            .is_ok_and(|x| x)
-        {
+        if async_determine_master_from_role_or_info_replication(&connection_info).await? {
             return Ok(connection_info);
         }
     }
@@ -795,8 +799,10 @@ impl Sentinel {
         get_valid_replicas_addresses(replicas, node_connection_info, &self.certs)
     }
 
-    /// Determines the masters address for the given name, and returns a client for that
-    /// master.
+    /// Determines the master's address for the given name, and returns a client for that
+    /// master. This will connect to the master node to verify that it considers itself
+    /// master so errors can originate from interaction either with Sentinel or with the
+    /// master node.
     pub fn master_for(
         &mut self,
         service_name: &str,
@@ -914,8 +920,10 @@ impl Sentinel {
         async_get_valid_replicas_addresses(replicas, node_connection_info, &self.certs).await
     }
 
-    /// Determines the masters address for the given name, and returns a client for that
-    /// master.
+    /// Determines the master's address for the given name, and returns a client for that
+    /// master. This will connect to the master node to verify that it considers itself
+    /// master so errors can originate from interaction either with Sentinel or with the
+    /// master node.
     pub async fn async_master_for(
         &mut self,
         service_name: &str,
@@ -927,7 +935,8 @@ impl Sentinel {
         Client::open(address)
     }
 
-    /// Connects to a randomly chosen replica of the given master name.
+    /// Connects to a randomly chosen replica of the given master name. Errors can originate
+    /// from interaction either with Sentinel or with the replica.
     pub async fn async_replica_for(
         &mut self,
         service_name: &str,
