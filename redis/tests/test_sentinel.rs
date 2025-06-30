@@ -182,7 +182,7 @@ fn test_sentinel_no_role_or_info_permission() {
     let err = sentinel
         .master_for(master_name, Some(&node_conn_info))
         .unwrap_err();
-    assert!(err.code() == Some("NOPERM"));
+    assert_eq!(err.code(), Some("NOPERM"));
     // Ensure we get the error returned by role command
     assert!(err.detail().unwrap().contains("role"));
 }
