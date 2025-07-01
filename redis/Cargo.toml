@@ -111,7 +111,7 @@ uuid = { version = "1.15.1", optional = true }
 # Optional hashbrown support
 hashbrown = { version = "0.15", optional = true }
 
-lru = { version = "0.14", optional = true }
+lru = { version = "0.15", optional = true }
 
 [features]
 default = ["acl", "streams", "geospatial", "script", "keep-alive", "num-bigint"]
