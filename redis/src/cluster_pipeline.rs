@@ -6,7 +6,7 @@ use crate::types::{
 };
 
 pub(crate) const UNROUTABLE_ERROR: (ErrorKind, &str) = (
-    ErrorKind::ClientError,
+    ErrorKind::Client,
     "This command cannot be safely routed in cluster mode",
 );
 

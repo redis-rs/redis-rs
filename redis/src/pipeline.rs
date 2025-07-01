@@ -142,7 +142,7 @@ impl Pipeline {
     pub fn query<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
         if !con.supports_pipelining() {
             fail!((
-                ErrorKind::ClientError,
+                ErrorKind::Client,
                 "This connection does not support pipelining."
             ));
         }

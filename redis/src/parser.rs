@@ -28,9 +28,9 @@ fn err_parser(line: &str) -> ServerError {
     let mut pieces = line.splitn(2, ' ');
     let kind = match pieces.next().unwrap() {
         "ERR" => ServerErrorKind::ResponseError,
-        "EXECABORT" => ServerErrorKind::ExecAbortError,
-        "LOADING" => ServerErrorKind::BusyLoadingError,
-        "NOSCRIPT" => ServerErrorKind::NoScriptError,
+        "EXECABORT" => ServerErrorKind::ExecAbort,
+        "LOADING" => ServerErrorKind::BusyLoading,
+        "NOSCRIPT" => ServerErrorKind::NoScript,
         "MOVED" => ServerErrorKind::Moved,
         "ASK" => ServerErrorKind::Ask,
         "TRYAGAIN" => ServerErrorKind::TryAgain,
@@ -42,14 +42,14 @@ fn err_parser(line: &str) -> ServerError {
         "NOSUB" => ServerErrorKind::NoSub,
         "NOPERM" => ServerErrorKind::NoPerm,
         code => {
-            return ServerError::ExtensionError {
+            return ServerError::Extension {
                 code: code.into(),
                 detail: pieces.next().map(|str| str.into()),
             }
         }
     };
     let detail = pieces.next().map(|str| str.into());
-    ServerError::KnownError { kind, detail }
+    ServerError::Known { kind, detail }
 }
 
 pub fn get_push_kind(kind: String) -> PushKind {
@@ -514,8 +514,8 @@ mod tests {
             result,
             Value::Array(vec![
                 Value::Okay,
-                Value::ServerError(ServerError::KnownError {
-                    kind: ServerErrorKind::BusyLoadingError,
+                Value::ServerError(ServerError::Known {
+                    kind: ServerErrorKind::BusyLoading,
                     detail: Some(arcstr::literal!("server is loading"))
                 }),
                 Value::Okay
@@ -540,8 +540,8 @@ mod tests {
             result.unwrap(),
             Value::Array(vec![
                 Value::Okay,
-                Value::ServerError(ServerError::KnownError {
-                    kind: ServerErrorKind::BusyLoadingError,
+                Value::ServerError(ServerError::Known {
+                    kind: ServerErrorKind::BusyLoading,
                     detail: Some(arcstr::literal!("server is loading"))
                 }),
                 Value::Okay
@@ -619,7 +619,7 @@ mod tests {
         let val = parse_redis_value(b"!21\r\nSYNTAX invalid syntax\r\n");
         assert_eq!(
             val.unwrap(),
-            Value::ServerError(ServerError::ExtensionError {
+            Value::ServerError(ServerError::Extension {
                 code: arcstr::literal!("SYNTAX"),
                 detail: Some(arcstr::literal!("invalid syntax"))
             })
@@ -684,7 +684,7 @@ mod tests {
             ba.extend(end);
             match parse_redis_value(&ba) {
                 Ok(_) => panic!("Expected ParseError"),
-                Err(e) => assert!(matches!(e.kind(), ErrorKind::ParseError)),
+                Err(e) => assert!(matches!(e.kind(), ErrorKind::Parse)),
             }
         }
     }
@@ -706,7 +706,7 @@ mod tests {
         ba.extend(end);
         match parse_redis_value(&ba) {
             Ok(_) => panic!("Expected ParseError"),
-            Err(e) => assert!(matches!(e.kind(), ErrorKind::ParseError)),
+            Err(e) => assert!(matches!(e.kind(), ErrorKind::Parse)),
         }
     }
 }

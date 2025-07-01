@@ -348,7 +348,7 @@ mod basic_async {
                         let result: RedisResult<()> = cmd().await;
                         assert_eq!(
                             result.as_ref().unwrap_err().kind(),
-                            redis::ErrorKind::IoError,
+                            redis::ErrorKind::Io,
                             "{}",
                             result.as_ref().unwrap_err()
                         );
@@ -357,7 +357,7 @@ mod basic_async {
                     .map(|result| {
                         assert_eq!(
                             result.as_ref().unwrap_err().kind(),
-                            redis::ErrorKind::IoError,
+                            redis::ErrorKind::Io,
                             "{}",
                             result.as_ref().unwrap_err()
                         );
@@ -824,7 +824,7 @@ mod basic_async {
                         Err(err) => break err,
                     };
                 };
-                assert_eq!(err.kind(), ErrorKind::IoError);
+                assert_eq!(err.kind(), ErrorKind::Io);
                 Ok(())
             },
             runtime,
@@ -1080,7 +1080,7 @@ mod basic_async {
                     assert_eq!(count, NUM_KEYS - 1);
 
                     // Assert that the encountered error is a type error
-                    assert_eq!(error, Some(ErrorKind::ParseError));
+                    assert_eq!(error, Some(ErrorKind::Parse));
 
                     Ok(())
                 },
@@ -1998,7 +1998,7 @@ mod basic_async {
                     .await;
 
                 let err = command_that_blocks.unwrap_err();
-                assert_eq!(err.kind(), ErrorKind::IoError);
+                assert_eq!(err.kind(), ErrorKind::Io);
 
                 drop(connection_to_dispose_of);
 

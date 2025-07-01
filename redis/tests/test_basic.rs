@@ -1241,7 +1241,7 @@ mod basic {
         assert_eq!(count, KEY_COUNT);
 
         // make sure we encountered the error (i.e. instead of silent failure)
-        assert_eq!(error_kind, Some(ErrorKind::ParseError));
+        assert_eq!(error_kind, Some(ErrorKind::Parse));
     }
 
     #[test]

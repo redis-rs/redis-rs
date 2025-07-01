@@ -12,7 +12,7 @@ use crate::{
 #[non_exhaustive]
 pub enum ErrorKind {
     /// The parser failed to parse the server response.
-    ParseError,
+    Parse,
     /// The authentication with the server failed.
     AuthenticationFailed,
     /// Operation failed because of a type mismatch.
@@ -23,12 +23,12 @@ pub enum ErrorKind {
     /// This kind is returned if the redis error is one that is
     /// not native to the system.  This is usually the case if
     /// the cause is another error.
-    IoError,
+    Io,
     /// An error raised that was identified on the client before execution.
-    ClientError,
+    Client,
     /// An extension error.  This is an error created by the server
     /// that is not directly understood by the library.
-    ExtensionError,
+    Extension,
     /// Requested name not found among masters returned by the sentinels
     MasterNameNotFoundBySentinel,
     /// No valid replicas found in the sentinels, for a given master name
@@ -38,7 +38,7 @@ pub enum ErrorKind {
     /// Used when a cluster connection cannot find a connection to a valid node.
     ClusterConnectionNotFound,
     /// An error returned from the server
-    ServerError(ServerErrorKind),
+    Server(ServerErrorKind),
 
     #[cfg(feature = "json")]
     /// Error Serializing a struct to JSON form
@@ -70,23 +70,22 @@ impl From<serde_json::Error> for RedisError {
 
 #[derive(Debug)]
 enum ErrorRepr {
-    WithDescriptionAndDetail(ErrorKind, &'static str, Option<ArcStr>),
-    ExtensionError(ArcStr, ArcStr),
-    IoError(io::Error),
-    ParsingError(ParsingError),
-    ServerError(ServerError),
+    General(ErrorKind, &'static str, Option<ArcStr>),
+    Extension(ArcStr, ArcStr),
+    Io(io::Error),
+    Parsing(ParsingError),
+    Server(ServerError),
 }
 
 impl PartialEq for RedisError {
     fn eq(&self, other: &RedisError) -> bool {
         match (&self.repr, &other.repr) {
-            (
-                &ErrorRepr::WithDescriptionAndDetail(kind_a, _, _),
-                &ErrorRepr::WithDescriptionAndDetail(kind_b, _, _),
-            ) => kind_a == kind_b,
-            (ErrorRepr::ExtensionError(a, _), ErrorRepr::ExtensionError(b, _)) => *a == *b,
-            (ErrorRepr::ParsingError(a), ErrorRepr::ParsingError(b)) => *a == *b,
-            (ErrorRepr::ServerError(a), ErrorRepr::ServerError(b)) => *a == *b,
+            (&ErrorRepr::General(kind_a, _, _), &ErrorRepr::General(kind_b, _, _)) => {
+                kind_a == kind_b
+            }
+            (ErrorRepr::Extension(a, _), ErrorRepr::Extension(b, _)) => *a == *b,
+            (ErrorRepr::Parsing(a), ErrorRepr::Parsing(b)) => *a == *b,
+            (ErrorRepr::Server(a), ErrorRepr::Server(b)) => *a == *b,
             _ => false,
         }
     }
@@ -95,7 +94,7 @@ impl PartialEq for RedisError {
 impl From<io::Error> for RedisError {
     fn from(err: io::Error) -> RedisError {
         RedisError {
-            repr: ErrorRepr::IoError(err),
+            repr: ErrorRepr::Io(err),
         }
     }
 }
@@ -104,11 +103,7 @@ impl From<io::Error> for RedisError {
 impl From<rustls::pki_types::InvalidDnsNameError> for RedisError {
     fn from(err: rustls::pki_types::InvalidDnsNameError) -> RedisError {
         RedisError {
-            repr: ErrorRepr::WithDescriptionAndDetail(
-                ErrorKind::IoError,
-                "TLS Error",
-                Some(err.to_string().into()),
-            ),
+            repr: ErrorRepr::General(ErrorKind::Io, "TLS Error", Some(err.to_string().into())),
         }
     }
 }
@@ -117,8 +112,8 @@ impl From<rustls::pki_types::InvalidDnsNameError> for RedisError {
 impl From<rustls_native_certs::Error> for RedisError {
     fn from(err: rustls_native_certs::Error) -> RedisError {
         RedisError {
-            repr: ErrorRepr::WithDescriptionAndDetail(
-                ErrorKind::IoError,
+            repr: ErrorRepr::General(
+                ErrorKind::Io,
                 "Fetch certs Error",
                 Some(err.to_string().into()),
             ),
@@ -129,7 +124,7 @@ impl From<rustls_native_certs::Error> for RedisError {
 impl From<(ErrorKind, &'static str)> for RedisError {
     fn from((kind, desc): (ErrorKind, &'static str)) -> RedisError {
         RedisError {
-            repr: ErrorRepr::WithDescriptionAndDetail(kind, desc, None),
+            repr: ErrorRepr::General(kind, desc, None),
         }
     }
 }
@@ -137,7 +132,7 @@ impl From<(ErrorKind, &'static str)> for RedisError {
 impl From<(ErrorKind, &'static str, String)> for RedisError {
     fn from((kind, desc, detail): (ErrorKind, &'static str, String)) -> RedisError {
         RedisError {
-            repr: ErrorRepr::WithDescriptionAndDetail(kind, desc, Some(detail.into())),
+            repr: ErrorRepr::General(kind, desc, Some(detail.into())),
         }
     }
 }
@@ -146,26 +141,26 @@ impl error::Error for RedisError {
     #[allow(deprecated)]
     fn description(&self) -> &str {
         match &self.repr {
-            ErrorRepr::WithDescriptionAndDetail(_, desc, _) => desc,
-            ErrorRepr::ExtensionError(_, _) => "extension error",
-            ErrorRepr::IoError(err) => err.description(),
-            ErrorRepr::ParsingError(err) => err.description(),
-            ErrorRepr::ServerError(err) => err.description(),
+            ErrorRepr::General(_, desc, _) => desc,
+            ErrorRepr::Extension(_, _) => "extension error",
+            ErrorRepr::Io(err) => err.description(),
+            ErrorRepr::Parsing(err) => err.description(),
+            ErrorRepr::Server(err) => err.description(),
         }
     }
 
     fn cause(&self) -> Option<&dyn error::Error> {
         match self.repr {
-            ErrorRepr::IoError(ref err) => Some(err as &dyn error::Error),
+            ErrorRepr::Io(ref err) => Some(err as &dyn error::Error),
             _ => None,
         }
     }
 
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match &self.repr {
-            ErrorRepr::IoError(err) => Some(err),
-            ErrorRepr::ServerError(err) => Some(err),
-            ErrorRepr::ParsingError(err) => Some(err),
+            ErrorRepr::Io(err) => Some(err),
+            ErrorRepr::Server(err) => Some(err),
+            ErrorRepr::Parsing(err) => Some(err),
             _ => None,
         }
     }
@@ -180,7 +175,7 @@ impl fmt::Debug for RedisError {
 impl fmt::Display for RedisError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match &self.repr {
-            ErrorRepr::WithDescriptionAndDetail(kind, desc, detail) => {
+            ErrorRepr::General(kind, desc, detail) => {
                 desc.fmt(f)?;
                 f.write_str(" - ")?;
                 fmt::Debug::fmt(&kind, f)?;
@@ -191,14 +186,14 @@ impl fmt::Display for RedisError {
                     Ok(())
                 }
             }
-            ErrorRepr::ExtensionError(code, detail) => {
+            ErrorRepr::Extension(code, detail) => {
                 code.fmt(f)?;
                 f.write_str(": ")?;
                 detail.fmt(f)
             }
-            ErrorRepr::IoError(err) => err.fmt(f),
-            ErrorRepr::ParsingError(err) => err.fmt(f),
-            ErrorRepr::ServerError(err) => err.fmt(f),
+            ErrorRepr::Io(err) => err.fmt(f),
+            ErrorRepr::Parsing(err) => err.fmt(f),
+            ErrorRepr::Server(err) => err.fmt(f),
         }
     }
 }
@@ -227,13 +222,13 @@ impl RedisError {
     /// Returns the kind of the error.
     pub fn kind(&self) -> ErrorKind {
         match &self.repr {
-            ErrorRepr::WithDescriptionAndDetail(kind, _, _) => *kind,
-            ErrorRepr::ExtensionError(_, _) => ErrorKind::ExtensionError,
-            ErrorRepr::IoError(_) => ErrorKind::IoError,
-            ErrorRepr::ParsingError(_) => ErrorKind::ParseError,
-            ErrorRepr::ServerError(err) => match err.kind() {
-                Some(kind) => ErrorKind::ServerError(kind),
-                None => ErrorKind::ExtensionError,
+            ErrorRepr::General(kind, _, _) => *kind,
+            ErrorRepr::Extension(_, _) => ErrorKind::Extension,
+            ErrorRepr::Io(_) => ErrorKind::Io,
+            ErrorRepr::Parsing(_) => ErrorKind::Parse,
+            ErrorRepr::Server(err) => match err.kind() {
+                Some(kind) => ErrorKind::Server(kind),
+                None => ErrorKind::Extension,
             },
         }
     }
@@ -241,12 +236,10 @@ impl RedisError {
     /// Returns the error detail.
     pub fn detail(&self) -> Option<&str> {
         match &self.repr {
-            ErrorRepr::WithDescriptionAndDetail(_, _, detail) => {
-                detail.as_ref().map(|detail| detail.as_str())
-            }
-            ErrorRepr::ExtensionError(_, detail) => Some(detail.as_str()),
-            ErrorRepr::ParsingError(err) => Some(&err.description),
-            ErrorRepr::ServerError(err) => err.details(),
+            ErrorRepr::General(_, _, detail) => detail.as_ref().map(|detail| detail.as_str()),
+            ErrorRepr::Extension(_, detail) => Some(detail.as_str()),
+            ErrorRepr::Parsing(err) => Some(&err.description),
+            ErrorRepr::Server(err) => err.details(),
             _ => None,
         }
     }
@@ -254,10 +247,10 @@ impl RedisError {
     /// Returns the raw error code if available.
     pub fn code(&self) -> Option<&str> {
         match self.kind() {
-            ErrorKind::ServerError(kind) => Some(kind.code()),
+            ErrorKind::Server(kind) => Some(kind.code()),
             _ => match &self.repr {
-                ErrorRepr::ExtensionError(code, _) => Some(code),
-                ErrorRepr::ServerError(err) => Some(err.code()),
+                ErrorRepr::Extension(code, _) => Some(code),
+                ErrorRepr::Server(err) => Some(err.code()),
                 _ => None,
             },
         }
@@ -266,47 +259,47 @@ impl RedisError {
     /// Returns the name of the error category for display purposes.
     pub fn category(&self) -> &str {
         match self.kind() {
-            ErrorKind::ServerError(ServerErrorKind::ResponseError) => "response error",
+            ErrorKind::Server(ServerErrorKind::ResponseError) => "response error",
             ErrorKind::AuthenticationFailed => "authentication failed",
             ErrorKind::UnexpectedReturnType => "type error",
-            ErrorKind::ServerError(ServerErrorKind::ExecAbortError) => "script execution aborted",
-            ErrorKind::ServerError(ServerErrorKind::BusyLoadingError) => "busy loading",
-            ErrorKind::ServerError(ServerErrorKind::NoScriptError) => "no script",
+            ErrorKind::Server(ServerErrorKind::ExecAbort) => "script execution aborted",
+            ErrorKind::Server(ServerErrorKind::BusyLoading) => "busy loading",
+            ErrorKind::Server(ServerErrorKind::NoScript) => "no script",
             ErrorKind::InvalidClientConfig => "invalid client config",
-            ErrorKind::ServerError(ServerErrorKind::Moved) => "key moved",
-            ErrorKind::ServerError(ServerErrorKind::Ask) => "key moved (ask)",
-            ErrorKind::ServerError(ServerErrorKind::TryAgain) => "try again",
-            ErrorKind::ServerError(ServerErrorKind::ClusterDown) => "cluster down",
-            ErrorKind::ServerError(ServerErrorKind::CrossSlot) => "cross-slot",
-            ErrorKind::ServerError(ServerErrorKind::MasterDown) => "master down",
-            ErrorKind::IoError => "I/O error",
-            ErrorKind::ExtensionError => "extension error",
-            ErrorKind::ClientError => "client error",
-            ErrorKind::ServerError(ServerErrorKind::ReadOnly) => "read-only",
+            ErrorKind::Server(ServerErrorKind::Moved) => "key moved",
+            ErrorKind::Server(ServerErrorKind::Ask) => "key moved (ask)",
+            ErrorKind::Server(ServerErrorKind::TryAgain) => "try again",
+            ErrorKind::Server(ServerErrorKind::ClusterDown) => "cluster down",
+            ErrorKind::Server(ServerErrorKind::CrossSlot) => "cross-slot",
+            ErrorKind::Server(ServerErrorKind::MasterDown) => "master down",
+            ErrorKind::Io => "I/O error",
+            ErrorKind::Extension => "extension error",
+            ErrorKind::Client => "client error",
+            ErrorKind::Server(ServerErrorKind::ReadOnly) => "read-only",
             ErrorKind::MasterNameNotFoundBySentinel => "master name not found by sentinel",
             ErrorKind::NoValidReplicasFoundBySentinel => "no valid replicas found by sentinel",
             ErrorKind::EmptySentinelList => "empty sentinel list",
-            ErrorKind::ServerError(ServerErrorKind::NotBusy) => "not busy",
+            ErrorKind::Server(ServerErrorKind::NotBusy) => "not busy",
             ErrorKind::ClusterConnectionNotFound => "connection to node in cluster not found",
             #[cfg(feature = "json")]
             ErrorKind::Serialize => "serializing",
             ErrorKind::RESP3NotSupported => "resp3 is not supported by server",
-            ErrorKind::ParseError => "parse error",
-            ErrorKind::ServerError(ServerErrorKind::NoSub) => {
+            ErrorKind::Parse => "parse error",
+            ErrorKind::Server(ServerErrorKind::NoSub) => {
                 "Server declined unsubscribe related command in non-subscribed mode"
             }
-            ErrorKind::ServerError(ServerErrorKind::NoPerm) => "",
+            ErrorKind::Server(ServerErrorKind::NoPerm) => "",
         }
     }
 
     /// Indicates that this failure is an IO failure.
     pub fn is_io_error(&self) -> bool {
-        self.kind() == ErrorKind::IoError
+        self.kind() == ErrorKind::Io
     }
 
     pub(crate) fn as_io_error(&self) -> Option<&io::Error> {
         match &self.repr {
-            ErrorRepr::IoError(e) => Some(e),
+            ErrorRepr::Io(e) => Some(e),
             _ => None,
         }
     }
@@ -315,10 +308,10 @@ impl RedisError {
     pub fn is_cluster_error(&self) -> bool {
         matches!(
             self.kind(),
-            ErrorKind::ServerError(ServerErrorKind::Moved)
-                | ErrorKind::ServerError(ServerErrorKind::Ask)
-                | ErrorKind::ServerError(ServerErrorKind::TryAgain)
-                | ErrorKind::ServerError(ServerErrorKind::ClusterDown)
+            ErrorKind::Server(ServerErrorKind::Moved)
+                | ErrorKind::Server(ServerErrorKind::Ask)
+                | ErrorKind::Server(ServerErrorKind::TryAgain)
+                | ErrorKind::Server(ServerErrorKind::ClusterDown)
         )
     }
 
@@ -328,7 +321,7 @@ impl RedisError {
     /// local server is available.
     pub fn is_connection_refusal(&self) -> bool {
         match self.repr {
-            ErrorRepr::IoError(ref err) => {
+            ErrorRepr::Io(ref err) => {
                 #[allow(clippy::match_like_matches_macro)]
                 match err.kind() {
                     io::ErrorKind::ConnectionRefused => true,
@@ -347,7 +340,7 @@ impl RedisError {
     /// Note that this may not be accurate depending on platform.
     pub fn is_timeout(&self) -> bool {
         match self.repr {
-            ErrorRepr::IoError(ref err) => matches!(
+            ErrorRepr::Io(ref err) => matches!(
                 err.kind(),
                 io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
             ),
@@ -358,7 +351,7 @@ impl RedisError {
     /// Returns true if error was caused by a dropped connection.
     pub fn is_connection_dropped(&self) -> bool {
         match self.repr {
-            ErrorRepr::IoError(ref err) => matches!(
+            ErrorRepr::Io(ref err) => matches!(
                 err.kind(),
                 io::ErrorKind::BrokenPipe
                     | io::ErrorKind::ConnectionReset
@@ -386,10 +379,11 @@ impl RedisError {
     ///
     /// This returns `(addr, slot_id)`.
     pub fn redirect_node(&self) -> Option<(&str, u16)> {
-        match self.kind() {
-            ErrorKind::ServerError(ServerErrorKind::Ask)
-            | ErrorKind::ServerError(ServerErrorKind::Moved) => (),
-            _ => return None,
+        if !matches!(
+            self.kind(),
+            ErrorKind::Server(ServerErrorKind::Ask) | ErrorKind::Server(ServerErrorKind::Moved),
+        ) {
+            return None;
         }
         let mut iter = self.detail()?.split_ascii_whitespace();
         let slot_id: u16 = iter.next()?.parse().ok()?;
@@ -397,28 +391,28 @@ impl RedisError {
         Some((addr, slot_id))
     }
 
-    /// Clone the `RedisError`, throwing away non-cloneable parts of an `IoError`.
+    /// Clone the `RedisError`, throwing away non-cloneable parts of an `Io`.
     ///
     /// Deriving `Clone` is not possible because the wrapped `io::Error` is not
     /// cloneable.
     ///
     /// The `ioerror_description` parameter will be prepended to the message in
-    /// case an `IoError` is found.
+    /// case an `Io` is found.
     #[cfg(feature = "connection-manager")] // Used to avoid "unused method" warning
     pub(crate) fn clone_mostly(&self, ioerror_description: &'static str) -> Self {
         let repr = match &self.repr {
-            ErrorRepr::WithDescriptionAndDetail(kind, desc, ref detail) => {
-                ErrorRepr::WithDescriptionAndDetail(*kind, desc, detail.clone())
+            ErrorRepr::General(kind, desc, ref detail) => {
+                ErrorRepr::General(*kind, desc, detail.clone())
             }
-            ErrorRepr::ExtensionError(ref code, ref detail) => {
-                ErrorRepr::ExtensionError(code.clone(), detail.clone())
+            ErrorRepr::Extension(ref code, ref detail) => {
+                ErrorRepr::Extension(code.clone(), detail.clone())
             }
-            ErrorRepr::IoError(ref e) => ErrorRepr::IoError(io::Error::new(
+            ErrorRepr::Io(ref e) => ErrorRepr::Io(io::Error::new(
                 e.kind(),
                 format!("{ioerror_description}: {e}"),
             )),
-            ErrorRepr::ParsingError(ref err) => ErrorRepr::ParsingError(err.clone()),
-            ErrorRepr::ServerError(server_error) => ErrorRepr::ServerError(server_error.clone()),
+            ErrorRepr::Parsing(ref err) => ErrorRepr::Parsing(err.clone()),
+            ErrorRepr::Server(server_error) => ErrorRepr::Server(server_error.clone()),
         };
         Self { repr }
     }
@@ -431,39 +425,39 @@ impl RedisError {
     /// than just the error kind on when to retry.
     pub fn retry_method(&self) -> RetryMethod {
         match self.kind() {
-            ErrorKind::ServerError(ServerErrorKind::Moved) => RetryMethod::MovedRedirect,
-            ErrorKind::ServerError(ServerErrorKind::Ask) => RetryMethod::AskRedirect,
+            ErrorKind::Server(ServerErrorKind::Moved) => RetryMethod::MovedRedirect,
+            ErrorKind::Server(ServerErrorKind::Ask) => RetryMethod::AskRedirect,
 
-            ErrorKind::ServerError(ServerErrorKind::TryAgain) => RetryMethod::WaitAndRetry,
-            ErrorKind::ServerError(ServerErrorKind::MasterDown) => RetryMethod::WaitAndRetry,
-            ErrorKind::ServerError(ServerErrorKind::ClusterDown) => RetryMethod::WaitAndRetry,
-            ErrorKind::ServerError(ServerErrorKind::BusyLoadingError) => RetryMethod::WaitAndRetry,
+            ErrorKind::Server(ServerErrorKind::TryAgain) => RetryMethod::WaitAndRetry,
+            ErrorKind::Server(ServerErrorKind::MasterDown) => RetryMethod::WaitAndRetry,
+            ErrorKind::Server(ServerErrorKind::ClusterDown) => RetryMethod::WaitAndRetry,
+            ErrorKind::Server(ServerErrorKind::BusyLoading) => RetryMethod::WaitAndRetry,
             ErrorKind::MasterNameNotFoundBySentinel => RetryMethod::WaitAndRetry,
             ErrorKind::NoValidReplicasFoundBySentinel => RetryMethod::WaitAndRetry,
 
-            ErrorKind::ServerError(ServerErrorKind::ResponseError) => RetryMethod::NoRetry,
-            ErrorKind::ServerError(ServerErrorKind::ReadOnly) => RetryMethod::NoRetry,
-            ErrorKind::ExtensionError => RetryMethod::NoRetry,
-            ErrorKind::ServerError(ServerErrorKind::ExecAbortError) => RetryMethod::NoRetry,
+            ErrorKind::Server(ServerErrorKind::ResponseError) => RetryMethod::NoRetry,
+            ErrorKind::Server(ServerErrorKind::ReadOnly) => RetryMethod::NoRetry,
+            ErrorKind::Extension => RetryMethod::NoRetry,
+            ErrorKind::Server(ServerErrorKind::ExecAbort) => RetryMethod::NoRetry,
             ErrorKind::UnexpectedReturnType => RetryMethod::NoRetry,
-            ErrorKind::ServerError(ServerErrorKind::NoScriptError) => RetryMethod::NoRetry,
+            ErrorKind::Server(ServerErrorKind::NoScript) => RetryMethod::NoRetry,
             ErrorKind::InvalidClientConfig => RetryMethod::NoRetry,
-            ErrorKind::ServerError(ServerErrorKind::CrossSlot) => RetryMethod::NoRetry,
-            ErrorKind::ClientError => RetryMethod::NoRetry,
+            ErrorKind::Server(ServerErrorKind::CrossSlot) => RetryMethod::NoRetry,
+            ErrorKind::Client => RetryMethod::NoRetry,
             ErrorKind::EmptySentinelList => RetryMethod::NoRetry,
-            ErrorKind::ServerError(ServerErrorKind::NotBusy) => RetryMethod::NoRetry,
+            ErrorKind::Server(ServerErrorKind::NotBusy) => RetryMethod::NoRetry,
             #[cfg(feature = "json")]
             ErrorKind::Serialize => RetryMethod::NoRetry,
             ErrorKind::RESP3NotSupported => RetryMethod::NoRetry,
-            ErrorKind::ServerError(ServerErrorKind::NoSub) => RetryMethod::NoRetry,
-            ErrorKind::ServerError(ServerErrorKind::NoPerm) => RetryMethod::NoRetry,
+            ErrorKind::Server(ServerErrorKind::NoSub) => RetryMethod::NoRetry,
+            ErrorKind::Server(ServerErrorKind::NoPerm) => RetryMethod::NoRetry,
 
-            ErrorKind::ParseError => RetryMethod::Reconnect,
+            ErrorKind::Parse => RetryMethod::Reconnect,
             ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
             ErrorKind::ClusterConnectionNotFound => RetryMethod::ReconnectFromInitialConnections,
 
-            ErrorKind::IoError => match &self.repr {
-                ErrorRepr::IoError(err) => match err.kind() {
+            ErrorKind::Io => match &self.repr {
+                ErrorRepr::Io(err) => match err.kind() {
                     io::ErrorKind::ConnectionRefused => RetryMethod::Reconnect,
                     io::ErrorKind::NotFound => RetryMethod::Reconnect,
                     io::ErrorKind::ConnectionReset => RetryMethod::Reconnect,
@@ -483,7 +477,7 @@ impl RedisError {
     }
 }
 
-/// Creates a new Redis error with the `ExtensionError` kind.
+/// Creates a new Redis error with the `Extension` kind.
 ///
 /// This function is used to create Redis errors for extension error codes
 /// that are not directly understood by the library.
@@ -495,16 +489,13 @@ impl RedisError {
 ///
 /// # Returns
 ///
-/// A `RedisError` with the `ExtensionError` kind.
+/// A `RedisError` with the `Extension` kind.
 pub fn make_extension_error(code: String, detail: Option<String>) -> RedisError {
     RedisError {
-        repr: ErrorRepr::ExtensionError(
-            code.into(),
-            match detail {
-                Some(x) => x.into(),
-                None => arcstr::literal!("Unknown extension error encountered"),
-            },
-        ),
+        repr: ErrorRepr::Server(ServerError::Extension {
+            code: code.into(),
+            detail: detail.map(|detail| detail.into()),
+        }),
     }
 }
 
@@ -512,11 +503,7 @@ pub fn make_extension_error(code: String, detail: Option<String>) -> RedisError 
 impl From<native_tls::Error> for RedisError {
     fn from(err: native_tls::Error) -> RedisError {
         RedisError {
-            repr: ErrorRepr::WithDescriptionAndDetail(
-                ErrorKind::IoError,
-                "TLS error",
-                Some(err.to_string().into()),
-            ),
+            repr: ErrorRepr::General(ErrorKind::Io, "TLS error", Some(err.to_string().into())),
         }
     }
 }
@@ -525,11 +512,7 @@ impl From<native_tls::Error> for RedisError {
 impl From<rustls::Error> for RedisError {
     fn from(err: rustls::Error) -> RedisError {
         RedisError {
-            repr: ErrorRepr::WithDescriptionAndDetail(
-                ErrorKind::IoError,
-                "TLS error",
-                Some(err.to_string().into()),
-            ),
+            repr: ErrorRepr::General(ErrorKind::Io, "TLS error", Some(err.to_string().into())),
         }
     }
 }
@@ -537,21 +520,21 @@ impl From<rustls::Error> for RedisError {
 impl From<ServerError> for RedisError {
     fn from(err: ServerError) -> Self {
         Self {
-            repr: ErrorRepr::ServerError(err),
+            repr: ErrorRepr::Server(err),
         }
     }
 }
 
 impl From<ServerErrorKind> for ErrorKind {
     fn from(kind: ServerErrorKind) -> Self {
-        ErrorKind::ServerError(kind)
+        ErrorKind::Server(kind)
     }
 }
 
 impl From<ParsingError> for RedisError {
     fn from(err: ParsingError) -> Self {
         RedisError {
-            repr: ErrorRepr::ParsingError(err),
+            repr: ErrorRepr::Parsing(err),
         }
     }
 }

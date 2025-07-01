@@ -184,16 +184,12 @@ impl ConnectionLike for MockRedisConnection {
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
         let mut commands = self.commands.lock().unwrap();
         let next_cmd = commands.pop_front().ok_or_else(|| {
-            RedisError::from((
-                ErrorKind::ClientError,
-                "TEST",
-                "unexpected command".to_owned(),
-            ))
+            RedisError::from((ErrorKind::Client, "TEST", "unexpected command".to_owned()))
         })?;
 
         if cmd != next_cmd.cmd_bytes {
             return Err(RedisError::from((
-                ErrorKind::ClientError,
+                ErrorKind::Client,
                 "TEST",
                 format!(
                     "unexpected command: expected={}, actual={}",
@@ -209,11 +205,11 @@ impl ConnectionLike for MockRedisConnection {
             .and_then(|values| match values.as_slice() {
                 [value] => Ok(value.clone()),
                 [] => Err(RedisError::from((
-                    ErrorKind::ClientError,
+                    ErrorKind::Client,
                     "no value configured as response",
                 ))),
                 _ => Err(RedisError::from((
-                    ErrorKind::ClientError,
+                    ErrorKind::Client,
                     "multiple values configured as response for command expecting a single value",
                 ))),
             })
@@ -227,16 +223,12 @@ impl ConnectionLike for MockRedisConnection {
     ) -> RedisResult<Vec<Value>> {
         let mut commands = self.commands.lock().unwrap();
         let next_cmd = commands.pop_front().ok_or_else(|| {
-            RedisError::from((
-                ErrorKind::ClientError,
-                "TEST",
-                "unexpected command".to_owned(),
-            ))
+            RedisError::from((ErrorKind::Client, "TEST", "unexpected command".to_owned()))
         })?;
 
         if cmd != next_cmd.cmd_bytes {
             return Err(RedisError::from((
-                ErrorKind::ClientError,
+                ErrorKind::Client,
                 "TEST",
                 format!(
                     "unexpected command: expected={}, actual={}",
@@ -363,7 +355,7 @@ mod tests {
             .arg("foo")
             .exec(&mut conn)
             .unwrap_err();
-        assert_eq!(err.kind(), ErrorKind::ClientError);
+        assert_eq!(err.kind(), ErrorKind::Client);
         assert_eq!(err.detail(), Some("unexpected command"));
     }
 
@@ -381,7 +373,7 @@ mod tests {
             .arg("foo")
             .exec(&mut conn)
             .unwrap_err();
-        assert_eq!(err.kind(), ErrorKind::ClientError);
+        assert_eq!(err.kind(), ErrorKind::Client);
         assert!(err.detail().unwrap().contains("unexpected command"));
     }
 

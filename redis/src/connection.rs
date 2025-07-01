@@ -815,7 +815,7 @@ impl ActualConnection {
                         match tls_connector.connect(host, tcp) {
                             Ok(res) => res,
                             Err(e) => {
-                                fail!((ErrorKind::IoError, "SSL Handshake error", e.to_string()));
+                                fail!((ErrorKind::Io, "SSL Handshake error", e.to_string()));
                             }
                         }
                     }
@@ -1375,12 +1375,12 @@ pub(crate) fn check_connection_setup(
 
     if let Some(index) = resp3_auth_cmd_idx {
         let Some(value) = results.get(index) else {
-            return Err((ErrorKind::ClientError, "Missing RESP3 auth response").into());
+            return Err((ErrorKind::Client, "Missing RESP3 auth response").into());
         };
         check_resp3_auth(value)?;
     } else if let Some(index) = resp2_auth_cmd_idx {
         let Some(value) = results.get(index) else {
-            return Err((ErrorKind::ClientError, "Missing RESP2 auth response").into());
+            return Err((ErrorKind::Client, "Missing RESP2 auth response").into());
         };
         if check_resp2_auth(value)? == AuthResult::ShouldRetryWithoutUsername {
             return Ok(AuthResult::ShouldRetryWithoutUsername);
@@ -1389,7 +1389,7 @@ pub(crate) fn check_connection_setup(
 
     if let Some(index) = select_cmd_idx {
         let Some(value) = results.get(index) else {
-            return Err((ErrorKind::ClientError, "Missing SELECT DB response").into());
+            return Err((ErrorKind::Client, "Missing SELECT DB response").into());
         };
         check_db_select(value)?;
     }
@@ -1397,7 +1397,7 @@ pub(crate) fn check_connection_setup(
     #[cfg(feature = "cache-aio")]
     if let Some(index) = cache_cmd_idx {
         let Some(value) = results.get(index) else {
-            return Err((ErrorKind::ClientError, "Missing Caching response").into());
+            return Err((ErrorKind::Client, "Missing Caching response").into());
         };
         check_caching(value)?;
     }
@@ -1655,7 +1655,7 @@ impl Connection {
                 }
                 _ => {
                     return Err((
-                        ErrorKind::ClientError,
+                        ErrorKind::Client,
                         "Unexpected unsubscribe response",
                         format!("{resp:?}"),
                     )
