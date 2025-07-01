@@ -40,6 +40,7 @@ fn err_parser(line: &str) -> ServerError {
         "READONLY" => ServerErrorKind::ReadOnly,
         "NOTBUSY" => ServerErrorKind::NotBusy,
         "NOSUB" => ServerErrorKind::NoSub,
+        "NOPERM" => ServerErrorKind::NoPerm,
         code => {
             return ServerError::ExtensionError {
                 code: code.into(),

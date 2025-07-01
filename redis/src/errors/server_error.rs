@@ -29,6 +29,8 @@ pub enum ServerErrorKind {
     NotBusy,
     /// Attempted to unsubscribe on a connection that is not in subscribed mode.
     NoSub,
+    /// Attempted to use a command without ACL permission.
+    NoPerm,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -68,6 +70,7 @@ impl ServerError {
                 ServerErrorKind::ReadOnly => "READONLY",
                 ServerErrorKind::NotBusy => "NOTBUSY",
                 ServerErrorKind::NoSub => "NOSUB",
+                ServerErrorKind::NoPerm => "NOPERM",
             },
         }
     }

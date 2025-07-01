@@ -63,6 +63,8 @@ pub enum ErrorKind {
     ClusterConnectionNotFound,
     /// Attempted to unsubscribe on a connection that is not in subscribed mode.
     NoSub,
+    /// Attempted to use a command without ACL permission.
+    NoPerm,
 
     #[cfg(feature = "json")]
     /// Error Serializing a struct to JSON form
@@ -276,6 +278,7 @@ impl RedisError {
                 Some(ServerErrorKind::ReadOnly) => ErrorKind::ReadOnly,
                 Some(ServerErrorKind::NotBusy) => ErrorKind::NotBusy,
                 Some(ServerErrorKind::NoSub) => ErrorKind::NoSub,
+                Some(ServerErrorKind::NoPerm) => ErrorKind::NoPerm,
                 None => ErrorKind::ExtensionError,
             },
         }
@@ -347,6 +350,7 @@ impl RedisError {
             ErrorKind::NoSub => {
                 "Server declined unsubscribe related command in non-subscribed mode"
             }
+            ErrorKind::NoPerm => "",
         }
     }
 
@@ -504,6 +508,7 @@ impl RedisError {
             ErrorKind::Serialize => RetryMethod::NoRetry,
             ErrorKind::RESP3NotSupported => RetryMethod::NoRetry,
             ErrorKind::NoSub => RetryMethod::NoRetry,
+            ErrorKind::NoPerm => RetryMethod::NoRetry,
 
             ErrorKind::ParseError => RetryMethod::Reconnect,
             ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
