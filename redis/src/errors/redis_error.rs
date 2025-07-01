@@ -70,8 +70,7 @@ impl From<serde_json::Error> for RedisError {
 
 #[derive(Debug)]
 enum ErrorRepr {
-    WithDescription(ErrorKind, &'static str),
-    WithDescriptionAndDetail(ErrorKind, &'static str, ArcStr),
+    WithDescriptionAndDetail(ErrorKind, &'static str, Option<ArcStr>),
     ExtensionError(ArcStr, ArcStr),
     IoError(io::Error),
     ParsingError(ParsingError),
@@ -81,9 +80,6 @@ enum ErrorRepr {
 impl PartialEq for RedisError {
     fn eq(&self, other: &RedisError) -> bool {
         match (&self.repr, &other.repr) {
-            (&ErrorRepr::WithDescription(kind_a, _), &ErrorRepr::WithDescription(kind_b, _)) => {
-                kind_a == kind_b
-            }
             (
                 &ErrorRepr::WithDescriptionAndDetail(kind_a, _, _),
                 &ErrorRepr::WithDescriptionAndDetail(kind_b, _, _),
@@ -111,7 +107,7 @@ impl From<rustls::pki_types::InvalidDnsNameError> for RedisError {
             repr: ErrorRepr::WithDescriptionAndDetail(
                 ErrorKind::IoError,
                 "TLS Error",
-                err.to_string().into(),
+                Some(err.to_string().into()),
             ),
         }
     }
@@ -124,7 +120,7 @@ impl From<rustls_native_certs::Error> for RedisError {
             repr: ErrorRepr::WithDescriptionAndDetail(
                 ErrorKind::IoError,
                 "Fetch certs Error",
-                err.to_string().into(),
+                Some(err.to_string().into()),
             ),
         }
     }
@@ -133,7 +129,7 @@ impl From<rustls_native_certs::Error> for RedisError {
 impl From<(ErrorKind, &'static str)> for RedisError {
     fn from((kind, desc): (ErrorKind, &'static str)) -> RedisError {
         RedisError {
-            repr: ErrorRepr::WithDescription(kind, desc),
+            repr: ErrorRepr::WithDescriptionAndDetail(kind, desc, None),
         }
     }
 }
@@ -141,7 +137,7 @@ impl From<(ErrorKind, &'static str)> for RedisError {
 impl From<(ErrorKind, &'static str, String)> for RedisError {
     fn from((kind, desc, detail): (ErrorKind, &'static str, String)) -> RedisError {
         RedisError {
-            repr: ErrorRepr::WithDescriptionAndDetail(kind, desc, detail.into()),
+            repr: ErrorRepr::WithDescriptionAndDetail(kind, desc, Some(detail.into())),
         }
     }
 }
@@ -150,7 +146,6 @@ impl error::Error for RedisError {
     #[allow(deprecated)]
     fn description(&self) -> &str {
         match &self.repr {
-            ErrorRepr::WithDescription(_, desc) => desc,
             ErrorRepr::WithDescriptionAndDetail(_, desc, _) => desc,
             ErrorRepr::ExtensionError(_, _) => "extension error",
             ErrorRepr::IoError(err) => err.description(),
@@ -185,17 +180,16 @@ impl fmt::Debug for RedisError {
 impl fmt::Display for RedisError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match &self.repr {
-            ErrorRepr::WithDescription(kind, desc) => {
-                desc.fmt(f)?;
-                f.write_str("- ")?;
-                fmt::Debug::fmt(&kind, f)
-            }
             ErrorRepr::WithDescriptionAndDetail(kind, desc, detail) => {
                 desc.fmt(f)?;
                 f.write_str(" - ")?;
                 fmt::Debug::fmt(&kind, f)?;
-                f.write_str(": ")?;
-                detail.fmt(f)
+                if let Some(detail) = detail {
+                    f.write_str(": ")?;
+                    detail.fmt(f)
+                } else {
+                    Ok(())
+                }
             }
             ErrorRepr::ExtensionError(code, detail) => {
                 code.fmt(f)?;
@@ -233,8 +227,7 @@ impl RedisError {
     /// Returns the kind of the error.
     pub fn kind(&self) -> ErrorKind {
         match &self.repr {
-            ErrorRepr::WithDescription(kind, _)
-            | ErrorRepr::WithDescriptionAndDetail(kind, _, _) => *kind,
+            ErrorRepr::WithDescriptionAndDetail(kind, _, _) => *kind,
             ErrorRepr::ExtensionError(_, _) => ErrorKind::ExtensionError,
             ErrorRepr::IoError(_) => ErrorKind::IoError,
             ErrorRepr::ParsingError(_) => ErrorKind::ParseError,
@@ -248,8 +241,10 @@ impl RedisError {
     /// Returns the error detail.
     pub fn detail(&self) -> Option<&str> {
         match &self.repr {
-            ErrorRepr::WithDescriptionAndDetail(_, _, detail)
-            | ErrorRepr::ExtensionError(_, detail) => Some(detail.as_str()),
+            ErrorRepr::WithDescriptionAndDetail(_, _, detail) => {
+                detail.as_ref().map(|detail| detail.as_str())
+            }
+            ErrorRepr::ExtensionError(_, detail) => Some(detail.as_str()),
             ErrorRepr::ParsingError(err) => Some(&err.description),
             ErrorRepr::ServerError(err) => err.details(),
             _ => None,
@@ -412,7 +407,6 @@ impl RedisError {
     #[cfg(feature = "connection-manager")] // Used to avoid "unused method" warning
     pub(crate) fn clone_mostly(&self, ioerror_description: &'static str) -> Self {
         let repr = match &self.repr {
-            ErrorRepr::WithDescription(kind, desc) => ErrorRepr::WithDescription(*kind, desc),
             ErrorRepr::WithDescriptionAndDetail(kind, desc, ref detail) => {
                 ErrorRepr::WithDescriptionAndDetail(*kind, desc, detail.clone())
             }
@@ -521,7 +515,7 @@ impl From<native_tls::Error> for RedisError {
             repr: ErrorRepr::WithDescriptionAndDetail(
                 ErrorKind::IoError,
                 "TLS error",
-                err.to_string().into(),
+                Some(err.to_string().into()),
             ),
         }
     }
@@ -534,7 +528,7 @@ impl From<rustls::Error> for RedisError {
             repr: ErrorRepr::WithDescriptionAndDetail(
                 ErrorKind::IoError,
                 "TLS error",
-                err.to_string().into(),
+                Some(err.to_string().into()),
             ),
         }
     }
