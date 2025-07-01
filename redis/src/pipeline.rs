@@ -4,7 +4,7 @@
 use crate::cmd::CommandCacheConfig;
 use crate::cmd::{cmd, cmd_len, Cmd};
 use crate::connection::ConnectionLike;
-use crate::errors::ErrorKind;
+use crate::errors::ServerErrorKind;
 use crate::types::{
     from_owned_redis_value, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,
 };
@@ -115,7 +115,7 @@ impl Pipeline {
             Some(Value::Nil) => Ok(Value::Nil),
             Some(Value::Array(items)) => self.make_pipeline_results(items),
             _ => fail!((
-                ErrorKind::ResponseError,
+                ServerErrorKind::ResponseError.into(),
                 "Invalid response when parsing multi response"
             )),
         }
@@ -142,7 +142,7 @@ impl Pipeline {
     pub fn query<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
         if !con.supports_pipelining() {
             fail!((
-                ErrorKind::ResponseError,
+                ServerErrorKind::ResponseError.into(),
                 "This connection does not support pipelining."
             ));
         }
@@ -188,7 +188,7 @@ impl Pipeline {
             Some(Value::Nil) => Ok(Value::Nil),
             Some(Value::Array(items)) => self.make_pipeline_results(items),
             _ => Err((
-                ErrorKind::ResponseError,
+                ServerErrorKind::ResponseError.into(),
                 "Invalid response when parsing multi response",
             )
                 .into()),

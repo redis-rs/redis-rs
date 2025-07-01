@@ -3,7 +3,7 @@ use sha1_smol::Sha1;
 
 use crate::cmd::cmd;
 use crate::connection::ConnectionLike;
-use crate::errors::ErrorKind;
+use crate::errors::ServerErrorKind;
 use crate::types::{FromRedisValue, RedisResult, ToRedisArgs};
 use crate::Cmd;
 
@@ -147,7 +147,7 @@ impl<'a> ScriptInvocation<'a> {
         match eval_cmd.query(con) {
             Ok(val) => Ok(val),
             Err(err) => {
-                if err.kind() == ErrorKind::NoScriptError {
+                if err.kind() == ServerErrorKind::NoScriptError.into() {
                     self.load_cmd().exec(con)?;
                     eval_cmd.query(con)
                 } else {
@@ -172,7 +172,9 @@ impl<'a> ScriptInvocation<'a> {
             }
             Err(err) => {
                 // Load the script into Redis if the script hash wasn't there already
-                if err.kind() == ErrorKind::NoScriptError {
+
+                use crate::errors::ServerErrorKind;
+                if err.kind() == ServerErrorKind::NoScriptError.into() {
                     self.load_cmd().exec_async(con).await?;
                     eval_cmd.query_async(con).await
                 } else {

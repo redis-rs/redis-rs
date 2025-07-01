@@ -433,6 +433,8 @@ mod basic_async {
     fn test_pipeline_transaction_with_errors(#[case] runtime: RuntimeType) {
         test_with_all_connection_types(
             |mut con| async move {
+                use redis::ServerErrorKind;
+
                 con.set::<_, _, ()>("x", 42).await.unwrap();
 
                 // Make Redis a replica of a nonexistent master, thereby making it read-only.
@@ -452,7 +454,7 @@ mod basic_async {
                     .query_async(&mut con)
                     .await;
 
-                assert_eq!(err.unwrap_err().kind(), ErrorKind::ReadOnly);
+                assert_eq!(err.unwrap_err().kind(), ServerErrorKind::ReadOnly.into());
 
                 let x: i32 = con.get("x").await.unwrap();
                 assert_eq!(x, 42);

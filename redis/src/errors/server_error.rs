@@ -1,6 +1,7 @@
 use arcstr::ArcStr;
 use std::fmt;
 
+/// Kinds of errors returned from the server
 #[derive(PartialEq, Debug, Clone, Copy, Eq)]
 pub enum ServerErrorKind {
     /// The server generated an invalid response.
@@ -33,6 +34,27 @@ pub enum ServerErrorKind {
     NoPerm,
 }
 
+impl ServerErrorKind {
+    pub(crate) fn code(&self) -> &'static str {
+        match self {
+            ServerErrorKind::ResponseError => "ERR",
+            ServerErrorKind::ExecAbortError => "EXECABORT",
+            ServerErrorKind::BusyLoadingError => "LOADING",
+            ServerErrorKind::NoScriptError => "NOSCRIPT",
+            ServerErrorKind::Moved => "MOVED",
+            ServerErrorKind::Ask => "ASK",
+            ServerErrorKind::TryAgain => "TRYAGAIN",
+            ServerErrorKind::ClusterDown => "CLUSTERDOWN",
+            ServerErrorKind::CrossSlot => "CROSSSLOT",
+            ServerErrorKind::MasterDown => "MASTERDOWN",
+            ServerErrorKind::ReadOnly => "READONLY",
+            ServerErrorKind::NotBusy => "NOTBUSY",
+            ServerErrorKind::NoSub => "NOSUB",
+            ServerErrorKind::NoPerm => "NOPERM",
+        }
+    }
+}
+
 #[derive(PartialEq, Debug, Clone)]
 pub enum ServerError {
     ExtensionError {
@@ -56,22 +78,7 @@ impl ServerError {
     pub fn code(&self) -> &str {
         match self {
             ServerError::ExtensionError { code, .. } => code,
-            ServerError::KnownError { kind, .. } => match kind {
-                ServerErrorKind::ResponseError => "ERR",
-                ServerErrorKind::ExecAbortError => "EXECABORT",
-                ServerErrorKind::BusyLoadingError => "LOADING",
-                ServerErrorKind::NoScriptError => "NOSCRIPT",
-                ServerErrorKind::Moved => "MOVED",
-                ServerErrorKind::Ask => "ASK",
-                ServerErrorKind::TryAgain => "TRYAGAIN",
-                ServerErrorKind::ClusterDown => "CLUSTERDOWN",
-                ServerErrorKind::CrossSlot => "CROSSSLOT",
-                ServerErrorKind::MasterDown => "MASTERDOWN",
-                ServerErrorKind::ReadOnly => "READONLY",
-                ServerErrorKind::NotBusy => "NOTBUSY",
-                ServerErrorKind::NoSub => "NOSUB",
-                ServerErrorKind::NoPerm => "NOPERM",
-            },
+            ServerError::KnownError { kind, .. } => kind.code(),
         }
     }
 

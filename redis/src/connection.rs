@@ -1306,7 +1306,7 @@ fn check_resp2_auth(result: &Value) -> RedisResult<AuthResult> {
         Value::ServerError(err) => err,
         _ => {
             return Err((
-                ErrorKind::ResponseError,
+                ServerErrorKind::ResponseError.into(),
                 "Redis server refused to authenticate, returns Ok() != Value::Okay",
             )
                 .into());
@@ -1334,13 +1334,13 @@ fn check_db_select(value: &Value) -> RedisResult<()> {
 
     match err.details() {
         Some(err_msg) => Err((
-            ErrorKind::ResponseError,
+            ServerErrorKind::ResponseError.into(),
             "Redis server refused to switch database",
             err_msg.to_string(),
         )
             .into()),
         None => Err((
-            ErrorKind::ResponseError,
+            ServerErrorKind::ResponseError.into(),
             "Redis server refused to switch database",
         )
             .into()),
@@ -1352,7 +1352,7 @@ fn check_caching(result: &Value) -> RedisResult<()> {
     match result {
         Value::Okay => Ok(()),
         _ => Err((
-            ErrorKind::ResponseError,
+            ServerErrorKind::ResponseError.into(),
             "Client-side caching returned unknown response",
             format!("{result:?}"),
         )
