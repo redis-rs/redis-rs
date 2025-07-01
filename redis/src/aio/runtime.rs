@@ -82,7 +82,7 @@ fn set_runtime(runtime: Runtime) -> Result<(), RedisError> {
 
     CHOSEN_RUNTIME
         .set(runtime)
-        .map_err(|_| RedisError::from((crate::ErrorKind::ClientError, PREFER_RUNTIME_ERROR)))
+        .map_err(|_| RedisError::from((crate::ErrorKind::Client, PREFER_RUNTIME_ERROR)))
 }
 
 /// Mark Smol as the preferred runtime.

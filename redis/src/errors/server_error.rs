@@ -4,14 +4,14 @@ use std::fmt;
 /// Kinds of errors returned from the server
 #[derive(PartialEq, Debug, Clone, Copy, Eq)]
 pub enum ServerErrorKind {
-    /// The server generated an invalid response.
+    /// The server generated an invalid response, or returned a general error.
     ResponseError,
     /// A script execution was aborted.
-    ExecAbortError,
+    ExecAbort,
     /// The server cannot response because it's loading a dump.
-    BusyLoadingError,
+    BusyLoading,
     /// A script that was requested does not actually exist.
-    NoScriptError,
+    NoScript,
     /// Raised if a key moved to a different node.
     Moved,
     /// Raised if a key moved to a different node but we need to ask.
@@ -38,9 +38,9 @@ impl ServerErrorKind {
     pub(crate) fn code(&self) -> &'static str {
         match self {
             ServerErrorKind::ResponseError => "ERR",
-            ServerErrorKind::ExecAbortError => "EXECABORT",
-            ServerErrorKind::BusyLoadingError => "LOADING",
-            ServerErrorKind::NoScriptError => "NOSCRIPT",
+            ServerErrorKind::ExecAbort => "EXECABORT",
+            ServerErrorKind::BusyLoading => "LOADING",
+            ServerErrorKind::NoScript => "NOSCRIPT",
             ServerErrorKind::Moved => "MOVED",
             ServerErrorKind::Ask => "ASK",
             ServerErrorKind::TryAgain => "TRYAGAIN",
@@ -57,11 +57,11 @@ impl ServerErrorKind {
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum ServerError {
-    ExtensionError {
+    Extension {
         code: ArcStr,
         detail: Option<ArcStr>,
     },
-    KnownError {
+    Known {
         kind: ServerErrorKind,
         detail: Option<ArcStr>,
     },
@@ -70,22 +70,22 @@ pub enum ServerError {
 impl ServerError {
     pub fn kind(&self) -> Option<ServerErrorKind> {
         match self {
-            ServerError::ExtensionError { .. } => None,
-            ServerError::KnownError { kind, .. } => Some(*kind),
+            ServerError::Extension { .. } => None,
+            ServerError::Known { kind, .. } => Some(*kind),
         }
     }
 
     pub fn code(&self) -> &str {
         match self {
-            ServerError::ExtensionError { code, .. } => code,
-            ServerError::KnownError { kind, .. } => kind.code(),
+            ServerError::Extension { code, .. } => code,
+            ServerError::Known { kind, .. } => kind.code(),
         }
     }
 
     pub fn details(&self) -> Option<&str> {
         match self {
-            ServerError::ExtensionError { detail, .. } => detail.as_ref().map(|str| str.as_str()),
-            ServerError::KnownError { detail, .. } => detail.as_ref().map(|str| str.as_str()),
+            ServerError::Extension { detail, .. } => detail.as_ref().map(|str| str.as_str()),
+            ServerError::Known { detail, .. } => detail.as_ref().map(|str| str.as_str()),
         }
     }
 }
@@ -93,7 +93,7 @@ impl ServerError {
 impl fmt::Display for ServerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self {
-            ServerError::ExtensionError { code, detail } => {
+            ServerError::Extension { code, detail } => {
                 fmt::Debug::fmt(&code, f)?;
                 if let Some(detail) = detail {
                     f.write_str(": ")?;
@@ -101,7 +101,7 @@ impl fmt::Display for ServerError {
                 }
                 Ok(())
             }
-            ServerError::KnownError { kind, detail } => {
+            ServerError::Known { kind, detail } => {
                 fmt::Debug::fmt(&kind, f)?;
                 if let Some(detail) = detail {
                     f.write_str(": ")?;

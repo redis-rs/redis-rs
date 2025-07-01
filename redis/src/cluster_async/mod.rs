@@ -507,13 +507,13 @@ where
         if connections.is_empty() {
             if let Some(err) = error {
                 return Err(RedisError::from((
-                    ErrorKind::IoError,
+                    ErrorKind::Io,
                     "Failed to create initial connections",
                     err.to_string(),
                 )));
             } else {
                 return Err(RedisError::from((
-                    ErrorKind::IoError,
+                    ErrorKind::Io,
                     "Failed to create initial connections",
                 )));
             }
@@ -676,8 +676,8 @@ where
         };
 
         let convert_result = |res: Result<RedisResult<Response>, _>| {
-            res.map_err(|_| RedisError::from((ErrorKind::ClientError, "request wasn't handled due to internal failure"))) // this happens only if the result sender is dropped before usage.
-            .and_then(|res| res.map(extract_result))
+            res.map_err(|_| RedisError::from((ErrorKind::Client, "request wasn't handled due to internal failure"))) // this happens only if the result sender is dropped before usage.
+               .and_then(|res| res.map(extract_result))
         };
 
         let get_receiver = |(_, receiver): (_, oneshot::Receiver<RedisResult<Response>>)| async {
@@ -928,12 +928,9 @@ where
                 if let Some(conn) = read_guard.0.get(&address).cloned() {
                     return Ok((address, conn));
                 } else {
-                    return Err((
-                        ErrorKind::ClientError,
-                        "Requested connection not found",
-                        address,
-                    )
-                        .into());
+                    return Err(
+                        (ErrorKind::Client, "Requested connection not found", address).into(),
+                    );
                 }
             }
         }

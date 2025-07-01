@@ -312,7 +312,7 @@ impl ConnectionManager {
         let runtime = Runtime::locate();
 
         if config.resubscribe_automatically && config.push_sender.is_none() {
-            return Err((crate::ErrorKind::ClientError, "Cannot set resubscribe_automatically without setting a push sender to receive messages.").into());
+            return Err((crate::ErrorKind::Client, "Cannot set resubscribe_automatically without setting a push sender to receive messages.").into());
         }
 
         let mut retry_strategy = ExponentialBuilder::default()
@@ -391,7 +391,7 @@ impl ConnectionManager {
                 ))
                 .map_err(|_| {
                     crate::RedisError::from((
-                        crate::ErrorKind::ClientError,
+                        crate::ErrorKind::Client,
                         "Failed to set automatic resubscription",
                     ))
                 })?;

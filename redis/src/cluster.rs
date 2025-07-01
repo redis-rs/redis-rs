@@ -416,7 +416,7 @@ where
                         failed_connections.push((
                             addr,
                             RedisError::from((
-                                ErrorKind::IoError,
+                                ErrorKind::Io,
                                 "Node failed to respond to connection check,",
                             )),
                         ));
@@ -447,7 +447,7 @@ where
             };
 
             return Err(RedisError::from((
-                ErrorKind::IoError,
+                ErrorKind::Io,
                 "It failed to check startup nodes.",
                 detail,
             )));
@@ -513,7 +513,7 @@ where
         match new_slots {
             Some(new_slots) => Ok(new_slots),
             None => Err(RedisError::from((
-                ErrorKind::ClientError,
+                ErrorKind::Client,
                 "Slot refresh error. didn't get any slots from server",
             ))),
         }
@@ -572,7 +572,7 @@ where
         let addr_for_slot = |route: Route| -> RedisResult<String> {
             let slot_addr = slots
                 .slot_addr_for_route(&route)
-                .ok_or((ErrorKind::ClientError, "Missing slot coverage"))?;
+                .ok_or((ErrorKind::Client, "Missing slot coverage"))?;
             Ok(slot_addr.to_string())
         };
 
@@ -666,7 +666,7 @@ where
             .enumerate()
             .map(|(index, addr)| {
                 let addr = addr.ok_or(RedisError::from((
-                    ErrorKind::IoError,
+                    ErrorKind::Io,
                     "Couldn't find connection",
                 )))?;
                 let connection = self.get_connection_by_addr(connections, addr)?;
@@ -729,7 +729,7 @@ where
                 }
 
                 Err(last_failure
-                    .unwrap_or_else(|| (ErrorKind::IoError, "Couldn't find a connection").into()))
+                    .unwrap_or_else(|| (ErrorKind::Io, "Couldn't find a connection").into()))
             }
             Some(ResponsePolicy::OneSucceededNonEmpty) => {
                 let mut last_failure = None;
@@ -742,7 +742,7 @@ where
                     }
                 }
                 Err(last_failure
-                    .unwrap_or_else(|| (ErrorKind::IoError, "Couldn't find a connection").into()))
+                    .unwrap_or_else(|| (ErrorKind::Io, "Couldn't find a connection").into()))
             }
             Some(ResponsePolicy::Aggregate(op)) => {
                 let results = results

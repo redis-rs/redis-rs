@@ -286,14 +286,14 @@ mod cluster {
 
         assert_eq!(
         err.to_string(),
-        "This command cannot be safely routed in cluster mode - ClientError: Command 'SCRIPT KILL' can't be executed in a cluster pipeline."
+        "This command cannot be safely routed in cluster mode - Client: Command 'SCRIPT KILL' can't be executed in a cluster pipeline."
     );
 
         let err = cluster_pipe().keys("*").exec(&mut con).unwrap_err();
 
         assert_eq!(
         err.to_string(),
-        "This command cannot be safely routed in cluster mode - ClientError: Command 'KEYS' can't be executed in a cluster pipeline."
+        "This command cannot be safely routed in cluster mode - Client: Command 'KEYS' can't be executed in a cluster pipeline."
     );
     }
 
