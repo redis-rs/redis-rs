@@ -77,7 +77,7 @@ use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
 };
-use crate::errors::{ErrorKind, RedisError, RetryMethod, ServerErrorKind};
+use crate::errors::{ErrorKind, RedisError, RetryMethod};
 use crate::parser::parse_redis_value;
 use crate::types::{HashMap, RedisResult, Value};
 use crate::IntoConnectionInfo;
@@ -513,9 +513,8 @@ where
         match new_slots {
             Some(new_slots) => Ok(new_slots),
             None => Err(RedisError::from((
-                ErrorKind::ServerError(ServerErrorKind::ResponseError),
-                "Slot refresh error.",
-                "didn't get any slots from server".to_string(),
+                ErrorKind::ClientError,
+                "Slot refresh error. didn't get any slots from server",
             ))),
         }
     }
@@ -573,7 +572,7 @@ where
         let addr_for_slot = |route: Route| -> RedisResult<String> {
             let slot_addr = slots
                 .slot_addr_for_route(&route)
-                .ok_or((ServerErrorKind::ClusterDown.into(), "Missing slot coverage"))?;
+                .ok_or((ErrorKind::ClientError, "Missing slot coverage"))?;
             Ok(slot_addr.to_string())
         };
 

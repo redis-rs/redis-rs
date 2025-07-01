@@ -18,11 +18,7 @@ macro_rules! impl_bb8_manage_connection {
                 let pong: String = Cmd::ping().query_async(conn).await?;
                 match pong.as_str() {
                     "PONG" => Ok(()),
-                    _ => Err((
-                        crate::errors::ServerErrorKind::ResponseError.into(),
-                        "ping request",
-                    )
-                        .into()),
+                    _ => Err((crate::ErrorKind::UnexpectedReturnType, "ping request", pong).into()),
                 }
             }
 

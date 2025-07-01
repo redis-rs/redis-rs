@@ -113,7 +113,6 @@ use crate::{
     },
     cluster_topology::parse_slots,
     cmd,
-    errors::ServerErrorKind,
     subscription_tracker::SubscriptionTracker,
     types::closed_connection_error,
     AsyncConnectionConfig, Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError,
@@ -677,7 +676,7 @@ where
         };
 
         let convert_result = |res: Result<RedisResult<Response>, _>| {
-            res.map_err(|_| RedisError::from((ServerErrorKind::ResponseError.into(), "request wasn't handled due to internal failure"))) // this happens only if the result sender is dropped before usage.
+            res.map_err(|_| RedisError::from((ErrorKind::ClientError, "request wasn't handled due to internal failure"))) // this happens only if the result sender is dropped before usage.
             .and_then(|res| res.map(extract_result))
         };
 
@@ -713,8 +712,7 @@ where
                         let result = convert_result(receiver.await)?;
                         match result {
                             Value::Nil => {
-                                Err((ServerErrorKind::ResponseError.into(), "no value found")
-                                    .into())
+                                Err((ErrorKind::UnexpectedReturnType, "no value found").into())
                             }
                             _ => Ok(result),
                         }
