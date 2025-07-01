@@ -173,7 +173,6 @@ impl<'a> ScriptInvocation<'a> {
             Err(err) => {
                 // Load the script into Redis if the script hash wasn't there already
 
-                use crate::errors::ServerErrorKind;
                 if err.kind() == ServerErrorKind::NoScriptError.into() {
                     self.load_cmd().exec_async(con).await?;
                     eval_cmd.query_async(con).await
