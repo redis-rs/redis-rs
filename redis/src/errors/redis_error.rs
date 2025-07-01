@@ -11,35 +11,15 @@ use crate::{
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
 #[non_exhaustive]
 pub enum ErrorKind {
-    /// The server generated an invalid response.
-    ResponseError,
     /// The parser failed to parse the server response.
     ParseError,
     /// The authentication with the server failed.
     AuthenticationFailed,
     /// Operation failed because of a type mismatch.
     UnexpectedReturnType,
-    /// A script execution was aborted.
-    ExecAbortError,
-    /// The server cannot response because it's loading a dump.
-    BusyLoadingError,
-    /// A script that was requested does not actually exist.
-    NoScriptError,
     /// An error that was caused because the parameter to the
     /// client were wrong.
     InvalidClientConfig,
-    /// Raised if a key moved to a different node.
-    Moved,
-    /// Raised if a key moved to a different node but we need to ask.
-    Ask,
-    /// Raised if a request needs to be retried.
-    TryAgain,
-    /// Raised if a redis cluster is down.
-    ClusterDown,
-    /// A request spans multiple slots
-    CrossSlot,
-    /// A cluster master is unavailable.
-    MasterDown,
     /// This kind is returned if the redis error is one that is
     /// not native to the system.  This is usually the case if
     /// the cause is another error.
@@ -49,22 +29,16 @@ pub enum ErrorKind {
     /// An extension error.  This is an error created by the server
     /// that is not directly understood by the library.
     ExtensionError,
-    /// Attempt to write to a read-only server
-    ReadOnly,
     /// Requested name not found among masters returned by the sentinels
     MasterNameNotFoundBySentinel,
     /// No valid replicas found in the sentinels, for a given master name
     NoValidReplicasFoundBySentinel,
     /// At least one sentinel connection info is required
     EmptySentinelList,
-    /// Attempted to kill a script/function while they werent' executing
-    NotBusy,
     /// Used when a cluster connection cannot find a connection to a valid node.
     ClusterConnectionNotFound,
-    /// Attempted to unsubscribe on a connection that is not in subscribed mode.
-    NoSub,
-    /// Attempted to use a command without ACL permission.
-    NoPerm,
+    /// An error returned from the server
+    ServerError(ServerErrorKind),
 
     #[cfg(feature = "json")]
     /// Error Serializing a struct to JSON form
@@ -265,20 +239,7 @@ impl RedisError {
             ErrorRepr::IoError(_) => ErrorKind::IoError,
             ErrorRepr::ParsingError(_) => ErrorKind::ParseError,
             ErrorRepr::ServerError(err) => match err.kind() {
-                Some(ServerErrorKind::ResponseError) => ErrorKind::ResponseError,
-                Some(ServerErrorKind::ExecAbortError) => ErrorKind::ExecAbortError,
-                Some(ServerErrorKind::BusyLoadingError) => ErrorKind::BusyLoadingError,
-                Some(ServerErrorKind::NoScriptError) => ErrorKind::NoScriptError,
-                Some(ServerErrorKind::Moved) => ErrorKind::Moved,
-                Some(ServerErrorKind::Ask) => ErrorKind::Ask,
-                Some(ServerErrorKind::TryAgain) => ErrorKind::TryAgain,
-                Some(ServerErrorKind::ClusterDown) => ErrorKind::ClusterDown,
-                Some(ServerErrorKind::CrossSlot) => ErrorKind::CrossSlot,
-                Some(ServerErrorKind::MasterDown) => ErrorKind::MasterDown,
-                Some(ServerErrorKind::ReadOnly) => ErrorKind::ReadOnly,
-                Some(ServerErrorKind::NotBusy) => ErrorKind::NotBusy,
-                Some(ServerErrorKind::NoSub) => ErrorKind::NoSub,
-                Some(ServerErrorKind::NoPerm) => ErrorKind::NoPerm,
+                Some(kind) => ErrorKind::ServerError(kind),
                 None => ErrorKind::ExtensionError,
             },
         }
@@ -298,18 +259,7 @@ impl RedisError {
     /// Returns the raw error code if available.
     pub fn code(&self) -> Option<&str> {
         match self.kind() {
-            ErrorKind::ResponseError => Some("ERR"),
-            ErrorKind::ExecAbortError => Some("EXECABORT"),
-            ErrorKind::BusyLoadingError => Some("LOADING"),
-            ErrorKind::NoScriptError => Some("NOSCRIPT"),
-            ErrorKind::Moved => Some("MOVED"),
-            ErrorKind::Ask => Some("ASK"),
-            ErrorKind::TryAgain => Some("TRYAGAIN"),
-            ErrorKind::ClusterDown => Some("CLUSTERDOWN"),
-            ErrorKind::CrossSlot => Some("CROSSSLOT"),
-            ErrorKind::MasterDown => Some("MASTERDOWN"),
-            ErrorKind::ReadOnly => Some("READONLY"),
-            ErrorKind::NotBusy => Some("NOTBUSY"),
+            ErrorKind::ServerError(kind) => Some(kind.code()),
             _ => match &self.repr {
                 ErrorRepr::ExtensionError(code, _) => Some(code),
                 ErrorRepr::ServerError(err) => Some(err.code()),
@@ -321,36 +271,36 @@ impl RedisError {
     /// Returns the name of the error category for display purposes.
     pub fn category(&self) -> &str {
         match self.kind() {
-            ErrorKind::ResponseError => "response error",
+            ErrorKind::ServerError(ServerErrorKind::ResponseError) => "response error",
             ErrorKind::AuthenticationFailed => "authentication failed",
             ErrorKind::UnexpectedReturnType => "type error",
-            ErrorKind::ExecAbortError => "script execution aborted",
-            ErrorKind::BusyLoadingError => "busy loading",
-            ErrorKind::NoScriptError => "no script",
+            ErrorKind::ServerError(ServerErrorKind::ExecAbortError) => "script execution aborted",
+            ErrorKind::ServerError(ServerErrorKind::BusyLoadingError) => "busy loading",
+            ErrorKind::ServerError(ServerErrorKind::NoScriptError) => "no script",
             ErrorKind::InvalidClientConfig => "invalid client config",
-            ErrorKind::Moved => "key moved",
-            ErrorKind::Ask => "key moved (ask)",
-            ErrorKind::TryAgain => "try again",
-            ErrorKind::ClusterDown => "cluster down",
-            ErrorKind::CrossSlot => "cross-slot",
-            ErrorKind::MasterDown => "master down",
+            ErrorKind::ServerError(ServerErrorKind::Moved) => "key moved",
+            ErrorKind::ServerError(ServerErrorKind::Ask) => "key moved (ask)",
+            ErrorKind::ServerError(ServerErrorKind::TryAgain) => "try again",
+            ErrorKind::ServerError(ServerErrorKind::ClusterDown) => "cluster down",
+            ErrorKind::ServerError(ServerErrorKind::CrossSlot) => "cross-slot",
+            ErrorKind::ServerError(ServerErrorKind::MasterDown) => "master down",
             ErrorKind::IoError => "I/O error",
             ErrorKind::ExtensionError => "extension error",
             ErrorKind::ClientError => "client error",
-            ErrorKind::ReadOnly => "read-only",
+            ErrorKind::ServerError(ServerErrorKind::ReadOnly) => "read-only",
             ErrorKind::MasterNameNotFoundBySentinel => "master name not found by sentinel",
             ErrorKind::NoValidReplicasFoundBySentinel => "no valid replicas found by sentinel",
             ErrorKind::EmptySentinelList => "empty sentinel list",
-            ErrorKind::NotBusy => "not busy",
+            ErrorKind::ServerError(ServerErrorKind::NotBusy) => "not busy",
             ErrorKind::ClusterConnectionNotFound => "connection to node in cluster not found",
             #[cfg(feature = "json")]
             ErrorKind::Serialize => "serializing",
             ErrorKind::RESP3NotSupported => "resp3 is not supported by server",
             ErrorKind::ParseError => "parse error",
-            ErrorKind::NoSub => {
+            ErrorKind::ServerError(ServerErrorKind::NoSub) => {
                 "Server declined unsubscribe related command in non-subscribed mode"
             }
-            ErrorKind::NoPerm => "",
+            ErrorKind::ServerError(ServerErrorKind::NoPerm) => "",
         }
     }
 
@@ -370,7 +320,10 @@ impl RedisError {
     pub fn is_cluster_error(&self) -> bool {
         matches!(
             self.kind(),
-            ErrorKind::Moved | ErrorKind::Ask | ErrorKind::TryAgain | ErrorKind::ClusterDown
+            ErrorKind::ServerError(ServerErrorKind::Moved)
+                | ErrorKind::ServerError(ServerErrorKind::Ask)
+                | ErrorKind::ServerError(ServerErrorKind::TryAgain)
+                | ErrorKind::ServerError(ServerErrorKind::ClusterDown)
         )
     }
 
@@ -439,7 +392,8 @@ impl RedisError {
     /// This returns `(addr, slot_id)`.
     pub fn redirect_node(&self) -> Option<(&str, u16)> {
         match self.kind() {
-            ErrorKind::Ask | ErrorKind::Moved => (),
+            ErrorKind::ServerError(ServerErrorKind::Ask)
+            | ErrorKind::ServerError(ServerErrorKind::Moved) => (),
             _ => return None,
         }
         let mut iter = self.detail()?.split_ascii_whitespace();
@@ -483,32 +437,32 @@ impl RedisError {
     /// than just the error kind on when to retry.
     pub fn retry_method(&self) -> RetryMethod {
         match self.kind() {
-            ErrorKind::Moved => RetryMethod::MovedRedirect,
-            ErrorKind::Ask => RetryMethod::AskRedirect,
+            ErrorKind::ServerError(ServerErrorKind::Moved) => RetryMethod::MovedRedirect,
+            ErrorKind::ServerError(ServerErrorKind::Ask) => RetryMethod::AskRedirect,
 
-            ErrorKind::TryAgain => RetryMethod::WaitAndRetry,
-            ErrorKind::MasterDown => RetryMethod::WaitAndRetry,
-            ErrorKind::ClusterDown => RetryMethod::WaitAndRetry,
-            ErrorKind::BusyLoadingError => RetryMethod::WaitAndRetry,
+            ErrorKind::ServerError(ServerErrorKind::TryAgain) => RetryMethod::WaitAndRetry,
+            ErrorKind::ServerError(ServerErrorKind::MasterDown) => RetryMethod::WaitAndRetry,
+            ErrorKind::ServerError(ServerErrorKind::ClusterDown) => RetryMethod::WaitAndRetry,
+            ErrorKind::ServerError(ServerErrorKind::BusyLoadingError) => RetryMethod::WaitAndRetry,
             ErrorKind::MasterNameNotFoundBySentinel => RetryMethod::WaitAndRetry,
             ErrorKind::NoValidReplicasFoundBySentinel => RetryMethod::WaitAndRetry,
 
-            ErrorKind::ResponseError => RetryMethod::NoRetry,
-            ErrorKind::ReadOnly => RetryMethod::NoRetry,
+            ErrorKind::ServerError(ServerErrorKind::ResponseError) => RetryMethod::NoRetry,
+            ErrorKind::ServerError(ServerErrorKind::ReadOnly) => RetryMethod::NoRetry,
             ErrorKind::ExtensionError => RetryMethod::NoRetry,
-            ErrorKind::ExecAbortError => RetryMethod::NoRetry,
+            ErrorKind::ServerError(ServerErrorKind::ExecAbortError) => RetryMethod::NoRetry,
             ErrorKind::UnexpectedReturnType => RetryMethod::NoRetry,
-            ErrorKind::NoScriptError => RetryMethod::NoRetry,
+            ErrorKind::ServerError(ServerErrorKind::NoScriptError) => RetryMethod::NoRetry,
             ErrorKind::InvalidClientConfig => RetryMethod::NoRetry,
-            ErrorKind::CrossSlot => RetryMethod::NoRetry,
+            ErrorKind::ServerError(ServerErrorKind::CrossSlot) => RetryMethod::NoRetry,
             ErrorKind::ClientError => RetryMethod::NoRetry,
             ErrorKind::EmptySentinelList => RetryMethod::NoRetry,
-            ErrorKind::NotBusy => RetryMethod::NoRetry,
+            ErrorKind::ServerError(ServerErrorKind::NotBusy) => RetryMethod::NoRetry,
             #[cfg(feature = "json")]
             ErrorKind::Serialize => RetryMethod::NoRetry,
             ErrorKind::RESP3NotSupported => RetryMethod::NoRetry,
-            ErrorKind::NoSub => RetryMethod::NoRetry,
-            ErrorKind::NoPerm => RetryMethod::NoRetry,
+            ErrorKind::ServerError(ServerErrorKind::NoSub) => RetryMethod::NoRetry,
+            ErrorKind::ServerError(ServerErrorKind::NoPerm) => RetryMethod::NoRetry,
 
             ErrorKind::ParseError => RetryMethod::Reconnect,
             ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
@@ -591,6 +545,12 @@ impl From<ServerError> for RedisError {
         Self {
             repr: ErrorRepr::ServerError(err),
         }
+    }
+}
+
+impl From<ServerErrorKind> for ErrorKind {
+    fn from(kind: ServerErrorKind) -> Self {
+        ErrorKind::ServerError(kind)
     }
 }
 

@@ -140,9 +140,9 @@ use crate::tls::retrieve_tls_certificates;
 #[cfg(feature = "tls-rustls")]
 use crate::TlsCertificates;
 use crate::{
-    cmd, connection::ConnectionInfo, types::RedisResult, Client, Cmd, Connection, ConnectionAddr,
-    ErrorKind, FromRedisValue, IntoConnectionInfo, ProtocolVersion, RedisConnectionInfo,
-    RedisError, Role, TlsMode,
+    cmd, connection::ConnectionInfo, errors::ServerErrorKind, types::RedisResult, Client, Cmd,
+    Connection, ConnectionAddr, ErrorKind, FromRedisValue, IntoConnectionInfo, ProtocolVersion,
+    RedisConnectionInfo, RedisError, Role, TlsMode,
 };
 
 /// The Sentinel type, serves as a special purpose client which builds other clients on
@@ -343,7 +343,7 @@ fn evaluate_role_check_errors(
     fallback_role_err: RedisError,
 ) -> RedisResult<bool> {
     // unknown commands are expressed as response errors
-    if !matches!(role_err.kind(), ErrorKind::ResponseError) {
+    if role_err.kind() != ServerErrorKind::ResponseError.into() {
         return Err(role_err);
     }
 

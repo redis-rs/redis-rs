@@ -636,7 +636,9 @@ pub use crate::types::{
     ProtocolVersion,
     PushInfo,
 };
-pub use crate::errors::{make_extension_error, ErrorKind, ParsingError, RedisError, RetryMethod};
+pub use crate::errors::{
+    make_extension_error, ErrorKind, ParsingError, RedisError, RetryMethod, ServerErrorKind,
+};
 
 #[cfg(feature = "aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
