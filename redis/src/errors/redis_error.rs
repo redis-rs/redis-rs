@@ -71,7 +71,6 @@ impl From<serde_json::Error> for RedisError {
 #[derive(Debug)]
 enum ErrorRepr {
     General(ErrorKind, &'static str, Option<ArcStr>),
-    Extension(ArcStr, ArcStr),
     Io(io::Error),
     Parsing(ParsingError),
     Server(ServerError),
@@ -83,7 +82,6 @@ impl PartialEq for RedisError {
             (&ErrorRepr::General(kind_a, _, _), &ErrorRepr::General(kind_b, _, _)) => {
                 kind_a == kind_b
             }
-            (ErrorRepr::Extension(a, _), ErrorRepr::Extension(b, _)) => *a == *b,
             (ErrorRepr::Parsing(a), ErrorRepr::Parsing(b)) => *a == *b,
             (ErrorRepr::Server(a), ErrorRepr::Server(b)) => *a == *b,
             _ => false,
@@ -142,7 +140,6 @@ impl error::Error for RedisError {
     fn description(&self) -> &str {
         match &self.repr {
             ErrorRepr::General(_, desc, _) => desc,
-            ErrorRepr::Extension(_, _) => "extension error",
             ErrorRepr::Io(err) => err.description(),
             ErrorRepr::Parsing(err) => err.description(),
             ErrorRepr::Server(err) => err.description(),
@@ -186,11 +183,6 @@ impl fmt::Display for RedisError {
                     Ok(())
                 }
             }
-            ErrorRepr::Extension(code, detail) => {
-                code.fmt(f)?;
-                f.write_str(": ")?;
-                detail.fmt(f)
-            }
             ErrorRepr::Io(err) => err.fmt(f),
             ErrorRepr::Parsing(err) => err.fmt(f),
             ErrorRepr::Server(err) => err.fmt(f),
@@ -223,7 +215,6 @@ impl RedisError {
     pub fn kind(&self) -> ErrorKind {
         match &self.repr {
             ErrorRepr::General(kind, _, _) => *kind,
-            ErrorRepr::Extension(_, _) => ErrorKind::Extension,
             ErrorRepr::Io(_) => ErrorKind::Io,
             ErrorRepr::Parsing(_) => ErrorKind::Parse,
             ErrorRepr::Server(err) => match err.kind() {
@@ -237,7 +228,6 @@ impl RedisError {
     pub fn detail(&self) -> Option<&str> {
         match &self.repr {
             ErrorRepr::General(_, _, detail) => detail.as_ref().map(|detail| detail.as_str()),
-            ErrorRepr::Extension(_, detail) => Some(detail.as_str()),
             ErrorRepr::Parsing(err) => Some(&err.description),
             ErrorRepr::Server(err) => err.details(),
             _ => None,
@@ -249,7 +239,6 @@ impl RedisError {
         match self.kind() {
             ErrorKind::Server(kind) => Some(kind.code()),
             _ => match &self.repr {
-                ErrorRepr::Extension(code, _) => Some(code),
                 ErrorRepr::Server(err) => Some(err.code()),
                 _ => None,
             },
@@ -403,9 +392,6 @@ impl RedisError {
         let repr = match &self.repr {
             ErrorRepr::General(kind, desc, ref detail) => {
                 ErrorRepr::General(*kind, desc, detail.clone())
-            }
-            ErrorRepr::Extension(ref code, ref detail) => {
-                ErrorRepr::Extension(code.clone(), detail.clone())
             }
             ErrorRepr::Io(ref e) => ErrorRepr::Io(io::Error::new(
                 e.kind(),
