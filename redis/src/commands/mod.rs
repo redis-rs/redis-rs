@@ -448,6 +448,38 @@ implement_commands! {
         cmd("BITOP").arg("NOT").arg(dstkey).arg(srckey)
     }
 
+    /// DIFF(X, Y1, Y2, …) \
+    /// Perform a **set difference** to extract the members of X that are not members of any of Y1, Y2,…. \
+    /// Logical representation: X  ∧ ¬(Y1 ∨ Y2 ∨ …) \
+    /// [Redis Docs](https://redis.io/commands/BITOP)
+    fn bit_diff<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) -> (usize) {
+        cmd("BITOP").arg("DIFF").arg(dstkey).arg(srckeys)
+    }
+
+    /// DIFF1(X, Y1, Y2, …) (Relative complement difference) \
+    /// Perform a **relative complement set difference** to extract the members of one or more of Y1, Y2,… that are not members of X. \
+    /// Logical representation: ¬X  ∧ (Y1 ∨ Y2 ∨ …) \
+    /// [Redis Docs](https://redis.io/commands/BITOP)
+    fn bit_diff1<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) -> (usize) {
+        cmd("BITOP").arg("DIFF1").arg(dstkey).arg(srckeys)
+    }
+
+    /// ANDOR(X, Y1, Y2, …) \
+    /// Perform an **"intersection of union(s)"** operation to extract the members of X that are also members of one or more of Y1, Y2,…. \
+    /// Logical representation: X ∧ (Y1 ∨ Y2 ∨ …) \
+    /// [Redis Docs](https://redis.io/commands/BITOP)
+    fn bit_and_or<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) -> (usize) {
+        cmd("BITOP").arg("ANDOR").arg(dstkey).arg(srckeys)
+    }
+
+    /// ONE(X, Y1, Y2, …) \
+    /// Perform an **"exclusive membership"** operation to extract the members of exactly **one** of X, Y1, Y2, …. \
+    /// Logical representation: (X ∨ Y1 ∨ Y2 ∨ …) ∧ ¬((X ∧ Y1) ∨ (X ∧ Y2) ∨ (Y1 ∧ Y2) ∨ (Y1 ∧ Y3) ∨ …) \
+    /// [Redis Docs](https://redis.io/commands/BITOP)
+    fn bit_one<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) -> (usize) {
+        cmd("BITOP").arg("ONE").arg(dstkey).arg(srckeys)
+    }
+
     /// Get the length of the value stored in a key.
     /// 0 if key does not exist.
     /// [Redis Docs](https://redis.io/commands/STRLEN)

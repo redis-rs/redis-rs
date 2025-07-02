@@ -54,6 +54,12 @@ jobs:
               db-name: redis,
               db-version: 8.0.2
             },
+            {
+              rust: stable,
+              db-org: redis,
+              db-name: redis,
+              db-version: 8.2-m01
+            },
 
             # Different rust cases
             {
