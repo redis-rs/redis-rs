@@ -231,7 +231,7 @@ mod cluster_async {
                 pairs.sort_by(|(address1, _), (address2, _)| address1.cmp(address2));
                 pairs.into_iter().unzip()
             } else {
-                unreachable!("{:?}", res);
+                unreachable!("{res:?}");
             }
         };
 
@@ -1639,12 +1639,7 @@ mod cluster_async {
         let result = runtime
             .block_on(cmd.query_async::<Value>(&mut connection))
             .unwrap_err();
-        assert_eq!(
-            result.kind(),
-            ServerErrorKind::NotBusy.into(),
-            "{:?}",
-            result.kind()
-        );
+        assert_eq!(result.kind(), ServerErrorKind::NotBusy.into());
     }
 
     #[test]
@@ -1703,12 +1698,7 @@ mod cluster_async {
         let result = runtime
             .block_on(cmd.query_async::<Value>(&mut connection))
             .unwrap_err();
-        assert_eq!(
-            result.kind(),
-            ServerErrorKind::NotBusy.into(),
-            "{:?}",
-            result.kind()
-        );
+        assert_eq!(result.kind(), ServerErrorKind::NotBusy.into());
     }
 
     #[test]

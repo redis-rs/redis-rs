@@ -346,21 +346,11 @@ mod basic_async {
                             }
                         };
                         let result: RedisResult<()> = cmd().await;
-                        assert_eq!(
-                            result.as_ref().unwrap_err().kind(),
-                            redis::ErrorKind::Io,
-                            "{}",
-                            result.as_ref().unwrap_err()
-                        );
+                        assert_eq!(result.as_ref().unwrap_err().kind(), redis::ErrorKind::Io);
                         cmd().await
                     })
                     .map(|result| {
-                        assert_eq!(
-                            result.as_ref().unwrap_err().kind(),
-                            redis::ErrorKind::Io,
-                            "{}",
-                            result.as_ref().unwrap_err()
-                        );
+                        assert_eq!(result.as_ref().unwrap_err().kind(), redis::ErrorKind::Io);
                     })
                     .await;
                 Ok(())
@@ -525,7 +515,7 @@ mod basic_async {
                     .map_ok(|results| {
                         assert_eq!(results.len(), 100);
                     })
-                    .map_err(|err| panic!("{}", err))
+                    .map_err(|err| panic!("{err}"))
                     .await
             },
             runtime,
@@ -568,7 +558,7 @@ mod basic_async {
                     .map_ok(|results| {
                         assert_eq!(results.len(), 100);
                     })
-                    .map_err(|err| panic!("{}", err))
+                    .map_err(|err| panic!("{err}"))
                     .await
             },
             runtime,

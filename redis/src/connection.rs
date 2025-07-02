@@ -2417,16 +2417,10 @@ mod tests {
         ];
         for (url, expected, detail) in cases.into_iter() {
             let res = url_to_tcp_connection_info(url).unwrap_err();
-            assert_eq!(
-                res.kind(),
-                crate::ErrorKind::InvalidClientConfig,
-                "{}",
-                &res,
-            );
-            #[allow(deprecated)]
-            let desc = std::error::Error::description(&res);
-            assert_eq!(desc, expected, "{}", &res);
-            assert_eq!(res.detail(), detail, "{}", &res);
+            assert_eq!(res.kind(), crate::ErrorKind::InvalidClientConfig,);
+            let desc = res.to_string();
+            assert!(desc.contains(expected), "{desc}");
+            assert_eq!(res.detail(), detail);
         }
     }
 
