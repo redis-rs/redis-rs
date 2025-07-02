@@ -528,7 +528,7 @@ impl RoutingInfo {
             b"MSET" => multi_shard(r, cmd, 1, true),
             b"PFCOUNT" | b"PFMERGE" => multiple_keys_same_slot(r, cmd, 1, None, false),
             // TODO - special handling - b"SCAN"
-            b"SCAN" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" | b"MOVE" | b"BITOP" => None,
+            b"SCAN" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" | b"MOVE" => None,
             b"EVALSHA" | b"EVAL" => {
                 let key_count = r
                     .arg_idx(2)
@@ -545,7 +545,8 @@ impl RoutingInfo {
             | b"XINFO GROUPS"
             | b"XINFO STREAM"
             | b"PUBSUB SHARDNUMSUB"
-            | b"PUBSUB NUMSUB" => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
+            | b"PUBSUB NUMSUB"
+            | b"BITOP" => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
             b"XREAD" | b"XREADGROUP" => {
                 let streams_position = r.position(b"STREAMS")?;
                 r.arg_idx(streams_position + 1)
@@ -997,7 +998,6 @@ mod tests {
             cmd("SLAVEOF"),
             cmd("REPLICAOF"),
             cmd("MOVE"),
-            cmd("BITOP"),
         ] {
             assert_eq!(
                 RoutingInfo::for_routable(&cmd),
