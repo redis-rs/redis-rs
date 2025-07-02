@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use redis::{JsonCommands, ProtocolVersion};
 
 use redis::{
-    ErrorKind, RedisError, RedisResult,
+    ErrorKind, RedisResult,
     Value::{self, *},
 };
 use redis_test::server::Module;
@@ -42,15 +42,14 @@ fn test_module_json_serialize_error() {
 
     test_invalid_value.invalid_json.insert(None, 2i64);
 
-    let set_invalid: RedisResult<bool> = con.json_set(TEST_KEY, "$", &test_invalid_value);
+    let set_invalid = con
+        .json_set::<_, _, _, bool>(TEST_KEY, "$", &test_invalid_value)
+        .unwrap_err();
 
+    assert_eq!(set_invalid.kind(), ErrorKind::Serialize);
     assert_eq!(
-        set_invalid,
-        Err(RedisError::from((
-            ErrorKind::Serialize,
-            "Serialization Error",
-            String::from("key must be string")
-        )))
+        set_invalid.to_string(),
+        String::from("key must be a string")
     );
 }
 

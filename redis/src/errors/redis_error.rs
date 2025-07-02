@@ -1,4 +1,4 @@
-use std::{error, fmt, io};
+use std::{error, fmt, io, sync::Arc};
 
 use arcstr::ArcStr;
 
@@ -53,6 +53,7 @@ pub enum ErrorKind {
 ///
 /// For the most part you should be using the Error trait to interact with this
 /// rather than the actual struct.
+#[derive(Clone)]
 pub struct RedisError {
     repr: ErrorRepr,
 }
@@ -60,18 +61,22 @@ pub struct RedisError {
 #[cfg(feature = "json")]
 impl From<serde_json::Error> for RedisError {
     fn from(serde_err: serde_json::Error) -> RedisError {
-        RedisError::from((
-            ErrorKind::Serialize,
-            "Serialization Error",
-            format!("{serde_err}"),
-        ))
+        RedisError {
+            repr: ErrorRepr::Internal {
+                kind: ErrorKind::Serialize,
+                err: Arc::new(serde_err),
+            },
+        }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum ErrorRepr {
     General(ErrorKind, &'static str, Option<ArcStr>),
-    Io(io::Error),
+    Internal {
+        kind: ErrorKind,
+        err: Arc<dyn error::Error + Send + Sync>,
+    },
     Parsing(ParsingError),
     Server(ServerError),
 }
@@ -92,7 +97,10 @@ impl PartialEq for RedisError {
 impl From<io::Error> for RedisError {
     fn from(err: io::Error) -> RedisError {
         RedisError {
-            repr: ErrorRepr::Io(err),
+            repr: ErrorRepr::Internal {
+                kind: ErrorKind::Io,
+                err: Arc::new(err),
+            },
         }
     }
 }
@@ -101,7 +109,10 @@ impl From<io::Error> for RedisError {
 impl From<rustls::pki_types::InvalidDnsNameError> for RedisError {
     fn from(err: rustls::pki_types::InvalidDnsNameError) -> RedisError {
         RedisError {
-            repr: ErrorRepr::General(ErrorKind::Io, "TLS Error", Some(err.to_string().into())),
+            repr: ErrorRepr::Internal {
+                kind: ErrorKind::Io,
+                err: Arc::new(err),
+            },
         }
     }
 }
@@ -110,11 +121,10 @@ impl From<rustls::pki_types::InvalidDnsNameError> for RedisError {
 impl From<rustls_native_certs::Error> for RedisError {
     fn from(err: rustls_native_certs::Error) -> RedisError {
         RedisError {
-            repr: ErrorRepr::General(
-                ErrorKind::Io,
-                "Fetch certs Error",
-                Some(err.to_string().into()),
-            ),
+            repr: ErrorRepr::Internal {
+                kind: ErrorKind::Io,
+                err: Arc::new(err),
+            },
         }
     }
 }
@@ -136,26 +146,9 @@ impl From<(ErrorKind, &'static str, String)> for RedisError {
 }
 
 impl error::Error for RedisError {
-    #[allow(deprecated)]
-    fn description(&self) -> &str {
-        match &self.repr {
-            ErrorRepr::General(_, desc, _) => desc,
-            ErrorRepr::Io(err) => err.description(),
-            ErrorRepr::Parsing(err) => err.description(),
-            ErrorRepr::Server(err) => err.description(),
-        }
-    }
-
-    fn cause(&self) -> Option<&dyn error::Error> {
-        match self.repr {
-            ErrorRepr::Io(ref err) => Some(err as &dyn error::Error),
-            _ => None,
-        }
-    }
-
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match &self.repr {
-            ErrorRepr::Io(err) => Some(err),
+            ErrorRepr::Internal { err, .. } => Some(err),
             ErrorRepr::Server(err) => Some(err),
             ErrorRepr::Parsing(err) => Some(err),
             _ => None,
@@ -183,7 +176,7 @@ impl fmt::Display for RedisError {
                     Ok(())
                 }
             }
-            ErrorRepr::Io(err) => err.fmt(f),
+            ErrorRepr::Internal { err, .. } => err.fmt(f),
             ErrorRepr::Parsing(err) => err.fmt(f),
             ErrorRepr::Server(err) => err.fmt(f),
         }
@@ -215,7 +208,7 @@ impl RedisError {
     pub fn kind(&self) -> ErrorKind {
         match &self.repr {
             ErrorRepr::General(kind, _, _) => *kind,
-            ErrorRepr::Io(_) => ErrorKind::Io,
+            ErrorRepr::Internal { kind, .. } => *kind,
             ErrorRepr::Parsing(_) => ErrorKind::Parse,
             ErrorRepr::Server(err) => match err.kind() {
                 Some(kind) => ErrorKind::Server(kind),
@@ -288,7 +281,7 @@ impl RedisError {
 
     pub(crate) fn as_io_error(&self) -> Option<&io::Error> {
         match &self.repr {
-            ErrorRepr::Io(e) => Some(e),
+            ErrorRepr::Internal { err, .. } => err.downcast_ref(),
             _ => None,
         }
     }
@@ -309,45 +302,40 @@ impl RedisError {
     /// unless you are writing unit tests that want to detect if a
     /// local server is available.
     pub fn is_connection_refusal(&self) -> bool {
-        match self.repr {
-            ErrorRepr::Io(ref err) => {
-                #[allow(clippy::match_like_matches_macro)]
-                match err.kind() {
-                    io::ErrorKind::ConnectionRefused => true,
-                    // if we connect to a unix socket and the file does not
-                    // exist yet, then we want to treat this as if it was a
-                    // connection refusal.
-                    io::ErrorKind::NotFound => cfg!(unix),
-                    _ => false,
-                }
+        self.as_io_error().is_some_and(|err| {
+            #[allow(clippy::match_like_matches_macro)]
+            match err.kind() {
+                io::ErrorKind::ConnectionRefused => true,
+                // if we connect to a unix socket and the file does not
+                // exist yet, then we want to treat this as if it was a
+                // connection refusal.
+                io::ErrorKind::NotFound => cfg!(unix),
+                _ => false,
             }
-            _ => false,
-        }
+        })
     }
 
     /// Returns true if error was caused by I/O time out.
     /// Note that this may not be accurate depending on platform.
     pub fn is_timeout(&self) -> bool {
-        match self.repr {
-            ErrorRepr::Io(ref err) => matches!(
+        self.as_io_error().is_some_and(|err| {
+            matches!(
                 err.kind(),
                 io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
-            ),
-            _ => false,
-        }
+            )
+        })
     }
 
     /// Returns true if error was caused by a dropped connection.
     pub fn is_connection_dropped(&self) -> bool {
-        match self.repr {
-            ErrorRepr::Io(ref err) => matches!(
+        self.as_io_error().is_some_and(|err| {
+            matches!(
                 err.kind(),
                 io::ErrorKind::BrokenPipe
                     | io::ErrorKind::ConnectionReset
                     | io::ErrorKind::UnexpectedEof
-            ),
-            _ => false,
-        }
+            )
+        })
     }
 
     /// Returns true if the error is likely to not be recoverable, and the connection must be replaced.
@@ -378,29 +366,6 @@ impl RedisError {
         let slot_id: u16 = iter.next()?.parse().ok()?;
         let addr = iter.next()?;
         Some((addr, slot_id))
-    }
-
-    /// Clone the `RedisError`, throwing away non-cloneable parts of an `Io`.
-    ///
-    /// Deriving `Clone` is not possible because the wrapped `io::Error` is not
-    /// cloneable.
-    ///
-    /// The `ioerror_description` parameter will be prepended to the message in
-    /// case an `Io` is found.
-    #[cfg(feature = "connection-manager")] // Used to avoid "unused method" warning
-    pub(crate) fn clone_mostly(&self, ioerror_description: &'static str) -> Self {
-        let repr = match &self.repr {
-            ErrorRepr::General(kind, desc, ref detail) => {
-                ErrorRepr::General(*kind, desc, detail.clone())
-            }
-            ErrorRepr::Io(ref e) => ErrorRepr::Io(io::Error::new(
-                e.kind(),
-                format!("{ioerror_description}: {e}"),
-            )),
-            ErrorRepr::Parsing(ref err) => ErrorRepr::Parsing(err.clone()),
-            ErrorRepr::Server(server_error) => ErrorRepr::Server(server_error.clone()),
-        };
-        Self { repr }
     }
 
     /// Specifies what method (if any) should be used to retry this request.
@@ -442,8 +407,9 @@ impl RedisError {
             ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
             ErrorKind::ClusterConnectionNotFound => RetryMethod::ReconnectFromInitialConnections,
 
-            ErrorKind::Io => match &self.repr {
-                ErrorRepr::Io(err) => match err.kind() {
+            ErrorKind::Io => self
+                .as_io_error()
+                .map(|err| match err.kind() {
                     io::ErrorKind::ConnectionRefused => RetryMethod::Reconnect,
                     io::ErrorKind::NotFound => RetryMethod::Reconnect,
                     io::ErrorKind::ConnectionReset => RetryMethod::Reconnect,
@@ -456,9 +422,8 @@ impl RedisError {
                     io::ErrorKind::Unsupported => RetryMethod::NoRetry,
 
                     _ => RetryMethod::RetryImmediately,
-                },
-                _ => RetryMethod::RetryImmediately,
-            },
+                })
+                .unwrap_or(RetryMethod::NoRetry),
         }
     }
 }
@@ -489,7 +454,10 @@ pub fn make_extension_error(code: String, detail: Option<String>) -> RedisError 
 impl From<native_tls::Error> for RedisError {
     fn from(err: native_tls::Error) -> RedisError {
         RedisError {
-            repr: ErrorRepr::General(ErrorKind::Io, "TLS error", Some(err.to_string().into())),
+            repr: ErrorRepr::Internal {
+                kind: ErrorKind::Client,
+                err: Arc::new(err),
+            },
         }
     }
 }
@@ -498,7 +466,10 @@ impl From<native_tls::Error> for RedisError {
 impl From<rustls::Error> for RedisError {
     fn from(err: rustls::Error) -> RedisError {
         RedisError {
-            repr: ErrorRepr::General(ErrorKind::Io, "TLS error", Some(err.to_string().into())),
+            repr: ErrorRepr::Internal {
+                kind: ErrorKind::Client,
+                err: Arc::new(err),
+            },
         }
     }
 }
