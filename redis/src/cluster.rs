@@ -77,8 +77,9 @@ use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
 };
+use crate::errors::{ErrorKind, RedisError, RetryMethod};
 use crate::parser::parse_redis_value;
-use crate::types::{ErrorKind, HashMap, RedisError, RedisResult, Value};
+use crate::types::{HashMap, RedisResult, Value};
 use crate::IntoConnectionInfo;
 pub use crate::TlsMode; // Pub for backwards compatibility
 use crate::{
@@ -415,7 +416,7 @@ where
                         failed_connections.push((
                             addr,
                             RedisError::from((
-                                ErrorKind::IoError,
+                                ErrorKind::Io,
                                 "Node failed to respond to connection check,",
                             )),
                         ));
@@ -446,7 +447,7 @@ where
             };
 
             return Err(RedisError::from((
-                ErrorKind::IoError,
+                ErrorKind::Io,
                 "It failed to check startup nodes.",
                 detail,
             )));
@@ -512,9 +513,8 @@ where
         match new_slots {
             Some(new_slots) => Ok(new_slots),
             None => Err(RedisError::from((
-                ErrorKind::ResponseError,
-                "Slot refresh error.",
-                "didn't get any slots from server".to_string(),
+                ErrorKind::Client,
+                "Slot refresh error. didn't get any slots from server",
             ))),
         }
     }
@@ -572,7 +572,7 @@ where
         let addr_for_slot = |route: Route| -> RedisResult<String> {
             let slot_addr = slots
                 .slot_addr_for_route(&route)
-                .ok_or((ErrorKind::ClusterDown, "Missing slot coverage"))?;
+                .ok_or((ErrorKind::Client, "Missing slot coverage"))?;
             Ok(slot_addr.to_string())
         };
 
@@ -666,7 +666,7 @@ where
             .enumerate()
             .map(|(index, addr)| {
                 let addr = addr.ok_or(RedisError::from((
-                    ErrorKind::IoError,
+                    ErrorKind::Io,
                     "Couldn't find connection",
                 )))?;
                 let connection = self.get_connection_by_addr(connections, addr)?;
@@ -729,7 +729,7 @@ where
                 }
 
                 Err(last_failure
-                    .unwrap_or_else(|| (ErrorKind::IoError, "Couldn't find a connection").into()))
+                    .unwrap_or_else(|| (ErrorKind::Io, "Couldn't find a connection").into()))
             }
             Some(ResponsePolicy::OneSucceededNonEmpty) => {
                 let mut last_failure = None;
@@ -742,7 +742,7 @@ where
                     }
                 }
                 Err(last_failure
-                    .unwrap_or_else(|| (ErrorKind::IoError, "Couldn't find a connection").into()))
+                    .unwrap_or_else(|| (ErrorKind::Io, "Couldn't find a connection").into()))
             }
             Some(ResponsePolicy::Aggregate(op)) => {
                 let results = results
@@ -864,12 +864,12 @@ where
                     retries += 1;
 
                     match err.retry_method() {
-                        crate::types::RetryMethod::AskRedirect => {
+                        RetryMethod::AskRedirect => {
                             redirected = err
                                 .redirect_node()
                                 .map(|(node, _slot)| Redirect::Ask(node.to_string()));
                         }
-                        crate::types::RetryMethod::MovedRedirect => {
+                        RetryMethod::MovedRedirect => {
                             // Refresh slots.
                             self.refresh_slots()?;
                             // Request again.
@@ -877,7 +877,7 @@ where
                                 .redirect_node()
                                 .map(|(node, _slot)| Redirect::Moved(node.to_string()));
                         }
-                        crate::types::RetryMethod::WaitAndRetry => {
+                        RetryMethod::WaitAndRetry => {
                             // Sleep and retry.
                             let sleep_time = self
                                 .cluster_params
@@ -885,7 +885,7 @@ where
                                 .wait_time_for_retry(retries);
                             thread::sleep(sleep_time);
                         }
-                        crate::types::RetryMethod::Reconnect => {
+                        RetryMethod::Reconnect => {
                             if *self.auto_reconnect.borrow() {
                                 // if the connection is no longer valid, we should remove it.
                                 self.connections.borrow_mut().remove(&addr);
@@ -896,11 +896,11 @@ where
                                 }
                             }
                         }
-                        crate::types::RetryMethod::NoRetry => {
+                        RetryMethod::NoRetry => {
                             return Err(err);
                         }
-                        crate::types::RetryMethod::RetryImmediately => {}
-                        crate::types::RetryMethod::ReconnectFromInitialConnections => {
+                        RetryMethod::RetryImmediately => {}
+                        RetryMethod::ReconnectFromInitialConnections => {
                             // TODO - implement reconnect from initial connections
                             if *self.auto_reconnect.borrow() {
                                 if let Ok(mut conn) = self.connect(&addr) {

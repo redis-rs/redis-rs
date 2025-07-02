@@ -133,7 +133,7 @@ pub(crate) fn aggregate(values: Vec<Value>, op: AggregateOp) -> RedisResult<Valu
             _ => {
                 return RedisResult::Err(
                     (
-                        ErrorKind::TypeError,
+                        ErrorKind::UnexpectedReturnType,
                         "expected array of integers as response",
                     )
                         .into(),
@@ -159,7 +159,7 @@ pub(crate) fn logical_aggregate(values: Vec<Value>, op: LogicalAggregateOp) -> R
             _ => {
                 return RedisResult::Err(
                     (
-                        ErrorKind::TypeError,
+                        ErrorKind::UnexpectedReturnType,
                         "expected array of integers as response",
                     )
                         .into(),
@@ -176,7 +176,7 @@ pub(crate) fn logical_aggregate(values: Vec<Value>, op: LogicalAggregateOp) -> R
                 Value::Int(int) => int,
                 _ => {
                     return Err((
-                        ErrorKind::TypeError,
+                        ErrorKind::UnexpectedReturnType,
                         "expected array of integers as response",
                     )
                         .into());
@@ -203,7 +203,11 @@ pub(crate) fn combine_array_results(values: Vec<Value>) -> RedisResult<Value> {
         match value {
             Value::Array(values) => results.extend(values),
             _ => {
-                return Err((ErrorKind::TypeError, "expected array of values as response").into());
+                return Err((
+                    ErrorKind::UnexpectedReturnType,
+                    "expected array of values as response",
+                )
+                    .into());
             }
         }
     }
@@ -238,7 +242,11 @@ pub(crate) fn combine_and_sort_array_results<'a>(
                 }
             }
             _ => {
-                return Err((ErrorKind::TypeError, "expected array of values as response").into());
+                return Err((
+                    ErrorKind::UnexpectedReturnType,
+                    "expected array of values as response",
+                )
+                    .into());
             }
         }
     }

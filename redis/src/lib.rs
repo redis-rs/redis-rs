@@ -559,6 +559,7 @@ let primary = sentinel.get_async_connection().await.unwrap();
 //! * If you create [ConnectionInfo] or [RedisConnectionInfo] objects explicitly, now you need to use the builder pattern setters.
 //! * if you used `MultiplexedConnection::new_with_response_timeout`, it is replaced by [aio::MultiplexedConnection::new_with_config]. `Client::get_multiplexed_tokio_connection_with_response_timeouts`, `Client::get_multiplexed_tokio_connection`, `Client::create_multiplexed_tokio_connection_with_response_timeout`, `Client::create_multiplexed_tokio_connection` were replaced by [Client::get_multiplexed_async_connection_with_config].
 //! * If you're using `tokio::time::pause()` or otherwise manipulating time, you might need to opt out of timeouts using `AsyncConnectionConfig::new().set_connection_timeout(None).set_response_timeout(None)`.
+//! * ErrorKind::TypeError was renamed ErrorKind::UnexpectedReturnType, to clarify its meaning. Also fixed some cases where it and ErrorKind::Parse were intermingled.
 //!
 //!
 
@@ -605,11 +606,6 @@ pub use crate::types::{
     // utility functions
     from_redis_value,
     from_owned_redis_value,
-    make_extension_error,
-
-    // error kinds
-    ErrorKind,
-    RetryMethod,
 
     // conversion traits
     FromRedisValue,
@@ -626,10 +622,6 @@ pub use crate::types::{
     ReplicaInfo,
     IntegerReplyOrNoOp,
 	ValueType,
-
-    // error and result types
-    ParsingError,
-    RedisError,
     RedisResult,
     RedisWrite,
     ToRedisArgs,
@@ -640,6 +632,9 @@ pub use crate::types::{
     VerbatimFormat,
     ProtocolVersion,
     PushInfo,
+};
+pub use crate::errors::{
+    make_extension_error, ErrorKind, ParsingError, RedisError, RetryMethod, ServerErrorKind,
 };
 
 #[cfg(feature = "aio")]
@@ -737,6 +732,7 @@ mod client;
 mod cmd;
 mod commands;
 mod connection;
+mod errors;
 /// Module for defining I/O behavior.
 pub mod io;
 mod parser;
