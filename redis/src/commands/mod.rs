@@ -419,7 +419,7 @@ implement_commands! {
     /// Perform a bitwise AND between multiple keys (containing string values)
     /// and store the result in the destination key.
     /// Returns size of destination string after operation.
-    /// [Redis Docs](https://redis.io/commands/BITOP").arg("AND)
+    /// [Redis Docs](https://redis.io/commands/BITOP)
     fn bit_and<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) -> (usize) {
         cmd("BITOP").arg("AND").arg(dstkey).arg(srckeys)
     }
@@ -427,7 +427,7 @@ implement_commands! {
     /// Perform a bitwise OR between multiple keys (containing string values)
     /// and store the result in the destination key.
     /// Returns size of destination string after operation.
-    /// [Redis Docs](https://redis.io/commands/BITOP").arg("OR)
+    /// [Redis Docs](https://redis.io/commands/BITOP)
     fn bit_or<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) -> (usize) {
         cmd("BITOP").arg("OR").arg(dstkey).arg(srckeys)
     }
@@ -435,7 +435,7 @@ implement_commands! {
     /// Perform a bitwise XOR between multiple keys (containing string values)
     /// and store the result in the destination key.
     /// Returns size of destination string after operation.
-    /// [Redis Docs](https://redis.io/commands/BITOP").arg("XOR)
+    /// [Redis Docs](https://redis.io/commands/BITOP)
     fn bit_xor<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckeys: S) -> (usize) {
         cmd("BITOP").arg("XOR").arg(dstkey).arg(srckeys)
     }
@@ -443,7 +443,7 @@ implement_commands! {
     /// Perform a bitwise NOT of the key (containing string values)
     /// and store the result in the destination key.
     /// Returns size of destination string after operation.
-    /// [Redis Docs](https://redis.io/commands/BITOP").arg("NOT)
+    /// [Redis Docs](https://redis.io/commands/BITOP)
     fn bit_not<D: ToRedisArgs, S: ToRedisArgs>(dstkey: D, srckey: S) -> (usize) {
         cmd("BITOP").arg("NOT").arg(dstkey).arg(srckey)
     }
@@ -463,7 +463,7 @@ implement_commands! {
     }
 
     /// Get the value of one or more fields of a given hash key, and optionally set their expiration
-    /// [Redis Docs](https://redis.io/commands/HGETEX").arg(key).arg(expire_at).arg("FIELDS)
+    /// [Redis Docs](https://redis.io/commands/HGETEX)
     fn hget_ex<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F, expire_at: Expiry) -> (Vec<String>) {
         cmd("HGETEX").arg(key).arg(expire_at).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
@@ -476,7 +476,7 @@ implement_commands! {
     }
 
     /// Get and delete the value of one or more fields of a given hash key
-    /// [Redis Docs](https://redis.io/commands/HGETDEL").arg(key).arg("FIELDS)
+    /// [Redis Docs](https://redis.io/commands/HGETDEL)
     fn hget_del<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) -> (Vec<Option<String>>) {
         cmd("HGETDEL").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
@@ -489,7 +489,7 @@ implement_commands! {
     }
 
     /// Set the value of one or more fields of a given hash key, and optionally set their expiration
-    /// [Redis Docs](https://redis.io/commands/HSETEX").arg(key).arg(hash_field_expiration_options).arg("FIELDS)
+    /// [Redis Docs](https://redis.io/commands/HSETEX)
     fn hset_ex<K: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs>(key: K, hash_field_expiration_options: &'a HashFieldExpirationOptions, fields_values: &'a [(F, V)]) -> (bool) {
         cmd("HSETEX").arg(key).arg(hash_field_expiration_options).arg("FIELDS").arg(fields_values.len()).arg(fields_values)
     }
@@ -524,13 +524,13 @@ implement_commands! {
     }
 
     /// Get one or more fields' TTL in seconds.
-    /// [Redis Docs](https://redis.io/commands/HTTL").arg(key).arg("FIELDS)
+    /// [Redis Docs](https://redis.io/commands/HTTL)
     fn httl<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) -> (Vec<IntegerReplyOrNoOp>) {
         cmd("HTTL").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
     /// Get one or more fields' TTL in milliseconds.
-    /// [Redis Docs](https://redis.io/commands/HPTTL").arg(key).arg("FIELDS)
+    /// [Redis Docs](https://redis.io/commands/HPTTL)
     fn hpttl<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) -> (Vec<IntegerReplyOrNoOp>) {
         cmd("HPTTL").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
@@ -542,7 +542,7 @@ implement_commands! {
     /// 1 if the expiration time was updated.
     /// 2 if called with 0 seconds.
     /// Errors if provided key exists but is not a hash.
-    /// [Redis Docs](https://redis.io/commands/HEXPIRE").arg(key).arg(seconds).arg(opt).arg("FIELDS)
+    /// [Redis Docs](https://redis.io/commands/HEXPIRE)
     fn hexpire<K: ToRedisArgs, F: ToRedisArgs>(key: K, seconds: i64, opt: ExpireOption, fields: F) -> (Vec<IntegerReplyOrNoOp>) {
        cmd("HEXPIRE").arg(key).arg(seconds).arg(opt).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
@@ -555,20 +555,20 @@ implement_commands! {
     /// 1 if the expiration time was updated.
     /// 2 if called with a time in the past.
     /// Errors if provided key exists but is not a hash.
-    /// [Redis Docs](https://redis.io/commands/HEXPIREAT").arg(key).arg(ts).arg(opt).arg("FIELDS)
+    /// [Redis Docs](https://redis.io/commands/HEXPIREAT)
     fn hexpire_at<K: ToRedisArgs, F: ToRedisArgs>(key: K, ts: i64, opt: ExpireOption, fields: F) -> (Vec<IntegerReplyOrNoOp>) {
         cmd("HEXPIREAT").arg(key).arg(ts).arg(opt).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
     /// Returns the absolute Unix expiration timestamp in seconds.
-    /// [Redis Docs](https://redis.io/commands/HEXPIRETIME").arg(key).arg("FIELDS)
+    /// [Redis Docs](https://redis.io/commands/HEXPIRETIME)
     fn hexpire_time<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) -> (Vec<IntegerReplyOrNoOp>) {
         cmd("HEXPIRETIME").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
     /// Remove the expiration from a key.
     /// Returns 1 if the expiration was removed.
-    /// [Redis Docs](https://redis.io/commands/HPERSIST").arg(key).arg("FIELDS)
+    /// [Redis Docs](https://redis.io/commands/HPERSIST)
     fn hpersist<K: ToRedisArgs, F :ToRedisArgs>(key: K, fields: F) -> (Vec<IntegerReplyOrNoOp>) {
         cmd("HPERSIST").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
@@ -580,7 +580,7 @@ implement_commands! {
     /// 1 if the expiration time was updated.
     /// 2 if called with 0 seconds.
     /// Errors if provided key exists but is not a hash.
-    /// [Redis Docs](https://redis.io/commands/HPEXPIRE").arg(key).arg(milliseconds).arg(opt).arg("FIELDS)
+    /// [Redis Docs](https://redis.io/commands/HPEXPIRE)
     fn hpexpire<K: ToRedisArgs, F: ToRedisArgs>(key: K, milliseconds: i64, opt: ExpireOption, fields: F) -> (Vec<IntegerReplyOrNoOp>) {
         cmd("HPEXPIRE").arg(key).arg(milliseconds).arg(opt).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
@@ -592,13 +592,13 @@ implement_commands! {
     /// 1 if the expiration time was updated.
     /// 2 if called with a time in the past.
     /// Errors if provided key exists but is not a hash.
-    /// [Redis Docs](https://redis.io/commands/HPEXPIREAT").arg(key).arg(ts).arg(opt).arg("FIELDS)
+    /// [Redis Docs](https://redis.io/commands/HPEXPIREAT)
     fn hpexpire_at<K: ToRedisArgs, F: ToRedisArgs>(key: K, ts: i64,  opt: ExpireOption, fields: F) -> (Vec<IntegerReplyOrNoOp>) {
         cmd("HPEXPIREAT").arg(key).arg(ts).arg(opt).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
 
     /// Returns the absolute Unix expiration timestamp in seconds.
-    /// [Redis Docs](https://redis.io/commands/HPEXPIRETIME").arg(key).arg("FIELDS)
+    /// [Redis Docs](https://redis.io/commands/HPEXPIRETIME)
     fn hpexpire_time<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) -> (Vec<IntegerReplyOrNoOp>) {
         cmd("HPEXPIRETIME").arg(key).arg("FIELDS").arg(fields.num_of_args()).arg(fields)
     }
@@ -639,7 +639,7 @@ implement_commands! {
 
     /// Pops `count` elements from the first non-empty list key from the list of
     /// provided key names; or blocks until one is available.
-    /// [Redis Docs](https://redis.io/commands/BLMPOP").arg(timeout).arg(numkeys).arg(key).arg(dir).arg("COUNT)
+    /// [Redis Docs](https://redis.io/commands/BLMPOP)
     fn blmpop<K: ToRedisArgs>(timeout: f64, numkeys: usize, key: K, dir: Direction, count: usize) -> (Option<[String; 2]>) {
         cmd("BLMPOP").arg(timeout).arg(numkeys).arg(key).arg(dir).arg("COUNT").arg(count)
     }
@@ -697,7 +697,7 @@ implement_commands! {
 
     /// Pops `count` elements from the first non-empty list key from the list of
     /// provided key names.
-    /// [Redis Docs](https://redis.io/commands/LMPOP").arg(numkeys).arg(key).arg(dir).arg("COUNT)
+    /// [Redis Docs](https://redis.io/commands/LMPOP)
     fn lmpop<K: ToRedisArgs>( numkeys: usize, key: K, dir: Direction, count: usize) -> (Option<(String, Vec<String>)>) {
         cmd("LMPOP").arg(numkeys).arg(key).arg(dir).arg("COUNT").arg(count)
     }
@@ -2295,10 +2295,9 @@ implement_commands! {
     /// ```text
     /// XINFO GROUPS <key>
     /// ```
-    /// [Redis Docs](https://redis.io/commands/XINFO")
+    /// [Redis Docs](https://redis.io/commands/XINFO-GROUPS)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
-    /// [Redis Docs](https://redis.io/commands/XINFO").arg("GROUPS)
     fn xinfo_groups<K: ToRedisArgs>(key: K) -> (streams::StreamInfoGroupsReply) {
         cmd("XINFO").arg("GROUPS").arg(key)
     }
@@ -2314,9 +2313,9 @@ implement_commands! {
     /// ```text
     /// XINFO STREAM <key>
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XINFO-STREAM)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
-    /// [Redis Docs](https://redis.io/commands/XINFO").arg("STREAM)
     fn xinfo_stream<K: ToRedisArgs>(key: K) -> (streams::StreamInfoStreamReply) {
         cmd("XINFO").arg("STREAM").arg(key)
     }
@@ -2461,9 +2460,9 @@ implement_commands! {
     /// ```text
     /// XRANGE key - +
     /// ```
+    /// [Redis Docs](https://redis.io/commands/XRANGE)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
-    /// [Redis Docs](https://redis.io/commands/XRANGE").arg(key).arg("-").arg("+)
     fn xrange_all<K: ToRedisArgs>(key: K) -> (streams::StreamRangeReply) {
         cmd("XRANGE").arg(key).arg("-").arg("+")
     }
@@ -2588,7 +2587,7 @@ implement_commands! {
     /// ```text
     /// XREVRANGE key + -
     /// ```
-    /// [Redis Docs](https://redis.io/commands/XREVRANGE").arg(key).arg("+").arg("-)
+    /// [Redis Docs](https://redis.io/commands/XREVRANGE)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xrevrange_all<K: ToRedisArgs>(key: K) -> (streams::StreamRangeReply) {
