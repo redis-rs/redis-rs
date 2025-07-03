@@ -64,7 +64,6 @@
 //! ```
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 
@@ -76,13 +75,12 @@ use super::{
     client::ClusterParams,
     routing::{Redirect, Route, RoutingInfo, SlotMap, SLOT_SIZE},
 };
+use crate::cluster_handling::{get_connection_info, slot_cmd, split_node_address};
 use crate::cluster_routing::{
     MultipleNodeRoutingInfo, ResponsePolicy, Routable, SingleNodeRoutingInfo, SlotAddr,
 };
 use crate::cmd::{cmd, Cmd};
-use crate::connection::{
-    connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
-};
+use crate::connection::{connect, Connection, ConnectionInfo, ConnectionLike};
 use crate::errors::{ErrorKind, RedisError, RetryMethod};
 use crate::parser::parse_redis_value;
 use crate::types::{HashMap, RedisResult, Value};
@@ -92,8 +90,6 @@ use pipeline::UNROUTABLE_ERROR;
 use rand::{rng, seq::IteratorRandom, Rng};
 
 pub use pipeline::{cluster_pipe, ClusterPipeline};
-
-use crate::connection::TlsConnParams;
 
 #[derive(Clone)]
 enum Input<'a> {
@@ -1115,71 +1111,10 @@ fn get_random_connection_or_error<C: ConnectionLike + Connect + Sized>(
     }
 }
 
-// The node string passed to this function will always be in the format host:port as it is either:
-// - Created by calling ConnectionAddr::to_string (unix connections are not supported in cluster mode)
-// - Returned from redis via the ASK/MOVED response
-pub(crate) fn get_connection_info(
-    node: &str,
-    cluster_params: ClusterParams,
-) -> RedisResult<ConnectionInfo> {
-    let (host, port) = split_node_address(node)?;
-
-    Ok(ConnectionInfo {
-        addr: get_connection_addr(host, port, cluster_params.tls, cluster_params.tls_params),
-        redis: RedisConnectionInfo {
-            password: cluster_params.password,
-            username: cluster_params.username,
-            protocol: cluster_params.protocol.unwrap_or_default(),
-            ..Default::default()
-        },
-        tcp_settings: cluster_params.tcp_settings,
-    })
-}
-
-fn split_node_address(node: &str) -> RedisResult<(String, u16)> {
-    let invalid_error =
-        || RedisError::from((ErrorKind::InvalidClientConfig, "Invalid node string"));
-    node.rsplit_once(':')
-        .and_then(|(host, port)| {
-            Some(host.trim_start_matches('[').trim_end_matches(']'))
-                .filter(|h| !h.is_empty())
-                .map(str::to_string)
-                .zip(u16::from_str(port).ok())
-        })
-        .ok_or_else(invalid_error)
-}
-
-pub(crate) fn get_connection_addr(
-    host: String,
-    port: u16,
-    tls: Option<TlsMode>,
-    tls_params: Option<TlsConnParams>,
-) -> ConnectionAddr {
-    match tls {
-        Some(TlsMode::Secure) => ConnectionAddr::TcpTls {
-            host,
-            port,
-            insecure: false,
-            tls_params,
-        },
-        Some(TlsMode::Insecure) => ConnectionAddr::TcpTls {
-            host,
-            port,
-            insecure: true,
-            tls_params,
-        },
-        _ => ConnectionAddr::Tcp(host, port),
-    }
-}
-
-pub(crate) fn slot_cmd() -> Cmd {
-    let mut cmd = Cmd::new();
-    cmd.arg("CLUSTER").arg("SLOTS");
-    cmd
-}
-
 #[cfg(test)]
 mod tests {
+    use crate::ConnectionAddr;
+
     use super::*;
 
     #[test]

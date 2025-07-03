@@ -105,12 +105,15 @@ mod request;
 mod routing;
 use crate::{
     aio::{check_resp3, ConnectionLike, HandleContainer, MultiplexedConnection, Runtime},
-    cluster_handling::client::ClusterParams,
-    cluster_handling::sync_connection::{get_connection_info, slot_cmd},
-    cluster_handling::topology::parse_slots,
-    cluster_routing::{
-        MultipleNodeRoutingInfo, Redirect, ResponsePolicy, RoutingInfo, SingleNodeRoutingInfo,
-        Slot, SlotMap,
+    cluster_handling::{
+        client::ClusterParams,
+        get_connection_info,
+        routing::{
+            MultipleNodeRoutingInfo, Redirect, ResponsePolicy, RoutingInfo, SingleNodeRoutingInfo,
+            Slot, SlotMap,
+        },
+        slot_cmd,
+        topology::parse_slots,
     },
     cmd,
     errors::closed_connection_error,
