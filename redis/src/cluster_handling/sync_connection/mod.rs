@@ -68,11 +68,17 @@ use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 
-use crate::cluster_pipeline::UNROUTABLE_ERROR;
+mod pipeline;
+
+pub use super::client::{ClusterClient, ClusterClientBuilder};
+use super::topology::parse_slots;
+use super::{
+    client::ClusterParams,
+    routing::{Redirect, Route, RoutingInfo, SlotMap, SLOT_SIZE},
+};
 use crate::cluster_routing::{
     MultipleNodeRoutingInfo, ResponsePolicy, Routable, SingleNodeRoutingInfo, SlotAddr,
 };
-use crate::cluster_topology::parse_slots;
 use crate::cmd::{cmd, Cmd};
 use crate::connection::{
     connect, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, RedisConnectionInfo,
@@ -82,14 +88,10 @@ use crate::parser::parse_redis_value;
 use crate::types::{HashMap, RedisResult, Value};
 use crate::IntoConnectionInfo;
 pub use crate::TlsMode; // Pub for backwards compatibility
-use crate::{
-    cluster_client::ClusterParams,
-    cluster_routing::{Redirect, Route, RoutingInfo, SlotMap, SLOT_SIZE},
-};
+use pipeline::UNROUTABLE_ERROR;
 use rand::{rng, seq::IteratorRandom, Rng};
 
-pub use crate::cluster_client::{ClusterClient, ClusterClientBuilder};
-pub use crate::cluster_pipeline::{cluster_pipe, ClusterPipeline};
+pub use pipeline::{cluster_pipe, ClusterPipeline};
 
 use crate::connection::TlsConnParams;
 

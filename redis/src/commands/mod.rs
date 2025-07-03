@@ -29,7 +29,7 @@ pub use json::JsonCommands;
 pub use json::JsonAsyncCommands;
 
 #[cfg(feature = "cluster")]
-use crate::cluster_pipeline::ClusterPipeline;
+use crate::cluster_handling::sync_connection::ClusterPipeline;
 
 #[cfg(feature = "geospatial")]
 pub mod geo;
