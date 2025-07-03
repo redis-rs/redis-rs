@@ -110,9 +110,9 @@ use crate::{
         get_connection_info,
         routing::{
             MultipleNodeRoutingInfo, Redirect, ResponsePolicy, RoutingInfo, SingleNodeRoutingInfo,
-            Slot, SlotMap,
         },
         slot_cmd,
+        slot_map::{Slot, SlotMap},
         topology::parse_slots,
     },
     cmd,
