@@ -9,8 +9,9 @@ pub mod async_connection;
 pub mod client;
 /// Routing information for cluster commands.
 pub mod routing;
+pub(crate) mod slot_map;
 pub mod sync_connection;
-pub mod topology;
+pub(crate) mod topology;
 
 pub(crate) fn slot_cmd() -> Cmd {
     let mut cmd = Cmd::new();

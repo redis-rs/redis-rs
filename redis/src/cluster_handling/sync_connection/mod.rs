@@ -73,7 +73,8 @@ pub use super::client::{ClusterClient, ClusterClientBuilder};
 use super::topology::parse_slots;
 use super::{
     client::ClusterParams,
-    routing::{Redirect, Route, RoutingInfo, SlotMap, SLOT_SIZE},
+    routing::{Redirect, Route, RoutingInfo},
+    slot_map::{SlotMap, SLOT_SIZE},
 };
 use crate::cluster_handling::{get_connection_info, slot_cmd, split_node_address};
 use crate::cluster_routing::{
