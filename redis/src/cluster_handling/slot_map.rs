@@ -62,7 +62,7 @@ impl SlotMap {
                     Some(
                         slot_value
                             .addrs
-                            .slot_addr(route.slot_addr(), self.read_from_replica),
+                            .slot_addr(&route.slot_addr(), self.read_from_replica),
                     )
                 } else {
                     None

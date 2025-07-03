@@ -5,6 +5,7 @@ use crate::{
 
 use std::str::FromStr;
 
+#[cfg(feature = "cluster-async")]
 pub mod async_connection;
 pub mod client;
 /// Routing information for cluster commands.

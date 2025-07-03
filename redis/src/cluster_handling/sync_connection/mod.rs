@@ -687,7 +687,7 @@ where
         let mut slots = self.slots.borrow_mut();
 
         let results = match &routing {
-            MultipleNodeRoutingInfo::MultiSlot(routes) => {
+            MultipleNodeRoutingInfo::MultiSlot((routes, _)) => {
                 self.execute_multi_slot(input, &mut slots, &mut connections, routes)
             }
             MultipleNodeRoutingInfo::AllMasters => {
@@ -730,18 +730,34 @@ where
                 Err(last_failure
                     .unwrap_or_else(|| (ErrorKind::Io, "Couldn't find a connection").into()))
             }
-            Some(ResponsePolicy::OneSucceededNonEmpty) => {
+            Some(ResponsePolicy::CombineMaps) => crate::cluster_routing::combine_map_results(
+                results
+                    .into_iter()
+                    .map(|result| result.map(|(_, value)| value))
+                    .collect::<RedisResult<Vec<_>>>()?,
+            ),
+            Some(ResponsePolicy::FirstSucceededNonEmptyOrAllEmpty) => {
+                // Attempt to return the first result that isn't `Nil` or an error.
+                // If no such response is found and all servers returned `Nil`, it indicates that all shards are empty, so return `Nil`.
+                // If we received only errors, return the last received error.
+                // If we received a mix of errors and `Nil`s, we can't determine if all shards are empty,
+                // thus we return the last received error instead of `Nil`.
                 let mut last_failure = None;
-
+                let num_of_results = results.len();
+                let mut nil_counter = 0;
                 for result in results {
                     match result.map(|(_, res)| res) {
-                        Ok(Value::Nil) => continue,
+                        Ok(Value::Nil) => nil_counter += 1,
                         Ok(val) => return Ok(val),
                         Err(err) => last_failure = Some(err),
                     }
                 }
-                Err(last_failure
-                    .unwrap_or_else(|| (ErrorKind::Io, "Couldn't find a connection").into()))
+                if nil_counter == num_of_results {
+                    Ok(Value::Nil)
+                } else {
+                    Err(last_failure
+                        .unwrap_or_else(|| (ErrorKind::Io, "Couldn't find a connection").into()))
+                }
             }
             Some(ResponsePolicy::Aggregate(op)) => {
                 let results = results
@@ -763,10 +779,9 @@ where
                     .map(|res| res.map(|(_, val)| val))
                     .collect::<RedisResult<Vec<_>>>()?;
                 match routing {
-                    MultipleNodeRoutingInfo::MultiSlot(vec) => {
+                    MultipleNodeRoutingInfo::MultiSlot((vec, pattern)) => {
                         crate::cluster_routing::combine_and_sort_array_results(
-                            results,
-                            vec.iter().map(|(_, indices)| indices),
+                            results, &vec, &pattern,
                         )
                     }
                     _ => crate::cluster_routing::combine_array_results(results),
@@ -834,6 +849,9 @@ where
                             let address = format!("{host}:{port}");
                             let conn = self.get_connection_by_addr(&mut connections, &address);
                             (address, conn)
+                        }
+                        SingleNodeRoutingInfo::RandomPrimary => {
+                            self.get_connection(&mut connections, &Route::new_random_primary())
                         }
                     }
                 };
