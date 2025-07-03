@@ -1,14 +1,26 @@
-use std::cmp::min;
-use std::collections::{HashMap, HashSet};
+use rand::Rng;
 
 use crate::cluster_handling::slot_map::SLOT_SIZE;
 use crate::cmd::{Arg, Cmd};
 use crate::commands::is_readonly_cmd;
 use crate::types::Value;
-use crate::{ErrorKind, RedisResult};
+use crate::{ErrorKind, RedisError, RedisResult};
+use std::borrow::Cow;
+use std::cmp::min;
+use std::collections::HashMap;
 
 fn slot(key: &[u8]) -> u16 {
     crc16::State::<crc16::XMODEM>::calculate(key) % SLOT_SIZE
+}
+
+/// Returns the slot that matches `key`.
+pub(crate) fn get_slot(key: &[u8]) -> u16 {
+    let key = match get_hashtag(key) {
+        Some(tag) => tag,
+        None => key,
+    };
+
+    slot(key)
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -25,7 +37,7 @@ pub enum LogicalAggregateOp {
     // Or, omitted due to dead code warnings. ATM this value isn't constructed anywhere
 }
 
-/// Numerical aggreagting operators.
+/// Numerical aggregating operators.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AggregateOp {
     /// Choose minimal value
@@ -40,8 +52,8 @@ pub enum AggregateOp {
 pub enum ResponsePolicy {
     /// Wait for one request to succeed and return its results. Return error if all requests fail.
     OneSucceeded,
-    /// Wait for one request to succeed with a non-empty value. Return error if all requests fail or return `Nil`.
-    OneSucceededNonEmpty,
+    /// Returns the first succeeded non-empty result; if all results are empty, returns `Nil`; otherwise, returns the last received error.
+    FirstSucceededNonEmptyOrAllEmpty,
     /// Waits for all requests to succeed, and the returns one of the successes. Returns the error on the first received error.
     AllSucceeded,
     /// Aggregate success results according to a logical bitwise operator. Return error on any failed request or on a response that doesn't conform to 0 or 1.
@@ -52,6 +64,8 @@ pub enum ResponsePolicy {
     CombineArrays,
     /// Handling is not defined by the Redis standard. Will receive a special case
     Special,
+    /// Combines multiple map responses into a single map.
+    CombineMaps,
 }
 
 /// Defines whether a request should be routed to a single node, or multiple ones.
@@ -68,6 +82,8 @@ pub enum RoutingInfo {
 pub enum SingleNodeRoutingInfo {
     /// Route to any node at random
     Random,
+    /// Route to any *primary* node
+    RandomPrimary,
     /// Route to the node that matches the [Route]
     SpecificNode(Route),
     /// Route to the node with the given address.
@@ -94,15 +110,18 @@ pub enum MultipleNodeRoutingInfo {
     AllNodes,
     /// Route to all primaries in the cluster
     AllMasters,
-    /// Instructions for how to split a multi-slot command (e.g. MGET, MSET) into sub-commands. Each tuple is the route for each subcommand, and the indices of the arguments from the original command that should be copied to the subcommand.
-    MultiSlot(Vec<(Route, Vec<usize>)>),
+    /// Routes the request to multiple slots.
+    /// This variant contains instructions for splitting a multi-slot command (e.g., MGET, MSET) into sub-commands.
+    /// Each tuple consists of a `Route` representing the target node for the subcommand,
+    /// and a vector of argument indices from the original command that should be copied to each subcommand.
+    /// The `MultiSlotArgPattern` specifies the pattern of the command’s arguments, indicating how they are organized
+    /// (e.g., only keys, key-value pairs, etc).
+    MultiSlot((Vec<(Route, Vec<usize>)>, MultiSlotArgPattern)),
 }
 
-/// Splits a command into a sub-command that won't generate a CROSSLOTS error.
-///
-///  Takes a routable and an iterator of indices, which is assumed to be created from`MultipleNodeRoutingInfo::MultiSlot`,
+/// Takes a routable and an iterator of indices, which is assued to be created from`MultipleNodeRoutingInfo::MultiSlot`,
 /// and returns a command with the arguments matching the indices.
-pub fn command_for_multi_slot_indices<'a, 'b>(
+pub(crate) fn command_for_multi_slot_indices<'a, 'b>(
     original_cmd: &'a impl Routable,
     indices: impl Iterator<Item = &'b usize> + 'a,
 ) -> Cmd
@@ -118,6 +137,7 @@ where
     new_cmd
 }
 
+/// Aggreagte numeric responses.
 pub(crate) fn aggregate(values: Vec<Value>, op: AggregateOp) -> RedisResult<Value> {
     let initial_value = match op {
         AggregateOp::Min => i64::MAX,
@@ -145,6 +165,7 @@ pub(crate) fn aggregate(values: Vec<Value>, op: AggregateOp) -> RedisResult<Valu
     Ok(Value::Int(result))
 }
 
+/// Aggreagte numeric responses by a boolean operator.
 pub(crate) fn logical_aggregate(values: Vec<Value>, op: LogicalAggregateOp) -> RedisResult<Value> {
     let initial_value = match op {
         LogicalAggregateOp::And => true,
@@ -191,7 +212,50 @@ pub(crate) fn logical_aggregate(values: Vec<Value>, op: LogicalAggregateOp) -> R
             .collect(),
     ))
 }
+/// Aggregate array responses into a single map.
+pub(crate) fn combine_map_results(values: Vec<Value>) -> RedisResult<Value> {
+    let mut map: HashMap<Vec<u8>, i64> = HashMap::new();
 
+    for value in values {
+        match value {
+            Value::Array(elements) => {
+                let mut iter = elements.into_iter();
+
+                while let Some(key) = iter.next() {
+                    if let Value::BulkString(key_bytes) = key {
+                        if let Some(Value::Int(value)) = iter.next() {
+                            *map.entry(key_bytes).or_insert(0) += value;
+                        } else {
+                            return Err((
+                                ErrorKind::UnexpectedReturnType,
+                                "expected integer value",
+                            )
+                                .into());
+                        }
+                    } else {
+                        return Err((ErrorKind::UnexpectedReturnType, "expected string key").into());
+                    }
+                }
+            }
+            _ => {
+                return Err((
+                    ErrorKind::UnexpectedReturnType,
+                    "expected array of values as response",
+                )
+                    .into());
+            }
+        }
+    }
+
+    let result_vec: Vec<(Value, Value)> = map
+        .into_iter()
+        .map(|(k, v)| (Value::BulkString(k), Value::Int(v)))
+        .collect();
+
+    Ok(Value::Map(result_vec))
+}
+
+/// Aggregate array responses into a single array.
 pub(crate) fn combine_array_results(values: Vec<Value>) -> RedisResult<Value> {
     let mut results = Vec::new();
 
@@ -211,14 +275,123 @@ pub(crate) fn combine_array_results(values: Vec<Value>) -> RedisResult<Value> {
     Ok(Value::Array(results))
 }
 
-/// Combines multiple call results in the `values` field, each assume to be an array of results,
-/// into a single array. `sorting_order` defines the order of the results in the returned array -
-/// for each array of results, `sorting_order` should contain a matching array with the indices of
-/// the results in the final array.
-pub(crate) fn combine_and_sort_array_results<'a>(
+// An iterator that yields `Cow<[usize]>` representing grouped result indices according to a specified argument pattern.
+// This type is used to combine multi-slot array responses.
+type MultiSlotResIdxIter<'a> = std::iter::Map<
+    std::slice::Iter<'a, (Route, Vec<usize>)>,
+    fn(&'a (Route, Vec<usize>)) -> Cow<'a, [usize]>,
+>;
+
+/// Generates an iterator that yields a vector of result indices for each slot within the final merged results array for a multi-slot command response.
+/// The indices are calculated based on the `args_pattern` and the positions of the arguments for each slot-specific request in the original multi-slot request,
+/// ensuring that the results are ordered according to the structure of the initial multi-slot command.
+///
+/// # Arguments
+/// * `route_arg_indices` - A reference to a vector where each element is a tuple containing a route and
+///   the corresponding argument indices for that route.
+/// * `args_pattern` - Specifies the argument pattern (e.g., `KeysOnly`, `KeyValuePairs`, ..), which defines how the indices are grouped for each slot.
+///
+/// # Returns
+/// An iterator yielding `Cow<[usize]>` with the grouped result indices based on the specified argument pattern.
+///
+/// /// For example, given the command `MSET foo bar foo2 bar2 {foo}foo3 bar3` with the `KeyValuePairs` pattern:
+/// - `route_arg_indices` would include:
+///   - Slot of "foo" with argument indices `[0, 1, 4, 5]` (where `{foo}foo3` hashes to the same slot as "foo" due to curly braces).
+///   - Slot of "foo2" with argument indices `[2, 3]`.
+/// - Using the `KeyValuePairs` pattern, each key-value pair contributes a single response, yielding three responses total.
+/// - Therefore, the iterator generated by this function would yield grouped result indices as follows:
+///   - Slot "foo" is mapped to `[0, 2]` in the final result order.
+///   - Slot "foo2" is mapped to `[1]`.
+fn calculate_multi_slot_result_indices<'a>(
+    route_arg_indices: &'a [(Route, Vec<usize>)],
+    args_pattern: &MultiSlotArgPattern,
+) -> RedisResult<MultiSlotResIdxIter<'a>> {
+    let check_indices_input = |step_count: usize| {
+        for (_, indices) in route_arg_indices {
+            if indices.len() % step_count != 0 {
+                return Err(RedisError::from((
+                    ErrorKind::Client,
+                    "Invalid indices input detected",
+                    format!(
+                        "Expected argument pattern with tuples of size {step_count}, but found indices: {indices:?}"
+                    ),
+                )));
+            }
+        }
+        Ok(())
+    };
+
+    match args_pattern {
+        MultiSlotArgPattern::KeysOnly => Ok(route_arg_indices
+            .iter()
+            .map(|(_, indices)| Cow::Borrowed(indices))),
+        MultiSlotArgPattern::KeysAndLastArg => {
+            // The last index corresponds to the path, skip it
+            Ok(route_arg_indices
+                .iter()
+                .map(|(_, indices)| Cow::Borrowed(&indices[..indices.len() - 1])))
+        }
+        MultiSlotArgPattern::KeyWithTwoArgTriples => {
+            // For each triplet (key, path, value) we receive a single response.
+            // For example, for argument indices: [(_, [0,1,2]), (_, [3,4,5,9,10,11]), (_, [6,7,8])]
+            // The resulting grouped indices would be: [0], [1, 3], [2]
+            check_indices_input(3)?;
+            Ok(route_arg_indices.iter().map(|(_, indices)| {
+                Cow::Owned(
+                    indices
+                        .iter()
+                        .step_by(3)
+                        .map(|idx| idx / 3)
+                        .collect::<Vec<usize>>(),
+                )
+            }))
+        }
+        MultiSlotArgPattern::KeyValuePairs =>
+        // For each pair (key, value) we receive a single response.
+        // For example, for argument indices: [(_, [0,1]), (_, [2,3,6,7]), (_, [4,5])]
+        // The resulting grouped indices would be: [0], [1, 3], [2]
+        {
+            check_indices_input(2)?;
+            Ok(route_arg_indices.iter().map(|(_, indices)| {
+                Cow::Owned(
+                    indices
+                        .iter()
+                        .step_by(2)
+                        .map(|idx| idx / 2)
+                        .collect::<Vec<usize>>(),
+                )
+            }))
+        }
+    }
+}
+
+/// Merges the results of a multi-slot command from the `values` field, where each entry is expected to be an array of results.
+/// The combined results are ordered according to the sequence in which they appeared in the original command.
+///
+/// # Arguments
+///
+/// * `values` - A vector of `Value`s, where each `Value` is expected to be an array representing results
+///   from separate slots in a multi-slot command. Each `Value::Array` within `values` corresponds to
+///   the results associated with a specific slot, as indicated by `route_arg_indices`.
+///
+/// * `route_arg_indices` - A reference to a vector of tuples, where each tuple represents a route and a vector of
+///   argument indices associated with that route. The route indicates the slot, while the indices vector
+///   specifies the positions of arguments relevant to this slot. This is used to construct `sorting_order`,
+///   which guides the placement of results in the final array.
+///
+/// * `args_pattern` - Specifies the argument pattern (e.g., `KeysOnly`, `KeyValuePairs`, ...).
+///   The pattern defines how the argument indices are grouped for each slot and determines
+///   the ordering of results from `values` as they are placed in the final combined array.
+///
+/// # Returns
+///
+/// Returns a `RedisResult<Value>` containing the final ordered array (`Value::Array`) of combined results.
+pub(crate) fn combine_and_sort_array_results(
     values: Vec<Value>,
-    sorting_order: impl ExactSizeIterator<Item = &'a Vec<usize>>,
+    route_arg_indices: &[(Route, Vec<usize>)],
+    args_pattern: &MultiSlotArgPattern,
 ) -> RedisResult<Value> {
+    let result_indices = calculate_multi_slot_result_indices(route_arg_indices, args_pattern)?;
     let mut results = Vec::new();
     results.resize(
         values.iter().fold(0, |acc, value| match value {
@@ -227,9 +400,19 @@ pub(crate) fn combine_and_sort_array_results<'a>(
         }),
         Value::Nil,
     );
-    assert_eq!(values.len(), sorting_order.len());
+    if values.len() != result_indices.len() {
+        return Err(RedisError::from((
+            ErrorKind::Client,
+            "Mismatch in the number of multi-slot results compared to the expected result count.",
+            format!(
+                "Expected: {:?}, Found: {:?}",
+                values.len(),
+                result_indices.len()
+            ),
+        )));
+    }
 
-    for (key_indices, value) in sorting_order.into_iter().zip(values) {
+    for (key_indices, value) in result_indices.into_iter().zip(values) {
         match value {
             Value::Array(values) => {
                 assert_eq!(values.len(), key_indices.len());
@@ -250,16 +433,6 @@ pub(crate) fn combine_and_sort_array_results<'a>(
     Ok(Value::Array(results))
 }
 
-/// Returns the slot that matches `key`.
-pub fn get_slot(key: &[u8]) -> u16 {
-    let key = match get_hashtag(key) {
-        Some(tag) => tag,
-        None => key,
-    };
-
-    slot(key)
-}
-
 fn get_route(is_readonly: bool, key: &[u8]) -> Route {
     let slot = get_slot(key);
     if is_readonly {
@@ -269,131 +442,152 @@ fn get_route(is_readonly: bool, key: &[u8]) -> Route {
     }
 }
 
+/// Represents the pattern of argument structures in multi-slot commands,
+/// defining how the arguments are organized in the command.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MultiSlotArgPattern {
+    /// Pattern where only keys are provided in the command.
+    /// For example: `MGET key1 key2`
+    KeysOnly,
+
+    /// Pattern where each key is followed by a corresponding value.
+    /// For example: `MSET key1 value1 key2 value2`
+    KeyValuePairs,
+
+    /// Pattern where a list of keys is followed by a shared parameter.
+    /// For example: `JSON.MGET key1 key2 key3 path`
+    KeysAndLastArg,
+
+    /// Pattern where each key is followed by two associated arguments, forming key-argument-argument triples.
+    /// For example: `JSON.MSET key1 path1 value1 key2 path2 value2`
+    KeyWithTwoArgTriples,
+}
+
 /// Takes the given `routable` and creates a multi-slot routing info.
 /// This is used for commands like MSET & MGET, where if the command's keys
 /// are hashed to multiple slots, the command should be split into sub-commands,
-/// each targeting a single slot. The results of these sub-commands are then
+/// each targetting a single slot. The results of these sub-commands are then
 /// usually reassembled using `combine_and_sort_array_results`. In order to do this,
 /// `MultipleNodeRoutingInfo::MultiSlot` contains the routes for each sub-command, and
 /// the indices in the final combined result for each result from the sub-command.
 ///
 /// If all keys are routed to the same slot, there's no need to split the command,
 /// so a single node routing info will be returned.
+///
+/// # Arguments
+/// * `routable` - The command or structure containing key-related data that can be routed.
+/// * `cmd` - A byte slice representing the command name or opcode (e.g., `b"MGET"`).
+/// * `first_key_index` - The starting index in the command where the first key is located.
+/// * `args_pattern` - Specifies how keys and values are patterned in the command (e.g., `OnlyKeys`, `KeyValuePairs`).
+///
+/// # Returns
+/// `Some(RoutingInfo)` if routing info is created, indicating the command targets multiple slots or a single slot;
+/// `None` if no routing info could be derived.
 fn multi_shard<R>(
     routable: &R,
     cmd: &[u8],
     first_key_index: usize,
-    has_values: bool,
+    args_pattern: MultiSlotArgPattern,
 ) -> Option<RoutingInfo>
 where
     R: Routable + ?Sized,
 {
     let is_readonly = is_readonly_cmd(cmd);
     let mut routes = HashMap::new();
-    let mut key_index = 0;
-    while let Some(key) = routable.arg_idx(first_key_index + key_index) {
-        let route = get_route(is_readonly, key);
-        let entry = routes.entry(route);
-        let keys = entry.or_insert(Vec::new());
-        keys.push(key_index);
+    let mut curr_arg_idx = 0;
+    let incr_add_next_arg = |arg_indices: &mut Vec<usize>, mut curr_arg_idx: usize| {
+        curr_arg_idx += 1;
+        // Ensure there's a value following the key
+        routable.arg_idx(curr_arg_idx)?;
+        arg_indices.push(curr_arg_idx);
+        Some(curr_arg_idx)
+    };
+    while let Some(arg) = routable.arg_idx(first_key_index + curr_arg_idx) {
+        let route = get_route(is_readonly, arg);
+        let arg_indices = routes.entry(route).or_insert(Vec::new());
 
-        if has_values {
-            key_index += 1;
-            routable.arg_idx(first_key_index + key_index)?; // check that there's a value for the key
-            keys.push(key_index);
+        arg_indices.push(curr_arg_idx);
+
+        match args_pattern {
+            MultiSlotArgPattern::KeysOnly => {} // no additional handling needed for keys-only commands
+            MultiSlotArgPattern::KeyValuePairs => {
+                // Increment to the value paired with the current key and add its index
+                curr_arg_idx = incr_add_next_arg(arg_indices, curr_arg_idx)?;
+            }
+            MultiSlotArgPattern::KeysAndLastArg => {
+                // Check if the command has more keys or if the next argument is a path
+                if routable
+                    .arg_idx(first_key_index + curr_arg_idx + 2)
+                    .is_none()
+                {
+                    // Last key reached; add the path argument index for each route and break
+                    let path_idx = curr_arg_idx + 1;
+                    for (_, arg_indices) in routes.iter_mut() {
+                        arg_indices.push(path_idx);
+                    }
+                    break;
+                }
+            }
+            MultiSlotArgPattern::KeyWithTwoArgTriples => {
+                // Increment to the first argument associated with the current key and add its index
+                curr_arg_idx = incr_add_next_arg(arg_indices, curr_arg_idx)?;
+                // Increment to the second argument associated with the current key and add its index
+                curr_arg_idx = incr_add_next_arg(arg_indices, curr_arg_idx)?;
+            }
         }
-        key_index += 1;
+        curr_arg_idx += 1;
     }
 
     let mut routes: Vec<(Route, Vec<usize>)> = routes.into_iter().collect();
+    if routes.is_empty() {
+        return None;
+    }
+
     Some(if routes.len() == 1 {
         RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(routes.pop().unwrap().0))
     } else {
         RoutingInfo::MultiNode((
-            MultipleNodeRoutingInfo::MultiSlot(routes),
+            MultipleNodeRoutingInfo::MultiSlot((routes, args_pattern)),
             ResponsePolicy::for_command(cmd),
         ))
     })
 }
 
-/// Takes the given `routable` with possibly multiple keys and creates a single-slot routing info.
-/// This is used for commands like PFCOUNT or PFMERGE, where it is required that the command's keys
-/// are hashed to the same slots and there is no way how the command might be split on the client.
-/// Additionaly this function accepts optional count of provided keys. This is usefull for EVAL and
-/// EVALSHA commands which allow user to pass arbitrary number of keys and values as arguments.
-///
-/// If all keys are not routed to the same slot, `None` variant is returned and invoking of such
-/// command fails with UNROUTABLE_ERROR.
-fn multiple_keys_same_slot<R>(
-    routable: &R,
-    cmd: &[u8],
-    first_key_index: usize,
-    key_limit: Option<usize>,
-    allow_empty_keys: bool,
-) -> Option<RoutingInfo>
-where
-    R: Routable + ?Sized,
-{
-    let is_readonly = is_readonly_cmd(cmd);
-    let mut slots = HashSet::new();
-    let mut key_index = 0;
-    while let Some(key) = routable.arg_idx(first_key_index + key_index) {
-        if let Some(limit) = key_limit {
-            if key_index >= limit {
-                break;
-            }
-        }
-
-        slots.insert(get_slot(key));
-        key_index += 1;
-    }
-
-    if slots.is_empty() && allow_empty_keys {
-        return Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random));
-    }
-
-    if slots.len() != 1 {
-        return None;
-    }
-
-    let slot = slots.into_iter().next().unwrap();
-    Some(RoutingInfo::SingleNode(
-        SingleNodeRoutingInfo::SpecificNode(Route::new(
-            slot,
-            if is_readonly {
-                SlotAddr::ReplicaOptional
-            } else {
-                SlotAddr::Master
-            },
-        )),
-    ))
-}
-
 impl ResponsePolicy {
     /// Parse the command for the matching response policy.
-    pub fn for_command(cmd: &[u8]) -> Option<ResponsePolicy> {
+    pub(crate) fn for_command(cmd: &[u8]) -> Option<ResponsePolicy> {
         match cmd {
             b"SCRIPT EXISTS" => Some(ResponsePolicy::AggregateLogical(LogicalAggregateOp::And)),
 
             b"DBSIZE" | b"DEL" | b"EXISTS" | b"SLOWLOG LEN" | b"TOUCH" | b"UNLINK"
-            | b"LATENCY RESET" => Some(ResponsePolicy::Aggregate(AggregateOp::Sum)),
+            | b"LATENCY RESET" | b"PUBSUB NUMPAT" => {
+                Some(ResponsePolicy::Aggregate(AggregateOp::Sum))
+            }
 
             b"WAIT" => Some(ResponsePolicy::Aggregate(AggregateOp::Min)),
 
             b"ACL SETUSER" | b"ACL DELUSER" | b"ACL SAVE" | b"CLIENT SETNAME"
             | b"CLIENT SETINFO" | b"CONFIG SET" | b"CONFIG RESETSTAT" | b"CONFIG REWRITE"
             | b"FLUSHALL" | b"FLUSHDB" | b"FUNCTION DELETE" | b"FUNCTION FLUSH"
-            | b"FUNCTION LOAD" | b"FUNCTION RESTORE" | b"MEMORY PURGE" | b"MSET" | b"PING"
-            | b"SCRIPT FLUSH" | b"SCRIPT LOAD" | b"SLOWLOG RESET" => {
-                Some(ResponsePolicy::AllSucceeded)
-            }
+            | b"FUNCTION LOAD" | b"FUNCTION RESTORE" | b"MEMORY PURGE" | b"MSET" | b"JSON.MSET"
+            | b"PING" | b"SCRIPT FLUSH" | b"SCRIPT LOAD" | b"SLOWLOG RESET" | b"UNWATCH"
+            | b"WATCH" => Some(ResponsePolicy::AllSucceeded),
 
-            b"KEYS" | b"MGET" | b"SLOWLOG GET" => Some(ResponsePolicy::CombineArrays),
+            b"KEYS"
+            | b"FT._ALIASLIST"
+            | b"FT._LIST"
+            | b"MGET"
+            | b"JSON.MGET"
+            | b"SLOWLOG GET"
+            | b"PUBSUB CHANNELS"
+            | b"PUBSUB SHARDCHANNELS" => Some(ResponsePolicy::CombineArrays),
+
+            b"PUBSUB NUMSUB" | b"PUBSUB SHARDNUMSUB" => Some(ResponsePolicy::CombineMaps),
 
             b"FUNCTION KILL" | b"SCRIPT KILL" => Some(ResponsePolicy::OneSucceeded),
 
             // This isn't based on response_tips, but on the discussion here - https://github.com/redis/redis/issues/12410
-            b"RANDOMKEY" => Some(ResponsePolicy::OneSucceededNonEmpty),
+            b"RANDOMKEY" => Some(ResponsePolicy::FirstSucceededNonEmptyOrAllEmpty),
 
             b"LATENCY GRAPH" | b"LATENCY HISTOGRAM" | b"LATENCY HISTORY" | b"LATENCY DOCTOR"
             | b"LATENCY LATEST" => Some(ResponsePolicy::Special),
@@ -411,113 +605,232 @@ impl ResponsePolicy {
     }
 }
 
+enum RouteBy {
+    AllNodes,
+    AllPrimaries,
+    FirstKey,
+    MultiShard(MultiSlotArgPattern),
+    Random,
+    SecondArg,
+    SecondArgAfterKeyCount,
+    SecondArgSlot,
+    StreamsIndex,
+    ThirdArgAfterKeyCount,
+    Undefined,
+}
+
+fn base_routing(cmd: &[u8]) -> RouteBy {
+    match cmd {
+        b"ACL SETUSER"
+        | b"ACL DELUSER"
+        | b"ACL SAVE"
+        | b"CLIENT SETNAME"
+        | b"CLIENT SETINFO"
+        | b"SLOWLOG GET"
+        | b"SLOWLOG LEN"
+        | b"SLOWLOG RESET"
+        | b"CONFIG SET"
+        | b"CONFIG RESETSTAT"
+        | b"CONFIG REWRITE"
+        | b"SCRIPT FLUSH"
+        | b"SCRIPT LOAD"
+        | b"LATENCY RESET"
+        | b"LATENCY GRAPH"
+        | b"LATENCY HISTOGRAM"
+        | b"LATENCY HISTORY"
+        | b"LATENCY DOCTOR"
+        | b"LATENCY LATEST"
+        | b"PUBSUB NUMPAT"
+        | b"PUBSUB CHANNELS"
+        | b"PUBSUB NUMSUB"
+        | b"PUBSUB SHARDCHANNELS"
+        | b"PUBSUB SHARDNUMSUB"
+        | b"SCRIPT KILL"
+        | b"FUNCTION KILL"
+        | b"FUNCTION STATS" => RouteBy::AllNodes,
+
+        b"DBSIZE"
+        | b"DEBUG"
+        | b"FLUSHALL"
+        | b"FLUSHDB"
+        | b"FT._ALIASLIST"
+        | b"FT._LIST"
+        | b"FUNCTION DELETE"
+        | b"FUNCTION FLUSH"
+        | b"FUNCTION LOAD"
+        | b"FUNCTION RESTORE"
+        | b"INFO"
+        | b"KEYS"
+        | b"MEMORY DOCTOR"
+        | b"MEMORY MALLOC-STATS"
+        | b"MEMORY PURGE"
+        | b"MEMORY STATS"
+        | b"PING"
+        | b"SCRIPT EXISTS"
+        | b"UNWATCH"
+        | b"WAIT"
+        | b"RANDOMKEY"
+        | b"WAITAOF" => RouteBy::AllPrimaries,
+
+        b"MGET" | b"DEL" | b"EXISTS" | b"UNLINK" | b"TOUCH" | b"WATCH" => {
+            RouteBy::MultiShard(MultiSlotArgPattern::KeysOnly)
+        }
+
+        b"MSET" => RouteBy::MultiShard(MultiSlotArgPattern::KeyValuePairs),
+        b"JSON.MGET" => RouteBy::MultiShard(MultiSlotArgPattern::KeysAndLastArg),
+        b"JSON.MSET" => RouteBy::MultiShard(MultiSlotArgPattern::KeyWithTwoArgTriples),
+        // TODO - special handling - b"SCAN"
+        b"SCAN" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" => RouteBy::Undefined,
+
+        b"BLMPOP" | b"BZMPOP" | b"EVAL" | b"EVALSHA" | b"EVALSHA_RO" | b"EVAL_RO" | b"FCALL"
+        | b"FCALL_RO" => RouteBy::ThirdArgAfterKeyCount,
+
+        b"BITOP"
+        | b"MEMORY USAGE"
+        | b"PFDEBUG"
+        | b"XGROUP CREATE"
+        | b"XGROUP CREATECONSUMER"
+        | b"XGROUP DELCONSUMER"
+        | b"XGROUP DESTROY"
+        | b"XGROUP SETID"
+        | b"XINFO CONSUMERS"
+        | b"XINFO GROUPS"
+        | b"XINFO STREAM"
+        | b"OBJECT ENCODING"
+        | b"OBJECT FREQ"
+        | b"OBJECT IDLETIME"
+        | b"OBJECT REFCOUNT"
+        | b"JSON.DEBUG" => RouteBy::SecondArg,
+
+        b"LMPOP" | b"SINTERCARD" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZMPOP" | b"ZUNION" => {
+            RouteBy::SecondArgAfterKeyCount
+        }
+
+        b"XREAD" | b"XREADGROUP" => RouteBy::StreamsIndex,
+
+        // keyless commands with more arguments, whose arguments might be wrongly taken to be keys.
+        // TODO - double check these, in order to find better ways to route some of them.
+        b"ACL DRYRUN"
+        | b"ACL GENPASS"
+        | b"ACL GETUSER"
+        | b"ACL HELP"
+        | b"ACL LIST"
+        | b"ACL LOG"
+        | b"ACL USERS"
+        | b"ACL WHOAMI"
+        | b"AUTH"
+        | b"BGSAVE"
+        | b"CLIENT GETNAME"
+        | b"CLIENT GETREDIR"
+        | b"CLIENT ID"
+        | b"CLIENT INFO"
+        | b"CLIENT KILL"
+        | b"CLIENT PAUSE"
+        | b"CLIENT REPLY"
+        | b"CLIENT TRACKINGINFO"
+        | b"CLIENT UNBLOCK"
+        | b"CLIENT UNPAUSE"
+        | b"CLUSTER COUNT-FAILURE-REPORTS"
+        | b"CLUSTER INFO"
+        | b"CLUSTER KEYSLOT"
+        | b"CLUSTER MEET"
+        | b"CLUSTER MYSHARDID"
+        | b"CLUSTER NODES"
+        | b"CLUSTER REPLICAS"
+        | b"CLUSTER RESET"
+        | b"CLUSTER SET-CONFIG-EPOCH"
+        | b"CLUSTER SHARDS"
+        | b"CLUSTER SLOTS"
+        | b"COMMAND COUNT"
+        | b"COMMAND GETKEYS"
+        | b"COMMAND LIST"
+        | b"COMMAND"
+        | b"CONFIG GET"
+        | b"ECHO"
+        | b"FUNCTION LIST"
+        | b"LASTSAVE"
+        | b"LOLWUT"
+        | b"MODULE LIST"
+        | b"MODULE LOAD"
+        | b"MODULE LOADEX"
+        | b"MODULE UNLOAD"
+        | b"READONLY"
+        | b"READWRITE"
+        | b"SAVE"
+        | b"SCRIPT SHOW"
+        | b"TFCALL"
+        | b"TFCALLASYNC"
+        | b"TFUNCTION DELETE"
+        | b"TFUNCTION LIST"
+        | b"TFUNCTION LOAD"
+        | b"TIME" => RouteBy::Random,
+
+        b"CLUSTER ADDSLOTS"
+        | b"CLUSTER COUNTKEYSINSLOT"
+        | b"CLUSTER DELSLOTS"
+        | b"CLUSTER DELSLOTSRANGE"
+        | b"CLUSTER GETKEYSINSLOT"
+        | b"CLUSTER SETSLOT" => RouteBy::SecondArgSlot,
+
+        _ => RouteBy::FirstKey,
+    }
+}
+
 impl RoutingInfo {
     /// Returns the routing info for `r`.
-    pub fn for_routable<R>(r: &R) -> Option<RoutingInfo>
+    pub(crate) fn for_routable<R>(r: &R) -> Option<RoutingInfo>
     where
         R: Routable + ?Sized,
     {
         let cmd = &r.command()?[..];
-        match cmd {
-            b"RANDOMKEY"
-            | b"KEYS"
-            | b"SCRIPT EXISTS"
-            | b"WAIT"
-            | b"DBSIZE"
-            | b"FLUSHALL"
-            | b"FUNCTION RESTORE"
-            | b"FUNCTION DELETE"
-            | b"FUNCTION FLUSH"
-            | b"FUNCTION LOAD"
-            | b"PING"
-            | b"FLUSHDB"
-            | b"MEMORY PURGE"
-            | b"FUNCTION KILL"
-            | b"SCRIPT KILL"
-            | b"FUNCTION STATS"
-            | b"MEMORY MALLOC-STATS"
-            | b"MEMORY DOCTOR"
-            | b"MEMORY STATS"
-            | b"INFO" => Some(RoutingInfo::MultiNode((
+        match base_routing(cmd) {
+            RouteBy::AllNodes => Some(RoutingInfo::MultiNode((
+                MultipleNodeRoutingInfo::AllNodes,
+                ResponsePolicy::for_command(cmd),
+            ))),
+
+            RouteBy::AllPrimaries => Some(RoutingInfo::MultiNode((
                 MultipleNodeRoutingInfo::AllMasters,
                 ResponsePolicy::for_command(cmd),
             ))),
 
-            b"ACL SETUSER" | b"ACL DELUSER" | b"ACL SAVE" | b"CLIENT SETNAME"
-            | b"CLIENT SETINFO" | b"SLOWLOG GET" | b"SLOWLOG LEN" | b"SLOWLOG RESET"
-            | b"CONFIG SET" | b"CONFIG RESETSTAT" | b"CONFIG REWRITE" | b"SCRIPT FLUSH"
-            | b"SCRIPT LOAD" | b"LATENCY RESET" | b"LATENCY GRAPH" | b"LATENCY HISTOGRAM"
-            | b"LATENCY HISTORY" | b"LATENCY DOCTOR" | b"LATENCY LATEST" => {
-                Some(RoutingInfo::MultiNode((
-                    MultipleNodeRoutingInfo::AllNodes,
-                    ResponsePolicy::for_command(cmd),
-                )))
+            RouteBy::MultiShard(arg_pattern) => multi_shard(r, cmd, 1, arg_pattern),
+
+            RouteBy::Random => Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)),
+
+            RouteBy::ThirdArgAfterKeyCount => {
+                let key_count = r
+                    .arg_idx(2)
+                    .and_then(|x| std::str::from_utf8(x).ok())
+                    .and_then(|x| x.parse::<u64>().ok())?;
+                if key_count == 0 {
+                    Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                } else {
+                    r.arg_idx(3).map(|key| RoutingInfo::for_key(cmd, key))
+                }
             }
 
-            // keyless commands with more arguments, whose arguments might be wrongly taken to be keys.
-            // TODO - double check these, in order to find better ways to route some of them.
-            b"ACL DRYRUN"
-            | b"ACL GENPASS"
-            | b"ACL GETUSER"
-            | b"ACL HELP"
-            | b"ACL LIST"
-            | b"ACL LOG"
-            | b"ACL USERS"
-            | b"ACL WHOAMI"
-            | b"AUTH"
-            | b"TIME"
-            | b"PUBSUB CHANNELS"
-            | b"PUBSUB NUMPAT"
-            | b"PUBSUB SHARDCHANNELS"
-            | b"BGSAVE"
-            | b"WAITAOF"
-            | b"SAVE"
-            | b"LASTSAVE"
-            | b"CLIENT TRACKINGINFO"
-            | b"CLIENT PAUSE"
-            | b"CLIENT UNPAUSE"
-            | b"CLIENT UNBLOCK"
-            | b"CLIENT ID"
-            | b"CLIENT REPLY"
-            | b"CLIENT GETNAME"
-            | b"CLIENT GETREDIR"
-            | b"CLIENT INFO"
-            | b"CLIENT KILL"
-            | b"CLUSTER INFO"
-            | b"CLUSTER MEET"
-            | b"CLUSTER MYSHARDID"
-            | b"CLUSTER NODES"
-            | b"CLUSTER REPLICAS"
-            | b"CLUSTER RESET"
-            | b"CLUSTER SET-CONFIG-EPOCH"
-            | b"CLUSTER SLOTS"
-            | b"CLUSTER SHARDS"
-            | b"CLUSTER COUNT-FAILURE-REPORTS"
-            | b"CLUSTER KEYSLOT"
-            | b"COMMAND"
-            | b"COMMAND COUNT"
-            | b"COMMAND LIST"
-            | b"COMMAND GETKEYS"
-            | b"CONFIG GET"
-            | b"DEBUG"
-            | b"ECHO"
-            | b"READONLY"
-            | b"READWRITE"
-            | b"TFUNCTION LOAD"
-            | b"TFUNCTION DELETE"
-            | b"TFUNCTION LIST"
-            | b"TFCALL"
-            | b"TFCALLASYNC"
-            | b"MODULE LIST"
-            | b"MODULE LOAD"
-            | b"MODULE UNLOAD"
-            | b"MODULE LOADEX" => Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)),
+            RouteBy::SecondArg => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
 
-            b"CLUSTER COUNTKEYSINSLOT"
-            | b"CLUSTER GETKEYSINSLOT"
-            | b"CLUSTER SETSLOT"
-            | b"CLUSTER DELSLOTS"
-            | b"CLUSTER DELSLOTSRANGE" => r
+            RouteBy::SecondArgAfterKeyCount => {
+                let key_count = r
+                    .arg_idx(1)
+                    .and_then(|x| std::str::from_utf8(x).ok())
+                    .and_then(|x| x.parse::<u64>().ok())?;
+                if key_count == 0 {
+                    Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                } else {
+                    r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key))
+                }
+            }
+
+            RouteBy::StreamsIndex => {
+                let streams_position = r.position(b"STREAMS")?;
+                r.arg_idx(streams_position + 1)
+                    .map(|key| RoutingInfo::for_key(cmd, key))
+            }
+
+            RouteBy::SecondArgSlot => r
                 .arg_idx(2)
                 .and_then(|arg| std::str::from_utf8(arg).ok())
                 .and_then(|slot| slot.parse::<u16>().ok())
@@ -528,37 +841,12 @@ impl RoutingInfo {
                     )))
                 }),
 
-            b"MGET" | b"DEL" | b"EXISTS" | b"UNLINK" | b"TOUCH" => multi_shard(r, cmd, 1, false),
-            b"MSET" => multi_shard(r, cmd, 1, true),
-            b"PFCOUNT" | b"PFMERGE" => multiple_keys_same_slot(r, cmd, 1, None, false),
-            // TODO - special handling - b"SCAN"
-            b"SCAN" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" | b"MOVE" | b"BITOP" => None,
-            b"EVALSHA" | b"EVAL" => {
-                let key_count = r
-                    .arg_idx(2)
-                    .and_then(|x| std::str::from_utf8(x).ok())
-                    .and_then(|x| x.parse::<usize>().ok())?;
-                multiple_keys_same_slot(r, cmd, 3, Some(key_count), true)
-            }
-            b"XGROUP CREATE"
-            | b"XGROUP CREATECONSUMER"
-            | b"XGROUP DELCONSUMER"
-            | b"XGROUP DESTROY"
-            | b"XGROUP SETID"
-            | b"XINFO CONSUMERS"
-            | b"XINFO GROUPS"
-            | b"XINFO STREAM"
-            | b"PUBSUB SHARDNUMSUB"
-            | b"PUBSUB NUMSUB" => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
-            b"XREAD" | b"XREADGROUP" => {
-                let streams_position = r.position(b"STREAMS")?;
-                r.arg_idx(streams_position + 1)
-                    .map(|key| RoutingInfo::for_key(cmd, key))
-            }
-            _ => match r.arg_idx(1) {
+            RouteBy::FirstKey => match r.arg_idx(1) {
                 Some(key) => Some(RoutingInfo::for_key(cmd, key)),
                 None => Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)),
             },
+
+            RouteBy::Undefined => None,
         }
     }
 
@@ -571,7 +859,7 @@ impl RoutingInfo {
 }
 
 /// Objects that implement this trait define a request that can be routed by a cluster client to different nodes in the cluster.
-pub trait Routable {
+pub(crate) trait Routable {
     /// Convenience function to return ascii uppercase version of the
     /// the first argument (i.e., the command).
     fn command(&self) -> Option<Vec<u8>> {
@@ -641,7 +929,27 @@ impl Routable for Value {
     }
 }
 
-/// What type of node should a request be routed to.
+#[derive(Debug, Hash, Clone)]
+pub(crate) struct Slot {
+    pub(crate) start: u16,
+    pub(crate) end: u16,
+    pub(crate) master: String,
+    pub(crate) replicas: Vec<String>,
+}
+
+impl Slot {
+    #[allow(dead_code)] // used in tests
+    pub(crate) fn master(&self) -> &str {
+        self.master.as_str()
+    }
+
+    #[allow(dead_code)] // used in tests
+    pub(crate) fn replicas(&self) -> Vec<String> {
+        self.replicas.clone()
+    }
+}
+
+/// What type of node should a request be routed to, assuming read from replica is enabled.
 #[derive(Eq, PartialEq, Clone, Copy, Debug, Hash)]
 pub enum SlotAddr {
     /// The request must be routed to primary node
@@ -665,13 +973,26 @@ impl Route {
         Self(slot, slot_addr)
     }
 
+    /// Returns the slot number of the route.
     pub(crate) fn slot(&self) -> u16 {
         self.0
     }
 
-    pub(crate) fn slot_addr(&self) -> &SlotAddr {
-        &self.1
+    /// Returns the slot address of the route.
+    pub(crate) fn slot_addr(&self) -> SlotAddr {
+        self.1
     }
+
+    /// Returns a new Route for a random primary node
+    pub(crate) fn new_random_primary() -> Self {
+        Self::new(random_slot(), SlotAddr::Master)
+    }
+}
+
+/// Choose a random slot from `0..SLOT_SIZE` (excluding)
+fn random_slot() -> u16 {
+    let mut rng = rand::rng();
+    rng.random_range(0..SLOT_SIZE)
 }
 
 fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
@@ -684,23 +1005,14 @@ fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
 }
 
 #[cfg(test)]
-mod tests {
-    use core::panic;
-
-    use super::*;
-    use crate::{
-        cluster_routing::{get_slot, AggregateOp, ResponsePolicy},
-        cmd,
-        parser::parse_redis_value,
-        Value,
+mod tests_routing {
+    use super::{
+        command_for_multi_slot_indices, AggregateOp, MultiSlotArgPattern, MultipleNodeRoutingInfo,
+        ResponsePolicy, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr,
     };
-
-    #[test]
-    fn test_get_hashtag() {
-        assert_eq!(get_hashtag(&b"foo{bar}baz"[..]), Some(&b"bar"[..]));
-        assert_eq!(get_hashtag(&b"foo{}{baz}"[..]), None);
-        assert_eq!(get_hashtag(&b"foo{{bar}}zap"[..]), Some(&b"{bar"[..]));
-    }
+    use crate::cluster_routing::slot;
+    use crate::{cmd, parser::parse_redis_value, Value};
+    use core::panic;
 
     #[test]
     fn test_routing_info_mixed_capatalization() {
@@ -748,6 +1060,16 @@ mod tests {
         test_cmd.arg("GROUPS").arg("FOOBAR");
         test_cmds.push(test_cmd);
 
+        // Routing key is 3rd or 4th arg (3rd = "0" == RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+        test_cmd = cmd("EVAL");
+        test_cmd.arg("FOO").arg("0").arg("BAR");
+        test_cmds.push(test_cmd);
+
+        // Routing key is 3rd or 4th arg (3rd != "0" == RoutingInfo::Slot)
+        test_cmd = cmd("EVAL");
+        test_cmd.arg("FOO").arg("4").arg("BAR");
+        test_cmds.push(test_cmd);
+
         // Routing key position is variable, 3rd arg
         test_cmd = cmd("XREAD");
         test_cmd.arg("STREAMS").arg("4");
@@ -789,7 +1111,7 @@ mod tests {
         assert_eq!(
             RoutingInfo::for_routable(&cmd("SCRIPT KILL")),
             Some(RoutingInfo::MultiNode((
-                MultipleNodeRoutingInfo::AllMasters,
+                MultipleNodeRoutingInfo::AllNodes,
                 Some(ResponsePolicy::OneSucceeded)
             )))
         );
@@ -815,8 +1137,6 @@ mod tests {
             cmd("SHUTDOWN"),
             cmd("SLAVEOF"),
             cmd("REPLICAOF"),
-            cmd("MOVE"),
-            cmd("BITOP"),
         ] {
             assert_eq!(
                 RoutingInfo::for_routable(&cmd),
@@ -826,7 +1146,34 @@ mod tests {
             );
         }
 
+        for cmd in [
+            cmd("EVAL").arg(r#"redis.call("PING");"#).arg(0),
+            cmd("EVALSHA").arg(r#"redis.call("PING");"#).arg(0),
+        ] {
+            assert_eq!(
+                RoutingInfo::for_routable(cmd),
+                Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+            );
+        }
+
+        // While FCALL with N keys is expected to be routed to a specific node
+        assert_eq!(
+            RoutingInfo::for_routable(cmd("FCALL").arg("foo").arg(1).arg("mykey")),
+            Some(RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::SpecificNode(Route::new(slot(b"mykey"), SlotAddr::Master))
+            ))
+        );
+
         for (cmd, expected) in [
+            (
+                cmd("EVAL")
+                    .arg(r#"redis.call("GET, KEYS[1]");"#)
+                    .arg(1)
+                    .arg("foo"),
+                Some(RoutingInfo::SingleNode(
+                    SingleNodeRoutingInfo::SpecificNode(Route::new(slot(b"foo"), SlotAddr::Master)),
+                )),
+            ),
             (
                 cmd("XGROUP")
                     .arg("CREATE")
@@ -913,7 +1260,7 @@ mod tests {
     }
 
     #[test]
-    fn test_multi_shard() {
+    fn test_multi_shard_keys_only() {
         let mut cmd = cmd("DEL");
         cmd.arg("foo").arg("bar").arg("baz").arg("{bar}vaz");
         let routing = RoutingInfo::for_routable(&cmd);
@@ -923,11 +1270,11 @@ mod tests {
         expected.insert(Route(12182, SlotAddr::Master), vec![0]);
 
         assert!(
-            matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot(vec), Some(ResponsePolicy::Aggregate(AggregateOp::Sum))))) if {
+            matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot((vec, args_pattern)), Some(ResponsePolicy::Aggregate(AggregateOp::Sum))))) if {
                 let routes = vec.clone().into_iter().collect();
-                expected == routes
+                expected == routes && args_pattern == MultiSlotArgPattern::KeysOnly
             }),
-            "{routing:?}"
+            "expected={expected:?}\nrouting={routing:?}"
         );
 
         let mut cmd = crate::cmd("MGET");
@@ -939,142 +1286,85 @@ mod tests {
         expected.insert(Route(12182, SlotAddr::ReplicaOptional), vec![0]);
 
         assert!(
-            matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot(vec), Some(ResponsePolicy::CombineArrays)))) if {
+            matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot((vec, args_pattern)), Some(ResponsePolicy::CombineArrays)))) if {
                 let routes = vec.clone().into_iter().collect();
-                expected ==routes
+                expected == routes && args_pattern == MultiSlotArgPattern::KeysOnly
             }),
-            "{routing:?}"
+            "expected={expected:?}\nrouting={routing:?}"
         );
     }
 
     #[test]
-    fn test_multiple_keys_same_slot() {
-        // single key
-        let mut cmd = crate::cmd("PFCOUNT");
-        cmd.arg("hll-1");
+    fn test_multi_shard_key_value_pairs() {
+        let mut cmd = cmd("MSET");
+        cmd.arg("foo") // key slot 12182
+            .arg("bar") // value
+            .arg("foo2") // key slot 1044
+            .arg("bar2")    // value
+            .arg("{foo}foo3") // key slot 12182
+            .arg("bar3"); // value
         let routing = RoutingInfo::for_routable(&cmd);
-        assert!(matches!(
-            routing,
-            Some(RoutingInfo::SingleNode(
-                SingleNodeRoutingInfo::SpecificNode(Route(_, SlotAddr::ReplicaOptional))
-            ))
-        ));
+        let mut expected = std::collections::HashMap::new();
+        expected.insert(Route(1044, SlotAddr::Master), vec![2, 3]);
+        expected.insert(Route(12182, SlotAddr::Master), vec![0, 1, 4, 5]);
 
-        let mut cmd = crate::cmd("PFMERGE");
-        cmd.arg("hll-1");
-        let routing = RoutingInfo::for_routable(&cmd);
-        assert!(matches!(
-            routing,
-            Some(RoutingInfo::SingleNode(
-                SingleNodeRoutingInfo::SpecificNode(Route(_, SlotAddr::Master))
-            ))
-        ));
-
-        // multiple keys
-        let mut cmd = crate::cmd("PFCOUNT");
-        cmd.arg("{hll}-1").arg("{hll}-2");
-        let routing = RoutingInfo::for_routable(&cmd);
-        assert!(matches!(
-            routing,
-            Some(RoutingInfo::SingleNode(
-                SingleNodeRoutingInfo::SpecificNode(Route(_, SlotAddr::ReplicaOptional))
-            ))
-        ));
-
-        let mut cmd = crate::cmd("PFMERGE");
-        cmd.arg("{hll}-1").arg("{hll}-2");
-        let routing = RoutingInfo::for_routable(&cmd);
-        assert!(matches!(
-            routing,
-            Some(RoutingInfo::SingleNode(
-                SingleNodeRoutingInfo::SpecificNode(Route(_, SlotAddr::Master))
-            ))
-        ));
-
-        // same-slot violation
-        let mut cmd = crate::cmd("PFCOUNT");
-        cmd.arg("hll-1").arg("hll-2");
-        let routing = RoutingInfo::for_routable(&cmd);
-        assert!(routing.is_none());
-
-        let mut cmd = crate::cmd("PFMERGE");
-        cmd.arg("hll-1").arg("hll-2");
-        let routing = RoutingInfo::for_routable(&cmd);
-        assert!(routing.is_none());
-
-        // missing keys
-        let cmd = crate::cmd("PFCOUNT");
-        let routing = RoutingInfo::for_routable(&cmd);
-        assert!(routing.is_none());
-
-        let cmd = crate::cmd("PFMERGE");
-        let routing = RoutingInfo::for_routable(&cmd);
-        assert!(routing.is_none());
+        assert!(
+            matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot((vec, args_pattern)), Some(ResponsePolicy::AllSucceeded)))) if {
+                let routes = vec.clone().into_iter().collect();
+                expected == routes && args_pattern == MultiSlotArgPattern::KeyValuePairs
+            }),
+            "expected={expected:?}\nrouting={routing:?}"
+        );
     }
 
     #[test]
-    fn test_eval_and_evalsha() {
-        // no key
-        let mut cmd = crate::cmd("EVAL");
-        cmd.arg(r#""return 42""#).arg("0");
+    fn test_multi_shard_keys_and_path() {
+        let mut cmd = cmd("JSON.MGET");
+        cmd.arg("foo") // key slot 12182
+            .arg("bar") // key slot 5061
+            .arg("baz") // key slot 4813
+            .arg("{bar}vaz") // key slot 5061
+            .arg("$.f.a"); // path
         let routing = RoutingInfo::for_routable(&cmd);
-        assert_eq!(
-            routing,
-            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
-        );
+        let mut expected = std::collections::HashMap::new();
+        expected.insert(Route(4813, SlotAddr::ReplicaOptional), vec![2, 4]);
+        expected.insert(Route(5061, SlotAddr::ReplicaOptional), vec![1, 3, 4]);
+        expected.insert(Route(12182, SlotAddr::ReplicaOptional), vec![0, 4]);
 
-        // just keys
-        let mut cmd = crate::cmd("EVAL");
-        cmd.arg(r#""return {KEYS[1], KEYS[2]}""#)
-            .arg("2")
-            .arg("{k}1")
-            .arg("{k}2");
-        let routing = RoutingInfo::for_routable(&cmd);
-        assert_eq!(
-            routing,
-            Some(RoutingInfo::SingleNode(
-                SingleNodeRoutingInfo::SpecificNode(Route(get_slot(b"{k}1"), SlotAddr::Master))
-            ))
+        assert!(
+            matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot((vec, args_pattern)), Some(ResponsePolicy::CombineArrays)))) if {
+                let routes = vec.clone().into_iter().collect();
+                expected == routes && args_pattern == MultiSlotArgPattern::KeysAndLastArg
+            }),
+            "expected={expected:?}\nrouting={routing:?}"
         );
+    }
 
-        // just values
-        let mut cmd = crate::cmd("EVALSHA");
-        cmd.arg("c62ff9e46fd2e8a71f74500b9438c80df6af233c")
-            .arg("0")
-            .arg("v1")
-            .arg("v2");
+    #[test]
+    fn test_multi_shard_key_with_two_arg_triples() {
+        let mut cmd = cmd("JSON.MSET");
+        cmd
+            .arg("foo") // key slot 12182
+            .arg("$.a") // path
+            .arg("bar") // value
+            .arg("foo2") // key slot 1044
+            .arg("$.f.a") // path
+            .arg("bar2") // value
+            .arg("{foo}foo3") // key slot 12182
+            .arg("$.f.a") // path
+            .arg("bar3"); // value
         let routing = RoutingInfo::for_routable(&cmd);
-        assert_eq!(
-            routing,
-            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+        let mut expected = std::collections::HashMap::new();
+        expected.insert(Route(1044, SlotAddr::Master), vec![3, 4, 5]);
+        expected.insert(Route(12182, SlotAddr::Master), vec![0, 1, 2, 6, 7, 8]);
+
+        assert!(
+            matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot((vec, args_pattern)), Some(ResponsePolicy::AllSucceeded)))) if {
+                let routes = vec.clone().into_iter().collect();
+                expected == routes && args_pattern == MultiSlotArgPattern::KeyWithTwoArgTriples
+            }),
+            "expected={expected:?}\nrouting={routing:?}"
         );
-
-        // keys and values
-        let mut cmd = crate::cmd("EVALSHA");
-        cmd.arg("c62ff9e46fd2e8a71f74500b9438c80df6af233c")
-            .arg("2")
-            .arg("{k}1")
-            .arg("{k}2")
-            .arg("v1")
-            .arg("v2");
-        let routing = RoutingInfo::for_routable(&cmd);
-        assert_eq!(
-            routing,
-            Some(RoutingInfo::SingleNode(
-                SingleNodeRoutingInfo::SpecificNode(Route(get_slot(b"{k}1"), SlotAddr::Master))
-            ))
-        );
-
-        // same-slot violation
-        let mut cmd = crate::cmd("EVALSHA");
-        cmd.arg("c62ff9e46fd2e8a71f74500b9438c80df6af233c")
-            .arg("2")
-            .arg("k1")
-            .arg("k2")
-            .arg("v1")
-            .arg("v2");
-        let routing = RoutingInfo::for_routable(&cmd);
-        assert_eq!(routing, None);
     }
 
     #[test]
@@ -1089,9 +1379,10 @@ mod tests {
         let expected = [vec![0], vec![1, 3], vec![2]];
 
         let mut indices: Vec<_> = match routing {
-            Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot(vec), _))) => {
-                vec.into_iter().map(|(_, indices)| indices).collect()
-            }
+            Some(RoutingInfo::MultiNode((
+                MultipleNodeRoutingInfo::MultiSlot((vec, MultiSlotArgPattern::KeysOnly)),
+                _,
+            ))) => vec.into_iter().map(|(_, indices)| indices).collect(),
             _ => panic!("unexpected routing: {routing:?}"),
         };
         indices.sort_by(|prev, next| prev.iter().next().unwrap().cmp(next.iter().next().unwrap())); // sorting because the `for_routable` doesn't return values in a consistent order between runs.
@@ -1125,7 +1416,8 @@ mod tests {
     }
 
     #[test]
-    fn test_combining_results_into_single_array() {
+    fn test_combining_results_into_single_array_only_keys() {
+        // For example `MGET foo bar baz {baz}baz2 {bar}bar2 {foo}foo2`
         let res1 = Value::Array(vec![Value::Nil, Value::Okay]);
         let res2 = Value::Array(vec![
             Value::BulkString("1".as_bytes().to_vec()),
@@ -1134,19 +1426,141 @@ mod tests {
         let res3 = Value::Array(vec![Value::SimpleString("2".to_string()), Value::Int(3)]);
         let results = super::combine_and_sort_array_results(
             vec![res1, res2, res3],
-            [vec![0, 5], vec![1, 4], vec![2, 3]].iter(),
+            &[
+                (Route(4813, SlotAddr::Master), vec![2, 3]),
+                (Route(5061, SlotAddr::Master), vec![1, 4]),
+                (Route(12182, SlotAddr::Master), vec![0, 5]),
+            ],
+            &MultiSlotArgPattern::KeysOnly,
         );
 
         assert_eq!(
             results.unwrap(),
             Value::Array(vec![
-                Value::Nil,
-                Value::BulkString("1".as_bytes().to_vec()),
                 Value::SimpleString("2".to_string()),
-                Value::Int(3),
+                Value::BulkString("1".as_bytes().to_vec()),
+                Value::Nil,
+                Value::Okay,
                 Value::BulkString("4".as_bytes().to_vec()),
+                Value::Int(3),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_combining_results_into_single_array_key_value_paires() {
+        // For example `MSET foo bar foo2 bar2 {foo}foo3 bar3`
+        let res1 = Value::Array(vec![Value::Okay]);
+        let res2 = Value::Array(vec![Value::BulkString("1".as_bytes().to_vec()), Value::Nil]);
+        let results = super::combine_and_sort_array_results(
+            vec![res1, res2],
+            &[
+                (Route(1044, SlotAddr::Master), vec![2, 3]),
+                (Route(12182, SlotAddr::Master), vec![0, 1, 4, 5]),
+            ],
+            &MultiSlotArgPattern::KeyValuePairs,
+        );
+
+        assert_eq!(
+            results.unwrap(),
+            Value::Array(vec![
+                Value::BulkString("1".as_bytes().to_vec()),
+                Value::Okay,
+                Value::Nil
+            ])
+        );
+    }
+
+    #[test]
+    fn test_combining_results_into_single_array_keys_and_path() {
+        // For example `JSON.MGET foo bar {foo}foo2 $.a`
+        let res1 = Value::Array(vec![Value::Okay]);
+        let res2 = Value::Array(vec![Value::BulkString("1".as_bytes().to_vec()), Value::Nil]);
+        let results = super::combine_and_sort_array_results(
+            vec![res1, res2],
+            &[
+                (Route(5061, SlotAddr::Master), vec![2, 3]),
+                (Route(12182, SlotAddr::Master), vec![0, 1, 3]),
+            ],
+            &MultiSlotArgPattern::KeysAndLastArg,
+        );
+
+        assert_eq!(
+            results.unwrap(),
+            Value::Array(vec![
+                Value::BulkString("1".as_bytes().to_vec()),
+                Value::Nil,
                 Value::Okay,
             ])
         );
+    }
+
+    #[test]
+    fn test_combining_results_into_single_array_key_with_two_arg_triples() {
+        // For example `JSON.MSET foo $.a bar foo2 $.f.a bar2 {foo}foo3 $.f bar3`
+        let res1 = Value::Array(vec![Value::Okay]);
+        let res2 = Value::Array(vec![Value::BulkString("1".as_bytes().to_vec()), Value::Nil]);
+        let results = super::combine_and_sort_array_results(
+            vec![res1, res2],
+            &[
+                (Route(5061, SlotAddr::Master), vec![3, 4, 5]),
+                (Route(12182, SlotAddr::Master), vec![0, 1, 2, 6, 7, 8]),
+            ],
+            &MultiSlotArgPattern::KeyWithTwoArgTriples,
+        );
+
+        assert_eq!(
+            results.unwrap(),
+            Value::Array(vec![
+                Value::BulkString("1".as_bytes().to_vec()),
+                Value::Okay,
+                Value::Nil
+            ])
+        );
+    }
+
+    #[test]
+    fn test_combine_map_results() {
+        let input = vec![];
+        let result = super::combine_map_results(input).unwrap();
+        assert_eq!(result, Value::Map(vec![]));
+
+        let input = vec![
+            Value::Array(vec![
+                Value::BulkString(b"key1".to_vec()),
+                Value::Int(5),
+                Value::BulkString(b"key2".to_vec()),
+                Value::Int(10),
+            ]),
+            Value::Array(vec![
+                Value::BulkString(b"key1".to_vec()),
+                Value::Int(3),
+                Value::BulkString(b"key3".to_vec()),
+                Value::Int(15),
+            ]),
+        ];
+        let result = super::combine_map_results(input).unwrap();
+        let mut expected = vec![
+            (Value::BulkString(b"key1".to_vec()), Value::Int(8)),
+            (Value::BulkString(b"key2".to_vec()), Value::Int(10)),
+            (Value::BulkString(b"key3".to_vec()), Value::Int(15)),
+        ];
+        expected.sort_unstable_by(|a, b| match (&a.0, &b.0) {
+            (Value::BulkString(a_bytes), Value::BulkString(b_bytes)) => a_bytes.cmp(b_bytes),
+            _ => std::cmp::Ordering::Equal,
+        });
+        let mut result_vec = match result {
+            Value::Map(v) => v,
+            _ => panic!("Expected Map"),
+        };
+        result_vec.sort_unstable_by(|a, b| match (&a.0, &b.0) {
+            (Value::BulkString(a_bytes), Value::BulkString(b_bytes)) => a_bytes.cmp(b_bytes),
+            _ => std::cmp::Ordering::Equal,
+        });
+        assert_eq!(result_vec, expected);
+
+        let input = vec![Value::Int(5)];
+        let result = super::combine_map_results(input);
+        assert!(result.is_err());
     }
 }
