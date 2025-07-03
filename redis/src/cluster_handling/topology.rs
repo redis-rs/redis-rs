@@ -1,8 +1,7 @@
 //! This module provides the functionality to refresh and calculate the cluster topology for Redis Cluster.
 
-use crate::cluster::get_connection_addr;
-use crate::cluster_routing::Slot;
-use crate::{cluster::TlsMode, RedisResult, Value};
+use super::{routing::Slot, sync_connection::get_connection_addr, sync_connection::TlsMode};
+use crate::{RedisResult, Value};
 
 // Parse slot data from raw redis value.
 pub(crate) fn parse_slots(
