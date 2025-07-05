@@ -51,7 +51,7 @@ tokio = { version = "1", features = [
   "time",
   "sync",
 ], optional = true }
-socket2 = { version = "0.5", features = ["all"] }
+socket2 = { version = "0.6", features = ["all"] }
 
 # Only needed for the connection manager
 arc-swap = { version = "1.7.1", optional = true }
