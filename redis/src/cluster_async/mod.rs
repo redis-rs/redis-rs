@@ -113,8 +113,8 @@ use crate::{
     },
     cluster_topology::parse_slots,
     cmd,
+    errors::closed_connection_error,
     subscription_tracker::SubscriptionTracker,
-    types::closed_connection_error,
     AsyncConnectionConfig, Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError,
     RedisFuture, RedisResult, ToRedisArgs, Value,
 };

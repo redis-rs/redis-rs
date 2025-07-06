@@ -14,25 +14,7 @@ use std::io;
 use std::ops::Deref;
 use std::str::from_utf8;
 
-macro_rules! invalid_type_error {
-    ($v:expr, $det:expr) => {{
-        fail!(ParsingError {
-            description: format!("{:?} (value was {:?})", $det, $v).into(),
-        })
-    }};
-}
-
-macro_rules! invalid_type_error_inner {
-    ($v:expr, $det:expr) => {
-        ParsingError {
-            description: format!("{:?} (value was {:?})", $det, $v).into(),
-        }
-    };
-}
-
 use crate::errors::{RedisError, ServerError};
-
-pub(crate) use {invalid_type_error, invalid_type_error_inner};
 
 /// Helper enum that is used to define expiry time
 pub enum Expiry {
@@ -582,10 +564,10 @@ impl FromRedisValue for ReplicaInfo {
     fn from_owned_redis_value(v: Value) -> Result<Self, ParsingError> {
         let v = match get_owned_inner_value(v).into_sequence() {
             Ok(v) => v,
-            Err(v) => invalid_type_error!(v, "Replica response should be an array"),
+            Err(v) => crate::errors::invalid_type_error!(v, "Replica response should be an array"),
         };
         if v.len() < 3 {
-            invalid_type_error!(v, "Replica array is too short, expected 3 elements")
+            crate::errors::invalid_type_error!(v, "Replica array is too short, expected 3 elements")
         }
         let mut v = v.into_iter();
         let ip = from_owned_redis_value(v.next().expect("len was checked"))?;
@@ -607,19 +589,25 @@ impl FromRedisValue for Role {
     fn from_owned_redis_value(v: Value) -> Result<Self, ParsingError> {
         let v = match get_owned_inner_value(v).into_sequence() {
             Ok(v) => v,
-            Err(v) => invalid_type_error!(v, "Role response should be an array"),
+            Err(v) => crate::errors::invalid_type_error!(v, "Role response should be an array"),
         };
         if v.len() < 2 {
-            invalid_type_error!(v, "Role array is too short, expected at least 2 elements")
+            crate::errors::invalid_type_error!(
+                v,
+                "Role array is too short, expected at least 2 elements"
+            )
         }
         match &v[0] {
             Value::BulkString(role) => match role.as_slice() {
                 b"master" => Role::new_primary(v),
                 b"slave" => Role::new_replica(v),
                 b"sentinel" => Role::new_sentinel(v),
-                _ => invalid_type_error!(v, "Role type is not master, slave or sentinel"),
+                _ => crate::errors::invalid_type_error!(
+                    v,
+                    "Role type is not master, slave or sentinel"
+                ),
             },
-            _ => invalid_type_error!(v, "Role type is not a bulk string"),
+            _ => crate::errors::invalid_type_error!(v, "Role type is not a bulk string"),
         }
     }
 }
@@ -627,7 +615,7 @@ impl FromRedisValue for Role {
 impl Role {
     fn new_primary(values: Vec<Value>) -> Result<Self, ParsingError> {
         if values.len() < 3 {
-            invalid_type_error!(
+            crate::errors::invalid_type_error!(
                 values,
                 "Role primary response too short, expected 3 elements"
             )
@@ -647,7 +635,7 @@ impl Role {
 
     fn new_replica(values: Vec<Value>) -> Result<Self, ParsingError> {
         if values.len() < 5 {
-            invalid_type_error!(
+            crate::errors::invalid_type_error!(
                 values,
                 "Role replica response too short, expected 5 elements"
             )
@@ -671,7 +659,7 @@ impl Role {
 
     fn new_sentinel(values: Vec<Value>) -> Result<Self, ParsingError> {
         if values.len() < 2 {
-            invalid_type_error!(
+            crate::errors::invalid_type_error!(
                 values,
                 "Role sentinel response too short, expected at least 2 elements"
             )
@@ -1358,7 +1346,7 @@ fn vec_to_array<T, const N: usize>(
                 "Response has wrong dimension, expected {N}, got {}",
                 items.len()
             );
-            invalid_type_error!(original_value, msg)
+            crate::errors::invalid_type_error!(original_value, msg)
         }
     }
 }
@@ -1373,7 +1361,7 @@ impl<T: FromRedisValue, const N: usize> FromRedisValue for [T; N] {
                         "Conversion to Array[{}; {N}] failed",
                         std::any::type_name::<T>()
                     );
-                    invalid_type_error!(value, msg)
+                    crate::errors::invalid_type_error!(value, msg)
                 }
             },
             Value::Array(ref items) => {
@@ -1381,7 +1369,7 @@ impl<T: FromRedisValue, const N: usize> FromRedisValue for [T; N] {
                 vec_to_array(items, value)
             }
             Value::Nil => vec_to_array(vec![], value),
-            _ => invalid_type_error!(value, "Response type not array compatible"),
+            _ => crate::errors::invalid_type_error!(value, "Response type not array compatible"),
         }
     }
 }
@@ -1492,14 +1480,14 @@ macro_rules! from_redis_value_for_num_internal {
             Value::Int(val) => Ok(val as $t),
             Value::SimpleString(ref s) => match s.parse::<$t>() {
                 Ok(rv) => Ok(rv),
-                Err(_) => invalid_type_error!(v, "Could not convert from string."),
+                Err(_) => crate::errors::invalid_type_error!(v, "Could not convert from string."),
             },
             Value::BulkString(ref bytes) => match from_utf8(bytes)?.parse::<$t>() {
                 Ok(rv) => Ok(rv),
-                Err(_) => invalid_type_error!(v, "Could not convert from string."),
+                Err(_) => crate::errors::invalid_type_error!(v, "Could not convert from string."),
             },
             Value::Double(val) => Ok(val as $t),
-            _ => invalid_type_error!(v, "Response type not convertible to numeric."),
+            _ => crate::errors::invalid_type_error!(v, "Response type not convertible to numeric."),
         }
     }};
 }
@@ -1551,17 +1539,18 @@ macro_rules! from_redis_value_for_bignum_internal {
     ($t:ty, $v:expr) => {{
         let v = $v;
         match *v {
-            Value::Int(val) => <$t>::try_from(val)
-                .map_err(|_| invalid_type_error_inner!(v, "Could not convert from integer.")),
+            Value::Int(val) => <$t>::try_from(val).map_err(|_| {
+                crate::errors::invalid_type_error_inner!(v, "Could not convert from integer.")
+            }),
             Value::SimpleString(ref s) => match s.parse::<$t>() {
                 Ok(rv) => Ok(rv),
-                Err(_) => invalid_type_error!(v, "Could not convert from string."),
+                Err(_) => crate::errors::invalid_type_error!(v, "Could not convert from string."),
             },
             Value::BulkString(ref bytes) => match from_utf8(bytes)?.parse::<$t>() {
                 Ok(rv) => Ok(rv),
-                Err(_) => invalid_type_error!(v, "Could not convert from string."),
+                Err(_) => crate::errors::invalid_type_error!(v, "Could not convert from string."),
             },
-            _ => invalid_type_error!(v, "Response type not convertible to numeric."),
+            _ => crate::errors::invalid_type_error!(v, "Response type not convertible to numeric."),
         }
     }};
 }
@@ -1602,7 +1591,7 @@ impl FromRedisValue for bool {
                 } else if &s[..] == "0" {
                     Ok(false)
                 } else {
-                    invalid_type_error!(v, "Response status not valid boolean");
+                    crate::errors::invalid_type_error!(v, "Response status not valid boolean");
                 }
             }
             Value::BulkString(ref bytes) => {
@@ -1611,12 +1600,12 @@ impl FromRedisValue for bool {
                 } else if bytes == b"0" {
                     Ok(false)
                 } else {
-                    invalid_type_error!(v, "Response type not bool compatible.");
+                    crate::errors::invalid_type_error!(v, "Response type not bool compatible.");
                 }
             }
             Value::Boolean(b) => Ok(b),
             Value::Okay => Ok(true),
-            _ => invalid_type_error!(v, "Response type not bool compatible."),
+            _ => crate::errors::invalid_type_error!(v, "Response type not bool compatible."),
         }
     }
 }
@@ -1628,7 +1617,7 @@ impl FromRedisValue for CString {
             Value::BulkString(ref bytes) => Ok(CString::new(bytes.as_slice())?),
             Value::Okay => Ok(CString::new("OK")?),
             Value::SimpleString(ref val) => Ok(CString::new(val.as_bytes())?),
-            _ => invalid_type_error!(v, "Response type not CString compatible."),
+            _ => crate::errors::invalid_type_error!(v, "Response type not CString compatible."),
         }
     }
     fn from_owned_redis_value(v: Value) -> Result<CString, ParsingError> {
@@ -1637,7 +1626,7 @@ impl FromRedisValue for CString {
             Value::BulkString(bytes) => Ok(CString::new(bytes)?),
             Value::Okay => Ok(CString::new("OK")?),
             Value::SimpleString(val) => Ok(CString::new(val)?),
-            _ => invalid_type_error!(v, "Response type not CString compatible."),
+            _ => crate::errors::invalid_type_error!(v, "Response type not CString compatible."),
         }
     }
 }
@@ -1655,7 +1644,7 @@ impl FromRedisValue for String {
             } => Ok(text.to_string()),
             Value::Double(ref val) => Ok(val.to_string()),
             Value::Int(val) => Ok(val.to_string()),
-            _ => invalid_type_error!(v, "Response type not string compatible."),
+            _ => crate::errors::invalid_type_error!(v, "Response type not string compatible."),
         }
     }
 
@@ -1668,7 +1657,7 @@ impl FromRedisValue for String {
             Value::VerbatimString { format: _, text } => Ok(text),
             Value::Double(val) => Ok(val.to_string()),
             Value::Int(val) => Ok(val.to_string()),
-            _ => invalid_type_error!(v, "Response type not string compatible."),
+            _ => crate::errors::invalid_type_error!(v, "Response type not string compatible."),
         }
     }
 }
@@ -1713,7 +1702,7 @@ macro_rules! from_vec_from_redis_value {
                     // u8 has its own implementation of from_byte_vec.
                     Value::BulkString(bytes) => match FromRedisValue::from_byte_vec(bytes) {
                         Some(x) => Ok($convert(x)),
-                        None => invalid_type_error!(
+                        None => crate::errors::invalid_type_error!(
                             v,
                             format!("Conversion to {} failed.", std::any::type_name::<$Type>())
                         ),
@@ -1735,7 +1724,7 @@ macro_rules! from_vec_from_redis_value {
                         Ok($convert(n))
                     }
                     Value::Nil => Ok($convert(Vec::new())),
-                    _ => invalid_type_error!(v, "Response type not vector compatible."),
+                    _ => crate::errors::invalid_type_error!(v, "Response type not vector compatible."),
                 }
             }
             fn from_owned_redis_value(v: Value) -> Result<$Type, ParsingError> {
@@ -1761,7 +1750,7 @@ macro_rules! from_vec_from_redis_value {
                         Ok($convert(n))
                     }
                     Value::Nil => Ok($convert(Vec::new())),
-                    _ => invalid_type_error!(v, "Response type not vector compatible."),
+                    _ => crate::errors::invalid_type_error!(v, "Response type not vector compatible."),
                 }
             }
         }
@@ -1784,7 +1773,7 @@ macro_rules! impl_from_redis_value_for_map {
                     Value::Nil => Ok(Default::default()),
                     _ => v
                         .as_map_iter()
-                        .ok_or_else(|| invalid_type_error_inner!(v, "Response type not map compatible"))?
+                        .ok_or_else(|| crate::errors::invalid_type_error_inner!(v, "Response type not map compatible"))?
                         .map(|(k, v)| {
                             Ok((from_redis_value(k)?, from_redis_value(v)?))
                         })
@@ -1798,7 +1787,7 @@ macro_rules! impl_from_redis_value_for_map {
                     Value::Nil => Ok(Default::default()),
                     _ => v
                         .into_map_iter()
-                        .map_err(|v| invalid_type_error_inner!(v, "Response type not map compatible"))?
+                        .map_err(|v| crate::errors::invalid_type_error_inner!(v, "Response type not map compatible"))?
                         .map(|(k, v)| {
                             Ok((from_owned_redis_value(k)?, from_owned_redis_value(v)?))
                         })
@@ -1841,7 +1830,7 @@ macro_rules! impl_from_redis_value_for_set {
                 let v = get_inner_value(v);
                 let items = v
                     .as_sequence()
-                    .ok_or_else(|| invalid_type_error_inner!(v, "Response type not map compatible"))?;
+                    .ok_or_else(|| crate::errors::invalid_type_error_inner!(v, "Response type not map compatible"))?;
                 items.iter().map(|item| from_redis_value(item)).collect()
             }
 
@@ -1849,7 +1838,7 @@ macro_rules! impl_from_redis_value_for_set {
                 let v = get_owned_inner_value(v);
                 let items = v
                     .into_sequence()
-                    .map_err(|v| invalid_type_error_inner!(v, "Response type not map compatible"))?;
+                    .map_err(|v| crate::errors::invalid_type_error_inner!(v, "Response type not map compatible"))?;
                 items
                     .into_iter()
                     .map(|item| from_owned_redis_value(item))
@@ -1913,7 +1902,7 @@ macro_rules! from_redis_value_for_tuple {
                 match *v {
                     Value::Array(ref items) => {
                         if items.len() != n {
-                            invalid_type_error!(v, "Array response of wrong dimension")
+                            crate::errors::invalid_type_error!(v, "Array response of wrong dimension")
                         }
 
                         // The { i += 1; i - 1} is rust's postfix increment :)
@@ -1924,7 +1913,7 @@ macro_rules! from_redis_value_for_tuple {
 
                     Value::Set(ref items) => {
                         if items.len() != n {
-                            invalid_type_error!(v, "Set response of wrong dimension")
+                            crate::errors::invalid_type_error!(v, "Set response of wrong dimension")
                         }
 
                         // The { i += 1; i - 1} is rust's postfix increment :)
@@ -1935,7 +1924,7 @@ macro_rules! from_redis_value_for_tuple {
 
                     Value::Map(ref items) => {
                         if n != items.len() * 2 {
-                            invalid_type_error!(v, "Map response of wrong dimension")
+                            crate::errors::invalid_type_error!(v, "Map response of wrong dimension")
                         }
 
                         let mut flatten_items = items.iter().map(|(a,b)|[a,b]).flatten();
@@ -1944,7 +1933,7 @@ macro_rules! from_redis_value_for_tuple {
                              &flatten_items.next().unwrap())?},)*))
                     }
 
-                    _ => invalid_type_error!(v, "Not a Array response")
+                    _ => crate::errors::invalid_type_error!(v, "Not a Array response")
                 }
             }
 
@@ -1959,7 +1948,7 @@ macro_rules! from_redis_value_for_tuple {
                 match v {
                     Value::Array(mut items) => {
                         if items.len() != n {
-                            invalid_type_error!(Value::Array(items), "Array response of wrong dimension")
+                            crate::errors::invalid_type_error!(Value::Array(items), "Array response of wrong dimension")
                         }
 
                         // The { i += 1; i - 1} is rust's postfix increment :)
@@ -1971,7 +1960,7 @@ macro_rules! from_redis_value_for_tuple {
 
                     Value::Set(mut items) => {
                         if items.len() != n {
-                            invalid_type_error!(Value::Array(items), "Set response of wrong dimension")
+                            crate::errors::invalid_type_error!(Value::Array(items), "Set response of wrong dimension")
                         }
 
                         // The { i += 1; i - 1} is rust's postfix increment :)
@@ -1983,7 +1972,7 @@ macro_rules! from_redis_value_for_tuple {
 
                     Value::Map(items) => {
                         if n != items.len() * 2 {
-                            invalid_type_error!(Value::Map(items), "Map response of wrong dimension")
+                            crate::errors::invalid_type_error!(Value::Map(items), "Map response of wrong dimension")
                         }
 
                         let mut flatten_items = items.into_iter().map(|(a,b)|[a,b]).flatten();
@@ -1993,7 +1982,7 @@ macro_rules! from_redis_value_for_tuple {
                         )?},)*))
                     }
 
-                    _ => invalid_type_error!(v, "Not a Array response")
+                    _ => crate::errors::invalid_type_error!(v, "Not a Array response")
                 }
             }
 
@@ -2140,14 +2129,14 @@ impl FromRedisValue for bytes::Bytes {
         let v = get_inner_value(v);
         match v {
             Value::BulkString(bytes_vec) => Ok(bytes::Bytes::copy_from_slice(bytes_vec.as_ref())),
-            _ => invalid_type_error!(v, "Not a bulk string"),
+            _ => crate::errors::invalid_type_error!(v, "Not a bulk string"),
         }
     }
     fn from_owned_redis_value(v: Value) -> Result<Self, ParsingError> {
         let v = get_owned_inner_value(v);
         match v {
             Value::BulkString(bytes_vec) => Ok(bytes_vec.into()),
-            _ => invalid_type_error!(v, "Not a bulk string"),
+            _ => crate::errors::invalid_type_error!(v, "Not a bulk string"),
         }
     }
 }
@@ -2157,7 +2146,7 @@ impl FromRedisValue for uuid::Uuid {
     fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
         match *v {
             Value::BulkString(ref bytes) => Ok(uuid::Uuid::from_slice(bytes)?),
-            _ => invalid_type_error!(v, "Response type not uuid compatible."),
+            _ => crate::errors::invalid_type_error!(v, "Response type not uuid compatible."),
         }
     }
 }
@@ -2248,12 +2237,6 @@ impl PushInfo {
 
 pub(crate) type SyncPushSender = std::sync::mpsc::Sender<PushInfo>;
 
-// A consistent error value for connections closed without a reason.
-#[cfg(any(feature = "aio", feature = "r2d2"))]
-pub(crate) fn closed_connection_error() -> RedisError {
-    RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
-}
-
 /// Possible types of value held in Redis: [Redis Docs](https://redis.io/docs/latest/commands/type/)
 #[derive(Debug, Clone, PartialEq)]
 pub enum ValueType {
@@ -2305,14 +2288,14 @@ impl FromRedisValue for ValueType {
     fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
         match v {
             Value::SimpleString(s) => Ok(s.into()),
-            _ => invalid_type_error!(v, "Value type should be a simple string"),
+            _ => crate::errors::invalid_type_error!(v, "Value type should be a simple string"),
         }
     }
 
     fn from_owned_redis_value(v: Value) -> Result<Self, ParsingError> {
         match v {
             Value::SimpleString(s) => Ok(s.into()),
-            _ => invalid_type_error!(v, "Value type should be a simple string"),
+            _ => crate::errors::invalid_type_error!(v, "Value type should be a simple string"),
         }
     }
 }
@@ -2347,7 +2330,7 @@ impl FromRedisValue for IntegerReplyOrNoOp {
                 -1 => Ok(IntegerReplyOrNoOp::ExistsButNotRelevant),
                 _ => Ok(IntegerReplyOrNoOp::IntegerReply(*s as usize)),
             },
-            _ => invalid_type_error!(v, "Value should be an integer"),
+            _ => crate::errors::invalid_type_error!(v, "Value should be an integer"),
         }
     }
 
@@ -2358,7 +2341,7 @@ impl FromRedisValue for IntegerReplyOrNoOp {
                 -1 => Ok(IntegerReplyOrNoOp::ExistsButNotRelevant),
                 _ => Ok(IntegerReplyOrNoOp::IntegerReply(s as usize)),
             },
-            _ => invalid_type_error!(v, "Value should be an integer"),
+            _ => crate::errors::invalid_type_error!(v, "Value should be an integer"),
         }
     }
 }

@@ -6,32 +6,39 @@ pub use parsing_error::*;
 pub use redis_error::*;
 pub use server_error::*;
 
-mod test {
+macro_rules! invalid_type_error_inner {
+    ($v:expr, $det:expr) => {
+        ParsingError {
+            description: format!("{:?} (value was {:?})", $det, $v).into(),
+        }
+    };
+}
+
+macro_rules! invalid_type_error {
+    ($v:expr, $det:expr) => {{
+        fail!(crate::errors::invalid_type_error_inner!($v, $det))
+    }};
+}
+
+pub(crate) use {invalid_type_error, invalid_type_error_inner};
+
+// A consistent error value for connections closed without a reason.
+#[cfg(any(feature = "aio", feature = "r2d2", test))]
+pub(crate) fn closed_connection_error() -> RedisError {
+    use std::io;
+
+    RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 
     #[test]
-    fn test_size() {
-        println!(
-            "Parsing error: {}",
-            std::mem::size_of::<crate::ParsingError>()
-        );
-        println!(
-            "Server error: {}",
-            std::mem::size_of::<super::ServerError>()
-        );
-        println!("Redis error: {}", std::mem::size_of::<crate::RedisError>());
-        println!("Value: {}", std::mem::size_of::<crate::Value>());
-        println!(
-            "Redis result: {}",
-            std::mem::size_of::<crate::RedisResult<crate::Value>>()
-        );
-        println!("io::Error: {}", std::mem::size_of::<std::io::Error>());
-        println!(
-            "tuple: {}",
-            std::mem::size_of::<(crate::ErrorKind, &'static str, arcstr::ArcStr)>()
-        );
-        println!(
-            "tuple2: {}",
-            std::mem::size_of::<(crate::ErrorKind, arcstr::ArcStr, arcstr::ArcStr)>()
-        );
+    fn test_closed_connection_error() {
+        let err = closed_connection_error();
+        assert!(err.is_connection_dropped());
+        assert!(err.is_unrecoverable_error());
+        assert!(err.is_io_error());
     }
 }

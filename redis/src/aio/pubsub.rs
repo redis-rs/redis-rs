@@ -1,7 +1,7 @@
-use crate::types::{closed_connection_error, RedisResult, Value};
+use crate::types::{RedisResult, Value};
 use crate::{
-    aio::Runtime, cmd, errors::RedisError, from_owned_redis_value, parser::ValueCodec,
-    FromRedisValue, Msg, RedisConnectionInfo, ToRedisArgs,
+    aio::Runtime, cmd, errors::closed_connection_error, errors::RedisError, from_owned_redis_value,
+    parser::ValueCodec, FromRedisValue, Msg, RedisConnectionInfo, ToRedisArgs,
 };
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
