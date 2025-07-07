@@ -38,15 +38,24 @@
 //! assert_eq!(rv, "test_data");
 //! ```
 //!
-//! If the sentinel's nodes are using TLS or require authentication, a full
-//! SentinelNodeConnectionInfo struct may be used instead of just the master's name:
+//! If the sentinel's servers are using TLS or require authentication, a full
+//! SentinelNodeConnectionInfo struct may be used instead of just the master's name.
+//! It's important to note that the sentinel nodes may have different usernames or passwords,
+//! so the authentication info for them must be entered separately.
 //!
 //! # Example
 //! ```rust,no_run
-//! use redis::{ Commands, RedisConnectionInfo };
+//! use redis::{ Commands, ConnectionAddr, ConnectionInfo, RedisConnectionInfo };
 //! use redis::sentinel::{ Sentinel, SentinelNodeConnectionInfo };
 //!
-//! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
+//! let nodes = vec![ConnectionInfo {
+//!   addr: ConnectionAddr::Tcp(String::from("redis://127.0.0.1"), 6379),
+//!   redis: RedisConnectionInfo {
+//!     username: Some(String::from("sentinel_username")),
+//!     password: Some(String::from("sentinel_password")),
+//!     ..Default::default()
+//!   },
+//! }];
 //! let mut sentinel = Sentinel::build(nodes).unwrap();
 //!
 //! let mut master_with_auth = sentinel
