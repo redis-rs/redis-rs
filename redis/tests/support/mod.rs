@@ -98,13 +98,25 @@ where
 #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 #[should_panic(expected = "Internal thread panicked")]
 fn test_block_on_all_panics_from_spawns(#[case] runtime: RuntimeType) {
+    use std::sync::{atomic::AtomicBool, Arc};
+
+    let slept = Arc::new(AtomicBool::new(false));
+    let slept_clone = slept.clone();
     let _ = block_on_all(
         async {
-            spawn(async {
+            spawn(async move {
                 futures_time::task::sleep(futures_time::time::Duration::from_millis(1)).await;
+                slept_clone.store(true, std::sync::atomic::Ordering::Relaxed);
                 panic!("As it should");
             });
-            futures_time::task::sleep(futures_time::time::Duration::from_millis(10)).await;
+
+            loop {
+                futures_time::task::sleep(futures_time::time::Duration::from_millis(2)).await;
+                if slept.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+            }
+
             Ok(())
         },
         runtime,
