@@ -1,7 +1,8 @@
 //! Defines types to use with the streams commands.
 
 use crate::{
-    from_redis_value, types::HashMap, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs, Value,
+    from_redis_value, types::HashMap, ErrorKind, FromRedisValue, RedisError, RedisResult,
+    RedisWrite, ToRedisArgs, Value,
 };
 
 use std::io::Error;
@@ -130,6 +131,7 @@ impl ToRedisArgs for StreamTrimStrategy {
 #[derive(Debug)]
 pub struct StreamTrimOptions {
     strategy: StreamTrimStrategy,
+    deletion_policy: Option<StreamDeletionPolicy>,
 }
 
 impl StreamTrimOptions {
@@ -137,6 +139,7 @@ impl StreamTrimOptions {
     pub fn maxlen(mode: StreamTrimmingMode, max_entries: usize) -> Self {
         Self {
             strategy: StreamTrimStrategy::maxlen(mode, max_entries),
+            deletion_policy: None,
         }
     }
 
@@ -144,12 +147,19 @@ impl StreamTrimOptions {
     pub fn minid(mode: StreamTrimmingMode, stream_id: impl Into<String>) -> Self {
         Self {
             strategy: StreamTrimStrategy::minid(mode, stream_id),
+            deletion_policy: None,
         }
     }
 
     /// Set a limit to the number of records to trim in a single operation
     pub fn limit(mut self, limit: usize) -> Self {
         self.strategy = self.strategy.limit(limit);
+        self
+    }
+
+    /// Set the deletion policy for the XTRIM operation
+    pub fn set_deletion_policy(mut self, deletion_policy: StreamDeletionPolicy) -> Self {
+        self.deletion_policy = Some(deletion_policy);
         self
     }
 }
@@ -160,6 +170,9 @@ impl ToRedisArgs for StreamTrimOptions {
         W: ?Sized + RedisWrite,
     {
         self.strategy.write_redis_args(out);
+        if let Some(deletion_policy) = self.deletion_policy.as_ref() {
+            deletion_policy.write_redis_args(out);
+        }
     }
 }
 
@@ -171,6 +184,7 @@ impl ToRedisArgs for StreamTrimOptions {
 pub struct StreamAddOptions {
     nomkstream: bool,
     trim: Option<StreamTrimStrategy>,
+    deletion_policy: Option<StreamDeletionPolicy>,
 }
 
 impl StreamAddOptions {
@@ -185,6 +199,12 @@ impl StreamAddOptions {
         self.trim = Some(trim);
         self
     }
+
+    /// Set the deletion policy for the XADD operation
+    pub fn set_deletion_policy(mut self, deletion_policy: StreamDeletionPolicy) -> Self {
+        self.deletion_policy = Some(deletion_policy);
+        self
+    }
 }
 
 impl ToRedisArgs for StreamAddOptions {
@@ -197,6 +217,9 @@ impl ToRedisArgs for StreamAddOptions {
         }
         if let Some(strategy) = self.trim.as_ref() {
             strategy.write_redis_args(out);
+        }
+        if let Some(deletion_policy) = self.deletion_policy.as_ref() {
+            deletion_policy.write_redis_args(out);
         }
     }
 }
@@ -966,6 +989,90 @@ impl FromRedisValue for StreamInfoGroupsReply {
         }
         Ok(reply)
     }
+}
+
+/// Deletion policy for stream entries.
+#[derive(Debug, Clone, Default)]
+pub enum StreamDeletionPolicy {
+    /// Preserve existing references to the deleted entries in all consumer groups' PEL.
+    #[default]
+    KeepRef,
+    /// Delete the entry from the stream and from all the consumer groups' PELs.
+    DelRef,
+    /// Delete the entry from the stream and from all the consumer groups' PELs, but only if the entry is acknowledged by all the groups.
+    Acked,
+}
+
+impl ToRedisArgs for StreamDeletionPolicy {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            StreamDeletionPolicy::KeepRef => out.write_arg(b"KEEPREF"),
+            StreamDeletionPolicy::DelRef => out.write_arg(b"DELREF"),
+            StreamDeletionPolicy::Acked => out.write_arg(b"ACKED"),
+        }
+    }
+}
+
+macro_rules! define_stream_response_status_enum {
+    ($(#[$enum_meta:meta])* $name:ident, $( $(#[$meta:meta])* $variant:ident = $value:expr ),+ $(,)?) => {
+        #[cfg(feature = "streams")]
+        #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+        #[derive(Debug, PartialEq, Eq)]
+        $(#[$enum_meta])*
+        pub enum $name {
+            $(
+                $(#[$meta])*
+                $variant = $value,
+            )+
+        }
+
+        #[cfg(feature = "streams")]
+        impl FromRedisValue for $name {
+            fn from_redis_value(v: &Value) -> RedisResult<Self> {
+                match v {
+                    Value::Int(code) => match *code {
+                        $(
+                            $value => Ok($name::$variant),
+                        )+
+                        _ => Err(RedisError::from((
+                            ErrorKind::TypeError,
+                            concat!("Invalid ", stringify!($name), " status code"),
+                            format!("Unknown status code: {}", code),
+                        ))),
+                    },
+                    _ => Err(RedisError::from((
+                        ErrorKind::TypeError,
+                        concat!("Response type not ", stringify!($name), " compatible"),
+                    ))),
+                }
+            }
+        }
+    };
+}
+
+define_stream_response_status_enum! {
+    /// Status codes returned by the `XDELEX` command
+    XDelExStatusCode,
+    /// No entry with the given id exists in the stream
+    IdNotFound = -1,
+    /// Entry was deleted from the stream
+    Deleted = 1,
+    /// Entry was not deleted because it has references in consumer groups' PEL
+    NotDeletedStillReferenced = 2
+}
+
+define_stream_response_status_enum! {
+    /// Status codes returned by the `XACKDEL` command
+    XAckDelStatusCode,
+    /// No entry with the given id exists in the stream
+    IdNotFound = -1,
+    /// Entry was acknowledged and deleted from the stream
+    AcknowledgedAndDeleted = 1,
+    /// Entry was acknowledged but not deleted because it has references in consumer groups' PEL
+    AcknowledgedNotDeletedStillReferenced = 2
 }
 
 #[cfg(test)]
