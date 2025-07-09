@@ -443,10 +443,10 @@ impl RedisError {
 /// A `RedisError` with the `Extension` kind.
 pub fn make_extension_error(code: String, detail: Option<String>) -> RedisError {
     RedisError {
-        repr: ErrorRepr::Server(ServerError::Extension {
+        repr: ErrorRepr::Server(ServerError(crate::errors::Repr::Extension {
             code: code.into(),
             detail: detail.map(|detail| detail.into()),
-        }),
+        })),
     }
 }
 

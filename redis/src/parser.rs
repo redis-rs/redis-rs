@@ -3,7 +3,7 @@ use std::{
     str,
 };
 
-use crate::errors::{ParsingError, RedisError, ServerError, ServerErrorKind};
+use crate::errors::{ParsingError, RedisError, Repr, ServerError, ServerErrorKind};
 use crate::types::{PushKind, RedisResult, Value, VerbatimFormat};
 
 use combine::{
@@ -42,14 +42,14 @@ fn err_parser(line: &str) -> ServerError {
         "NOSUB" => ServerErrorKind::NoSub,
         "NOPERM" => ServerErrorKind::NoPerm,
         code => {
-            return ServerError::Extension {
+            return ServerError(Repr::Extension {
                 code: code.into(),
                 detail: pieces.next().map(|str| str.into()),
-            }
+            })
         }
     };
     let detail = pieces.next().map(|str| str.into());
-    ServerError::Known { kind, detail }
+    ServerError(Repr::Known { kind, detail })
 }
 
 pub fn get_push_kind(kind: String) -> PushKind {
@@ -514,10 +514,10 @@ mod tests {
             result,
             Value::Array(vec![
                 Value::Okay,
-                Value::ServerError(ServerError::Known {
+                Value::ServerError(ServerError(Repr::Known {
                     kind: ServerErrorKind::BusyLoading,
                     detail: Some(arcstr::literal!("server is loading"))
-                }),
+                })),
                 Value::Okay
             ])
         );
@@ -540,10 +540,10 @@ mod tests {
             result.unwrap(),
             Value::Array(vec![
                 Value::Okay,
-                Value::ServerError(ServerError::Known {
+                Value::ServerError(ServerError(Repr::Known {
                     kind: ServerErrorKind::BusyLoading,
                     detail: Some(arcstr::literal!("server is loading"))
-                }),
+                })),
                 Value::Okay
             ])
         );
@@ -619,10 +619,10 @@ mod tests {
         let val = parse_redis_value(b"!21\r\nSYNTAX invalid syntax\r\n");
         assert_eq!(
             val.unwrap(),
-            Value::ServerError(ServerError::Extension {
+            Value::ServerError(ServerError(Repr::Extension {
                 code: arcstr::literal!("SYNTAX"),
                 detail: Some(arcstr::literal!("invalid syntax"))
-            })
+            }))
         )
     }
 

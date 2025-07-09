@@ -55,8 +55,12 @@ impl ServerErrorKind {
     }
 }
 
+/// An error that was returned from the server
 #[derive(PartialEq, Debug, Clone)]
-pub enum ServerError {
+pub struct ServerError(pub(crate) Repr);
+
+#[derive(PartialEq, Debug, Clone)]
+pub(crate) enum Repr {
     Extension {
         code: ArcStr,
         detail: Option<ArcStr>,
@@ -68,32 +72,35 @@ pub enum ServerError {
 }
 
 impl ServerError {
+    /// Returns the kind of error. If `None`, try `crate::Self::code` to get the error code.
     pub fn kind(&self) -> Option<ServerErrorKind> {
-        match self {
-            ServerError::Extension { .. } => None,
-            ServerError::Known { kind, .. } => Some(*kind),
+        match &self.0 {
+            Repr::Extension { .. } => None,
+            Repr::Known { kind, .. } => Some(*kind),
         }
     }
 
+    /// The error code returned from the server
     pub fn code(&self) -> &str {
-        match self {
-            ServerError::Extension { code, .. } => code,
-            ServerError::Known { kind, .. } => kind.code(),
+        match &self.0 {
+            Repr::Extension { code, .. } => code,
+            Repr::Known { kind, .. } => kind.code(),
         }
     }
 
+    /// Additional details about the error, if exist
     pub fn details(&self) -> Option<&str> {
-        match self {
-            ServerError::Extension { detail, .. } => detail.as_ref().map(|str| str.as_str()),
-            ServerError::Known { detail, .. } => detail.as_ref().map(|str| str.as_str()),
+        match &self.0 {
+            Repr::Extension { detail, .. } => detail.as_ref().map(|str| str.as_str()),
+            Repr::Known { detail, .. } => detail.as_ref().map(|str| str.as_str()),
         }
     }
 }
 
 impl fmt::Display for ServerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self {
-            ServerError::Extension { code, detail } => {
+        match &self.0 {
+            Repr::Extension { code, detail } => {
                 fmt::Debug::fmt(&code, f)?;
                 if let Some(detail) = detail {
                     f.write_str(": ")?;
@@ -101,7 +108,7 @@ impl fmt::Display for ServerError {
                 }
                 Ok(())
             }
-            ServerError::Known { kind, detail } => {
+            Repr::Known { kind, detail } => {
                 fmt::Debug::fmt(&kind, f)?;
                 if let Some(detail) = detail {
                     f.write_str(": ")?;

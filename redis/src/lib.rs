@@ -637,7 +637,8 @@ pub use crate::types::{
     PushInfo,
 };
 pub use crate::errors::{
-    make_extension_error, ErrorKind, ParsingError, RedisError, RetryMethod, ServerErrorKind,
+    make_extension_error, ErrorKind, ParsingError, RedisError, RetryMethod, ServerError,
+    ServerErrorKind,
 };
 
 #[cfg(feature = "aio")]
