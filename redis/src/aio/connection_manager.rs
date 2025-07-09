@@ -26,15 +26,13 @@ type OptionalPushSender = Option<Arc<dyn AsyncPushSender>>;
 pub struct ConnectionManagerConfig {
     /// The resulting duration is calculated by taking the base to the `n`-th power,
     /// where `n` denotes the number of past attempts.
-    exponent_base: u64,
-    /// A multiplicative factor that will be applied to the retry delay.
-    ///
-    /// For example, using a factor of `1000` will make each delay in units of seconds.
-    factor: u64,
+    exponent_base: f32,
+    /// The minimal delay for reconnection attempts
+    min_delay: Duration,
+    /// Apply a maximum delay between connection attempts. The delay between attempts won't be longer than max_delay milliseconds.
+    max_delay: Option<Duration>,
     /// number_of_retries times, with an exponentially increasing delay
     number_of_retries: usize,
-    /// Apply a maximum delay between connection attempts. The delay between attempts won't be longer than max_delay milliseconds.
-    max_delay: Option<u64>,
     /// The new connection will time out operations after `response_timeout` has passed.
     response_timeout: Option<Duration>,
     /// Each connection attempt to the server will time out after `connection_timeout`.
@@ -51,7 +49,7 @@ impl std::fmt::Debug for ConnectionManagerConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         let &Self {
             exponent_base,
-            factor,
+            min_delay,
             number_of_retries,
             max_delay,
             response_timeout,
@@ -63,9 +61,9 @@ impl std::fmt::Debug for ConnectionManagerConfig {
         } = &self;
         let mut str = f.debug_struct("ConnectionManagerConfig");
         str.field("exponent_base", &exponent_base)
-            .field("factor", &factor)
-            .field("number_of_retries", &number_of_retries)
+            .field("min_delay", &min_delay)
             .field("max_delay", &max_delay)
+            .field("number_of_retries", &number_of_retries)
             .field("response_timeout", &response_timeout)
             .field("connection_timeout", &connection_timeout)
             .field("resubscribe_automatically", &resubscribe_automatically)
@@ -86,8 +84,8 @@ impl std::fmt::Debug for ConnectionManagerConfig {
 }
 
 impl ConnectionManagerConfig {
-    const DEFAULT_CONNECTION_RETRY_EXPONENT_BASE: u64 = 2;
-    const DEFAULT_CONNECTION_RETRY_FACTOR: u64 = 100;
+    const DEFAULT_CONNECTION_RETRY_EXPONENT_BASE: f32 = 2.0;
+    const DEFAULT_CONNECTION_RETRY_MIN_DELAY: Duration = Duration::from_millis(100);
     const DEFAULT_NUMBER_OF_CONNECTION_RETRIES: usize = 6;
 
     /// Creates a new instance of the options with nothing set
@@ -95,23 +93,21 @@ impl ConnectionManagerConfig {
         Self::default()
     }
 
-    /// A multiplicative factor that will be applied to the retry delay.
-    ///
-    /// For example, using a factor of `1000` will make each delay in units of seconds.
-    pub fn set_factor(mut self, factor: u64) -> ConnectionManagerConfig {
-        self.factor = factor;
+    /// Set the minimal delay for reconnect attempts.
+    pub fn set_min_delay(mut self, min_delay: Duration) -> ConnectionManagerConfig {
+        self.min_delay = min_delay;
         self
     }
 
     /// Apply a maximum delay between connection attempts. The delay between attempts won't be longer than max_delay milliseconds.
-    pub fn set_max_delay(mut self, time: u64) -> ConnectionManagerConfig {
+    pub fn set_max_delay(mut self, time: Duration) -> ConnectionManagerConfig {
         self.max_delay = Some(time);
         self
     }
 
     /// The resulting duration is calculated by taking the base to the `n`-th power,
     /// where `n` denotes the number of past attempts.
-    pub fn set_exponent_base(mut self, base: u64) -> ConnectionManagerConfig {
+    pub fn set_exponent_base(mut self, base: f32) -> ConnectionManagerConfig {
         self.exponent_base = base;
         self
     }
@@ -188,11 +184,11 @@ impl Default for ConnectionManagerConfig {
     fn default() -> Self {
         Self {
             exponent_base: Self::DEFAULT_CONNECTION_RETRY_EXPONENT_BASE,
-            factor: Self::DEFAULT_CONNECTION_RETRY_FACTOR,
+            min_delay: Self::DEFAULT_CONNECTION_RETRY_MIN_DELAY,
+            max_delay: None,
             number_of_retries: Self::DEFAULT_NUMBER_OF_CONNECTION_RETRIES,
             response_timeout: DEFAULT_RESPONSE_TIMEOUT,
             connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
-            max_delay: None,
             push_sender: None,
             resubscribe_automatically: false,
             #[cfg(feature = "cache-aio")]
@@ -298,9 +294,7 @@ impl ConnectionManager {
     ///
     /// In case of reconnection issues, the manager will retry reconnection
     /// number_of_retries times, with an exponentially increasing delay, calculated as
-    /// rand(0 .. factor * (exponent_base ^ current-try)).
-    ///
-    /// Apply a maximum delay. No retry delay will be longer than this  ConnectionManagerConfig.max_delay` .
+    /// min(max_delay, rand(0 .. min_delay * (exponent_base ^ current-try))).
     ///
     /// The new connection will time out operations after `response_timeout` has passed.
     /// Each connection attempt to the server will time out after `connection_timeout`.
@@ -316,11 +310,12 @@ impl ConnectionManager {
         }
 
         let mut retry_strategy = ExponentialBuilder::default()
-            .with_factor(config.factor as f32)
+            .with_factor(config.exponent_base)
+            .with_min_delay(config.min_delay)
             .with_max_times(config.number_of_retries)
             .with_jitter();
         if let Some(max_delay) = config.max_delay {
-            retry_strategy = retry_strategy.with_max_delay(Duration::from_millis(max_delay));
+            retry_strategy = retry_strategy.with_max_delay(max_delay);
         }
 
         let mut connection_config = AsyncConnectionConfig::new()
