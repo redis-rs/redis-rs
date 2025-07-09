@@ -376,32 +376,19 @@ impl RedisError {
     /// than just the error kind on when to retry.
     pub fn retry_method(&self) -> RetryMethod {
         match self.kind() {
-            ErrorKind::Server(ServerErrorKind::Moved) => RetryMethod::MovedRedirect,
-            ErrorKind::Server(ServerErrorKind::Ask) => RetryMethod::AskRedirect,
+            ErrorKind::Server(server_error) => server_error.retry_method(),
 
-            ErrorKind::Server(ServerErrorKind::TryAgain) => RetryMethod::WaitAndRetry,
-            ErrorKind::Server(ServerErrorKind::MasterDown) => RetryMethod::WaitAndRetry,
-            ErrorKind::Server(ServerErrorKind::ClusterDown) => RetryMethod::WaitAndRetry,
-            ErrorKind::Server(ServerErrorKind::BusyLoading) => RetryMethod::WaitAndRetry,
             ErrorKind::MasterNameNotFoundBySentinel => RetryMethod::WaitAndRetry,
             ErrorKind::NoValidReplicasFoundBySentinel => RetryMethod::WaitAndRetry,
 
-            ErrorKind::Server(ServerErrorKind::ResponseError) => RetryMethod::NoRetry,
-            ErrorKind::Server(ServerErrorKind::ReadOnly) => RetryMethod::NoRetry,
             ErrorKind::Extension => RetryMethod::NoRetry,
-            ErrorKind::Server(ServerErrorKind::ExecAbort) => RetryMethod::NoRetry,
             ErrorKind::UnexpectedReturnType => RetryMethod::NoRetry,
-            ErrorKind::Server(ServerErrorKind::NoScript) => RetryMethod::NoRetry,
             ErrorKind::InvalidClientConfig => RetryMethod::NoRetry,
-            ErrorKind::Server(ServerErrorKind::CrossSlot) => RetryMethod::NoRetry,
             ErrorKind::Client => RetryMethod::NoRetry,
             ErrorKind::EmptySentinelList => RetryMethod::NoRetry,
-            ErrorKind::Server(ServerErrorKind::NotBusy) => RetryMethod::NoRetry,
             #[cfg(feature = "json")]
             ErrorKind::Serialize => RetryMethod::NoRetry,
             ErrorKind::RESP3NotSupported => RetryMethod::NoRetry,
-            ErrorKind::Server(ServerErrorKind::NoSub) => RetryMethod::NoRetry,
-            ErrorKind::Server(ServerErrorKind::NoPerm) => RetryMethod::NoRetry,
 
             ErrorKind::Parse => RetryMethod::Reconnect,
             ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
