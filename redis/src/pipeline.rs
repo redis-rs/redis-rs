@@ -74,7 +74,6 @@ impl Pipeline {
     }
 
     /// Returns `true` if the pipeline is in transaction mode (aka atomic mode).
-    #[cfg(feature = "aio")]
     pub fn is_transaction(&self) -> bool {
         self.transaction_mode
     }
@@ -96,29 +95,24 @@ impl Pipeline {
         self.commands.is_empty()
     }
 
-    fn execute_pipelined(&self, con: &mut dyn ConnectionLike) -> RedisResult<Value> {
-        self.make_pipeline_results(con.req_packed_commands(
-            &encode_pipeline(&self.commands, false),
-            0,
-            self.commands.len(),
-        )?)
-    }
-
-    fn execute_transaction(&self, con: &mut dyn ConnectionLike) -> RedisResult<Value> {
-        let mut resp = con.req_packed_commands(
-            &encode_pipeline(&self.commands, true),
-            self.commands.len() + 1,
-            1,
-        )?;
-
-        match resp.pop() {
-            Some(Value::Nil) => Ok(Value::Nil),
-            Some(Value::Array(items)) => self.make_pipeline_results(items),
-            _ => fail!((
-                ErrorKind::UnexpectedReturnType,
-                "Invalid response when parsing multi response"
-            )),
-        }
+    fn complete_request<T>(&self, mut response: Vec<Value>) -> RedisResult<T>
+    where
+        T: FromRedisValue,
+    {
+        let values = if self.is_transaction() {
+            match response.pop() {
+                Some(Value::Nil) => Ok(Value::Nil),
+                Some(Value::Array(items)) => self.make_pipeline_results(items),
+                _ => Err((
+                    ErrorKind::UnexpectedReturnType,
+                    "Invalid response when parsing multi response",
+                )
+                    .into()),
+            }?
+        } else {
+            self.make_pipeline_results(response)?
+        };
+        Ok(from_owned_redis_value(values)?)
     }
 
     /// Executes the pipeline and fetches the return values.  Since most
@@ -146,53 +140,24 @@ impl Pipeline {
                 "This connection does not support pipelining."
             ));
         }
-        let value = if self.commands.is_empty() {
-            Value::Array(vec![])
+
+        let response = if self.commands.is_empty() {
+            vec![]
         } else if self.transaction_mode {
-            self.execute_transaction(con)?
+            con.req_packed_commands(
+                &encode_pipeline(&self.commands, true),
+                self.commands.len() + 1,
+                1,
+            )?
         } else {
-            self.execute_pipelined(con)?
+            con.req_packed_commands(
+                &encode_pipeline(&self.commands, false),
+                0,
+                self.commands.len(),
+            )?
         };
 
-        Ok(from_owned_redis_value(value.extract_error()?)?)
-    }
-
-    #[cfg(feature = "aio")]
-    async fn execute_pipelined_async<C>(&self, con: &mut C) -> RedisResult<Value>
-    where
-        C: crate::aio::ConnectionLike,
-    {
-        // As the pipeline is not a transaction, the pipeline's commands got executed as is, and we
-        // can grab the results one by one (offset 0, and count is the commands' length).
-        let value = con
-            .req_packed_commands(self, 0, self.commands.len())
-            .await?;
-        self.make_pipeline_results(value)
-    }
-
-    #[cfg(feature = "aio")]
-    async fn execute_transaction_async<C>(&self, con: &mut C) -> RedisResult<Value>
-    where
-        C: crate::aio::ConnectionLike,
-    {
-        // As the pipeline is a transaction pipeline, a `MULTI` got inserted in the beginning, and
-        // an `EXEC` added at the end. The `MULTI` received an `Ok` response. The individual
-        // commands received `QUEUED` responses. And the proper results of the commands are in the
-        // response to `EXEC` (A Redis Array of the results of the individual commands in the
-        // pipeline). So when getting the result, we skip straight to `EXEC`'s result (offset is
-        // length + 1), and only extract the result of the `EXEC` (count is 1).
-        let mut resp = con
-            .req_packed_commands(self, self.commands.len() + 1, 1)
-            .await?;
-        match resp.pop() {
-            Some(Value::Nil) => Ok(Value::Nil),
-            Some(Value::Array(items)) => self.make_pipeline_results(items),
-            _ => Err((
-                ErrorKind::UnexpectedReturnType,
-                "Invalid response when parsing multi response",
-            )
-                .into()),
-        }
+        self.complete_request(response)
     }
 
     /// Async version of `query`.
@@ -202,14 +167,17 @@ impl Pipeline {
         &self,
         con: &mut impl crate::aio::ConnectionLike,
     ) -> RedisResult<T> {
-        let value = if self.commands.is_empty() {
-            return Ok(from_owned_redis_value(Value::Array(vec![]))?);
+        let response = if self.commands.is_empty() {
+            vec![]
         } else if self.transaction_mode {
-            self.execute_transaction_async(con).await?
+            con.req_packed_commands(self, self.commands.len() + 1, 1)
+                .await?
         } else {
-            self.execute_pipelined_async(con).await?
+            con.req_packed_commands(self, 0, self.commands.len())
+                .await?
         };
-        Ok(from_owned_redis_value(value.extract_error()?)?)
+
+        self.complete_request(response)
     }
 
     /// This is an alternative to `query`` that can be used if you want to be able to handle a
