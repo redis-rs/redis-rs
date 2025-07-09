@@ -1610,7 +1610,7 @@ mod basic_async {
             }
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-            let max_delay_between_attempts = 2;
+            let max_delay_between_attempts = Duration::from_millis(2);
             let config = redis::aio::ConnectionManagerConfig::new()
                 .set_push_sender(tx)
                 .set_automatic_resubscription()
@@ -1771,10 +1771,9 @@ mod basic_async {
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     #[cfg(feature = "connection-manager")]
     fn test_connection_manager_reconnect_after_delay(#[case] runtime: RuntimeType) {
-        let max_delay_between_attempts = 2;
-
+        let max_delay_between_attempts = Duration::from_millis(2);
         let mut config = redis::aio::ConnectionManagerConfig::new()
-            .set_factor(10000)
+            .set_exponent_base(10000.0)
             .set_max_delay(max_delay_between_attempts);
 
         let tempdir = tempfile::Builder::new()
@@ -1835,9 +1834,9 @@ mod basic_async {
             return;
         }
 
-        let max_delay_between_attempts = 2;
+        let max_delay_between_attempts = Duration::from_millis(2);
         let config = redis::aio::ConnectionManagerConfig::new()
-            .set_factor(10000)
+            .set_exponent_base(10000.0)
             .set_max_delay(max_delay_between_attempts);
 
         block_on_all(
@@ -1923,9 +1922,9 @@ mod basic_async {
         println!("running");
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-        let max_delay_between_attempts = 2;
+        let max_delay_between_attempts = Duration::from_millis(2);
         let config = redis::aio::ConnectionManagerConfig::new()
-            .set_factor(10000)
+            .set_exponent_base(10000.0)
             .set_push_sender(tx)
             .set_max_delay(max_delay_between_attempts);
 
