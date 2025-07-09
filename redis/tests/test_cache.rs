@@ -648,7 +648,7 @@ fn test_connection_manager_maintains_statistics_after_crashes(
             };
 
             let config = redis::aio::ConnectionManagerConfig::new()
-                .set_max_delay(1)
+                .set_max_delay(Duration::from_millis(1))
                 .set_cache_config(cache_config);
 
             let mut get = get_cmd("GET", test_with_optin);
