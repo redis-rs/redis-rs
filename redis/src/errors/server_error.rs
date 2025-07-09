@@ -118,6 +118,16 @@ impl ServerError {
             Repr::Known { detail, .. } => detail.as_ref().map(|str| str.as_str()),
         }
     }
+
+    #[cfg(feature = "cluster-async")]
+    pub(crate) fn requires_action(&self) -> bool {
+        !matches!(
+            self.kind()
+                .map(|kind| kind.retry_method())
+                .unwrap_or(RetryMethod::NoRetry),
+            RetryMethod::NoRetry
+        )
+    }
 }
 
 impl fmt::Display for ServerError {

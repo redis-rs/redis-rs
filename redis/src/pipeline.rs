@@ -99,7 +99,7 @@ impl Pipeline {
     where
         T: FromRedisValue,
     {
-        let values = if self.is_transaction() {
+        let value = if self.is_transaction() {
             match response.pop() {
                 Some(Value::Nil) => Ok(Value::Nil),
                 Some(Value::Array(items)) => self.make_pipeline_results(items),
@@ -112,7 +112,11 @@ impl Pipeline {
         } else {
             self.make_pipeline_results(response)?
         };
-        Ok(from_owned_redis_value(values)?)
+        if T::can_collect_errors() {
+            Ok(from_owned_redis_value(value)?)
+        } else {
+            Ok(from_owned_redis_value(value.extract_error()?)?)
+        }
     }
 
     /// Executes the pipeline and fetches the return values.  Since most
@@ -186,7 +190,9 @@ impl Pipeline {
     /// It avoids the need to define generic bounds for ().
     #[inline]
     pub fn exec(&self, con: &mut dyn ConnectionLike) -> RedisResult<()> {
-        self.query::<()>(con)
+        self.query::<Vec<RedisResult<()>>>(con)?
+            .into_iter()
+            .collect()
     }
 
     /// This is an alternative to `query_async` that can be used if you want to be able to handle a
@@ -195,7 +201,10 @@ impl Pipeline {
     /// It avoids the need to define generic bounds for ().
     #[cfg(feature = "aio")]
     pub async fn exec_async(&self, con: &mut impl crate::aio::ConnectionLike) -> RedisResult<()> {
-        self.query_async::<()>(con).await
+        self.query_async::<Vec<RedisResult<()>>>(con)
+            .await?
+            .into_iter()
+            .collect()
     }
 }
 
@@ -251,10 +260,12 @@ macro_rules! implement_pipeline_commands {
             }
 
             /// Instructs the pipeline to ignore the return value of this command.
-            /// It will still be ensured that it is not an error, but any successful
-            /// result is just thrown away.  This makes result processing through
-            /// tuples much easier because you do not need to handle all the items
-            /// you do not care about.
+            ///
+            /// On any successful result the value from this command is thrown away.
+            /// This makes result processing through tuples much easier because you
+            /// do not need to handle all the items you do not care about.
+            /// If any command received an error from the server, no result will be ignored,
+            /// so that the user could retrace which command failed.
             #[inline]
             pub fn ignore(&mut self) -> &mut Self {
                 match self.commands.len() {
@@ -297,7 +308,13 @@ macro_rules! implement_pipeline_commands {
             }
 
             fn make_pipeline_results(&self, resp: Vec<Value>) -> RedisResult<Value> {
-                let resp = Value::extract_error_vec(resp)?;
+                // if any response is an error, we just return the values without filtering
+                if resp
+                    .iter()
+                    .any(|value| matches!(value, Value::ServerError(_)))
+                {
+                    return Ok(Value::Array(resp));
+                }
 
                 let mut rv = Vec::with_capacity(resp.len() - self.ignored_commands.len());
                 for (idx, result) in resp.into_iter().enumerate() {
@@ -328,5 +345,86 @@ impl Pipeline {
         let cmd = self.get_last_command();
         cmd.set_cache_config(command_cache_config);
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        errors::{Repr, ServerError},
+        pipe, ServerErrorKind,
+    };
+
+    use super::*;
+
+    fn server_error() -> ServerError {
+        ServerError(Repr::Known {
+            kind: ServerErrorKind::CrossSlot,
+            detail: None,
+        })
+    }
+
+    fn complete_response<T>() -> RedisResult<T>
+    where
+        T: FromRedisValue,
+    {
+        let mut pipeline = pipe();
+        pipeline.cmd("FOO").cmd("BAR").ignore().cmd("baz").ignore();
+        let inputs = vec![Value::Okay, Value::ServerError(server_error()), Value::Okay];
+        pipeline.complete_request(inputs)
+    }
+
+    #[test]
+    fn test_pipeline_passes_values_only_from_non_ignored_commands() {
+        let mut pipeline = pipe();
+        pipeline.cmd("FOO").cmd("BAR").ignore().cmd("baz").ignore();
+        let inputs = vec![Value::Okay, Value::Okay, Value::Okay];
+        let result = pipeline.complete_request(inputs);
+
+        let expected = vec!["OK".to_string()];
+        assert_eq!(result, Ok(expected));
+    }
+
+    #[test]
+    fn test_pipeline_passes_errors_from_ignored_commands() {
+        let result = complete_response();
+
+        let expected = vec![Value::Okay, Value::ServerError(server_error()), Value::Okay];
+        assert_eq!(result, Ok(expected));
+    }
+
+    #[test]
+    fn test_pipeline_passes_errors_from_ignored_commands_when_converting_values() {
+        let result: RedisResult<Vec<String>> = complete_response();
+
+        assert_eq!(
+            result.clone().unwrap_err().kind(),
+            ErrorKind::Server(ServerErrorKind::CrossSlot),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn test_pipeline_passes_errors_as_redis_errors_when_requested_as_type_explicitly() {
+        let result: Vec<RedisResult<String>> = complete_response().unwrap();
+
+        assert_eq!(
+            result,
+            vec![
+                Ok("OK".to_string()),
+                Err(server_error().into()),
+                Ok("OK".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn test_pipeline_passes_errors_as_redis_errors_when_requesting_value_as_type() {
+        let result: Vec<Value> = complete_response().unwrap();
+
+        assert_eq!(
+            result,
+            vec![Value::Okay, Value::ServerError(server_error()), Value::Okay]
+        );
     }
 }
