@@ -560,6 +560,7 @@ let primary = sentinel.get_async_connection().await.unwrap();
 //! * if you used `MultiplexedConnection::new_with_response_timeout`, it is replaced by [aio::MultiplexedConnection::new_with_config]. `Client::get_multiplexed_tokio_connection_with_response_timeouts`, `Client::get_multiplexed_tokio_connection`, `Client::create_multiplexed_tokio_connection_with_response_timeout`, `Client::create_multiplexed_tokio_connection` were replaced by [Client::get_multiplexed_async_connection_with_config].
 //! * If you're using `tokio::time::pause()` or otherwise manipulating time, you might need to opt out of timeouts using `AsyncConnectionConfig::new().set_connection_timeout(None).set_response_timeout(None)`.
 //! * Async connections now have default timeouts. If you're using blocking commands or other potentially long running commands, you should adjust the timeouts accordingly.
+//! * If you're manually setting `ConnectionManager`'s retry setting, then please re-examine the values you set. `exponential_base` has been made a f32, and `factor` was replaced by `min_delay`, in order to match the documented behavior, instead of the actual erroneous behavior of past versions.
 //!
 //!
 
