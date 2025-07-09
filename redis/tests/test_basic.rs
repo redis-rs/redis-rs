@@ -25,6 +25,7 @@ mod basic {
     use rand::prelude::IndexedRandom;
     use rand::{rng, Rng};
 
+    use redis::parse_redis_value;
     use redis::{
         cmd, Client, Connection, ConnectionInfo, ConnectionLike, ControlFlow, CopyOptions,
         ErrorKind, ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck,
@@ -1367,6 +1368,33 @@ mod basic {
             .query::<String>(&mut con)
             .unwrap();
         assert_eq!(res, "x-value");
+    }
+
+    #[test]
+    fn test_pipeline_returns_server_errors() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+        let mut pipe = redis::pipe();
+        pipe.set("x", "x-value")
+            .ignore()
+            .hset("x", "field", "field_value")
+            .ignore()
+            .get("x");
+
+        let res = pipe.exec(&mut con);
+        assert_eq!(res.unwrap_err().code(), Some("WRONGTYPE"));
+
+        let mut res: Vec<RedisResult<String>> = pipe.query(&mut con).unwrap();
+        assert_eq!(res.len(), 3);
+        assert_eq!(res.pop(), Some(Ok("x-value".to_string())));
+        assert_eq!(res.pop().unwrap().unwrap_err().code(), Some("WRONGTYPE"));
+        assert_eq!(res.pop(), Some(Ok("OK".to_string())));
+
+        let mut res: Vec<Value> = pipe.query(&mut con).unwrap();
+        assert_eq!(res.len(), 3);
+        assert_eq!(res.pop(), Some(Value::BulkString(b"x-value".to_vec())));
+        assert_eq!(res.pop(), parse_redis_value(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n").ok());
+        assert_eq!(res.pop(), Some(Value::Okay));
     }
 
     #[test]
