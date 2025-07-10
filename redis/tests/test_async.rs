@@ -467,7 +467,8 @@ mod basic_async {
                     .get("x");
 
                 let res = pipe.exec_async(&mut con).await;
-                assert_eq!(res.unwrap_err().code(), Some("WRONGTYPE"));
+                let error_message = res.unwrap_err().to_string();
+                assert_eq!(&error_message, "Pipeline failure: [(Index 1, error: \"WRONGTYPE\": Operation against a key holding the wrong kind of value)]");
 
                 let mut res: Vec<RedisResult<String>> = pipe.query_async(&mut con).await.unwrap();
                 assert_eq!(res.len(), 3);

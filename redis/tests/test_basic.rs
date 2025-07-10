@@ -1382,7 +1382,8 @@ mod basic {
             .get("x");
 
         let res = pipe.exec(&mut con);
-        assert_eq!(res.unwrap_err().code(), Some("WRONGTYPE"));
+        let error_message = res.unwrap_err().to_string();
+        assert_eq!(&error_message, "Pipeline failure: [(Index 1, error: \"WRONGTYPE\": Operation against a key holding the wrong kind of value)]");
 
         let mut res: Vec<RedisResult<String>> = pipe.query(&mut con).unwrap();
         assert_eq!(res.len(), 3);
@@ -1393,7 +1394,13 @@ mod basic {
         let mut res: Vec<Value> = pipe.query(&mut con).unwrap();
         assert_eq!(res.len(), 3);
         assert_eq!(res.pop(), Some(Value::BulkString(b"x-value".to_vec())));
-        assert_eq!(res.pop(), parse_redis_value(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n").ok());
+        assert_eq!(
+            res.pop(),
+            parse_redis_value(
+                b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n"
+            )
+            .ok()
+        );
         assert_eq!(res.pop(), Some(Value::Okay));
     }
 

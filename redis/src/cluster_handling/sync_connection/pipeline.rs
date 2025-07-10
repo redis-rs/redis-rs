@@ -122,7 +122,9 @@ impl ClusterPipeline {
         Ok(from_owned_redis_value(if self.commands.is_empty() {
             Value::Array(vec![])
         } else {
-            self.make_pipeline_results(con.execute_pipeline(self)?)?
+            Value::Array(
+                self.filter_ignored_results_if_there_are_no_errors(con.execute_pipeline(self)?),
+            )
         })?)
     }
 
