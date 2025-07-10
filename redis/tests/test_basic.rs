@@ -35,7 +35,7 @@ mod basic {
     };
 
     #[cfg(feature = "vector-sets")]
-    use redis::{
+    use redis::vector_sets::{
         EmbeddingInput, VAddOptions, VEmbOptions, VSimOptions, VectorAddInput, VectorQuantization,
         VectorSimilaritySearchInput,
     };
