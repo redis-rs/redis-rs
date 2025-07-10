@@ -561,6 +561,7 @@ let primary = sentinel.get_async_connection().await.unwrap();
 //! * If you're using `tokio::time::pause()` or otherwise manipulating time, you might need to opt out of timeouts using `AsyncConnectionConfig::new().set_connection_timeout(None).set_response_timeout(None)`.
 //! * Async connections now have default timeouts. If you're using blocking commands or other potentially long running commands, you should adjust the timeouts accordingly.
 //! * If you're manually setting `ConnectionManager`'s retry setting, then please re-examine the values you set. `exponential_base` has been made a f32, and `factor` was replaced by `min_delay`, in order to match the documented behavior, instead of the actual erroneous behavior of past versions.
+//! * Vector set types have been moved into the `vector_sets` module, instead of being exposed directly.
 //!
 //!
 
@@ -672,10 +673,7 @@ pub use crate::commands::JsonAsyncCommands;
 
 #[cfg(feature = "vector-sets")]
 #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
-pub use crate::commands::{
-    EmbeddingInput, VAddOptions, VEmbOptions, VSimOptions, VectorAddInput, VectorQuantization,
-    VectorSimilaritySearchInput,
-};
+pub use crate::commands::vector_sets;
 
 #[cfg(feature = "geospatial")]
 #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
