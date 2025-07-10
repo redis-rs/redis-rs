@@ -79,6 +79,7 @@ enum ErrorRepr {
     },
     Parsing(ParsingError),
     Server(ServerError),
+    Pipeline(Arc<[(usize, ServerError)]>),
 }
 
 impl PartialEq for RedisError {
@@ -89,6 +90,7 @@ impl PartialEq for RedisError {
             }
             (ErrorRepr::Parsing(a), ErrorRepr::Parsing(b)) => *a == *b,
             (ErrorRepr::Server(a), ErrorRepr::Server(b)) => *a == *b,
+            (ErrorRepr::Pipeline(a), ErrorRepr::Pipeline(b)) => *a == *b,
             _ => false,
         }
     }
@@ -179,6 +181,23 @@ impl fmt::Display for RedisError {
             ErrorRepr::Internal { err, .. } => err.fmt(f),
             ErrorRepr::Parsing(err) => err.fmt(f),
             ErrorRepr::Server(err) => err.fmt(f),
+            ErrorRepr::Pipeline(items) => {
+                if items.len() > 1 {
+                    f.write_str("Pipeline failures: [")?;
+                } else {
+                    f.write_str("Pipeline failure: [")?;
+                }
+                let mut first = true;
+                for (index, error) in items.iter() {
+                    if first {
+                        write!(f, "(Index {index}, error: {error})")?;
+                        first = false;
+                    } else {
+                        write!(f, ", (Index {index}, error: {error})")?;
+                    }
+                }
+                f.write_str("]")
+            }
         }
     }
 }
@@ -214,6 +233,10 @@ impl RedisError {
                 Some(kind) => ErrorKind::Server(kind),
                 None => ErrorKind::Extension,
             },
+            ErrorRepr::Pipeline(items) => items
+                .first()
+                .and_then(|item| item.1.kind().map(|kind| kind.into()))
+                .unwrap_or(ErrorKind::Extension),
         }
     }
 
@@ -411,6 +434,12 @@ impl RedisError {
                     _ => RetryMethod::RetryImmediately,
                 })
                 .unwrap_or(RetryMethod::NoRetry),
+        }
+    }
+
+    pub(crate) fn pipeline(errors: Vec<(usize, ServerError)>) -> Self {
+        Self {
+            repr: ErrorRepr::Pipeline(Arc::from(errors)),
         }
     }
 }

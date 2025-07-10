@@ -8,6 +8,7 @@ use crate::errors::ErrorKind;
 use crate::types::{
     from_owned_redis_value, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,
 };
+use crate::RedisError;
 
 /// Represents a redis command pipeline.
 #[derive(Clone)]
@@ -99,24 +100,42 @@ impl Pipeline {
     where
         T: FromRedisValue,
     {
-        let value = if self.is_transaction() {
+        let response = if self.is_transaction() {
             match response.pop() {
-                Some(Value::Nil) => Ok(Value::Nil),
-                Some(Value::Array(items)) => self.make_pipeline_results(items),
-                _ => Err((
-                    ErrorKind::UnexpectedReturnType,
-                    "Invalid response when parsing multi response",
-                )
-                    .into()),
-            }?
+                Some(Value::Nil) => {
+                    return Ok(from_owned_redis_value(Value::Nil)?);
+                }
+                Some(Value::Array(items)) => items,
+                _ => {
+                    return Err((
+                        ErrorKind::UnexpectedReturnType,
+                        "Invalid response when parsing multi response",
+                    )
+                        .into());
+                }
+            }
         } else {
-            self.make_pipeline_results(response)?
+            response
         };
-        if T::can_collect_errors() {
-            Ok(from_owned_redis_value(value)?)
+
+        let value = if T::can_collect_errors() {
+            Value::Array(self.filter_ignored_results_if_there_are_no_errors(response))
         } else {
-            Ok(from_owned_redis_value(value.extract_error()?)?)
-        }
+            let server_errors: Vec<_> = response
+                .iter()
+                .enumerate()
+                .filter_map(|(index, value)| match value {
+                    Value::ServerError(error) => Some((index, error.clone())),
+                    _ => None,
+                })
+                .collect();
+            if server_errors.is_empty() {
+                Value::Array(self.filter_ignored_results(response)).extract_error()?
+            } else {
+                return Err(RedisError::pipeline(server_errors));
+            }
+        };
+        Ok(from_owned_redis_value(value)?)
     }
 
     /// Executes the pipeline and fetches the return values.  Since most
@@ -190,9 +209,7 @@ impl Pipeline {
     /// It avoids the need to define generic bounds for ().
     #[inline]
     pub fn exec(&self, con: &mut dyn ConnectionLike) -> RedisResult<()> {
-        self.query::<Vec<RedisResult<()>>>(con)?
-            .into_iter()
-            .collect()
+        self.query::<()>(con)
     }
 
     /// This is an alternative to `query_async` that can be used if you want to be able to handle a
@@ -201,10 +218,7 @@ impl Pipeline {
     /// It avoids the need to define generic bounds for ().
     #[cfg(feature = "aio")]
     pub async fn exec_async(&self, con: &mut impl crate::aio::ConnectionLike) -> RedisResult<()> {
-        self.query_async::<Vec<RedisResult<()>>>(con)
-            .await?
-            .into_iter()
-            .collect()
+        self.query_async::<()>(con).await
     }
 }
 
@@ -307,22 +321,28 @@ macro_rules! implement_pipeline_commands {
                 &mut self.commands[idx]
             }
 
-            fn make_pipeline_results(&self, resp: Vec<Value>) -> RedisResult<Value> {
+            fn filter_ignored_results(&self, resp: Vec<Value>) -> Vec<Value> {
+                resp.into_iter()
+                    .enumerate()
+                    .filter_map(|(index, result)| {
+                        (!self.ignored_commands.contains(&index)).then(|| result)
+                    })
+                    .collect()
+            }
+
+            fn filter_ignored_results_if_there_are_no_errors(
+                &self,
+                resp: Vec<Value>,
+            ) -> Vec<Value> {
                 // if any response is an error, we just return the values without filtering
                 if resp
                     .iter()
                     .any(|value| matches!(value, Value::ServerError(_)))
                 {
-                    return Ok(Value::Array(resp));
+                    return resp;
                 }
 
-                let mut rv = Vec::with_capacity(resp.len() - self.ignored_commands.len());
-                for (idx, result) in resp.into_iter().enumerate() {
-                    if !self.ignored_commands.contains(&idx) {
-                        rv.push(result);
-                    }
-                }
-                Ok(Value::Array(rv))
+                self.filter_ignored_results(resp)
             }
         }
 
