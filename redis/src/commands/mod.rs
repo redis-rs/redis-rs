@@ -32,13 +32,13 @@ pub use json::JsonAsyncCommands;
 use crate::cluster_pipeline::ClusterPipeline;
 
 #[cfg(feature = "geospatial")]
-use crate::geo;
+pub mod geo;
 
 #[cfg(feature = "streams")]
-use crate::streams;
+pub mod streams;
 
 #[cfg(feature = "acl")]
-use crate::acl;
+pub mod acl;
 use crate::RedisConnectionInfo;
 
 #[cfg(any(feature = "cluster", feature = "cache-aio"))]

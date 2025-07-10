@@ -656,7 +656,7 @@ mod pipeline;
 
 #[cfg(feature = "acl")]
 #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
-pub mod acl;
+pub use commands::acl;
 
 #[cfg(feature = "aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
@@ -679,7 +679,7 @@ pub use crate::commands::{
 
 #[cfg(feature = "geospatial")]
 #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
-pub mod geo;
+pub use commands::geo;
 
 #[cfg(any(feature = "connection-manager", feature = "cluster-async"))]
 mod subscription_tracker;
@@ -714,7 +714,7 @@ mod bb8;
 
 #[cfg(feature = "streams")]
 #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
-pub mod streams;
+pub use commands::streams;
 
 #[cfg(feature = "cluster-async")]
 #[cfg_attr(docsrs, doc(cfg(all(feature = "cluster", feature = "aio"))))]
