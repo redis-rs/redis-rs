@@ -119,13 +119,11 @@ impl ClusterPipeline {
             }
         }
 
-        Ok(from_owned_redis_value(if self.commands.is_empty() {
-            Value::Array(vec![])
+        if self.commands.is_empty() {
+            Ok(from_owned_redis_value(Value::Array(vec![]))?)
         } else {
-            Value::Array(
-                self.filter_ignored_results_if_there_are_no_errors(con.execute_pipeline(self)?),
-            )
-        })?)
+            self.compose_response(con.execute_pipeline(self)?)
+        }
     }
 
     /// This is an alternative to `query`` that can be used if you want to be able to handle a

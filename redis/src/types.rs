@@ -433,10 +433,7 @@ impl fmt::Debug for Value {
 /// Library generic result type.
 pub type RedisResult<T> = Result<T, RedisError>;
 
-impl<T> FromRedisValue for RedisResult<T>
-where
-    T: FromRedisValue,
-{
+impl<T: FromRedisValue> FromRedisValue for RedisResult<T> {
     fn from_redis_value(value: &Value) -> Result<Self, ParsingError> {
         match value {
             Value::ServerError(err) => Ok(Err(err.clone().into())),
@@ -449,10 +446,6 @@ where
             Value::ServerError(err) => Ok(Err(err.into())),
             _ => from_owned_redis_value(value).map(|result| Ok(result)),
         }
-    }
-
-    fn can_contain_server_error() -> bool {
-        true
     }
 }
 
@@ -1467,21 +1460,6 @@ pub trait FromRedisValue: Sized {
     fn from_owned_byte_vec(_vec: Vec<u8>) -> Result<Vec<Self>, ParsingError> {
         Self::from_owned_redis_value(Value::BulkString(_vec)).map(|rv| vec![rv])
     }
-
-    /// Marker for whether we're parsing into a vec of RedisResult or Value.
-    ///
-    /// This should be removed once the language supports either static reflection or negative trait bounds.
-    /// Overwrite at your peril.
-    fn can_collect_errors() -> bool {
-        false
-    }
-
-    /// Marker for whether we're parsing into a type that can represent a server error.
-    ///
-    /// This should be removed once the language supports either static reflection or negative trait bounds.
-    fn can_contain_server_error() -> bool {
-        false
-    }
 }
 
 fn get_inner_value(v: &Value) -> &Value {
@@ -1796,10 +1774,6 @@ macro_rules! from_vec_from_redis_value {
                     _ => crate::errors::invalid_type_error!(v, "Response type not vector compatible."),
                 }
             }
-
-            fn can_collect_errors() -> bool {
-                T::can_contain_server_error()
-            }
         }
     };
 }
@@ -1924,10 +1898,6 @@ impl FromRedisValue for Value {
 
     fn from_owned_redis_value(v: Value) -> Result<Self, ParsingError> {
         Ok(v)
-    }
-
-    fn can_contain_server_error() -> bool {
-        true
     }
 }
 
