@@ -10,7 +10,7 @@ use super::smol as crate_smol;
 #[cfg(feature = "tokio-comp")]
 use super::tokio as crate_tokio;
 use super::RedisRuntime;
-use crate::types::RedisError;
+use crate::errors::RedisError;
 #[cfg(feature = "smol-comp")]
 use smol_timeout::TimeoutExt;
 
@@ -82,7 +82,7 @@ fn set_runtime(runtime: Runtime) -> Result<(), RedisError> {
 
     CHOSEN_RUNTIME
         .set(runtime)
-        .map_err(|_| RedisError::from((crate::ErrorKind::ClientError, PREFER_RUNTIME_ERROR)))
+        .map_err(|_| RedisError::from((crate::ErrorKind::Client, PREFER_RUNTIME_ERROR)))
 }
 
 /// Mark Smol as the preferred runtime.

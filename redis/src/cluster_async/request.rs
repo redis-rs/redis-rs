@@ -6,9 +6,10 @@ use std::{
     time::Duration,
 };
 
+use crate::errors::RetryMethod;
 use crate::{
-    cluster_async::OperationTarget, cluster_client::RetryParams, cluster_routing::Redirect,
-    types::RetryMethod, Cmd, RedisResult,
+    cluster_async::OperationTarget, cluster_client::RetryParams, cluster_routing::Redirect, Cmd,
+    RedisResult,
 };
 
 use futures_util::{future::BoxFuture, ready};

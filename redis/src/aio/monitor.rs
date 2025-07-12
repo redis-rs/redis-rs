@@ -8,7 +8,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::Decoder;
 
 use crate::{
-    cmd, parser::ValueCodec, types::closed_connection_error, FromRedisValue, RedisConnectionInfo,
+    cmd, errors::closed_connection_error, parser::ValueCodec, FromRedisValue, RedisConnectionInfo,
     RedisResult, Value,
 };
 

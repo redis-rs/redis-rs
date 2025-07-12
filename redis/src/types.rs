@@ -1,3 +1,4 @@
+use crate::errors::ParsingError;
 #[cfg(feature = "ahash")]
 pub(crate) use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 #[cfg(feature = "num-bigint")]
@@ -6,32 +7,14 @@ use std::borrow::Cow;
 #[cfg(not(feature = "ahash"))]
 pub(crate) use std::collections::{HashMap, HashSet};
 use std::default::Default;
-use std::error;
-use std::ffi::{CString, NulError};
+use std::ffi::CString;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
 use std::io;
 use std::ops::Deref;
-use std::str::{from_utf8, Utf8Error};
-use std::string::FromUtf8Error;
+use std::str::from_utf8;
 
-macro_rules! invalid_type_error {
-    ($v:expr, $det:expr) => {{
-        fail!(ParsingError {
-            description: format!("{:?} (value was {:?})", $det, $v).into(),
-        })
-    }};
-}
-
-macro_rules! invalid_type_error_inner {
-    ($v:expr, $det:expr) => {
-        ParsingError {
-            description: format!("{:?} (value was {:?})", $det, $v).into(),
-        }
-    };
-}
-
-pub(crate) use {invalid_type_error, invalid_type_error_inner};
+use crate::errors::{RedisError, ServerError};
 
 /// Helper enum that is used to define expiry time
 pub enum Expiry {
@@ -90,177 +73,6 @@ pub enum NumericBehavior {
     NumberIsInteger,
     /// This argument is a floating point value.
     NumberIsFloat,
-}
-
-/// An enum of all error kinds.
-#[derive(PartialEq, Eq, Copy, Clone, Debug)]
-#[non_exhaustive]
-pub enum ErrorKind {
-    /// The server generated an invalid response.
-    ResponseError,
-    /// The parser failed to parse the server response.
-    ParseError,
-    /// The authentication with the server failed.
-    AuthenticationFailed,
-    /// Operation failed because of a type mismatch.
-    TypeError,
-    /// A script execution was aborted.
-    ExecAbortError,
-    /// The server cannot response because it's loading a dump.
-    BusyLoadingError,
-    /// A script that was requested does not actually exist.
-    NoScriptError,
-    /// An error that was caused because the parameter to the
-    /// client were wrong.
-    InvalidClientConfig,
-    /// Raised if a key moved to a different node.
-    Moved,
-    /// Raised if a key moved to a different node but we need to ask.
-    Ask,
-    /// Raised if a request needs to be retried.
-    TryAgain,
-    /// Raised if a redis cluster is down.
-    ClusterDown,
-    /// A request spans multiple slots
-    CrossSlot,
-    /// A cluster master is unavailable.
-    MasterDown,
-    /// This kind is returned if the redis error is one that is
-    /// not native to the system.  This is usually the case if
-    /// the cause is another error.
-    IoError,
-    /// An error raised that was identified on the client before execution.
-    ClientError,
-    /// An extension error.  This is an error created by the server
-    /// that is not directly understood by the library.
-    ExtensionError,
-    /// Attempt to write to a read-only server
-    ReadOnly,
-    /// Requested name not found among masters returned by the sentinels
-    MasterNameNotFoundBySentinel,
-    /// No valid replicas found in the sentinels, for a given master name
-    NoValidReplicasFoundBySentinel,
-    /// At least one sentinel connection info is required
-    EmptySentinelList,
-    /// Attempted to kill a script/function while they werent' executing
-    NotBusy,
-    /// Used when a cluster connection cannot find a connection to a valid node.
-    ClusterConnectionNotFound,
-    /// Attempted to unsubscribe on a connection that is not in subscribed mode.
-    NoSub,
-
-    #[cfg(feature = "json")]
-    /// Error Serializing a struct to JSON form
-    Serialize,
-
-    /// Redis Servers prior to v6.0.0 doesn't support RESP3.
-    /// Try disabling resp3 option
-    RESP3NotSupported,
-}
-
-#[derive(PartialEq, Debug, Clone, Copy)]
-pub enum ServerErrorKind {
-    ResponseError,
-    ExecAbortError,
-    BusyLoadingError,
-    NoScriptError,
-    Moved,
-    Ask,
-    TryAgain,
-    ClusterDown,
-    CrossSlot,
-    MasterDown,
-    ReadOnly,
-    NotBusy,
-    NoSub,
-}
-
-#[derive(PartialEq, Debug, Clone)]
-pub enum ServerError {
-    ExtensionError {
-        code: String,
-        detail: Option<String>,
-    },
-    KnownError {
-        kind: ServerErrorKind,
-        detail: Option<String>,
-    },
-}
-
-impl ServerError {
-    pub fn kind(&self) -> Option<ServerErrorKind> {
-        match self {
-            ServerError::ExtensionError { .. } => None,
-            ServerError::KnownError { kind, .. } => Some(*kind),
-        }
-    }
-
-    pub fn code(&self) -> &str {
-        match self {
-            ServerError::ExtensionError { code, .. } => code,
-            ServerError::KnownError { kind, .. } => match kind {
-                ServerErrorKind::ResponseError => "ERR",
-                ServerErrorKind::ExecAbortError => "EXECABORT",
-                ServerErrorKind::BusyLoadingError => "LOADING",
-                ServerErrorKind::NoScriptError => "NOSCRIPT",
-                ServerErrorKind::Moved => "MOVED",
-                ServerErrorKind::Ask => "ASK",
-                ServerErrorKind::TryAgain => "TRYAGAIN",
-                ServerErrorKind::ClusterDown => "CLUSTERDOWN",
-                ServerErrorKind::CrossSlot => "CROSSSLOT",
-                ServerErrorKind::MasterDown => "MASTERDOWN",
-                ServerErrorKind::ReadOnly => "READONLY",
-                ServerErrorKind::NotBusy => "NOTBUSY",
-                ServerErrorKind::NoSub => "NOSUB",
-            },
-        }
-    }
-
-    pub fn details(&self) -> Option<&str> {
-        match self {
-            ServerError::ExtensionError { detail, .. } => detail.as_ref().map(|str| str.as_str()),
-            ServerError::KnownError { detail, .. } => detail.as_ref().map(|str| str.as_str()),
-        }
-    }
-}
-
-impl From<ServerError> for RedisError {
-    fn from(value: ServerError) -> Self {
-        // TODO - Consider changing RedisError to explicitly represent whether an error came from the server or not. Today it is only implied.
-        match value {
-            ServerError::ExtensionError { code, detail } => make_extension_error(code, detail),
-            ServerError::KnownError { kind, detail } => {
-                let desc = "An error was signalled by the server";
-                let kind = match kind {
-                    ServerErrorKind::ResponseError => ErrorKind::ResponseError,
-                    ServerErrorKind::ExecAbortError => ErrorKind::ExecAbortError,
-                    ServerErrorKind::BusyLoadingError => ErrorKind::BusyLoadingError,
-                    ServerErrorKind::NoScriptError => ErrorKind::NoScriptError,
-                    ServerErrorKind::Moved => ErrorKind::Moved,
-                    ServerErrorKind::Ask => ErrorKind::Ask,
-                    ServerErrorKind::TryAgain => ErrorKind::TryAgain,
-                    ServerErrorKind::ClusterDown => ErrorKind::ClusterDown,
-                    ServerErrorKind::CrossSlot => ErrorKind::CrossSlot,
-                    ServerErrorKind::MasterDown => ErrorKind::MasterDown,
-                    ServerErrorKind::ReadOnly => ErrorKind::ReadOnly,
-                    ServerErrorKind::NotBusy => ErrorKind::NotBusy,
-                    ServerErrorKind::NoSub => ErrorKind::NoSub,
-                };
-                match detail {
-                    Some(detail) => RedisError::from((kind, desc, detail)),
-                    None => RedisError::from((kind, desc)),
-                }
-            }
-        }
-    }
-}
-
-impl From<ParsingError> for RedisError {
-    fn from(err: ParsingError) -> Self {
-        RedisError {
-            repr: ErrorRepr::ParsingError(err),
-        }
-    }
 }
 
 /// Internal low-level redis value enum.
@@ -613,521 +425,6 @@ impl fmt::Debug for Value {
     }
 }
 
-/// Represents a redis error.
-///
-/// For the most part you should be using the Error trait to interact with this
-/// rather than the actual struct.
-pub struct RedisError {
-    repr: ErrorRepr,
-}
-
-#[cfg(feature = "json")]
-impl From<serde_json::Error> for RedisError {
-    fn from(serde_err: serde_json::Error) -> RedisError {
-        RedisError::from((
-            ErrorKind::Serialize,
-            "Serialization Error",
-            format!("{serde_err}"),
-        ))
-    }
-}
-
-#[derive(Debug)]
-enum ErrorRepr {
-    WithDescription(ErrorKind, &'static str),
-    WithDescriptionAndDetail(ErrorKind, &'static str, String),
-    ExtensionError(String, String),
-    IoError(io::Error),
-    ParsingError(ParsingError),
-}
-
-impl PartialEq for RedisError {
-    fn eq(&self, other: &RedisError) -> bool {
-        match (&self.repr, &other.repr) {
-            (&ErrorRepr::WithDescription(kind_a, _), &ErrorRepr::WithDescription(kind_b, _)) => {
-                kind_a == kind_b
-            }
-            (
-                &ErrorRepr::WithDescriptionAndDetail(kind_a, _, _),
-                &ErrorRepr::WithDescriptionAndDetail(kind_b, _, _),
-            ) => kind_a == kind_b,
-            (ErrorRepr::ExtensionError(a, _), ErrorRepr::ExtensionError(b, _)) => *a == *b,
-            _ => false,
-        }
-    }
-}
-
-impl From<io::Error> for RedisError {
-    fn from(err: io::Error) -> RedisError {
-        RedisError {
-            repr: ErrorRepr::IoError(err),
-        }
-    }
-}
-
-impl From<Utf8Error> for ParsingError {
-    fn from(_: Utf8Error) -> ParsingError {
-        ParsingError {
-            description: "Invalid UTF-8".into(),
-        }
-    }
-}
-
-impl From<NulError> for ParsingError {
-    fn from(err: NulError) -> ParsingError {
-        ParsingError {
-            description: format!("Value contains interior nul terminator: {err}",).into(),
-        }
-    }
-}
-
-#[cfg(feature = "tls-native-tls")]
-impl From<native_tls::Error> for RedisError {
-    fn from(err: native_tls::Error) -> RedisError {
-        RedisError {
-            repr: ErrorRepr::WithDescriptionAndDetail(
-                ErrorKind::IoError,
-                "TLS error",
-                err.to_string(),
-            ),
-        }
-    }
-}
-
-#[cfg(feature = "tls-rustls")]
-impl From<rustls::Error> for RedisError {
-    fn from(err: rustls::Error) -> RedisError {
-        RedisError {
-            repr: ErrorRepr::WithDescriptionAndDetail(
-                ErrorKind::IoError,
-                "TLS error",
-                err.to_string(),
-            ),
-        }
-    }
-}
-
-#[cfg(feature = "tls-rustls")]
-impl From<rustls::pki_types::InvalidDnsNameError> for RedisError {
-    fn from(err: rustls::pki_types::InvalidDnsNameError) -> RedisError {
-        RedisError {
-            repr: ErrorRepr::WithDescriptionAndDetail(
-                ErrorKind::IoError,
-                "TLS Error",
-                err.to_string(),
-            ),
-        }
-    }
-}
-
-#[cfg(feature = "tls-rustls")]
-impl From<rustls_native_certs::Error> for RedisError {
-    fn from(err: rustls_native_certs::Error) -> RedisError {
-        RedisError {
-            repr: ErrorRepr::WithDescriptionAndDetail(
-                ErrorKind::IoError,
-                "Fetch certs Error",
-                err.to_string(),
-            ),
-        }
-    }
-}
-
-#[cfg(feature = "uuid")]
-impl From<uuid::Error> for ParsingError {
-    fn from(err: uuid::Error) -> ParsingError {
-        ParsingError {
-            description: format!("Value is not a valid UUID: {err}").into(),
-        }
-    }
-}
-
-impl From<FromUtf8Error> for ParsingError {
-    fn from(_: FromUtf8Error) -> ParsingError {
-        ParsingError {
-            description: "Cannot convert from UTF-8".into(),
-        }
-    }
-}
-
-impl From<(ErrorKind, &'static str)> for RedisError {
-    fn from((kind, desc): (ErrorKind, &'static str)) -> RedisError {
-        RedisError {
-            repr: ErrorRepr::WithDescription(kind, desc),
-        }
-    }
-}
-
-impl From<(ErrorKind, &'static str, String)> for RedisError {
-    fn from((kind, desc, detail): (ErrorKind, &'static str, String)) -> RedisError {
-        RedisError {
-            repr: ErrorRepr::WithDescriptionAndDetail(kind, desc, detail),
-        }
-    }
-}
-
-impl error::Error for RedisError {
-    #[allow(deprecated)]
-    fn description(&self) -> &str {
-        match self.repr {
-            ErrorRepr::WithDescription(_, desc) => desc,
-            ErrorRepr::WithDescriptionAndDetail(_, desc, _) => desc,
-            ErrorRepr::ExtensionError(_, _) => "extension error",
-            ErrorRepr::IoError(ref err) => err.description(),
-            ErrorRepr::ParsingError(ref err) => err.description(),
-        }
-    }
-
-    fn cause(&self) -> Option<&dyn error::Error> {
-        match self.repr {
-            ErrorRepr::IoError(ref err) => Some(err as &dyn error::Error),
-            _ => None,
-        }
-    }
-
-    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        match self.repr {
-            ErrorRepr::IoError(ref err) => Some(err),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for RedisError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        match self.repr {
-            ErrorRepr::WithDescription(kind, desc) => {
-                desc.fmt(f)?;
-                f.write_str("- ")?;
-                fmt::Debug::fmt(&kind, f)
-            }
-            ErrorRepr::WithDescriptionAndDetail(kind, desc, ref detail) => {
-                desc.fmt(f)?;
-                f.write_str(" - ")?;
-                fmt::Debug::fmt(&kind, f)?;
-                f.write_str(": ")?;
-                detail.fmt(f)
-            }
-            ErrorRepr::ExtensionError(ref code, ref detail) => {
-                code.fmt(f)?;
-                f.write_str(": ")?;
-                detail.fmt(f)
-            }
-            ErrorRepr::IoError(ref err) => err.fmt(f),
-            ErrorRepr::ParsingError(ref err) => err.fmt(f),
-        }
-    }
-}
-
-impl fmt::Debug for RedisError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        fmt::Display::fmt(self, f)
-    }
-}
-
-/// What method should be used if retrying this request.
-#[non_exhaustive]
-pub enum RetryMethod {
-    /// Create a fresh connection, since the current connection is no longer usable.
-    Reconnect,
-    /// Don't retry, this is a permanent error.
-    NoRetry,
-    /// Retry immediately, this doesn't require a wait.
-    RetryImmediately,
-    /// Retry after sleeping to avoid overloading the external service.
-    WaitAndRetry,
-    /// The key has moved to a different node but we have to ask which node, this is only relevant for clusters.
-    AskRedirect,
-    /// The key has moved to a different node, this is only relevant for clusters.
-    MovedRedirect,
-    /// Reconnect the initial connection to the master cluster, this is only relevant for clusters.
-    ReconnectFromInitialConnections,
-}
-
-/// Indicates a general failure in the library.
-impl RedisError {
-    /// Returns the kind of the error.
-    pub fn kind(&self) -> ErrorKind {
-        match self.repr {
-            ErrorRepr::WithDescription(kind, _)
-            | ErrorRepr::WithDescriptionAndDetail(kind, _, _) => kind,
-            ErrorRepr::ExtensionError(_, _) => ErrorKind::ExtensionError,
-            ErrorRepr::IoError(_) => ErrorKind::IoError,
-            ErrorRepr::ParsingError(_) => ErrorKind::TypeError,
-        }
-    }
-
-    /// Returns the error detail.
-    pub fn detail(&self) -> Option<&str> {
-        match self.repr {
-            ErrorRepr::WithDescriptionAndDetail(_, _, ref detail)
-            | ErrorRepr::ExtensionError(_, ref detail) => Some(detail.as_str()),
-            ErrorRepr::ParsingError(ref err) => Some(&err.description),
-            _ => None,
-        }
-    }
-
-    /// Returns the raw error code if available.
-    pub fn code(&self) -> Option<&str> {
-        match self.kind() {
-            ErrorKind::ResponseError => Some("ERR"),
-            ErrorKind::ExecAbortError => Some("EXECABORT"),
-            ErrorKind::BusyLoadingError => Some("LOADING"),
-            ErrorKind::NoScriptError => Some("NOSCRIPT"),
-            ErrorKind::Moved => Some("MOVED"),
-            ErrorKind::Ask => Some("ASK"),
-            ErrorKind::TryAgain => Some("TRYAGAIN"),
-            ErrorKind::ClusterDown => Some("CLUSTERDOWN"),
-            ErrorKind::CrossSlot => Some("CROSSSLOT"),
-            ErrorKind::MasterDown => Some("MASTERDOWN"),
-            ErrorKind::ReadOnly => Some("READONLY"),
-            ErrorKind::NotBusy => Some("NOTBUSY"),
-            _ => match self.repr {
-                ErrorRepr::ExtensionError(ref code, _) => Some(code),
-                _ => None,
-            },
-        }
-    }
-
-    /// Returns the name of the error category for display purposes.
-    pub fn category(&self) -> &str {
-        match self.kind() {
-            ErrorKind::ResponseError => "response error",
-            ErrorKind::AuthenticationFailed => "authentication failed",
-            ErrorKind::TypeError => "type error",
-            ErrorKind::ExecAbortError => "script execution aborted",
-            ErrorKind::BusyLoadingError => "busy loading",
-            ErrorKind::NoScriptError => "no script",
-            ErrorKind::InvalidClientConfig => "invalid client config",
-            ErrorKind::Moved => "key moved",
-            ErrorKind::Ask => "key moved (ask)",
-            ErrorKind::TryAgain => "try again",
-            ErrorKind::ClusterDown => "cluster down",
-            ErrorKind::CrossSlot => "cross-slot",
-            ErrorKind::MasterDown => "master down",
-            ErrorKind::IoError => "I/O error",
-            ErrorKind::ExtensionError => "extension error",
-            ErrorKind::ClientError => "client error",
-            ErrorKind::ReadOnly => "read-only",
-            ErrorKind::MasterNameNotFoundBySentinel => "master name not found by sentinel",
-            ErrorKind::NoValidReplicasFoundBySentinel => "no valid replicas found by sentinel",
-            ErrorKind::EmptySentinelList => "empty sentinel list",
-            ErrorKind::NotBusy => "not busy",
-            ErrorKind::ClusterConnectionNotFound => "connection to node in cluster not found",
-            #[cfg(feature = "json")]
-            ErrorKind::Serialize => "serializing",
-            ErrorKind::RESP3NotSupported => "resp3 is not supported by server",
-            ErrorKind::ParseError => "parse error",
-            ErrorKind::NoSub => {
-                "Server declined unsubscribe related command in non-subscribed mode"
-            }
-        }
-    }
-
-    /// Indicates that this failure is an IO failure.
-    pub fn is_io_error(&self) -> bool {
-        self.kind() == ErrorKind::IoError
-    }
-
-    pub(crate) fn as_io_error(&self) -> Option<&io::Error> {
-        match &self.repr {
-            ErrorRepr::IoError(e) => Some(e),
-            _ => None,
-        }
-    }
-
-    /// Indicates that this is a cluster error.
-    pub fn is_cluster_error(&self) -> bool {
-        matches!(
-            self.kind(),
-            ErrorKind::Moved | ErrorKind::Ask | ErrorKind::TryAgain | ErrorKind::ClusterDown
-        )
-    }
-
-    /// Returns true if this error indicates that the connection was
-    /// refused.  You should generally not rely much on this function
-    /// unless you are writing unit tests that want to detect if a
-    /// local server is available.
-    pub fn is_connection_refusal(&self) -> bool {
-        match self.repr {
-            ErrorRepr::IoError(ref err) => {
-                #[allow(clippy::match_like_matches_macro)]
-                match err.kind() {
-                    io::ErrorKind::ConnectionRefused => true,
-                    // if we connect to a unix socket and the file does not
-                    // exist yet, then we want to treat this as if it was a
-                    // connection refusal.
-                    io::ErrorKind::NotFound => cfg!(unix),
-                    _ => false,
-                }
-            }
-            _ => false,
-        }
-    }
-
-    /// Returns true if error was caused by I/O time out.
-    /// Note that this may not be accurate depending on platform.
-    pub fn is_timeout(&self) -> bool {
-        match self.repr {
-            ErrorRepr::IoError(ref err) => matches!(
-                err.kind(),
-                io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
-            ),
-            _ => false,
-        }
-    }
-
-    /// Returns true if error was caused by a dropped connection.
-    pub fn is_connection_dropped(&self) -> bool {
-        match self.repr {
-            ErrorRepr::IoError(ref err) => matches!(
-                err.kind(),
-                io::ErrorKind::BrokenPipe
-                    | io::ErrorKind::ConnectionReset
-                    | io::ErrorKind::UnexpectedEof
-            ),
-            _ => false,
-        }
-    }
-
-    /// Returns true if the error is likely to not be recoverable, and the connection must be replaced.
-    pub fn is_unrecoverable_error(&self) -> bool {
-        match self.retry_method() {
-            RetryMethod::Reconnect => true,
-            RetryMethod::ReconnectFromInitialConnections => true,
-
-            RetryMethod::NoRetry => false,
-            RetryMethod::RetryImmediately => false,
-            RetryMethod::WaitAndRetry => false,
-            RetryMethod::AskRedirect => false,
-            RetryMethod::MovedRedirect => false,
-        }
-    }
-
-    /// Returns the node the error refers to.
-    ///
-    /// This returns `(addr, slot_id)`.
-    pub fn redirect_node(&self) -> Option<(&str, u16)> {
-        match self.kind() {
-            ErrorKind::Ask | ErrorKind::Moved => (),
-            _ => return None,
-        }
-        let mut iter = self.detail()?.split_ascii_whitespace();
-        let slot_id: u16 = iter.next()?.parse().ok()?;
-        let addr = iter.next()?;
-        Some((addr, slot_id))
-    }
-
-    /// Clone the `RedisError`, throwing away non-cloneable parts of an `IoError`.
-    ///
-    /// Deriving `Clone` is not possible because the wrapped `io::Error` is not
-    /// cloneable.
-    ///
-    /// The `ioerror_description` parameter will be prepended to the message in
-    /// case an `IoError` is found.
-    #[cfg(feature = "connection-manager")] // Used to avoid "unused method" warning
-    pub(crate) fn clone_mostly(&self, ioerror_description: &'static str) -> Self {
-        let repr = match self.repr {
-            ErrorRepr::WithDescription(kind, desc) => ErrorRepr::WithDescription(kind, desc),
-            ErrorRepr::WithDescriptionAndDetail(kind, desc, ref detail) => {
-                ErrorRepr::WithDescriptionAndDetail(kind, desc, detail.clone())
-            }
-            ErrorRepr::ExtensionError(ref code, ref detail) => {
-                ErrorRepr::ExtensionError(code.clone(), detail.clone())
-            }
-            ErrorRepr::IoError(ref e) => ErrorRepr::IoError(io::Error::new(
-                e.kind(),
-                format!("{ioerror_description}: {e}"),
-            )),
-            ErrorRepr::ParsingError(ref err) => ErrorRepr::ParsingError(err.clone()),
-        };
-        Self { repr }
-    }
-
-    /// Specifies what method (if any) should be used to retry this request.
-    ///
-    /// If you are using the cluster api retrying of requests is already handled by the library.
-    ///
-    /// This isn't precise, and internally the library uses multiple other considerations rather
-    /// than just the error kind on when to retry.
-    pub fn retry_method(&self) -> RetryMethod {
-        match self.kind() {
-            ErrorKind::Moved => RetryMethod::MovedRedirect,
-            ErrorKind::Ask => RetryMethod::AskRedirect,
-
-            ErrorKind::TryAgain => RetryMethod::WaitAndRetry,
-            ErrorKind::MasterDown => RetryMethod::WaitAndRetry,
-            ErrorKind::ClusterDown => RetryMethod::WaitAndRetry,
-            ErrorKind::BusyLoadingError => RetryMethod::WaitAndRetry,
-            ErrorKind::MasterNameNotFoundBySentinel => RetryMethod::WaitAndRetry,
-            ErrorKind::NoValidReplicasFoundBySentinel => RetryMethod::WaitAndRetry,
-
-            ErrorKind::ResponseError => RetryMethod::NoRetry,
-            ErrorKind::ReadOnly => RetryMethod::NoRetry,
-            ErrorKind::ExtensionError => RetryMethod::NoRetry,
-            ErrorKind::ExecAbortError => RetryMethod::NoRetry,
-            ErrorKind::TypeError => RetryMethod::NoRetry,
-            ErrorKind::NoScriptError => RetryMethod::NoRetry,
-            ErrorKind::InvalidClientConfig => RetryMethod::NoRetry,
-            ErrorKind::CrossSlot => RetryMethod::NoRetry,
-            ErrorKind::ClientError => RetryMethod::NoRetry,
-            ErrorKind::EmptySentinelList => RetryMethod::NoRetry,
-            ErrorKind::NotBusy => RetryMethod::NoRetry,
-            #[cfg(feature = "json")]
-            ErrorKind::Serialize => RetryMethod::NoRetry,
-            ErrorKind::RESP3NotSupported => RetryMethod::NoRetry,
-            ErrorKind::NoSub => RetryMethod::NoRetry,
-
-            ErrorKind::ParseError => RetryMethod::Reconnect,
-            ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
-            ErrorKind::ClusterConnectionNotFound => RetryMethod::ReconnectFromInitialConnections,
-
-            ErrorKind::IoError => match &self.repr {
-                ErrorRepr::IoError(err) => match err.kind() {
-                    io::ErrorKind::ConnectionRefused => RetryMethod::Reconnect,
-                    io::ErrorKind::NotFound => RetryMethod::Reconnect,
-                    io::ErrorKind::ConnectionReset => RetryMethod::Reconnect,
-                    io::ErrorKind::ConnectionAborted => RetryMethod::Reconnect,
-                    io::ErrorKind::NotConnected => RetryMethod::Reconnect,
-                    io::ErrorKind::BrokenPipe => RetryMethod::Reconnect,
-                    io::ErrorKind::UnexpectedEof => RetryMethod::Reconnect,
-
-                    io::ErrorKind::PermissionDenied => RetryMethod::NoRetry,
-                    io::ErrorKind::Unsupported => RetryMethod::NoRetry,
-
-                    _ => RetryMethod::RetryImmediately,
-                },
-                _ => RetryMethod::RetryImmediately,
-            },
-        }
-    }
-}
-
-/// Creates a new Redis error with the `ExtensionError` kind.
-///
-/// This function is used to create Redis errors for extension error codes
-/// that are not directly understood by the library.
-///
-/// # Arguments
-///
-/// * `code` - The error code string returned by the Redis server
-/// * `detail` - Optional detailed error message. If None, a default message is used.
-///
-/// # Returns
-///
-/// A `RedisError` with the `ExtensionError` kind.
-pub fn make_extension_error(code: String, detail: Option<String>) -> RedisError {
-    RedisError {
-        repr: ErrorRepr::ExtensionError(
-            code,
-            match detail {
-                Some(x) => x,
-                None => "Unknown extension error encountered".to_string(),
-            },
-        ),
-    }
-}
-
 /// Library generic result type.
 pub type RedisResult<T> = Result<T, RedisError>;
 
@@ -1267,10 +564,10 @@ impl FromRedisValue for ReplicaInfo {
     fn from_owned_redis_value(v: Value) -> Result<Self, ParsingError> {
         let v = match get_owned_inner_value(v).into_sequence() {
             Ok(v) => v,
-            Err(v) => invalid_type_error!(v, "Replica response should be an array"),
+            Err(v) => crate::errors::invalid_type_error!(v, "Replica response should be an array"),
         };
         if v.len() < 3 {
-            invalid_type_error!(v, "Replica array is too short, expected 3 elements")
+            crate::errors::invalid_type_error!(v, "Replica array is too short, expected 3 elements")
         }
         let mut v = v.into_iter();
         let ip = from_owned_redis_value(v.next().expect("len was checked"))?;
@@ -1292,19 +589,25 @@ impl FromRedisValue for Role {
     fn from_owned_redis_value(v: Value) -> Result<Self, ParsingError> {
         let v = match get_owned_inner_value(v).into_sequence() {
             Ok(v) => v,
-            Err(v) => invalid_type_error!(v, "Role response should be an array"),
+            Err(v) => crate::errors::invalid_type_error!(v, "Role response should be an array"),
         };
         if v.len() < 2 {
-            invalid_type_error!(v, "Role array is too short, expected at least 2 elements")
+            crate::errors::invalid_type_error!(
+                v,
+                "Role array is too short, expected at least 2 elements"
+            )
         }
         match &v[0] {
             Value::BulkString(role) => match role.as_slice() {
                 b"master" => Role::new_primary(v),
                 b"slave" => Role::new_replica(v),
                 b"sentinel" => Role::new_sentinel(v),
-                _ => invalid_type_error!(v, "Role type is not master, slave or sentinel"),
+                _ => crate::errors::invalid_type_error!(
+                    v,
+                    "Role type is not master, slave or sentinel"
+                ),
             },
-            _ => invalid_type_error!(v, "Role type is not a bulk string"),
+            _ => crate::errors::invalid_type_error!(v, "Role type is not a bulk string"),
         }
     }
 }
@@ -1312,7 +615,7 @@ impl FromRedisValue for Role {
 impl Role {
     fn new_primary(values: Vec<Value>) -> Result<Self, ParsingError> {
         if values.len() < 3 {
-            invalid_type_error!(
+            crate::errors::invalid_type_error!(
                 values,
                 "Role primary response too short, expected 3 elements"
             )
@@ -1332,7 +635,7 @@ impl Role {
 
     fn new_replica(values: Vec<Value>) -> Result<Self, ParsingError> {
         if values.len() < 5 {
-            invalid_type_error!(
+            crate::errors::invalid_type_error!(
                 values,
                 "Role replica response too short, expected 5 elements"
             )
@@ -1356,7 +659,7 @@ impl Role {
 
     fn new_sentinel(values: Vec<Value>) -> Result<Self, ParsingError> {
         if values.len() < 2 {
-            invalid_type_error!(
+            crate::errors::invalid_type_error!(
                 values,
                 "Role sentinel response too short, expected at least 2 elements"
             )
@@ -1385,7 +688,7 @@ pub trait RedisWrite {
     ///
     /// Writing no data is supported and is similar to having an empty bytestring
     /// as an argument.
-    fn writer_for_next_arg(&mut self) -> impl std::io::Write + '_;
+    fn writer_for_next_arg(&mut self) -> impl io::Write + '_;
 
     /// Reserve space for `additional` arguments in the command
     ///
@@ -1449,7 +752,7 @@ pub trait RedisWrite {
             /// The buffer, implements [`bytes::BufMut`] allowing passthrough
             buf: Vec<u8>,
             /// The writer to the command, used on drop
-            writer: Box<dyn std::io::Write + 'a>,
+            writer: Box<dyn io::Write + 'a>,
         }
         unsafe impl bytes::BufMut for Wrapper<'_> {
             fn remaining_mut(&self) -> usize {
@@ -1502,7 +805,7 @@ impl RedisWrite for Vec<Vec<u8>> {
         self.push(arg.to_string().into_bytes())
     }
 
-    fn writer_for_next_arg(&mut self) -> impl std::io::Write + '_ {
+    fn writer_for_next_arg(&mut self) -> impl io::Write + '_ {
         self.push(Vec::new());
         self.last_mut().unwrap()
     }
@@ -2043,7 +1346,7 @@ fn vec_to_array<T, const N: usize>(
                 "Response has wrong dimension, expected {N}, got {}",
                 items.len()
             );
-            invalid_type_error!(original_value, msg)
+            crate::errors::invalid_type_error!(original_value, msg)
         }
     }
 }
@@ -2058,7 +1361,7 @@ impl<T: FromRedisValue, const N: usize> FromRedisValue for [T; N] {
                         "Conversion to Array[{}; {N}] failed",
                         std::any::type_name::<T>()
                     );
-                    invalid_type_error!(value, msg)
+                    crate::errors::invalid_type_error!(value, msg)
                 }
             },
             Value::Array(ref items) => {
@@ -2066,25 +1369,10 @@ impl<T: FromRedisValue, const N: usize> FromRedisValue for [T; N] {
                 vec_to_array(items, value)
             }
             Value::Nil => vec_to_array(vec![], value),
-            _ => invalid_type_error!(value, "Response type not array compatible"),
+            _ => crate::errors::invalid_type_error!(value, "Response type not array compatible"),
         }
     }
 }
-
-/// Describes a type conversion or parsing failure.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ParsingError {
-    pub(crate) description: Cow<'static, str>,
-}
-
-impl std::fmt::Display for ParsingError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Incompatible type - ")?;
-        self.description.fmt(f)
-    }
-}
-
-impl std::error::Error for ParsingError {}
 
 /// This trait is used to convert a redis value into a more appropriate
 /// type.
@@ -2192,14 +1480,14 @@ macro_rules! from_redis_value_for_num_internal {
             Value::Int(val) => Ok(val as $t),
             Value::SimpleString(ref s) => match s.parse::<$t>() {
                 Ok(rv) => Ok(rv),
-                Err(_) => invalid_type_error!(v, "Could not convert from string."),
+                Err(_) => crate::errors::invalid_type_error!(v, "Could not convert from string."),
             },
             Value::BulkString(ref bytes) => match from_utf8(bytes)?.parse::<$t>() {
                 Ok(rv) => Ok(rv),
-                Err(_) => invalid_type_error!(v, "Could not convert from string."),
+                Err(_) => crate::errors::invalid_type_error!(v, "Could not convert from string."),
             },
             Value::Double(val) => Ok(val as $t),
-            _ => invalid_type_error!(v, "Response type not convertible to numeric."),
+            _ => crate::errors::invalid_type_error!(v, "Response type not convertible to numeric."),
         }
     }};
 }
@@ -2251,17 +1539,18 @@ macro_rules! from_redis_value_for_bignum_internal {
     ($t:ty, $v:expr) => {{
         let v = $v;
         match *v {
-            Value::Int(val) => <$t>::try_from(val)
-                .map_err(|_| invalid_type_error_inner!(v, "Could not convert from integer.")),
+            Value::Int(val) => <$t>::try_from(val).map_err(|_| {
+                crate::errors::invalid_type_error_inner!(v, "Could not convert from integer.")
+            }),
             Value::SimpleString(ref s) => match s.parse::<$t>() {
                 Ok(rv) => Ok(rv),
-                Err(_) => invalid_type_error!(v, "Could not convert from string."),
+                Err(_) => crate::errors::invalid_type_error!(v, "Could not convert from string."),
             },
             Value::BulkString(ref bytes) => match from_utf8(bytes)?.parse::<$t>() {
                 Ok(rv) => Ok(rv),
-                Err(_) => invalid_type_error!(v, "Could not convert from string."),
+                Err(_) => crate::errors::invalid_type_error!(v, "Could not convert from string."),
             },
-            _ => invalid_type_error!(v, "Response type not convertible to numeric."),
+            _ => crate::errors::invalid_type_error!(v, "Response type not convertible to numeric."),
         }
     }};
 }
@@ -2302,7 +1591,7 @@ impl FromRedisValue for bool {
                 } else if &s[..] == "0" {
                     Ok(false)
                 } else {
-                    invalid_type_error!(v, "Response status not valid boolean");
+                    crate::errors::invalid_type_error!(v, "Response status not valid boolean");
                 }
             }
             Value::BulkString(ref bytes) => {
@@ -2311,12 +1600,12 @@ impl FromRedisValue for bool {
                 } else if bytes == b"0" {
                     Ok(false)
                 } else {
-                    invalid_type_error!(v, "Response type not bool compatible.");
+                    crate::errors::invalid_type_error!(v, "Response type not bool compatible.");
                 }
             }
             Value::Boolean(b) => Ok(b),
             Value::Okay => Ok(true),
-            _ => invalid_type_error!(v, "Response type not bool compatible."),
+            _ => crate::errors::invalid_type_error!(v, "Response type not bool compatible."),
         }
     }
 }
@@ -2328,7 +1617,7 @@ impl FromRedisValue for CString {
             Value::BulkString(ref bytes) => Ok(CString::new(bytes.as_slice())?),
             Value::Okay => Ok(CString::new("OK")?),
             Value::SimpleString(ref val) => Ok(CString::new(val.as_bytes())?),
-            _ => invalid_type_error!(v, "Response type not CString compatible."),
+            _ => crate::errors::invalid_type_error!(v, "Response type not CString compatible."),
         }
     }
     fn from_owned_redis_value(v: Value) -> Result<CString, ParsingError> {
@@ -2337,7 +1626,7 @@ impl FromRedisValue for CString {
             Value::BulkString(bytes) => Ok(CString::new(bytes)?),
             Value::Okay => Ok(CString::new("OK")?),
             Value::SimpleString(val) => Ok(CString::new(val)?),
-            _ => invalid_type_error!(v, "Response type not CString compatible."),
+            _ => crate::errors::invalid_type_error!(v, "Response type not CString compatible."),
         }
     }
 }
@@ -2355,7 +1644,7 @@ impl FromRedisValue for String {
             } => Ok(text.to_string()),
             Value::Double(ref val) => Ok(val.to_string()),
             Value::Int(val) => Ok(val.to_string()),
-            _ => invalid_type_error!(v, "Response type not string compatible."),
+            _ => crate::errors::invalid_type_error!(v, "Response type not string compatible."),
         }
     }
 
@@ -2368,7 +1657,7 @@ impl FromRedisValue for String {
             Value::VerbatimString { format: _, text } => Ok(text),
             Value::Double(val) => Ok(val.to_string()),
             Value::Int(val) => Ok(val.to_string()),
-            _ => invalid_type_error!(v, "Response type not string compatible."),
+            _ => crate::errors::invalid_type_error!(v, "Response type not string compatible."),
         }
     }
 }
@@ -2413,7 +1702,7 @@ macro_rules! from_vec_from_redis_value {
                     // u8 has its own implementation of from_byte_vec.
                     Value::BulkString(bytes) => match FromRedisValue::from_byte_vec(bytes) {
                         Some(x) => Ok($convert(x)),
-                        None => invalid_type_error!(
+                        None => crate::errors::invalid_type_error!(
                             v,
                             format!("Conversion to {} failed.", std::any::type_name::<$Type>())
                         ),
@@ -2435,7 +1724,7 @@ macro_rules! from_vec_from_redis_value {
                         Ok($convert(n))
                     }
                     Value::Nil => Ok($convert(Vec::new())),
-                    _ => invalid_type_error!(v, "Response type not vector compatible."),
+                    _ => crate::errors::invalid_type_error!(v, "Response type not vector compatible."),
                 }
             }
             fn from_owned_redis_value(v: Value) -> Result<$Type, ParsingError> {
@@ -2461,7 +1750,7 @@ macro_rules! from_vec_from_redis_value {
                         Ok($convert(n))
                     }
                     Value::Nil => Ok($convert(Vec::new())),
-                    _ => invalid_type_error!(v, "Response type not vector compatible."),
+                    _ => crate::errors::invalid_type_error!(v, "Response type not vector compatible."),
                 }
             }
         }
@@ -2484,7 +1773,7 @@ macro_rules! impl_from_redis_value_for_map {
                     Value::Nil => Ok(Default::default()),
                     _ => v
                         .as_map_iter()
-                        .ok_or_else(|| invalid_type_error_inner!(v, "Response type not map compatible"))?
+                        .ok_or_else(|| crate::errors::invalid_type_error_inner!(v, "Response type not map compatible"))?
                         .map(|(k, v)| {
                             Ok((from_redis_value(k)?, from_redis_value(v)?))
                         })
@@ -2498,7 +1787,7 @@ macro_rules! impl_from_redis_value_for_map {
                     Value::Nil => Ok(Default::default()),
                     _ => v
                         .into_map_iter()
-                        .map_err(|v| invalid_type_error_inner!(v, "Response type not map compatible"))?
+                        .map_err(|v| crate::errors::invalid_type_error_inner!(v, "Response type not map compatible"))?
                         .map(|(k, v)| {
                             Ok((from_owned_redis_value(k)?, from_owned_redis_value(v)?))
                         })
@@ -2541,7 +1830,7 @@ macro_rules! impl_from_redis_value_for_set {
                 let v = get_inner_value(v);
                 let items = v
                     .as_sequence()
-                    .ok_or_else(|| invalid_type_error_inner!(v, "Response type not map compatible"))?;
+                    .ok_or_else(|| crate::errors::invalid_type_error_inner!(v, "Response type not map compatible"))?;
                 items.iter().map(|item| from_redis_value(item)).collect()
             }
 
@@ -2549,7 +1838,7 @@ macro_rules! impl_from_redis_value_for_set {
                 let v = get_owned_inner_value(v);
                 let items = v
                     .into_sequence()
-                    .map_err(|v| invalid_type_error_inner!(v, "Response type not map compatible"))?;
+                    .map_err(|v| crate::errors::invalid_type_error_inner!(v, "Response type not map compatible"))?;
                 items
                     .into_iter()
                     .map(|item| from_owned_redis_value(item))
@@ -2613,7 +1902,7 @@ macro_rules! from_redis_value_for_tuple {
                 match *v {
                     Value::Array(ref items) => {
                         if items.len() != n {
-                            invalid_type_error!(v, "Array response of wrong dimension")
+                            crate::errors::invalid_type_error!(v, "Array response of wrong dimension")
                         }
 
                         // The { i += 1; i - 1} is rust's postfix increment :)
@@ -2624,7 +1913,7 @@ macro_rules! from_redis_value_for_tuple {
 
                     Value::Set(ref items) => {
                         if items.len() != n {
-                            invalid_type_error!(v, "Set response of wrong dimension")
+                            crate::errors::invalid_type_error!(v, "Set response of wrong dimension")
                         }
 
                         // The { i += 1; i - 1} is rust's postfix increment :)
@@ -2635,7 +1924,7 @@ macro_rules! from_redis_value_for_tuple {
 
                     Value::Map(ref items) => {
                         if n != items.len() * 2 {
-                            invalid_type_error!(v, "Map response of wrong dimension")
+                            crate::errors::invalid_type_error!(v, "Map response of wrong dimension")
                         }
 
                         let mut flatten_items = items.iter().map(|(a,b)|[a,b]).flatten();
@@ -2644,7 +1933,7 @@ macro_rules! from_redis_value_for_tuple {
                              &flatten_items.next().unwrap())?},)*))
                     }
 
-                    _ => invalid_type_error!(v, "Not a Array response")
+                    _ => crate::errors::invalid_type_error!(v, "Not a Array response")
                 }
             }
 
@@ -2659,7 +1948,7 @@ macro_rules! from_redis_value_for_tuple {
                 match v {
                     Value::Array(mut items) => {
                         if items.len() != n {
-                            invalid_type_error!(Value::Array(items), "Array response of wrong dimension")
+                            crate::errors::invalid_type_error!(Value::Array(items), "Array response of wrong dimension")
                         }
 
                         // The { i += 1; i - 1} is rust's postfix increment :)
@@ -2671,7 +1960,7 @@ macro_rules! from_redis_value_for_tuple {
 
                     Value::Set(mut items) => {
                         if items.len() != n {
-                            invalid_type_error!(Value::Array(items), "Set response of wrong dimension")
+                            crate::errors::invalid_type_error!(Value::Array(items), "Set response of wrong dimension")
                         }
 
                         // The { i += 1; i - 1} is rust's postfix increment :)
@@ -2683,7 +1972,7 @@ macro_rules! from_redis_value_for_tuple {
 
                     Value::Map(items) => {
                         if n != items.len() * 2 {
-                            invalid_type_error!(Value::Map(items), "Map response of wrong dimension")
+                            crate::errors::invalid_type_error!(Value::Map(items), "Map response of wrong dimension")
                         }
 
                         let mut flatten_items = items.into_iter().map(|(a,b)|[a,b]).flatten();
@@ -2693,7 +1982,7 @@ macro_rules! from_redis_value_for_tuple {
                         )?},)*))
                     }
 
-                    _ => invalid_type_error!(v, "Not a Array response")
+                    _ => crate::errors::invalid_type_error!(v, "Not a Array response")
                 }
             }
 
@@ -2840,14 +2129,14 @@ impl FromRedisValue for bytes::Bytes {
         let v = get_inner_value(v);
         match v {
             Value::BulkString(bytes_vec) => Ok(bytes::Bytes::copy_from_slice(bytes_vec.as_ref())),
-            _ => invalid_type_error!(v, "Not a bulk string"),
+            _ => crate::errors::invalid_type_error!(v, "Not a bulk string"),
         }
     }
     fn from_owned_redis_value(v: Value) -> Result<Self, ParsingError> {
         let v = get_owned_inner_value(v);
         match v {
             Value::BulkString(bytes_vec) => Ok(bytes_vec.into()),
-            _ => invalid_type_error!(v, "Not a bulk string"),
+            _ => crate::errors::invalid_type_error!(v, "Not a bulk string"),
         }
     }
 }
@@ -2857,7 +2146,7 @@ impl FromRedisValue for uuid::Uuid {
     fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
         match *v {
             Value::BulkString(ref bytes) => Ok(uuid::Uuid::from_slice(bytes)?),
-            _ => invalid_type_error!(v, "Response type not uuid compatible."),
+            _ => crate::errors::invalid_type_error!(v, "Response type not uuid compatible."),
         }
     }
 }
@@ -2948,12 +2237,6 @@ impl PushInfo {
 
 pub(crate) type SyncPushSender = std::sync::mpsc::Sender<PushInfo>;
 
-// A consistent error value for connections closed without a reason.
-#[cfg(any(feature = "aio", feature = "r2d2"))]
-pub(crate) fn closed_connection_error() -> RedisError {
-    RedisError::from(io::Error::from(io::ErrorKind::BrokenPipe))
-}
-
 /// Possible types of value held in Redis: [Redis Docs](https://redis.io/docs/latest/commands/type/)
 #[derive(Debug, Clone, PartialEq)]
 pub enum ValueType {
@@ -3005,14 +2288,14 @@ impl FromRedisValue for ValueType {
     fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
         match v {
             Value::SimpleString(s) => Ok(s.into()),
-            _ => invalid_type_error!(v, "Value type should be a simple string"),
+            _ => crate::errors::invalid_type_error!(v, "Value type should be a simple string"),
         }
     }
 
     fn from_owned_redis_value(v: Value) -> Result<Self, ParsingError> {
         match v {
             Value::SimpleString(s) => Ok(s.into()),
-            _ => invalid_type_error!(v, "Value type should be a simple string"),
+            _ => crate::errors::invalid_type_error!(v, "Value type should be a simple string"),
         }
     }
 }
@@ -3047,7 +2330,7 @@ impl FromRedisValue for IntegerReplyOrNoOp {
                 -1 => Ok(IntegerReplyOrNoOp::ExistsButNotRelevant),
                 _ => Ok(IntegerReplyOrNoOp::IntegerReply(*s as usize)),
             },
-            _ => invalid_type_error!(v, "Value should be an integer"),
+            _ => crate::errors::invalid_type_error!(v, "Value should be an integer"),
         }
     }
 
@@ -3058,7 +2341,7 @@ impl FromRedisValue for IntegerReplyOrNoOp {
                 -1 => Ok(IntegerReplyOrNoOp::ExistsButNotRelevant),
                 _ => Ok(IntegerReplyOrNoOp::IntegerReply(s as usize)),
             },
-            _ => invalid_type_error!(v, "Value should be an integer"),
+            _ => crate::errors::invalid_type_error!(v, "Value should be an integer"),
         }
     }
 }

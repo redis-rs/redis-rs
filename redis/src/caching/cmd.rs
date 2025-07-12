@@ -96,7 +96,7 @@ impl CacheableCommand<'_> {
                     Ok(reply)
                 } else {
                     Err(RedisError::from((
-                        ErrorKind::ParseError,
+                        ErrorKind::UnexpectedReturnType,
                         "Expected two Value from server",
                     )))
                 }
@@ -125,7 +125,7 @@ impl CacheableCommand<'_> {
                     }
                 } else {
                     return Err(RedisError::from((
-                        ErrorKind::ParseError,
+                        ErrorKind::UnexpectedReturnType,
                         "Expected Value::Array from server",
                     )));
                 }
@@ -175,7 +175,7 @@ fn get_next_reply(mut replies: impl Iterator<Item = Value>) -> RedisResult<Value
         Ok(reply)
     } else {
         Err(RedisError::from((
-            ErrorKind::ParseError,
+            ErrorKind::UnexpectedReturnType,
             "Expected Value from server",
         )))
     }

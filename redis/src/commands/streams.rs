@@ -1,8 +1,9 @@
 //! Defines types to use with the streams commands.
 
 use crate::{
+    errors::{invalid_type_error, ParsingError},
     from_redis_value,
-    types::{invalid_type_error, HashMap, ParsingError},
+    types::HashMap,
     FromRedisValue, RedisWrite, ToRedisArgs, Value,
 };
 

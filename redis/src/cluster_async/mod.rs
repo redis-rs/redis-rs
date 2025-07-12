@@ -113,8 +113,8 @@ use crate::{
     },
     cluster_topology::parse_slots,
     cmd,
+    errors::closed_connection_error,
     subscription_tracker::SubscriptionTracker,
-    types::closed_connection_error,
     AsyncConnectionConfig, Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError,
     RedisFuture, RedisResult, ToRedisArgs, Value,
 };
@@ -507,13 +507,13 @@ where
         if connections.is_empty() {
             if let Some(err) = error {
                 return Err(RedisError::from((
-                    ErrorKind::IoError,
+                    ErrorKind::Io,
                     "Failed to create initial connections",
                     err.to_string(),
                 )));
             } else {
                 return Err(RedisError::from((
-                    ErrorKind::IoError,
+                    ErrorKind::Io,
                     "Failed to create initial connections",
                 )));
             }
@@ -676,8 +676,8 @@ where
         };
 
         let convert_result = |res: Result<RedisResult<Response>, _>| {
-            res.map_err(|_| RedisError::from((ErrorKind::ResponseError, "request wasn't handled due to internal failure"))) // this happens only if the result sender is dropped before usage.
-            .and_then(|res| res.map(extract_result))
+            res.map_err(|_| RedisError::from((ErrorKind::Client, "request wasn't handled due to internal failure"))) // this happens only if the result sender is dropped before usage.
+               .and_then(|res| res.map(extract_result))
         };
 
         let get_receiver = |(_, receiver): (_, oneshot::Receiver<RedisResult<Response>>)| async {
@@ -711,7 +711,9 @@ where
                     Box::pin(async move {
                         let result = convert_result(receiver.await)?;
                         match result {
-                            Value::Nil => Err((ErrorKind::ResponseError, "no value found").into()),
+                            Value::Nil => {
+                                Err((ErrorKind::UnexpectedReturnType, "no value found").into())
+                            }
                             _ => Ok(result),
                         }
                     })
@@ -926,12 +928,9 @@ where
                 if let Some(conn) = read_guard.0.get(&address).cloned() {
                     return Ok((address, conn));
                 } else {
-                    return Err((
-                        ErrorKind::ClientError,
-                        "Requested connection not found",
-                        address,
-                    )
-                        .into());
+                    return Err(
+                        (ErrorKind::Client, "Requested connection not found", address).into(),
+                    );
                 }
             }
         }

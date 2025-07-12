@@ -1,6 +1,6 @@
+use crate::errors::closed_connection_error;
 #[cfg(feature = "sentinel")]
 use crate::sentinel::LockedSentinelClient;
-use crate::types::closed_connection_error;
 use crate::{ConnectionLike, RedisError};
 
 macro_rules! impl_manage_connection {

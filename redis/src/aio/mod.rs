@@ -5,8 +5,8 @@ use crate::connection::{
     RedisConnectionInfo,
 };
 use crate::io::AsyncDNSResolver;
-use crate::types::{closed_connection_error, RedisFuture, RedisResult, Value};
-use crate::{ErrorKind, PushInfo, RedisError};
+use crate::types::{RedisFuture, RedisResult, Value};
+use crate::{errors::closed_connection_error, ErrorKind, PushInfo, RedisError};
 use ::tokio::io::{AsyncRead, AsyncWrite};
 use futures_util::{
     future::{Future, FutureExt},
