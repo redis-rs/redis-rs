@@ -21,9 +21,9 @@ mod cluster_async {
         cluster::ClusterClient,
         cluster_async::Connect,
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
-        cmd, from_owned_redis_value, parse_redis_value, pipe, AsyncCommands, Cmd, ErrorKind,
-        InfoDict, IntoConnectionInfo, ProtocolVersion, RedisError, RedisFuture, RedisResult,
-        Script, Value,
+        cmd, from_owned_redis_value, parse_redis_value, pipe, AsyncCommands, Cmd, InfoDict,
+        IntoConnectionInfo, ProtocolVersion, RedisError, RedisFuture, RedisResult, Script,
+        ServerErrorKind, Value,
     };
     use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
     use redis_test::server::use_protocol;
@@ -231,7 +231,7 @@ mod cluster_async {
                 pairs.sort_by(|(address1, _), (address2, _)| address1.cmp(address2));
                 pairs.into_iter().unzip()
             } else {
-                unreachable!("{:?}", res);
+                unreachable!("{res:?}");
             }
         };
 
@@ -601,7 +601,12 @@ mod cluster_async {
     impl ConnectionLike for ErrorConnection {
         fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
             if ERROR.load(Ordering::SeqCst) {
-                Box::pin(async move { Err(RedisError::from((redis::ErrorKind::Moved, "ERROR"))) })
+                Box::pin(async move {
+                    Err(RedisError::from((
+                        redis::ServerErrorKind::Moved.into(),
+                        "ERROR",
+                    )))
+                })
             } else {
                 self.inner.req_packed_command(cmd)
             }
@@ -638,7 +643,10 @@ mod cluster_async {
                 let result: RedisResult<()> = con.get("test").await;
                 assert_eq!(
                     result,
-                    Err(RedisError::from((redis::ErrorKind::Moved, "ERROR")))
+                    Err(RedisError::from((
+                        redis::ServerErrorKind::Moved.into(),
+                        "ERROR"
+                    )))
                 );
 
                 Ok::<_, RedisError>(())
@@ -779,13 +787,10 @@ mod cluster_async {
                 .query_async::<Option<i32>>(&mut connection),
         );
 
-        match result {
-            Ok(_) => panic!("result should be an error"),
-            Err(e) => match e.kind() {
-                ErrorKind::TryAgain => {}
-                _ => panic!("Expected TryAgain but got {:?}", e.kind()),
-            },
-        }
+        assert!(
+            matches!(&result, Err(err) if err.kind() == ServerErrorKind::TryAgain.into()),
+            "{result:?}",
+        );
         assert_eq!(requests.load(atomic::Ordering::SeqCst), 3);
     }
 
@@ -924,20 +929,16 @@ mod cluster_async {
             },
         );
 
-        let value = runtime.block_on(
-            cmd("GET")
-                .arg("test")
-                .query_async::<Option<i32>>(&mut connection),
-        );
+        let value = runtime.block_on(cmd("GET").arg("test").query_async::<Value>(&mut connection));
 
         // The user should receive an initial error, because there are no retries and the first request failed.
         assert_eq!(
             value,
-            Err(RedisError::from((
-                ErrorKind::Moved,
-                "An error was signalled by the server",
-                "test_async_cluster_refresh_topology_even_with_zero_retries:6380".to_string()
-            )))
+            parse_redis_value(
+                b"-MOVED 123 test_async_cluster_refresh_topology_even_with_zero_retries:6380\r\n"
+            )
+            .unwrap()
+            .extract_error()
         );
 
         let value = runtime.block_on(
@@ -1593,7 +1594,7 @@ mod cluster_async {
                     return Err(Ok(Value::Okay));
                 } else if port == 6379 {
                     return Err(Err((
-                        ErrorKind::NotBusy,
+                        ServerErrorKind::NotBusy.into(),
                         "No scripts in execution right now",
                     )
                         .into()));
@@ -1628,7 +1629,7 @@ mod cluster_async {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
 
                 Err(Err((
-                    ErrorKind::NotBusy,
+                    ServerErrorKind::NotBusy.into(),
                     "No scripts in execution right now",
                 )
                     .into()))
@@ -1638,7 +1639,7 @@ mod cluster_async {
         let result = runtime
             .block_on(cmd.query_async::<Value>(&mut connection))
             .unwrap_err();
-        assert_eq!(result.kind(), ErrorKind::NotBusy, "{:?}", result.kind());
+        assert_eq!(result.kind(), ServerErrorKind::NotBusy.into());
     }
 
     #[test]
@@ -1685,7 +1686,7 @@ mod cluster_async {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
                 if port == 6381 {
                     return Err(Err((
-                        ErrorKind::NotBusy,
+                        ServerErrorKind::NotBusy.into(),
                         "No scripts in execution right now",
                     )
                         .into()));
@@ -1697,7 +1698,7 @@ mod cluster_async {
         let result = runtime
             .block_on(cmd.query_async::<Value>(&mut connection))
             .unwrap_err();
-        assert_eq!(result.kind(), ErrorKind::NotBusy, "{:?}", result.kind());
+        assert_eq!(result.kind(), ServerErrorKind::NotBusy.into());
     }
 
     #[test]
@@ -1977,23 +1978,20 @@ mod cluster_async {
                 // Error twice with io-error, ensure connection is reestablished w/out calling
                 // other node (i.e., not doing a full slot rebuild)
                 completed.fetch_add(1, Ordering::SeqCst);
-                Err(Err((ErrorKind::ReadOnly, "").into()))
+                Err(Err((ServerErrorKind::ReadOnly.into(), "").into()))
             }
         });
 
-        let value = runtime.block_on(
+        let result = runtime.block_on(
             cmd("GET")
                 .arg("test")
                 .query_async::<Option<i32>>(&mut connection),
         );
 
-        match value {
-            Ok(_) => panic!("result should be an error"),
-            Err(e) => match e.kind() {
-                ErrorKind::ReadOnly => {}
-                _ => panic!("Expected ReadOnly but got {:?}", e.kind()),
-            },
-        }
+        assert!(
+            matches!(&result, Err(err) if err.kind() == ServerErrorKind::ReadOnly.into()),
+            "{result:?}",
+        );
         assert_eq!(completed.load(Ordering::SeqCst), 1);
     }
 
@@ -2310,7 +2308,11 @@ mod cluster_async {
 
                 if received_cmd == packed_cmd {
                     cloned_req_counter.fetch_add(1, Ordering::Relaxed);
-                    return Err(Err((ErrorKind::TryAgain, "seriously, try again").into()));
+                    return Err(Err((
+                        ServerErrorKind::TryAgain.into(),
+                        "seriously, try again",
+                    )
+                        .into()));
                 }
 
                 Err(Ok(Value::Okay))

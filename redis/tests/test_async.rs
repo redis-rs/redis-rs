@@ -10,8 +10,9 @@ mod basic_async {
     use redis::aio::ConnectionManager;
     use redis::{
         aio::{ConnectionLike, MultiplexedConnection},
-        cmd, pipe, AsyncCommands, ErrorKind, IntoConnectionInfo, ProtocolVersion, PushKind,
-        RedisConnectionInfo, RedisError, RedisFuture, RedisResult, ScanOptions, ToRedisArgs, Value,
+        cmd, pipe, AsyncCommands, ErrorKind, IntoConnectionInfo, ParsingError, ProtocolVersion,
+        PushKind, RedisConnectionInfo, RedisError, RedisFuture, RedisResult, ScanOptions,
+        ToRedisArgs, Value,
     };
     use redis_test::server::{redis_settings, use_protocol};
     use rstest::rstest;
@@ -345,21 +346,11 @@ mod basic_async {
                             }
                         };
                         let result: RedisResult<()> = cmd().await;
-                        assert_eq!(
-                            result.as_ref().unwrap_err().kind(),
-                            redis::ErrorKind::IoError,
-                            "{}",
-                            result.as_ref().unwrap_err()
-                        );
+                        assert_eq!(result.as_ref().unwrap_err().kind(), redis::ErrorKind::Io);
                         cmd().await
                     })
                     .map(|result| {
-                        assert_eq!(
-                            result.as_ref().unwrap_err().kind(),
-                            redis::ErrorKind::IoError,
-                            "{}",
-                            result.as_ref().unwrap_err()
-                        );
+                        assert_eq!(result.as_ref().unwrap_err().kind(), redis::ErrorKind::Io);
                     })
                     .await;
                 Ok(())
@@ -432,6 +423,8 @@ mod basic_async {
     fn test_pipeline_transaction_with_errors(#[case] runtime: RuntimeType) {
         test_with_all_connection_types(
             |mut con| async move {
+                use redis::ServerErrorKind;
+
                 con.set::<_, _, ()>("x", 42).await.unwrap();
 
                 // Make Redis a replica of a nonexistent master, thereby making it read-only.
@@ -451,7 +444,7 @@ mod basic_async {
                     .query_async(&mut con)
                     .await;
 
-                assert_eq!(err.unwrap_err().kind(), ErrorKind::ReadOnly);
+                assert_eq!(err.unwrap_err().kind(), ServerErrorKind::ReadOnly.into());
 
                 let x: i32 = con.get("x").await.unwrap();
                 assert_eq!(x, 42);
@@ -522,7 +515,7 @@ mod basic_async {
                     .map_ok(|results| {
                         assert_eq!(results.len(), 100);
                     })
-                    .map_err(|err| panic!("{}", err))
+                    .map_err(|err| panic!("{err}"))
                     .await
             },
             runtime,
@@ -565,7 +558,7 @@ mod basic_async {
                     .map_ok(|results| {
                         assert_eq!(results.len(), 100);
                     })
-                    .map_err(|err| panic!("{}", err))
+                    .map_err(|err| panic!("{err}"))
                     .await
             },
             runtime,
@@ -821,7 +814,7 @@ mod basic_async {
                         Err(err) => break err,
                     };
                 };
-                assert_eq!(err.kind(), ErrorKind::IoError);
+                assert_eq!(err.kind(), ErrorKind::Io);
                 Ok(())
             },
             runtime,
@@ -1022,8 +1015,6 @@ mod basic_async {
         #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
         #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
         fn test_issue_async_commands_scan_finishing_prematurely(#[case] runtime: RuntimeType) {
-            use redis::ParsingError;
-
             const PREFIX: &str = "async-key";
             const NUM_KEYS: usize = 100;
 
@@ -1079,7 +1070,7 @@ mod basic_async {
                     assert_eq!(count, NUM_KEYS - 1);
 
                     // Assert that the encountered error is a type error
-                    assert!(matches!(error, Some(ErrorKind::TypeError)));
+                    assert_eq!(error, Some(ErrorKind::Parse));
 
                     Ok(())
                 },
@@ -1997,7 +1988,7 @@ mod basic_async {
                     .await;
 
                 let err = command_that_blocks.unwrap_err();
-                assert_eq!(err.kind(), ErrorKind::IoError);
+                assert_eq!(err.kind(), ErrorKind::Io);
 
                 drop(connection_to_dispose_of);
 

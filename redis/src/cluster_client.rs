@@ -4,10 +4,11 @@ use crate::aio::AsyncPushSender;
 use crate::caching::{CacheConfig, CacheManager};
 use crate::client::DEFAULT_CONNECTION_TIMEOUT;
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
+use crate::errors::{ErrorKind, RedisError};
 use crate::io::tcp::TcpSettings;
 #[cfg(feature = "cluster-async")]
 use crate::io::AsyncDNSResolver;
-use crate::types::{ErrorKind, ProtocolVersion, RedisError, RedisResult};
+use crate::types::{ProtocolVersion, RedisResult};
 use crate::{cluster, cluster::TlsMode};
 use rand::Rng;
 #[cfg(feature = "cluster-async")]

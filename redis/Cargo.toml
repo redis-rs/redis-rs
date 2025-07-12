@@ -108,7 +108,8 @@ uuid = { version = "1.15.1", optional = true }
 # Optional hashbrown support
 hashbrown = { version = "0.15", optional = true }
 
-lru = { version = "0.14", optional = true }
+lru = { version = "0.16", optional = true }
+arcstr = "1.2.0"
 
 [features]
 default = ["acl", "streams", "geospatial", "script", "num-bigint"]

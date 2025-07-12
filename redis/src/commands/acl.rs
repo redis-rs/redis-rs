@@ -1,6 +1,7 @@
 //! Defines types to use with the ACL commands.
 
-use crate::types::{FromRedisValue, ParsingError, RedisWrite, ToRedisArgs, Value};
+use crate::errors::ParsingError;
+use crate::types::{FromRedisValue, RedisWrite, ToRedisArgs, Value};
 
 macro_rules! not_convertible_error {
     ($v:expr, $det:expr) => {

@@ -1,5 +1,5 @@
 use crate::aio::MultiplexedConnection;
-use crate::{Client, Cmd, ErrorKind, RedisError};
+use crate::{Client, Cmd, RedisError};
 
 #[cfg(feature = "cluster-async")]
 use crate::{cluster::ClusterClient, cluster_async::ClusterConnection};
@@ -18,7 +18,7 @@ macro_rules! impl_bb8_manage_connection {
                 let pong: String = Cmd::ping().query_async(conn).await?;
                 match pong.as_str() {
                     "PONG" => Ok(()),
-                    _ => Err((ErrorKind::ResponseError, "ping request").into()),
+                    _ => Err((crate::ErrorKind::UnexpectedReturnType, "ping request", pong).into()),
                 }
             }
 
