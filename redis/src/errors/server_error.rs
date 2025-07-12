@@ -1,6 +1,8 @@
 use arcstr::ArcStr;
 use std::fmt;
 
+use crate::RetryMethod;
+
 /// Kinds of errors returned from the server
 #[derive(PartialEq, Debug, Clone, Copy, Eq)]
 pub enum ServerErrorKind {
@@ -37,20 +39,41 @@ pub enum ServerErrorKind {
 impl ServerErrorKind {
     pub(crate) fn code(&self) -> &'static str {
         match self {
-            ServerErrorKind::ResponseError => "ERR",
-            ServerErrorKind::ExecAbort => "EXECABORT",
-            ServerErrorKind::BusyLoading => "LOADING",
-            ServerErrorKind::NoScript => "NOSCRIPT",
-            ServerErrorKind::Moved => "MOVED",
-            ServerErrorKind::Ask => "ASK",
-            ServerErrorKind::TryAgain => "TRYAGAIN",
-            ServerErrorKind::ClusterDown => "CLUSTERDOWN",
-            ServerErrorKind::CrossSlot => "CROSSSLOT",
-            ServerErrorKind::MasterDown => "MASTERDOWN",
-            ServerErrorKind::ReadOnly => "READONLY",
-            ServerErrorKind::NotBusy => "NOTBUSY",
-            ServerErrorKind::NoSub => "NOSUB",
-            ServerErrorKind::NoPerm => "NOPERM",
+            Self::ResponseError => "ERR",
+            Self::ExecAbort => "EXECABORT",
+            Self::BusyLoading => "LOADING",
+            Self::NoScript => "NOSCRIPT",
+            Self::Moved => "MOVED",
+            Self::Ask => "ASK",
+            Self::TryAgain => "TRYAGAIN",
+            Self::ClusterDown => "CLUSTERDOWN",
+            Self::CrossSlot => "CROSSSLOT",
+            Self::MasterDown => "MASTERDOWN",
+            Self::ReadOnly => "READONLY",
+            Self::NotBusy => "NOTBUSY",
+            Self::NoSub => "NOSUB",
+            Self::NoPerm => "NOPERM",
+        }
+    }
+
+    pub(crate) fn retry_method(&self) -> RetryMethod {
+        match self {
+            Self::Moved => RetryMethod::MovedRedirect,
+            Self::Ask => RetryMethod::AskRedirect,
+
+            Self::TryAgain => RetryMethod::WaitAndRetry,
+            Self::MasterDown => RetryMethod::WaitAndRetry,
+            Self::ClusterDown => RetryMethod::WaitAndRetry,
+            Self::BusyLoading => RetryMethod::WaitAndRetry,
+
+            Self::ResponseError => RetryMethod::NoRetry,
+            Self::ReadOnly => RetryMethod::NoRetry,
+            Self::ExecAbort => RetryMethod::NoRetry,
+            Self::NoScript => RetryMethod::NoRetry,
+            Self::CrossSlot => RetryMethod::NoRetry,
+            Self::NotBusy => RetryMethod::NoRetry,
+            Self::NoSub => RetryMethod::NoRetry,
+            Self::NoPerm => RetryMethod::NoRetry,
         }
     }
 }
@@ -94,6 +117,16 @@ impl ServerError {
             Repr::Extension { detail, .. } => detail.as_ref().map(|str| str.as_str()),
             Repr::Known { detail, .. } => detail.as_ref().map(|str| str.as_str()),
         }
+    }
+
+    #[cfg(feature = "cluster-async")]
+    pub(crate) fn requires_action(&self) -> bool {
+        !matches!(
+            self.kind()
+                .map(|kind| kind.retry_method())
+                .unwrap_or(RetryMethod::NoRetry),
+            RetryMethod::NoRetry
+        )
     }
 }
 

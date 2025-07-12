@@ -79,6 +79,7 @@ enum ErrorRepr {
     },
     Parsing(ParsingError),
     Server(ServerError),
+    Pipeline(Arc<[(usize, ServerError)]>),
 }
 
 impl PartialEq for RedisError {
@@ -89,6 +90,7 @@ impl PartialEq for RedisError {
             }
             (ErrorRepr::Parsing(a), ErrorRepr::Parsing(b)) => *a == *b,
             (ErrorRepr::Server(a), ErrorRepr::Server(b)) => *a == *b,
+            (ErrorRepr::Pipeline(a), ErrorRepr::Pipeline(b)) => *a == *b,
             _ => false,
         }
     }
@@ -179,6 +181,23 @@ impl fmt::Display for RedisError {
             ErrorRepr::Internal { err, .. } => err.fmt(f),
             ErrorRepr::Parsing(err) => err.fmt(f),
             ErrorRepr::Server(err) => err.fmt(f),
+            ErrorRepr::Pipeline(items) => {
+                if items.len() > 1 {
+                    f.write_str("Pipeline failures: [")?;
+                } else {
+                    f.write_str("Pipeline failure: [")?;
+                }
+                let mut first = true;
+                for (index, error) in items.iter() {
+                    if first {
+                        write!(f, "(Index {index}, error: {error})")?;
+                        first = false;
+                    } else {
+                        write!(f, ", (Index {index}, error: {error})")?;
+                    }
+                }
+                f.write_str("]")
+            }
         }
     }
 }
@@ -214,6 +233,10 @@ impl RedisError {
                 Some(kind) => ErrorKind::Server(kind),
                 None => ErrorKind::Extension,
             },
+            ErrorRepr::Pipeline(items) => items
+                .first()
+                .and_then(|item| item.1.kind().map(|kind| kind.into()))
+                .unwrap_or(ErrorKind::Extension),
         }
     }
 
@@ -376,32 +399,19 @@ impl RedisError {
     /// than just the error kind on when to retry.
     pub fn retry_method(&self) -> RetryMethod {
         match self.kind() {
-            ErrorKind::Server(ServerErrorKind::Moved) => RetryMethod::MovedRedirect,
-            ErrorKind::Server(ServerErrorKind::Ask) => RetryMethod::AskRedirect,
+            ErrorKind::Server(server_error) => server_error.retry_method(),
 
-            ErrorKind::Server(ServerErrorKind::TryAgain) => RetryMethod::WaitAndRetry,
-            ErrorKind::Server(ServerErrorKind::MasterDown) => RetryMethod::WaitAndRetry,
-            ErrorKind::Server(ServerErrorKind::ClusterDown) => RetryMethod::WaitAndRetry,
-            ErrorKind::Server(ServerErrorKind::BusyLoading) => RetryMethod::WaitAndRetry,
             ErrorKind::MasterNameNotFoundBySentinel => RetryMethod::WaitAndRetry,
             ErrorKind::NoValidReplicasFoundBySentinel => RetryMethod::WaitAndRetry,
 
-            ErrorKind::Server(ServerErrorKind::ResponseError) => RetryMethod::NoRetry,
-            ErrorKind::Server(ServerErrorKind::ReadOnly) => RetryMethod::NoRetry,
             ErrorKind::Extension => RetryMethod::NoRetry,
-            ErrorKind::Server(ServerErrorKind::ExecAbort) => RetryMethod::NoRetry,
             ErrorKind::UnexpectedReturnType => RetryMethod::NoRetry,
-            ErrorKind::Server(ServerErrorKind::NoScript) => RetryMethod::NoRetry,
             ErrorKind::InvalidClientConfig => RetryMethod::NoRetry,
-            ErrorKind::Server(ServerErrorKind::CrossSlot) => RetryMethod::NoRetry,
             ErrorKind::Client => RetryMethod::NoRetry,
             ErrorKind::EmptySentinelList => RetryMethod::NoRetry,
-            ErrorKind::Server(ServerErrorKind::NotBusy) => RetryMethod::NoRetry,
             #[cfg(feature = "json")]
             ErrorKind::Serialize => RetryMethod::NoRetry,
             ErrorKind::RESP3NotSupported => RetryMethod::NoRetry,
-            ErrorKind::Server(ServerErrorKind::NoSub) => RetryMethod::NoRetry,
-            ErrorKind::Server(ServerErrorKind::NoPerm) => RetryMethod::NoRetry,
 
             ErrorKind::Parse => RetryMethod::Reconnect,
             ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
@@ -424,6 +434,12 @@ impl RedisError {
                     _ => RetryMethod::RetryImmediately,
                 })
                 .unwrap_or(RetryMethod::NoRetry),
+        }
+    }
+
+    pub(crate) fn pipeline(errors: Vec<(usize, ServerError)>) -> Self {
+        Self {
+            repr: ErrorRepr::Pipeline(Arc::from(errors)),
         }
     }
 }
