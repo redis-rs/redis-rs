@@ -285,24 +285,6 @@
 //! # Ok(()) }
 //! ```
 //!
-//! If the user wants to handle server errors while also receiving values from successful requests,
-//! the user can define the target type of a pipeline query as `Vec<RedisResult<T>>` or `Vec<Value>`. This vector
-//! will contain only non-ignored values, if all requests completed successfully. If some failed, this
-//! vector will contain all server responses, including the ones that were ignored.
-//!
-//! ```rust,no_run
-//! # fn do_something() -> redis::RedisResult<()> {
-//! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//! # let mut con = client.get_connection().unwrap();
-//! let results : Vec<redis::RedisResult<String>> = redis::pipe() //results: Vec<redis::Value> would also work
-//!         .set("x", "").ignore()
-//!         .hset("x", "field", "field_value").ignore()
-//!         .get("x")
-//!         .query(&mut con)?; // This will result with a vec![Ok("OK"), Err(WRONGTYPE), OK("x-value")]
-//!
-//! # Ok(()) }
-//! ```
-//!
 //! If you want the pipeline to be wrapped in a `MULTI`/`EXEC` block you can
 //! easily do that by switching the pipeline into `atomic` mode.  From the
 //! caller's point of view nothing changes, the pipeline itself will take
@@ -579,7 +561,6 @@ let primary = sentinel.get_async_connection().await.unwrap();
 //! * If you're manually setting `ConnectionManager`'s retry setting, then please re-examine the values you set. `exponential_base` has been made a f32, and `factor` was replaced by `min_delay`, in order to match the documented behavior, instead of the actual erroneous behavior of past versions.
 //! * Vector set types have been moved into the `vector_sets` module, instead of being exposed directly.
 //! * ErrorKind::TypeError was renamed ErrorKind::UnexpectedReturnType, to clarify its meaning. Also fixed some cases where it and ErrorKind::Parse were used interchangeably.
-//! * If you receive raw `redis::Value` from pipeline queries, they now will contain server errors, instead of converting those errors to `RedisError`. This allows the user to receive both successful and failed requests.
 //!
 //!
 

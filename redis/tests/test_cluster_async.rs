@@ -392,22 +392,6 @@ mod cluster_async {
                 .exec_async(&mut connection),
         );
         assert_eq!(res.unwrap_err().kind(), ServerErrorKind::CrossSlot.into());
-
-        let mut res: Vec<RedisResult<String>> = runtime
-            .block_on(
-                redis::pipe()
-                    .set("{tag}x", "another-x-value")
-                    .ignore()
-                    .get("{tag}y")
-                    .query_async(&mut connection),
-            )
-            .unwrap();
-        assert_eq!(res.len(), 2);
-        assert_eq!(res.pop(), Some(Ok("OK".to_string())));
-        assert_eq!(
-            res.pop().unwrap().unwrap_err().kind(),
-            ServerErrorKind::CrossSlot.into()
-        );
     }
 
     #[rstest]

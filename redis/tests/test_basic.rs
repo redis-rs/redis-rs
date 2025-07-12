@@ -25,7 +25,6 @@ mod basic {
     use rand::prelude::IndexedRandom;
     use rand::{rng, Rng};
 
-    use redis::parse_redis_value;
     use redis::{
         cmd, Client, Connection, ConnectionInfo, ConnectionLike, ControlFlow, CopyOptions,
         ErrorKind, ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck,
@@ -1384,24 +1383,6 @@ mod basic {
         let res = pipe.exec(&mut con);
         let error_message = res.unwrap_err().to_string();
         assert_eq!(&error_message, "Pipeline failure: [(Index 1, error: \"WRONGTYPE\": Operation against a key holding the wrong kind of value)]");
-
-        let mut res: Vec<RedisResult<String>> = pipe.query(&mut con).unwrap();
-        assert_eq!(res.len(), 3);
-        assert_eq!(res.pop(), Some(Ok("x-value".to_string())));
-        assert_eq!(res.pop().unwrap().unwrap_err().code(), Some("WRONGTYPE"));
-        assert_eq!(res.pop(), Some(Ok("OK".to_string())));
-
-        let mut res: Vec<Value> = pipe.query(&mut con).unwrap();
-        assert_eq!(res.len(), 3);
-        assert_eq!(res.pop(), Some(Value::BulkString(b"x-value".to_vec())));
-        assert_eq!(
-            res.pop(),
-            parse_redis_value(
-                b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n"
-            )
-            .ok()
-        );
-        assert_eq!(res.pop(), Some(Value::Okay));
     }
 
     #[test]

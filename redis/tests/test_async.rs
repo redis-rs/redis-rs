@@ -457,8 +457,6 @@ mod basic_async {
     fn test_pipeline_returns_server_errors(#[case] runtime: RuntimeType) {
         test_with_all_connection_types(
             |mut con| async move {
-                use redis::parse_redis_value;
-
                 let mut pipe = redis::pipe();
                 pipe.set("x", "x-value")
                     .ignore()
@@ -469,24 +467,6 @@ mod basic_async {
                 let res = pipe.exec_async(&mut con).await;
                 let error_message = res.unwrap_err().to_string();
                 assert_eq!(&error_message, "Pipeline failure: [(Index 1, error: \"WRONGTYPE\": Operation against a key holding the wrong kind of value)]");
-
-                let mut res: Vec<RedisResult<String>> = pipe.query_async(&mut con).await.unwrap();
-                assert_eq!(res.len(), 3);
-                assert_eq!(res.pop(), Some(Ok("x-value".to_string())));
-                assert_eq!(res.pop().unwrap().unwrap_err().code(), Some("WRONGTYPE"));
-                assert_eq!(res.pop(), Some(Ok("OK".to_string())));
-
-                let mut res: Vec<Value> = pipe.query_async(&mut con).await.unwrap();
-                assert_eq!(res.len(), 3);
-                assert_eq!(res.pop(), Some(Value::BulkString(b"x-value".to_vec())));
-                assert_eq!(
-                    res.pop(),
-                    parse_redis_value(
-                        b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n"
-                    )
-                    .ok()
-                );
-                assert_eq!(res.pop(), Some(Value::Okay));
                 Ok(())
             },
             runtime,
