@@ -9,12 +9,13 @@ use std::str::{from_utf8, FromStr};
 use std::time::{Duration, Instant};
 
 use crate::cmd::{cmd, pipe, Cmd};
+use crate::errors::{ErrorKind, RedisError, ServerError, ServerErrorKind};
 use crate::io::tcp::{stream_with_settings, TcpSettings};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
 use crate::types::{
-    from_redis_value, ErrorKind, FromRedisValue, HashMap, PushKind, RedisError, RedisResult,
-    ServerError, ServerErrorKind, SyncPushSender, ToRedisArgs, Value,
+    from_redis_value, FromRedisValue, HashMap, PushKind, RedisResult, SyncPushSender, ToRedisArgs,
+    Value,
 };
 use crate::{check_resp3, from_owned_redis_value, ProtocolVersion};
 
@@ -816,7 +817,7 @@ impl ActualConnection {
                         match tls_connector.connect(host, tcp) {
                             Ok(res) => res,
                             Err(e) => {
-                                fail!((ErrorKind::IoError, "SSL Handshake error", e.to_string()));
+                                fail!((ErrorKind::Io, "SSL Handshake error", e.to_string()));
                             }
                         }
                     }
@@ -1307,7 +1308,7 @@ fn check_resp2_auth(result: &Value) -> RedisResult<AuthResult> {
         Value::ServerError(err) => err,
         _ => {
             return Err((
-                ErrorKind::ResponseError,
+                ServerErrorKind::ResponseError.into(),
                 "Redis server refused to authenticate, returns Ok() != Value::Okay",
             )
                 .into());
@@ -1335,13 +1336,13 @@ fn check_db_select(value: &Value) -> RedisResult<()> {
 
     match err.details() {
         Some(err_msg) => Err((
-            ErrorKind::ResponseError,
+            ServerErrorKind::ResponseError.into(),
             "Redis server refused to switch database",
             err_msg.to_string(),
         )
             .into()),
         None => Err((
-            ErrorKind::ResponseError,
+            ServerErrorKind::ResponseError.into(),
             "Redis server refused to switch database",
         )
             .into()),
@@ -1353,7 +1354,7 @@ fn check_caching(result: &Value) -> RedisResult<()> {
     match result {
         Value::Okay => Ok(()),
         _ => Err((
-            ErrorKind::ResponseError,
+            ServerErrorKind::ResponseError.into(),
             "Client-side caching returned unknown response",
             format!("{result:?}"),
         )
@@ -1376,12 +1377,12 @@ pub(crate) fn check_connection_setup(
 
     if let Some(index) = resp3_auth_cmd_idx {
         let Some(value) = results.get(index) else {
-            return Err((ErrorKind::ClientError, "Missing RESP3 auth response").into());
+            return Err((ErrorKind::Client, "Missing RESP3 auth response").into());
         };
         check_resp3_auth(value)?;
     } else if let Some(index) = resp2_auth_cmd_idx {
         let Some(value) = results.get(index) else {
-            return Err((ErrorKind::ClientError, "Missing RESP2 auth response").into());
+            return Err((ErrorKind::Client, "Missing RESP2 auth response").into());
         };
         if check_resp2_auth(value)? == AuthResult::ShouldRetryWithoutUsername {
             return Ok(AuthResult::ShouldRetryWithoutUsername);
@@ -1390,7 +1391,7 @@ pub(crate) fn check_connection_setup(
 
     if let Some(index) = select_cmd_idx {
         let Some(value) = results.get(index) else {
-            return Err((ErrorKind::ClientError, "Missing SELECT DB response").into());
+            return Err((ErrorKind::Client, "Missing SELECT DB response").into());
         };
         check_db_select(value)?;
     }
@@ -1398,7 +1399,7 @@ pub(crate) fn check_connection_setup(
     #[cfg(feature = "cache-aio")]
     if let Some(index) = cache_cmd_idx {
         let Some(value) = results.get(index) else {
-            return Err((ErrorKind::ClientError, "Missing Caching response").into());
+            return Err((ErrorKind::Client, "Missing Caching response").into());
         };
         check_caching(value)?;
     }
@@ -1656,7 +1657,7 @@ impl Connection {
                 }
                 _ => {
                     return Err((
-                        ErrorKind::ClientError,
+                        ErrorKind::Client,
                         "Unexpected unsubscribe response",
                         format!("{resp:?}"),
                     )
@@ -2462,16 +2463,10 @@ mod tests {
         ];
         for (url, expected, detail) in cases.into_iter() {
             let res = url_to_tcp_connection_info(url).unwrap_err();
-            assert_eq!(
-                res.kind(),
-                crate::ErrorKind::InvalidClientConfig,
-                "{}",
-                &res,
-            );
-            #[allow(deprecated)]
-            let desc = std::error::Error::description(&res);
-            assert_eq!(desc, expected, "{}", &res);
-            assert_eq!(res.detail(), detail, "{}", &res);
+            assert_eq!(res.kind(), crate::ErrorKind::InvalidClientConfig,);
+            let desc = res.to_string();
+            assert!(desc.contains(expected), "{desc}");
+            assert_eq!(res.detail(), detail);
         }
     }
 

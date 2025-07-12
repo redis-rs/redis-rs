@@ -1,8 +1,7 @@
 //! Defines types to use with the geospatial commands.
 
-use crate::types::{
-    invalid_type_error, FromRedisValue, ParsingError, RedisWrite, ToRedisArgs, Value,
-};
+use crate::errors::{invalid_type_error, ParsingError};
+use crate::types::{FromRedisValue, RedisWrite, ToRedisArgs, Value};
 
 /// Units used by [`geo_dist`][1] and [`geo_radius`][2].
 ///

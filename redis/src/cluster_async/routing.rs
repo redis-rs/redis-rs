@@ -3,7 +3,8 @@ use crate::{
         self, MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, SingleNodeRoutingInfo,
         SlotAddr,
     },
-    Cmd, ErrorKind, RedisResult,
+    errors::ServerErrorKind,
+    Cmd, RedisResult,
 };
 
 #[derive(Clone)]
@@ -90,7 +91,11 @@ pub(super) fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Opti
             (_, None) => Ok(chosen_route),
             (Some(chosen_route), Some(next_cmd_route)) => {
                 if chosen_route.slot() != next_cmd_route.slot() {
-                    Err((ErrorKind::CrossSlot, "Received crossed slots in pipeline").into())
+                    Err((
+                        ServerErrorKind::CrossSlot.into(),
+                        "Received crossed slots in pipeline",
+                    )
+                        .into())
                 } else if chosen_route.slot_addr() != &SlotAddr::Master {
                     Ok(Some(next_cmd_route))
                 } else {
@@ -163,7 +168,7 @@ mod pipeline_routing_tests {
 
         assert_eq!(
             route_for_pipeline(&pipeline).unwrap_err().kind(),
-            crate::ErrorKind::CrossSlot
+            crate::ServerErrorKind::CrossSlot.into()
         );
     }
 
