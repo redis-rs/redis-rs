@@ -152,6 +152,24 @@ impl Pipeline {
     ///     .cmd("GET").arg("key_2").query(&mut con).unwrap();
     /// ```
     ///
+    /// If the user wants to handle server errors while also receiving values from successful requests,
+    /// the user can define the target type of a pipeline query as `Vec<RedisResult<T>>` or `Vec<Value>`. This vector
+    /// will contain only non-ignored values, if all requests completed successfully. If some failed, this
+    /// vector will contain all server responses, including the ones that were ignored.
+    ///
+    /// ```rust,no_run
+    /// # fn do_something() -> redis::RedisResult<()> {
+    /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    /// # let mut con = client.get_connection().unwrap();
+    /// let results : Vec<redis::RedisResult<String>> = redis::pipe() //results: Vec<redis::Value> would also work
+    ///         .set("x", "").ignore()
+    ///         .hset("x", "field", "field_value").ignore()
+    ///         .get("x")
+    ///         .query(&mut con)?; // This will result with a vec![Ok("OK"), Err(WRONGTYPE), OK("x-value")]
+    ///
+    /// # Ok(()) }
+    /// ```
+    ///
     /// NOTE: A Pipeline object may be reused after `query()` with all the commands as were inserted
     ///       to them. In order to clear a Pipeline object with minimal memory released/allocated,
     ///       it is necessary to call the `clear()` before inserting new commands.
@@ -183,7 +201,7 @@ impl Pipeline {
         self.complete_request(response)
     }
 
-    /// Async version of `query`.
+    /// Async version of [Self::query].
     #[inline]
     #[cfg(feature = "aio")]
     pub async fn query_async<T: FromRedisValue>(
@@ -203,7 +221,7 @@ impl Pipeline {
         self.complete_request(response)
     }
 
-    /// This is an alternative to `query`` that can be used if you want to be able to handle a
+    /// This is an alternative to [Self::query] that can be used if you want to be able to handle a
     /// command's success or failure but don't care about the command's response. For example,
     /// this is useful for "SET" commands for which the response's content is not important.
     /// It avoids the need to define generic bounds for ().
@@ -212,7 +230,7 @@ impl Pipeline {
         self.query::<()>(con)
     }
 
-    /// This is an alternative to `query_async` that can be used if you want to be able to handle a
+    /// This is an alternative to [Self::query_async] that can be used if you want to be able to handle a
     /// command's success or failure but don't care about the command's response. For example,
     /// this is useful for "SET" commands for which the response's content is not important.
     /// It avoids the need to define generic bounds for ().

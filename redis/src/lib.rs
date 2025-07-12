@@ -288,13 +288,13 @@
 //! If the user wants to handle server errors while also receiving values from successful requests,
 //! the user can define the target type of a pipeline query as `Vec<RedisResult<T>>` or `Vec<Value>`. This vector
 //! will contain only non-ignored values, if all requests completed successfully. If some failed, this
-//! vector will contain all server responses.
+//! vector will contain all server responses, including the ones that were ignored.
 //!
 //! ```rust,no_run
 //! # fn do_something() -> redis::RedisResult<()> {
 //! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! # let mut con = client.get_connection().unwrap();
-//! let results : Vec<RedisResult<String>> = redis::pipe() //results: Vec<redis::Value> would also work
+//! let results : Vec<redis::RedisResult<String>> = redis::pipe() //results: Vec<redis::Value> would also work
 //!         .set("x", "").ignore()
 //!         .hset("x", "field", "field_value").ignore()
 //!         .get("x")
