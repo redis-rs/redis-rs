@@ -6,8 +6,9 @@ use crate::{
     check_resp3,
     client::{DEFAULT_CONNECTION_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT},
     cmd,
+    errors::RedisError,
     subscription_tracker::{SubscriptionAction, SubscriptionTracker},
-    types::{RedisError, RedisResult, Value},
+    types::{RedisResult, Value},
     AsyncConnectionConfig, Client, Cmd, Pipeline, ProtocolVersion, PushInfo, PushKind, ToRedisArgs,
 };
 use arc_swap::ArcSwap;
@@ -246,11 +247,8 @@ struct Internals {
 #[derive(Clone)]
 pub struct ConnectionManager(Arc<Internals>);
 
-/// A `RedisResult` that can be cloned because `RedisError` is behind an `Arc`.
-type CloneableRedisResult<T> = Result<T, Arc<RedisError>>;
-
-/// Type alias for a shared boxed future that will resolve to a `CloneableRedisResult`.
-type SharedRedisFuture<T> = Shared<BoxFuture<'static, CloneableRedisResult<T>>>;
+/// Type alias for a shared boxed future that will resolve to a `RedisResult`.
+type SharedRedisFuture<T> = Shared<BoxFuture<'static, RedisResult<T>>>;
 
 /// Handle a command result. If the connection was dropped, reconnect.
 macro_rules! reconnect_if_dropped {
@@ -306,7 +304,7 @@ impl ConnectionManager {
         let runtime = Runtime::locate();
 
         if config.resubscribe_automatically && config.push_sender.is_none() {
-            return Err((crate::ErrorKind::ClientError, "Cannot set resubscribe_automatically without setting a push sender to receive messages.").into());
+            return Err((crate::ErrorKind::Client, "Cannot set resubscribe_automatically without setting a push sender to receive messages.").into());
         }
 
         let mut retry_strategy = ExponentialBuilder::default()
@@ -386,7 +384,7 @@ impl ConnectionManager {
                 ))
                 .map_err(|_| {
                     crate::RedisError::from((
-                        crate::ErrorKind::ClientError,
+                        crate::ErrorKind::Client,
                         "Failed to set automatic resubscription",
                     ))
                 })?;
@@ -503,10 +501,7 @@ impl ConnectionManager {
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
         // Clone connection to avoid having to lock the ArcSwap in write mode
         let guard = self.0.connection.load();
-        let connection_result = (**guard)
-            .clone()
-            .await
-            .map_err(|e| e.clone_mostly("Reconnecting failed"));
+        let connection_result = (**guard).clone().await.map_err(|e| e.clone());
         reconnect_if_io_error!(self, connection_result, guard);
         let result = connection_result?.send_packed_command(cmd).await;
         reconnect_if_dropped!(self, &result, guard);
@@ -524,10 +519,7 @@ impl ConnectionManager {
     ) -> RedisResult<Vec<Value>> {
         // Clone shared connection future to avoid having to lock the ArcSwap in write mode
         let guard = self.0.connection.load();
-        let connection_result = (**guard)
-            .clone()
-            .await
-            .map_err(|e| e.clone_mostly("Reconnecting failed"));
+        let connection_result = (**guard).clone().await.map_err(|e| e.clone());
         reconnect_if_io_error!(self, connection_result, guard);
         let result = connection_result?
             .send_packed_commands(cmd, offset, count)

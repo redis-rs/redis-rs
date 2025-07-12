@@ -3,7 +3,7 @@
 mod support;
 
 mod script {
-    use redis::ErrorKind;
+    use redis::ServerErrorKind;
 
     use crate::support::*;
 
@@ -57,7 +57,7 @@ mod script {
         let r: Result<(), _> = redis::pipe()
             .invoke_script(script.arg(1).arg(2))
             .query(&mut con);
-        assert_eq!(r.unwrap_err().kind(), ErrorKind::NoScriptError);
+        assert_eq!(r.unwrap_err().kind(), ServerErrorKind::NoScript.into());
     }
 
     #[test]

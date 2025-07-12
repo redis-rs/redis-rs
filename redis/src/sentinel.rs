@@ -149,9 +149,9 @@ use crate::tls::retrieve_tls_certificates;
 #[cfg(feature = "tls-rustls")]
 use crate::TlsCertificates;
 use crate::{
-    cmd, connection::ConnectionInfo, types::RedisResult, Client, Cmd, Connection, ConnectionAddr,
-    ErrorKind, FromRedisValue, IntoConnectionInfo, ProtocolVersion, RedisConnectionInfo,
-    RedisError, Role, TlsMode,
+    cmd, connection::ConnectionInfo, errors::ServerErrorKind, types::RedisResult, Client, Cmd,
+    Connection, ConnectionAddr, ErrorKind, FromRedisValue, IntoConnectionInfo, ProtocolVersion,
+    RedisConnectionInfo, RedisError, Role, TlsMode,
 };
 
 /// The Sentinel type, serves as a special purpose client which builds other clients on
@@ -354,7 +354,10 @@ fn check_info_replication(conn: &mut Connection) -> RedisResult<String> {
     let info_map = parse_replication_info(info);
     match info_map.get("role") {
         Some(x) => Ok(x.clone()),
-        None => Err(RedisError::from((ErrorKind::ParseError, "parse error"))),
+        None => Err(RedisError::from((
+            ErrorKind::UnexpectedReturnType,
+            "Missing \"role\" field",
+        ))),
     }
 }
 
@@ -363,7 +366,7 @@ fn evaluate_role_check_errors(
     fallback_role_err: RedisError,
 ) -> RedisResult<bool> {
     // unknown commands are expressed as response errors
-    if !matches!(role_err.kind(), ErrorKind::ResponseError) {
+    if role_err.kind() != ServerErrorKind::ResponseError.into() {
         return Err(role_err);
     }
 
@@ -466,7 +469,10 @@ async fn async_check_info_replication(conn: &mut MultiplexedConnection) -> Redis
     let info_map = parse_replication_info(info);
     match info_map.get("role") {
         Some(x) => Ok(x.clone()),
-        None => Err(RedisError::from((ErrorKind::ParseError, "parse error"))),
+        None => Err(RedisError::from((
+            ErrorKind::UnexpectedReturnType,
+            "Missing \"role\" field",
+        ))),
     }
 }
 

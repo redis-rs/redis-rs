@@ -109,6 +109,7 @@ uuid = { version = "1.18.0", optional = true }
 hashbrown = { version = "0.16", optional = true }
 
 lru = { version = "0.16", optional = true }
+arcstr = "1.2.0"
 
 [features]
 default = ["acl", "streams", "geospatial", "script", "num-bigint"]

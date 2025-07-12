@@ -587,6 +587,7 @@ let primary = sentinel.get_async_connection().await.unwrap();
 //! * Async connections now have default timeouts. If you're using blocking commands or other potentially long running commands, you should adjust the timeouts accordingly.
 //! * If you're manually setting `ConnectionManager`'s retry setting, then please re-examine the values you set. `exponential_base` has been made a f32, and `factor` was replaced by `min_delay`, in order to match the documented behavior, instead of the actual erroneous behavior of past versions.
 //! * Vector set types have been moved into the `vector_sets` module, instead of being exposed directly.
+//! * ErrorKind::TypeError was renamed ErrorKind::UnexpectedReturnType, to clarify its meaning. Also fixed some cases where it and ErrorKind::Parse were used interchangeably.
 //!
 //!
 
@@ -633,11 +634,6 @@ pub use crate::types::{
     // utility functions
     from_redis_value,
     from_owned_redis_value,
-    make_extension_error,
-
-    // error kinds
-    ErrorKind,
-    RetryMethod,
 
     // conversion traits
     FromRedisValue,
@@ -654,10 +650,6 @@ pub use crate::types::{
     ReplicaInfo,
     IntegerReplyOrNoOp,
 	ValueType,
-
-    // error and result types
-    ParsingError,
-    RedisError,
     RedisResult,
     RedisWrite,
     ToRedisArgs,
@@ -668,6 +660,10 @@ pub use crate::types::{
     VerbatimFormat,
     ProtocolVersion,
     PushInfo,
+};
+pub use crate::errors::{
+    make_extension_error, ErrorKind, ParsingError, RedisError, RetryMethod, ServerError,
+    ServerErrorKind,
 };
 
 #[cfg(feature = "aio")]
@@ -762,6 +758,7 @@ mod client;
 mod cmd;
 mod commands;
 mod connection;
+mod errors;
 /// Module for defining I/O behavior.
 pub mod io;
 mod parser;

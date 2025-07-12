@@ -61,7 +61,7 @@ where
     let check_future = futures_util::FutureExt::fuse(async {
         loop {
             if CHECK.load(Ordering::Relaxed) {
-                return Err((redis::ErrorKind::IoError, "panic was caught").into());
+                return Err((redis::ErrorKind::Io, "panic was caught").into());
             }
             futures_time::task::sleep(futures_time::time::Duration::from_millis(1)).await;
         }

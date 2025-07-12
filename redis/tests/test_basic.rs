@@ -1224,7 +1224,7 @@ mod basic {
         assert_eq!(count, KEY_COUNT);
 
         // make sure we encountered the error (i.e. instead of silent failure)
-        assert!(matches!(error_kind, Some(ErrorKind::TypeError)));
+        assert_eq!(error_kind, Some(ErrorKind::Parse));
     }
 
     #[test]
@@ -1336,7 +1336,10 @@ mod basic {
             .ignore()
             .get("y")
             .exec(&mut con);
-        assert_eq!(res.unwrap_err().kind(), ErrorKind::ReadOnly);
+        assert_eq!(
+            res.unwrap_err().kind(),
+            redis::ServerErrorKind::ReadOnly.into()
+        );
 
         // Make sure we don't get leftover responses from the pipeline ("y-value"). See #436.
         let res = redis::cmd("GET")
@@ -1402,7 +1405,10 @@ mod basic {
             .get("x")
             .query(&mut con);
 
-        assert_eq!(err.unwrap_err().kind(), ErrorKind::ReadOnly);
+        assert_eq!(
+            err.unwrap_err().kind(),
+            redis::ServerErrorKind::ReadOnly.into()
+        );
 
         let x: i32 = redis::Commands::get(&mut con, "x").unwrap();
         assert_eq!(x, 42);
@@ -3475,7 +3481,7 @@ mod basic {
         let result = con.vdim(non_existent_key);
         assert!(result.is_err(), "Expected an error for non-existent key");
         let error = result.unwrap_err();
-        assert_eq!(error.kind(), redis::ErrorKind::ResponseError);
+        assert_eq!(error.kind(), redis::ServerErrorKind::ResponseError.into());
         assert!(
             error.to_string().contains("key does not exist"),
             "Expected error message = 'key does not exist', got: {error}"
@@ -3516,7 +3522,7 @@ mod basic {
             "Expected an error for dimensionality mismatch"
         );
         let error = result.unwrap_err();
-        assert_eq!(error.kind(), redis::ErrorKind::ResponseError);
+        assert_eq!(error.kind(), redis::ServerErrorKind::ResponseError.into());
 
         // VEMB returns NIL for non-existent keys or elements.
         assert_eq!(
@@ -3584,7 +3590,7 @@ mod basic {
             "Expected an error for non-existent element"
         );
         let error = result.unwrap_err();
-        assert_eq!(error.kind(), redis::ErrorKind::ResponseError);
+        assert_eq!(error.kind(), redis::ServerErrorKind::ResponseError.into());
     }
 
     #[test]
