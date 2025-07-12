@@ -12,8 +12,8 @@ mod cluster {
     use redis::{
         cluster::{cluster_pipe, ClusterClient, ClusterConnection},
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
-        cmd, parse_redis_value, Commands, ConnectionLike, ErrorKind, ProtocolVersion, RedisError,
-        Value,
+        cmd, parse_redis_value, Commands, ConnectionLike, ProtocolVersion, RedisError,
+        ServerErrorKind, Value,
     };
     use redis_test::{
         cluster::{RedisCluster, RedisClusterConfiguration},
@@ -286,14 +286,14 @@ mod cluster {
 
         assert_eq!(
         err.to_string(),
-        "This command cannot be safely routed in cluster mode - ClientError: Command 'SCRIPT KILL' can't be executed in a cluster pipeline."
+        "This command cannot be safely routed in cluster mode - Client: Command 'SCRIPT KILL' can't be executed in a cluster pipeline."
     );
 
         let err = cluster_pipe().keys("*").exec(&mut con).unwrap_err();
 
         assert_eq!(
         err.to_string(),
-        "This command cannot be safely routed in cluster mode - ClientError: Command 'KEYS' can't be executed in a cluster pipeline."
+        "This command cannot be safely routed in cluster mode - Client: Command 'KEYS' can't be executed in a cluster pipeline."
     );
     }
 
@@ -468,13 +468,10 @@ mod cluster {
 
         let result = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
 
-        match result {
-            Ok(_) => panic!("result should be an error"),
-            Err(e) => match e.kind() {
-                ErrorKind::TryAgain => {}
-                _ => panic!("Expected TryAgain but got {:?}", e.kind()),
-            },
-        }
+        assert!(
+            matches!(&result, Err(err) if err.kind() == ServerErrorKind::TryAgain.into()),
+            "{result:?}",
+        );
         assert_eq!(requests.load(atomic::Ordering::SeqCst), 3);
     }
 
@@ -727,19 +724,16 @@ mod cluster {
                 // Error twice with io-error, ensure connection is reestablished w/out calling
                 // other node (i.e., not doing a full slot rebuild)
                 completed.fetch_add(1, Ordering::SeqCst);
-                Err(Err((ErrorKind::ReadOnly, "").into()))
+                Err(Err((ServerErrorKind::ReadOnly.into(), "").into()))
             }
         });
 
-        let value = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
+        let result = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
 
-        match value {
-            Ok(_) => panic!("result should be an error"),
-            Err(e) => match e.kind() {
-                ErrorKind::ReadOnly => {}
-                _ => panic!("Expected ReadOnly but got {:?}", e.kind()),
-            },
-        }
+        assert!(
+            matches!(&result, Err(err) if err.kind() == ServerErrorKind::ReadOnly.into()),
+            "{result:?}",
+        );
         assert_eq!(completed.load(Ordering::SeqCst), 1);
     }
 

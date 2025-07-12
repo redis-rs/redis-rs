@@ -6,7 +6,7 @@ use std::{
 
 use redis::{
     cluster::{self, ClusterClient, ClusterClientBuilder},
-    ErrorKind, FromRedisValue,
+    FromRedisValue, ServerErrorKind,
 };
 
 use {
@@ -258,11 +258,13 @@ impl redis::ConnectionLike for MockConnection {
                 if let Value::Array(results) = res {
                     match results.into_iter().nth(offset) {
                         Some(Value::Array(res)) => Ok(res),
-                        _ => Err((ErrorKind::ResponseError, "non-array response").into()),
+                        _ => Err(
+                            (ServerErrorKind::ResponseError.into(), "non-array response").into(),
+                        ),
                     }
                 } else {
                     Err((
-                        ErrorKind::ResponseError,
+                        ServerErrorKind::ResponseError.into(),
                         "non-array response",
                         String::from_owned_redis_value(res).unwrap(),
                     )

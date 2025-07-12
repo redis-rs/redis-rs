@@ -1,11 +1,12 @@
 use crate::cluster::ClusterConnection;
 use crate::cmd::{cmd, Cmd};
+use crate::errors::ErrorKind;
 use crate::types::{
-    from_owned_redis_value, ErrorKind, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,
+    from_owned_redis_value, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,
 };
 
 pub(crate) const UNROUTABLE_ERROR: (ErrorKind, &str) = (
-    ErrorKind::ClientError,
+    ErrorKind::Client,
     "This command cannot be safely routed in cluster mode",
 );
 
