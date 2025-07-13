@@ -2083,6 +2083,10 @@ mod basic {
             redis::Commands::hget(&mut con, "my_hash", &["f2", "f4"]),
             Ok((2, 8))
         );
+        assert_eq!(
+            redis::Commands::hmget(&mut con, "my_hash", &["f2", "f4"]),
+            Ok((2, 8))
+        );
         assert_eq!(con.hincr("my_hash", "f1", 1), Ok(2.0));
         assert_eq!(con.hincr("my_hash", "f2", 1.5), Ok(3.5));
         assert_eq!(con.hexists("my_hash", "f2"), Ok(true));

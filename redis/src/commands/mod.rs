@@ -494,6 +494,12 @@ implement_commands! {
         cmd(if field.num_of_args() <= 1 { "HGET" } else { "HMGET" }).arg(key).arg(field)
     }
 
+    /// Gets multiple fields from a hash.
+    /// [Redis Docs](https://redis.io/commands/HMGET)
+    fn hmget<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) -> (Vec<String>) {
+        cmd("HMGET").arg(key).arg(fields)
+    }
+
     /// Get the value of one or more fields of a given hash key, and optionally set their expiration
     /// [Redis Docs](https://redis.io/commands/HGETEX)
     fn hget_ex<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F, expire_at: Expiry) -> (Vec<String>) {
