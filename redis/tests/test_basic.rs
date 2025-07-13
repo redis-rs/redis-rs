@@ -2084,7 +2084,7 @@ mod basic {
             Ok((2, 8))
         );
         assert_eq!(
-            redis::Commands::hget_multiple(&mut con, "my_hash", &["f2", "f4"]),
+            redis::Commands::hmget(&mut con, "my_hash", &["f2", "f4"]),
             Ok((2, 8))
         );
         assert_eq!(con.hincr("my_hash", "f1", 1), Ok(2.0));

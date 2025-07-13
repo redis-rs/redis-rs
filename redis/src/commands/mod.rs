@@ -496,7 +496,7 @@ implement_commands! {
 
     /// Gets multiple fields from a hash.
     /// [Redis Docs](https://redis.io/commands/HMGET)
-    fn hget_multiple<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) -> (Vec<String>) {
+    fn hmget<K: ToRedisArgs, F: ToRedisArgs>(key: K, fields: F) -> (Vec<String>) {
         cmd("HMGET").arg(key).arg(fields)
     }
 
