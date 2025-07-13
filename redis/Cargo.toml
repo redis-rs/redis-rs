@@ -169,7 +169,6 @@ assert_approx_eq = "1.0"
 fnv = "1.0.5"
 futures = "0.3"
 futures-time = "3"
-criterion = "0.6"
 partial-io = { version = "0.5", features = ["tokio", "quickcheck1"] }
 quickcheck = "1.0.3"
 tokio = { version = "1", features = [
@@ -186,6 +185,7 @@ redis-test = { path = "../redis-test" }
 rstest = "0.25"
 rand = "0.9"
 rustls = { version = "0.23", features = ["ring"] }
+iai-callgrind = "0.15.2"
 
 [[test]]
 name = "test_async"
