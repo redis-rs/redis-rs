@@ -679,24 +679,16 @@ pub use commands::geo;
 mod subscription_tracker;
 
 #[cfg(feature = "cluster")]
-mod cluster_topology;
+mod cluster_handling;
 
 #[cfg(feature = "cluster")]
 #[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
-pub mod cluster;
-
-#[cfg(feature = "cluster")]
-#[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
-mod cluster_client;
-
-#[cfg(feature = "cluster")]
-#[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
-mod cluster_pipeline;
+pub use cluster_handling::sync_connection as cluster;
 
 /// Routing information for cluster commands.
 #[cfg(feature = "cluster")]
 #[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
-pub mod cluster_routing;
+pub use cluster_handling::routing as cluster_routing;
 
 #[cfg(feature = "r2d2")]
 #[cfg_attr(docsrs, doc(cfg(feature = "r2d2")))]
@@ -712,7 +704,7 @@ pub use commands::streams;
 
 #[cfg(feature = "cluster-async")]
 #[cfg_attr(docsrs, doc(cfg(all(feature = "cluster", feature = "aio"))))]
-pub mod cluster_async;
+pub use cluster_handling::async_connection as cluster_async;
 
 #[cfg(feature = "sentinel")]
 #[cfg_attr(docsrs, doc(cfg(feature = "sentinel")))]

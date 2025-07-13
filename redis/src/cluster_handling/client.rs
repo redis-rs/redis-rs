@@ -9,7 +9,7 @@ use crate::io::tcp::TcpSettings;
 #[cfg(feature = "cluster-async")]
 use crate::io::AsyncDNSResolver;
 use crate::types::{ProtocolVersion, RedisResult};
-use crate::{cluster, cluster::TlsMode};
+use crate::{cluster, TlsMode};
 use rand::Rng;
 #[cfg(feature = "cluster-async")]
 use std::sync::Arc;
