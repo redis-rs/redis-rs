@@ -1,3 +1,16 @@
+### 0.32.4 (2025-07-13)
+
+#### Changes & Bug fixes
+
+* Fix BITOP cluster routing. ([#1709](https://github\.com/redis-rs/redis-rs/pull/1709)  by @nihohit)
+* Fix some command links ([#1708](https://github\.com/redis-rs/redis-rs/pull/1708)  by @nihohit)
+* Update to socket2 v0.6 ([#1712](https://github\.com/redis-rs/redis-rs/pull/1712)  by @Thomasdezeeuw)
+* Add new operators to the BITOP command ([#1710](https://github\.com/redis-rs/redis-rs/pull/1710)  by @StefanPalashev)
+* Fix flakey test. ([#1716](https://github\.com/redis-rs/redis-rs/pull/1716)  by @nihohit)
+* Clarify sentinel docs about separate authentication for sentinel nodes. ([#1715](https://github\.com/redis-rs/redis-rs/pull/1715)  by @nihohit)
+* add method hget_multiple to explicitly call HMGET ([#1721](https://github\.com/redis-rs/redis-rs/pull/1721)  by @bentheiii)
+
+
 ### 0.32.3 (2025-06-30)
 
 #### Changes & Bug fixes

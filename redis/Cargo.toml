@@ -1,6 +1,6 @@
 [package]
 name = "redis"
-version = "0.32.3"
+version = "0.32.4"
 keywords = ["redis", "valkey", "cluster", "sentinel", "pubsub"]
 description = "Redis driver for Rust."
 homepage = "https://github.com/redis-rs/redis-rs"
@@ -111,7 +111,7 @@ uuid = { version = "1.17.0", optional = true }
 # Optional hashbrown support
 hashbrown = { version = "0.15", optional = true }
 
-lru = { version = "0.15", optional = true }
+lru = { version = "0.16", optional = true }
 
 [features]
 default = ["acl", "streams", "geospatial", "script", "keep-alive", "num-bigint"]
