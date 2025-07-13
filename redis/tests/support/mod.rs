@@ -287,13 +287,6 @@ impl TestContext {
         self.server.stop();
     }
 
-    #[cfg(feature = "tokio-comp")]
-    pub async fn multiplexed_async_connection_tokio(
-        &self,
-    ) -> RedisResult<redis::aio::MultiplexedConnection> {
-        self.client.get_multiplexed_async_connection().await
-    }
-
     #[cfg(all(feature = "aio", feature = "cache-aio"))]
     pub fn async_connection_with_cache(
         &self,
