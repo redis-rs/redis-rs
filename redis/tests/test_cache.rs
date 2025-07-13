@@ -852,7 +852,7 @@ fn test_cache_async_cluster_slot_change(
                     })
                 }
             }
-            let key_slot = redis::cluster_routing::get_slot("key_1".as_bytes());
+            let key_slot = 11998; // equivalent get_slot("key_1".as_bytes());
 
             let mut con = ctx.async_connection().await;
             let _: redis::Value = redis::cmd("SET")

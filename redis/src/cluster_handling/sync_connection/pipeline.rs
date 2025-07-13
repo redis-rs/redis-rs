@@ -1,4 +1,4 @@
-use crate::cluster::ClusterConnection;
+use super::ClusterConnection;
 use crate::cmd::{cmd, Cmd};
 use crate::errors::ErrorKind;
 use crate::types::{
