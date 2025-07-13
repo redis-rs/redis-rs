@@ -234,19 +234,23 @@ jobs:
         with:
           toolchain: ${{ env.rust_ver }}
 
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Benchmark
+      - name: Install dependencies
         run: |
-          cargo install critcmp
-          cargo bench -p redis --all-features -- --measurement-time 15 --save-baseline changes
-          git fetch
-          git checkout ${{ github.base_ref }} 
-          cargo bench -p redis --all-features -- --measurement-time 15 --save-baseline base
-          critcmp base changes
+          sudo apt install valgrind
+          cargo install iai-callgrind-runner@^0.15
 
-      # We check out again, because we switched branches in the last step.
-      - uses: actions/checkout@v4
+      - name: Benchmark baseline
+        run: |
+          git fetch
+          git checkout ${{ github.base_ref }}
+          echo "========= BASELINE ==========="
+          cargo bench -p redis --all-features --locked --quiet
+
+      - name: Benchmark current
+        run: |        
+          git reset --hard HEAD@{1}
+          echo "========= CURRENT ==========="
+          cargo bench -p redis --all-features --locked --quiet
 
   flag-frenzy:
     needs: [lint, build-and-test]
