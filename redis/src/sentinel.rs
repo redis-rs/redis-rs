@@ -48,39 +48,30 @@
 //! use redis::{ Commands, ConnectionAddr, ConnectionInfo, RedisConnectionInfo };
 //! use redis::sentinel::{ Sentinel, SentinelNodeConnectionInfo };
 //!
-//! let nodes = vec![ConnectionInfo {
-//!   addr: ConnectionAddr::Tcp(String::from("redis://127.0.0.1"), 6379),
-//!   redis: RedisConnectionInfo {
-//!     username: Some(String::from("sentinel_username")),
-//!     password: Some(String::from("sentinel_password")),
-//!     ..Default::default()
-//!   },
-//! }];
+//! let nodes = vec!["redis://sentinel_user:sentinel_pass@127.0.0.1"];
 //! let mut sentinel = Sentinel::build(nodes).unwrap();
 //!
+//! let redis_connection_info = RedisConnectionInfo::default()
+//!     .set_db(1)
+//!     .set_username("user")
+//!     .set_password("pass");
+//! let sentinel_master_node_connection_info = SentinelNodeConnectionInfo::default()
+//!     .set_redis_connection_info(redis_connection_info);
 //! let mut master_with_auth = sentinel
 //!     .master_for(
 //!         "master_name",
-//!         Some(&SentinelNodeConnectionInfo {
-//!             tls_mode: None,
-//!             redis_connection_info: Some(RedisConnectionInfo::default()
-//!                 .set_db(1)
-//!                 .set_username("user")
-//!                 .set_password("pass")
-//!             ),
-//!         }),
+//!         Some(&sentinel_master_node_connection_info),
 //!     )
 //!     .unwrap()
 //!     .get_connection()
 //!     .unwrap();
 //!
+//! let sentinel_replica_node_connection_info = SentinelNodeConnectionInfo::default()
+//!     .set_tls_mode(redis::TlsMode::Secure);
 //! let mut replica_with_tls = sentinel
 //!     .master_for(
 //!         "master_name",
-//!         Some(&SentinelNodeConnectionInfo {
-//!             tls_mode: Some(redis::TlsMode::Secure),
-//!             redis_connection_info: None,
-//!         }),
+//!         Some(&sentinel_replica_node_connection_info),
 //!     )
 //!     .unwrap()
 //!     .get_connection()
@@ -93,16 +84,16 @@
 //! use redis::sentinel::{ SentinelServerType, SentinelClient, SentinelNodeConnectionInfo };
 //!
 //! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
+//! let redis_connection_info = RedisConnectionInfo::default()
+//!     .set_username("user")
+//!     .set_password("pass");
+//! let sentinel_node_connection_info = SentinelNodeConnectionInfo::default()
+//!     .set_tls_mode(redis::TlsMode::Insecure)
+//!     .set_redis_connection_info(redis_connection_info);
 //! let mut master_client = SentinelClient::build(
 //!     nodes,
 //!     String::from("master1"),
-//!     Some(SentinelNodeConnectionInfo {
-//!         tls_mode: Some(redis::TlsMode::Insecure),
-//!         redis_connection_info: Some(RedisConnectionInfo::default()
-//!             .set_username("user")
-//!             .set_password("pass")
-//!         ),
-//!     }),
+//!     Some(sentinel_node_connection_info),
 //!     redis::sentinel::SentinelServerType::Master,
 //! )
 //! .unwrap();
@@ -172,13 +163,29 @@ pub struct Sentinel {
 pub struct SentinelNodeConnectionInfo {
     /// The TLS mode of the connection, or None if we do not want to connect using TLS
     /// (just a plain TCP connection).
-    pub tls_mode: Option<TlsMode>,
+    tls_mode: Option<TlsMode>,
 
     /// The Redis specific/connection independent information to be used.
-    pub redis_connection_info: Option<RedisConnectionInfo>,
+    redis_connection_info: Option<RedisConnectionInfo>,
 }
 
 impl SentinelNodeConnectionInfo {
+    /// Sets the TLS mode of the connection
+    pub fn set_tls_mode(self, tls_mode: TlsMode) -> Self {
+        Self {
+            tls_mode: Some(tls_mode),
+            ..self
+        }
+    }
+
+    /// Sets the Redis specific/connection independent information to be used, if needed
+    pub fn set_redis_connection_info(self, redis_connection_info: RedisConnectionInfo) -> Self {
+        Self {
+            redis_connection_info: Some(redis_connection_info),
+            ..self
+        }
+    }
+
     fn create_connection_info(
         &self,
         ip: String,

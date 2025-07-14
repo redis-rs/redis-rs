@@ -58,9 +58,10 @@ impl TestSentinelContext {
     }
 
     pub fn sentinel_node_connection_info(&self) -> SentinelNodeConnectionInfo {
-        SentinelNodeConnectionInfo {
-            tls_mode: self.tls_mode(),
-            redis_connection_info: None,
+        if let Some(tls_mode) = self.tls_mode() {
+            SentinelNodeConnectionInfo::default().set_tls_mode(tls_mode)
+        } else {
+            SentinelNodeConnectionInfo::default()
         }
     }
 
