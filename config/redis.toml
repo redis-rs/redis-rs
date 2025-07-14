@@ -15,20 +15,20 @@ require = [
 ]
 
 [[rule]]
-when = ["tls-rustls", "tokio-comp"]
-require = ["tokio-rustls-comp"]
+when = ["tls-rustls"]
+forbid = [
+  "tokio-comp",
+  "OR",
+  "smol-comp",
+] # tokio-rustls-comp or smol-rustls-comp should be used instead of this combination
 
 [[rule]]
-when = ["tls-native-tls", "tokio-comp"]
-require = ["tokio-native-tls-comp"]
-
-[[rule]]
-when = ["tls-rustls", "smol-comp"]
-require = ["smol-rustls-comp"]
-
-[[rule]]
-when = ["tls-native-tls", "smol-comp"]
-require = ["smol-native-tls-comp"]
+when = ["tls-native-tls"]
+forbid = [
+  "tokio-comp",
+  "OR",
+  "smol-comp",
+] # tokio-native-tls-comp or smol-native-tls-comp should be used instead of this combination
 
 [[rule]]
 when = "tls-rustls-insecure"
@@ -72,10 +72,12 @@ forbid = [
   "tokio-comp",
 ]
 
-# cluster-async is the feature for async work. We don't need to check cluster with async.
+# cluster-async is the feature for async work. We don't need to check cluster with any async runtime.
 [[rule]]
 when = ["cluster"]
 forbid = [
+  "cluster-async",
+  "OR",
   "tokio-rustls-comp",
   "OR",
   "tokio-native-tls-comp",
@@ -116,6 +118,11 @@ forbid = "bigdecimal"
 [[rule]]
 when = true
 forbid = "aio"
+
+# If you're using the library with sentinel or targetiing 
+[[rule]]
+when = ["connection-manager", "OR", "sentinel"]
+forbid = ["cluster-async", "OR", "cluster"]
 
 # these are all included in the `default` feature, so in order to reduce combinatoric explosion, we don't check them individually.
 [[rule]]
