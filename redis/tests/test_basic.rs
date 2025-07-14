@@ -1,21 +1,7 @@
 #![allow(clippy::let_unit_value)]
 
+#[macro_use]
 mod support;
-
-macro_rules! run_test_if_version_supported {
-    ($minimum_required_version:expr) => {{
-        let ctx = TestContext::new();
-        let redis_version = ctx.get_version();
-
-        if redis_version < *$minimum_required_version {
-            eprintln!("Skipping the test because the current version of Redis {:?} doesn't match the minimum required version {:?}.",
-            redis_version, $minimum_required_version);
-            return;
-        }
-
-        ctx
-    }};
-}
 
 #[cfg(test)]
 mod basic {
@@ -50,12 +36,6 @@ mod basic {
     use std::thread::{self, sleep, spawn};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use std::vec;
-
-    const REDIS_VERSION_CE_8_0_RC1: (u16, u16, u16) = (7, 9, 240);
-    #[cfg(feature = "vector-sets")]
-    const REDIS_VERSION_CE_8_0: (u16, u16, u16) = (8, 0, 0);
-
-    const REDIS_VERSION_CE_8_2: (u16, u16, u16) = (8, 1, 240);
 
     const HASH_KEY: &str = "testing_hash";
     const HASH_FIELDS_AND_VALUES: [(&str, u8); 5] =
