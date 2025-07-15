@@ -3,6 +3,7 @@
 use redis::streams::*;
 use redis::{Connection, ToRedisArgs, TypedCommands};
 
+#[macro_use]
 mod support;
 use crate::support::*;
 
@@ -822,6 +823,975 @@ fn test_xdel() {
     let result = con.xdel("k2", &["2000-0", "2000-1", "2000-2"]);
     // should equal 2 since the last id doesn't exist
     assert_eq!(result, Ok(2));
+}
+
+#[test]
+fn test_xadd_options_deletion_policy_keepref() {
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
+    let mut con = ctx.connection();
+    let _: () = con.flushdb().unwrap();
+
+    let stream_name = "test_stream_xadd_keepref";
+    let group_name = "test_group";
+    let consumer_name = "consumer";
+
+    let initial_stream_entries = [
+        ("field1", "value1"),
+        ("field2", "value2"),
+        ("field3", "value3"),
+    ];
+
+    let stream_entries: [(&str, &str); 3] = initial_stream_entries[..3].try_into().unwrap();
+    let [id1, id2, id3]: [String; 3] =
+        stream_entries.map(|entry| con.xadd(stream_name, "*", &[entry]).unwrap().unwrap());
+
+    // Create a consumer group and read all initial messages to create PEL entries.
+    let _: () = con
+        .xgroup_create_mkstream(stream_name, group_name, "0")
+        .unwrap();
+    let _: Option<StreamReadReply> = con
+        .xread_options(
+            &[stream_name],
+            &[">"],
+            &StreamReadOptions::default()
+                .group(group_name, consumer_name)
+                .count(initial_stream_entries.len() + 1),
+        )
+        .unwrap();
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), initial_stream_entries.len());
+
+    // Add a new entry with the following options:
+    // - Apply a trimming strategy to ensure the number of entries does not exceed the initial number of entries
+    // - Apply the KeepRef deletion policy to keep existing references to entries that will be removed as a result of trimming
+    let id4 = con
+        .xadd_options(
+            stream_name,
+            "*",
+            &[("field4", "value4")],
+            &StreamAddOptions::default()
+                .trim(StreamTrimStrategy::maxlen(
+                    StreamTrimmingMode::Exact,
+                    initial_stream_entries.len(),
+                ))
+                .set_deletion_policy(StreamDeletionPolicy::KeepRef),
+        )
+        .unwrap()
+        .unwrap();
+
+    // The stream should have been trimmed as its entries exceeded the maximum length.
+    // As a result, the first entry should have been removed.
+    assert_eq!(con.xlen(stream_name).unwrap(), initial_stream_entries.len());
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.first_entry.id, id2);
+    assert_eq!(info.last_generated_id, id4);
+
+    // The PEL should still have references to the initial entries.
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), initial_stream_entries.len());
+    // Check that these references are indeed pointing to the initial entries.
+    let reply = con
+        .xpending_consumer_count(
+            stream_name,
+            group_name,
+            "-",
+            "+",
+            initial_stream_entries.len(),
+            consumer_name,
+        )
+        .unwrap();
+    assert_eq!(
+        vec![id1, id2, id3],
+        reply
+            .ids
+            .iter()
+            .map(|id| id.id.clone())
+            .collect::<Vec<String>>()
+    );
+}
+
+#[test]
+fn test_xadd_options_deletion_policy_delref() {
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
+    let mut con = ctx.connection();
+    let _: () = con.flushdb().unwrap();
+
+    let stream_name = "test_stream_xadd_delref";
+    let group_name = "test_group";
+    let consumer_name = "consumer";
+
+    let initial_stream_entries = [
+        ("field1", "value1"),
+        ("field2", "value2"),
+        ("field3", "value3"),
+    ];
+
+    let stream_entries: [(&str, &str); 3] = initial_stream_entries[..3].try_into().unwrap();
+    let [_, id2, id3]: [String; 3] =
+        stream_entries.map(|entry| con.xadd(stream_name, "*", &[entry]).unwrap().unwrap());
+
+    // Create a consumer group and read all initial messages to create PEL entries.
+    let _: () = con
+        .xgroup_create_mkstream(stream_name, group_name, "0")
+        .unwrap();
+    let _: Option<StreamReadReply> = con
+        .xread_options(
+            &[stream_name],
+            &[">"],
+            &StreamReadOptions::default()
+                .group(group_name, consumer_name)
+                .count(initial_stream_entries.len() + 1),
+        )
+        .unwrap();
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), initial_stream_entries.len());
+
+    // Add a new entry with the following options:
+    // - Apply a trimming strategy to ensure the number of entries does not exceed the initial number of entries
+    // - Apply the DelRef deletion policy to erase any existing references to entries that will be removed as a result of trimming
+    let id4 = con
+        .xadd_options(
+            stream_name,
+            "*",
+            &[("field4", "value4")],
+            &StreamAddOptions::default()
+                .trim(StreamTrimStrategy::maxlen(
+                    StreamTrimmingMode::Exact,
+                    initial_stream_entries.len(),
+                ))
+                .set_deletion_policy(StreamDeletionPolicy::DelRef),
+        )
+        .unwrap()
+        .unwrap();
+
+    // The stream should have been trimmed as its entries exceeded the maximum length.
+    // As a result, the first entry should have been removed.
+    assert_eq!(con.xlen(stream_name).unwrap(), initial_stream_entries.len());
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.first_entry.id, id2);
+    assert_eq!(info.last_generated_id, id4);
+
+    // The PEL should now hold one less reference than the initial number of references as the first one was removed by the deletion policy.
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), initial_stream_entries.len() - 1);
+    // Check that the remaining references point to the remaining initial entries.
+    let reply = con
+        .xpending_consumer_count(
+            stream_name,
+            group_name,
+            "-",
+            "+",
+            initial_stream_entries.len(),
+            consumer_name,
+        )
+        .unwrap();
+    assert_eq!(
+        vec![id2, id3],
+        reply
+            .ids
+            .iter()
+            .map(|id| id.id.clone())
+            .collect::<Vec<String>>()
+    );
+}
+
+#[test]
+fn test_xadd_options_deletion_policy_acked() {
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
+    let mut con = ctx.connection();
+    let _: () = con.flushdb().unwrap();
+
+    let stream_name = "test_stream_xadd_acked";
+    let group_name = "test_group";
+    let consumer_name = "consumer";
+
+    let initial_stream_entries = [
+        ("field1", "value1"),
+        ("field2", "value2"),
+        ("field3", "value3"),
+    ];
+
+    let stream_entries: [(&str, &str); 3] = initial_stream_entries[..3].try_into().unwrap();
+    let [id1, id2, id3]: [String; 3] =
+        stream_entries.map(|entry| con.xadd(stream_name, "*", &[entry]).unwrap().unwrap());
+
+    // Create a consumer group and read all initial messages to create PEL entries.
+    let _: () = con
+        .xgroup_create_mkstream(stream_name, group_name, "0")
+        .unwrap();
+    let _: Option<StreamReadReply> = con
+        .xread_options(
+            &[stream_name],
+            &[">"],
+            &StreamReadOptions::default()
+                .group(group_name, consumer_name)
+                .count(initial_stream_entries.len() + 1),
+        )
+        .unwrap();
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), initial_stream_entries.len());
+
+    // Add a new entry with the following options:
+    // - Apply a trimming strategy to ensure the number of entries does not exceed the initial number of entries
+    // - Apply the Acked deletion policy, which removes entries and their references only if they have been delivered to a consumer and acknowledged
+    let id4 = con
+        .xadd_options(
+            stream_name,
+            "*",
+            &[("field4", "value4")],
+            &StreamAddOptions::default()
+                .trim(StreamTrimStrategy::maxlen(
+                    StreamTrimmingMode::Exact,
+                    initial_stream_entries.len(),
+                ))
+                .set_deletion_policy(StreamDeletionPolicy::Acked),
+        )
+        .unwrap()
+        .unwrap();
+
+    // The stream should NOT have been trimmed even though its entries exceeded the maximum length.
+    // The first entry should still be present, in accordance with the deletion policy.
+    assert_eq!(
+        con.xlen(stream_name).unwrap(),
+        initial_stream_entries.len() + 1
+    );
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.first_entry.id, id1);
+    assert_eq!(info.last_generated_id, id4);
+
+    // The PEL should still have references to the initial entries.
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), initial_stream_entries.len());
+    // Check that these references are indeed pointing to the initial entries.
+    let reply = con
+        .xpending_consumer_count(
+            stream_name,
+            group_name,
+            "-",
+            "+",
+            initial_stream_entries.len(),
+            consumer_name,
+        )
+        .unwrap();
+    assert_eq!(
+        vec![id1, id2, id3],
+        reply
+            .ids
+            .iter()
+            .map(|id| id.id.clone())
+            .collect::<Vec<String>>()
+    );
+}
+
+#[test]
+fn test_xtrim_options_deletion_policy_keepref() {
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
+    let mut con = ctx.connection();
+    let _: () = con.flushdb().unwrap();
+
+    let stream_name = "test_stream_xtrim_keepref";
+    let group_name = "test_group";
+    let consumer_name = "consumer";
+
+    let initial_stream_entries = [
+        ("field1", "value1"),
+        ("field2", "value2"),
+        ("field3", "value3"),
+    ];
+
+    let stream_entries: [(&str, &str); 3] = initial_stream_entries[..3].try_into().unwrap();
+    let [id1, id2, id3]: [String; 3] =
+        stream_entries.map(|entry| con.xadd(stream_name, "*", &[entry]).unwrap().unwrap());
+
+    // Create a consumer group and read all initial messages to create PEL entries.
+    let _: () = con
+        .xgroup_create_mkstream(stream_name, group_name, "0")
+        .unwrap();
+    let _: Option<StreamReadReply> = con
+        .xread_options(
+            &[stream_name],
+            &[">"],
+            &StreamReadOptions::default()
+                .group(group_name, consumer_name)
+                .count(initial_stream_entries.len() + 1),
+        )
+        .unwrap();
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), initial_stream_entries.len());
+
+    // Trim the stream to remove the first entry with the following options:
+    // - Apply a trimming strategy to remove the first entry
+    // - Apply the KeepRef deletion policy to keep existing references to entries that will be removed as a result of trimming
+    let _: usize = con
+        .xtrim_options(
+            stream_name,
+            &StreamTrimOptions::minid(StreamTrimmingMode::Exact, id2.clone())
+                .set_deletion_policy(StreamDeletionPolicy::KeepRef),
+        )
+        .unwrap();
+    // The stream should have been trimmed.
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, initial_stream_entries.len() - 1);
+    assert_eq!(info.first_entry.id, id2);
+    // Check that the PEL entries have been preserved.
+    let reply = con
+        .xpending_consumer_count(
+            stream_name,
+            group_name,
+            "-",
+            "+",
+            initial_stream_entries.len(),
+            consumer_name,
+        )
+        .unwrap();
+    assert_eq!(
+        vec![id1, id2, id3],
+        reply
+            .ids
+            .iter()
+            .map(|id| id.id.clone())
+            .collect::<Vec<String>>()
+    );
+}
+
+#[test]
+fn test_xtrim_options_deletion_policy_delref() {
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
+    let mut con = ctx.connection();
+    let _: () = con.flushdb().unwrap();
+
+    let stream_name = "test_stream_xtrim_delref";
+    let group_name = "test_group";
+    let consumer_name = "consumer";
+
+    let initial_stream_entries = [
+        ("field1", "value1"),
+        ("field2", "value2"),
+        ("field3", "value3"),
+    ];
+
+    let stream_entries: [(&str, &str); 3] = initial_stream_entries[..3].try_into().unwrap();
+    let [_, id2, id3]: [String; 3] =
+        stream_entries.map(|entry| con.xadd(stream_name, "*", &[entry]).unwrap().unwrap());
+
+    // Create a consumer group and read all initial messages to create PEL entries.
+    let _: () = con
+        .xgroup_create_mkstream(stream_name, group_name, "0")
+        .unwrap();
+    let _: Option<StreamReadReply> = con
+        .xread_options(
+            &[stream_name],
+            &[">"],
+            &StreamReadOptions::default()
+                .group(group_name, consumer_name)
+                .count(initial_stream_entries.len() + 1),
+        )
+        .unwrap();
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), initial_stream_entries.len());
+
+    // Trim the stream to remove the first entry with the following options:
+    // - Apply a trimming strategy to remove the first entry
+    // - Apply the DelRef deletion policy to remove any existing references to entries that will be removed as a result of trimming
+    let _: usize = con
+        .xtrim_options(
+            stream_name,
+            &StreamTrimOptions::minid(StreamTrimmingMode::Exact, id2.clone())
+                .set_deletion_policy(StreamDeletionPolicy::DelRef),
+        )
+        .unwrap();
+    // The stream should have been trimmed.
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, initial_stream_entries.len() - 1);
+    assert_eq!(info.first_entry.id, id2);
+    // Check that the PEL entry for the first entry has been removed.
+    let reply = con
+        .xpending_consumer_count(
+            stream_name,
+            group_name,
+            "-",
+            "+",
+            initial_stream_entries.len(),
+            consumer_name,
+        )
+        .unwrap();
+    assert_eq!(
+        vec![id2, id3],
+        reply
+            .ids
+            .iter()
+            .map(|id| id.id.clone())
+            .collect::<Vec<String>>()
+    );
+}
+
+#[test]
+fn test_xtrim_options_deletion_policy_acked() {
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
+    let mut con = ctx.connection();
+    let _: () = con.flushdb().unwrap();
+
+    let stream_name = "test_stream_xtrim_acked";
+    let group_name = "test_group";
+    let consumer_name = "consumer";
+
+    let initial_stream_entries = [
+        ("field1", "value1"),
+        ("field2", "value2"),
+        ("field3", "value3"),
+    ];
+
+    let stream_entries: [(&str, &str); 3] = initial_stream_entries[..3].try_into().unwrap();
+    let [id1, id2, id3]: [String; 3] =
+        stream_entries.map(|entry| con.xadd(stream_name, "*", &[entry]).unwrap().unwrap());
+
+    // Create a consumer group and read all initial messages to create PEL entries.
+    let _: () = con
+        .xgroup_create_mkstream(stream_name, group_name, "0")
+        .unwrap();
+    let _: Option<StreamReadReply> = con
+        .xread_options(
+            &[stream_name],
+            &[">"],
+            &StreamReadOptions::default()
+                .group(group_name, consumer_name)
+                .count(initial_stream_entries.len() + 1),
+        )
+        .unwrap();
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), initial_stream_entries.len());
+
+    // Trim the stream to remove the first entry with the following options:
+    // - Apply a trimming strategy to remove the first entry
+    // - Apply the Acked deletion policy to remove the entry only if it has been acknowledged
+    let _: usize = con
+        .xtrim_options(
+            stream_name,
+            &StreamTrimOptions::minid(StreamTrimmingMode::Exact, id2.clone())
+                .set_deletion_policy(StreamDeletionPolicy::Acked),
+        )
+        .unwrap();
+    // The stream should NOT have been trimmed, as the entry to be trimmed was not acknowledged.
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, initial_stream_entries.len());
+    assert_eq!(info.first_entry.id, id1);
+    // Check that the PEL entry for the first entry has been removed.
+    let reply = con
+        .xpending_consumer_count(
+            stream_name,
+            group_name,
+            "-",
+            "+",
+            initial_stream_entries.len(),
+            consumer_name,
+        )
+        .unwrap();
+    assert_eq!(
+        vec![id1, id2, id3],
+        reply
+            .ids
+            .iter()
+            .map(|id| id.id.clone())
+            .collect::<Vec<String>>()
+    );
+}
+
+#[test]
+fn test_xdel_ex() {
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
+    let mut con = ctx.connection();
+    let _: () = con.flushdb().unwrap();
+
+    let stream_name = "test_stream_xdel_ex";
+    let group_name = "test_group";
+
+    let stream_entries = [
+        ("field1", "value1"),
+        ("field2", "value2"),
+        ("field3", "value3"),
+        ("field4", "value4"),
+        ("field5", "value5"),
+        ("field6", "value6"),
+    ];
+    let non_existent_id = "9999999999-0";
+
+    let first_three_entries: [(&str, &str); 3] = stream_entries[..3].try_into().unwrap();
+    let [id1, id2, id3]: [String; 3] =
+        first_three_entries.map(|entry| con.xadd(stream_name, "*", &[entry]).unwrap().unwrap());
+
+    // Create a consumer group and read some messages to create PEL entries.
+    let _: () = con
+        .xgroup_create_mkstream(stream_name, group_name, "0")
+        .unwrap();
+    // Create 2 consumers within the group and read 1 message with each of them.
+    for i in 1..3 {
+        let _: Option<StreamReadReply> = con
+            .xread_options(
+                &[stream_name],
+                &[">"],
+                &StreamReadOptions::default()
+                    .group(group_name, format!("consumer{i}"))
+                    .count(1),
+            )
+            .unwrap();
+
+        // Read the PEL entries.
+        let pending = con.xpending(stream_name, group_name).unwrap();
+        assert_eq!(pending.count(), i);
+        if let StreamPendingReply::Data(data) = pending {
+            assert_eq!(data.consumers.len(), i);
+            for j in 0..i {
+                assert_eq!(data.consumers[j].name, format!("consumer{}", j + 1));
+                assert_eq!(data.consumers[j].pending, 1);
+            }
+        } else {
+            panic!("Expected StreamPendingReply::Data");
+        }
+    }
+    // Check the number of entries in the stream.
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, first_three_entries.len());
+
+    // Test XDELEX with ACKED policy
+    // Entries are not deleted unless they are acknowledged by all groups.
+    let result = con.xdel_ex(stream_name, &[&id1], StreamDeletionPolicy::Acked);
+    assert_eq!(
+        result,
+        Ok(vec![
+            XDelExStatusCode::NotDeletedUnacknowledgedOrStillReferenced
+        ])
+    );
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), 2);
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, 3);
+    // After acknowledging a message, deleting it should be possible.
+    let _: usize = con.xack(stream_name, group_name, &[&id1]).unwrap();
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), 1);
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, 3);
+    let result = con.xdel_ex(stream_name, &[&id1], StreamDeletionPolicy::Acked);
+    assert_eq!(result, Ok(vec![XDelExStatusCode::Deleted]));
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), 1);
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, 2);
+
+    // Test XDELEX with KEEPREF policy
+    // Should delete entries but preserve references in PEL.
+    let result = con.xdel_ex(stream_name, &[&id2], StreamDeletionPolicy::KeepRef);
+    assert_eq!(result, Ok(vec![XDelExStatusCode::Deleted]));
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), 1);
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, 1);
+
+    // Test XDELEX with ACKED policy
+    // Should fail on an entry that is still referenced by a consumer group, even though it was deleted from the stream.
+    let result = con.xdel_ex(stream_name, &[&id2], StreamDeletionPolicy::Acked);
+    assert_eq!(
+        result,
+        Ok(vec![
+            XDelExStatusCode::NotDeletedUnacknowledgedOrStillReferenced
+        ])
+    );
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), 1);
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, 1);
+    assert_eq!(info.first_entry.id, id3);
+
+    // Test XDELEX with ACKED policy
+    // Entries that were not delivered to any consumer cannot be deleted even though they are not referenced by any consumer group.
+    // Such entries can be removed with the DELREF policy.
+    let fourth_entry: [(&str, &str); 1] = stream_entries[3..4].try_into().unwrap();
+    let id4: String = con.xadd(stream_name, "*", &fourth_entry).unwrap().unwrap();
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), 1);
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, 2);
+
+    let result = con.xdel_ex(stream_name, &[&id4], StreamDeletionPolicy::Acked);
+    assert_eq!(
+        result,
+        Ok(vec![
+            XDelExStatusCode::NotDeletedUnacknowledgedOrStillReferenced
+        ])
+    );
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), 1);
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, 2);
+
+    let result = con.xdel_ex(stream_name, &[&id4], StreamDeletionPolicy::DelRef);
+    assert_eq!(result, Ok(vec![XDelExStatusCode::Deleted]));
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), 1);
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, 1);
+
+    // Test XDELEX with DELREF policy
+    // Deletes entries and their references in PEL.
+    // Bring id3 into the PEL by reading it with a new consumer.
+    let _: Option<StreamReadReply> = con
+        .xread_options(
+            &[stream_name],
+            &[">"],
+            &StreamReadOptions::default()
+                .group(group_name, "consumer3")
+                .count(1),
+        )
+        .unwrap();
+
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), 2);
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, 1);
+    // Verify that the DELREF policy can delete entries in the PEL even when they are no longer part of the stream.
+    // These are dangling references in the PEL.
+    let result = con.xdel_ex(stream_name, &[&id2], StreamDeletionPolicy::DelRef);
+    assert_eq!(result, Ok(vec![XDelExStatusCode::IdNotFound]));
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), 1);
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, 1);
+    // Verify that the DELREF policy deletes entries that exist both in the PEL and in the stream.
+    let result = con.xdel_ex(stream_name, &[&id3], StreamDeletionPolicy::DelRef);
+    assert_eq!(result, Ok(vec![XDelExStatusCode::Deleted]));
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), 0);
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, 0);
+
+    // Test multiple IDs at once
+    let last_two_entries: [(&str, &str); 2] = stream_entries[4..6].try_into().unwrap();
+    let [id5, id6]: [String; 2] =
+        last_two_entries.map(|entry| con.xadd(stream_name, "*", &[entry]).unwrap().unwrap());
+
+    let result = con.xdel_ex(
+        stream_name,
+        &[id5.as_str(), id6.as_str(), non_existent_id],
+        StreamDeletionPolicy::DelRef,
+    );
+    assert_eq!(
+        result,
+        Ok(vec![
+            XDelExStatusCode::Deleted,
+            XDelExStatusCode::Deleted,
+            XDelExStatusCode::IdNotFound,
+        ])
+    );
+
+    // Test XDELEX with non-existent ID
+    let result = con.xdel_ex(
+        stream_name,
+        &[non_existent_id],
+        StreamDeletionPolicy::DelRef,
+    );
+    assert_eq!(result, Ok(vec![XDelExStatusCode::IdNotFound]));
+
+    // Test with invalid ID format
+    let result = con.xdel_ex(stream_name, &["invalid-0"], StreamDeletionPolicy::DelRef);
+    assert!(matches!(result, Err(e) if e.to_string().contains("Invalid stream ID")));
+}
+
+#[test]
+fn test_xack_del() {
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
+    let mut con = ctx.connection();
+    let _: () = con.flushdb().unwrap();
+
+    let stream_name = "test_stream_xack_del";
+    let first_group_name = "test_group1";
+    let second_group_name = "test_group2";
+
+    let stream_entries = [
+        ("field1", "value1"),
+        ("field2", "value2"),
+        ("field3", "value3"),
+        ("field4", "value4"),
+        ("field5", "value5"),
+        ("field6", "value6"),
+    ];
+    let non_existent_id = "9999999999-0";
+
+    // Create a stream with some entries.
+    let first_three_entries: [(&str, &str); 3] = stream_entries[..3].try_into().unwrap();
+    let [id1, id2, id3]: [String; 3] =
+        first_three_entries.map(|entry| con.xadd(stream_name, "*", &[entry]).unwrap().unwrap());
+
+    // Create a consumer group and an individual consumer for each message,
+    // then read the messages to create PEL entries.
+    let _: () = con
+        .xgroup_create_mkstream(stream_name, first_group_name, "0")
+        .unwrap();
+
+    for i in 1..4 {
+        let _: Option<StreamReadReply> = con
+            .xread_options(
+                &[stream_name],
+                &[">"],
+                &StreamReadOptions::default()
+                    .group(first_group_name, format!("consumer{i}"))
+                    .count(1),
+            )
+            .unwrap();
+
+        // Read the PEL entries.
+        let pending = con.xpending(stream_name, first_group_name).unwrap();
+        assert_eq!(pending.count(), i);
+        if let StreamPendingReply::Data(data) = pending {
+            assert_eq!(data.consumers.len(), i);
+            for j in 0..i {
+                assert_eq!(data.consumers[j].name, format!("consumer{}", j + 1));
+                assert_eq!(data.consumers[j].pending, 1);
+            }
+        } else {
+            panic!("Expected StreamPendingReply::Data");
+        }
+    }
+    // Check the number of entries in the stream.
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, first_three_entries.len());
+    // Check that all of the messages were inserted in the PEL.
+    let pending = con.xpending(stream_name, first_group_name).unwrap();
+    assert_eq!(pending.count(), first_three_entries.len());
+
+    let mut remaining_entries = first_three_entries.len();
+
+    // Test XACKDEL with all of the policies, when there is just one group
+    // As only one group is holding a reference to any of the messages, they should be deletable regardless of the applied policy.
+    let ids = [&id1, &id2, &id3];
+    let policies = [
+        StreamDeletionPolicy::KeepRef,
+        StreamDeletionPolicy::DelRef,
+        StreamDeletionPolicy::Acked,
+    ];
+
+    for (&id, policy) in ids.iter().zip(policies.iter()) {
+        let result = con.xack_del(stream_name, first_group_name, &[id], policy.clone());
+        assert_eq!(result, Ok(vec![XAckDelStatusCode::AcknowledgedAndDeleted]));
+        remaining_entries -= 1;
+
+        let pending = con.xpending(stream_name, first_group_name).unwrap();
+        assert_eq!(pending.count(), remaining_entries);
+        let info = con.xinfo_stream(stream_name).unwrap();
+        assert_eq!(info.length, remaining_entries);
+    }
+
+    // Insert a new entry and create a second group so it could be read by both groups.
+    let fourth_entry: [(&str, &str); 1] = stream_entries[3..4].try_into().unwrap();
+    let id4: String = con.xadd(stream_name, "*", &fourth_entry).unwrap().unwrap();
+    let _: () = con
+        .xgroup_create_mkstream(stream_name, second_group_name, "0")
+        .unwrap();
+
+    // Before reading it with the consumers attempt to acknowledge and delete it.
+    // XACKDEL should not be able to find the entry in a PEL and thus should return IdNotFound.
+    let result = con.xack_del(
+        stream_name,
+        first_group_name,
+        &[&id4],
+        StreamDeletionPolicy::Acked,
+    );
+    assert_eq!(result, Ok(vec![XAckDelStatusCode::IdNotFound]));
+
+    // Read the new entry with both groups.
+    for &group_name in &[first_group_name, second_group_name] {
+        let _: Option<StreamReadReply> = con
+            .xread_options(
+                &[stream_name],
+                &[">"],
+                &StreamReadOptions::default()
+                    .group(group_name, "consumer1")
+                    .count(1),
+            )
+            .unwrap();
+    }
+    let first_group_pending_messages = con.xpending(stream_name, first_group_name).unwrap();
+    let second_group_pending_messages = con.xpending(stream_name, second_group_name).unwrap();
+    assert_eq!(first_group_pending_messages.count(), 1);
+    assert_eq!(
+        first_group_pending_messages.count(),
+        second_group_pending_messages.count()
+    );
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, 1);
+
+    // Test XACKDEL with KeepRef policy
+    // Should acknowledge and delete the entry in the PEL of the specified group, but not in the PEL of the other group.
+    let result = con.xack_del(
+        stream_name,
+        first_group_name,
+        &[&id4],
+        StreamDeletionPolicy::KeepRef,
+    );
+    assert_eq!(result, Ok(vec![XAckDelStatusCode::AcknowledgedAndDeleted]));
+    let first_group_pending_messages = con.xpending(stream_name, first_group_name).unwrap();
+    assert_eq!(first_group_pending_messages.count(), 0);
+    let second_group_pending_messages = con.xpending(stream_name, second_group_name).unwrap();
+    assert_eq!(second_group_pending_messages.count(), 1);
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, 0);
+
+    // Test XACKDEL with DelRef policy
+    // Should acknowledge and delete the entry and its references even if they are dangling ones.
+    let result = con.xack_del(
+        stream_name,
+        second_group_name,
+        &[&id4],
+        StreamDeletionPolicy::DelRef,
+    );
+    assert_eq!(result, Ok(vec![XAckDelStatusCode::AcknowledgedAndDeleted]));
+    let second_group_pending_messages = con.xpending(stream_name, second_group_name).unwrap();
+    assert_eq!(second_group_pending_messages.count(), 0);
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, 0);
+
+    // Test XACKDEL with DelRef policy
+    // Should acknowledge and delete the entries and their references from all PELs.
+    let last_two_entries: [(&str, &str); 2] = stream_entries[4..6].try_into().unwrap();
+    let [id5, id6]: [String; 2] =
+        last_two_entries.map(|entry| con.xadd(stream_name, "*", &[entry]).unwrap().unwrap());
+
+    for &group_name in &[first_group_name, second_group_name] {
+        let _: Option<StreamReadReply> = con
+            .xread_options(
+                &[stream_name],
+                &[">"],
+                &StreamReadOptions::default()
+                    .group(group_name, "consumer1")
+                    .count(2),
+            )
+            .unwrap();
+    }
+
+    let first_group_pending_messages = con.xpending(stream_name, first_group_name).unwrap();
+    assert_eq!(first_group_pending_messages.count(), 2);
+    let second_group_pending_messages = con.xpending(stream_name, second_group_name).unwrap();
+    assert_eq!(second_group_pending_messages.count(), 2);
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, 2);
+
+    let result = con.xack_del(
+        stream_name,
+        first_group_name,
+        &[&id5, &id6],
+        StreamDeletionPolicy::DelRef,
+    );
+    assert_eq!(
+        result,
+        Ok(vec![
+            XAckDelStatusCode::AcknowledgedAndDeleted,
+            XAckDelStatusCode::AcknowledgedAndDeleted,
+        ])
+    );
+    let first_group_pending_messages = con.xpending(stream_name, first_group_name).unwrap();
+    assert_eq!(first_group_pending_messages.count(), 0);
+    let second_group_pending_messages = con.xpending(stream_name, second_group_name).unwrap();
+    assert_eq!(second_group_pending_messages.count(), 0);
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, 0);
+
+    let result = con.xack_del(
+        stream_name,
+        second_group_name,
+        &[&id5, &id6],
+        StreamDeletionPolicy::DelRef,
+    );
+    assert_eq!(
+        result,
+        Ok(vec![
+            XAckDelStatusCode::IdNotFound,
+            XAckDelStatusCode::IdNotFound,
+        ])
+    );
+
+    // Test XACKDEL with ACKED policy
+    // Entries are not deleted unless they are acknowledged by all groups.
+    let last_two_entries: [(&str, &str); 2] = stream_entries[4..6].try_into().unwrap();
+    let [id5, id6]: [String; 2] =
+        last_two_entries.map(|entry| con.xadd(stream_name, "*", &[entry]).unwrap().unwrap());
+
+    for &group_name in &[first_group_name, second_group_name] {
+        let _: Option<StreamReadReply> = con
+            .xread_options(
+                &[stream_name],
+                &[">"],
+                &StreamReadOptions::default()
+                    .group(group_name, "consumer1")
+                    .count(2),
+            )
+            .unwrap();
+    }
+    let first_group_pending_messages = con.xpending(stream_name, first_group_name).unwrap();
+    assert_eq!(first_group_pending_messages.count(), 2);
+    let second_group_pending_messages = con.xpending(stream_name, second_group_name).unwrap();
+    assert_eq!(second_group_pending_messages.count(), 2);
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, 2);
+
+    // ACKED policy should not delete the entries because they are still referenced by the other group.
+    let result = con.xack_del(
+        stream_name,
+        first_group_name,
+        &[&id5, &id6],
+        StreamDeletionPolicy::Acked,
+    );
+    assert_eq!(
+        result,
+        Ok(vec![
+            XAckDelStatusCode::AcknowledgedNotDeletedStillReferenced,
+            XAckDelStatusCode::AcknowledgedNotDeletedStillReferenced,
+        ])
+    );
+
+    let first_group_pending_messages = con.xpending(stream_name, first_group_name).unwrap();
+    assert_eq!(first_group_pending_messages.count(), 0);
+    let second_group_pending_messages = con.xpending(stream_name, second_group_name).unwrap();
+    assert_eq!(second_group_pending_messages.count(), 2);
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, 2);
+
+    // ACKED policy should delete the entries because they are no longer referenced by any other group.
+    let result = con.xack_del(
+        stream_name,
+        second_group_name,
+        &[&id5, &id6],
+        StreamDeletionPolicy::Acked,
+    );
+    assert_eq!(
+        result,
+        Ok(vec![
+            XAckDelStatusCode::AcknowledgedAndDeleted,
+            XAckDelStatusCode::AcknowledgedAndDeleted,
+        ])
+    );
+    let first_group_pending_messages = con.xpending(stream_name, first_group_name).unwrap();
+    assert_eq!(first_group_pending_messages.count(), 0);
+    let second_group_pending_messages = con.xpending(stream_name, second_group_name).unwrap();
+    assert_eq!(second_group_pending_messages.count(), 0);
+    let info = con.xinfo_stream(stream_name).unwrap();
+    assert_eq!(info.length, 0);
+
+    // Test XACKDEL with non-existent ID
+    let result = con.xack_del(
+        stream_name,
+        first_group_name,
+        &[non_existent_id],
+        StreamDeletionPolicy::DelRef,
+    );
+    assert_eq!(result, Ok(vec![XAckDelStatusCode::IdNotFound]));
+
+    // Test with invalid ID format
+    let result = con.xack_del(
+        stream_name,
+        first_group_name,
+        &["invalid-0"],
+        StreamDeletionPolicy::DelRef,
+    );
+    assert!(matches!(result, Err(e) if e.to_string().contains("Invalid stream ID")));
 }
 
 #[test]
