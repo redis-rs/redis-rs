@@ -1058,10 +1058,11 @@ define_stream_response_status_enum! {
     XDelExStatusCode,
     /// No entry with the given id exists in the stream
     IdNotFound = -1,
-    /// Entry was deleted from the stream
+    /// The entry was deleted from the stream
     Deleted = 1,
-    /// Entry was not deleted because it has references in consumer groups' PEL
-    NotDeletedStillReferenced = 2
+    /// The entry was not deleted because it has either not been delivered to any consumer
+    /// or still has references in the consumer groups' Pending Entries List (PEL)
+    NotDeletedUnacknowledgedOrStillReferenced = 2
 }
 
 define_stream_response_status_enum! {
@@ -1069,9 +1070,9 @@ define_stream_response_status_enum! {
     XAckDelStatusCode,
     /// No entry with the given id exists in the stream
     IdNotFound = -1,
-    /// Entry was acknowledged and deleted from the stream
+    /// The entry was acknowledged and deleted from the stream
     AcknowledgedAndDeleted = 1,
-    /// Entry was acknowledged but not deleted because it has references in consumer groups' PEL
+    /// The entry was acknowledged but not deleted because it has references in the consumer groups' Pending Entries List (PEL)
     AcknowledgedNotDeletedStillReferenced = 2
 }
 
