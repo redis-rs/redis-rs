@@ -1,5 +1,7 @@
 //! This module provides the functionality to refresh and calculate the cluster topology for Redis Cluster.
 
+use arcstr::ArcStr;
+
 use super::{get_connection_addr, slot_map::Slot};
 use crate::{RedisResult, TlsMode, Value};
 
@@ -32,7 +34,7 @@ pub(crate) fn parse_slots(
                 continue;
             };
 
-            let mut nodes: Vec<String> = item
+            let mut nodes: Vec<ArcStr> = item
                 .into_iter()
                 .skip(2)
                 .filter_map(|node| {
@@ -67,7 +69,9 @@ pub(crate) fn parse_slots(
                             return None;
                         };
                         Some(
-                            get_connection_addr(hostname.into_owned(), port, tls, None).to_string(),
+                            get_connection_addr(hostname.into_owned(), port, tls, None)
+                                .to_string()
+                                .into(),
                         )
                     } else {
                         None
