@@ -1423,9 +1423,8 @@ fn get_random_connection<C>(connections: &ConnectionMap<C>) -> Option<(ArcStr, C
 where
     C: Clone,
 {
-    connections.keys().choose(&mut rng()).and_then(|addr| {
-        connections
-            .get(addr)
-            .map(|conn| (addr.clone(), conn.clone()))
-    })
+    connections
+        .iter()
+        .choose(&mut rng())
+        .map(|(addr, conn)| (addr.clone(), conn.clone()))
 }

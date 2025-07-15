@@ -471,8 +471,7 @@ where
         *connections = nodes
             .into_iter()
             .filter_map(|addr| {
-                if connections.contains_key(addr) {
-                    let mut conn = connections.remove(addr).unwrap();
+                if let Some(mut conn) = connections.remove(addr) {
                     if conn.check_connection() {
                         return Some((addr.clone(), conn));
                     }
@@ -553,13 +552,16 @@ where
         connections: &'a mut HashMap<ArcStr, C>,
         addr: &ArcStr,
     ) -> RedisResult<&'a mut C> {
-        if connections.contains_key(addr) {
-            Ok(connections.get_mut(addr).unwrap())
-        } else {
-            // Create new connection.
-            // TODO: error handling
-            let conn = self.connect(addr)?;
-            Ok(connections.entry(addr.clone()).or_insert(conn))
+        match connections.entry(addr.clone()) {
+            std::collections::hash_map::Entry::Occupied(occupied_entry) => {
+                Ok(occupied_entry.into_mut())
+            }
+            std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                // Create new connection.
+                // TODO: error handling
+                let conn = self.connect(addr)?;
+                Ok(vacant_entry.insert(conn))
+            }
         }
     }
 
@@ -1107,9 +1109,10 @@ impl NodeCmd {
 fn get_random_connection<C: ConnectionLike + Connect + Sized>(
     connections: &mut HashMap<ArcStr, C>,
 ) -> Option<(ArcStr, &mut C)> {
-    let addr = connections.keys().choose(&mut rng())?.clone();
-    let conn = connections.get_mut(&addr)?;
-    Some((addr.clone(), conn))
+    connections
+        .iter_mut()
+        .choose(&mut rng())
+        .map(|(addr, conn)| (addr.clone(), conn))
 }
 
 fn get_random_connection_or_error<C: ConnectionLike + Connect + Sized>(
