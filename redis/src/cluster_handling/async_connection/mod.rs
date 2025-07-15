@@ -599,11 +599,7 @@ where
                     .req_packed_command(&slot_cmd())
                     .await
                     .and_then(|value| value.extract_error())?;
-                let v: Vec<Slot> = parse_slots(
-                    value,
-                    inner.cluster_params.tls,
-                    addr.rsplit_once(':').unwrap().0,
-                )?;
+                let v: Vec<Slot> = parse_slots(value, addr.rsplit_once(':').unwrap().0)?;
                 Self::build_slot_map(slots, v)
             }
             .await;

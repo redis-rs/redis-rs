@@ -496,11 +496,7 @@ where
 
         for (addr, conn) in connections.iter_mut() {
             let value = conn.req_command(&slot_cmd())?;
-            if let Ok(slots_data) = parse_slots(
-                value,
-                self.cluster_params.tls,
-                addr.rsplit_once(':').unwrap().0,
-            ) {
+            if let Ok(slots_data) = parse_slots(value, addr.rsplit_once(':').unwrap().0) {
                 new_slots = Some(SlotMap::from_slots(
                     slots_data,
                     self.cluster_params.read_from_replicas,
