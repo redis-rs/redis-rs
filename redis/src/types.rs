@@ -387,6 +387,11 @@ impl Value {
             _ => false,
         }
     }
+
+    #[cfg(feature = "cluster-async")]
+    pub(crate) fn is_error_that_requires_action(&self) -> bool {
+        matches!(self, Self::ServerError(error) if error.requires_action())
+    }
 }
 
 impl fmt::Debug for Value {
@@ -427,6 +432,22 @@ impl fmt::Debug for Value {
 
 /// Library generic result type.
 pub type RedisResult<T> = Result<T, RedisError>;
+
+impl<T: FromRedisValue> FromRedisValue for RedisResult<T> {
+    fn from_redis_value(value: &Value) -> Result<Self, ParsingError> {
+        match value {
+            Value::ServerError(err) => Ok(Err(err.clone().into())),
+            _ => from_redis_value(value).map(|result| Ok(result)),
+        }
+    }
+
+    fn from_owned_redis_value(value: Value) -> Result<Self, ParsingError> {
+        match value {
+            Value::ServerError(err) => Ok(Err(err.into())),
+            _ => from_owned_redis_value(value).map(|result| Ok(result)),
+        }
+    }
+}
 
 /// Library generic future type.
 #[cfg(feature = "aio")]
@@ -1874,14 +1895,20 @@ impl FromRedisValue for Value {
     fn from_redis_value(v: &Value) -> Result<Value, ParsingError> {
         Ok(v.clone())
     }
+
     fn from_owned_redis_value(v: Value) -> Result<Self, ParsingError> {
         Ok(v)
     }
 }
 
 impl FromRedisValue for () {
-    fn from_redis_value(_v: &Value) -> Result<(), ParsingError> {
-        Ok(())
+    fn from_redis_value(v: &Value) -> Result<(), ParsingError> {
+        match v {
+            Value::ServerError(err) => Err(ParsingError {
+                description: err.to_string().into(),
+            }),
+            _ => Ok(()),
+        }
     }
 }
 

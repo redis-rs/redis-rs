@@ -357,6 +357,43 @@ mod cluster_async {
         .unwrap()
     }
 
+    #[test]
+    fn test_pipeline_returns_server_errors() {
+        let name = "test_pipeline_returns_server_errors";
+
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            ..
+        } = MockEnv::new(name, move |cmd, _| {
+            respond_startup(name, cmd)?;
+            if cmd
+                == redis::cmd("SET")
+                    .arg("{tag}x")
+                    .arg("another-x-value")
+                    .get_packed_command()
+            {
+                Err(Ok(parse_redis_value(b"-CROSSSLOT foobar\r\n").unwrap()))
+            } else if cmd == redis::cmd("GET").arg("{tag}y").get_packed_command() {
+                Err(Ok(Value::Okay))
+            } else {
+                panic!(
+                    "unexpected cmd: {}",
+                    String::from_utf8(cmd.to_vec()).unwrap()
+                );
+            }
+        });
+
+        let res = runtime.block_on(
+            redis::pipe()
+                .set("{tag}x", "another-x-value")
+                .ignore()
+                .get("{tag}y")
+                .exec_async(&mut connection),
+        );
+        assert_eq!(res.unwrap_err().kind(), ServerErrorKind::CrossSlot.into());
+    }
+
     #[rstest]
     #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
