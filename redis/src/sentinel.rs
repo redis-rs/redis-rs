@@ -252,6 +252,22 @@ fn random_replica_index(max: NonZeroUsize) -> usize {
     rand::rng().random_range(0..max.into())
 }
 
+fn try_connect_to_all_replica(
+    addresses: &[ConnectionInfo],
+) -> Result<Vec<Client>, crate::RedisError> {
+    if addresses.is_empty() {
+        fail!((
+            ErrorKind::NoValidReplicasFoundBySentinel,
+            "No valid replica found in sentinel for given name",
+        ));
+    }
+
+    addresses
+        .iter()
+        .map(|addr| Client::open(addr.clone()))
+        .collect()
+}
+
 fn try_connect_to_first_replica(
     addresses: &[ConnectionInfo],
     start_index: Option<usize>,
@@ -813,6 +829,18 @@ impl Sentinel {
         Client::open(connection_info)
     }
 
+    /// Connects to all valid replicas of the given master name. Errors can originate
+    /// from interaction either with Sentinel or any of the replicas during connection.
+    pub fn get_all_replicas(
+        &mut self,
+        service_name: &str,
+        node_connection_info: Option<&SentinelNodeConnectionInfo>,
+    ) -> RedisResult<Vec<Client>> {
+        let addresses = self
+            .find_valid_replica_addresses(service_name, node_connection_info.unwrap_or_default())?;
+        try_connect_to_all_replica(&addresses)
+    }
+
     /// Connects to a randomly chosen replica of the given master name.
     pub fn replica_for(
         &mut self,
@@ -933,6 +961,22 @@ impl Sentinel {
             .async_find_master_address(service_name, node_connection_info.unwrap_or_default())
             .await?;
         Client::open(address)
+    }
+
+    /// Connects to all valid replicas of the given master name. Errors can originate
+    /// from interaction either with Sentinel or any of the replicas during connection.
+    pub async fn async_get_all_replicas(
+        &mut self,
+        service_name: &str,
+        node_connection_info: Option<&SentinelNodeConnectionInfo>,
+    ) -> RedisResult<Vec<Client>> {
+        let addresses = self
+            .async_find_valid_replica_addresses(
+                service_name,
+                node_connection_info.unwrap_or_default(),
+            )
+            .await?;
+        try_connect_to_all_replica(&addresses)
     }
 
     /// Connects to a randomly chosen replica of the given master name. Errors can originate

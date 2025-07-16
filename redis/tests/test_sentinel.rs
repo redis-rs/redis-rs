@@ -104,6 +104,82 @@ fn assert_connect_to_known_replicas(
 }
 
 #[test]
+fn test_get_all_replicas_success() {
+    let number_of_replicas = 3;
+    let master_name = "master1";
+    let mut context = TestSentinelContext::new(2, number_of_replicas, 3);
+    let sentinel = context.sentinel_mut();
+    let replicas = sentinel.get_all_replicas(master_name, None).unwrap();
+
+    assert!(replicas.len() == number_of_replicas as usize);
+}
+
+#[test]
+fn test_get_all_replicas_invalid_master_name() {
+    let mut cluster = TestSentinelContext::new(2, 2, 3);
+    let sentinel = cluster.sentinel_mut();
+
+    let result = sentinel.get_all_replicas("invalid_master_name", None);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_get_all_replicas_report_correct_master() {
+    let number_of_replicas = 3;
+    let master_name = "master1";
+    let mut cluster = TestSentinelContext::new(2, number_of_replicas, 3);
+    let node_conn_info = cluster.sentinel_node_connection_info();
+    let sentinel = cluster.sentinel_mut();
+    let master_client = sentinel
+        .master_for(master_name, Some(&node_conn_info))
+        .unwrap();
+
+    let replicas = sentinel.get_all_replicas(master_name, None).unwrap();
+
+    for replica_client in replicas {
+        let mut con = replica_client.get_connection().unwrap();
+        assert_connection_is_replica_of_correct_master(&mut con, &master_client);
+    }
+}
+
+#[test]
+fn test_get_all_replicas_with_one_replica_down() {
+    let number_of_replicas = 3;
+    let master_name = "master0";
+
+    let mut context = TestSentinelContext::new(2, number_of_replicas, 3);
+
+    let sentinel_conn_info = context.sentinels_connection_info()[0].clone();
+    let mut conn = Client::open(sentinel_conn_info)
+        .unwrap()
+        .get_connection()
+        .unwrap();
+
+    redis::cmd("SENTINEL")
+        .arg("set")
+        .arg(master_name)
+        .arg("down-after-milliseconds")
+        .arg("1000")
+        .query::<()>(&mut conn)
+        .unwrap();
+
+    context.cluster.servers[1].stop();
+
+    std::thread::sleep(std::time::Duration::from_secs(3));
+
+    let sentinel = context.sentinel_mut();
+    let replicas = sentinel
+        .get_all_replicas(master_name, None)
+        .expect("Failed to get replicas");
+
+    assert_eq!(
+        replicas.len(),
+        (number_of_replicas - 1) as usize,
+        "Unexpected num of replicas total"
+    );
+}
+
+#[test]
 fn test_sentinel_role_no_permission() {
     let number_of_replicas = 3;
     let master_name = "master1";
@@ -1055,6 +1131,123 @@ pub mod async_tests {
                     )
                     .await;
                 }
+
+                Ok::<(), RedisError>(())
+            },
+            runtime,
+        )
+        .unwrap();
+    }
+
+    #[rstest]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+    fn test_get_all_replicas_success_async(#[case] runtime: RuntimeType) {
+        let number_of_replicas = 3;
+        let master_name = "master1";
+        let mut context = TestSentinelContext::new(2, number_of_replicas, 3);
+        let sentinel = context.sentinel_mut();
+
+        block_on_all(
+            async move {
+                let replicas = sentinel.async_get_all_replicas(master_name, None).await?;
+                assert!(replicas.len() == number_of_replicas as usize);
+                Ok::<(), RedisError>(())
+            },
+            runtime,
+        )
+        .unwrap();
+    }
+
+    #[rstest]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+    fn test_get_all_replicas_invalid_master_name_async(#[case] runtime: RuntimeType) {
+        let mut cluster = TestSentinelContext::new(2, 2, 3);
+        let sentinel = cluster.sentinel_mut();
+
+        block_on_all(
+            async move {
+                let result = sentinel.async_get_all_replicas("invalid_master_name", None).await;
+                assert!(result.is_err());
+
+                Ok::<(), RedisError>(())
+            },
+            runtime,
+        )
+        .unwrap();
+    }
+
+    #[rstest]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+    fn test_get_all_replicas_report_correct_master_async(#[case] runtime: RuntimeType) {
+        let number_of_replicas = 3;
+        let master_name = "master1";
+        let mut context = TestSentinelContext::new(2, number_of_replicas, 3);
+        let node_conn_info = context.sentinel_node_connection_info();
+        let sentinel = context.sentinel_mut();
+
+        block_on_all(
+            async move {
+                let master_client = sentinel
+                    .async_master_for(master_name, Some(&node_conn_info))
+                    .await?;
+                let replicas = sentinel.async_get_all_replicas(master_name, None).await?;
+
+                for replica_client in replicas {
+                    let mut con = replica_client.get_multiplexed_async_connection().await?;
+                    async_assert_connection_is_replica_of_correct_master(&mut con, &master_client)
+                        .await;
+                }
+
+                Ok::<(), RedisError>(())
+            },
+            runtime,
+        )
+        .unwrap();
+    }
+
+    #[rstest]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+    fn test_get_all_replicas_with_one_replica_down_async(#[case] runtime: RuntimeType) {
+        let number_of_replicas = 3;
+        let master_name = "master0";
+        let mut context = TestSentinelContext::new(2, number_of_replicas, 3);
+        let sentinel_conn_info = context.sentinels_connection_info()[0].clone();
+        block_on_all(
+            async move {
+                let mut conn = Client::open(sentinel_conn_info)
+                    .unwrap()
+                    .get_multiplexed_async_connection()
+                    .await?;
+
+                redis::cmd("SENTINEL")
+                    .arg("set")
+                    .arg(master_name)
+                    .arg("down-after-milliseconds")
+                    .arg("1000")
+                    .query_async::<()>(&mut conn)
+                    .await?;
+
+                context.cluster.servers[1].stop();
+                std::thread::sleep(std::time::Duration::from_secs(4));
+
+                let sentinel = context.sentinel_mut();
+                let replicas = sentinel
+                    .async_get_all_replicas(master_name, None).await
+                    .expect("Failed to get replicas");
+
+                assert_eq!(
+                    replicas.len(),
+                    (number_of_replicas - 1) as usize,
+                    "Unexpected num of replicas total"
+                );
 
                 Ok::<(), RedisError>(())
             },
