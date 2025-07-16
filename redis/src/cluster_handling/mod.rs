@@ -20,14 +20,13 @@ pub(crate) fn slot_cmd() -> Cmd {
     cmd
 }
 
-pub(crate) fn split_node_address(node: &str) -> RedisResult<(String, u16)> {
+pub(crate) fn split_node_address(node: &str) -> RedisResult<(&str, u16)> {
     let invalid_error =
         || RedisError::from((ErrorKind::InvalidClientConfig, "Invalid node string"));
     node.rsplit_once(':')
         .and_then(|(host, port)| {
             Some(host.trim_start_matches('[').trim_end_matches(']'))
                 .filter(|h| !h.is_empty())
-                .map(str::to_string)
                 .zip(u16::from_str(port).ok())
         })
         .ok_or_else(invalid_error)
@@ -66,10 +65,15 @@ pub(crate) fn get_connection_info(
     let (host, port) = split_node_address(node)?;
 
     Ok(ConnectionInfo {
-        addr: get_connection_addr(host, port, cluster_params.tls, cluster_params.tls_params),
+        addr: get_connection_addr(
+            host.to_string(),
+            port,
+            cluster_params.tls,
+            cluster_params.tls_params,
+        ),
         redis: RedisConnectionInfo {
-            password: cluster_params.password.map(|str| str.to_string()),
-            username: cluster_params.username.map(|str| str.to_string()),
+            password: cluster_params.password.clone(),
+            username: cluster_params.username.clone(),
             protocol: cluster_params.protocol.unwrap_or_default(),
             ..Default::default()
         },

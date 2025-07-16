@@ -1411,7 +1411,7 @@ where
 {
     let mut cmd = Cmd::new();
     cmd.arg("PING");
-    cmd.query_async::<String>(conn).await?;
+    cmd.query_async::<()>(conn).await?;
     Ok(())
 }
 
