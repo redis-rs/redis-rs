@@ -68,8 +68,8 @@ pub(crate) fn get_connection_info(
     Ok(ConnectionInfo {
         addr: get_connection_addr(host, port, cluster_params.tls, cluster_params.tls_params),
         redis: RedisConnectionInfo {
-            password: cluster_params.password,
-            username: cluster_params.username,
+            password: cluster_params.password.map(|str| str.to_string()),
+            username: cluster_params.username.map(|str| str.to_string()),
             protocol: cluster_params.protocol.unwrap_or_default(),
             ..Default::default()
         },

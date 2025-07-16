@@ -1962,8 +1962,8 @@ mod cluster_async {
     fn test_async_cluster_with_username_and_password(#[case] runtime: RuntimeType) {
         let cluster = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
             builder
-                .username(RedisCluster::username().to_string())
-                .password(RedisCluster::password().to_string())
+                .username(RedisCluster::username())
+                .password(RedisCluster::password())
         });
         cluster.disable_default_user();
 
