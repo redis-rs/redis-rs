@@ -445,7 +445,7 @@ enum OperationTarget {
     NotFound,
     FanOut,
 }
-type OperationResult = Result<Response, (OperationTarget, RedisError)>;
+type OperationResult = (OperationTarget, Result<Response, RedisError>);
 
 impl From<String> for OperationTarget {
     fn from(address: String) -> Self {
@@ -839,14 +839,16 @@ where
     ) -> OperationResult {
         let read_guard = core.conn_lock.read().await;
         if read_guard.0.is_empty() {
-            return OperationResult::Err((
+            return (
                 OperationTarget::FanOut,
-                (
-                    ErrorKind::ClusterConnectionNotFound,
-                    "No connections found for multi-node operation",
-                )
-                    .into(),
-            ));
+                Result::Err(
+                    (
+                        ErrorKind::ClusterConnectionNotFound,
+                        "No connections found for multi-node operation",
+                    )
+                        .into(),
+                ),
+            );
         }
         let (receivers, requests): (Vec<_>, Vec<_>) = {
             let to_request = |(addr, cmd): (&str, Arc<Cmd>)| {
@@ -905,10 +907,12 @@ where
         drop(read_guard);
         core.pending_requests.lock().unwrap().extend(requests);
 
-        Self::aggregate_results(receivers, routing, response_policy)
-            .await
-            .map(Response::Single)
-            .map_err(|err| (OperationTarget::FanOut, err))
+        (
+            OperationTarget::FanOut,
+            Self::aggregate_results(receivers, routing, response_policy)
+                .await
+                .map(Response::Single),
+        )
     }
 
     async fn try_cmd_request(
@@ -930,13 +934,11 @@ where
         };
 
         match Self::get_connection(route, core).await {
-            Ok((addr, mut conn)) => conn
-                .req_packed_command(&cmd)
-                .await
-                .and_then(|value| value.extract_error())
-                .map(Response::Single)
-                .map_err(|err| (addr.into(), err)),
-            Err(err) => Err((OperationTarget::NotFound, err)),
+            Ok((addr, mut conn)) => (
+                addr.into(),
+                conn.req_packed_command(&cmd).await.map(Response::Single),
+            ),
+            Err(err) => (OperationTarget::NotFound, Err(err)),
         }
     }
 
@@ -947,13 +949,13 @@ where
         conn: impl Future<Output = RedisResult<(String, C)>>,
     ) -> OperationResult {
         match conn.await {
-            Ok((addr, mut conn)) => conn
-                .req_packed_commands(&pipeline, offset, count)
-                .await
-                .and_then(Value::extract_error_vec)
-                .map(Response::Multiple)
-                .map_err(|err| (OperationTarget::Node { address: addr }, err)),
-            Err(err) => Err((OperationTarget::NotFound, err)),
+            Ok((addr, mut conn)) => (
+                OperationTarget::Node { address: addr },
+                conn.req_packed_commands(&pipeline, offset, count)
+                    .await
+                    .map(Response::Multiple),
+            ),
+            Err(err) => (OperationTarget::NotFound, Err(err)),
         }
     }
 
