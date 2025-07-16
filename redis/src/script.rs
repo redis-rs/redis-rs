@@ -206,7 +206,7 @@ impl<'a> ScriptInvocation<'a> {
     }
 
     /// Returns a command to load the script.
-    fn load_cmd(&self) -> Cmd {
+    pub fn load_cmd(&self) -> Cmd {
         let mut cmd = cmd("SCRIPT");
         cmd.arg("LOAD").arg(self.script.code.as_bytes());
         cmd
