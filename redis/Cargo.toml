@@ -1,6 +1,6 @@
 [package]
 name = "redis"
-version = "0.32.3"
+version = "0.32.4"
 keywords = ["redis", "valkey", "cluster", "sentinel", "pubsub"]
 description = "Redis driver for Rust."
 homepage = "https://github.com/redis-rs/redis-rs"
@@ -51,7 +51,7 @@ tokio = { version = "1", features = [
   "time",
   "sync",
 ], optional = true }
-socket2 = { version = "0.5", features = ["all"] }
+socket2 = { version = "0.6", features = ["all"] }
 
 # Only needed for the connection manager
 arc-swap = { version = "1.7.1", optional = true }
@@ -106,12 +106,12 @@ ahash = { version = "0.8.11", optional = true }
 log = { version = "0.4", optional = true }
 
 # Optional uuid support
-uuid = { version = "1.15.1", optional = true }
+uuid = { version = "1.17.0", optional = true }
 
 # Optional hashbrown support
 hashbrown = { version = "0.15", optional = true }
 
-lru = { version = "0.15", optional = true }
+lru = { version = "0.16", optional = true }
 
 [features]
 default = ["acl", "streams", "geospatial", "script", "keep-alive", "num-bigint"]
