@@ -1350,6 +1350,22 @@ mod basic {
     }
 
     #[test]
+    fn test_pipeline_returns_server_errors() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+        let mut pipe = redis::pipe();
+        pipe.set("x", "x-value")
+            .ignore()
+            .hset("x", "field", "field_value")
+            .ignore()
+            .get("x");
+
+        let res = pipe.exec(&mut con);
+        let error_message = res.unwrap_err().to_string();
+        assert_eq!(&error_message, "Pipeline failure: [(Index 1, error: \"WRONGTYPE\": Operation against a key holding the wrong kind of value)]");
+    }
+
+    #[test]
     fn test_empty_pipeline() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
