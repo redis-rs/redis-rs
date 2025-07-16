@@ -12,7 +12,7 @@ mod basic_async {
         aio::{ConnectionLike, MultiplexedConnection},
         cmd, pipe, AsyncCommands, ErrorKind, IntoConnectionInfo, ParsingError, ProtocolVersion,
         PushKind, RedisConnectionInfo, RedisError, RedisFuture, RedisResult, ScanOptions,
-        ToRedisArgs, Value,
+        ServerErrorKind, ToRedisArgs, Value,
     };
     use redis_test::server::{redis_settings, use_protocol};
     use rstest::rstest;
@@ -93,9 +93,7 @@ mod basic_async {
             async move {
                 setup();
                 let ctx = TestContext::new();
-                println!("connect");
                 let conn = ctx.async_connection().await.unwrap().into();
-                println!("connected");
                 test(ctx, conn).await.unwrap();
 
                 #[cfg(feature = "connection-manager")]
@@ -423,8 +421,6 @@ mod basic_async {
     fn test_pipeline_transaction_with_errors(#[case] runtime: RuntimeType) {
         test_with_all_connection_types(
             |mut con| async move {
-                use redis::ServerErrorKind;
-
                 con.set::<_, _, ()>("x", 42).await.unwrap();
 
                 // Make Redis a replica of a nonexistent master, thereby making it read-only.
@@ -450,6 +446,28 @@ mod basic_async {
                 assert_eq!(x, 42);
 
                 Ok::<_, RedisError>(())
+            },
+            runtime,
+        );
+    }
+
+    #[rstest]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+    fn test_pipeline_returns_server_errors(#[case] runtime: RuntimeType) {
+        test_with_all_connection_types(
+            |mut con| async move {
+                let mut pipe = redis::pipe();
+                pipe.set("x", "x-value")
+                    .ignore()
+                    .hset("x", "field", "field_value")
+                    .ignore()
+                    .get("x");
+
+                let res = pipe.exec_async(&mut con).await;
+                let error_message = res.unwrap_err().to_string();
+                assert_eq!(&error_message, "Pipeline failure: [(Index 1, error: \"WRONGTYPE\": Operation against a key holding the wrong kind of value)]");
+                Ok(())
             },
             runtime,
         );
@@ -1376,10 +1394,10 @@ mod basic_async {
                     conn.lpush::<&str, &str, ()>("key", "value").await?;
 
                     redis::pipe()
-                .get("key") // WRONGTYPE
-                .llen("key")
-                .exec_async(&mut conn)
-                .await.unwrap_err();
+                        .get("key") // WRONGTYPE
+                        .llen("key")
+                        .exec_async(&mut conn)
+                        .await.unwrap_err();
 
                     let list: Vec<String> = conn.lrange("key", 0, -1).await?;
 
@@ -1442,7 +1460,7 @@ mod basic_async {
                     let mut results: Vec<Value> = conn
                         .req_packed_commands(
                             redis::pipe()
-                                .get("key") // WRONGTYPE
+                        .get("key") // WRONGTYPE
                                 .llen("key"),
                             0,
                             2,
