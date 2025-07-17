@@ -1,12 +1,13 @@
 //! This module provides the functionality to refresh and calculate the cluster topology for Redis Cluster.
 
-use super::{get_connection_addr, slot_map::Slot};
-use crate::{RedisResult, TlsMode, Value};
+use arcstr::ArcStr;
+
+use super::slot_map::Slot;
+use crate::{RedisResult, Value};
 
 // Parse slot data from raw redis value.
 pub(crate) fn parse_slots(
     raw_slot_resp: Value,
-    tls: Option<TlsMode>,
     // The DNS address of the node from which `raw_slot_resp` was received.
     addr_of_answering_node: &str,
 ) -> RedisResult<Vec<Slot>> {
@@ -32,55 +33,56 @@ pub(crate) fn parse_slots(
                 continue;
             };
 
-            let mut nodes: Vec<String> = item
-                .into_iter()
-                .skip(2)
-                .filter_map(|node| {
-                    if let Value::Array(node) = node {
-                        if node.len() < 2 {
-                            return None;
-                        }
-                        // According to the CLUSTER SLOTS documentation:
-                        // If the received hostname is an empty string or NULL, clients should utilize the hostname of the responding node.
-                        // However, if the received hostname is "?", it should be regarded as an indication of an unknown node.
-                        let hostname = if let Value::BulkString(ref ip) = node[0] {
-                            let hostname = String::from_utf8_lossy(ip);
-                            if hostname.is_empty() {
-                                addr_of_answering_node.into()
-                            } else if hostname == "?" {
-                                return None;
-                            } else {
-                                hostname
-                            }
-                        } else if let Value::Nil = node[0] {
-                            addr_of_answering_node.into()
-                        } else {
-                            return None;
-                        };
-                        if hostname.is_empty() {
-                            return None;
-                        }
-
-                        let port = if let Value::Int(port) = node[1] {
-                            port as u16
-                        } else {
-                            return None;
-                        };
-                        Some(
-                            get_connection_addr(hostname.into_owned(), port, tls, None).to_string(),
-                        )
+            let try_to_address = |node: Value| {
+                let Value::Array(node) = node else {
+                    return None;
+                };
+                if node.len() < 2 {
+                    return None;
+                }
+                // According to the CLUSTER SLOTS documentation:
+                // If the received hostname is an empty string or NULL, clients should utilize the hostname of the responding node.
+                // However, if the received hostname is "?", it should be regarded as an indication of an unknown node.
+                let hostname = if let Value::BulkString(ref ip) = node[0] {
+                    let hostname = String::from_utf8_lossy(ip);
+                    if hostname.is_empty() {
+                        addr_of_answering_node.into()
+                    } else if hostname == "?" {
+                        return None;
                     } else {
-                        None
+                        hostname
                     }
-                })
-                .collect();
+                } else if let Value::Nil = node[0] {
+                    addr_of_answering_node.into()
+                } else {
+                    return None;
+                };
+                if hostname.is_empty() {
+                    return None;
+                }
 
-            if nodes.is_empty() {
-                continue;
+                let port = if let Value::Int(port) = node[1] {
+                    port as u16
+                } else {
+                    return None;
+                };
+                Some(format!("{hostname}:{port}").into())
+            };
+
+            let mut iterator = item.into_iter().skip(2);
+            let mut primary = None;
+            while primary.is_none() {
+                let Some(node) = iterator.next() else {
+                    break;
+                };
+                primary = try_to_address(node);
             }
+            let Some(primary) = primary else {
+                continue;
+            };
+            let replicas: Vec<ArcStr> = iterator.filter_map(try_to_address).collect();
 
-            let replicas = nodes.split_off(1);
-            slots.push(Slot::new(start, end, nodes.pop().unwrap(), replicas));
+            slots.push(Slot::new(start, end, primary, replicas));
         }
     }
 
@@ -114,7 +116,7 @@ mod tests {
     fn parse_slots_returns_slots_with_host_name_if_missing() {
         let view = Value::Array(vec![slot_value(0, 4000, "", 6379)]);
 
-        let slots = parse_slots(view, None, "node").unwrap();
+        let slots = parse_slots(view, "node").unwrap();
         assert_eq!(slots[0].master, "node:6379");
     }
 }

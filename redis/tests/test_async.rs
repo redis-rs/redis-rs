@@ -847,7 +847,7 @@ mod basic_async {
         let ctx = TestContext::new();
         block_on_all(
             async move {
-                let redis = RedisConnectionInfo::default().set_password("asdcasc".to_string());
+                let redis = RedisConnectionInfo::default().set_password("asdcasc");
                 let connection_info = ctx
                     .server
                     .client_addr()

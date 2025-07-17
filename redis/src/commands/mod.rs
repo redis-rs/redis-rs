@@ -3587,7 +3587,7 @@ pub fn resp3_hello(connection_info: &RedisConnectionInfo) -> Cmd {
             None => "default",
             Some(username) => username,
         };
-        hello_cmd.arg("AUTH").arg(username).arg(password);
+        hello_cmd.arg("AUTH").arg(username).arg(password.as_bytes());
     }
 
     hello_cmd

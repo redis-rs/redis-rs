@@ -1,3 +1,4 @@
+use arcstr::ArcStr;
 use rand::Rng;
 
 use crate::cluster_handling::slot_map::SLOT_SIZE;
@@ -25,8 +26,8 @@ pub(crate) fn get_slot(key: &[u8]) -> u16 {
 
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) enum Redirect {
-    Moved(String),
-    Ask(String),
+    Moved(ArcStr),
+    Ask(ArcStr),
 }
 
 /// Logical bitwise aggregating operators.
