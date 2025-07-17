@@ -131,7 +131,10 @@ fn test_get_replica_clients_invalid_master_name() {
         .unwrap_err();
     // sometimes we get unexplained connection refused errors.
     assert!(
-        matches!(err.kind(), ErrorKind::ResponseError | ErrorKind::IoError),
+        matches!(
+            err.kind(),
+            ErrorKind::Server(redis::ServerErrorKind::ResponseError) | ErrorKind::Io
+        ),
         "{err}"
     );
 }
@@ -1166,7 +1169,10 @@ pub mod async_tests {
                     .unwrap_err();
                 // sometimes we get unexplained connection refused errors.
                 assert!(
-                    matches!(err.kind(), ErrorKind::ResponseError | ErrorKind::IoError),
+                    matches!(
+                        err.kind(),
+                        ErrorKind::Server(redis::ServerErrorKind::ResponseError) | ErrorKind::Io
+                    ),
                     "{err}"
                 );
 
