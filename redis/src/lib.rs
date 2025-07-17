@@ -68,14 +68,14 @@
 //! ```rust,no_run
 //! # #[cfg(feature = "r2d2")]
 //! # fn do_something() {
-//! use redis::Commands;
+//! use redis::TypedCommands;
 //!
 //! let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 //! let pool = r2d2::Pool::builder().build(client).unwrap();
 //! let mut conn = pool.get().unwrap();
 //!
-//! let _: () = conn.set("KEY", "VALUE").unwrap();
-//! let val: String = conn.get("KEY").unwrap();
+//! conn.set("KEY", "VALUE").unwrap();
+//! let val = conn.get("KEY").unwrap();
 //! # }
 //! ```
 //!
@@ -162,16 +162,16 @@
 //! ## Executing High-Level Commands
 //!
 //! The high-level interface is similar.  For it to become available you
-//! need to use the `Commands` trait in which case all `ConnectionLike`
+//! need to use the `TypedCommands` or `Commands` traits in which case all `ConnectionLike`
 //! objects the library provides will also have high-level methods which
 //! make working with the protocol easier:
 //!
 //! ```rust,no_run
 //! extern crate redis;
-//! use redis::Commands;
+//! use redis::TypedCommands;
 //!
 //! fn do_something(con: &mut redis::Connection) -> redis::RedisResult<()> {
-//!     let _: () = con.set("my_key", 42)?;
+//!     con.set("my_key", 42)?;
 //!     Ok(())
 //! }
 //! ```
@@ -179,11 +179,38 @@
 //! Note that high-level commands are work in progress and many are still
 //! missing!
 //!
-//! ## Type Conversions
+//! ## Pre-typed Commands
 //!
 //! Because redis inherently is mostly type-less and the protocol is not
 //! exactly friendly to developers, this library provides flexible support
-//! for casting values to the intended results.  This is driven through the [FromRedisValue] and [ToRedisArgs] traits.
+//! for casting values to the intended results. This is driven through the [FromRedisValue] and [ToRedisArgs] traits.
+//!
+//! In most cases, you may like to use defaults provided by the library, to avoid the clutter and development overhead
+//! of specifying types for each command.
+//!
+//! The library facilitates this by providing the [commands::TypedCommands] and [commands::AsyncTypedCommands]. These traits provide functions
+//! with pre-defined and opinionated return types. For example, `set` returns `()`, avoiding the need
+//! for developers to explicitly type each call as returning `()`.
+//!
+//! ```rust,no_run
+//! use redis::TypedCommands;
+//!
+//! fn fetch_an_integer() -> redis::RedisResult<isize> {
+//!     // connect to redis
+//!     let client = redis::Client::open("redis://127.0.0.1/")?;
+//!     let mut con = client.get_connection()?;
+//!     // `set` returns a `()`, so we don't need to specify the return type manually unlike in the previous example.
+//!     con.set("my_key", 42)?;
+//!     // `get_int` returns Result<Option<isize>>, as the key may not be found, or some error may occur.
+//!     Ok(con.get_int("my_key").unwrap().unwrap())
+//! }
+//! ```
+//!
+//! ## Custom Type Conversions
+//!
+//! In some cases, the user might want to define their own return value types to various Redis calls.
+//! The library facilitates this by providing the [commands::Commands] and [commands::AsyncCommands]
+//! as alternatives to [commands::TypedCommands] and [commands::AsyncTypedCommands] respectively.
 //!
 //! The `arg` method of the command will accept a wide range of types through
 //! the [ToRedisArgs] trait and the `query` method of a command can convert the
@@ -208,31 +235,6 @@
 //! let (k1, k2) : (String, String) = con.get(&["k1", "k2"])?;
 //! # Ok(())
 //! # }
-//! ```
-//!
-//! ## Pre-typed Commands
-//!
-//! In some cases, you may not have a desired return type for a high-level command, and would
-//! instead like to use defaults provided by the library, to avoid the clutter and development overhead
-//! of specifying types for each command.
-//!
-//! The library facilitates this by providing the [commands::TypedCommands] and [commands::AsyncTypedCommands]
-//! as alternatives to [commands::Commands] and [commands::AsyncCommands] respectively. These traits provide functions
-//! with pre-defined and opinionated return types. For example, `set` returns `()`, avoiding the need
-//! for developers to explicitly type each call as returning `()`.
-//!
-//! ```rust,no_run
-//! use redis::TypedCommands;
-//!
-//! fn fetch_an_integer() -> redis::RedisResult<isize> {
-//!     // connect to redis
-//!     let client = redis::Client::open("redis://127.0.0.1/")?;
-//!     let mut con = client.get_connection()?;
-//!     // `set` returns a `()`, so we don't need to specify the return type manually unlike in the previous example.
-//!     con.set("my_key", 42)?;
-//!     // `get_int` returns Result<Option<isize>>, as the key may not be found, or some error may occur.
-//!     Ok(con.get_int("my_key").unwrap().unwrap())
-//! }
 //! ```
 //!
 //! # RESP3 support
@@ -390,7 +392,7 @@
 //! # #[cfg(feature = "aio")]
 //! # {
 //! # use futures::prelude::*;
-//! # use redis::AsyncCommands;
+//! # use redis::AsyncTypedCommands;
 //!
 //! # async fn func() -> redis::RedisResult<()> {
 //! let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
@@ -468,21 +470,21 @@ constraints of `futures`.
 
 ```rust,no_run
 use futures::prelude::*;
-use redis::AsyncCommands;
+use redis::AsyncTypedCommands;
 
 # #[tokio::main]
 # async fn main() -> redis::RedisResult<()> {
 let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 let mut con = client.get_multiplexed_async_connection().await?;
 
-let _: () = con.set("key1", b"foo").await?;
+con.set("key1", b"foo").await?;
 
 redis::cmd("SET").arg(&["key2", "bar"]).exec_async(&mut con).await?;
 
 let result = redis::cmd("MGET")
- .arg(&["key1", "key2"])
- .query_async(&mut con)
- .await;
+  .arg(&["key1", "key2"])
+  .query_async(&mut con)
+  .await;
 assert_eq!(result, Ok(("foo".to_string(), b"bar".to_vec())));
 # Ok(()) }
 ```

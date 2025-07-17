@@ -26,8 +26,24 @@ Documentation on the library can be found at
 To open a connection you need to create a client and then to fetch a
 connection from it.
 
-Many commands are implemented through the `Commands` trait but manual
-command creation is also possible.
+Many commands are implemented through the `TypedCommands` or `Commands` traits but manual
+command creation is also possible. The `TypedCommands` trait provides pre-specified and opinionated return value types to commands,
+but if you want to use other return value types, you can use `Commands` as long as the chosen return value type
+implements the `FromRedisValue` trait.
+
+```rust
+use redis::TypedCommands;
+
+fn fetch_an_integer() -> redis::RedisResult<isize> {
+	// connect to redis
+	let client = redis::Client::open("redis://127.0.0.1/")?;
+	let mut con = client.get_connection()?;
+	// `set` returns a `()`, so we don't need to specify the return type manually unlike in the previous example.
+	con.set("my_key", 42)?;
+	// `get_int` returns Option<isize>, as the key may not be found.
+	con.get_int("my_key").unwrap()
+}
+```
 
 ```rust
 use redis::Commands;
@@ -50,24 +66,6 @@ Variables are converted to and from the Redis format for a wide variety of types
 you can implement the `FromRedisValue` and `ToRedisArgs` traits, or derive it with the
 [redis-macros](https://github.com/daniel7grant/redis-macros/#json-wrapper-with-redisjson) crate.
 
-If you wish to avoid having to specify a return type for every command, you can use the `TypedCommands` trait instead,
-which has
-pre-specified and opinionated return types.
-
-```rust
-use redis::TypedCommands;
-
-fn fetch_an_integer() -> redis::RedisResult<isize> {
-	// connect to redis
-	let client = redis::Client::open("redis://127.0.0.1/")?;
-	let mut con = client.get_connection()?;
-	// `set` returns a `()`, so we don't need to specify the return type manually unlike in the previous example.
-	con.set("my_key", 42)?;
-	// `get_int` returns Option<isize>, as the key may not be found.
-	con.get_int("my_key").unwrap()
-}
-```
-
 ## Async support
 
 To enable asynchronous clients, enable the relevant feature in your Cargo.toml,
@@ -81,7 +79,7 @@ redis = { version = "1.0", features = ["tokio-comp"] }
 redis = { version = "1.0", features = ["smol-comp"] }
 ```
 
-You can then use either the `AsyncCommands` or `AsyncTypedCommands` trait. All async connections are cheap to clone, and clones can be used concurrently from multiple threads.
+You can then use either the `AsyncTypedCommands` or `AsyncCommands` traits. All async connections are cheap to clone, and clones can be used concurrently from multiple threads.
 
 ## Connection Pooling
 
@@ -176,15 +174,14 @@ you can specify multiple.
 
 ```rust
 use redis::cluster::ClusterClient;
-use redis::Commands;
+use redis::TypedCommands;
 
 fn fetch_an_integer() -> String {
     let nodes = vec!["redis://127.0.0.1/"];
     let client = ClusterClient::new(nodes).unwrap();
     let mut connection = client.get_connection().unwrap();
-    let _: () = connection.set("test", "test_data").unwrap();
-    let rv: String = connection.get("test").unwrap();
-    return rv;
+    connection.set("test", "test_data").unwrap();
+    return connection.get("test").unwrap();
 }
 ```
 
@@ -195,15 +192,14 @@ with your preferred async runtime, e.g.:
 
 ```rust
 use redis::cluster::ClusterClient;
-use redis::AsyncCommands;
+use redis::AsyncTypedCommands;
 
 async fn fetch_an_integer() -> String {
     let nodes = vec!["redis://127.0.0.1/"];
     let client = ClusterClient::new(nodes).unwrap();
     let mut connection = client.get_async_connection().await.unwrap();
-    let _: () = connection.set("test", "test_data").await.unwrap();
-    let rv: String = connection.get("test").await.unwrap();
-    return rv;
+    connection.set("test", "test_data").await.unwrap();
+    return connection.get("test").await.unwrap();
 }
 ```
 
