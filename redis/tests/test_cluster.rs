@@ -89,8 +89,8 @@ mod cluster {
     fn test_cluster_with_username_and_password() {
         let cluster = TestClusterContext::new_with_cluster_client_builder(|builder| {
             builder
-                .username(RedisCluster::username().to_string())
-                .password(RedisCluster::password().to_string())
+                .username(RedisCluster::username())
+                .password(RedisCluster::password())
         });
         cluster.disable_default_user();
 
@@ -101,8 +101,8 @@ mod cluster {
     fn test_cluster_with_bad_password() {
         let cluster = TestClusterContext::new_with_cluster_client_builder(|builder| {
             builder
-                .username(RedisCluster::username().to_string())
-                .password("not the right password".to_string())
+                .username(RedisCluster::username())
+                .password("not the right password")
         });
         assert!(cluster.client.get_connection().is_err());
     }

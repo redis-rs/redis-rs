@@ -23,6 +23,7 @@ use crate::{check_resp3, from_owned_redis_value, ProtocolVersion};
 use std::os::unix::net::UnixStream;
 
 use crate::commands::resp3_hello;
+use arcstr::ArcStr;
 #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
 use native_tls::{TlsConnector, TlsStream};
 
@@ -270,9 +271,9 @@ pub struct RedisConnectionInfo {
     /// The database number to use.  This is usually `0`.
     pub(crate) db: i64,
     /// Optionally a username that should be used for connection.
-    pub(crate) username: Option<String>,
+    pub(crate) username: Option<ArcStr>,
     /// Optionally a password that should be used for connection.
-    pub(crate) password: Option<String>,
+    pub(crate) password: Option<ArcStr>,
     /// Version of the protocol to use.
     pub(crate) protocol: ProtocolVersion,
     /// If set, the connection shouldn't send the library name to the server.
@@ -281,14 +282,14 @@ pub struct RedisConnectionInfo {
 
 impl RedisConnectionInfo {
     /// Sets the username for the connection's ACL
-    pub fn set_username(mut self, username: impl Into<String>) -> Self {
-        self.username = Some(username.into());
+    pub fn set_username(mut self, username: impl AsRef<str>) -> Self {
+        self.username = Some(username.as_ref().into());
         self
     }
 
     /// Sets the password for the connection's ACL
-    pub fn set_password(mut self, password: impl Into<String>) -> Self {
-        self.password = Some(password.into());
+    pub fn set_password(mut self, password: impl AsRef<str>) -> Self {
+        self.password = Some(password.as_ref().into());
         self
     }
 
@@ -479,7 +480,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 None
             } else {
                 match percent_encoding::percent_decode(url.username().as_bytes()).decode_utf8() {
-                    Ok(decoded) => Some(decoded.into_owned()),
+                    Ok(decoded) => Some(decoded.into()),
                     Err(_) => fail!((
                         ErrorKind::InvalidClientConfig,
                         "Username is not valid UTF-8 string"
@@ -488,7 +489,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             },
             password: match url.password() {
                 Some(pw) => match percent_encoding::percent_decode(pw.as_bytes()).decode_utf8() {
-                    Ok(decoded) => Some(decoded.into_owned()),
+                    Ok(decoded) => Some(decoded.into()),
                     Err(_) => fail!((
                         ErrorKind::InvalidClientConfig,
                         "Password is not valid UTF-8 string"
@@ -518,8 +519,8 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
 
                 None => 0,
             },
-            username: query.get("user").map(|username| username.to_string()),
-            password: query.get("pass").map(|password| password.to_string()),
+            username: query.get("user").map(|username| username.as_ref().into()),
+            password: query.get("pass").map(|password| password.as_ref().into()),
             protocol: parse_protocol(&query)?,
             ..Default::default()
         },
@@ -1167,7 +1168,7 @@ fn authenticate_cmd(
     let mut command = cmd("AUTH");
     if check_username {
         if let Some(username) = &connection_info.username {
-            command.arg(username);
+            command.arg(username.as_str());
         }
     }
     command.arg(password);
@@ -2387,8 +2388,8 @@ mod tests {
                     addr: ConnectionAddr::Tcp("example.com".to_string(), 6379),
                     redis: RedisConnectionInfo {
                         db: 2,
-                        username: Some("%johndoe%".to_string()),
-                        password: Some("#@<>$".to_string()),
+                        username: Some("%johndoe%".into()),
+                        password: Some("#@<>$".into()),
                         ..Default::default()
                     },
                     tcp_settings: TcpSettings::default(),
@@ -2508,8 +2509,8 @@ mod tests {
                     addr: ConnectionAddr::Unix("/example.sock".into()),
                     redis: RedisConnectionInfo {
                         db: 2,
-                        username: Some("%johndoe%".to_string()),
-                        password: Some("#@<>$".to_string()),
+                        username: Some("%johndoe%".into()),
+                        password: Some("#@<>$".into()),
                         ..Default::default()
                     },
                     tcp_settings: TcpSettings::default(),
@@ -2524,8 +2525,8 @@ mod tests {
                     addr: ConnectionAddr::Unix("/example.sock".into()),
                     redis: RedisConnectionInfo {
                         db: 2,
-                        username: Some("%johndoe%".to_string()),
-                        password: Some("&?= *+".to_string()),
+                        username: Some("%johndoe%".into()),
+                        password: Some("&?= *+".into()),
                         ..Default::default()
                     },
                     tcp_settings: TcpSettings::default(),
