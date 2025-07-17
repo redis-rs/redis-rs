@@ -3,7 +3,7 @@
 //!
 //! # Example
 //! ```rust,no_run
-//! use redis::Commands;
+//! use redis::TypedCommands;
 //! use redis::sentinel::Sentinel;
 //!
 //! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
@@ -11,8 +11,8 @@
 //! let mut master = sentinel.master_for("master_name", None).unwrap().get_connection().unwrap();
 //! let mut replica = sentinel.replica_for("master_name", None).unwrap().get_connection().unwrap();
 //!
-//! let _: () = master.set("test", "test_data").unwrap();
-//! let rv: String = replica.get("test").unwrap();
+//! master.set("test", "test_data").unwrap();
+//! let rv = replica.get("test").unwrap().unwrap();
 //!
 //! assert_eq!(rv, "test_data");
 //! ```
@@ -23,7 +23,7 @@
 //!
 //! # Example
 //! ```rust,no_run
-//! use redis::Commands;
+//! use redis::TypedCommands;
 //! use redis::sentinel::{ SentinelServerType, SentinelClient };
 //!
 //! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
@@ -32,8 +32,8 @@
 //! let mut master_conn = master_client.get_connection().unwrap();
 //! let mut replica_conn = replica_client.get_connection().unwrap();
 //!
-//! let _: () = master_conn.set("test", "test_data").unwrap();
-//! let rv: String = replica_conn.get("test").unwrap();
+//! master_conn.set("test", "test_data").unwrap();
+//! let rv = replica_conn.get("test").unwrap().unwrap();
 //!
 //! assert_eq!(rv, "test_data");
 //! ```
