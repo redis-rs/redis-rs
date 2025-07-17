@@ -13,14 +13,14 @@
 //! # Example
 //! ```rust,no_run
 //! use redis::cluster::ClusterClient;
-//! use redis::AsyncCommands;
+//! use redis::AsyncTypedCommands;
 //!
 //! async fn fetch_an_integer() -> String {
 //!     let nodes = vec!["redis://127.0.0.1/"];
 //!     let client = ClusterClient::new(nodes).unwrap();
 //!     let mut connection = client.get_async_connection().await.unwrap();
-//!     let _: () = connection.set("test", "test_data").await.unwrap();
-//!     let rv: String = connection.get("test").await.unwrap();
+//!     connection.set("test", "test_data").await.unwrap();
+//!     let rv = connection.get("test").await.unwrap().unwrap();
 //!     return rv;
 //! }
 //! ```
