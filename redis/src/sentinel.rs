@@ -829,9 +829,11 @@ impl Sentinel {
         Client::open(connection_info)
     }
 
-    /// Connects to all valid replicas of the given master name. Errors can originate
-    /// from interaction either with Sentinel or any of the replicas during connection.
-    pub fn get_all_replicas(
+    /// Returns Redis `Client` objects for all valid replicas of the given master name.
+    /// Each client can be used to establish a connection later.
+    ///
+    /// This may return errors originating from either Sentinel or during client construction.
+    pub fn get_replica_clients(
         &mut self,
         service_name: &str,
         node_connection_info: Option<&SentinelNodeConnectionInfo>,
@@ -963,9 +965,11 @@ impl Sentinel {
         Client::open(address)
     }
 
-    /// Connects to all valid replicas of the given master name. Errors can originate
-    /// from interaction either with Sentinel or any of the replicas during connection.
-    pub async fn async_get_all_replicas(
+    /// Returns Redis `Client` objects for all valid replicas of the given master name.
+    /// Each client can be used to establish a connection later.
+    ///
+    /// This may return errors originating from either Sentinel or during client construction.
+    pub async fn async_get_replica_clients(
         &mut self,
         service_name: &str,
         node_connection_info: Option<&SentinelNodeConnectionInfo>,
