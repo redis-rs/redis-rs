@@ -124,6 +124,7 @@
 
 #[cfg(feature = "aio")]
 use crate::aio::MultiplexedConnection as AsyncConnection;
+use arcstr::ArcStr;
 #[cfg(feature = "aio")]
 use futures_util::StreamExt;
 use rand::Rng;
@@ -1033,7 +1034,7 @@ impl LockedSentinelClient {
 /// "mymaster123", or always to replicas of the master "another-master-abc").
 pub struct SentinelClient {
     sentinel: Sentinel,
-    service_name: String,
+    service_name: ArcStr,
     node_connection_info: SentinelNodeConnectionInfo,
     server_type: SentinelServerType,
 }
@@ -1056,7 +1057,7 @@ impl SentinelClient {
     /// result in an error.
     pub fn build<T: IntoConnectionInfo>(
         params: Vec<T>,
-        service_name: String,
+        service_name: impl AsRef<str>,
         node_connection_info: Option<SentinelNodeConnectionInfo>,
         server_type: SentinelServerType,
     ) -> RedisResult<Self> {
@@ -1071,7 +1072,7 @@ impl SentinelClient {
 
     fn build_inner<T: IntoConnectionInfo>(
         params: Vec<T>,
-        service_name: String,
+        service_name: impl AsRef<str>,
         node_connection_info: Option<SentinelNodeConnectionInfo>,
         server_type: SentinelServerType,
         #[cfg(feature = "tls-rustls")] certs: Option<TlsCertificates>,
@@ -1081,7 +1082,7 @@ impl SentinelClient {
             sentinel: Sentinel::build_inner(params)?,
             #[cfg(feature = "tls-rustls")]
             sentinel: Sentinel::build_inner(params, certs)?,
-            service_name,
+            service_name: service_name.as_ref().into(),
             node_connection_info: node_connection_info.unwrap_or_default(),
             server_type,
         })
@@ -1254,8 +1255,8 @@ impl SentinelClient {
 struct BuilderConnectionParams {
     tls_mode: Option<TlsMode>,
     db: Option<i64>,
-    username: Option<String>,
-    password: Option<String>,
+    username: Option<ArcStr>,
+    password: Option<ArcStr>,
     protocol: Option<ProtocolVersion>,
     #[cfg(feature = "tls-rustls")]
     certificates: Option<TlsCertificates>,
@@ -1267,7 +1268,7 @@ struct BuilderConnectionParams {
 /// 2. The connection towards the sentinel nodes (configure via `set_client_to_sentinel_..` functions)
 pub struct SentinelClientBuilder {
     sentinels: Vec<ConnectionAddr>,
-    service_name: String,
+    service_name: ArcStr,
     server_type: SentinelServerType,
     client_to_redis_params: BuilderConnectionParams,
     client_to_sentinel_params: BuilderConnectionParams,
@@ -1280,12 +1281,12 @@ impl SentinelClientBuilder {
     /// - `server_type` - The server type to be queried via the sentinels
     pub fn new<T: IntoIterator<Item = ConnectionAddr>>(
         sentinels: T,
-        service_name: String,
+        service_name: impl AsRef<str>,
         server_type: SentinelServerType,
     ) -> RedisResult<SentinelClientBuilder> {
         Ok(SentinelClientBuilder {
             sentinels: sentinels.into_iter().collect::<Vec<_>>(),
-            service_name,
+            service_name: service_name.as_ref().into(),
             server_type,
             client_to_redis_params: BuilderConnectionParams {
                 tls_mode: None,
@@ -1444,14 +1445,20 @@ impl SentinelClientBuilder {
     }
 
     /// Set username for the connection to redis
-    pub fn set_client_to_redis_username(mut self, username: String) -> SentinelClientBuilder {
-        self.client_to_redis_params.username = Some(username);
+    pub fn set_client_to_redis_username(
+        mut self,
+        username: impl AsRef<str>,
+    ) -> SentinelClientBuilder {
+        self.client_to_redis_params.username = Some(username.as_ref().into());
         self
     }
 
     /// Set password for the connection to redis
-    pub fn set_client_to_redis_password(mut self, password: String) -> SentinelClientBuilder {
-        self.client_to_redis_params.password = Some(password);
+    pub fn set_client_to_redis_password(
+        mut self,
+        password: impl AsRef<str>,
+    ) -> SentinelClientBuilder {
+        self.client_to_redis_params.password = Some(password.as_ref().into());
         self
     }
 
@@ -1481,14 +1488,20 @@ impl SentinelClientBuilder {
     }
 
     /// Set username for the connection to the sentinels
-    pub fn set_client_to_sentinel_username(mut self, username: String) -> SentinelClientBuilder {
-        self.client_to_sentinel_params.username = Some(username);
+    pub fn set_client_to_sentinel_username(
+        mut self,
+        username: impl AsRef<str>,
+    ) -> SentinelClientBuilder {
+        self.client_to_sentinel_params.username = Some(username.as_ref().into());
         self
     }
 
     /// Set password for the connection to the sentinels
-    pub fn set_client_to_sentinel_password(mut self, password: String) -> SentinelClientBuilder {
-        self.client_to_sentinel_params.password = Some(password);
+    pub fn set_client_to_sentinel_password(
+        mut self,
+        password: impl AsRef<str>,
+    ) -> SentinelClientBuilder {
+        self.client_to_sentinel_params.password = Some(password.as_ref().into());
         self
     }
 

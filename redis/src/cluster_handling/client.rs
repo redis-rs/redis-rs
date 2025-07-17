@@ -10,6 +10,7 @@ use crate::io::tcp::TcpSettings;
 use crate::io::AsyncDNSResolver;
 use crate::types::{ProtocolVersion, RedisResult};
 use crate::{cluster, TlsMode};
+use arcstr::ArcStr;
 use rand::Rng;
 #[cfg(feature = "cluster-async")]
 use std::sync::Arc;
@@ -28,8 +29,8 @@ use crate::tls::{retrieve_tls_certificates, TlsCertificates};
 /// than final ClusterParams
 #[derive(Default)]
 struct BuilderParams {
-    password: Option<String>,
-    username: Option<String>,
+    password: Option<ArcStr>,
+    username: Option<ArcStr>,
     read_from_replicas: bool,
     tls: Option<TlsMode>,
     #[cfg(feature = "tls-rustls")]
@@ -89,8 +90,8 @@ impl RetryParams {
 /// Redis cluster specific parameters.
 #[derive(Default, Clone)]
 pub(crate) struct ClusterParams {
-    pub(crate) password: Option<String>,
-    pub(crate) username: Option<String>,
+    pub(crate) password: Option<ArcStr>,
+    pub(crate) username: Option<ArcStr>,
     pub(crate) read_from_replicas: bool,
     /// tls indicates tls behavior of connections.
     /// When Some(TlsMode), connections use tls and verify certification depends on TlsMode.
@@ -236,7 +237,7 @@ impl ClusterClientBuilder {
         let password = if cluster_params.password.is_none() {
             cluster_params
                 .password
-                .clone_from(&first_node.redis.password);
+                .clone_from(&first_node.redis.password.as_ref().map(|str| str.into()));
             &cluster_params.password
         } else {
             &None
@@ -244,7 +245,7 @@ impl ClusterClientBuilder {
         let username = if cluster_params.username.is_none() {
             cluster_params
                 .username
-                .clone_from(&first_node.redis.username);
+                .clone_from(&first_node.redis.username.as_ref().map(|str| str.into()));
             &cluster_params.username
         } else {
             &None
@@ -269,14 +270,14 @@ impl ClusterClientBuilder {
                                              "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
             }
 
-            if password.is_some() && node.redis.password != *password {
+            if password.is_some() && node.redis.password.as_deref() != password.as_deref() {
                 return Err(RedisError::from((
                     ErrorKind::InvalidClientConfig,
                     "Cannot use different password among initial nodes.",
                 )));
             }
 
-            if username.is_some() && node.redis.username != *username {
+            if username.is_some() && node.redis.username.as_deref() != username.as_deref() {
                 return Err(RedisError::from((
                     ErrorKind::InvalidClientConfig,
                     "Cannot use different username among initial nodes.",
@@ -304,14 +305,14 @@ impl ClusterClientBuilder {
     }
 
     /// Sets password for the new ClusterClient.
-    pub fn password(mut self, password: String) -> ClusterClientBuilder {
-        self.builder_params.password = Some(password);
+    pub fn password(mut self, password: impl AsRef<str>) -> ClusterClientBuilder {
+        self.builder_params.password = Some(password.as_ref().into());
         self
     }
 
     /// Sets username for the new ClusterClient.
-    pub fn username(mut self, username: String) -> ClusterClientBuilder {
-        self.builder_params.username = Some(username);
+    pub fn username(mut self, username: impl AsRef<str>) -> ClusterClientBuilder {
+        self.builder_params.username = Some(username.as_ref().into());
         self
     }
 
@@ -646,14 +647,14 @@ mod tests {
     #[test]
     fn give_password_by_initial_nodes() {
         let client = ClusterClient::new(get_connection_data_with_password()).unwrap();
-        assert_eq!(client.cluster_params.password, Some("password".to_string()));
+        assert_eq!(client.cluster_params.password, Some("password".into()));
     }
 
     #[test]
     fn give_username_and_password_by_initial_nodes() {
         let client = ClusterClient::new(get_connection_data_with_username_and_password()).unwrap();
-        assert_eq!(client.cluster_params.password, Some("password".to_string()));
-        assert_eq!(client.cluster_params.username, Some("user1".to_string()));
+        assert_eq!(client.cluster_params.password, Some("password".into()));
+        assert_eq!(client.cluster_params.username, Some("user1".into()));
     }
 
     #[test]
@@ -699,12 +700,12 @@ mod tests {
     #[test]
     fn give_username_password_by_method() {
         let client = ClusterClientBuilder::new(get_connection_data_with_username_and_password())
-            .password("password".to_string())
-            .username("user1".to_string())
+            .password("password")
+            .username("user1")
             .build()
             .unwrap();
-        assert_eq!(client.cluster_params.password, Some("password".to_string()));
-        assert_eq!(client.cluster_params.username, Some("user1".to_string()));
+        assert_eq!(client.cluster_params.password, Some("password".into()));
+        assert_eq!(client.cluster_params.username, Some("user1".into()));
     }
 
     #[test]
