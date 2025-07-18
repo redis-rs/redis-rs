@@ -261,9 +261,7 @@ fn random_replica_index(max: NonZeroUsize) -> usize {
     rand::rng().random_range(0..max.into())
 }
 
-fn try_connect_to_all_replica(
-    addresses: &[ConnectionInfo],
-) -> Result<Vec<Client>, crate::RedisError> {
+fn build_replica_clients(addresses: &[ConnectionInfo]) -> Result<Vec<Client>, crate::RedisError> {
     if addresses.is_empty() {
         fail!((
             ErrorKind::NoValidReplicasFoundBySentinel,
@@ -849,7 +847,7 @@ impl Sentinel {
     ) -> RedisResult<Vec<Client>> {
         let addresses = self
             .find_valid_replica_addresses(service_name, node_connection_info.unwrap_or_default())?;
-        try_connect_to_all_replica(&addresses)
+        build_replica_clients(&addresses)
     }
 
     /// Connects to a randomly chosen replica of the given master name.
@@ -989,7 +987,7 @@ impl Sentinel {
                 node_connection_info.unwrap_or_default(),
             )
             .await?;
-        try_connect_to_all_replica(&addresses)
+        build_replica_clients(&addresses)
     }
 
     /// Connects to a randomly chosen replica of the given master name. Errors can originate
