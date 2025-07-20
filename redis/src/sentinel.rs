@@ -261,6 +261,20 @@ fn random_replica_index(max: NonZeroUsize) -> usize {
     rand::rng().random_range(0..max.into())
 }
 
+fn build_replica_clients(addresses: &[ConnectionInfo]) -> Result<Vec<Client>, crate::RedisError> {
+    if addresses.is_empty() {
+        fail!((
+            ErrorKind::NoValidReplicasFoundBySentinel,
+            "No valid replica found in sentinel for given name",
+        ));
+    }
+
+    addresses
+        .iter()
+        .map(|addr| Client::open(addr.clone()))
+        .collect()
+}
+
 fn try_connect_to_first_replica(
     addresses: &[ConnectionInfo],
     start_index: Option<usize>,
@@ -822,6 +836,20 @@ impl Sentinel {
         Client::open(connection_info)
     }
 
+    /// Returns Redis `Client` objects for all valid replicas of the given master name.
+    /// Each client can be used to establish a connection later.
+    ///
+    /// This may return errors originating from either Sentinel or during client construction.
+    pub fn get_replica_clients(
+        &mut self,
+        service_name: &str,
+        node_connection_info: Option<&SentinelNodeConnectionInfo>,
+    ) -> RedisResult<Vec<Client>> {
+        let addresses = self
+            .find_valid_replica_addresses(service_name, node_connection_info.unwrap_or_default())?;
+        build_replica_clients(&addresses)
+    }
+
     /// Connects to a randomly chosen replica of the given master name.
     pub fn replica_for(
         &mut self,
@@ -942,6 +970,24 @@ impl Sentinel {
             .async_find_master_address(service_name, node_connection_info.unwrap_or_default())
             .await?;
         Client::open(address)
+    }
+
+    /// Returns Redis `Client` objects for all valid replicas of the given master name.
+    /// Each client can be used to establish a connection later.
+    ///
+    /// This may return errors originating from either Sentinel or during client construction.
+    pub async fn async_get_replica_clients(
+        &mut self,
+        service_name: &str,
+        node_connection_info: Option<&SentinelNodeConnectionInfo>,
+    ) -> RedisResult<Vec<Client>> {
+        let addresses = self
+            .async_find_valid_replica_addresses(
+                service_name,
+                node_connection_info.unwrap_or_default(),
+            )
+            .await?;
+        build_replica_clients(&addresses)
     }
 
     /// Connects to a randomly chosen replica of the given master name. Errors can originate
