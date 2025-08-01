@@ -1016,64 +1016,75 @@ impl ToRedisArgs for StreamDeletionPolicy {
     }
 }
 
-macro_rules! define_stream_response_status_enum {
-    ($(#[$enum_meta:meta])* $name:ident, $( $(#[$meta:meta])* $variant:ident = $value:expr ),+ $(,)?) => {
-        #[cfg(feature = "streams")]
-        #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
-        #[derive(Debug, PartialEq, Eq)]
-        $(#[$enum_meta])*
-        pub enum $name {
-            $(
-                $(#[$meta])*
-                $variant = $value,
-            )+
-        }
-
-        #[cfg(feature = "streams")]
-        impl FromRedisValue for $name {
-            fn from_redis_value(v: &Value) -> RedisResult<Self> {
-                match v {
-                    Value::Int(code) => match *code {
-                        $(
-                            $value => Ok($name::$variant),
-                        )+
-                        _ => Err(RedisError::from((
-                            ErrorKind::TypeError,
-                            concat!("Invalid ", stringify!($name), " status code"),
-                            format!("Unknown status code: {}", code),
-                        ))),
-                    },
-                    _ => Err(RedisError::from((
-                        ErrorKind::TypeError,
-                        concat!("Response type not ", stringify!($name), " compatible"),
-                    ))),
-                }
-            }
-        }
-    };
-}
-
-define_stream_response_status_enum! {
-    /// Status codes returned by the `XDELEX` command
-    XDelExStatusCode,
+/// Status codes returned by the `XDELEX` command
+#[cfg(feature = "streams")]
+#[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+#[derive(Debug, PartialEq, Eq)]
+pub enum XDelExStatusCode {
     /// No entry with the given id exists in the stream
     IdNotFound = -1,
     /// The entry was deleted from the stream
     Deleted = 1,
     /// The entry was not deleted because it has either not been delivered to any consumer
     /// or still has references in the consumer groups' Pending Entries List (PEL)
-    NotDeletedUnacknowledgedOrStillReferenced = 2
+    NotDeletedUnacknowledgedOrStillReferenced = 2,
 }
 
-define_stream_response_status_enum! {
-    /// Status codes returned by the `XACKDEL` command
-    XAckDelStatusCode,
+#[cfg(feature = "streams")]
+impl FromRedisValue for XDelExStatusCode {
+    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+        match v {
+            Value::Int(code) => match *code {
+                -1 => Ok(XDelExStatusCode::IdNotFound),
+                1 => Ok(XDelExStatusCode::Deleted),
+                2 => Ok(XDelExStatusCode::NotDeletedUnacknowledgedOrStillReferenced),
+                _ => Err(RedisError::from((
+                    ErrorKind::TypeError,
+                    "Invalid XDelExStatusCode status code",
+                    format!("Unknown status code: {code}"),
+                ))),
+            },
+            _ => Err(RedisError::from((
+                ErrorKind::TypeError,
+                "Response type not XDelExStatusCode compatible",
+            ))),
+        }
+    }
+}
+
+/// Status codes returned by the `XACKDEL` command
+#[cfg(feature = "streams")]
+#[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+#[derive(Debug, PartialEq, Eq)]
+pub enum XAckDelStatusCode {
     /// No entry with the given id exists in the stream
     IdNotFound = -1,
     /// The entry was acknowledged and deleted from the stream
     AcknowledgedAndDeleted = 1,
     /// The entry was acknowledged but not deleted because it has references in the consumer groups' Pending Entries List (PEL)
-    AcknowledgedNotDeletedStillReferenced = 2
+    AcknowledgedNotDeletedStillReferenced = 2,
+}
+
+#[cfg(feature = "streams")]
+impl FromRedisValue for XAckDelStatusCode {
+    fn from_redis_value(v: &Value) -> RedisResult<Self> {
+        match v {
+            Value::Int(code) => match *code {
+                -1 => Ok(XAckDelStatusCode::IdNotFound),
+                1 => Ok(XAckDelStatusCode::AcknowledgedAndDeleted),
+                2 => Ok(XAckDelStatusCode::AcknowledgedNotDeletedStillReferenced),
+                _ => Err(RedisError::from((
+                    ErrorKind::TypeError,
+                    "Invalid XAckDelStatusCode status code",
+                    format!("Unknown status code: {code}"),
+                ))),
+            },
+            _ => Err(RedisError::from((
+                ErrorKind::TypeError,
+                "Response type not XAckDelStatusCode compatible",
+            ))),
+        }
+    }
 }
 
 #[cfg(test)]
