@@ -93,7 +93,7 @@ futures-rustls = { version = "0.26", optional = true, default-features = false }
 
 # Needed for modules Support
 serde = { version = "1.0.219", optional = true }
-serde_json = { version = "1.0.140", optional = true }
+serde_json = { version = "1.0.142", optional = true }
 
 # Only needed for bignum Support
 rust_decimal = { version = "1.37.1", optional = true }
