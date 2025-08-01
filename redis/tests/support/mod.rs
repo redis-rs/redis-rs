@@ -31,6 +31,7 @@ pub fn current_thread_runtime() -> tokio::runtime::Runtime {
 }
 
 #[cfg(feature = "aio")]
+#[derive(Clone, Copy)]
 pub enum RuntimeType {
     #[cfg(feature = "tokio-comp")]
     Tokio,
