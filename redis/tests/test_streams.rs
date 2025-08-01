@@ -1275,7 +1275,7 @@ fn test_xtrim_options_deletion_policy_acked() {
     let info = con.xinfo_stream(stream_name).unwrap();
     assert_eq!(info.length, initial_stream_entries.len());
     assert_eq!(info.first_entry.id, id1);
-    // Check that the PEL entry for the first entry has been removed.
+    // PEL entries should remain unchanged because no stream trimming was performed.
     let reply = con
         .xpending_consumer_count(
             stream_name,
