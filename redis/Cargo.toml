@@ -97,7 +97,7 @@ serde_json = { version = "1.0.142", optional = true }
 
 # Only needed for bignum Support
 rust_decimal = { version = "1.37.1", optional = true }
-bigdecimal = { version = "0.4.7", optional = true }
+bigdecimal = { version = "0.4.8", optional = true }
 num-bigint = "0.4.6"
 
 # Optional aHash support
