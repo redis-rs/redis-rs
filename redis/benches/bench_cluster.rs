@@ -1,6 +1,7 @@
-#![allow(clippy::unit_arg)] // want to allow this for `black_box()`
 #![cfg(feature = "cluster")]
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use redis::cluster::cluster_pipe;
 use redis_test::cluster::RedisClusterConfiguration;
 
