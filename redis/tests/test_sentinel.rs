@@ -1183,7 +1183,7 @@ pub mod async_tests {
                 let result = sentinel
                     .async_get_replica_clients("invalid_master_name", Some(&node_conn_info))
                     .await;
-                assert!(result.is_err_and(|err| err.kind() == ErrorKind::ResponseError));
+                assert_eq!(result.unwrap_err().kind(), ErrorKind::ResponseError);
 
                 Ok::<(), RedisError>(())
             },
