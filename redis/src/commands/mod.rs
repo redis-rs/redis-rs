@@ -1954,7 +1954,7 @@ implement_commands! {
     /// ```
     ///
     /// ```text
-    /// XADD key [NOMKSTREAM] [<MAXLEN|MINID> [~|=] threshold [LIMIT count]] <* | ID> field value [field value] ...
+    /// XADD key [NOMKSTREAM] [<MAXLEN|MINID> [~|=] threshold [LIMIT count]] <* | ID> field value [field value] [KEEPREF | DELREF | ACKED] ...
     /// ```
     /// [Redis Docs](https://redis.io/commands/XADD)
     #[cfg(feature = "streams")]
@@ -2166,6 +2166,19 @@ implement_commands! {
         cmd("XDEL").arg(key).arg(ids)
     }
 
+    /// An extension of the Streams `XDEL` command that provides finer control over how message entries are deleted with respect to consumer groups.
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xdel_ex<K: ToRedisArgs, ID: ToRedisArgs>(key: K, ids: &'a [ID], options: streams::StreamDeletionPolicy) -> (Vec<streams::XDelExStatusCode>) {
+        cmd("XDELEX").arg(key).arg(options).arg("IDS").arg(ids.len()).arg(ids)
+    }
+
+    /// A combination of `XACK` and `XDEL` that acknowledges and attempts to delete a list of `ids` for a given stream `key` and consumer `group`.
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xack_del<K: ToRedisArgs, G: ToRedisArgs, ID: ToRedisArgs>(key: K, group: G, ids: &'a [ID], options: streams::StreamDeletionPolicy) -> (Vec<streams::XAckDelStatusCode>) {
+        cmd("XACKDEL").arg(key).arg(group).arg(options).arg("IDS").arg(ids.len()).arg(ids)
+    }
 
     /// This command is used for creating a consumer `group`. It expects the stream key
     /// to already exist. Otherwise, use `xgroup_create_mkstream` if it doesn't.
@@ -2673,7 +2686,7 @@ implement_commands! {
      /// Trim a stream `key` with full options
      ///
      /// ```text
-     /// XTRIM <key> <MAXLEN|MINID> [~|=] <threshold> [LIMIT <count>]  (Same as XADD MAXID|MINID options)
+     /// XTRIM <key> <MAXLEN|MINID> [~|=] <threshold> [LIMIT <count>]  (Same as XADD MAXID|MINID options) [KEEPREF | DELREF | ACKED]
      /// ```
      /// [Redis Docs](https://redis.io/commands/XTRIM)
     #[cfg(feature = "streams")]

@@ -441,6 +441,28 @@ pub fn is_version(expected_major_minor: (u16, u16), version: Version) -> bool {
         || (expected_major_minor.0 == version.0 && expected_major_minor.1 <= version.1)
 }
 
+// Redis version constants for version-gated tests
+pub const REDIS_VERSION_CE_8_0: Version = (8, 0, 0);
+pub const REDIS_VERSION_CE_8_2: Version = (8, 1, 240);
+
+/// Macro to run tests only if the Redis version meets the minimum requirement.
+/// If the version is insufficient, the test is skipped with a message.
+#[macro_export]
+macro_rules! run_test_if_version_supported {
+    ($minimum_required_version:expr) => {{
+        let ctx = $crate::support::TestContext::new();
+        let redis_version = ctx.get_version();
+
+        if redis_version < *$minimum_required_version {
+            eprintln!("Skipping the test because the current version of Redis {:?} doesn't match the minimum required version {:?}.",
+            redis_version, $minimum_required_version);
+            return;
+        }
+
+        ctx
+    }};
+}
+
 #[cfg(feature = "tls-rustls")]
 fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> TlsCertificates {
     let ca_file = File::open(&tls_file_paths.ca_crt).expect("Cannot open CA cert file");
