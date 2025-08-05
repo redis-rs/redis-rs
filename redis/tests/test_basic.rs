@@ -483,7 +483,7 @@ mod basic {
     /// 5. Attempting to delete a field from a non-existing hash results in a NIL response.
     #[test]
     fn test_hget_del() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0_RC1);
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
         let mut con = ctx.connection();
         // Create a hash with multiple fields and values that will be used for testing
         assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
@@ -560,7 +560,7 @@ mod basic {
     /// 6. Attempting to retrieve a field from a non-existing hash returns in a NIL response.
     #[test]
     fn test_hget_ex() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0_RC1);
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
         let mut con = ctx.connection();
         // Create a hash with multiple fields and values that will be used for testing
         assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
@@ -679,7 +679,7 @@ mod basic {
     /// as well as removing an existing expiration using the PERSIST option.
     #[test]
     fn test_hget_ex_field_expiration_options() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0_RC1);
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
         let mut con = ctx.connection();
         // Create a hash with multiple fields and values that will be used for testing
         assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
@@ -774,7 +774,7 @@ mod basic {
     ///        and verifies that their values have been modified and the fields are set to expire.
     #[test]
     fn test_hset_ex() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0_RC1);
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
         let mut con = ctx.connection();
 
         let generated_hash_key = generate_random_testing_hash_key(&mut con);
@@ -960,7 +960,7 @@ mod basic {
     /// as well as keeping an existing expiration using the KEEPTTL option.
     #[test]
     fn test_hsetex_field_expiration_options() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0_RC1);
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
         let mut con = ctx.connection();
         // Create a hash with multiple fields and values that will be used for testing
         assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
@@ -1022,7 +1022,7 @@ mod basic {
 
     #[test]
     fn test_hsetex_can_update_the_expiration_of_a_field_that_has_already_been_set_to_expire() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0_RC1);
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
         let mut con = ctx.connection();
         // Create a hash with multiple fields and values that will be used for testing
         assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
