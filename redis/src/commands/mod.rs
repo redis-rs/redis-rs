@@ -2700,11 +2700,12 @@ implement_commands! {
 
     // script commands
 
-    /// Adds a prepared script command to the pipeline.
+    /// Invoke a prepared script.
     ///
-    /// Note: unlike a call to [`invoke`](crate::ScriptInvocation::invoke), if the script isn't loaded during the pipeline operation,
-    /// it will not automatically be loaded and retried. The script can be loaded using the
-    /// [`load`](crate::ScriptInvocation::load) operation.
+    /// Note: Unlike[`ScriptInvocation::invoke`](crate::ScriptInvocation::invoke), this function
+    /// does _not_ automatically load the script. If the invoked script did not get loaded beforehand, you
+    /// need to manually load it (e.g.: using [`ScriptInvocation::load`](crate::ScriptInvocation::load))
+    /// or this command will fail.
     #[cfg_attr(feature = "script", doc = r##"
 
 # Examples:
