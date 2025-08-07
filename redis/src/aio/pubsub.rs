@@ -368,7 +368,9 @@ impl PubSubSink {
     }
 }
 
-/// A connection dedicated to pubsub messages.
+/// A connection dedicated to RESP2 pubsub messages.
+///
+/// If you're using a DB that supports RESP3, consider using a regular connection and setting a [crate::aio::AsyncPushSender] on it using [crate::client::AsyncConnectionConfig::set_push_sender].
 pub struct PubSub {
     sink: PubSubSink,
     stream: PubSubStream,

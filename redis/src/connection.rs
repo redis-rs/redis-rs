@@ -654,7 +654,9 @@ pub struct Connection {
     messages_to_skip: usize,
 }
 
-/// Represents a pubsub connection.
+/// Represents a RESP2 pubsub connection.
+///
+/// If you're using a DB that supports RESP3, consider using a regular connection and setting a [SyncPushSender] on it using [Connection::set_push_sender].
 pub struct PubSub<'a> {
     con: &'a mut Connection,
     waiting_messages: VecDeque<Msg>,
