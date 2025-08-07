@@ -2717,7 +2717,7 @@ implement_commands! {
 let script = redis::Script::new(r"
     return tonumber(ARGV[1]) + tonumber(ARGV[2]);
 ");
-script.prepare_invoke().load(&mut con)?;
+script.load(&mut con)?;
 let (a, b): (isize, isize) = redis::pipe()
     .invoke_script(script.arg(1).arg(2))
     .invoke_script(script.arg(2).arg(3))

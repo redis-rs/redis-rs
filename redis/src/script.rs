@@ -44,6 +44,37 @@ impl Script {
         &self.hash
     }
 
+    /// Returns a command to load the script.
+    fn load_cmd(&self) -> Cmd {
+        let mut cmd = cmd("SCRIPT");
+        cmd.arg("LOAD").arg(self.code.as_bytes());
+        cmd
+    }
+
+    /// Loads the script and returns the SHA1 of it.
+    #[inline]
+    pub fn load(&self, con: &mut dyn ConnectionLike) -> RedisResult<String> {
+        let hash: String = self.load_cmd().query(con)?;
+
+        debug_assert_eq!(hash, self.hash);
+
+        Ok(hash)
+    }
+
+    /// Asynchronously loads the script and returns the SHA1 of it.
+    #[inline]
+    #[cfg(feature = "aio")]
+    pub async fn load_async<C>(&self, con: &mut C) -> RedisResult<String>
+    where
+        C: crate::aio::ConnectionLike,
+    {
+        let hash: String = self.load_cmd().query_async(con).await?;
+
+        debug_assert_eq!(hash, self.hash);
+
+        Ok(hash)
+    }
+
     /// Creates a script invocation object with a key filled in.
     #[inline]
     pub fn key<T: ToRedisArgs>(&self, key: T) -> ScriptInvocation<'_> {
@@ -184,11 +215,7 @@ impl<'a> ScriptInvocation<'a> {
     /// Loads the script and returns the SHA1 of it.
     #[inline]
     pub fn load(&self, con: &mut dyn ConnectionLike) -> RedisResult<String> {
-        let hash: String = self.load_cmd().query(con)?;
-
-        debug_assert_eq!(hash, self.script.hash);
-
-        Ok(hash)
+        self.script.load(con)
     }
 
     /// Asynchronously loads the script and returns the SHA1 of it.
@@ -198,18 +225,7 @@ impl<'a> ScriptInvocation<'a> {
     where
         C: crate::aio::ConnectionLike,
     {
-        let hash: String = self.load_cmd().query_async(con).await?;
-
-        debug_assert_eq!(hash, self.script.hash);
-
-        Ok(hash)
-    }
-
-    /// Returns a command to load the script.
-    fn load_cmd(&self) -> Cmd {
-        let mut cmd = cmd("SCRIPT");
-        cmd.arg("LOAD").arg(self.script.code.as_bytes());
-        cmd
+        self.script.load_async(con).await
     }
 
     fn estimate_buflen(&self) -> usize {

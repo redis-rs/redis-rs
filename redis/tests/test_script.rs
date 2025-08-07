@@ -31,6 +31,18 @@ mod script {
 
         let script = redis::Script::new("return 'Hello World'");
 
+        let hash = script.load(&mut con);
+
+        assert_eq!(hash, Ok(script.get_hash().to_string()));
+    }
+
+    #[test]
+    fn test_script_load_through_invocation() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        let script = redis::Script::new("return 'Hello World'");
+
         let hash = script.prepare_invoke().load(&mut con);
 
         assert_eq!(hash, Ok(script.get_hash().to_string()));
@@ -54,7 +66,7 @@ mod script {
         let mut con = ctx.connection();
 
         let script = redis::Script::new(r"return tonumber(ARGV[1]) + tonumber(ARGV[2]);");
-        script.prepare_invoke().load(&mut con).unwrap();
+        script.load(&mut con).unwrap();
 
         let (a, b): (isize, isize) = redis::pipe()
             .invoke_script(script.arg(1).arg(2))
