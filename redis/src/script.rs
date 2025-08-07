@@ -223,7 +223,7 @@ impl<'a> ScriptInvocation<'a> {
             + 4 /* Slots reserved for the length of keys. */
     }
 
-    /// Returns a command to evaluate the command.
+    /// Returns a command to evaluate the script.
     pub(crate) fn eval_cmd(&self) -> Cmd {
         let args_len = 3 + self.keys.len() + self.args.len();
         let mut cmd = Cmd::with_capacity(args_len, self.estimate_buflen());
