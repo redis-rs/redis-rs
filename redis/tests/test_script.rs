@@ -66,15 +66,16 @@ mod script {
         let mut con = ctx.connection();
 
         let script = redis::Script::new(r"return tonumber(ARGV[1]) + tonumber(ARGV[2]);");
-        script.load(&mut con).unwrap();
 
-        let (a, b): (isize, isize) = redis::pipe()
+        let (load_res, invok_1_res, invok_2_res): (String, isize, isize) = redis::pipe()
+            .load_script(&script)
             .invoke_script(script.arg(1).arg(2))
             .invoke_script(script.arg(2).arg(3))
             .query(&mut con)
             .unwrap();
 
-        assert_eq!(a, 3);
-        assert_eq!(b, 5);
+        assert_eq!(load_res, "1ca80f2366c125a7c43519ce241d5c24c2b64023");
+        assert_eq!(invok_1_res, 3);
+        assert_eq!(invok_2_res, 5);
     }
 }

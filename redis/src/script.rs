@@ -45,7 +45,7 @@ impl Script {
     }
 
     /// Returns a command to load the script.
-    fn load_cmd(&self) -> Cmd {
+    pub(crate) fn load_cmd(&self) -> Cmd {
         let mut cmd = cmd("SCRIPT");
         cmd.arg("LOAD").arg(self.code.as_bytes());
         cmd
