@@ -16,7 +16,7 @@ use crate::types::{
     from_redis_value, ErrorKind, FromRedisValue, HashMap, PushKind, RedisError, RedisResult,
     ServerError, ServerErrorKind, SyncPushSender, ToRedisArgs, Value,
 };
-use crate::{from_owned_redis_value, ProtocolVersion};
+use crate::{check_resp3, from_owned_redis_value, ProtocolVersion};
 
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
@@ -656,7 +656,7 @@ pub struct Connection {
 
 /// Represents a RESP2 pubsub connection.
 ///
-/// If you're using a DB that supports RESP3, consider using a regular connection and setting a [SyncPushSender] on it using [Connection::set_push_sender].
+/// If you're using a DB that supports RESP3, consider using a regular connection and setting a push sender it using [Connection::set_push_sender].
 pub struct PubSub<'a> {
     con: &'a mut Connection,
     waiting_messages: VecDeque<Msg>,
@@ -1696,6 +1696,50 @@ impl Connection {
             }
         }
         result
+    }
+
+    /// Subscribes to a new channel(s).
+    ///
+    /// This only works if the connection was configured with [ProtocolVersion::RESP3] and [Self::set_push_sender].
+    pub fn subscribe_resp3<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
+        check_resp3!(self.protocol);
+        cmd("SUBSCRIBE")
+            .arg(channel)
+            .set_no_response(true)
+            .exec(self)
+    }
+
+    /// Subscribes to new channel(s) with pattern(s).
+    ///
+    /// This only works if the connection was configured with [ProtocolVersion::RESP3] and [Self::set_push_sender].
+    pub fn psubscribe_resp3<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
+        check_resp3!(self.protocol);
+        cmd("PSUBSCRIBE")
+            .arg(pchannel)
+            .set_no_response(true)
+            .exec(self)
+    }
+
+    /// Unsubscribes from a channel(s).
+    ///
+    /// This only works if the connection was configured with [ProtocolVersion::RESP3] and [Self::set_push_sender].
+    pub fn unsubscribe_resp3<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
+        check_resp3!(self.protocol);
+        cmd("UNSUBSCRIBE")
+            .arg(channel)
+            .set_no_response(true)
+            .exec(self)
+    }
+
+    /// Unsubscribes from channel pattern(s).
+    ///
+    /// This only works if the connection was configured with [ProtocolVersion::RESP3] and [Self::set_push_sender].
+    pub fn punsubscribe_resp3<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
+        check_resp3!(self.protocol);
+        cmd("PUNSUBSCRIBE")
+            .arg(pchannel)
+            .set_no_response(true)
+            .exec(self)
     }
 }
 

@@ -190,30 +190,6 @@ pub use runtime::prefer_smol;
 pub use runtime::prefer_tokio;
 pub(super) use runtime::*;
 
-macro_rules! check_resp3 {
-    ($protocol: expr) => {
-        use crate::types::ProtocolVersion;
-        if $protocol == ProtocolVersion::RESP2 {
-            return Err(RedisError::from((
-                crate::ErrorKind::InvalidClientConfig,
-                "RESP3 is required for this command",
-            )));
-        }
-    };
-
-    ($protocol: expr, $message: expr) => {
-        use crate::types::ProtocolVersion;
-        if $protocol == ProtocolVersion::RESP2 {
-            return Err(RedisError::from((
-                crate::ErrorKind::InvalidClientConfig,
-                $message,
-            )));
-        }
-    };
-}
-
-pub(crate) use check_resp3;
-
 /// An error showing that the receiver
 pub struct SendError;
 

@@ -245,6 +245,55 @@
 //! who use the low-level `Value` type, and to receive out of band messages on the same connection. This allows the user to receive PubSub
 //! messages on the same connection, instead of creating a new PubSub connection (see "RESP3 async pubsub").
 //!
+
+//!
+//! ## RESP3 pubsub
+//! If you're targeting a Redis/Valkey server of version 6 or above, you can receive
+//! pubsub messages from it without creating another connection, by setting a push sender on the connection.
+//!
+//! ```rust,no_run
+//! # #[cfg(feature = "aio")]
+//! # {
+//! # use futures::prelude::*;
+//! # use redis::AsyncCommands;
+//!
+//! # async fn func() -> redis::RedisResult<()> {
+//! let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
+//! let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+//! let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
+//! let mut con = client.get_multiplexed_async_connection_with_config(&config).await?;
+//! con.subscribe(&["channel_1", "channel_2"]).await?;
+//!
+//! loop {
+//!   println!("Received {:?}", rx.recv().await.unwrap());
+//! }
+//! # Ok(()) }
+//! # }
+//! ```
+//!
+//! sync example:
+//!
+//! ```rust,no_run
+//! # {
+//! # use redis::TypedCommands;
+//!
+//! # async fn func() -> redis::RedisResult<()> {
+//! let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
+//! let (tx, rx) = std::sync::mpsc::channel();
+//! let mut con = client.get_connection().unwrap();
+//! con.set_push_sender(tx);
+//! con.subscribe_resp3(&["channel_1", "channel_2"])?;
+//!
+//! loop {
+//!   std::thread::sleep(std::time::Duration::from_millis(10));
+//!   // the connection only reads when actively polled, so it must constantly send and receive requests.
+//!   _ = con.ping().unwrap();
+//!   println!("Received {:?}", rx.try_recv().unwrap());
+//! }
+//! # Ok(()) }
+//! # }
+//!  ```
+//!
 //! # Iteration Protocol
 //!
 //! In addition to sending a single query, iterators are also supported.  When
@@ -384,30 +433,6 @@
 //!     println!("channel '{}': {}", msg.get_channel_name(), payload);
 //! }
 //! # Ok(()) }
-//! ```
-//!
-//! ## RESP3 async pubsub
-//! If you're targeting a Redis/Valkey server of version 6 or above, you can receive
-//! pubsub messages from it without creating another connection, by setting a push sender on the connection.
-//!
-//! ```rust,no_run
-//! # #[cfg(feature = "aio")]
-//! # {
-//! # use futures::prelude::*;
-//! # use redis::AsyncCommands;
-//!
-//! # async fn func() -> redis::RedisResult<()> {
-//! let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
-//! let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-//! let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
-//! let mut con = client.get_multiplexed_async_connection_with_config(&config).await?;
-//! con.subscribe(&["channel_1", "channel_2"]).await?;
-//!
-//! loop {
-//!   println!("Received {:?}", rx.recv().await.unwrap());
-//! }
-//! # Ok(()) }
-//! # }
 //! ```
 //!
 #![cfg_attr(
@@ -735,6 +760,30 @@ pub mod io;
 mod parser;
 mod script;
 mod types;
+
+macro_rules! check_resp3 {
+    ($protocol: expr) => {
+        use crate::types::ProtocolVersion;
+        if $protocol == ProtocolVersion::RESP2 {
+            return Err(RedisError::from((
+                crate::ErrorKind::InvalidClientConfig,
+                "RESP3 is required for this command",
+            )));
+        }
+    };
+
+    ($protocol: expr, $message: expr) => {
+        use crate::types::ProtocolVersion;
+        if $protocol == ProtocolVersion::RESP2 {
+            return Err(RedisError::from((
+                crate::ErrorKind::InvalidClientConfig,
+                $message,
+            )));
+        }
+    };
+}
+
+pub(crate) use check_resp3;
 
 #[cfg(test)]
 mod tests {

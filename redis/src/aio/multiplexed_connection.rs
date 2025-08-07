@@ -1,12 +1,12 @@
 use super::{AsyncPushSender, ConnectionLike, Runtime, SharedHandleContainer, TaskHandle};
-use crate::aio::{check_resp3, setup_connection};
+use crate::aio::setup_connection;
 #[cfg(feature = "cache-aio")]
 use crate::caching::{CacheManager, CacheStatistics, PrepareCacheResult};
-use crate::cmd::Cmd;
 use crate::parser::ValueCodec;
 use crate::types::{closed_connection_error, RedisError, RedisFuture, RedisResult, Value};
 use crate::{
-    cmd, AsyncConnectionConfig, ProtocolVersion, PushInfo, RedisConnectionInfo, ToRedisArgs,
+    check_resp3, cmd, cmd::Cmd, AsyncConnectionConfig, ProtocolVersion, PushInfo,
+    RedisConnectionInfo, ToRedisArgs,
 };
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},

@@ -104,7 +104,8 @@ use std::{
 mod request;
 mod routing;
 use crate::{
-    aio::{check_resp3, ConnectionLike, HandleContainer, MultiplexedConnection, Runtime},
+    aio::{ConnectionLike, HandleContainer, MultiplexedConnection, Runtime},
+    check_resp3,
     cluster::{get_connection_info, slot_cmd},
     cluster_client::ClusterParams,
     cluster_routing::{

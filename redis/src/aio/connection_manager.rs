@@ -2,8 +2,8 @@ use super::{AsyncPushSender, HandleContainer, RedisFuture};
 #[cfg(feature = "cache-aio")]
 use crate::caching::CacheManager;
 use crate::{
-    aio::{check_resp3, ConnectionLike, MultiplexedConnection, Runtime},
-    cmd,
+    aio::{ConnectionLike, MultiplexedConnection, Runtime},
+    check_resp3, cmd,
     subscription_tracker::{SubscriptionAction, SubscriptionTracker},
     types::{RedisError, RedisResult, Value},
     AsyncConnectionConfig, Client, Cmd, Pipeline, ProtocolVersion, PushInfo, PushKind, ToRedisArgs,
