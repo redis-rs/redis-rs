@@ -2700,11 +2700,9 @@ implement_commands! {
 
     // script commands
 
-    /// Adds a prepared script command to the pipeline.
+    /// Load a script.
     ///
-    /// Note: unlike a call to [`invoke`](crate::ScriptInvocation::invoke), if the script isn't loaded during the pipeline operation,
-    /// it will not automatically be loaded and retried. The script can be loaded using the
-    /// [`load`](crate::ScriptInvocation::load) operation.
+    /// See [`invoke_script`](Self::invoke_script) to actually run the scripts.
     #[cfg_attr(feature = "script", doc = r##"
 
 # Examples:
@@ -2716,14 +2714,48 @@ implement_commands! {
 let script = redis::Script::new(r"
     return tonumber(ARGV[1]) + tonumber(ARGV[2]);
 ");
-script.prepare_invoke().load(&mut con)?;
-let (a, b): (isize, isize) = redis::pipe()
+let (load_res, invok_res): (String, isize) = redis::pipe()
+    .load_script(&script)
+    .invoke_script(script.arg(1).arg(2))
+    .query(&mut con)?;
+
+assert_eq!(load_res, "1ca80f2366c125a7c43519ce241d5c24c2b64023");
+assert_eq!(invok_res, 3);
+# Ok(()) }
+```
+"##)]
+    #[cfg(feature = "script")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "script")))]
+    fn load_script<>(script: &'a crate::Script) -> Generic {
+        &mut script.load_cmd()
+    }
+
+    /// Invoke a prepared script.
+    ///
+    /// Note: Unlike[`ScriptInvocation::invoke`](crate::ScriptInvocation::invoke), this function
+    /// does _not_ automatically load the script. If the invoked script did not get loaded beforehand, you
+    /// need to manually load it (e.g.: using [`load_script`](Self::load_script) or
+    /// [`ScriptInvocation::load`](crate::ScriptInvocation::load)). Otherwise this command will fail.
+    #[cfg_attr(feature = "script", doc = r##"
+
+# Examples:
+
+```rust,no_run
+# fn do_something() -> redis::RedisResult<()> {
+# let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+# let mut con = client.get_connection().unwrap();
+let script = redis::Script::new(r"
+    return tonumber(ARGV[1]) + tonumber(ARGV[2]);
+");
+let (load_res, invok_1_res, invok_2_res): (String, isize, isize) = redis::pipe()
+    .load_script(&script)
     .invoke_script(script.arg(1).arg(2))
     .invoke_script(script.arg(2).arg(3))
     .query(&mut con)?;
 
-assert_eq!(a, 3);
-assert_eq!(b, 5);
+assert_eq!(load_res, "1ca80f2366c125a7c43519ce241d5c24c2b64023");
+assert_eq!(invok_1_res, 3);
+assert_eq!(invok_2_res, 5);
 # Ok(()) }
 ```
 "##)]
