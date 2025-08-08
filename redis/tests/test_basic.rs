@@ -3689,7 +3689,6 @@ mod basic {
         pubsub_con.set_push_sender(tx);
 
         // `set_no_response` is used because in RESP3
-        // SUBSCRIPE/PSUBSCRIBE and UNSUBSCRIBE/PUNSUBSCRIBE commands doesn't return any reply only push messages
         pubsub_con.subscribe_resp3("foo").unwrap();
         pubsub_con.psubscribe_resp3("bar*").unwrap();
 

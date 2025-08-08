@@ -260,8 +260,12 @@ name = "async-await"
 required-features = ["aio"]
 
 [[example]]
-name = "async-pub-sub"
+name = "async-resp2-pub-sub"
 required-features = ["aio"]
+
+[[example]]
+name = "async-resp3-pub-sub"
+required-features = ["aio", "connection-manager"]
 
 [[example]]
 name = "async-scan"

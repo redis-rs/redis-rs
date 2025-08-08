@@ -240,8 +240,10 @@ jobs:
         run: cargo run --example async-connection-loss --features tokio-comp,connection-manager -- reconnect
       - name: async-multiplexed
         run: cargo run --example async-multiplexed --features tokio-comp
-      - name: async-pub-sub
-        run: cargo run --example async-pub-sub --features tokio-comp
+      - name: async-resp2-pub-sub
+        run: cargo run --example async-resp2-pub-sub --features tokio-comp
+      - name: async-resp3-pub-sub
+        run: cargo run --example async-resp3-pub-sub --features tokio-comp,connection-manager        
       - name: async-scan
         run: cargo run --example async-scan --features tokio-comp
 
