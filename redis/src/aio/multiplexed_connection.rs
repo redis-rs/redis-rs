@@ -735,9 +735,10 @@ impl MultiplexedConnection {
     /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     /// let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
     /// let mut con = client.get_multiplexed_async_connection_with_config(&config).await?;
-    /// con.subscribe(&["channel_1", "channel_2"]).await?;
-    /// con.unsubscribe(&["channel_1", "channel_2"]).await?;
-    /// # Ok(()) }
+    /// con.psubscribe("channel*_1").await?;
+    /// con.psubscribe(&["channel*_2", "channel*_3"]).await?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
