@@ -3688,15 +3688,9 @@ mod basic {
         let mut pubsub_con = ctx.connection();
         pubsub_con.set_push_sender(tx);
 
-        {
-            // `set_no_response` is used because in RESP3
-            // SUBSCRIPE/PSUBSCRIBE and UNSUBSCRIBE/PUNSUBSCRIBE commands doesn't return any reply only push messages
-            redis::cmd("SUBSCRIBE")
-                .arg("foo")
-                .set_no_response(true)
-                .exec(&mut pubsub_con)
-                .unwrap();
-        }
+        pubsub_con.subscribe_resp3("foo").unwrap();
+        pubsub_con.psubscribe_resp3("bar*").unwrap();
+
         // We are using different redis connection to send PubSub message but it's okay to re-use the same connection.
         redis::cmd("PUBLISH")
             .arg("foo")
@@ -3704,7 +3698,7 @@ mod basic {
             .exec(&mut con)
             .unwrap();
         // We can also call the command directly
-        assert_eq!(con.publish("foo", 23), Ok(1));
+        assert_eq!(con.publish("barvaz", 23), Ok(1));
 
         // In sync connection it can't receive push messages from socket without requesting some command
         redis::cmd("PING").exec(&mut pubsub_con).unwrap();
@@ -3715,6 +3709,14 @@ mod basic {
             (
                 PushKind::Subscribe,
                 vec![Value::BulkString("foo".as_bytes().to_vec()), Value::Int(1)]
+            ),
+            (kind, data)
+        );
+        let PushInfo { kind, data } = rx.try_recv().unwrap();
+        assert_eq!(
+            (
+                PushKind::PSubscribe,
+                vec![Value::BulkString("bar*".as_bytes().to_vec()), Value::Int(2)]
             ),
             (kind, data)
         );
@@ -3733,14 +3735,43 @@ mod basic {
         let PushInfo { kind, data } = rx.try_recv().unwrap();
         assert_eq!(
             (
-                PushKind::Message,
+                PushKind::PMessage,
                 vec![
-                    Value::BulkString("foo".as_bytes().to_vec()),
+                    Value::BulkString("bar*".as_bytes().to_vec()),
+                    Value::BulkString("barvaz".as_bytes().to_vec()),
                     Value::BulkString("23".as_bytes().to_vec())
                 ]
             ),
             (kind, data)
         );
+
+        pubsub_con.unsubscribe_resp3("foo").unwrap();
+        pubsub_con.punsubscribe_resp3("bar*").unwrap();
+        pubsub_con.ping().unwrap();
+
+        assert_eq!(con.publish("foo", 23), Ok(0));
+        assert_eq!(con.publish("barvaz", 42), Ok(0));
+
+        // We have received verification from Redis that it's unsubscribed to channel.
+        let PushInfo { kind, data } = rx.try_recv().unwrap();
+        assert_eq!(
+            (
+                PushKind::Unsubscribe,
+                vec![Value::BulkString("foo".as_bytes().to_vec()), Value::Int(1)]
+            ),
+            (kind, data)
+        );
+        let PushInfo { kind, data } = rx.try_recv().unwrap();
+        assert_eq!(
+            (
+                PushKind::PUnsubscribe,
+                vec![Value::BulkString("bar*".as_bytes().to_vec()), Value::Int(0)]
+            ),
+            (kind, data)
+        );
+
+        // check that no additional message was sent.
+        rx.try_recv().unwrap_err();
     }
 
     #[test]

@@ -2,8 +2,8 @@ use super::{AsyncPushSender, HandleContainer, RedisFuture};
 #[cfg(feature = "cache-aio")]
 use crate::caching::CacheManager;
 use crate::{
-    aio::{check_resp3, ConnectionLike, MultiplexedConnection, Runtime},
-    cmd,
+    aio::{ConnectionLike, MultiplexedConnection, Runtime},
+    check_resp3, cmd,
     subscription_tracker::{SubscriptionAction, SubscriptionTracker},
     types::{RedisError, RedisResult, Value},
     AsyncConnectionConfig, Client, Cmd, Pipeline, ProtocolVersion, PushInfo, PushKind, ToRedisArgs,
@@ -634,6 +634,18 @@ impl ConnectionManager {
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that unless [ConnectionManagerConfig::set_automatic_resubscription] was called,
     /// the subscription will be removed on a disconnect and must be re-subscribed.
+    ///  
+    /// ```rust,no_run
+    /// # async fn func() -> redis::RedisResult<()> {
+    /// let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
+    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    /// let config = redis::aio::ConnectionManagerConfig::new().set_push_sender(tx);
+    /// let mut con = client.get_connection_manager_with_config(config).await?;
+    /// con.psubscribe("channel*_1").await?;
+    /// con.psubscribe(&["channel*_2", "channel*_3"]).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.0.client.connection_info.redis.protocol);
         let mut cmd = cmd("SUBSCRIBE");
@@ -666,6 +678,18 @@ impl ConnectionManager {
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that unless [ConnectionManagerConfig::set_automatic_resubscription] was called,
     /// the subscription will be removed on a disconnect and must be re-subscribed.
+    ///
+    /// ```rust,no_run
+    /// # async fn func() -> redis::RedisResult<()> {
+    /// let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
+    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    /// let config = redis::aio::ConnectionManagerConfig::new().set_push_sender(tx);
+    /// let mut con = client.get_connection_manager_with_config(config).await?;
+    /// con.psubscribe("channel*_1").await?;
+    /// con.psubscribe(&["channel*_2", "channel*_3"]).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.0.client.connection_info.redis.protocol);
         let mut cmd = cmd("PSUBSCRIBE");

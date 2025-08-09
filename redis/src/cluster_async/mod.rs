@@ -104,7 +104,8 @@ use std::{
 mod request;
 mod routing;
 use crate::{
-    aio::{check_resp3, ConnectionLike, HandleContainer, MultiplexedConnection, Runtime},
+    aio::{ConnectionLike, HandleContainer, MultiplexedConnection, Runtime},
+    check_resp3,
     cluster::{get_connection_info, slot_cmd},
     cluster_client::ClusterParams,
     cluster_routing::{
@@ -279,6 +280,19 @@ where
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that the subscription will be automatically resubscribed after disconnections, so the user might
     /// receive additional pushes with [crate::PushKind::Subscribe], later after the subscription completed.
+    ///
+    /// ```rust,no_run
+    /// # async fn func() -> redis::RedisResult<()> {
+    /// let nodes = vec!["redis://127.0.0.1/protocol=3"];
+    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    /// let client = redis::cluster::ClusterClientBuilder::new(nodes)
+    ///   .use_protocol(redis::ProtocolVersion::RESP3)
+    ///   .push_sender(tx).build()?;
+    /// let mut con = client.get_async_connection().await?;
+    /// con.subscribe(&["channel_1", "channel_2"]).await?;
+    /// con.unsubscribe(&["channel_1", "channel_2"]).await?;
+    /// # Ok(()) }
+    /// ```
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.state.protocol);
         let mut cmd = cmd("SUBSCRIBE");
@@ -306,6 +320,21 @@ where
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that the subscription will be automatically resubscribed after disconnections, so the user might
     /// receive additional pushes with [crate::PushKind::PSubscribe], later after the subscription completed.
+    ///
+    /// ```rust,no_run
+    /// # #[cfg(feature = "aio")]
+    /// # async fn do_something() -> redis::RedisResult<()> {
+    /// let nodes = vec!["redis://127.0.0.1/protocol=3"];
+    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    /// let client = redis::cluster::ClusterClientBuilder::new(nodes)
+    ///   .use_protocol(redis::ProtocolVersion::RESP3)
+    ///   .push_sender(tx).build()?;
+    /// let mut connection = client.get_async_connection().await?;
+    /// connection.psubscribe("channel*_1").await?;
+    /// connection.psubscribe(&["channel*_2", "channel*_3"]).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.state.protocol);
         let mut cmd = cmd("PSUBSCRIBE");
@@ -333,6 +362,19 @@ where
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that the subscription will be automatically resubscribed after disconnections, so the user might
     /// receive additional pushes with [crate::PushKind::SSubscribe], later after the subscription completed.
+    ///
+    /// ```rust,no_run
+    /// # async fn func() -> redis::RedisResult<()> {
+    /// let nodes = vec!["redis://127.0.0.1/protocol=3"];
+    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    /// let client = redis::cluster::ClusterClientBuilder::new(nodes)
+    ///   .use_protocol(redis::ProtocolVersion::RESP3)
+    ///   .push_sender(tx).build()?;
+    /// let mut connection = client.get_async_connection().await?;
+    /// connection.ssubscribe(&["channel_1", "channel_2"]).await?;
+    /// connection.sunsubscribe(&["channel_1", "channel_2"]).await?;
+    /// # Ok(()) }
+    /// ```
     pub async fn ssubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.state.protocol);
         let mut cmd = cmd("SSUBSCRIBE");
