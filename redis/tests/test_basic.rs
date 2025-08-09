@@ -3688,7 +3688,6 @@ mod basic {
         let mut pubsub_con = ctx.connection();
         pubsub_con.set_push_sender(tx);
 
-        // `set_no_response` is used because in RESP3
         pubsub_con.subscribe_resp3("foo").unwrap();
         pubsub_con.psubscribe_resp3("bar*").unwrap();
 
@@ -3746,8 +3745,6 @@ mod basic {
             (kind, data)
         );
 
-        // `set_no_response` is used because in RESP3
-        // SUBSCRIPE/PSUBSCRIBE and UNSUBSCRIBE/PUNSUBSCRIBE commands doesn't return any reply only push messages
         pubsub_con.unsubscribe_resp3("foo").unwrap();
         pubsub_con.punsubscribe_resp3("bar*").unwrap();
         pubsub_con.ping().unwrap();
@@ -3755,7 +3752,7 @@ mod basic {
         assert_eq!(con.publish("foo", 23), Ok(0));
         assert_eq!(con.publish("barvaz", 42), Ok(0));
 
-        // We have received verification from Redis that it's subscribed to channel.
+        // We have received verification from Redis that it's unsubscribed to channel.
         let PushInfo { kind, data } = rx.try_recv().unwrap();
         assert_eq!(
             (
