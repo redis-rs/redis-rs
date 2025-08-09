@@ -1,3 +1,20 @@
+### 0.32.5 (2025-08-10)
+
+#### Changes & Bug fixes
+
+* Added `async_get_all_replicas` & `get_all_replicas` methods ([#1728](https://github.com/redis-rs/redis-rs/pull/1728) by @siddharthteli12)
+* Support Redis 8.2 stream command extensions and new deletion commands ([#1743](https://github.com/redis-rs/redis-rs/pull/1743) by @StefanPalashev)
+* Make `Script`'s `load_cmd` public ([#1731](https://github.com/redis-rs/redis-rs/pull/1731) by @somechris)
+* Clarify difference between RESP2 and RESP3 pubsub. ([#1750](https://github.com/redis-rs/redis-rs/pull/1750) by @nihohit)
+
+#### Documentation & CI improvements
+
+* Add Cmd tests. ([#1751](https://github.com/redis-rs/redis-rs/pull/1751) by @nihohit)
+* test: Fix clippy warnings about `ref instead of clone` in stream tests ([#1748](https://github.com/redis-rs/redis-rs/pull/1748) by @somechris)
+* docs: Fix usage of command/script of `ScriptInvocation::eval_cmd` ([#1749](https://github.com/redis-rs/redis-rs/pull/1749) by @somechris)
+* Remove usage of criterion's blackbox in benches. ([#1745](https://github.com/redis-rs/redis-rs/pull/1745) by @nihohit)
+* Further limit flag frenzy checks ([#1725](https://github.com/redis-rs/redis-rs/pull/1725) by @nihohit)
+
 ### 0.32.4 (2025-07-13)
 
 #### Changes & Bug fixes
