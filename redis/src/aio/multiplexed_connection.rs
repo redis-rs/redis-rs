@@ -8,7 +8,8 @@ use crate::{
     errors::{closed_connection_error, RedisError},
     parser::ValueCodec,
     types::{RedisFuture, RedisResult, Value},
-    AsyncConnectionConfig, ProtocolVersion, PushInfo, RedisConnectionInfo, ToRedisArgs,
+    AsyncConnectionConfig, ProtocolVersion, PushInfo, RedisConnectionInfo, ServerError,
+    ToRedisArgs,
 };
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -33,11 +34,17 @@ use tokio_util::codec::Decoder;
 // Senders which the result of a single request are sent through
 type PipelineOutput = oneshot::Sender<RedisResult<Value>>;
 
+enum ErrorOrErrors {
+    Errors(Vec<(usize, ServerError)>),
+    // only set if we receive a transmission error
+    FirstError(RedisError),
+}
+
 enum ResponseAggregate {
     SingleCommand,
     Pipeline {
         buffer: Vec<Value>,
-        first_err: Option<RedisError>,
+        error_or_errors: ErrorOrErrors,
         expectation: PipelineResponseExpectation,
     },
 }
@@ -50,6 +57,7 @@ struct PipelineResponseExpectation {
     expected_response_count: usize,
     // whether the pipelined request is a transaction
     is_transaction: bool,
+    seen_responses: usize,
 }
 
 impl ResponseAggregate {
@@ -57,7 +65,7 @@ impl ResponseAggregate {
         match expectation {
             Some(expectation) => ResponseAggregate::Pipeline {
                 buffer: Vec::new(),
-                first_err: None,
+                error_or_errors: ErrorOrErrors::Errors(Vec::new()),
                 expectation,
             },
             None => ResponseAggregate::SingleCommand,
@@ -208,19 +216,29 @@ where
             }
             ResponseAggregate::Pipeline {
                 buffer,
-                first_err,
+                error_or_errors,
                 expectation:
                     PipelineResponseExpectation {
                         expected_response_count,
                         skipped_response_count,
                         is_transaction,
+                        seen_responses,
                     },
             } => {
+                *seen_responses += 1;
                 if *skipped_response_count > 0 {
-                    // errors in skipped values are still counted for errors in transactions, since they're errors that will cause the transaction to fail,
+                    // server errors in skipped values are still counted for errors in transactions, since they're errors that will cause the transaction to fail,
                     // and we only skip values in transaction.
-                    if first_err.is_none() && *is_transaction {
-                        *first_err = result.and_then(Value::extract_error).err();
+                    if *is_transaction {
+                        if let ErrorOrErrors::Errors(errs) = error_or_errors {
+                            match result {
+                                Ok(Value::ServerError(err)) => {
+                                    errs.push((*seen_responses - 2, err)); // -2 - 1 for the early increment, and 1 for the MULTI call.
+                                }
+                                Err(err) => *error_or_errors = ErrorOrErrors::FirstError(err),
+                                _ => {}
+                            }
+                        }
                     }
 
                     *skipped_response_count -= 1;
@@ -233,8 +251,8 @@ where
                         buffer.push(item);
                     }
                     Err(err) => {
-                        if first_err.is_none() {
-                            *first_err = Some(err);
+                        if matches!(error_or_errors, ErrorOrErrors::Errors(_)) {
+                            *error_or_errors = ErrorOrErrors::FirstError(err)
                         }
                     }
                 }
@@ -245,10 +263,17 @@ where
                     return;
                 }
 
-                let response = match first_err.take() {
-                    Some(err) => Err(err),
-                    None => Ok(Value::Array(std::mem::take(buffer))),
-                };
+                let response =
+                    match std::mem::replace(error_or_errors, ErrorOrErrors::Errors(Vec::new())) {
+                        ErrorOrErrors::Errors(errors) => {
+                            if errors.is_empty() {
+                                Ok(Value::Array(std::mem::take(buffer)))
+                            } else {
+                                Err(RedisError::make_aborted_transaction(errors))
+                            }
+                        }
+                        ErrorOrErrors::FirstError(redis_error) => Err(redis_error),
+                    };
 
                 // `Err` means that the receiver was dropped in which case it does not
                 // care about the output and we can continue by just dropping the value
@@ -568,6 +593,7 @@ impl MultiplexedConnection {
                                 skipped_response_count: 0,
                                 expected_response_count: pipeline.commands.len(),
                                 is_transaction: false,
+                                seen_responses: 0,
                             }),
                             self.response_timeout,
                         )
@@ -604,6 +630,7 @@ impl MultiplexedConnection {
                         skipped_response_count,
                         expected_response_count,
                         is_transaction: cacheable_pipeline.transaction_mode,
+                        seen_responses: 0,
                     }),
                     self.response_timeout,
                 )
@@ -619,6 +646,7 @@ impl MultiplexedConnection {
                     skipped_response_count: offset,
                     expected_response_count: count,
                     is_transaction: cmd.is_transaction(),
+                    seen_responses: 0,
                 }),
                 self.response_timeout,
             )

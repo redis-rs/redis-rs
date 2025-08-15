@@ -1880,6 +1880,7 @@ impl ConnectionLike for Connection {
         self.send_bytes(cmd)?;
         let mut rv = vec![];
         let mut first_err = None;
+        let mut server_errors = vec![];
         let mut count = count;
         let mut idx = 0;
         while idx < (offset + count) {
@@ -1891,9 +1892,7 @@ impl ConnectionLike for Connection {
             match response {
                 Ok(Value::ServerError(err)) => {
                     if idx < offset {
-                        if first_err.is_none() {
-                            first_err = Some(err.into());
-                        }
+                        server_errors.push((idx - 1, err)); // -1, because of the first MULTI
                     } else {
                         rv.push(Value::ServerError(err));
                     }
@@ -1918,6 +1917,10 @@ impl ConnectionLike for Connection {
                 }
             }
             idx += 1;
+        }
+
+        if !server_errors.is_empty() {
+            return Err(RedisError::make_aborted_transaction(server_errors));
         }
 
         first_err.map_or(Ok(rv), Err)

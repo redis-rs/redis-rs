@@ -80,6 +80,7 @@ enum ErrorRepr {
     Parsing(ParsingError),
     Server(ServerError),
     Pipeline(Arc<[(usize, ServerError)]>),
+    TransactionAborted(Arc<[(usize, ServerError)]>),
 }
 
 impl PartialEq for RedisError {
@@ -198,6 +199,20 @@ impl fmt::Display for RedisError {
                 }
                 f.write_str("]")
             }
+            ErrorRepr::TransactionAborted(items) => {
+                f.write_str("Transaction aborted: [")?;
+
+                let mut first = true;
+                for (index, error) in items.iter() {
+                    if first {
+                        write!(f, "(Index {index}, error: {error})")?;
+                        first = false;
+                    } else {
+                        write!(f, ", (Index {index}, error: {error})")?;
+                    }
+                }
+                f.write_str("]")
+            }
         }
     }
 }
@@ -237,6 +252,7 @@ impl RedisError {
                 .first()
                 .and_then(|item| item.1.kind().map(|kind| kind.into()))
                 .unwrap_or(ErrorKind::Extension),
+            ErrorRepr::TransactionAborted(..) => ErrorKind::Server(ServerErrorKind::ExecAbort),
         }
     }
 
@@ -437,9 +453,27 @@ impl RedisError {
         }
     }
 
+    /// Returns the internal server errors, if there are any, and the index of the pipeline where they happened.
+    ///
+    /// If the error is not a pipeline error, the index will be 0.
+    pub fn into_server_errors(self) -> Option<Arc<[(usize, ServerError)]>> {
+        match self.repr {
+            ErrorRepr::Pipeline(items) => Some(items),
+            ErrorRepr::TransactionAborted(errs) => Some(errs),
+            ErrorRepr::Server(err) => Some(Arc::from([(0, err)])),
+            _ => None,
+        }
+    }
+
     pub(crate) fn pipeline(errors: Vec<(usize, ServerError)>) -> Self {
         Self {
             repr: ErrorRepr::Pipeline(Arc::from(errors)),
+        }
+    }
+
+    pub(crate) fn make_aborted_transaction(errs: Vec<(usize, ServerError)>) -> Self {
+        Self {
+            repr: ErrorRepr::TransactionAborted(Arc::from(errs)),
         }
     }
 }

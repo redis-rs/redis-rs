@@ -432,15 +432,24 @@ mod basic_async {
                     .unwrap();
 
                 // Ensure that a write command fails with a READONLY error
-                let err: RedisResult<()> = redis::pipe()
+                let err = redis::pipe()
                     .atomic()
+                    .ping()
                     .set("x", 142)
                     .ignore()
                     .get("x")
-                    .query_async(&mut con)
-                    .await;
+                    .set("x", 142)
+                    .query_async::<()>(&mut con)
+                    .await
+                    .unwrap_err();
 
-                assert_eq!(err.unwrap_err().kind(), ServerErrorKind::ReadOnly.into());
+                assert_eq!(err.kind(), ServerErrorKind::ExecAbort.into());
+                let errors = err.into_server_errors().unwrap();
+                assert_eq!(errors.len(), 2);
+                assert_eq!(errors[0].0, 1);
+                assert_eq!(errors[0].1.kind(), ServerErrorKind::ReadOnly.into());
+                assert_eq!(errors[1].0, 3);
+                assert_eq!(errors[1].1.kind(), ServerErrorKind::ReadOnly.into());
 
                 let x: i32 = con.get("x").await.unwrap();
                 assert_eq!(x, 42);
