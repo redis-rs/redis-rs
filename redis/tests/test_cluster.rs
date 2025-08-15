@@ -262,10 +262,10 @@ mod cluster {
             .query::<Vec<redis::Value>>(&mut con)
             .unwrap();
 
-        let resp_1: String = FromRedisValue::from_redis_value(&resp[0]).unwrap();
+        let resp_1: String = FromRedisValue::from_redis_value_ref(&resp[0]).unwrap();
         assert_eq!(resp_1, "value_1".to_string());
 
-        let resp_2: usize = FromRedisValue::from_redis_value(&resp[1]).unwrap();
+        let resp_2: usize = FromRedisValue::from_redis_value_ref(&resp[1]).unwrap();
         assert_eq!(resp_2, 1);
     }
 

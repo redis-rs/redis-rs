@@ -63,8 +63,8 @@ impl<T> Coord<T> {
 }
 
 impl<T: FromRedisValue> FromRedisValue for Coord<T> {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
-        let values: Vec<T> = FromRedisValue::from_redis_value(v)?;
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
+        let values: Vec<T> = FromRedisValue::from_redis_value_ref(v)?;
         let mut values = values.into_iter();
         let (longitude, latitude) = match (values.next(), values.next(), values.next()) {
             (Some(longitude), Some(latitude), None) => (longitude, latitude),
@@ -264,9 +264,9 @@ pub struct RadiusSearchResult {
 }
 
 impl FromRedisValue for RadiusSearchResult {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
         // If we receive only the member name, it will be a plain string
-        if let Ok(name) = FromRedisValue::from_redis_value(v) {
+        if let Ok(name) = FromRedisValue::from_redis_value_ref(v) {
             return Ok(RadiusSearchResult {
                 name,
                 coord: None,
@@ -290,7 +290,7 @@ impl RadiusSearchResult {
         let mut iter = items.iter();
 
         // First item is always the member name
-        let name: String = match iter.next().map(FromRedisValue::from_redis_value) {
+        let name: String = match iter.next().map(FromRedisValue::from_redis_value_ref) {
             Some(Ok(n)) => n,
             _ => return None,
         };
@@ -298,7 +298,7 @@ impl RadiusSearchResult {
         let mut next = iter.next();
 
         // Next element, if present, will be the distance.
-        let dist = match next.map(FromRedisValue::from_redis_value) {
+        let dist = match next.map(FromRedisValue::from_redis_value_ref) {
             Some(Ok(c)) => {
                 next = iter.next();
                 Some(c)
@@ -308,7 +308,7 @@ impl RadiusSearchResult {
 
         // Finally, if present, the last item will be the coordinates
 
-        let coord = match next.map(FromRedisValue::from_redis_value) {
+        let coord = match next.map(FromRedisValue::from_redis_value_ref) {
             Some(Ok(c)) => Some(c),
             _ => None,
         };

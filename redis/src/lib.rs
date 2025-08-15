@@ -633,8 +633,8 @@ pub use crate::script::{Script, ScriptInvocation};
 #[rustfmt::skip]
 pub use crate::types::{
     // utility functions
+    from_redis_value_ref,
     from_redis_value,
-    from_owned_redis_value,
 
     // conversion traits
     FromRedisValue,

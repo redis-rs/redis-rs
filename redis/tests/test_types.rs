@@ -75,8 +75,8 @@ mod types {
     }
 
     /// The `FromRedisValue` trait provides two methods for parsing:
-    /// - `fn from_redis_value(&Value) -> Result<T, RedisError>`
-    /// - `fn from_owned_redis_value(Value) -> Result<T, RedisError>`
+    /// - `fn from_redis_value_ref(&Value) -> Result<T, RedisError>`
+    /// - `fn from_redis_value(Value) -> Result<T, RedisError>`
     ///
     /// The `RedisParseMode` below allows choosing between the two
     /// so that test logic does not need to be duplicated for each.
@@ -86,15 +86,15 @@ mod types {
     }
 
     impl RedisParseMode {
-        /// Calls either `FromRedisValue::from_owned_redis_value` or
-        /// `FromRedisValue::from_redis_value`.
+        /// Calls either `FromRedisValue::from_redis_value` or
+        /// `FromRedisValue::from_redis_value_ref`.
         fn parse_redis_value<T: redis::FromRedisValue>(
             &self,
             value: redis::Value,
         ) -> Result<T, redis::ParsingError> {
             match self {
-                Self::Owned => redis::FromRedisValue::from_owned_redis_value(value),
-                Self::Ref => redis::FromRedisValue::from_redis_value(&value),
+                Self::Owned => redis::FromRedisValue::from_redis_value(value),
+                Self::Ref => redis::FromRedisValue::from_redis_value_ref(&value),
             }
         }
     }
@@ -321,7 +321,7 @@ mod types {
             assert_eq!(v, Ok(vec![1_u16].into_boxed_slice()));
 
             assert_eq!(
-        Box::<[i32]>::from_redis_value(
+        Box::<[i32]>::from_redis_value_ref(
             &Value::BulkString("just a string".into())
         ).unwrap_err().to_string(),
         "Incompatible type - \"Conversion to alloc::boxed::Box<[i32]> failed.\" (value was bulk-string('\"just a string\"'))",
@@ -354,7 +354,7 @@ mod types {
             assert_eq!(v, Ok(Arc::from(vec![1_u16])));
 
             assert_eq!(
-            Arc::<[i32]>::from_redis_value(
+            Arc::<[i32]>::from_redis_value_ref(
                 &Value::BulkString("just a string".into())
             ).unwrap_err().to_string(),
             "Incompatible type - \"Conversion to alloc::sync::Arc<[i32]> failed.\" (value was bulk-string('\"just a string\"'))",
@@ -615,23 +615,23 @@ mod types {
         let uuid = Uuid::from_str("abab64b7-e265-4052-a41b-23e1e28674bf").unwrap();
         let bytes = uuid.as_bytes().to_vec();
 
-        let v: Result<Uuid, _> = FromRedisValue::from_redis_value(&Value::BulkString(bytes));
+        let v: Result<Uuid, _> = FromRedisValue::from_redis_value_ref(&Value::BulkString(bytes));
         assert_eq!(v, Ok(uuid));
 
         let v: Result<Uuid, _> =
-            FromRedisValue::from_redis_value(&Value::SimpleString("garbage".into()));
+            FromRedisValue::from_redis_value_ref(&Value::SimpleString("garbage".into()));
         assert!(v.is_err());
 
-        let v: Result<Uuid, _> = FromRedisValue::from_redis_value(&Value::Okay);
+        let v: Result<Uuid, _> = FromRedisValue::from_redis_value_ref(&Value::Okay);
         assert!(v.is_err());
 
-        let v: Result<Uuid, _> = FromRedisValue::from_redis_value(&Value::Nil);
+        let v: Result<Uuid, _> = FromRedisValue::from_redis_value_ref(&Value::Nil);
         assert!(v.is_err());
 
-        let v: Result<Uuid, _> = FromRedisValue::from_redis_value(&Value::Int(0));
+        let v: Result<Uuid, _> = FromRedisValue::from_redis_value_ref(&Value::Int(0));
         assert!(v.is_err());
 
-        let v: Result<Uuid, _> = FromRedisValue::from_redis_value(&Value::Int(42));
+        let v: Result<Uuid, _> = FromRedisValue::from_redis_value_ref(&Value::Int(42));
         assert!(v.is_err());
     }
 
@@ -779,7 +779,7 @@ mod types {
         let mut encoded_input = Vec::new();
         encode_value(&value, &mut encoded_input).unwrap();
 
-        let new_array: [usize; 1000] = FromRedisValue::from_redis_value(&value).unwrap();
+        let new_array: [usize; 1000] = FromRedisValue::from_redis_value_ref(&value).unwrap();
         assert_eq!(new_array, array);
     }
 
@@ -800,7 +800,7 @@ mod types {
         let mut encoded_input = Vec::new();
         encode_value(&value, &mut encoded_input).unwrap();
 
-        let new_array: [u8; 1000] = FromRedisValue::from_redis_value(&value).unwrap();
+        let new_array: [u8; 1000] = FromRedisValue::from_redis_value_ref(&value).unwrap();
         assert_eq!(new_array, array);
     }
 
@@ -824,7 +824,7 @@ mod types {
         let mut encoded_input = Vec::new();
         encode_value(&value, &mut encoded_input).unwrap();
 
-        let new_array: [String; 1000] = FromRedisValue::from_redis_value(&value).unwrap();
+        let new_array: [String; 1000] = FromRedisValue::from_redis_value_ref(&value).unwrap();
         assert_eq!(new_array, array);
     }
 
@@ -845,10 +845,10 @@ mod types {
         let mut encoded_input = Vec::new();
         encode_value(&value, &mut encoded_input).unwrap();
 
-        let new_array: [usize; 0] = FromRedisValue::from_redis_value(&value).unwrap();
+        let new_array: [usize; 0] = FromRedisValue::from_redis_value_ref(&value).unwrap();
         assert_eq!(new_array, array);
 
-        let new_array: [usize; 0] = FromRedisValue::from_redis_value(&Value::Nil).unwrap();
+        let new_array: [usize; 0] = FromRedisValue::from_redis_value_ref(&Value::Nil).unwrap();
         assert_eq!(new_array, array);
     }
 
@@ -859,12 +859,12 @@ mod types {
         let val = parse_redis_value(bytes).unwrap();
         {
             // The case user doesn't expect attributes from server
-            let x: Vec<i32> = redis::FromRedisValue::from_redis_value(&val).unwrap();
+            let x: Vec<i32> = redis::FromRedisValue::from_redis_value_ref(&val).unwrap();
             assert_eq!(x, vec![1, 2, 3]);
         }
         {
             // The case user wants raw value from server
-            let x: Value = FromRedisValue::from_redis_value(&val).unwrap();
+            let x: Value = FromRedisValue::from_redis_value_ref(&val).unwrap();
             assert_eq!(
                 x,
                 Value::Array(vec![

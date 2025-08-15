@@ -434,17 +434,17 @@ impl fmt::Debug for Value {
 pub type RedisResult<T> = Result<T, RedisError>;
 
 impl<T: FromRedisValue> FromRedisValue for RedisResult<T> {
-    fn from_redis_value(value: &Value) -> Result<Self, ParsingError> {
+    fn from_redis_value_ref(value: &Value) -> Result<Self, ParsingError> {
         match value {
             Value::ServerError(err) => Ok(Err(err.clone().into())),
-            _ => from_redis_value(value).map(|result| Ok(result)),
+            _ => from_redis_value_ref(value).map(|result| Ok(result)),
         }
     }
 
-    fn from_owned_redis_value(value: Value) -> Result<Self, ParsingError> {
+    fn from_redis_value(value: Value) -> Result<Self, ParsingError> {
         match value {
             Value::ServerError(err) => Ok(Err(err.into())),
-            _ => from_owned_redis_value(value).map(|result| Ok(result)),
+            _ => from_redis_value(value).map(|result| Ok(result)),
         }
     }
 }
@@ -500,7 +500,7 @@ impl InfoDict {
     /// Typical types are `String`, `bool` and integer types.
     pub fn get<T: FromRedisValue>(&self, key: &str) -> Option<T> {
         match self.find(&key) {
-            Some(x) => from_redis_value(x).ok(),
+            Some(x) => from_redis_value_ref(x).ok(),
             None => None,
         }
     }
@@ -578,11 +578,11 @@ pub struct ReplicaInfo {
 }
 
 impl FromRedisValue for ReplicaInfo {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
-        Self::from_owned_redis_value(v.clone())
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
+        Self::from_redis_value(v.clone())
     }
 
-    fn from_owned_redis_value(v: Value) -> Result<Self, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let v = match get_owned_inner_value(v).into_sequence() {
             Ok(v) => v,
             Err(v) => crate::errors::invalid_type_error!(v, "Replica response should be an array"),
@@ -591,9 +591,9 @@ impl FromRedisValue for ReplicaInfo {
             crate::errors::invalid_type_error!(v, "Replica array is too short, expected 3 elements")
         }
         let mut v = v.into_iter();
-        let ip = from_owned_redis_value(v.next().expect("len was checked"))?;
-        let port = from_owned_redis_value(v.next().expect("len was checked"))?;
-        let offset = from_owned_redis_value(v.next().expect("len was checked"))?;
+        let ip = from_redis_value(v.next().expect("len was checked"))?;
+        let port = from_redis_value(v.next().expect("len was checked"))?;
+        let offset = from_redis_value(v.next().expect("len was checked"))?;
         Ok(ReplicaInfo {
             ip,
             port,
@@ -603,11 +603,11 @@ impl FromRedisValue for ReplicaInfo {
 }
 
 impl FromRedisValue for Role {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
-        Self::from_owned_redis_value(v.clone())
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
+        Self::from_redis_value(v.clone())
     }
 
-    fn from_owned_redis_value(v: Value) -> Result<Self, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let v = match get_owned_inner_value(v).into_sequence() {
             Ok(v) => v,
             Err(v) => crate::errors::invalid_type_error!(v, "Role response should be an array"),
@@ -645,8 +645,8 @@ impl Role {
         let mut values = values.into_iter();
         _ = values.next();
 
-        let replication_offset = from_owned_redis_value(values.next().expect("len was checked"))?;
-        let replicas = from_owned_redis_value(values.next().expect("len was checked"))?;
+        let replication_offset = from_redis_value(values.next().expect("len was checked"))?;
+        let replicas = from_redis_value(values.next().expect("len was checked"))?;
 
         Ok(Role::Primary {
             replication_offset,
@@ -665,10 +665,10 @@ impl Role {
         let mut values = values.into_iter();
         _ = values.next();
 
-        let primary_ip = from_owned_redis_value(values.next().expect("len was checked"))?;
-        let primary_port = from_owned_redis_value(values.next().expect("len was checked"))?;
-        let replication_state = from_owned_redis_value(values.next().expect("len was checked"))?;
-        let data_received = from_owned_redis_value(values.next().expect("len was checked"))?;
+        let primary_ip = from_redis_value(values.next().expect("len was checked"))?;
+        let primary_port = from_redis_value(values.next().expect("len was checked"))?;
+        let replication_state = from_redis_value(values.next().expect("len was checked"))?;
+        let data_received = from_redis_value(values.next().expect("len was checked"))?;
 
         Ok(Role::Replica {
             primary_ip,
@@ -686,7 +686,7 @@ impl Role {
             )
         }
         let second_val = values.into_iter().nth(1).expect("len was checked");
-        let primary_names = from_owned_redis_value(second_val)?;
+        let primary_names = from_redis_value(second_val)?;
         Ok(Role::Sentinel { primary_names })
     }
 }
@@ -1373,9 +1373,9 @@ fn vec_to_array<T, const N: usize>(
 }
 
 impl<T: FromRedisValue, const N: usize> FromRedisValue for [T; N] {
-    fn from_redis_value(value: &Value) -> Result<[T; N], ParsingError> {
+    fn from_redis_value_ref(value: &Value) -> Result<[T; N], ParsingError> {
         match *value {
-            Value::BulkString(ref bytes) => match FromRedisValue::from_byte_vec(bytes) {
+            Value::BulkString(ref bytes) => match FromRedisValue::from_byte_slice(bytes) {
                 Some(items) => vec_to_array(items, value),
                 None => {
                     let msg = format!(
@@ -1386,7 +1386,7 @@ impl<T: FromRedisValue, const N: usize> FromRedisValue for [T; N] {
                 }
             },
             Value::Array(ref items) => {
-                let items = FromRedisValue::from_redis_values(items)?;
+                let items = FromRedisValue::from_redis_value_refs(items)?;
                 vec_to_array(items, value)
             }
             Value::Nil => vec_to_array(vec![], value),
@@ -1412,53 +1412,56 @@ pub trait FromRedisValue: Sized {
     /// Given a redis `Value` this attempts to convert it into the given
     /// destination type.  If that fails because it's not compatible an
     /// appropriate error is generated.
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError>;
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError>;
 
     /// Given a redis `Value` this attempts to convert it into the given
     /// destination type.  If that fails because it's not compatible an
     /// appropriate error is generated.
-    fn from_owned_redis_value(v: Value) -> Result<Self, ParsingError> {
-        // By default, fall back to `from_redis_value`.
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        // By default, fall back to `from_redis_value_ref`.
         // This function only needs to be implemented if it can benefit
         // from taking `v` by value.
-        Self::from_redis_value(&v)
+        Self::from_redis_value_ref(&v)
     }
 
-    /// Similar to `from_redis_value` but constructs a vector of objects
+    /// Similar to `from_redis_value_ref` but constructs a vector of objects
     /// from another vector of values.  This primarily exists internally
     /// to customize the behavior for vectors of tuples.
-    fn from_redis_values(items: &[Value]) -> Result<Vec<Self>, ParsingError> {
-        items.iter().map(FromRedisValue::from_redis_value).collect()
-    }
-
-    /// The same as `from_redis_values`, but takes a `Vec<Value>` instead
-    /// of a `&[Value]`.
-    fn from_owned_redis_values(items: Vec<Value>) -> Result<Vec<Self>, ParsingError> {
+    fn from_redis_value_refs(items: &[Value]) -> Result<Vec<Self>, ParsingError> {
         items
-            .into_iter()
-            .map(FromRedisValue::from_owned_redis_value)
+            .iter()
+            .map(FromRedisValue::from_redis_value_ref)
             .collect()
     }
 
-    /// The same as `from_owned_redis_values`, but returns a result for each
-    /// conversion to make handling them case-by-case possible.
-    fn from_each_owned_redis_values(items: Vec<Value>) -> Vec<Result<Self, ParsingError>> {
+    /// The same as `from_redis_value_refs`, but takes a `Vec<Value>` instead
+    /// of a `&[Value]`.
+    fn from_redis_values(items: Vec<Value>) -> Result<Vec<Self>, ParsingError> {
         items
             .into_iter()
-            .map(FromRedisValue::from_owned_redis_value)
+            .map(FromRedisValue::from_redis_value)
+            .collect()
+    }
+
+    /// The same as `from_redis_values`, but returns a result for each
+    /// conversion to make handling them case-by-case possible.
+    fn from_each_redis_values(items: Vec<Value>) -> Vec<Result<Self, ParsingError>> {
+        items
+            .into_iter()
+            .map(FromRedisValue::from_redis_value)
             .collect()
     }
 
     /// Convert bytes to a single element vector.
-    fn from_byte_vec(_vec: &[u8]) -> Option<Vec<Self>> {
-        Self::from_owned_redis_value(Value::BulkString(_vec.into()))
+    fn from_byte_slice(_vec: &[u8]) -> Option<Vec<Self>> {
+        Self::from_redis_value(Value::BulkString(_vec.into()))
             .map(|rv| vec![rv])
             .ok()
     }
 
     /// Convert bytes to a single element vector.
-    fn from_owned_byte_vec(_vec: Vec<u8>) -> Result<Vec<Self>, ParsingError> {
-        Self::from_owned_redis_value(Value::BulkString(_vec)).map(|rv| vec![rv])
+    fn from_byte_vec(_vec: Vec<u8>) -> Result<Vec<Self>, ParsingError> {
+        Self::from_redis_value(Value::BulkString(_vec)).map(|rv| vec![rv])
     }
 }
 
@@ -1516,7 +1519,7 @@ macro_rules! from_redis_value_for_num_internal {
 macro_rules! from_redis_value_for_num {
     ($t:ty) => {
         impl FromRedisValue for $t {
-            fn from_redis_value(v: &Value) -> Result<$t, ParsingError> {
+            fn from_redis_value_ref(v: &Value) -> Result<$t, ParsingError> {
                 from_redis_value_for_num_internal!($t, v)
             }
         }
@@ -1524,15 +1527,15 @@ macro_rules! from_redis_value_for_num {
 }
 
 impl FromRedisValue for u8 {
-    fn from_redis_value(v: &Value) -> Result<u8, ParsingError> {
+    fn from_redis_value_ref(v: &Value) -> Result<u8, ParsingError> {
         from_redis_value_for_num_internal!(u8, v)
     }
 
     // this hack allows us to specialize Vec<u8> to work with binary data.
-    fn from_byte_vec(vec: &[u8]) -> Option<Vec<u8>> {
+    fn from_byte_slice(vec: &[u8]) -> Option<Vec<u8>> {
         Some(vec.to_vec())
     }
-    fn from_owned_byte_vec(vec: Vec<u8>) -> Result<Vec<u8>, ParsingError> {
+    fn from_byte_vec(vec: Vec<u8>) -> Result<Vec<u8>, ParsingError> {
         Ok(vec)
     }
 }
@@ -1584,7 +1587,7 @@ macro_rules! from_redis_value_for_bignum_internal {
 macro_rules! from_redis_value_for_bignum {
     ($t:ty) => {
         impl FromRedisValue for $t {
-            fn from_redis_value(v: &Value) -> Result<$t, ParsingError> {
+            fn from_redis_value_ref(v: &Value) -> Result<$t, ParsingError> {
                 from_redis_value_for_bignum_internal!($t, v)
             }
         }
@@ -1601,7 +1604,7 @@ from_redis_value_for_bignum!(num_bigint::BigInt);
 from_redis_value_for_bignum!(num_bigint::BigUint);
 
 impl FromRedisValue for bool {
-    fn from_redis_value(v: &Value) -> Result<bool, ParsingError> {
+    fn from_redis_value_ref(v: &Value) -> Result<bool, ParsingError> {
         let v = get_inner_value(v);
         match *v {
             Value::Nil => Ok(false),
@@ -1632,7 +1635,7 @@ impl FromRedisValue for bool {
 }
 
 impl FromRedisValue for CString {
-    fn from_redis_value(v: &Value) -> Result<CString, ParsingError> {
+    fn from_redis_value_ref(v: &Value) -> Result<CString, ParsingError> {
         let v = get_inner_value(v);
         match *v {
             Value::BulkString(ref bytes) => Ok(CString::new(bytes.as_slice())?),
@@ -1641,7 +1644,7 @@ impl FromRedisValue for CString {
             _ => crate::errors::invalid_type_error!(v, "Response type not CString compatible."),
         }
     }
-    fn from_owned_redis_value(v: Value) -> Result<CString, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<CString, ParsingError> {
         let v = get_owned_inner_value(v);
         match v {
             Value::BulkString(bytes) => Ok(CString::new(bytes)?),
@@ -1653,7 +1656,7 @@ impl FromRedisValue for CString {
 }
 
 impl FromRedisValue for String {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
         let v = get_inner_value(v);
         match *v {
             Value::BulkString(ref bytes) => Ok(from_utf8(bytes)?.to_string()),
@@ -1669,7 +1672,7 @@ impl FromRedisValue for String {
         }
     }
 
-    fn from_owned_redis_value(v: Value) -> Result<Self, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let v = get_owned_inner_value(v);
         match v {
             Value::BulkString(bytes) => Ok(Self::from_utf8(bytes)?),
@@ -1690,13 +1693,13 @@ macro_rules! pointer_from_redis_value_impl {
     ) => {
         $(#[$attr])*
         impl<$id:  FromRedisValue> FromRedisValue for $ty {
-            fn from_redis_value(v: &Value) -> Result<Self, ParsingError>
+            fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError>
             {
-                FromRedisValue::from_redis_value(v).map($func)
+                FromRedisValue::from_redis_value_ref(v).map($func)
             }
 
-            fn from_owned_redis_value(v: Value) -> Result<Self, ParsingError>{
-                FromRedisValue::from_owned_redis_value(v).map($func)
+            fn from_redis_value(v: Value) -> Result<Self, ParsingError>{
+                FromRedisValue::from_redis_value(v).map($func)
             }
         }
     }
@@ -1717,23 +1720,23 @@ macro_rules! from_vec_from_redis_value {
 
     (<$T:ident> $Type:ty; $convert:expr) => {
         impl<$T: FromRedisValue> FromRedisValue for $Type {
-            fn from_redis_value(v: &Value) -> Result<$Type, ParsingError> {
+            fn from_redis_value_ref(v: &Value) -> Result<$Type, ParsingError> {
                 match v {
                     // All binary data except u8 will try to parse into a single element vector.
-                    // u8 has its own implementation of from_byte_vec.
-                    Value::BulkString(bytes) => match FromRedisValue::from_byte_vec(bytes) {
+                    // u8 has its own implementation of from_byte_slice.
+                    Value::BulkString(bytes) => match FromRedisValue::from_byte_slice(bytes) {
                         Some(x) => Ok($convert(x)),
                         None => crate::errors::invalid_type_error!(
                             v,
                             format!("Conversion to {} failed.", std::any::type_name::<$Type>())
                         ),
                     },
-                    Value::Array(items) => FromRedisValue::from_redis_values(items).map($convert),
-                    Value::Set(ref items) => FromRedisValue::from_redis_values(items).map($convert),
+                    Value::Array(items) => FromRedisValue::from_redis_value_refs(items).map($convert),
+                    Value::Set(ref items) => FromRedisValue::from_redis_value_refs(items).map($convert),
                     Value::Map(ref items) => {
                         let mut n: Vec<T> = vec![];
                         for item in items {
-                            match FromRedisValue::from_redis_value(&Value::Map(vec![item.clone()])) {
+                            match FromRedisValue::from_redis_value_ref(&Value::Map(vec![item.clone()])) {
                                 Ok(v) => {
                                     n.push(v);
                                 }
@@ -1748,18 +1751,18 @@ macro_rules! from_vec_from_redis_value {
                     _ => crate::errors::invalid_type_error!(v, "Response type not vector compatible."),
                 }
             }
-            fn from_owned_redis_value(v: Value) -> Result<$Type, ParsingError> {
+            fn from_redis_value(v: Value) -> Result<$Type, ParsingError> {
                 match v {
                     // Binary data is parsed into a single-element vector, except
                     // for the element type `u8`, which directly consumes the entire
                     // array of bytes.
-                    Value::BulkString(bytes) => FromRedisValue::from_owned_byte_vec(bytes).map($convert),
-                    Value::Array(items) => FromRedisValue::from_owned_redis_values(items).map($convert),
-                    Value::Set(items) => FromRedisValue::from_owned_redis_values(items).map($convert),
+                    Value::BulkString(bytes) => FromRedisValue::from_byte_vec(bytes).map($convert),
+                    Value::Array(items) => FromRedisValue::from_redis_values(items).map($convert),
+                    Value::Set(items) => FromRedisValue::from_redis_values(items).map($convert),
                     Value::Map(items) => {
                         let mut n: Vec<T> = vec![];
                         for item in items {
-                            match FromRedisValue::from_owned_redis_value(Value::Map(vec![item])) {
+                            match FromRedisValue::from_redis_value(Value::Map(vec![item])) {
                                 Ok(v) => {
                                     n.push(v);
                                 }
@@ -1788,7 +1791,7 @@ macro_rules! impl_from_redis_value_for_map {
         where
             $($WhereClause)+
         {
-            fn from_redis_value(v: &Value) -> Result<$MapType, ParsingError> {
+            fn from_redis_value_ref(v: &Value) -> Result<$MapType, ParsingError> {
                 let v = get_inner_value(v);
                 match *v {
                     Value::Nil => Ok(Default::default()),
@@ -1796,13 +1799,13 @@ macro_rules! impl_from_redis_value_for_map {
                         .as_map_iter()
                         .ok_or_else(|| crate::errors::invalid_type_error_inner!(v, "Response type not map compatible"))?
                         .map(|(k, v)| {
-                            Ok((from_redis_value(k)?, from_redis_value(v)?))
+                            Ok((from_redis_value_ref(k)?, from_redis_value_ref(v)?))
                         })
                         .collect(),
                 }
             }
 
-            fn from_owned_redis_value(v: Value) -> Result<$MapType, ParsingError> {
+            fn from_redis_value(v: Value) -> Result<$MapType, ParsingError> {
                 let v = get_owned_inner_value(v);
                 match v {
                     Value::Nil => Ok(Default::default()),
@@ -1810,7 +1813,7 @@ macro_rules! impl_from_redis_value_for_map {
                         .into_map_iter()
                         .map_err(|v| crate::errors::invalid_type_error_inner!(v, "Response type not map compatible"))?
                         .map(|(k, v)| {
-                            Ok((from_owned_redis_value(k)?, from_owned_redis_value(v)?))
+                            Ok((from_redis_value(k)?, from_redis_value(v)?))
                         })
                         .collect(),
                 }
@@ -1847,22 +1850,22 @@ macro_rules! impl_from_redis_value_for_set {
         where
             $($WhereClause)+
         {
-            fn from_redis_value(v: &Value) -> Result<$SetType, ParsingError> {
+            fn from_redis_value_ref(v: &Value) -> Result<$SetType, ParsingError> {
                 let v = get_inner_value(v);
                 let items = v
                     .as_sequence()
                     .ok_or_else(|| crate::errors::invalid_type_error_inner!(v, "Response type not map compatible"))?;
-                items.iter().map(|item| from_redis_value(item)).collect()
+                items.iter().map(|item| from_redis_value_ref(item)).collect()
             }
 
-            fn from_owned_redis_value(v: Value) -> Result<$SetType, ParsingError> {
+            fn from_redis_value(v: Value) -> Result<$SetType, ParsingError> {
                 let v = get_owned_inner_value(v);
                 let items = v
                     .into_sequence()
                     .map_err(|v| crate::errors::invalid_type_error_inner!(v, "Response type not map compatible"))?;
                 items
                     .into_iter()
-                    .map(|item| from_owned_redis_value(item))
+                    .map(|item| from_redis_value(item))
                     .collect()
             }
         }
@@ -1892,17 +1895,17 @@ impl_from_redis_value_for_set!(
 );
 
 impl FromRedisValue for Value {
-    fn from_redis_value(v: &Value) -> Result<Value, ParsingError> {
+    fn from_redis_value_ref(v: &Value) -> Result<Value, ParsingError> {
         Ok(v.clone())
     }
 
-    fn from_owned_redis_value(v: Value) -> Result<Self, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         Ok(v)
     }
 }
 
 impl FromRedisValue for () {
-    fn from_redis_value(v: &Value) -> Result<(), ParsingError> {
+    fn from_redis_value_ref(v: &Value) -> Result<(), ParsingError> {
         match v {
             Value::ServerError(err) => Err(ParsingError {
                 description: err.to_string().into(),
@@ -1920,7 +1923,7 @@ macro_rules! from_redis_value_for_tuple {
             // we have local variables named T1 as dummies and those
             // variables are unused.
             #[allow(non_snake_case, unused_variables)]
-            fn from_redis_value(v: &Value) -> Result<($($name,)*), ParsingError> {
+            fn from_redis_value_ref(v: &Value) -> Result<($($name,)*), ParsingError> {
                 let v = get_inner_value(v);
                 // hacky way to count the tuple size
                 let mut n = 0;
@@ -1934,7 +1937,7 @@ macro_rules! from_redis_value_for_tuple {
 
                         // The { i += 1; i - 1} is rust's postfix increment :)
                         let mut i = 0;
-                        Ok(($({let $name = (); from_redis_value(
+                        Ok(($({let $name = (); from_redis_value_ref(
                              &items[{ i += 1; i - 1 }])?},)*))
                     }
 
@@ -1945,7 +1948,7 @@ macro_rules! from_redis_value_for_tuple {
 
                         // The { i += 1; i - 1} is rust's postfix increment :)
                         let mut i = 0;
-                        Ok(($({let $name = (); from_redis_value(
+                        Ok(($({let $name = (); from_redis_value_ref(
                              &items[{ i += 1; i - 1 }])?},)*))
                     }
 
@@ -1956,7 +1959,7 @@ macro_rules! from_redis_value_for_tuple {
 
                         let mut flatten_items = items.iter().map(|(a,b)|[a,b]).flatten();
 
-                        Ok(($({let $name = (); from_redis_value(
+                        Ok(($({let $name = (); from_redis_value_ref(
                              &flatten_items.next().unwrap())?},)*))
                     }
 
@@ -1967,7 +1970,7 @@ macro_rules! from_redis_value_for_tuple {
             // we have local variables named T1 as dummies and those
             // variables are unused.
             #[allow(non_snake_case, unused_variables)]
-            fn from_owned_redis_value(v: Value) -> Result<($($name,)*), ParsingError> {
+            fn from_redis_value(v: Value) -> Result<($($name,)*), ParsingError> {
                 let v = get_owned_inner_value(v);
                 // hacky way to count the tuple size
                 let mut n = 0;
@@ -1980,7 +1983,7 @@ macro_rules! from_redis_value_for_tuple {
 
                         // The { i += 1; i - 1} is rust's postfix increment :)
                         let mut i = 0;
-                        Ok(($({let $name = (); from_owned_redis_value(
+                        Ok(($({let $name = (); from_redis_value(
                             ::std::mem::replace(&mut items[{ i += 1; i - 1 }], Value::Nil)
                         )?},)*))
                     }
@@ -1992,7 +1995,7 @@ macro_rules! from_redis_value_for_tuple {
 
                         // The { i += 1; i - 1} is rust's postfix increment :)
                         let mut i = 0;
-                        Ok(($({let $name = (); from_owned_redis_value(
+                        Ok(($({let $name = (); from_redis_value(
                             ::std::mem::replace(&mut items[{ i += 1; i - 1 }], Value::Nil)
                         )?},)*))
                     }
@@ -2004,7 +2007,7 @@ macro_rules! from_redis_value_for_tuple {
 
                         let mut flatten_items = items.into_iter().map(|(a,b)|[a,b]).flatten();
 
-                        Ok(($({let $name = (); from_owned_redis_value(
+                        Ok(($({let $name = (); from_redis_value(
                             ::std::mem::replace(&mut flatten_items.next().unwrap(), Value::Nil)
                         )?},)*))
                     }
@@ -2014,7 +2017,7 @@ macro_rules! from_redis_value_for_tuple {
             }
 
             #[allow(non_snake_case, unused_variables)]
-            fn from_redis_values(items: &[Value]) -> Result<Vec<($($name,)*)>, ParsingError> {
+            fn from_redis_value_refs(items: &[Value]) -> Result<Vec<($($name,)*)>, ParsingError> {
                 // hacky way to count the tuple size
                 let mut n = 0;
                 $(let $name = (); n += 1;)*
@@ -2023,17 +2026,17 @@ macro_rules! from_redis_value_for_tuple {
                 }
 
                 if items.iter().all(|item|item.is_collection_of_len(n)) {
-                    return items.iter().map(|item|from_redis_value(item)).collect();
+                    return items.iter().map(|item|from_redis_value_ref(item)).collect();
                 }
 
                 let mut rv = Vec::with_capacity(items.len() / n);
                 if let [$($name),*] = items{
-                    rv.push(($(from_redis_value($name)?),*),);
+                    rv.push(($(from_redis_value_ref($name)?),*),);
                     return Ok(rv);
                 }
                 for chunk in items.chunks_exact(n) {
                     match chunk {
-                        [$($name),*] => rv.push(($(from_redis_value($name)?),*),),
+                        [$($name),*] => rv.push(($(from_redis_value_ref($name)?),*),),
                          _ => {},
                     }
                 }
@@ -2041,7 +2044,7 @@ macro_rules! from_redis_value_for_tuple {
             }
 
             #[allow(non_snake_case, unused_variables)]
-            fn from_each_owned_redis_values(mut items: Vec<Value>) -> Vec<Result<($($name,)*), ParsingError>> {
+            fn from_each_redis_values(mut items: Vec<Value>) -> Vec<Result<($($name,)*), ParsingError>> {
 
                 #[allow(unused_parens)]
                 let extract = |val: ($(Result<$name, ParsingError>),*)| -> Result<($($name,)*), ParsingError> {
@@ -2058,7 +2061,7 @@ macro_rules! from_redis_value_for_tuple {
                     return vec![];
                 }
                 if items.iter().all(|item|item.is_collection_of_len(n)) {
-                    return items.into_iter().map(|item|from_owned_redis_value(item).map_err(|err|err.into())).collect();
+                    return items.into_iter().map(|item|from_redis_value(item).map_err(|err|err.into())).collect();
                 }
 
                 let mut rv = Vec::with_capacity(items.len() / n);
@@ -2069,7 +2072,7 @@ macro_rules! from_redis_value_for_tuple {
                         // in its place. This allows each `Value` to be parsed without being copied.
                         // Since `items` is consumed by this function and not used later, this replacement
                         // is not observable to the rest of the code.
-                        [$($name),*] => rv.push(extract(($(from_owned_redis_value(std::mem::replace($name, Value::Nil)).into()),*))),
+                        [$($name),*] => rv.push(extract(($(from_redis_value(std::mem::replace($name, Value::Nil)).into()),*))),
                          _ => unreachable!(),
                     }
                 }
@@ -2077,7 +2080,7 @@ macro_rules! from_redis_value_for_tuple {
             }
 
             #[allow(non_snake_case, unused_variables)]
-            fn from_owned_redis_values(mut items: Vec<Value>) -> Result<Vec<($($name,)*)>, ParsingError> {
+            fn from_redis_values(mut items: Vec<Value>) -> Result<Vec<($($name,)*)>, ParsingError> {
                 // hacky way to count the tuple size
                 let mut n = 0;
                 $(let $name = (); n += 1;)*
@@ -2087,7 +2090,7 @@ macro_rules! from_redis_value_for_tuple {
                     return Ok(vec![])
                 }
                 if items.iter().all(|item|item.is_collection_of_len(n)) {
-                    return items.into_iter().map(|item|from_owned_redis_value(item)).collect();
+                    return items.into_iter().map(|item|from_redis_value(item)).collect();
                 }
 
                 let mut rv = Vec::with_capacity(items.len() / n);
@@ -2097,7 +2100,7 @@ macro_rules! from_redis_value_for_tuple {
                         // in its place. This allows each `Value` to be parsed without being copied.
                         // Since `items` is consume by this function and not used later, this replacement
                         // is not observable to the rest of the code.
-                        [$($name),*] => rv.push(($(from_owned_redis_value(std::mem::replace($name, Value::Nil))?),*),),
+                        [$($name),*] => rv.push(($(from_redis_value(std::mem::replace($name, Value::Nil))?),*),),
                          _ => unreachable!(),
                     }
                 }
@@ -2121,45 +2124,45 @@ from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9
 from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
 
 impl FromRedisValue for InfoDict {
-    fn from_redis_value(v: &Value) -> Result<InfoDict, ParsingError> {
+    fn from_redis_value_ref(v: &Value) -> Result<InfoDict, ParsingError> {
         let v = get_inner_value(v);
-        let s: String = from_redis_value(v)?;
+        let s: String = from_redis_value_ref(v)?;
         Ok(InfoDict::new(&s))
     }
-    fn from_owned_redis_value(v: Value) -> Result<InfoDict, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<InfoDict, ParsingError> {
         let v = get_owned_inner_value(v);
-        let s: String = from_owned_redis_value(v)?;
+        let s: String = from_redis_value(v)?;
         Ok(InfoDict::new(&s))
     }
 }
 
 impl<T: FromRedisValue> FromRedisValue for Option<T> {
-    fn from_redis_value(v: &Value) -> Result<Option<T>, ParsingError> {
+    fn from_redis_value_ref(v: &Value) -> Result<Option<T>, ParsingError> {
         let v = get_inner_value(v);
         if *v == Value::Nil {
             return Ok(None);
         }
-        Ok(Some(from_redis_value(v)?))
+        Ok(Some(from_redis_value_ref(v)?))
     }
-    fn from_owned_redis_value(v: Value) -> Result<Option<T>, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Option<T>, ParsingError> {
         let v = get_owned_inner_value(v);
         if v == Value::Nil {
             return Ok(None);
         }
-        Ok(Some(from_owned_redis_value(v)?))
+        Ok(Some(from_redis_value(v)?))
     }
 }
 
 #[cfg(feature = "bytes")]
 impl FromRedisValue for bytes::Bytes {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
         let v = get_inner_value(v);
         match v {
             Value::BulkString(bytes_vec) => Ok(bytes::Bytes::copy_from_slice(bytes_vec.as_ref())),
             _ => crate::errors::invalid_type_error!(v, "Not a bulk string"),
         }
     }
-    fn from_owned_redis_value(v: Value) -> Result<Self, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let v = get_owned_inner_value(v);
         match v {
             Value::BulkString(bytes_vec) => Ok(bytes_vec.into()),
@@ -2170,7 +2173,7 @@ impl FromRedisValue for bytes::Bytes {
 
 #[cfg(feature = "uuid")]
 impl FromRedisValue for uuid::Uuid {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
         match *v {
             Value::BulkString(ref bytes) => Ok(uuid::Uuid::from_slice(bytes)?),
             _ => crate::errors::invalid_type_error!(v, "Response type not uuid compatible."),
@@ -2188,16 +2191,16 @@ impl ToRedisArgs for uuid::Uuid {
     }
 }
 
-/// A shortcut function to invoke `FromRedisValue::from_redis_value`
+/// A shortcut function to invoke `FromRedisValue::from_redis_value_ref`
 /// to make the API slightly nicer.
-pub fn from_redis_value<T: FromRedisValue>(v: &Value) -> Result<T, ParsingError> {
-    FromRedisValue::from_redis_value(v)
+pub fn from_redis_value_ref<T: FromRedisValue>(v: &Value) -> Result<T, ParsingError> {
+    FromRedisValue::from_redis_value_ref(v)
 }
 
-/// A shortcut function to invoke `FromRedisValue::from_owned_redis_value`
+/// A shortcut function to invoke `FromRedisValue::from_redis_value`
 /// to make the API slightly nicer.
-pub fn from_owned_redis_value<T: FromRedisValue>(v: Value) -> Result<T, ParsingError> {
-    FromRedisValue::from_owned_redis_value(v)
+pub fn from_redis_value<T: FromRedisValue>(v: Value) -> Result<T, ParsingError> {
+    FromRedisValue::from_redis_value(v)
 }
 
 /// Enum representing the communication protocol with the server.
@@ -2312,14 +2315,14 @@ impl From<ValueType> for String {
 }
 
 impl FromRedisValue for ValueType {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
         match v {
             Value::SimpleString(s) => Ok(s.into()),
             _ => crate::errors::invalid_type_error!(v, "Value type should be a simple string"),
         }
     }
 
-    fn from_owned_redis_value(v: Value) -> Result<Self, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         match v {
             Value::SimpleString(s) => Ok(s.into()),
             _ => crate::errors::invalid_type_error!(v, "Value type should be a simple string"),
@@ -2350,7 +2353,7 @@ impl IntegerReplyOrNoOp {
 }
 
 impl FromRedisValue for IntegerReplyOrNoOp {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
         match v {
             Value::Int(s) => match s {
                 -2 => Ok(IntegerReplyOrNoOp::NotExists),
@@ -2361,7 +2364,7 @@ impl FromRedisValue for IntegerReplyOrNoOp {
         }
     }
 
-    fn from_owned_redis_value(v: Value) -> Result<Self, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         match v {
             Value::Int(s) => match s {
                 -2 => Ok(IntegerReplyOrNoOp::NotExists),

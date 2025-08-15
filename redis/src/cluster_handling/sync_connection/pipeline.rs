@@ -2,7 +2,7 @@ use super::ClusterConnection;
 use crate::cmd::{cmd, Cmd};
 use crate::errors::ErrorKind;
 use crate::types::{
-    from_owned_redis_value, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,
+    from_redis_value, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,
 };
 
 pub(crate) const UNROUTABLE_ERROR: (ErrorKind, &str) = (
@@ -120,7 +120,7 @@ impl ClusterPipeline {
         }
 
         if self.commands.is_empty() {
-            Ok(from_owned_redis_value(Value::Array(vec![]))?)
+            Ok(from_redis_value(Value::Array(vec![]))?)
         } else {
             self.compose_response(con.execute_pipeline(self)?)
         }

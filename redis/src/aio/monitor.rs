@@ -71,7 +71,7 @@ where
 {
     value
         .ok()
-        .and_then(|value| T::from_owned_redis_value(value).ok())
+        .and_then(|value| T::from_redis_value(value).ok())
 }
 
 impl<T> Stream for MonitorStream<T>
