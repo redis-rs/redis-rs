@@ -163,6 +163,36 @@ mod basic_async {
         );
     }
 
+    #[rstest]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+    fn test_no_response_skips_response_even_on_error(#[case] runtime: RuntimeType) {
+        test_with_all_connection_types(
+            |mut con| async move {
+                redis::cmd("SET")
+                    .arg("key")
+                    .arg(b"foo")
+                    .set_no_response(true)
+                    .exec_async(&mut con)
+                    .await?;
+
+                // this should error, since we hset a string value, but we shouldn't receive the error, because we ignore the response
+                redis::cmd("HSET")
+                    .arg("key")
+                    .arg(b"foo")
+                    .arg("bar")
+                    .set_no_response(true)
+                    .exec_async(&mut con)
+                    .await?;
+
+                let result = redis::cmd("GET").arg("key").query_async(&mut con).await;
+                assert_eq!(result, Ok("foo".to_string()));
+                result
+            },
+            runtime,
+        );
+    }
+
     #[cfg(feature = "tokio-comp")]
     #[tokio::test]
     async fn test_works_with_paused_time_when_no_timeouts_are_set() {

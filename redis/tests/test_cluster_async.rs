@@ -74,6 +74,43 @@ mod cluster_async {
     #[rstest]
     #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+    fn test_no_response_skips_response_even_on_error(#[case] runtime: RuntimeType) {
+        let cluster = TestClusterContext::new();
+
+        block_on_all(
+            async move {
+                let mut connection = cluster.async_connection().await;
+                redis::cmd("SET")
+                    .arg("key")
+                    .arg(b"foo")
+                    .set_no_response(true)
+                    .exec_async(&mut connection)
+                    .await?;
+
+                // this should error, since we hset a string value, but we shouldn't receive the error, because we ignore the response
+                redis::cmd("HSET")
+                    .arg("key")
+                    .arg(b"foo")
+                    .arg("bar")
+                    .set_no_response(true)
+                    .exec_async(&mut connection)
+                    .await?;
+
+                let result = redis::cmd("GET")
+                    .arg("key")
+                    .query_async(&mut connection)
+                    .await;
+                assert_eq!(result, Ok("foo".to_string()));
+                result
+            },
+            runtime,
+        )
+        .unwrap();
+    }
+
+    #[rstest]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_async_cluster_basic_eval(#[case] runtime: RuntimeType) {
         let cluster = TestClusterContext::new();
 
