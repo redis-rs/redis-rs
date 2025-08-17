@@ -215,7 +215,7 @@ fn test_sentinel_role_no_permission() {
         .query(&mut master_con)
         .unwrap();
     //Remove ROLE permission for the given user on master
-    let _: () = redis::cmd("ACL")
+    () = redis::cmd("ACL")
         .arg("SETUSER")
         .arg(&user)
         .arg("-role")
@@ -228,7 +228,7 @@ fn test_sentinel_role_no_permission() {
             .replica_rotate_for(master_name, Some(&node_conn_info))
             .unwrap();
         let mut replica_con = replica_client.get_connection().unwrap();
-        let _: () = redis::cmd("ACL")
+        () = redis::cmd("ACL")
             .arg("SETUSER")
             .arg(&user)
             .arg("-role")
@@ -262,7 +262,7 @@ fn test_sentinel_no_role_or_info_permission() {
         .query(&mut master_con)
         .unwrap();
     //Remove both commands used to detect master
-    let _: () = redis::cmd("ACL")
+    () = redis::cmd("ACL")
         .arg("SETUSER")
         .arg(&user)
         .arg("-role")

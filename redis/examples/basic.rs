@@ -121,7 +121,7 @@ fn do_atomic_increment(con: &mut redis::Connection) -> redis::RedisResult<()> {
     println!("Run high-level atomic increment:");
 
     // set the initial value so we have something to test with.
-    let _: () = con.set(key, 42)?;
+    () = con.set(key, 42)?;
 
     // run the transaction block.
     let (new_val,): (isize,) = transaction(con, &[key], |con, pipe| {

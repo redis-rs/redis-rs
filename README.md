@@ -4,7 +4,7 @@
 [![crates.io](https://img.shields.io/crates/v/redis.svg)](https://crates.io/crates/redis)
 [![Chat](https://img.shields.io/discord/976380008299917365?logo=discord)](https://discord.gg/WHKcJK9AKP)
 
-Redis-rs is a high level Rust library for Redis, Valkey and any other RESP 
+Redis-rs is a high level Rust library for Redis, Valkey and any other RESP
 (Redis Serialization Protocol) compliant DB. It provides convenient access
 to all Redis functionality through a very flexible but low-level API. It
 uses a customizable type conversion trait so that any operation can return
@@ -53,7 +53,7 @@ fn fetch_an_integer() -> redis::RedisResult<isize> {
     let client = redis::Client::open("redis://127.0.0.1/")?;
     let mut con = client.get_connection()?;
     // throw away the result, just make sure it does not fail
-    let _: () = con.set("my_key", 42)?;
+    () = con.set("my_key", 42)?;
     // read back the key and return it.  Because the return value
     // from the function is a result for integer this will automatically
     // convert into one.
@@ -91,8 +91,8 @@ redis = { version = "1.0.0-alpha", features = ["r2d2"] }
 ```
 
 For async connections, connection pooling isn't necessary, unless blocking commands are used.
-The `MultiplexedConnection` is cheaply cloneable and can be used safely from multiple threads, so a 
-single connection can be easily reused. For automatic reconnections consider using 
+The `MultiplexedConnection` is cheaply cloneable and can be used safely from multiple threads, so a
+single connection can be easily reused. For automatic reconnections consider using
 `ConnectionManager` with the `connection-manager` feature.
 Async cluster connections also don't require pooling and are thread-safe and reusable.
 
@@ -144,11 +144,10 @@ And then, before creating a connection, ensure that you install a crypto provide
         .expect("Failed to install rustls crypto provider");
 ```
 
-
 With `rustls`, you can add the following feature flags on top of other feature flags to enable additional features:
 
--   `tls-rustls-insecure`: Allow insecure TLS connections
--   `tls-rustls-webpki-roots`: Use `webpki-roots` (Mozilla's root certificates) instead of native root certificates
+- `tls-rustls-insecure`: Allow insecure TLS connections
+- `tls-rustls-webpki-roots`: Use `webpki-roots` (Mozilla's root certificates) instead of native root certificates
 
 then you should be able to connect to a redis instance using the `rediss://` URL scheme:
 
@@ -240,9 +239,9 @@ you can use the `Json` wrapper from the
 To test `redis` you're going to need to be able to test with the Redis Modules, to do this
 you must set the following environment variable before running the test script
 
--   `REDIS_RS_REDIS_JSON_PATH` = The absolute path to the RedisJSON module (Either `librejson.so` for Linux or `librejson.dylib` for MacOS).
+- `REDIS_RS_REDIS_JSON_PATH` = The absolute path to the RedisJSON module (Either `librejson.so` for Linux or `librejson.dylib` for MacOS).
 
--   Please refer to this [link](https://github.com/RedisJSON/RedisJSON) to access the RedisJSON module:
+- Please refer to this [link](https://github.com/RedisJSON/RedisJSON) to access the RedisJSON module:
 
 <!-- As support for modules are added later, it would be wise to update this list -->
 
@@ -257,9 +256,8 @@ To test:
 
 Note: `make test` requires cargo-nextest installed, to learn more about it please visit [homepage of cargo-nextest](https://nexte.st/).
 
-
     $ make test
-    
+
 To run benchmarks:
 
     $ make bench

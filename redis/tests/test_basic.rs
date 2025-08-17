@@ -1404,7 +1404,7 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        let _: () = con.set("x", 42).unwrap();
+        () = con.set("x", 42).unwrap();
 
         // Make Redis a replica of a nonexistent master, thereby making it read-only.
         redis::cmd("slaveof")
@@ -3677,7 +3677,7 @@ mod basic {
         let (tx, rx) = std::sync::mpsc::channel();
         con.set_push_sender(tx.clone());
 
-        let _: () = con.set("A", "1").unwrap();
+        () = con.set("A", "1").unwrap();
         assert_eq!(
             rx.try_recv().unwrap_err(),
             std::sync::mpsc::TryRecvError::Empty

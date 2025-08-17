@@ -882,8 +882,8 @@ mod basic_async {
         test_with_all_connection_types(
             |mut con| async move {
                 for i in 0..20usize {
-                    let _: () = con.append(format!("test/{i}"), i).await.unwrap();
-                    let _: () = con.append(format!("other/{i}"), i).await.unwrap();
+                    () = con.append(format!("test/{i}"), i).await.unwrap();
+                    () = con.append(format!("other/{i}"), i).await.unwrap();
                 }
                 // scan with pattern
                 let opts = ScanOptions::default().with_count(20).with_pattern("test/*");
@@ -919,7 +919,7 @@ mod basic_async {
         test_with_all_connection_types(
             |mut con| async move {
                 for i in 0..20usize {
-                    let _: () = con.append(format!("test/{i}"), i).await.unwrap();
+                    () = con.append(format!("test/{i}"), i).await.unwrap();
                 }
                 let values = con.scan_match::<&str, String>("test/*").await.unwrap();
                 async move {
@@ -946,7 +946,7 @@ mod basic_async {
                 let mut keys: Vec<String> = (0..100).map(|k| format!("async-key{k}")).collect();
                 keys.sort();
                 for key in &keys {
-                    let _: () = con.set(key, b"foo").await.unwrap();
+                    () = con.set(key, b"foo").await.unwrap();
                 }
 
                 let iter: redis::AsyncIter<String> = con.scan().await.unwrap();
@@ -974,14 +974,14 @@ mod basic_async {
             block_on_all(
                 async move {
                     let mut pubsub_conn = ctx.async_pubsub().await?;
-                    let _: () = pubsub_conn.subscribe("phonewave").await?;
+                    () = pubsub_conn.subscribe("phonewave").await?;
                     let mut pubsub_stream = pubsub_conn.on_message();
                     let mut publish_conn = ctx.async_connection().await?;
-                    let _: () = publish_conn.publish("phonewave", "banana").await?;
+                    () = publish_conn.publish("phonewave", "banana").await?;
 
                     let repeats = 6;
                     for _ in 0..repeats {
-                        let _: () = publish_conn.publish("phonewave", "banana").await?;
+                        () = publish_conn.publish("phonewave", "banana").await?;
                     }
 
                     for _ in 0..repeats {
@@ -1008,15 +1008,15 @@ mod basic_async {
             block_on_all(
                 async move {
                     let mut pubsub_conn = ctx.async_pubsub().await?;
-                    let _: () = pubsub_conn.subscribe(&["phonewave", "foo", "bar"]).await?;
+                    () = pubsub_conn.subscribe(&["phonewave", "foo", "bar"]).await?;
                     let mut pubsub_stream = pubsub_conn.on_message();
                     let mut publish_conn = ctx.async_connection().await?;
-                    let _: () = publish_conn.publish("phonewave", "banana").await?;
+                    () = publish_conn.publish("phonewave", "banana").await?;
 
                     let msg_payload: String = pubsub_stream.next().await.unwrap().get_payload()?;
                     assert_eq!("banana".to_string(), msg_payload);
 
-                    let _: () = publish_conn.publish("foo", "foobar").await?;
+                    () = publish_conn.publish("foo", "foobar").await?;
                     let msg_payload: String = pubsub_stream.next().await.unwrap().get_payload()?;
                     assert_eq!("foobar".to_string(), msg_payload);
 
@@ -1061,7 +1061,7 @@ mod basic_async {
                         .collect();
 
                     for key in &keys {
-                        let _: () = con.set(key, "bar".as_bytes()).await.unwrap();
+                        () = con.set(key, "bar".as_bytes()).await.unwrap();
                     }
 
                     // Query all keys
@@ -1137,10 +1137,10 @@ mod basic_async {
                     let (mut sink, mut stream) = ctx.async_pubsub().await?.split();
                     let mut publish_conn = ctx.async_connection().await?;
 
-                    let _: () = sink.subscribe("phonewave").await?;
+                    () = sink.subscribe("phonewave").await?;
                     let repeats = 6;
                     for _ in 0..repeats {
-                        let _: () = publish_conn.publish("phonewave", "banana").await?;
+                        () = publish_conn.publish("phonewave", "banana").await?;
                     }
 
                     for _ in 0..repeats {
@@ -1166,12 +1166,12 @@ mod basic_async {
                     let (mut sink, mut stream) = ctx.async_pubsub().await?.split();
                     let mut publish_conn = ctx.async_connection().await?;
 
-                    let _: () = sink.subscribe("phonewave").await?;
+                    () = sink.subscribe("phonewave").await?;
 
                     // we publish before the ping, to verify that published messages don't distort the ping's resuilt.
                     let repeats = 6;
                     for _ in 0..repeats {
-                        let _: () = publish_conn.publish("phonewave", "banana").await?;
+                        () = publish_conn.publish("phonewave", "banana").await?;
                     }
 
                     if ctx.protocol == ProtocolVersion::RESP3 {
@@ -1220,11 +1220,11 @@ mod basic_async {
                     let (mut sink, mut stream) = ctx.async_pubsub().await?.split();
                     let mut publish_conn = ctx.async_connection().await?;
 
-                    let _: () = sink.subscribe("phonewave").await?;
+                    () = sink.subscribe("phonewave").await?;
                     drop(sink);
                     let repeats = 6;
                     for _ in 0..repeats {
-                        let _: () = publish_conn.publish("phonewave", "banana").await?;
+                        () = publish_conn.publish("phonewave", "banana").await?;
                     }
 
                     for _ in 0..repeats {
@@ -1252,13 +1252,13 @@ mod basic_async {
                     let mut pubsub = ctx.async_pubsub().await?;
                     let mut publish_conn = ctx.async_connection().await?;
 
-                    let _: () = pubsub.subscribe("phonewave").await?;
+                    () = pubsub.subscribe("phonewave").await?;
                     let mut stream = pubsub.into_on_message();
                     // wait a bit
                     sleep(Duration::from_secs(2).into()).await;
                     let repeats = 6;
                     for _ in 0..repeats {
-                        let _: () = publish_conn.publish("phonewave", "banana").await?;
+                        () = publish_conn.publish("phonewave", "banana").await?;
                     }
 
                     for _ in 0..repeats {
@@ -1425,13 +1425,13 @@ mod basic_async {
                         .client
                         .get_multiplexed_async_connection_with_config(&config)
                         .await?;
-                    let _: () = conn.subscribe(&["phonewave", "foo", "bar"]).await?;
+                    () = conn.subscribe(&["phonewave", "foo", "bar"]).await?;
                     let mut publish_conn = ctx.async_connection().await?;
 
                     let msg_payload = rx.recv().await.unwrap();
                     assert_eq!(msg_payload.kind, PushKind::Subscribe);
 
-                    let _: () = publish_conn.publish("foo", "foobar").await?;
+                    () = publish_conn.publish("foo", "foobar").await?;
 
                     let msg_payload = rx.recv().await.unwrap();
                     assert_eq!(msg_payload.kind, PushKind::Subscribe);
@@ -1503,7 +1503,7 @@ mod basic_async {
 
                     let mut publish_conn = ctx.async_connection().await?;
                     for i in 0..pub_count {
-                        let _: () = publish_conn
+                        () = publish_conn
                             .publish(channel_name.clone(), format!("banana {i}"))
                             .await?;
                     }
@@ -1521,7 +1521,7 @@ mod basic_async {
                     assert!(rx.try_recv().is_err());
 
                     //Lets test if unsubscribing from individual channel subscription works
-                    let _: () = publish_conn
+                    () = publish_conn
                         .publish(channel_name.clone(), "banana!")
                         .await?;
                     let push = rx.recv().await.unwrap();
@@ -1538,7 +1538,7 @@ mod basic_async {
                     conn.unsubscribe(channel_name.clone()).await?;
                     let push = rx.recv().await.unwrap();
                     assert_eq!(push.kind, PushKind::Unsubscribe);
-                    let _: () = publish_conn
+                    () = publish_conn
                         .publish(channel_name.clone(), "banana!")
                         .await?;
                     //Let's wait for 100ms to make sure there is nothing in channel.
@@ -1593,7 +1593,7 @@ mod basic_async {
                         .get_multiplexed_async_connection_with_config(&config)
                         .await?;
 
-                    let _: () = conn.set("A", "1").await?;
+                    () = conn.set("A", "1").await?;
                     assert_eq!(rx.try_recv().unwrap_err(), TryRecvError::Empty);
                     kill_client_async(&mut conn, &ctx.client).await.unwrap();
 
@@ -1631,9 +1631,9 @@ mod basic_async {
                         .client
                         .get_connection_manager_with_config(config)
                         .await?;
-                    let _: () = pubsub_conn.subscribe(&["phonewave", "foo", "bar"]).await?;
-                    let _: () = pubsub_conn.psubscribe(&["zoom*"]).await?;
-                    let _: () = pubsub_conn.unsubscribe("foo").await?;
+                    () = pubsub_conn.subscribe(&["phonewave", "foo", "bar"]).await?;
+                    () = pubsub_conn.psubscribe(&["zoom*"]).await?;
+                    () = pubsub_conn.unsubscribe("foo").await?;
 
                     let push = rx.recv().await.unwrap();
                     assert_eq!(push.kind, PushKind::Subscribe);
@@ -1701,7 +1701,7 @@ mod basic_async {
                     );
 
                     let mut publish_conn = ctx.async_connection().await?;
-                    let _: () = publish_conn.publish("phonewave", "banana").await?;
+                    () = publish_conn.publish("phonewave", "banana").await?;
 
                     let push = rx.recv().await.unwrap();
                     assert_eq!(push.kind, PushKind::Message);
@@ -1714,8 +1714,8 @@ mod basic_async {
                     );
 
                     // this should be skipped, because we unsubscribed from foo
-                    let _: () = publish_conn.publish("foo", "goo").await?;
-                    let _: () = publish_conn.publish("zoomer", "foobar").await?;
+                    () = publish_conn.publish("foo", "goo").await?;
+                    () = publish_conn.publish("zoomer", "foobar").await?;
                     let push = rx.recv().await.unwrap();
                     assert_eq!(push.kind, PushKind::PMessage);
                     assert_eq!(
@@ -2032,7 +2032,7 @@ mod basic_async {
                 let monitor_conn = ctx.client.get_async_monitor().await.unwrap();
                 let mut stream = monitor_conn.into_on_message();
 
-                let _: () = conn.set("foo", "bar").await?;
+                () = conn.set("foo", "bar").await?;
 
                 let msg: String = stream.next().await.unwrap();
                 assert!(msg.ends_with("\"SET\" \"foo\" \"bar\""));

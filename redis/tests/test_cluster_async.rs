@@ -130,8 +130,8 @@ mod cluster_async {
         block_on_all(
             async move {
                 let mut connection = cluster.async_connection().await;
-                let _: () = connection.set("foo", "bar").await.unwrap();
-                let _: () = connection.set("bar", "foo").await.unwrap();
+                () = connection.set("foo", "bar").await.unwrap();
+                () = connection.set("bar", "foo").await.unwrap();
 
                 let res: String = connection.get("foo").await.unwrap();
                 assert_eq!(res, "bar".to_string());
@@ -308,8 +308,8 @@ mod cluster_async {
 
                 let mut connection = cluster.async_connection().await;
 
-                let _: () = connection.hset("hash", "foo", "baz").await.unwrap();
-                let _: () = connection.hset("hash", "bar", "foobar").await.unwrap();
+                () = connection.hset("hash", "foo", "baz").await.unwrap();
+                () = connection.hset("hash", "bar", "foobar").await.unwrap();
                 let result: Value = connection.hgetall("hash").await.unwrap();
 
                 assert_eq!(
@@ -563,7 +563,7 @@ mod cluster_async {
             }
         }
 
-        let _: () = (0..requests + 1)
+        () = (0..requests + 1)
             .map(|i| {
                 let mut connection = connection.clone();
                 let mut node_conns = node_conns.clone();
@@ -2423,7 +2423,7 @@ mod cluster_async {
             rx: &mut tokio::sync::mpsc::UnboundedReceiver<PushInfo>,
             is_redis_6: bool,
         ) -> RedisResult<()> {
-            let _: () = pubsub_conn.subscribe("regular-phonewave").await?;
+            () = pubsub_conn.subscribe("regular-phonewave").await?;
             let push: PushInfo = rx.recv().await.unwrap();
             assert_eq!(
                 push,
@@ -2436,7 +2436,7 @@ mod cluster_async {
                 }
             );
 
-            let _: () = pubsub_conn.psubscribe("phonewave*").await?;
+            () = pubsub_conn.psubscribe("phonewave*").await?;
             let push = rx.recv().await.unwrap();
             assert_eq!(
                 push,
@@ -2447,7 +2447,7 @@ mod cluster_async {
             );
 
             if !is_redis_6 {
-                let _: () = pubsub_conn.ssubscribe("sphonewave").await?;
+                () = pubsub_conn.ssubscribe("sphonewave").await?;
                 let push = rx.recv().await.unwrap();
                 assert_eq!(
                     push,
@@ -2466,7 +2466,7 @@ mod cluster_async {
             rx: &mut tokio::sync::mpsc::UnboundedReceiver<PushInfo>,
             is_redis_6: bool,
         ) -> RedisResult<()> {
-            let _: () = publish_conn.publish("regular-phonewave", "banana").await?;
+            () = publish_conn.publish("regular-phonewave", "banana").await?;
             let push = rx.recv().await.unwrap();
             assert_eq!(
                 push,
@@ -2479,7 +2479,7 @@ mod cluster_async {
                 }
             );
 
-            let _: () = publish_conn.publish("phonewave-pattern", "banana").await?;
+            () = publish_conn.publish("phonewave-pattern", "banana").await?;
             let push = rx.recv().await.unwrap();
             assert_eq!(
                 push,
@@ -2494,7 +2494,7 @@ mod cluster_async {
             );
 
             if !is_redis_6 {
-                let _: () = publish_conn.spublish("sphonewave", "banana").await?;
+                () = publish_conn.spublish("sphonewave", "banana").await?;
                 let push = rx.recv().await.unwrap();
                 assert_eq!(
                     push,
@@ -2581,7 +2581,7 @@ mod cluster_async {
                         return Ok(());
                     }
 
-                    let _: () = pubsub_conn.ssubscribe("foo").await?;
+                    () = pubsub_conn.ssubscribe("foo").await?;
 
                     let res = cmd("pubsub")
                         .arg("SHARDNUMSUB")
@@ -2615,7 +2615,7 @@ mod cluster_async {
                         join!(ctx.async_connection(), ctx.async_connection());
                     let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
 
-                    let _: () = pubsub_conn.subscribe("regular-phonewave").await?;
+                    () = pubsub_conn.subscribe("regular-phonewave").await?;
                     let push = rx.recv().await.unwrap();
                     assert_eq!(
                         push,
@@ -2627,7 +2627,7 @@ mod cluster_async {
                             ]
                         }
                     );
-                    let _: () = pubsub_conn.unsubscribe("regular-phonewave").await?;
+                    () = pubsub_conn.unsubscribe("regular-phonewave").await?;
                     let push = rx.recv().await.unwrap();
                     assert_eq!(
                         push,
@@ -2640,7 +2640,7 @@ mod cluster_async {
                         }
                     );
 
-                    let _: () = pubsub_conn.psubscribe("phonewave*").await?;
+                    () = pubsub_conn.psubscribe("phonewave*").await?;
                     let push = rx.recv().await.unwrap();
                     assert_eq!(
                         push,
@@ -2649,7 +2649,7 @@ mod cluster_async {
                             data: vec![Value::BulkString(b"phonewave*".to_vec()), Value::Int(1)]
                         }
                     );
-                    let _: () = pubsub_conn.punsubscribe("phonewave*").await?;
+                    () = pubsub_conn.punsubscribe("phonewave*").await?;
                     let push = rx.recv().await.unwrap();
                     assert_eq!(
                         push,
@@ -2660,7 +2660,7 @@ mod cluster_async {
                     );
 
                     if !is_redis_6 {
-                        let _: () = pubsub_conn.ssubscribe("sphonewave").await?;
+                        () = pubsub_conn.ssubscribe("sphonewave").await?;
                         let push = rx.recv().await.unwrap();
                         assert_eq!(
                             push,
@@ -2672,7 +2672,7 @@ mod cluster_async {
                                 ]
                             }
                         );
-                        let _: () = pubsub_conn.sunsubscribe("sphonewave").await?;
+                        () = pubsub_conn.sunsubscribe("sphonewave").await?;
                         let push = rx.recv().await.unwrap();
                         assert_eq!(
                             push,
@@ -2686,10 +2686,10 @@ mod cluster_async {
                         );
                     }
 
-                    let _: () = publish_conn.publish("regular-phonewave", "banana").await?;
-                    let _: () = publish_conn.publish("phonewave-pattern", "banana").await?;
+                    () = publish_conn.publish("regular-phonewave", "banana").await?;
+                    () = publish_conn.publish("phonewave-pattern", "banana").await?;
                     if !is_redis_6 {
-                        let _: () = publish_conn.spublish("sphonewave", "banana").await?;
+                        () = publish_conn.spublish("sphonewave", "banana").await?;
                     }
 
                     assert_eq!(
@@ -2756,7 +2756,7 @@ mod cluster_async {
                     let mut pubsub_conn = ctx.async_connection().await;
                     let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
 
-                    let _: () = pubsub_conn
+                    () = pubsub_conn
                         .subscribe(&[
                             "regular-phonewave1",
                             "regular-phonewave2",
@@ -2778,7 +2778,7 @@ mod cluster_async {
                             }
                         );
                     }
-                    let _: () = pubsub_conn
+                    () = pubsub_conn
                         .unsubscribe(&["regular-phonewave1", "regular-phonewave2"])
                         .await?;
                     for i in 1..3 {
@@ -2797,7 +2797,7 @@ mod cluster_async {
                         );
                     }
 
-                    let _: () = pubsub_conn
+                    () = pubsub_conn
                         .psubscribe(&["phonewave*1", "phonewave*2", "phonewave*3"])
                         .await?;
                     for i in 1..4 {
@@ -2814,7 +2814,7 @@ mod cluster_async {
                         );
                     }
 
-                    let _: () = pubsub_conn
+                    () = pubsub_conn
                         .punsubscribe(&["phonewave*1", "phonewave*2"])
                         .await?;
                     for i in 1..3 {
@@ -2832,7 +2832,7 @@ mod cluster_async {
                     }
                     if !is_redis_6 {
                         // we use the curly braces in order to avoid cross slots errors.
-                        let _: () = pubsub_conn
+                        () = pubsub_conn
                             .ssubscribe(&["{sphonewave}1", "{sphonewave}2", "{sphonewave}3"])
                             .await?;
                         for i in 1..4 {
@@ -2851,7 +2851,7 @@ mod cluster_async {
                             );
                         }
 
-                        let _: () = pubsub_conn
+                        () = pubsub_conn
                             .sunsubscribe(&["{sphonewave}1", "{sphonewave}2"])
                             .await?;
                         for i in 1..3 {

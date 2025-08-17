@@ -46,7 +46,7 @@ macro_rules! implement_json_commands {
         /// # fn do_something() -> redis::RedisResult<()> {
         /// let client = redis::Client::open("redis://127.0.0.1/")?;
         /// let mut con = client.get_connection()?;
-        /// let _: () = con.json_set("my_key", "$", &json!({"item": 42i32}).to_string())?;
+        /// () = con.json_set("my_key", "$", &json!({"item": 42i32}).to_string())?;
         /// assert_eq!(con.json_get("my_key", "$"), Ok(String::from(r#"[{"item":42}]"#)));
         /// assert_eq!(con.json_get("my_key", "$.item"), Ok(String::from(r#"[42]"#)));
         /// # Ok(()) }
@@ -102,7 +102,7 @@ macro_rules! implement_json_commands {
         /// use redis::Commands;
         /// let client = redis::Client::open("redis://127.0.0.1/")?;
         /// let mut con = client.get_multiplexed_async_connection().await?;
-        /// let _: () = con.json_set("my_key", "$", &json!({"item": 42i32}).to_string()).await?;
+        /// () = con.json_set("my_key", "$", &json!({"item": 42i32}).to_string()).await?;
         /// assert_eq!(con.json_get("my_key", "$").await, Ok(String::from(r#"[{"item":42}]"#)));
         /// assert_eq!(con.json_get("my_key", "$.item").await, Ok(String::from(r#"[42]"#)));
         /// # Ok(()) }

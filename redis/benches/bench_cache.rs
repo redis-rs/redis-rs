@@ -60,7 +60,7 @@ async fn benchmark_executer(
                 per_key_command,
                 (read_ratio * per_key_command as f32) as u32,
             ) {
-                let _: () = cmd.query_async(&mut con).await.unwrap();
+                () = cmd.query_async(&mut con).await.unwrap();
             }
         }));
     }

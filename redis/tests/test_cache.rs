@@ -69,7 +69,7 @@ fn test_cache_basic(#[case] runtime: RuntimeType, #[values(true, false)] test_wi
             assert_hit!(&con, 1);
             assert_miss!(&con, 1);
 
-            let _: () = get_cmd("SET", test_with_optin)
+            () = get_cmd("SET", test_with_optin)
                 .arg("key_1")
                 .arg("1")
                 .query_async(&mut con)
@@ -110,7 +110,7 @@ fn test_cache_mget(#[case] runtime: RuntimeType) {
         async move {
             let mut con = ctx.async_connection_with_cache().await?;
             // Caching must work with both MGET and GET
-            let _: () = get_pipe(true)
+            () = get_pipe(true)
                 .cmd("SET")
                 .arg("key_1")
                 .arg(41)
@@ -172,7 +172,7 @@ fn test_module_cache_json_get_mget(#[case] runtime: RuntimeType) {
             let value_1 = serde_json::to_string(&json!({"value":41i64}))?;
             let value_3 = serde_json::to_string(&json!({"value":43i64}))?;
 
-            let _: () = get_pipe(true)
+            () = get_pipe(true)
                 .cmd("JSON.SET")
                 .arg("key_1")
                 .arg("$")
@@ -245,7 +245,7 @@ fn test_module_cache_json_get_mget_different_paths(#[case] runtime: RuntimeType)
             let value_1 = serde_json::to_string(&json!({"value":41i64, "id":1i8}))?;
             let value_3 = serde_json::to_string(&json!({"value":43i64, "id":3i8}))?;
 
-            let _: () = get_pipe(true)
+            () = get_pipe(true)
                 .cmd("JSON.SET")
                 .arg("key_1")
                 .arg("$")
@@ -352,7 +352,7 @@ fn test_cache_is_not_target_type_dependent(#[case] runtime: RuntimeType) {
     block_on_all(
         async move {
             let mut con = ctx.async_connection_with_cache().await?;
-            let _: () = con.set("KEY", "77").await?;
+            () = con.set("KEY", "77").await?;
             let x: u32 = con.get("KEY").await?;
             assert_eq!(x, 77);
             let x: String = con.get("KEY").await?;
@@ -445,7 +445,7 @@ fn test_cache_basic_partial_opt_in(#[case] runtime: RuntimeType) {
             assert_hit!(&con, 0);
             assert_miss!(&con, 0);
 
-            let _: () = redis::cmd("SET")
+            () = redis::cmd("SET")
                 .arg("key_1")
                 .arg("1")
                 .query_async(&mut con)
@@ -575,7 +575,7 @@ fn test_cache_different_commands(
                 CacheConfig::default()
             };
             let mut con = ctx.async_connection_with_cache_config(cache_config).await?;
-            let _: () = get_cmd("HSET", test_with_opt_in)
+            () = get_cmd("HSET", test_with_opt_in)
                 .arg("user")
                 .arg("health")
                 .arg("100")

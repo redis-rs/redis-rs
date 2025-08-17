@@ -165,8 +165,8 @@ mod cluster {
 
         let mut connection = cluster.connection();
 
-        let _: () = connection.hset("hash", "foo", "baz").unwrap();
-        let _: () = connection.hset("hash", "bar", "foobar").unwrap();
+        () = connection.hset("hash", "foo", "baz").unwrap();
+        () = connection.hset("hash", "bar", "foobar").unwrap();
         let result: Value = connection.hgetall("hash").unwrap();
 
         assert_eq!(

@@ -830,7 +830,7 @@ fn test_xdel() {
 fn test_xadd_options_deletion_policy_keepref() {
     let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
     let mut con = ctx.connection();
-    let _: () = con.flushdb().unwrap();
+    () = con.flushdb().unwrap();
 
     let stream_name = "test_stream_xadd_keepref";
     let group_name = "test_group";
@@ -847,7 +847,7 @@ fn test_xadd_options_deletion_policy_keepref() {
         stream_entries.map(|entry| con.xadd(stream_name, "*", &[entry]).unwrap().unwrap());
 
     // Create a consumer group and read all initial messages to create PEL entries.
-    let _: () = con
+    () = con
         .xgroup_create_mkstream(stream_name, group_name, "0")
         .unwrap();
     let _: Option<StreamReadReply> = con
@@ -915,7 +915,7 @@ fn test_xadd_options_deletion_policy_keepref() {
 fn test_xadd_options_deletion_policy_delref() {
     let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
     let mut con = ctx.connection();
-    let _: () = con.flushdb().unwrap();
+    () = con.flushdb().unwrap();
 
     let stream_name = "test_stream_xadd_delref";
     let group_name = "test_group";
@@ -932,7 +932,7 @@ fn test_xadd_options_deletion_policy_delref() {
         stream_entries.map(|entry| con.xadd(stream_name, "*", &[entry]).unwrap().unwrap());
 
     // Create a consumer group and read all initial messages to create PEL entries.
-    let _: () = con
+    () = con
         .xgroup_create_mkstream(stream_name, group_name, "0")
         .unwrap();
     let _: Option<StreamReadReply> = con
@@ -1000,7 +1000,7 @@ fn test_xadd_options_deletion_policy_delref() {
 fn test_xadd_options_deletion_policy_acked() {
     let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
     let mut con = ctx.connection();
-    let _: () = con.flushdb().unwrap();
+    () = con.flushdb().unwrap();
 
     let stream_name = "test_stream_xadd_acked";
     let group_name = "test_group";
@@ -1017,7 +1017,7 @@ fn test_xadd_options_deletion_policy_acked() {
         stream_entries.map(|entry| con.xadd(stream_name, "*", &[entry]).unwrap().unwrap());
 
     // Create a consumer group and read all initial messages to create PEL entries.
-    let _: () = con
+    () = con
         .xgroup_create_mkstream(stream_name, group_name, "0")
         .unwrap();
     let _: Option<StreamReadReply> = con
@@ -1088,7 +1088,7 @@ fn test_xadd_options_deletion_policy_acked() {
 fn test_xtrim_options_deletion_policy_keepref() {
     let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
     let mut con = ctx.connection();
-    let _: () = con.flushdb().unwrap();
+    () = con.flushdb().unwrap();
 
     let stream_name = "test_stream_xtrim_keepref";
     let group_name = "test_group";
@@ -1105,7 +1105,7 @@ fn test_xtrim_options_deletion_policy_keepref() {
         stream_entries.map(|entry| con.xadd(stream_name, "*", &[entry]).unwrap().unwrap());
 
     // Create a consumer group and read all initial messages to create PEL entries.
-    let _: () = con
+    () = con
         .xgroup_create_mkstream(stream_name, group_name, "0")
         .unwrap();
     let _: Option<StreamReadReply> = con
@@ -1159,7 +1159,7 @@ fn test_xtrim_options_deletion_policy_keepref() {
 fn test_xtrim_options_deletion_policy_delref() {
     let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
     let mut con = ctx.connection();
-    let _: () = con.flushdb().unwrap();
+    () = con.flushdb().unwrap();
 
     let stream_name = "test_stream_xtrim_delref";
     let group_name = "test_group";
@@ -1176,7 +1176,7 @@ fn test_xtrim_options_deletion_policy_delref() {
         stream_entries.map(|entry| con.xadd(stream_name, "*", &[entry]).unwrap().unwrap());
 
     // Create a consumer group and read all initial messages to create PEL entries.
-    let _: () = con
+    () = con
         .xgroup_create_mkstream(stream_name, group_name, "0")
         .unwrap();
     let _: Option<StreamReadReply> = con
@@ -1230,7 +1230,7 @@ fn test_xtrim_options_deletion_policy_delref() {
 fn test_xtrim_options_deletion_policy_acked() {
     let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
     let mut con = ctx.connection();
-    let _: () = con.flushdb().unwrap();
+    () = con.flushdb().unwrap();
 
     let stream_name = "test_stream_xtrim_acked";
     let group_name = "test_group";
@@ -1247,7 +1247,7 @@ fn test_xtrim_options_deletion_policy_acked() {
         stream_entries.map(|entry| con.xadd(stream_name, "*", &[entry]).unwrap().unwrap());
 
     // Create a consumer group and read all initial messages to create PEL entries.
-    let _: () = con
+    () = con
         .xgroup_create_mkstream(stream_name, group_name, "0")
         .unwrap();
     let _: Option<StreamReadReply> = con
@@ -1301,7 +1301,7 @@ fn test_xtrim_options_deletion_policy_acked() {
 fn test_xdel_ex() {
     let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
     let mut con = ctx.connection();
-    let _: () = con.flushdb().unwrap();
+    () = con.flushdb().unwrap();
 
     let stream_name = "test_stream_xdel_ex";
     let group_name = "test_group";
@@ -1321,7 +1321,7 @@ fn test_xdel_ex() {
         first_three_entries.map(|entry| con.xadd(stream_name, "*", &[entry]).unwrap().unwrap());
 
     // Create a consumer group and read some messages to create PEL entries.
-    let _: () = con
+    () = con
         .xgroup_create_mkstream(stream_name, group_name, "0")
         .unwrap();
     // Create 2 consumers within the group and read 1 message with each of them.
@@ -1501,7 +1501,7 @@ fn test_xdel_ex() {
 fn test_xack_del() {
     let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
     let mut con = ctx.connection();
-    let _: () = con.flushdb().unwrap();
+    () = con.flushdb().unwrap();
 
     let stream_name = "test_stream_xack_del";
     let first_group_name = "test_group1";
@@ -1524,7 +1524,7 @@ fn test_xack_del() {
 
     // Create a consumer group and an individual consumer for each message,
     // then read the messages to create PEL entries.
-    let _: () = con
+    () = con
         .xgroup_create_mkstream(stream_name, first_group_name, "0")
         .unwrap();
 
@@ -1584,7 +1584,7 @@ fn test_xack_del() {
     // Insert a new entry and create a second group so it could be read by both groups.
     let fourth_entry: [(&str, &str); 1] = stream_entries[3..4].try_into().unwrap();
     let id4: String = con.xadd(stream_name, "*", &fourth_entry).unwrap().unwrap();
-    let _: () = con
+    () = con
         .xgroup_create_mkstream(stream_name, second_group_name, "0")
         .unwrap();
 
