@@ -831,7 +831,7 @@ where
     async fn execute_on_multiple_nodes<'a>(
         cmd: &'a Arc<Cmd>,
         routing: &'a MultipleNodeRoutingInfo,
-        core: Core<C>,
+        core: &Core<C>,
         response_policy: Option<ResponsePolicy>,
     ) -> OperationResult {
         let read_guard = core.conn_lock.read().await;
@@ -915,7 +915,7 @@ where
     async fn try_cmd_request(
         cmd: Arc<Cmd>,
         routing: InternalRoutingInfo<C>,
-        core: Core<C>,
+        core: &Core<C>,
     ) -> OperationResult {
         let route = match routing {
             InternalRoutingInfo::SingleNode(single_node_routing) => single_node_routing,
@@ -933,7 +933,15 @@ where
         match Self::get_connection(route, core).await {
             Ok((addr, mut conn)) => (
                 addr.into(),
-                conn.req_packed_command(&cmd).await.map(Response::Single),
+                conn.req_packed_command(&cmd)
+                    .await
+                    .map(Response::Single)
+                    .inspect(|_| {
+                        if let Some(tracker) = &core.subscription_tracker {
+                            let mut tracker = tracker.lock().unwrap();
+                            tracker.update_with_cmd(cmd.as_ref())
+                        }
+                    }),
             ),
             Err(err) => (OperationTarget::NotFound, Err(err)),
         }
@@ -943,14 +951,23 @@ where
         pipeline: Arc<crate::Pipeline>,
         offset: usize,
         count: usize,
-        conn: impl Future<Output = RedisResult<(ArcStr, C)>>,
+        route: InternalSingleNodeRouting<C>,
+        core: &Core<C>,
     ) -> OperationResult {
+        let conn = Self::get_connection(route, core);
         match conn.await {
             Ok((addr, mut conn)) => (
                 OperationTarget::Node { address: addr },
                 conn.req_packed_commands(&pipeline, offset, count)
                     .await
-                    .map(Response::Multiple),
+                    .map(Response::Multiple)
+                    .inspect(|_| {
+                        if let Some(tracker) = &core.subscription_tracker {
+                            // TODO - benchmark whether checking whether the command is a subscription outside of the mutex is more performant.
+                            let mut tracker = tracker.lock().unwrap();
+                            tracker.update_with_pipeline(pipeline.as_ref())
+                        }
+                    }),
             ),
             Err(err) => (OperationTarget::NotFound, Err(err)),
         }
@@ -958,27 +975,19 @@ where
 
     async fn try_request(cmd: CmdArg<C>, core: Core<C>) -> OperationResult {
         match cmd {
-            CmdArg::Cmd { cmd, routing } => Self::try_cmd_request(cmd, routing, core).await,
+            CmdArg::Cmd { cmd, routing } => Self::try_cmd_request(cmd, routing, &core).await,
             CmdArg::Pipeline {
                 pipeline,
                 offset,
                 count,
                 route,
-            } => {
-                Self::try_pipeline_request(
-                    pipeline,
-                    offset,
-                    count,
-                    Self::get_connection(route, core),
-                )
-                .await
-            }
+            } => Self::try_pipeline_request(pipeline, offset, count, route, &core).await,
         }
     }
 
     async fn get_connection(
         route: InternalSingleNodeRouting<C>,
-        core: Core<C>,
+        core: &Core<C>,
     ) -> RedisResult<(ArcStr, C)> {
         let read_guard = core.conn_lock.read().await;
 
@@ -1043,7 +1052,7 @@ where
 
     async fn get_redirected_connection(
         redirect: Redirect,
-        core: Core<C>,
+        core: &Core<C>,
     ) -> RedisResult<(ArcStr, C)> {
         let asking = matches!(redirect, Redirect::Ask(_));
         let addr = match redirect {
@@ -1247,17 +1256,6 @@ where
     fn start_send(self: Pin<&mut Self>, msg: Message<C>) -> Result<(), Self::Error> {
         trace!("start_send");
         let Message { cmd, sender } = msg;
-
-        if let Some(tracker) = &self.inner.subscription_tracker {
-            // TODO - benchmark whether checking whether the command is a subscription outside of the mutex is more performant.
-            let mut tracker = tracker.lock().unwrap();
-            match &cmd {
-                CmdArg::Cmd { cmd, .. } => tracker.update_with_cmd(cmd.as_ref()),
-                CmdArg::Pipeline { pipeline, .. } => {
-                    tracker.update_with_pipeline(pipeline.as_ref())
-                }
-            }
-        };
 
         self.inner
             .pending_requests
