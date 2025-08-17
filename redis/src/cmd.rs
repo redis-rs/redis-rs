@@ -765,6 +765,9 @@ impl Cmd {
     }
 
     /// Client won't read and wait for results. Currently only used for Pub/Sub commands in RESP3.
+    ///
+    /// This is mostly set internally. The user can set it if they know that a certain command doesn't return a response, or if they use an async connection and don't want to wait for the server response.
+    /// For sync connections, setting this wrongly can affect the connection's correctness, and should be avoided.
     #[inline]
     pub fn set_no_response(&mut self, nr: bool) -> &mut Cmd {
         self.no_response = nr;
