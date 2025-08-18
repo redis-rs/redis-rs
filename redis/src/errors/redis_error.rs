@@ -453,8 +453,9 @@ impl RedisError {
         }
     }
 
-    /// Returns the internal server errors, if there are any, and the index of the pipeline where they happened.
+    /// Returns the internal server errors, if there are any, and the failing commands indices.
     ///
+    /// If this is called over over a pipeline or transaction error, the indices correspond to the positions of the failing commands in the pipeline or transaction.
     /// If the error is not a pipeline error, the index will be 0.
     pub fn into_server_errors(self) -> Option<Arc<[(usize, ServerError)]>> {
         match self.repr {

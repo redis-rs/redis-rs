@@ -1892,7 +1892,7 @@ impl ConnectionLike for Connection {
             match response {
                 Ok(Value::ServerError(err)) => {
                     if idx < offset {
-                        server_errors.push((idx - 1, err)); // -1, because of the first MULTI
+                        server_errors.push((idx - 1, err)); // -1, to offset the added MULTI call.
                     } else {
                         rv.push(Value::ServerError(err));
                     }

@@ -233,7 +233,7 @@ where
                         if let ErrorOrErrors::Errors(errs) = error_or_errors {
                             match result {
                                 Ok(Value::ServerError(err)) => {
-                                    errs.push((*seen_responses - 2, err)); // -2 - 1 for the early increment, and 1 for the MULTI call.
+                                    errs.push((*seen_responses - 2, err)); // - 1 to offset the early increment, and -1 to offset the added MULTI call.
                                 }
                                 Err(err) => *error_or_errors = ErrorOrErrors::FirstError(err),
                                 _ => {}
