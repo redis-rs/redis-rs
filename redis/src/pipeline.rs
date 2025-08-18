@@ -348,6 +348,11 @@ impl Pipeline {
         cmd.set_cache_config(command_cache_config);
         self
     }
+
+    #[cfg(feature = "cluster-async")]
+    pub(crate) fn into_cmd_iter(self) -> impl Iterator<Item = Cmd> {
+        self.commands.into_iter()
+    }
 }
 
 #[cfg(test)]
