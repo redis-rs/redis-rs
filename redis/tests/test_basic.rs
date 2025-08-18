@@ -11,6 +11,7 @@ mod basic {
     use rand::prelude::IndexedRandom;
     use rand::{rng, Rng};
 
+    use redis::ServerErrorKind;
     use redis::{
         cmd, Client, Connection, ConnectionInfo, ConnectionLike, ControlFlow, CopyOptions,
         ErrorKind, ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck,
@@ -1414,17 +1415,23 @@ mod basic {
             .unwrap();
 
         // Ensure that a write command fails with a READONLY error
-        let err: RedisResult<()> = redis::pipe()
+        let err = redis::pipe()
             .atomic()
+            .ping()
             .set("x", 142)
             .ignore()
             .get("x")
-            .query(&mut con);
+            .set("x", 142)
+            .query::<()>(&mut con)
+            .unwrap_err();
 
-        assert_eq!(
-            err.unwrap_err().kind(),
-            redis::ServerErrorKind::ReadOnly.into()
-        );
+        assert_eq!(err.kind(), ServerErrorKind::ExecAbort.into());
+        let errors = err.into_server_errors().unwrap();
+        assert_eq!(errors.len(), 2);
+        assert_eq!(errors[0].0, 1);
+        assert_eq!(errors[0].1.kind(), ServerErrorKind::ReadOnly.into());
+        assert_eq!(errors[1].0, 3);
+        assert_eq!(errors[1].1.kind(), ServerErrorKind::ReadOnly.into());
 
         let x: i32 = redis::Commands::get(&mut con, "x").unwrap();
         assert_eq!(x, 42);
