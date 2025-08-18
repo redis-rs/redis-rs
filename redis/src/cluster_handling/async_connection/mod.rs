@@ -935,13 +935,15 @@ where
                 addr.into(),
                 conn.req_packed_command(&cmd)
                     .await
-                    .map(Response::Single)
-                    .inspect(|_| {
-                        if let Some(tracker) = &core.subscription_tracker {
-                            let mut tracker = tracker.lock().unwrap();
-                            tracker.update_with_cmd(cmd.as_ref())
+                    .inspect(|res| {
+                        if !matches!(res, Value::ServerError(_)) {
+                            if let Some(tracker) = &core.subscription_tracker {
+                                let mut tracker = tracker.lock().unwrap();
+                                tracker.update_with_cmd(cmd.as_ref());
+                            }
                         }
-                    }),
+                    })
+                    .map(Response::Single),
             ),
             Err(err) => (OperationTarget::NotFound, Err(err)),
         }
@@ -960,14 +962,17 @@ where
                 OperationTarget::Node { address: addr },
                 conn.req_packed_commands(&pipeline, offset, count)
                     .await
-                    .map(Response::Multiple)
-                    .inspect(|_| {
-                        if let Some(tracker) = &core.subscription_tracker {
-                            // TODO - benchmark whether checking whether the command is a subscription outside of the mutex is more performant.
-                            let mut tracker = tracker.lock().unwrap();
-                            tracker.update_with_pipeline(pipeline.as_ref())
+                    .inspect(|res| {
+                        for (index, cmd) in pipeline.cmd_iter().enumerate() {
+                            if !matches!(res[index], Value::ServerError(_)) {
+                                if let Some(tracker) = &core.subscription_tracker {
+                                    let mut tracker = tracker.lock().unwrap();
+                                    tracker.update_with_cmd(cmd);
+                                }
+                            }
                         }
-                    }),
+                    })
+                    .map(Response::Multiple),
             ),
             Err(err) => (OperationTarget::NotFound, Err(err)),
         }

@@ -2987,7 +2987,7 @@ mod cluster_async {
         #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
         #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
         fn pub_sub_should_not_reconnect_if_subscription_failed(#[case] runtime: RuntimeType) {
-            // in this test we will try to subscribe to a disconnected cluster, fail, and check that once the connection reconnects it won't try and reconnect.
+            // in this test we will try to subscribe to a disconnected cluster, fail, and check that once the connection reconnects it won't try and resubscribe.
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let ctx = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
                 builder
