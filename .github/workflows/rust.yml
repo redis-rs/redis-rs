@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ main, 0.*.x, 1.*.x ]
+    branches: [main, 0.*.x, 1.*.x]
   pull_request:
-    branches: [ main, 0.*.x, 1.*.x ]
+    branches: [main, 0.*.x, 1.*.x]
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,153 +17,116 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60    
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        config:
-          [
+        config: [
             # Different DB cases:
+            { rust: stable, db-org: redis, db-name: redis, db-version: 6.2.13 },
+            { rust: stable, db-org: redis, db-name: redis, db-version: 7.2.4 },
             {
               rust: stable,
-              db-org: redis,
-              db-name: redis,
-              db-version: 6.2.13
-            },
-            {
-              rust: stable,
-              db-org: redis,
-              db-name: redis,
-              db-version: 7.2.4
+              db-org: valkey-io,
+              db-name: valkey,
+              db-version: 7.2.6,
             },
             {
               rust: stable,
               db-org: valkey-io,
               db-name: valkey,
-              db-version: 7.2.6
+              db-version: 8.0.1,
             },
-            {
-              rust: stable,
-              db-org: valkey-io,
-              db-name: valkey,
-              db-version: 8.0.1
-            },
-            {
-              rust: stable,
-              db-org: redis,
-              db-name: redis,
-              db-version: 8.0.2
-            },
-            {
-              rust: stable,
-              db-org: redis,
-              db-name: redis,
-              db-version: 8.2.0
-            },
+            { rust: stable, db-org: redis, db-name: redis, db-version: 8.0.2 },
+            { rust: stable, db-org: redis, db-name: redis, db-version: 8.2.0 },
 
             # Different rust cases
-            {
-              rust: beta,
-              db-org: redis,
-              db-name: redis,
-              db-version: 7.2.4
-            },
-            {
-              rust: nightly,
-              db-org: redis,
-              db-name: redis,
-              db-version: 7.2.4
-            },
-            {
-              rust: 1.80.0,
-              db-org: redis,
-              db-name: redis,
-              db-version: 7.2.4
-            }
+            { rust: beta, db-org: redis, db-name: redis, db-version: 7.2.4 },
+            { rust: nightly, db-org: redis, db-name: redis, db-version: 7.2.4 },
+            { rust: 1.85.0, db-org: redis, db-name: redis, db-version: 7.2.4 },
           ]
 
     steps:
+      - uses: actions/checkout@v4
 
-    - uses: actions/checkout@v4
+      - name: Cache RedisJSON
+        id: cache-redisjson
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/librejson.so
+          key: ${{ runner.os }}-redisjson
 
-    - name: Cache RedisJSON
-      id: cache-redisjson
-      uses: actions/cache@v4
-      with:
-        path: |
-          /tmp/librejson.so
-        key: ${{ runner.os }}-redisjson
+      - name: Install DB
+        uses: ./.github/actions/install-db
+        with:
+          db-org: ${{ matrix.config.db-org }}
+          db-name: ${{ matrix.config.db-name }}
+          db-version: ${{ matrix.config.db-version }}
 
-    - name: Install DB
-      uses: ./.github/actions/install-db
-      with:
-        db-org: ${{ matrix.config.db-org }}
-        db-name: ${{ matrix.config.db-name }}
-        db-version: ${{ matrix.config.db-version }} 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain/@master
+        with:
+          toolchain: ${{ matrix.config.rust }}
+          components: rustfmt
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain/@master
-      with:
-        toolchain: ${{ matrix.config.rust }}
-        components: rustfmt
+      - uses: Swatinem/rust-cache@v2
 
-    - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
 
-    - name: Install cargo-nextest
-      uses: taiki-e/install-action@v2
-      with:
-        tool: nextest
+      - name: Run tests
+        run: make test
 
-    - name: Run tests
-      run: make test
+      - name: Checkout RedisJSON
+        if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
+        uses: actions/checkout@v4
+        with:
+          repository: "RedisJSON/RedisJSON"
+          path: "./__ci/redis-json"
+          set-safe-directory: false
 
-    - name: Checkout RedisJSON
-      if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
-      uses: actions/checkout@v4
-      with:
-        repository: "RedisJSON/RedisJSON"
-        path: "./__ci/redis-json"
-        set-safe-directory: false
+        # When cargo is invoked, it'll go up many directories to see if it can find a workspace
+        # This will avoid this issue in what is admittedly a bit of a janky but still fully functional way
+        #
+        #   1. Copy the untouched file (into Cargo.toml.actual)
+        #   2. Exclude ./__ci/redis-json from the workspace
+        #      (preventing it from being compiled as a workspace module)
+        #   3. Build RedisJSON
+        #   4. Move the built RedisJSON Module (librejson.so) to /tmp
+        #   5. Restore Cargo.toml to its untouched state
+        #   6. Remove the RedisJSON Source code so it doesn't interfere with tests
+        #
+        # This shouldn't cause issues in the future so long as no profiles or patches
+        # are applied to the workspace Cargo.toml file
+      - name: Compile RedisJSON
+        if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
+        run: |
+          cp ./Cargo.toml ./Cargo.toml.actual
+          echo $'\nexclude = [\"./__ci/redis-json\"]' >> Cargo.toml
+          cargo +stable build --release --manifest-path ./__ci/redis-json/Cargo.toml
+          mv ./__ci/redis-json/target/release/librejson.so /tmp/librejson.so
+          rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
+          rm -rf ./__ci/redis-json
 
-      # When cargo is invoked, it'll go up many directories to see if it can find a workspace
-      # This will avoid this issue in what is admittedly a bit of a janky but still fully functional way
-      #
-      #   1. Copy the untouched file (into Cargo.toml.actual)
-      #   2. Exclude ./__ci/redis-json from the workspace
-      #      (preventing it from being compiled as a workspace module)
-      #   3. Build RedisJSON
-      #   4. Move the built RedisJSON Module (librejson.so) to /tmp
-      #   5. Restore Cargo.toml to its untouched state
-      #   6. Remove the RedisJSON Source code so it doesn't interfere with tests
-      #
-      # This shouldn't cause issues in the future so long as no profiles or patches
-      # are applied to the workspace Cargo.toml file
-    - name: Compile RedisJSON
-      if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
-      run: |
-        cp ./Cargo.toml ./Cargo.toml.actual
-        echo $'\nexclude = [\"./__ci/redis-json\"]' >> Cargo.toml
-        cargo +stable build --release --manifest-path ./__ci/redis-json/Cargo.toml
-        mv ./__ci/redis-json/target/release/librejson.so /tmp/librejson.so
-        rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
-        rm -rf ./__ci/redis-json
+      - name: Run module-specific tests
+        if: matrix.config.db-version != '6.2.13'
+        run: make test-module
+        env:
+          REDIS_VERSION: ${{ matrix.config.db-version }}
 
-    - name: Run module-specific tests
-      if: matrix.config.db-version != '6.2.13'
-      run: make test-module
-      env:
-        REDIS_VERSION: ${{ matrix.config.db-version }}
+      - name: Check features
+        run: |
+          cargo check -p redis --benches --all-features
+          cargo check -p redis --no-default-features --features tokio-comp
+          # Remove dev-dependencies so they do not enable features accidentally
+          # https://github.com/rust-lang/cargo/issues/4664
+          sed -i '/dev-dependencies/,/dev-dependencies/d' Cargo.toml
+          cargo check -p redis --all-features
 
-    - name: Check features
-      run: |
-        cargo check -p redis --benches --all-features
-        cargo check -p redis --no-default-features --features tokio-comp
-        # Remove dev-dependencies so they do not enable features accidentally
-        # https://github.com/rust-lang/cargo/issues/4664
-        sed -i '/dev-dependencies/,/dev-dependencies/d' Cargo.toml
-        cargo check -p redis --all-features
-
-        cargo check -p redis --no-default-features --features smol-comp
+          cargo check -p redis --no-default-features --features smol-comp
 
   examples:
     if: ${{ github.event_name == 'pull_request' }}
@@ -171,38 +134,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config:
-          [
+        config: [
             # Different DB cases:
-            {
-              db-org: redis,
-              db-name: redis,
-              db-version: 6.2.13
-            },
-            {
-              db-org: redis,
-              db-name: redis,
-              db-version: 7.2.4
-            },
-            {
-              db-org: valkey-io,
-              db-name: valkey,
-              db-version: 7.2.6
-            },
-            {
-              db-org: valkey-io,
-              db-name: valkey,
-              db-version: 8.0.1
-            },
-            {
-              db-org: redis,
-              db-name: redis,
-              db-version: 8.0.2
-            }
+            { db-org: redis, db-name: redis, db-version: 6.2.13 },
+            { db-org: redis, db-name: redis, db-version: 7.2.4 },
+            { db-org: valkey-io, db-name: valkey, db-version: 7.2.6 },
+            { db-org: valkey-io, db-name: valkey, db-version: 8.0.1 },
+            { db-org: redis, db-name: redis, db-version: 8.0.2 },
           ]
 
     steps:
-
       - uses: actions/checkout@v4
 
       - name: Install DB
@@ -210,15 +151,15 @@ jobs:
         with:
           db-org: ${{ matrix.config.db-org }}
           db-name: ${{ matrix.config.db-name }}
-          db-version: ${{ matrix.config.db-version }} 
+          db-version: ${{ matrix.config.db-version }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain/@master
         with:
           toolchain: stable
-  
+
       - uses: Swatinem/rust-cache@v2
-  
+
       - name: start-redis
         run: redis-server &
 
@@ -243,7 +184,7 @@ jobs:
       - name: async-resp2-pub-sub
         run: cargo run --example async-resp2-pub-sub --features tokio-comp
       - name: async-resp3-pub-sub
-        run: cargo run --example async-resp3-pub-sub --features tokio-comp,connection-manager        
+        run: cargo run --example async-resp3-pub-sub --features tokio-comp,connection-manager
       - name: async-scan
         run: cargo run --example async-scan --features tokio-comp
 
@@ -276,47 +217,46 @@ jobs:
     env:
       rust_ver: stable
     steps:
-      
-    - uses: actions/checkout@v4
-    
-    - name: Install DB
-      uses: ./.github/actions/install-db
-      with:
-        db-org: "redis"
-        db-name: "redis"
-        db-version: 8.0.2
+      - uses: actions/checkout@v4
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain/@master
-      with:
-        toolchain: ${{ env.rust_ver }}
+      - name: Install DB
+        uses: ./.github/actions/install-db
+        with:
+          db-org: "redis"
+          db-name: "redis"
+          db-version: 8.0.2
 
-    - uses: Swatinem/rust-cache@v2
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain/@master
+        with:
+          toolchain: ${{ env.rust_ver }}
 
-    - name: Benchmark
-      run: |
-        cargo install critcmp
-        cargo bench -p redis --all-features -- --measurement-time 15 --save-baseline changes
-        git fetch
-        git checkout ${{ github.base_ref }} 
-        cargo bench -p redis --all-features -- --measurement-time 15 --save-baseline base
-        critcmp base changes
+      - uses: Swatinem/rust-cache@v2
 
-    # We check out again, because we switched branches in the last step.
-    - uses: actions/checkout@v4        
+      - name: Benchmark
+        run: |
+          cargo install critcmp
+          cargo bench -p redis --all-features -- --measurement-time 15 --save-baseline changes
+          git fetch
+          git checkout ${{ github.base_ref }} 
+          cargo bench -p redis --all-features -- --measurement-time 15 --save-baseline base
+          critcmp base changes
+
+      # We check out again, because we switched branches in the last step.
+      - uses: actions/checkout@v4
 
   flag-frenzy:
-      runs-on: ubuntu-latest
-      steps:
-        - uses: actions/checkout@v4
-        - uses: dtolnay/rust-toolchain/@master
-          with:
-            toolchain: stable
-        - uses: Swatinem/rust-cache@v2
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain/@master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
 
-        - run: |
-            cargo install --git https://github.com/nihohit/flag-frenzy.git
-            flag-frenzy --package redis
+      - run: |
+          cargo install --git https://github.com/nihohit/flag-frenzy.git
+          flag-frenzy --package redis
 
   windows-build:
     runs-on: windows-latest
