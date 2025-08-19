@@ -1025,7 +1025,7 @@ where
 
         let addr_conn_option = match conn {
             Some((addr, Some(conn))) => Some((addr, conn)),
-            Some((addr, None)) => connect_check_and_add(&core, &addr)
+            Some((addr, None)) => connect_check_and_add(core, &addr)
                 .await
                 .ok()
                 .map(|conn| (addr, conn)),
@@ -1064,7 +1064,7 @@ where
         drop(read_guard);
         let mut conn = match conn {
             Some(conn) => conn,
-            None => connect_check_and_add(&core, &addr).await?,
+            None => connect_check_and_add(core, &addr).await?,
         };
         if asking {
             let _ = conn
