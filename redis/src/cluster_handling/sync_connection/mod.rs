@@ -515,8 +515,7 @@ where
     }
 
     fn connect(&self, node: &ArcStr) -> RedisResult<C> {
-        let params = self.cluster_params.clone();
-        let info = get_connection_info(node, params)?;
+        let info = get_connection_info(node, &self.cluster_params)?;
 
         let mut conn = C::connect(info, Some(self.cluster_params.connection_timeout))?;
         if self.cluster_params.read_from_replicas {
@@ -1155,13 +1154,13 @@ mod tests {
         ];
 
         for (input, expected) in cases {
-            let res = get_connection_info(input, ClusterParams::default());
+            let res = get_connection_info(input, &ClusterParams::default());
             assert_eq!(res.unwrap().addr, expected);
         }
 
         let cases = vec![":0", "[]:6379"];
         for input in cases {
-            let res = get_connection_info(input, ClusterParams::default());
+            let res = get_connection_info(input, &ClusterParams::default());
             assert_eq!(
                 res.err(),
                 Some(RedisError::from((

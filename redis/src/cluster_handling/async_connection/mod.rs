@@ -205,7 +205,7 @@ where
             self.sender
                 .send(Message {
                     cmd: CmdArg::Cmd {
-                        cmd: Arc::new(cmd.clone()), // TODO Remove this clone?
+                        cmd: Arc::new(cmd.clone()),
                         routing: routing.into(),
                     },
                     sender,
@@ -252,7 +252,7 @@ where
             self.sender
                 .send(Message {
                     cmd: CmdArg::Pipeline {
-                        pipeline: Arc::new(pipeline.clone()), // TODO Remove this clone?
+                        pipeline: Arc::new(pipeline.clone()),
                         offset,
                         count,
                         route: route.into(),
@@ -518,17 +518,14 @@ where
         params: &ClusterParams,
     ) -> RedisResult<ConnectionMap<C>> {
         let (connections, error) = stream::iter(initial_nodes.iter().cloned())
-            .map(|info| {
-                let params = params.clone();
-                async move {
-                    let addr = info.addr.to_string();
-                    let result = connect_and_check(&addr, params).await;
-                    match result {
-                        Ok(conn) => Ok((addr, conn)),
-                        Err(e) => {
-                            debug!("Failed to connect to initial node: {e:?}");
-                            Err(e)
-                        }
+            .map(async move |info| {
+                let addr = info.addr.to_string();
+                let result = connect_and_check(&addr, params).await;
+                match result {
+                    Ok(conn) => Ok((addr, conn)),
+                    Err(e) => {
+                        debug!("Failed to connect to initial node: {e:?}");
+                        Err(e)
                     }
                 }
             })
@@ -578,15 +575,15 @@ where
             .get_subscription_pipeline();
 
         // we send request per cmd, instead of sending the pipe together, in order to send each command to the relevant node, instead of all together to a single node.
-        let requests = subscription_pipe.cmd_iter().map(|cmd| {
-            let routing = RoutingInfo::for_routable(cmd)
+        let requests = subscription_pipe.into_cmd_iter().map(|cmd| {
+            let routing = RoutingInfo::for_routable(&cmd)
                 .unwrap_or(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
                 .into();
             PendingRequest {
                 retry: 0,
                 sender: request::ResultExpectation::Internal,
                 cmd: CmdArg::Cmd {
-                    cmd: Arc::new(cmd.clone()),
+                    cmd: Arc::new(cmd),
                     routing,
                 },
             }
@@ -614,7 +611,7 @@ where
                 SlotMap::new(inner.cluster_params.read_from_replicas),
             );
             drop(write_lock);
-            if let Err(err) = Self::refresh_slots(inner.clone()).await {
+            if let Err(err) = Self::refresh_slots(inner).await {
                 warn!("Can't refresh slots with initial nodes: `{err}`");
             };
         }
@@ -674,10 +671,8 @@ where
         let inner = &inner;
         *connections = stream::iter(addresses_and_connections_iter)
             .map(|(addr, connection)| async move {
-                (
-                    addr.clone(),
-                    Self::get_or_create_conn(&addr, connection, &inner.cluster_params).await,
-                )
+                let res = Self::get_or_create_conn(&addr, connection, &inner.cluster_params).await;
+                (addr, res)
             })
             .buffer_unordered(nodes_len.max(8))
             .fold(
@@ -1016,7 +1011,7 @@ where
 
         let addr_conn_option = match conn {
             Some((addr, Some(conn))) => Some((addr, conn)),
-            Some((addr, None)) => connect_check_and_add(core.clone(), addr.clone())
+            Some((addr, None)) => connect_check_and_add(&core, &addr)
                 .await
                 .ok()
                 .map(|conn| (addr, conn)),
@@ -1055,7 +1050,7 @@ where
         drop(read_guard);
         let mut conn = match conn {
             Some(conn) => conn,
-            None => connect_check_and_add(core.clone(), addr.clone()).await?,
+            None => connect_check_and_add(&core, &addr).await?,
         };
         if asking {
             let _ = conn
@@ -1196,10 +1191,10 @@ where
         if let Some(mut conn) = conn_option {
             match check_connection(&mut conn).await {
                 Ok(_) => Ok(conn),
-                Err(_) => connect_and_check(addr, params.clone()).await,
+                Err(_) => connect_and_check(addr, params).await,
             }
         } else {
-            connect_and_check(addr, params.clone()).await
+            connect_and_check(addr, params).await
         }
     }
 }
@@ -1386,46 +1381,40 @@ impl Connect for MultiplexedConnection {
     }
 }
 
-async fn connect_check_and_add<C>(core: Core<C>, addr: ArcStr) -> RedisResult<C>
+async fn connect_check_and_add<C>(core: &Core<C>, addr: &ArcStr) -> RedisResult<C>
 where
     C: ConnectionLike + Connect + Send + Clone + 'static,
 {
-    match connect_and_check::<C>(&addr, core.cluster_params.clone()).await {
+    match connect_and_check::<C>(addr, &core.cluster_params).await {
         Ok(conn) => {
-            let conn_clone = conn.clone();
-            core.conn_lock.write().await.0.insert(addr, conn_clone);
+            core.conn_lock
+                .write()
+                .await
+                .0
+                .insert(addr.clone(), conn.clone());
             Ok(conn)
         }
         Err(err) => Err(err),
     }
 }
 
-async fn connect_and_check<C>(node: &str, params: ClusterParams) -> RedisResult<C>
+async fn connect_and_check<C>(node: &str, params: &ClusterParams) -> RedisResult<C>
 where
     C: ConnectionLike + Connect + Send + 'static,
 {
-    let read_from_replicas = params.read_from_replicas;
-    let connection_timeout = params.connection_timeout;
-    let response_timeout = params.response_timeout;
-    let push_sender = params.async_push_sender.clone();
-    let tcp_settings = params.tcp_settings.clone();
-    let dns_resolver = params.async_dns_resolver.clone();
-    #[cfg(feature = "cache-aio")]
-    let cache_manager = params.cache_manager.clone();
-    let mut info = get_connection_info(node, params)?;
-    info.tcp_settings = tcp_settings;
+    let info = get_connection_info(node, params)?;
     let mut config =
-        AsyncConnectionConfig::default().set_connection_timeout(Some(connection_timeout));
-    config = config.set_response_timeout(response_timeout);
+        AsyncConnectionConfig::default().set_connection_timeout(Some(params.connection_timeout));
+    config = config.set_response_timeout(params.response_timeout);
 
-    if let Some(push_sender) = push_sender {
-        config = config.set_push_sender_internal(push_sender);
+    if let Some(push_sender) = &params.async_push_sender {
+        config = config.set_push_sender_internal(push_sender.clone());
     }
-    if let Some(resolver) = dns_resolver {
+    if let Some(resolver) = &params.async_dns_resolver {
         config = config.set_dns_resolver_internal(resolver.clone());
     }
     #[cfg(feature = "cache-aio")]
-    if let Some(cache_manager) = cache_manager {
+    if let Some(cache_manager) = &params.cache_manager {
         config = config.set_cache_manager(cache_manager.clone_and_increase_epoch());
     }
     let mut conn = match C::connect_with_config(info, config).await {
@@ -1436,7 +1425,7 @@ where
         }
     };
 
-    let check = if read_from_replicas {
+    let check = if params.read_from_replicas {
         // If READONLY is sent to primary nodes, it will have no effect
         cmd("READONLY")
     } else {
