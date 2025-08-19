@@ -60,7 +60,7 @@ pub(crate) fn get_connection_addr(
 // - Returned from redis via the ASK/MOVED response
 pub(crate) fn get_connection_info(
     node: &str,
-    cluster_params: ClusterParams,
+    cluster_params: &ClusterParams,
 ) -> RedisResult<ConnectionInfo> {
     let (host, port) = split_node_address(node)?;
 
@@ -69,7 +69,7 @@ pub(crate) fn get_connection_info(
             host.to_string(),
             port,
             cluster_params.tls,
-            cluster_params.tls_params,
+            cluster_params.tls_params.clone(),
         ),
         redis: RedisConnectionInfo {
             password: cluster_params.password.clone(),
@@ -77,6 +77,6 @@ pub(crate) fn get_connection_info(
             protocol: cluster_params.protocol.unwrap_or_default(),
             ..Default::default()
         },
-        tcp_settings: cluster_params.tcp_settings,
+        tcp_settings: cluster_params.tcp_settings.clone(),
     })
 }

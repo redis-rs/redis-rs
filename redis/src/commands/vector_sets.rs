@@ -143,7 +143,7 @@ pub enum EmbeddingInput<'a> {
     String(&'a [&'a str]),
 }
 
-impl<'a> ToRedisArgs for EmbeddingInput<'a> {
+impl ToRedisArgs for EmbeddingInput<'_> {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -180,7 +180,7 @@ pub enum VectorAddInput<'a> {
     Values(EmbeddingInput<'a>),
 }
 
-impl<'a> ToRedisArgs for VectorAddInput<'a> {
+impl ToRedisArgs for VectorAddInput<'_> {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -379,7 +379,7 @@ pub enum VectorSimilaritySearchInput<'a> {
     Element(&'a str),
 }
 
-impl<'a> ToRedisArgs for VectorSimilaritySearchInput<'a> {
+impl ToRedisArgs for VectorSimilaritySearchInput<'_> {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
