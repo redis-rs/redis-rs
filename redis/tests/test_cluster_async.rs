@@ -3019,6 +3019,85 @@ mod cluster_async {
             )
             .unwrap();
         }
+
+        #[rstest]
+        #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+        #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+        fn pub_sub_should_not_reconnect_if_subscription_failed(#[case] runtime: RuntimeType) {
+            // in this test we will try to subscribe to a disconnected cluster, fail, and check that once the connection reconnects it won't try and resubscribe.
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let ctx = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
+                builder
+                    .use_protocol(ProtocolVersion::RESP3)
+                    .push_sender(tx.clone())
+            });
+
+            block_on_all(
+                async move {
+                    let ports: Vec<_> = ctx.get_ports();
+
+                    let mut pubsub_conn = ctx.async_connection().await;
+
+                    drop(ctx);
+
+                    let err = pubsub_conn
+                        .subscribe("regular-phonewave")
+                        .await
+                        .unwrap_err();
+                    assert!(err.is_unrecoverable_error(), "{err:?}");
+
+                    // we expect 1 disconnect per connection to node.
+                    for _ in 0..3 {
+                        let push = rx
+                            .recv()
+                            .timeout(futures_time::time::Duration::from_millis(5))
+                            .await
+                            .unwrap();
+                        assert_eq!(
+                            push,
+                            Some(PushInfo {
+                                kind: PushKind::Disconnection,
+                                data: vec![]
+                            })
+                        );
+                    }
+
+                    // recreate cluster
+                    let _cluster = RedisCluster::new(RedisClusterConfiguration {
+                        ports: ports.clone(),
+                        ..Default::default()
+                    });
+
+                    // verify that we didn't get any disconnect notices.
+                    assert_eq!(
+                        rx.try_recv(),
+                        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+                    );
+
+                    // send request to trigger reconnection.
+                    let cmd = cmd("PING");
+                    let _ = pubsub_conn
+                        .route_command(
+                            &cmd,
+                            RoutingInfo::MultiNode((
+                                MultipleNodeRoutingInfo::AllMasters,
+                                Some(redis::cluster_routing::ResponsePolicy::AllSucceeded),
+                            )),
+                        )
+                        .await?;
+
+                    // verify that we didn't get any subscription notices.
+                    assert_eq!(
+                        rx.try_recv(),
+                        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+                    );
+
+                    Ok::<_, RedisError>(())
+                },
+                runtime,
+            )
+            .unwrap();
+        }
     }
 
     #[cfg(feature = "tls-rustls")]
