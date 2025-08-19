@@ -8,7 +8,7 @@ repository = "https://github.com/redis-rs/redis-rs"
 documentation = "https://docs.rs/redis"
 license = "BSD-3-Clause"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.85"
 readme = "../README.md"
 
 [package.metadata.docs.rs]
@@ -120,19 +120,11 @@ vector-sets = ["dep:serde", "serde/derive", "dep:serde_json"]
 cluster = ["dep:crc16", "dep:rand"]
 script = ["dep:sha1_smol"]
 tls-native-tls = ["dep:native-tls"]
-tls-rustls = [
-  "dep:rustls",
-  "rustls/std",
-  "dep:rustls-native-certs",
-]
+tls-rustls = ["dep:rustls", "rustls/std", "dep:rustls-native-certs"]
 tls-rustls-insecure = ["tls-rustls"]
 tls-rustls-webpki-roots = ["tls-rustls", "dep:webpki-roots"]
 smol-comp = ["aio", "dep:smol", "dep:smol-timeout", "dep:async-io"]
-smol-native-tls-comp = [
-  "smol-comp",
-  "dep:async-native-tls",
-  "tls-native-tls",
-]
+smol-native-tls-comp = ["smol-comp", "dep:async-native-tls", "tls-native-tls"]
 smol-rustls-comp = ["smol-comp", "dep:futures-rustls", "tls-rustls"]
 tokio-comp = ["aio", "tokio/net"]
 tokio-native-tls-comp = ["tokio-comp", "tls-native-tls", "dep:tokio-native-tls"]
