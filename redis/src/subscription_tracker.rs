@@ -98,12 +98,6 @@ impl SubscriptionTracker {
         self.update_with_request(action, args);
     }
 
-    pub(crate) fn update_with_pipeline<'a>(&'a mut self, pipe: &'a Pipeline) {
-        for cmd in pipe.cmd_iter() {
-            self.update_with_cmd(cmd);
-        }
-    }
-
     pub(crate) fn get_subscription_pipeline(&self) -> Pipeline {
         let mut pipeline = crate::pipe();
         if !self.subscriptions.is_empty() {
@@ -177,47 +171,6 @@ mod tests {
         let result = tracker.get_subscription_pipeline();
         let mut expected = pipe();
         expected.cmd("PSUBSCRIBE").arg("b*ar");
-        assert_eq!(
-            result.get_packed_pipeline(),
-            expected.get_packed_pipeline(),
-            "{}",
-            String::from_utf8(result.get_packed_pipeline()).unwrap()
-        );
-    }
-
-    #[test]
-    fn test_add_and_remove_subscriptions_with_pipeline() {
-        let mut tracker = SubscriptionTracker::default();
-
-        tracker.update_with_pipeline(
-            pipe()
-                .cmd("subscribe")
-                .arg("foo")
-                .arg("bar")
-                .cmd("PSUBSCRIBE")
-                .arg("fo*o")
-                .arg("b*ar")
-                .cmd("SSUBSCRIBE")
-                .arg("sfoo")
-                .arg("sbar")
-                .cmd("unsubscribe")
-                .arg("foo")
-                .cmd("Punsubscribe")
-                .arg("b*ar")
-                .cmd("Sunsubscribe")
-                .arg("sfoo")
-                .arg("SBAR"),
-        );
-
-        let result = tracker.get_subscription_pipeline();
-        let mut expected = pipe();
-        expected
-            .cmd("SUBSCRIBE")
-            .arg("bar")
-            .cmd("SSUBSCRIBE")
-            .arg("sbar")
-            .cmd("PSUBSCRIBE")
-            .arg("fo*o");
         assert_eq!(
             result.get_packed_pipeline(),
             expected.get_packed_pipeline(),
