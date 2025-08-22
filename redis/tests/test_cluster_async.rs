@@ -273,7 +273,7 @@ mod cluster_async {
 
     #[async_test]
     async fn cluster_resp3() -> RedisResult<()> {
-        if use_protocol() == ProtocolVersion::RESP2 {
+        if !use_protocol().supports_resp3() {
             return Ok(());
         }
 

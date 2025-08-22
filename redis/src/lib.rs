@@ -761,8 +761,7 @@ mod types;
 
 macro_rules! check_resp3 {
     ($protocol: expr) => {
-        use crate::types::ProtocolVersion;
-        if $protocol == ProtocolVersion::RESP2 {
+        if !$protocol.supports_resp3() {
             return Err(RedisError::from((
                 crate::ErrorKind::InvalidClientConfig,
                 "RESP3 is required for this command",
@@ -771,8 +770,7 @@ macro_rules! check_resp3 {
     };
 
     ($protocol: expr, $message: expr) => {
-        use crate::types::ProtocolVersion;
-        if $protocol == ProtocolVersion::RESP2 {
+        if !$protocol.supports_resp3() {
             return Err(RedisError::from((
                 crate::ErrorKind::InvalidClientConfig,
                 $message,

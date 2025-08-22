@@ -1246,7 +1246,7 @@ pub(crate) fn connection_setup_pipeline(
 ) -> (crate::Pipeline, ConnectionSetupComponents) {
     let mut pipeline = pipe();
     let (authenticate_with_resp3_cmd_index, authenticate_with_resp2_cmd_index) =
-        if connection_info.protocol != ProtocolVersion::RESP2 {
+        if connection_info.protocol.supports_resp3() {
             pipeline.add_command(resp3_hello(connection_info));
             (Some(0), None)
         } else if connection_info.password.is_some() {
@@ -1793,7 +1793,7 @@ impl Connection {
 
     fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
         let result = self.con.send_bytes(bytes);
-        if self.protocol != ProtocolVersion::RESP2 {
+        if self.protocol.supports_resp3() {
             if let Err(e) = &result {
                 if e.is_connection_dropped() {
                     self.send_disconnect();
@@ -2031,7 +2031,7 @@ impl<'a> PubSub<'a> {
         cmd: &mut Cmd,
         is_sub_unsub: bool,
     ) -> RedisResult<Value> {
-        let ignore_response = self.con.protocol != ProtocolVersion::RESP2 && is_sub_unsub;
+        let ignore_response = self.con.protocol.supports_resp3() && is_sub_unsub;
         cmd.set_no_response(ignore_response);
 
         self.con.send_packed_command(&cmd.get_packed_command())?;

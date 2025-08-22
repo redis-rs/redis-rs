@@ -4,7 +4,7 @@ use crate::support::*;
 use futures_time::task::sleep;
 #[cfg(feature = "cluster-async")]
 use redis::cluster_routing::*;
-use redis::{caching::CacheConfig, AsyncCommands, ProtocolVersion, RedisError};
+use redis::{caching::CacheConfig, AsyncCommands, RedisError};
 use redis::{CommandCacheConfig, RedisResult};
 #[cfg(feature = "json")]
 use redis_test::server::Module;
@@ -38,7 +38,7 @@ macro_rules! assert_invalidate {
 #[async_test]
 async fn test_cache_basic(test_with_optin: bool) -> RedisResult<()> {
     let ctx = TestContext::new();
-    if ctx.protocol == ProtocolVersion::RESP2 {
+    if !ctx.protocol.supports_resp3() {
         return Ok(());
     }
 
@@ -94,7 +94,7 @@ async fn test_cache_basic(test_with_optin: bool) -> RedisResult<()> {
 #[async_test]
 async fn cache_mget() -> RedisResult<()> {
     let ctx = TestContext::new();
-    if ctx.protocol == ProtocolVersion::RESP2 {
+    if !ctx.protocol.supports_resp3() {
         return Ok(());
     }
 
@@ -144,7 +144,7 @@ async fn cache_mget() -> RedisResult<()> {
 #[async_test]
 async fn module_cache_json_get_mget() -> RedisResult<()> {
     let ctx = TestContext::with_modules(&[Module::Json], false);
-    if ctx.protocol == ProtocolVersion::RESP2 {
+    if !ctx.protocol.supports_resp3() {
         return Ok(());
     }
 
@@ -209,7 +209,7 @@ async fn module_cache_json_get_mget() -> RedisResult<()> {
 #[async_test]
 async fn module_cache_json_get_mget_different_paths() -> RedisResult<()> {
     let ctx = TestContext::with_modules(&[Module::Json], false);
-    if ctx.protocol == ProtocolVersion::RESP2 {
+    if !ctx.protocol.supports_resp3() {
         return Ok(());
     }
 
@@ -313,7 +313,7 @@ async fn module_cache_json_get_mget_different_paths() -> RedisResult<()> {
 #[async_test]
 async fn cache_is_not_target_type_dependent() -> RedisResult<()> {
     let ctx = TestContext::new();
-    if ctx.protocol == ProtocolVersion::RESP2 {
+    if !ctx.protocol.supports_resp3() {
         return Ok(());
     }
 
@@ -333,7 +333,7 @@ async fn cache_is_not_target_type_dependent() -> RedisResult<()> {
 #[async_test]
 async fn test_cache_with_pipeline(atomic: bool) -> RedisResult<()> {
     let ctx = TestContext::new();
-    if ctx.protocol == ProtocolVersion::RESP2 {
+    if !ctx.protocol.supports_resp3() {
         return Ok(());
     }
 
@@ -381,7 +381,7 @@ async fn test_cache_with_pipeline(atomic: bool) -> RedisResult<()> {
 async fn cache_basic_partial_opt_in() -> RedisResult<()> {
     // In OptIn mode cache must not be utilized without explicit per command configuration.
     let ctx = TestContext::new();
-    if ctx.protocol == ProtocolVersion::RESP2 {
+    if !ctx.protocol.supports_resp3() {
         return Ok(());
     }
 
@@ -445,7 +445,7 @@ async fn cache_basic_partial_opt_in() -> RedisResult<()> {
 async fn test_cache_pipeline_partial_opt_in(atomic: bool) -> RedisResult<()> {
     // In OptIn mode cache must not be utilized without explicit per command configuration.
     let ctx = TestContext::new();
-    if ctx.protocol == ProtocolVersion::RESP2 {
+    if !ctx.protocol.supports_resp3() {
         return Ok(());
     }
 
@@ -497,7 +497,7 @@ async fn test_cache_pipeline_partial_opt_in(atomic: bool) -> RedisResult<()> {
 #[async_test]
 async fn test_cache_different_commands(test_with_opt_in: bool) -> RedisResult<()> {
     let ctx = TestContext::new();
-    if ctx.protocol == ProtocolVersion::RESP2 {
+    if !ctx.protocol.supports_resp3() {
         return Ok(());
     }
 
@@ -561,7 +561,7 @@ async fn test_connection_manager_maintains_statistics_after_crashes(
     test_with_optin: bool,
 ) -> RedisResult<()> {
     let ctx = TestContext::new();
-    if ctx.protocol == ProtocolVersion::RESP2 {
+    if !ctx.protocol.supports_resp3() {
         return Ok(());
     }
 
@@ -623,7 +623,7 @@ async fn cache_async_cluster_reconnect_all_nodes() -> RedisResult<()> {
     let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
         builder.cache_config(CacheConfig::default())
     });
-    if ctx.protocol == ProtocolVersion::RESP2 {
+    if !ctx.protocol.supports_resp3() {
         return Ok(());
     }
 
@@ -674,7 +674,7 @@ async fn cache_async_cluster_mget() -> RedisResult<()> {
     let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
         builder.cache_config(CacheConfig::default())
     });
-    if ctx.protocol == ProtocolVersion::RESP2 {
+    if !ctx.protocol.supports_resp3() {
         return Ok(());
     }
 
@@ -728,7 +728,7 @@ async fn test_cache_async_cluster_slot_change(migrate: bool) -> RedisResult<()> 
     let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
         builder.cache_config(CacheConfig::default())
     });
-    if ctx.protocol == ProtocolVersion::RESP2 {
+    if !ctx.protocol.supports_resp3() {
         return Ok(());
     }
     if !migrate && TestContext::new().get_version().0 == 6 {
