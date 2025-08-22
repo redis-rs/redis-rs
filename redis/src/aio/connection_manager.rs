@@ -9,7 +9,7 @@ use crate::{
     errors::RedisError,
     subscription_tracker::{SubscriptionAction, SubscriptionTracker},
     types::{RedisResult, Value},
-    AsyncConnectionConfig, Client, Cmd, Pipeline, ProtocolVersion, PushInfo, PushKind, ToRedisArgs,
+    AsyncConnectionConfig, Client, Cmd, Pipeline, PushInfo, PushKind, ToRedisArgs,
 };
 use arc_swap::ArcSwap;
 use backon::{ExponentialBuilder, Retryable};
@@ -356,7 +356,7 @@ impl ConnectionManager {
 
             connection_config =
                 connection_config.set_push_sender_internal(Arc::new(internal_sender));
-        } else if client.connection_info.redis.protocol != ProtocolVersion::RESP2 {
+        } else if client.connection_info.redis.protocol.supports_resp3() {
             let (internal_sender, internal_receiver) = unbounded_channel();
             components_for_reconnection_on_push = Some((internal_receiver, None));
 

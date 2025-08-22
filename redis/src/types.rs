@@ -2287,6 +2287,13 @@ pub enum ProtocolVersion {
     RESP3,
 }
 
+impl ProtocolVersion {
+    /// Returns true if the protocol can support RESP3 features.
+    pub fn supports_resp3(&self) -> bool {
+        !matches!(self, ProtocolVersion::RESP2)
+    }
+}
+
 /// Helper enum that is used to define option for the hash expire commands
 #[derive(Clone, Copy)]
 #[non_exhaustive]
