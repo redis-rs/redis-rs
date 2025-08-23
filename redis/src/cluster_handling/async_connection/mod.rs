@@ -127,10 +127,10 @@ use crate::{
 use crate::caching::{CacheManager, CacheStatistics};
 use crate::ProtocolVersion;
 use arcstr::ArcStr;
-use futures_sink::Sink;
 use futures_util::{
     future::{self, BoxFuture, FutureExt},
     ready,
+    sink::Sink,
     stream::{self, Stream, StreamExt},
 };
 use log::{debug, trace, warn};
