@@ -353,11 +353,19 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             // https://doc.rust-lang.org/src/std/net/parser.rs.html#255
             // But if we call Ipv6Addr.to_string directly, it follows rfc5952 without brackets:
             // https://doc.rust-lang.org/src/std/net/ip.rs.html#1755
-            match host {
+            let host_str = match host {
                 url::Host::Domain(path) => path.to_string(),
                 url::Host::Ipv4(v4) => v4.to_string(),
                 url::Host::Ipv6(v6) => v6.to_string(),
+            };
+
+            if host_str == "0.0.0.0" || host_str == "::" {
+                return Err(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "Cannot connect to a wildcard address (0.0.0.0 or ::)",
+                )));
             }
+            host_str
         }
         None => fail!((ErrorKind::InvalidClientConfig, "Missing hostname")),
     };
@@ -674,6 +682,12 @@ impl ActualConnection {
     pub fn new(addr: &ConnectionAddr, timeout: Option<Duration>) -> RedisResult<ActualConnection> {
         Ok(match *addr {
             ConnectionAddr::Tcp(ref host, ref port) => {
+                if host == "0.0.0.0" || host == "::" {
+                    fail!((
+                        ErrorKind::InvalidClientConfig,
+                        "Cannot connect to a wildcard address (0.0.0.0 or ::)"
+                    ));
+                }
                 let addr = (host.as_str(), *port);
                 let tcp = match timeout {
                     None => connect_tcp(addr)?,
@@ -2369,6 +2383,16 @@ mod tests {
                 url::Url::parse("redis://127.0.0.1/?protocol=4").unwrap(),
                 "Invalid protocol version",
                 Some("4"),
+            ),
+            (
+                url::Url::parse("redis://0.0.0.0").unwrap(),
+                "Cannot connect to a wildcard address (0.0.0.0 or ::)",
+                None,
+            ),
+            (
+                url::Url::parse("redis://[::]").unwrap(),
+                "Cannot connect to a wildcard address (0.0.0.0 or ::)",
+                None,
             ),
         ];
         for (url, expected, detail) in cases.into_iter() {
