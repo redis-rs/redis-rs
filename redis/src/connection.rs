@@ -412,6 +412,11 @@ fn parse_protocol(query: &HashMap<Cow<str>, Cow<str>>) -> RedisResult<ProtocolVe
     })
 }
 
+#[inline]
+pub(crate) fn is_wildcard_address(address: &str) -> bool {
+    address == "0.0.0.0" || address == "::"
+}
+
 fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     let host = match url.host() {
         Some(host) => {
@@ -426,11 +431,19 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             // https://doc.rust-lang.org/src/std/net/parser.rs.html#255
             // But if we call Ipv6Addr.to_string directly, it follows rfc5952 without brackets:
             // https://doc.rust-lang.org/src/std/net/ip.rs.html#1755
-            match host {
+            let host_str = match host {
                 url::Host::Domain(path) => path.to_string(),
                 url::Host::Ipv4(v4) => v4.to_string(),
                 url::Host::Ipv6(v6) => v6.to_string(),
+            };
+
+            if is_wildcard_address(&host_str) {
+                return Err(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "Cannot connect to a wildcard address (0.0.0.0 or ::)",
+                )));
             }
+            host_str
         }
         None => fail!((ErrorKind::InvalidClientConfig, "Missing hostname")),
     };
@@ -755,6 +768,12 @@ impl ActualConnection {
     ) -> RedisResult<ActualConnection> {
         Ok(match *addr {
             ConnectionAddr::Tcp(ref host, ref port) => {
+                if is_wildcard_address(host) {
+                    fail!((
+                        ErrorKind::InvalidClientConfig,
+                        "Cannot connect to a wildcard address (0.0.0.0 or ::)"
+                    ));
+                }
                 let addr = (host.as_str(), *port);
                 let tcp = match timeout {
                     None => connect_tcp(addr, tcp_settings)?,
@@ -2027,7 +2046,7 @@ impl<'a> PubSub<'a> {
         }
     }
 
-    /// Subscribes to a new channel(s).    
+    /// Subscribes to a new channel(s).
     pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         self.cache_messages_until_received_response(cmd("SUBSCRIBE").arg(channel), true)?;
         Ok(())

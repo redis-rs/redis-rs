@@ -491,7 +491,7 @@ asynchronous interface based on [`futures`][] and [`tokio`][] or [`smol`](https:
 
 This interface exists under the `aio` (async io) module (which requires that the `aio` feature
 is enabled) and largely mirrors the synchronous with a few concessions to make it fit the
-constraints of `futures`. 
+constraints of `futures`.
 
 ```rust,no_run
 use futures::prelude::*;
@@ -588,6 +588,7 @@ let primary = sentinel.get_async_connection().await.unwrap();
 //! * If you're manually setting `ConnectionManager`'s retry setting, then please re-examine the values you set. `exponential_base` has been made a f32, and `factor` was replaced by `min_delay`, in order to match the documented behavior, instead of the actual erroneous behavior of past versions.
 //! * Vector set types have been moved into the `vector_sets` module, instead of being exposed directly.
 //! * ErrorKind::TypeError was renamed ErrorKind::UnexpectedReturnType, to clarify its meaning. Also fixed some cases where it and ErrorKind::Parse were used interchangeably.
+//! * Connecting to a wildcard address (`0.0.0.0` or `::`) is now explicitly disallowed and will return an error. This change prevents connection timeouts and provides a clearer error message. This affects both standalone and cluster connections. Users relying on this behavior should now connect to a specific, non-wildcard address.
 //!
 //!
 
