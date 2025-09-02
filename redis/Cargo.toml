@@ -175,7 +175,6 @@ aio = [
   "dep:pin-project-lite",
   "dep:futures-util",
   "dep:tokio",
-  "tokio/io-util",
   "dep:tokio-util",
   "tokio-util/codec",
   "combine/tokio",
