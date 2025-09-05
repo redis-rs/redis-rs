@@ -1,8 +1,8 @@
 #![cfg(feature = "cluster")]
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use redis::cluster::cluster_pipe;
+use iai_callgrind::{library_benchmark, library_benchmark_group, main, LibraryBenchmarkConfig};
+use redis::cluster::{cluster_pipe, ClusterConnection};
 use redis_test::cluster::RedisClusterConfiguration;
 
 use support::*;
@@ -12,98 +12,90 @@ mod support;
 
 const PIPELINE_QUERIES: usize = 100;
 
-fn bench_set_get_and_del(c: &mut Criterion, con: &mut redis::cluster::ClusterConnection) {
+fn bench_set_get_and_del(con: &mut ClusterConnection) {
     let key = "test_key";
 
-    let mut group = c.benchmark_group("cluster_basic");
+    redis::cmd("SET").arg(key).arg(42).exec(con).unwrap();
 
-    group.bench_function("set", |b| {
-        b.iter(|| {
-            redis::cmd("SET").arg(key).arg(42).exec(con).unwrap();
-            black_box(())
-        })
-    });
+    black_box(redis::cmd("GET").arg(key).query::<isize>(con).unwrap());
 
-    group.bench_function("get", |b| {
-        b.iter(|| black_box(redis::cmd("GET").arg(key).query::<isize>(con).unwrap()))
-    });
-
-    let mut set_and_del = || {
-        redis::cmd("SET").arg(key).arg(42).exec(con).unwrap();
-        redis::cmd("DEL").arg(key).exec(con).unwrap();
-    };
-    group.bench_function("set_and_del", |b| {
-        b.iter(|| {
-            set_and_del();
-            black_box(())
-        })
-    });
-
-    group.finish();
+    redis::cmd("SET").arg(key).arg(42).exec(con).unwrap();
+    redis::cmd("DEL").arg(key).exec(con).unwrap();
 }
 
-fn bench_pipeline(c: &mut Criterion, con: &mut redis::cluster::ClusterConnection) {
-    let mut group = c.benchmark_group("cluster_pipeline");
-    group.throughput(Throughput::Elements(PIPELINE_QUERIES as u64));
-
-    let mut queries = Vec::new();
+fn bench_pipeline(con: &mut ClusterConnection) {
+    let mut keys = Vec::new();
     for i in 0..PIPELINE_QUERIES {
-        queries.push(format!("foo{i}"));
+        keys.push(format!("foo{i}"));
     }
-
-    let build_pipeline = || {
-        let mut pipe = cluster_pipe();
-        for q in &queries {
-            pipe.set(q, "bar").ignore();
-        }
-    };
-    group.bench_function("build_pipeline", |b| {
-        b.iter(|| {
-            build_pipeline();
-            black_box(())
-        })
-    });
 
     let mut pipe = cluster_pipe();
-    for q in &queries {
+    for q in &keys {
         pipe.set(q, "bar").ignore();
     }
-    group.bench_function("query_pipeline", |b| {
-        b.iter(|| {
-            pipe.exec(con).unwrap();
-            black_box(())
-        })
-    });
+    pipe.exec(con).unwrap();
 
-    group.finish();
+    let mut pipe = cluster_pipe();
+    for q in &keys {
+        pipe.get(q).ignore();
+    }
+    pipe.exec(con).unwrap();
 }
 
-fn bench_cluster_setup(c: &mut Criterion) {
+type Dependencies = (TestClusterContext, ClusterConnection);
+
+fn setup() -> Dependencies {
+    let cluster = TestClusterContext::new();
+    cluster.wait_for_cluster_up();
+    let connection = cluster.connection();
+    (cluster, connection)
+}
+
+fn setup_with_replicas() -> Dependencies {
     let cluster =
         TestClusterContext::new_with_config(RedisClusterConfiguration::single_replica_config());
     cluster.wait_for_cluster_up();
-
-    let mut con = cluster.connection();
-    bench_set_get_and_del(c, &mut con);
-    bench_pipeline(c, &mut con);
+    let connection = cluster.connection();
+    (cluster, connection)
 }
 
-#[allow(dead_code)]
-fn bench_cluster_read_from_replicas_setup(c: &mut Criterion) {
-    let cluster = TestClusterContext::new_with_config_and_builder(
-        RedisClusterConfiguration::single_replica_config(),
-        |builder| builder.read_from_replicas(),
-    );
-    cluster.wait_for_cluster_up();
-
-    let mut con = cluster.connection();
-    bench_set_get_and_del(c, &mut con);
-    bench_pipeline(c, &mut con);
+#[library_benchmark]
+#[benches::with_setup(setup = setup)]
+fn bench_cluster_set_get_and_del(tuple: Dependencies) {
+    let (_cluster, mut connection) = tuple;
+    bench_set_get_and_del(&mut connection);
 }
 
-criterion_group!(
-    cluster_bench,
-    bench_cluster_setup,
-    // bench_cluster_read_from_replicas_setup
+#[library_benchmark]
+#[benches::with_setup(setup = setup_with_replicas)]
+fn bench_cluster_set_get_and_del_with_replicas(tuple: Dependencies) {
+    let (_cluster, mut connection) = tuple;
+    bench_set_get_and_del(&mut connection);
+}
+
+#[library_benchmark]
+#[benches::with_setup(setup = setup)]
+fn bench_cluster_pipeline(tuple: Dependencies) {
+    let (_cluster, mut connection) = tuple;
+    bench_pipeline(&mut connection);
+}
+
+#[library_benchmark]
+#[benches::with_setup(setup = setup_with_replicas)]
+fn bench_cluster_pipeline_with_replicas(tuple: Dependencies) {
+    let (_cluster, mut connection) = tuple;
+    bench_pipeline(&mut connection);
+}
+
+library_benchmark_group!(
+    name = cluster_bench;
+    benchmarks =bench_cluster_set_get_and_del,
+    bench_cluster_set_get_and_del_with_replicas,
+    bench_cluster_pipeline,
+    bench_cluster_pipeline_with_replicas,
 );
-criterion_main!(cluster_bench);
+
+main!(
+    config = LibraryBenchmarkConfig::default().env_clear(false);
+    library_benchmark_groups = cluster_bench,
+);
