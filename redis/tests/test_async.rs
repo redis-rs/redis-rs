@@ -1,5 +1,65 @@
 mod support;
 
+#[cfg(all(feature = "connection-manager", feature = "tokio-comp"))]
+#[tokio::test]
+async fn test_connection_manager_reconnect_on_disconnect() {
+    use redis::aio::ConnectionManagerConfig;
+    use tokio::sync::mpsc::unbounded_channel;
+    use crate::support::{TestContext, kill_client_async};
+    use redis::{ProtocolVersion, ErrorKind};
+    use redis_test::server::use_protocol;
+
+    if use_protocol() == ProtocolVersion::RESP2 { return; }
+
+    let ctx = TestContext::new();
+    let (tx, _rx) = unbounded_channel::<redis::PushInfo>();
+    let config = ConnectionManagerConfig::new().set_push_sender(tx).set_automatic_resubscription();
+    let mut manager = ctx.client.get_connection_manager_with_config(config).await.expect("create manager");
+
+    redis::cmd("SET").arg("cm_reconnect_key").arg("1").exec_async(&mut manager).await.expect("initial set");
+
+    let mut killer = ctx.async_connection().await.expect("killer conn");
+    kill_client_async(&mut killer, &ctx.client).await.expect("kill");
+
+    let r1 = redis::cmd("GET").arg("cm_reconnect_key").query_async::<Option<String>>(&mut manager).await;
+    if let Err(e) = r1.as_ref() { assert_eq!(e.kind(), ErrorKind::Io); }
+
+    let r2 = redis::cmd("GET").arg("cm_reconnect_key").query_async::<Option<String>>(&mut manager).await.expect("post-reconnect get");
+    assert_eq!(r2, Some("1".to_string()));
+}
+
+#[cfg(all(feature = "connection-manager", feature = "tokio-comp"))]
+#[tokio::test]
+async fn test_connection_manager_auto_resubscribe_after_disconnect() {
+    use redis::aio::ConnectionManagerConfig;
+    use tokio::sync::mpsc::unbounded_channel;
+    use crate::support::{TestContext, kill_client_async};
+    use redis::{AsyncCommands, ProtocolVersion};
+    use redis_test::server::use_protocol;
+
+    if use_protocol() == ProtocolVersion::RESP2 { return; }
+
+    let ctx = TestContext::new();
+    let (tx, mut rx) = unbounded_channel::<redis::PushInfo>();
+    let config = ConnectionManagerConfig::new().set_push_sender(tx).set_automatic_resubscription();
+    let mut manager = ctx.client.get_connection_manager_with_config(config).await.expect("create manager");
+
+    manager.subscribe("cm_auto_resub_ch").await.expect("subscribe");
+    let mut pub_conn = ctx.async_connection().await.unwrap();
+    let _: () = pub_conn.publish("cm_auto_resub_ch", "first").await.unwrap();
+    let _ = rx.recv().await;
+
+    let mut killer = ctx.async_connection().await.expect("killer conn");
+    kill_client_async(&mut killer, &ctx.client).await.expect("kill");
+
+    let _: () = pub_conn.publish("cm_auto_resub_ch", "second").await.unwrap();
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop { if let Some(_msg) = rx.recv().await { break; } }
+    }).await.expect("receive push after reconnect");
+}
+
+
 #[cfg(test)]
 mod basic_async {
     use std::{collections::HashMap, time::Duration};
@@ -386,6 +446,116 @@ mod basic_async {
             runtime,
         )
         .unwrap();
+
+    #[cfg(all(feature = "connection-manager", feature = "tokio-comp"))]
+    #[tokio::test]
+    async fn test_connection_manager_reconnect_on_disconnect() {
+        use redis::aio::{ConnectionManagerConfig, AsyncPushSender};
+        use tokio::sync::mpsc::unbounded_channel;
+
+        // Ensure RESP3 to enable push-based signals
+        if use_protocol() == ProtocolVersion::RESP2 {
+            return;
+        }
+
+        let ctx = TestContext::new();
+
+        // External push sender (not strictly required for reconnect on IO error, but good for coverage)
+        let (tx, mut _rx) = unbounded_channel::<redis::PushInfo>();
+        let config = ConnectionManagerConfig::new()
+            .set_push_sender(tx)
+            .set_automatic_resubscription();
+
+        let mut manager = ctx
+            .client
+            .get_connection_manager_with_config(config)
+            .await
+            .expect("create connection manager");
+
+        // Basic command works
+        redis::cmd("SET")
+            .arg("cm_reconnect_key")
+            .arg("1")
+            .exec_async(&mut manager)
+            .await
+            .expect("initial set");
+
+        // Kill the client connection to force a disconnect
+        let mut killer = ctx.async_connection().await.expect("killer conn");
+        kill_client_async(&mut killer, &ctx.client).await.expect("kill");
+
+        // First command after kill likely errors with Io, which should trigger reconnect internally
+        let r1 = redis::cmd("GET")
+            .arg("cm_reconnect_key")
+            .query_async::<Option<String>>(&mut manager)
+            .await;
+        // Allow either an initial Io error or success (depending on timing)
+        if let Err(e) = r1.as_ref() {
+            assert_eq!(e.kind(), ErrorKind::Io);
+        }
+
+        // Subsequent command should succeed after reconnect
+        let r2 = redis::cmd("GET")
+            .arg("cm_reconnect_key")
+            .query_async::<Option<String>>(&mut manager)
+            .await
+            .expect("post-reconnect get");
+        assert_eq!(r2, Some("1".to_string()));
+    }
+
+    #[cfg(all(feature = "connection-manager", feature = "tokio-comp"))]
+    #[tokio::test]
+    async fn test_connection_manager_auto_resubscribe_after_disconnect() {
+        use redis::aio::ConnectionManagerConfig;
+        use tokio::sync::mpsc::unbounded_channel;
+
+        // RESP3 required for push-based subscription management
+        if use_protocol() == ProtocolVersion::RESP2 {
+            return;
+        }
+
+        let ctx = TestContext::new();
+        let (tx, mut rx) = unbounded_channel::<redis::PushInfo>();
+        let config = ConnectionManagerConfig::new()
+            .set_push_sender(tx)
+            .set_automatic_resubscription();
+
+        let mut manager = ctx
+            .client
+            .get_connection_manager_with_config(config)
+            .await
+            .expect("create manager");
+
+        // Subscribe to a channel
+        manager.subscribe("cm_auto_resub_ch").await.expect("subscribe");
+
+        // Publish a message and drain one push to ensure subscription is active
+        let mut pub_conn = ctx.async_connection().await.unwrap();
+        let _: () = pub_conn.publish("cm_auto_resub_ch", "first").await.unwrap();
+        // Wait for a push message confirming subscription/message flow
+        // We accept any push and proceed; test focuses on resubscribe after disconnect
+        let _ = rx.recv().await;
+
+        // Kill underlying connection to trigger disconnect
+        let mut killer = ctx.async_connection().await.expect("killer conn");
+        kill_client_async(&mut killer, &ctx.client).await.expect("kill");
+
+        // Publish again; after reconnect, auto-resubscribe should make messages flow
+        let _: () = pub_conn
+            .publish("cm_auto_resub_ch", "second")
+            .await
+            .unwrap();
+
+        // Expect to receive at least one push post-reconnect
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Some(_msg) = rx.recv().await { break; }
+            }
+        })
+        .await
+        .expect("receive push after reconnect");
+    }
+
     }
 
     #[rstest]

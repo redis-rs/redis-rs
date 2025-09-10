@@ -90,8 +90,9 @@
 //!     connection.route_command(&redis::cmd("PING"), routing_info).await
 //! }
 //! ```
+use crate::PushInfo;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt,
     future::Future,
     io, mem,
@@ -101,8 +102,13 @@ use std::{
     time::Duration,
 };
 
+// Limit how many node reconnects are initiated per poll cycle to avoid spikes.
+// This is internal-only for now; can be made configurable later if needed.
+const MAX_RECONNECTS_PER_CYCLE: usize = 32;
+
 mod request;
 mod routing;
+use crate::aio::{AsyncPushSender, SendError};
 use crate::{
     aio::{ConnectionLike, HandleContainer, MultiplexedConnection, Runtime},
     check_resp3,
@@ -122,6 +128,25 @@ use crate::{
     AsyncConnectionConfig, Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError,
     RedisFuture, RedisResult, ToRedisArgs, Value,
 };
+
+#[derive(Clone)]
+struct CombinedPushSender {
+    external: Option<Arc<dyn AsyncPushSender>>,
+    internal: mpsc::UnboundedSender<(ArcStr, crate::PushInfo)>,
+    node_address: ArcStr,
+}
+
+impl AsyncPushSender for CombinedPushSender {
+    fn send(&self, info: crate::PushInfo) -> Result<(), SendError> {
+        if let Some(external) = &self.external {
+            // Replicate ConnectionManager behavior: if external sender is disconnected, we don't care.
+            let _ = external.send(info.clone());
+        }
+        self.internal
+            .send((self.node_address.clone(), info))
+            .map_err(|_| SendError)
+    }
+}
 
 #[cfg(feature = "cache-aio")]
 use crate::caching::{CacheManager, CacheStatistics};
@@ -164,17 +189,37 @@ where
 {
     pub(crate) async fn new(
         initial_nodes: &[ConnectionInfo],
-        cluster_params: ClusterParams,
+        mut cluster_params: ClusterParams,
     ) -> RedisResult<ClusterConnection<C>> {
         let protocol = cluster_params.protocol.unwrap_or_default();
         let response_timeout = cluster_params.response_timeout;
         #[cfg(feature = "cache-aio")]
         let cache_manager = cluster_params.cache_manager.clone();
         let runtime = Runtime::locate();
+
+        #[cfg(feature = "cluster-async")]
+        let internal_push_receiver = {
+            let (internal_push_sender, internal_push_receiver) = mpsc::unbounded_channel();
+            cluster_params.internal_push_sender = Some(internal_push_sender);
+            Some(internal_push_receiver)
+        };
+
         ClusterConnInner::new(initial_nodes, cluster_params)
             .await
             .map(|inner| {
                 let (sender, mut receiver) = mpsc::channel::<Message<_>>(100);
+
+                #[cfg(feature = "cluster-async")]
+                {
+                    if let Some(internal_push_receiver) = internal_push_receiver {
+                        let stream_inner = inner.inner.clone();
+                        let _ = runtime.spawn(check_for_disconnect_pushes(
+                            stream_inner,
+                            internal_push_receiver,
+                        ));
+                    }
+                }
+
                 let stream = async move {
                     let _ = stream::poll_fn(move |cx| receiver.poll_recv(cx))
                         .map(Ok)
@@ -384,6 +429,7 @@ where
         let mut cmd = cmd("SSUBSCRIBE");
         cmd.arg(channel_name);
         cmd.exec_async(self).await?;
+
         Ok(())
     }
 
@@ -397,6 +443,7 @@ where
         cmd.exec_async(self).await?;
         Ok(())
     }
+
     /// Gets [`CacheStatistics`] for cluster connection if caching is enabled.
     #[cfg(feature = "cache-aio")]
     #[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
@@ -407,6 +454,24 @@ where
 
 type ConnectionMap<C> = HashMap<ArcStr, C>;
 
+#[cfg(feature = "cluster-async")]
+async fn check_for_disconnect_pushes<C>(
+    inner: Core<C>,
+    mut receiver: mpsc::UnboundedReceiver<(ArcStr, crate::PushInfo)>,
+) where
+    C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
+{
+    while let Some((node_address, push_info)) = receiver.recv().await {
+        if push_info.kind == crate::PushKind::Disconnection {
+            inner
+                .nodes_to_reconnect
+                .lock()
+                .unwrap()
+                .insert(node_address);
+        }
+    }
+}
+
 /// This is the internal representation of an async Redis Cluster connection. It stores the
 /// underlying connections maintained for each node in the cluster, as well
 /// as common parameters for connecting to nodes and executing commands.
@@ -416,6 +481,8 @@ struct InnerCore<C> {
     pending_requests: Mutex<Vec<PendingRequest<C>>>,
     initial_nodes: Vec<ConnectionInfo>,
     subscription_tracker: Option<Mutex<SubscriptionTracker>>,
+    #[cfg(feature = "cluster-async")]
+    nodes_to_reconnect: Mutex<HashSet<ArcStr>>,
 }
 
 type Core<C> = Arc<InnerCore<C>>;
@@ -502,6 +569,8 @@ where
             pending_requests: Mutex::new(Vec::new()),
             initial_nodes: initial_nodes.to_vec(),
             subscription_tracker,
+            #[cfg(feature = "cluster-async")]
+            nodes_to_reconnect: Mutex::new(HashSet::new()),
         });
         let connection = ClusterConnInner {
             inner,
@@ -1108,6 +1177,25 @@ where
     }
 
     fn poll_complete(&mut self, cx: &mut task::Context<'_>) -> Poll<PollFlushAction> {
+        #[cfg(feature = "cluster-async")]
+        {
+            let mut nodes_to_reconnect_guard = self.inner.nodes_to_reconnect.lock().unwrap();
+            if !nodes_to_reconnect_guard.is_empty() {
+                // Batch up to MAX_RECONNECTS_PER_CYCLE nodes to avoid spikes.
+                let batch: Vec<ArcStr> = nodes_to_reconnect_guard
+                    .iter()
+                    .take(MAX_RECONNECTS_PER_CYCLE)
+                    .cloned()
+                    .collect();
+                for addr in &batch {
+                    nodes_to_reconnect_guard.remove(addr);
+                }
+                if !batch.is_empty() {
+                    return Poll::Ready(PollFlushAction::Reconnect(batch));
+                }
+            }
+        }
+
         let mut poll_flush_action = PollFlushAction::None;
 
         let mut pending_requests_guard = self.inner.pending_requests.lock().unwrap();
@@ -1123,11 +1211,13 @@ where
 
                 let future = Self::try_request(request.cmd.clone(), self.inner.clone()).boxed();
                 self.in_flight_requests.push(Box::pin(Request {
+                    core: self.inner.clone(),
                     retry_params: self.inner.cluster_params.retry_params.clone(),
                     request: Some(request),
                     future: RequestState::Future { future },
                 }));
             }
+
             *pending_requests_guard = pending_requests;
         }
         drop(pending_requests_guard);
@@ -1138,13 +1228,16 @@ where
                     Poll::Ready(Some(result)) => result,
                     Poll::Ready(None) | Poll::Pending => break,
                 };
+
             match request_handling {
                 Some(Retry::MoveToPending { request }) => {
                     self.inner.pending_requests.lock().unwrap().push(request);
                 }
                 Some(Retry::Immediately { request }) => {
                     let future = Self::try_request(request.cmd.clone(), self.inner.clone());
+
                     self.in_flight_requests.push(Box::pin(Request {
+                        core: self.inner.clone(),
                         retry_params: self.inner.cluster_params.retry_params.clone(),
                         request: Some(request),
                         future: RequestState::Future {
@@ -1160,6 +1253,7 @@ where
                         sleep: boxed_sleep(sleep_duration),
                     };
                     self.in_flight_requests.push(Box::pin(Request {
+                        core: self.inner.clone(),
                         retry_params: self.inner.cluster_params.retry_params.clone(),
                         request: Some(request),
                         future,
@@ -1397,7 +1491,15 @@ where
                 .insert(addr.clone(), conn.clone());
             Ok(conn)
         }
-        Err(err) => Err(err),
+        Err(err) => {
+            if let Some(sender) = &core.cluster_params.internal_push_sender {
+                let _ = sender.send((addr.clone(), PushInfo::disconnect()));
+            }
+            if let Some(sender) = &core.cluster_params.async_push_sender {
+                let _ = sender.send(PushInfo::disconnect());
+            }
+            Err(err)
+        }
     }
 }
 
@@ -1410,7 +1512,15 @@ where
         AsyncConnectionConfig::default().set_connection_timeout(Some(params.connection_timeout));
     config = config.set_response_timeout(params.response_timeout);
 
-    if let Some(push_sender) = &params.async_push_sender {
+    #[cfg(feature = "cluster-async")]
+    if let Some(internal_sender) = &params.internal_push_sender {
+        let combined = CombinedPushSender {
+            external: params.async_push_sender.clone(),
+            internal: internal_sender.clone(),
+            node_address: node.into(),
+        };
+        config = config.set_push_sender(combined);
+    } else if let Some(push_sender) = &params.async_push_sender {
         config = config.set_push_sender_internal(push_sender.clone());
     }
     if let Some(resolver) = &params.async_dns_resolver {

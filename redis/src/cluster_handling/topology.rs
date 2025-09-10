@@ -3,7 +3,7 @@
 use arcstr::ArcStr;
 
 use super::slot_map::Slot;
-use crate::{RedisResult, Value};
+use crate::{connection::is_wildcard_address, RedisResult, Value};
 
 // Parse slot data from raw redis value.
 pub(crate) fn parse_slots(
@@ -45,7 +45,7 @@ pub(crate) fn parse_slots(
                 // However, if the received hostname is "?", it should be regarded as an indication of an unknown node.
                 let hostname = if let Value::BulkString(ref ip) = node[0] {
                     let hostname = String::from_utf8_lossy(ip);
-                    if hostname.is_empty() {
+                    if hostname.is_empty() || is_wildcard_address(&hostname) {
                         addr_of_answering_node.into()
                     } else if hostname == "?" {
                         return None;
@@ -118,5 +118,22 @@ mod tests {
 
         let slots = parse_slots(view, "node").unwrap();
         assert_eq!(slots[0].master, "node:6379");
+    }
+
+    #[test]
+    fn parse_slots_treats_wildcard_hostnames_as_answering_node() {
+        // Master advertised as 0.0.0.0 should be treated as the answering node's host
+        let view = Value::Array(vec![slot_value_with_replicas(
+            0,
+            100,
+            vec![("0.0.0.0", 7000)],
+        )]);
+        let slots = parse_slots(view, "answer.host").unwrap();
+        assert_eq!(slots[0].master, "answer.host:7000");
+
+        // IPv6 wildcard :: similarly falls back to answering node
+        let view_v6 = Value::Array(vec![slot_value_with_replicas(200, 300, vec![("::", 7001)])]);
+        let slots_v6 = parse_slots(view_v6, "answer6.host").unwrap();
+        assert_eq!(slots_v6[0].master, "answer6.host:7001");
     }
 }

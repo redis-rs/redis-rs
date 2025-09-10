@@ -1,5 +1,6 @@
 #![cfg(feature = "cluster-async")]
 mod support;
+use rstest::*;
 
 #[cfg(test)]
 mod cluster_async {
@@ -28,8 +29,11 @@ mod cluster_async {
     use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
     use redis_test::server::use_protocol;
     use rstest::rstest;
+    use redis::PushInfo;
+    use std::process::Command;
 
-    use crate::support::*;
+    use crate::support::{runtime::RuntimeType, *};
+    
 
     fn broken_pipe_error() -> RedisError {
         RedisError::from(std::io::Error::new(
@@ -1092,6 +1096,87 @@ mod cluster_async {
         // 5 - because of the 4 above, and then another PING for new connections.
         assert_eq!(connection_count_clone.load(Ordering::Relaxed), 5);
     }
+
+        #[test]
+        fn test_async_cluster_dedup_multiple_disconnections_single_reconnect() {
+            let name = "test_async_cluster_dedup_multiple_disconnections_single_reconnect";
+
+            let should_reconnect_phase = Arc::new(AtomicU32::new(0));
+            let connection_count = Arc::new(AtomicU16::new(0));
+            let connection_count_clone = connection_count.clone();
+
+            let MockEnv {
+                runtime,
+                async_connection: mut connection,
+                handler: _handler,
+                ..
+            } = MockEnv::with_client_builder(
+                ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
+                name,
+                {
+                    let should_reconnect_phase = should_reconnect_phase.clone();
+                    move |cmd: &[u8], port| {
+                        // Count connection attempts at startup (CLUSTER SLOTS / PING) as in the existing test.
+                        match respond_startup(name, cmd) {
+                            Ok(_) => {}
+                            Err(err) => {
+                                connection_count.fetch_add(1, Ordering::Relaxed);
+                                return Err(err);
+                            }
+                        }
+
+                        if contains_slice(cmd, b"ECHO") && port == 6379 {
+                            // First two attempts: IO error (simulate two rapid disconnections)
+                            let phase = should_reconnect_phase.fetch_add(1, Ordering::SeqCst);
+                            match phase {
+                                0 | 1 => Err(Err(broken_pipe_error())),
+                                _ => Err(Ok(Value::BulkString(b"PONG".to_vec()))),
+                            }
+                        } else {
+                            panic!("unexpected command {cmd:?}")
+                        }
+                    }
+                },
+            );
+
+            // 4 - MockEnv creates a sync & async connections, each calling CLUSTER SLOTS once & PING per node.
+            // Stay aligned with the existing expectation. If this setup changes upstream, this assertion might need update.
+            assert_eq!(connection_count_clone.load(Ordering::Relaxed), 4);
+
+            // First attempt: should receive IO error (broken pipe) due to simulated disconnect.
+            let value = runtime.block_on(connection.route_command(
+                &cmd("ECHO"),
+                RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+                    host: name.to_string(),
+                    port: 6379,
+                }),
+            ));
+            assert_eq!(value.unwrap_err().to_string(), broken_pipe_error().to_string());
+
+            // Second attempt: still IO error, but dedup should keep only one reconnect scheduled.
+            let value = runtime.block_on(connection.route_command(
+                &cmd("ECHO"),
+                RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+                    host: name.to_string(),
+                    port: 6379,
+                }),
+            ));
+            assert_eq!(value.unwrap_err().to_string(), broken_pipe_error().to_string());
+
+            // Third attempt: should succeed after a single reconnect cycle.
+            let value = runtime.block_on(connection.route_command(
+                &cmd("ECHO"),
+                RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+                    host: name.to_string(),
+                    port: 6379,
+                }),
+            ));
+
+            assert_eq!(value, Ok(Value::BulkString(b"PONG".to_vec())));
+            // Expect only one additional connection setup due to deduped reconnect (4 baseline + 1 reconnect PING/slots).
+            assert_eq!(connection_count_clone.load(Ordering::Relaxed), 5);
+        }
+
 
     #[test]
     fn test_async_cluster_ask_redirect() {
@@ -3161,3 +3246,73 @@ mod cluster_async {
         }
     }
 }
+
+
+    #[rstest]
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+    #[ignore] // This test requires a live redis cluster and is disruptive.
+    fn test_cluster_does_not_reconnect_on_idle_disconnection(#[case] runtime: RuntimeType) {
+        block_on_all(
+            async move {
+                let nodes = vec![
+                    "redis://127.0.0.1:7000/?protocol=3",
+                    "redis://127.0.0.1:7001/?protocol=3",
+                    "redis://127.0.0.1:7002/?protocol=3",
+                ];
+                let received_pushes = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+                let received_pushes_clone = received_pushes.clone();
+
+                let client = ClusterClient::builder(nodes)
+                    .use_protocol(redis::ProtocolVersion::RESP3)
+                    .push_sender(move |push: PushInfo| {
+                        let mut pushes = received_pushes_clone.try_lock().unwrap();
+                        pushes.push(push);
+                        Ok(())
+                    })
+                    .build()?;
+
+                let mut con = client.get_async_connection().await?;
+
+                // 1. Initial command to ensure connection is alive
+                let _: RedisResult<String> = con.get("some-key-that-does-not-exist").await;
+                println!("Initial command successful.");
+
+                // 2. Stop a node to trigger disconnection
+                println!("Stopping redis-7001 container...");
+                let stop_status = tokio::task::spawn_blocking(|| {
+                    Command::new("podman")
+                        .args(&["stop", "redis-7001"])
+                        .status()
+                })
+                .await??;
+                assert!(stop_status.success(), "Failed to stop redis-7001");
+
+                // 3. Wait for the disconnection push
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+                let pushes = received_pushes.lock().await;
+                let has_disconnection = pushes.iter().any(|p| p.kind == redis::PushKind::Disconnection);
+                assert!(has_disconnection, "Did not receive a Disconnection push");
+                println!("Disconnection push received.");
+                drop(pushes);
+
+                // 4. Attempt another command - this should fail if no reconnect happened
+                println!("Attempting command after disconnection...");
+                let result: RedisResult<String> = con.get("another-key").await;
+
+                assert!(result.is_err(), "Command should have failed after disconnection, but it succeeded.");
+                println!("Command correctly failed after disconnection as expected.");
+
+                // Cleanup
+                tokio::task::spawn_blocking(|| {
+                    Command::new("podman")
+                        .args(&["start", "redis-7001"])
+                        .status()
+                })
+                .await??;
+
+                Ok::<(), anyhow::Error>(())
+            },
+            runtime,
+        )
+    }
