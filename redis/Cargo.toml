@@ -72,7 +72,7 @@ rand = { version = "0.9", optional = true }
 futures-sink = { version = "0.3.31", optional = true }
 
 #only needed for smol support
-smol = { version = "2", optional = true }
+smol = { workspace = true, optional = true }
 async-io = { version = "2", optional = true }
 smol-timeout = { version = "0.6", optional = true }
 
@@ -163,20 +163,15 @@ futures-time = "3"
 criterion = "0.7"
 partial-io = { version = "0.5", features = ["tokio", "quickcheck1"] }
 quickcheck = "1.0.3"
-tokio = { version = "1", features = [
-  "rt",
-  "macros",
-  "rt-multi-thread",
-  "test-util",
-  "time",
-] }
-tempfile = "=3.21.0"
+tokio = { workspace = true }
+tempfile = "3.23.0"
 once_cell = "1"
 anyhow = "1"
 redis-test = { path = "../redis-test" }
 rstest = "0.26"
 rand = "0.9"
 rustls = { version = "0.23", features = ["ring"] }
+test-macros = { path = "../test-macros" }
 
 [[test]]
 name = "test_async"
