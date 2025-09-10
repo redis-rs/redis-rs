@@ -4,8 +4,8 @@ use crate::support::*;
 use futures_time::task::sleep;
 #[cfg(feature = "cluster-async")]
 use redis::cluster_routing::*;
-use redis::CommandCacheConfig;
 use redis::{caching::CacheConfig, AsyncCommands, ProtocolVersion, RedisError};
+use redis::{CommandCacheConfig, RedisResult};
 #[cfg(feature = "json")]
 use redis_test::server::Module;
 use rstest::rstest;
@@ -13,6 +13,7 @@ use rstest::rstest;
 use serde_json::json;
 use std::collections::HashMap;
 use std::time::Duration;
+use test_macros::async_test;
 mod support;
 
 macro_rules! assert_hit {
@@ -97,275 +98,243 @@ fn test_cache_basic(#[case] runtime: RuntimeType, #[values(true, false)] test_wi
     .unwrap();
 }
 
-#[rstest]
-#[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-fn test_cache_mget(#[case] runtime: RuntimeType) {
+#[async_test]
+async fn cache_mget() -> RedisResult<()> {
     let ctx = TestContext::new();
     if ctx.protocol == ProtocolVersion::RESP2 {
-        return;
+        return Ok(());
     }
 
-    block_on_all(
-        async move {
-            let mut con = ctx.async_connection_with_cache().await?;
-            // Caching must work with both MGET and GET
-            let _: () = get_pipe(true)
-                .cmd("SET")
-                .arg("key_1")
-                .arg(41)
-                .ignore()
-                .cmd("SET")
-                .arg("key_3")
-                .arg(43)
-                .ignore()
-                .query_async(&mut con)
-                .await?;
+    let mut con = ctx.async_connection_with_cache().await?;
+    // Caching must work with both MGET and GET
+    let _: () = get_pipe(true)
+        .cmd("SET")
+        .arg("key_1")
+        .arg(41)
+        .ignore()
+        .cmd("SET")
+        .arg("key_3")
+        .arg(43)
+        .ignore()
+        .query_async(&mut con)
+        .await?;
 
-            let res1: Vec<Option<String>> = redis::cmd("MGET")
-                .arg("key_1")
-                .arg("key_2")
-                .query_async(&mut con)
-                .await?;
-            assert_hit!(&con, 0);
-            assert_miss!(&con, 2);
-            assert_eq!(res1, vec![Some("41".to_string()), None]);
+    let res1: Vec<Option<String>> = redis::cmd("MGET")
+        .arg("key_1")
+        .arg("key_2")
+        .query_async(&mut con)
+        .await?;
+    assert_hit!(&con, 0);
+    assert_miss!(&con, 2);
+    assert_eq!(res1, vec![Some("41".to_string()), None]);
 
-            let res2: Vec<Option<String>> = redis::cmd("MGET")
-                .arg("key_1")
-                .arg("key_3")
-                .arg("key_2")
-                .query_async(&mut con)
-                .await?;
-            assert_hit!(&con, 2);
-            assert_miss!(&con, 3);
-            assert_eq!(
-                res2,
-                vec![Some("41".to_string()), Some("43".to_string()), None]
-            );
+    let res2: Vec<Option<String>> = redis::cmd("MGET")
+        .arg("key_1")
+        .arg("key_3")
+        .arg("key_2")
+        .query_async(&mut con)
+        .await?;
+    assert_hit!(&con, 2);
+    assert_miss!(&con, 3);
+    assert_eq!(
+        res2,
+        vec![Some("41".to_string()), Some("43".to_string()), None]
+    );
 
-            let _: Option<String> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
-            assert_hit!(&con, 3);
-            assert_miss!(&con, 3);
-            Ok::<_, RedisError>(())
-        },
-        runtime,
-    )
-    .unwrap();
+    let _: Option<String> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
+    assert_hit!(&con, 3);
+    assert_miss!(&con, 3);
+    Ok::<_, RedisError>(())
 }
 
-#[rstest]
 #[cfg(feature = "json")]
-#[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-fn test_module_cache_json_get_mget(#[case] runtime: RuntimeType) {
+#[async_test]
+async fn module_cache_json_get_mget() -> RedisResult<()> {
     let ctx = TestContext::with_modules(&[Module::Json], false);
     if ctx.protocol == ProtocolVersion::RESP2 {
-        return;
+        return Ok(());
     }
 
-    block_on_all(
-        async move {
-            let cache_config = CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn);
-            let mut con = ctx.async_connection_with_cache_config(cache_config).await?;
+    let cache_config = CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn);
+    let mut con = ctx.async_connection_with_cache_config(cache_config).await?;
 
-            let value_1 = serde_json::to_string(&json!({"value":41i64}))?;
-            let value_3 = serde_json::to_string(&json!({"value":43i64}))?;
+    let value_1 = serde_json::to_string(&json!({"value":41i64}))?;
+    let value_3 = serde_json::to_string(&json!({"value":43i64}))?;
 
-            let _: () = get_pipe(true)
-                .cmd("JSON.SET")
-                .arg("key_1")
-                .arg("$")
-                .arg(value_1.clone())
-                .ignore()
-                .cmd("JSON.SET")
-                .arg("key_3")
-                .arg("$")
-                .arg(value_3.clone())
-                .ignore()
-                .query_async(&mut con)
-                .await?;
+    let _: () = get_pipe(true)
+        .cmd("JSON.SET")
+        .arg("key_1")
+        .arg("$")
+        .arg(value_1.clone())
+        .ignore()
+        .cmd("JSON.SET")
+        .arg("key_3")
+        .arg("$")
+        .arg(value_3.clone())
+        .ignore()
+        .query_async(&mut con)
+        .await?;
 
-            let res1: Vec<Option<String>> = get_cmd("JSON.MGET", true)
-                .arg(&["key_1", "key_2"])
-                .arg(".")
-                .query_async(&mut con)
-                .await?;
+    let res1: Vec<Option<String>> = get_cmd("JSON.MGET", true)
+        .arg(&["key_1", "key_2"])
+        .arg(".")
+        .query_async(&mut con)
+        .await?;
 
-            assert_eq!(res1.len(), 2);
-            assert_eq!(res1, vec![Some(value_1.clone()), None]);
-            assert_hit!(&con, 0);
-            assert_miss!(&con, 2);
+    assert_eq!(res1.len(), 2);
+    assert_eq!(res1, vec![Some(value_1.clone()), None]);
+    assert_hit!(&con, 0);
+    assert_miss!(&con, 2);
 
-            let res2: Vec<Option<String>> = get_cmd("JSON.MGET", true)
-                .arg("key_1")
-                .arg("key_3")
-                .arg("key_2")
-                .arg(".")
-                .query_async(&mut con)
-                .await?;
+    let res2: Vec<Option<String>> = get_cmd("JSON.MGET", true)
+        .arg("key_1")
+        .arg("key_3")
+        .arg("key_2")
+        .arg(".")
+        .query_async(&mut con)
+        .await?;
 
-            assert_eq!(res2.len(), 3);
-            assert_eq!(res2, vec![Some(value_1.clone()), Some(value_3), None]);
-            assert_hit!(&con, 2);
-            assert_miss!(&con, 3);
+    assert_eq!(res2.len(), 3);
+    assert_eq!(res2, vec![Some(value_1.clone()), Some(value_3), None]);
+    assert_hit!(&con, 2);
+    assert_miss!(&con, 3);
 
-            let res3: Option<String> = get_cmd("JSON.GET", true)
-                .arg("key_1")
-                .arg(".")
-                .query_async(&mut con)
-                .await?;
+    let res3: Option<String> = get_cmd("JSON.GET", true)
+        .arg("key_1")
+        .arg(".")
+        .query_async(&mut con)
+        .await?;
 
-            assert_eq!(res3, Some(value_1.clone()));
-            assert_hit!(&con, 3);
-            assert_miss!(&con, 3);
+    assert_eq!(res3, Some(value_1.clone()));
+    assert_hit!(&con, 3);
+    assert_miss!(&con, 3);
 
-            Ok::<_, RedisError>(())
-        },
-        runtime,
-    )
-    .unwrap();
+    Ok::<_, RedisError>(())
 }
 
-#[rstest]
 #[cfg(feature = "json")]
-#[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-fn test_module_cache_json_get_mget_different_paths(#[case] runtime: RuntimeType) {
+#[async_test]
+async fn module_cache_json_get_mget_different_paths() -> RedisResult<()> {
     let ctx = TestContext::with_modules(&[Module::Json], false);
     if ctx.protocol == ProtocolVersion::RESP2 {
-        return;
+        return Ok(());
     }
 
-    block_on_all(
-        async move {
-            let cache_config = CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn);
-            let mut con = ctx.async_connection_with_cache_config(cache_config).await?;
+    let cache_config = CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn);
+    let mut con = ctx.async_connection_with_cache_config(cache_config).await?;
 
-            let value_1 = serde_json::to_string(&json!({"value":41i64, "id":1i8}))?;
-            let value_3 = serde_json::to_string(&json!({"value":43i64, "id":3i8}))?;
+    let value_1 = serde_json::to_string(&json!({"value":41i64, "id":1i8}))?;
+    let value_3 = serde_json::to_string(&json!({"value":43i64, "id":3i8}))?;
 
-            let _: () = get_pipe(true)
-                .cmd("JSON.SET")
-                .arg("key_1")
-                .arg("$")
-                .arg(value_1.clone())
-                .ignore()
-                .cmd("JSON.SET")
-                .arg("key_3")
-                .arg("$")
-                .arg(value_3.clone())
-                .ignore()
-                .query_async(&mut con)
-                .await?;
+    let _: () = get_pipe(true)
+        .cmd("JSON.SET")
+        .arg("key_1")
+        .arg("$")
+        .arg(value_1.clone())
+        .ignore()
+        .cmd("JSON.SET")
+        .arg("key_3")
+        .arg("$")
+        .arg(value_3.clone())
+        .ignore()
+        .query_async(&mut con)
+        .await?;
 
-            let res1: Vec<Option<i64>> = get_cmd("JSON.MGET", true)
-                .arg(&["key_1", "key_2"])
-                .arg(".value")
-                .query_async(&mut con)
-                .await?;
+    let res1: Vec<Option<i64>> = get_cmd("JSON.MGET", true)
+        .arg(&["key_1", "key_2"])
+        .arg(".value")
+        .query_async(&mut con)
+        .await?;
 
-            assert_eq!(res1.len(), 2);
-            assert_eq!(res1, vec![Some(41), None]);
-            assert_hit!(&con, 0);
-            assert_miss!(&con, 2);
+    assert_eq!(res1.len(), 2);
+    assert_eq!(res1, vec![Some(41), None]);
+    assert_hit!(&con, 0);
+    assert_miss!(&con, 2);
 
-            let res2: Vec<Option<i64>> = get_cmd("JSON.MGET", true)
-                .arg(&["key_1", "key_2"])
-                .arg(".value")
-                .query_async(&mut con)
-                .await?;
+    let res2: Vec<Option<i64>> = get_cmd("JSON.MGET", true)
+        .arg(&["key_1", "key_2"])
+        .arg(".value")
+        .query_async(&mut con)
+        .await?;
 
-            assert_eq!(res2.len(), 2);
-            assert_eq!(res2, vec![Some(41), None]);
-            assert_hit!(&con, 2);
-            assert_miss!(&con, 2);
+    assert_eq!(res2.len(), 2);
+    assert_eq!(res2, vec![Some(41), None]);
+    assert_hit!(&con, 2);
+    assert_miss!(&con, 2);
 
-            let res3: Vec<Option<i64>> = get_cmd("JSON.MGET", true)
-                .arg(&["key_1", "key_3"])
-                .arg(".id")
-                .query_async(&mut con)
-                .await?;
+    let res3: Vec<Option<i64>> = get_cmd("JSON.MGET", true)
+        .arg(&["key_1", "key_3"])
+        .arg(".id")
+        .query_async(&mut con)
+        .await?;
 
-            assert_eq!(res3.len(), 2);
-            assert_eq!(res3, vec![Some(1), Some(3)]);
-            assert_hit!(&con, 2);
-            assert_miss!(&con, 4);
+    assert_eq!(res3.len(), 2);
+    assert_eq!(res3, vec![Some(1), Some(3)]);
+    assert_hit!(&con, 2);
+    assert_miss!(&con, 4);
 
-            let res4: Vec<Option<i64>> = get_cmd("JSON.MGET", true)
-                .arg(&["key_2", "key_3"])
-                .arg(".id")
-                .query_async(&mut con)
-                .await?;
+    let res4: Vec<Option<i64>> = get_cmd("JSON.MGET", true)
+        .arg(&["key_2", "key_3"])
+        .arg(".id")
+        .query_async(&mut con)
+        .await?;
 
-            assert_eq!(res4.len(), 2);
-            assert_eq!(res4, vec![None, Some(3)]);
-            assert_hit!(&con, 3);
-            assert_miss!(&con, 5);
+    assert_eq!(res4.len(), 2);
+    assert_eq!(res4, vec![None, Some(3)]);
+    assert_hit!(&con, 3);
+    assert_miss!(&con, 5);
 
-            let res5: Option<i64> = get_cmd("JSON.GET", true)
-                .arg("key_1")
-                .arg(".value")
-                .query_async(&mut con)
-                .await?;
+    let res5: Option<i64> = get_cmd("JSON.GET", true)
+        .arg("key_1")
+        .arg(".value")
+        .query_async(&mut con)
+        .await?;
 
-            assert_eq!(res5, Some(41));
-            assert_hit!(&con, 4);
-            assert_miss!(&con, 5);
+    assert_eq!(res5, Some(41));
+    assert_hit!(&con, 4);
+    assert_miss!(&con, 5);
 
-            let res6: Option<i64> = get_cmd("JSON.GET", true)
-                .arg("key_1")
-                .arg(".value")
-                .query_async(&mut con)
-                .await?;
+    let res6: Option<i64> = get_cmd("JSON.GET", true)
+        .arg("key_1")
+        .arg(".value")
+        .query_async(&mut con)
+        .await?;
 
-            assert_eq!(res6, Some(41));
-            assert_hit!(&con, 5);
-            assert_miss!(&con, 5);
+    assert_eq!(res6, Some(41));
+    assert_hit!(&con, 5);
+    assert_miss!(&con, 5);
 
-            let res7: Option<i8> = get_cmd("JSON.GET", true)
-                .arg("key_1")
-                .arg(".id")
-                .query_async(&mut con)
-                .await?;
+    let res7: Option<i8> = get_cmd("JSON.GET", true)
+        .arg("key_1")
+        .arg(".id")
+        .query_async(&mut con)
+        .await?;
 
-            assert_eq!(res7, Some(1));
-            assert_hit!(&con, 6);
-            assert_miss!(&con, 5);
+    assert_eq!(res7, Some(1));
+    assert_hit!(&con, 6);
+    assert_miss!(&con, 5);
 
-            Ok::<_, RedisError>(())
-        },
-        runtime,
-    )
-    .unwrap();
+    Ok::<_, RedisError>(())
 }
 
-#[rstest]
-#[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-fn test_cache_is_not_target_type_dependent(#[case] runtime: RuntimeType) {
+#[async_test]
+async fn cache_is_not_target_type_dependent() -> RedisResult<()> {
     let ctx = TestContext::new();
     if ctx.protocol == ProtocolVersion::RESP2 {
-        return;
+        return Ok(());
     }
 
-    block_on_all(
-        async move {
-            let mut con = ctx.async_connection_with_cache().await?;
-            let _: () = con.set("KEY", "77").await?;
-            let x: u32 = con.get("KEY").await?;
-            assert_eq!(x, 77);
-            let x: String = con.get("KEY").await?;
-            assert_eq!(x, "77");
-            let x: u8 = con.get("KEY").await?;
-            assert_eq!(x, 77);
-            assert_hit!(&con, 2);
-            assert_miss!(&con, 1);
-            Ok::<_, RedisError>(())
-        },
-        runtime,
-    )
-    .unwrap();
+    let mut con = ctx.async_connection_with_cache().await?;
+    let _: () = con.set("KEY", "77").await?;
+    let x: u32 = con.get("KEY").await?;
+    assert_eq!(x, 77);
+    let x: String = con.get("KEY").await?;
+    assert_eq!(x, "77");
+    let x: u8 = con.get("KEY").await?;
+    assert_eq!(x, 77);
+    assert_hit!(&con, 2);
+    assert_miss!(&con, 1);
+    Ok::<_, RedisError>(())
 }
 
 #[rstest]
@@ -422,75 +391,68 @@ fn test_cache_with_pipeline(#[case] runtime: RuntimeType, #[values(true, false)]
     .unwrap();
 }
 
-#[rstest]
-#[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-fn test_cache_basic_partial_opt_in(#[case] runtime: RuntimeType) {
+#[async_test]
+async fn cache_basic_partial_opt_in() -> RedisResult<()> {
     // In OptIn mode cache must not be utilized without explicit per command configuration.
     let ctx = TestContext::new();
     if ctx.protocol == ProtocolVersion::RESP2 {
-        return;
+        return Ok(());
     }
-    block_on_all(
-        async move {
-            let cache_config = CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn);
-            let mut con = ctx.async_connection_with_cache_config(cache_config).await?;
-            let val: Option<String> = redis::cmd("GET")
-                .arg("key_1")
-                .query_async(&mut con)
-                .await
-                .unwrap();
-            assert_eq!(val, None);
-            // GET is not marked with cache(), there should be no MISS/HIT
-            assert_hit!(&con, 0);
-            assert_miss!(&con, 0);
 
-            let _: () = redis::cmd("SET")
-                .arg("key_1")
-                .arg("1")
-                .query_async(&mut con)
-                .await
-                .unwrap();
-            // There should be no invalidation since cache is not used.
-            assert_hit!(&con, 0);
-            assert_miss!(&con, 0);
-            assert_invalidate!(&con, 0);
+    let cache_config = CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn);
+    let mut con = ctx.async_connection_with_cache_config(cache_config).await?;
+    let val: Option<String> = redis::cmd("GET")
+        .arg("key_1")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, None);
+    // GET is not marked with cache(), there should be no MISS/HIT
+    assert_hit!(&con, 0);
+    assert_miss!(&con, 0);
 
-            let val: String = redis::cmd("GET")
-                .arg("key_1")
-                .set_cache_config(CommandCacheConfig::new().set_enable_cache(true))
-                .query_async(&mut con)
-                .await
-                .unwrap();
-            assert_eq!(val, "1");
-            assert_hit!(&con, 0);
-            assert_miss!(&con, 1);
+    let _: () = redis::cmd("SET")
+        .arg("key_1")
+        .arg("1")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    // There should be no invalidation since cache is not used.
+    assert_hit!(&con, 0);
+    assert_miss!(&con, 0);
+    assert_invalidate!(&con, 0);
 
-            let val: String = redis::cmd("GET")
-                .arg("key_1")
-                .query_async(&mut con)
-                .await
-                .unwrap();
-            assert_eq!(val, "1");
-            // Since cache is not used, hit should still be 0
-            assert_hit!(&con, 0);
-            assert_miss!(&con, 1);
+    let val: String = redis::cmd("GET")
+        .arg("key_1")
+        .set_cache_config(CommandCacheConfig::new().set_enable_cache(true))
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, "1");
+    assert_hit!(&con, 0);
+    assert_miss!(&con, 1);
 
-            let val: String = redis::cmd("GET")
-                .arg("key_1")
-                .set_cache_config(CommandCacheConfig::new().set_enable_cache(true))
-                .query_async(&mut con)
-                .await
-                .unwrap();
-            assert_eq!(val, "1");
-            assert_hit!(&con, 1);
-            assert_miss!(&con, 1);
-            assert_invalidate!(&con, 0);
-            Ok::<_, RedisError>(())
-        },
-        runtime,
-    )
-    .unwrap();
+    let val: String = redis::cmd("GET")
+        .arg("key_1")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, "1");
+    // Since cache is not used, hit should still be 0
+    assert_hit!(&con, 0);
+    assert_miss!(&con, 1);
+
+    let val: String = redis::cmd("GET")
+        .arg("key_1")
+        .set_cache_config(CommandCacheConfig::new().set_enable_cache(true))
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, "1");
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 1);
+    assert_invalidate!(&con, 0);
+    Ok::<_, RedisError>(())
 }
 
 #[rstest]
@@ -698,112 +660,98 @@ fn test_connection_manager_maintains_statistics_after_crashes(
     .unwrap();
 }
 
-#[rstest]
-#[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 #[cfg(feature = "cluster-async")]
-fn test_cache_async_cluster_reconnect_all_nodes(#[case] runtime: RuntimeType) {
+#[async_test]
+async fn cache_async_cluster_reconnect_all_nodes() -> RedisResult<()> {
     let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
         builder.cache_config(CacheConfig::default())
     });
     if ctx.protocol == ProtocolVersion::RESP2 {
-        return;
+        return Ok(());
     }
-    block_on_all(
-        async move {
-            let mut con = ctx.async_connection().await;
-            let val: Option<String> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
-            assert_eq!(val, None);
-            assert_hit!(&con, 0);
-            assert_miss!(&con, 1);
 
-            let val: Option<String> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
-            assert_eq!(val, None);
-            // key_1's value should be returned from cache even if it doesn't exist in server yet.
-            assert_hit!(&con, 1);
-            assert_miss!(&con, 1);
-            // disconnect from all nodes
-            let _ = con
-                .route_command(
-                    &redis::cmd("QUIT"),
-                    redis::cluster_routing::RoutingInfo::MultiNode((
-                        redis::cluster_routing::MultipleNodeRoutingInfo::AllNodes,
-                        None,
-                    )),
-                )
-                .await?;
-            // send ping so connections knows they have been disconnected
-            let _ = con
-                .route_command(
-                    &redis::cmd("PING"),
-                    redis::cluster_routing::RoutingInfo::MultiNode((
-                        redis::cluster_routing::MultipleNodeRoutingInfo::AllNodes,
-                        None,
-                    )),
-                )
-                .await;
+    let mut con = ctx.async_connection().await;
+    let val: Option<String> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
+    assert_eq!(val, None);
+    assert_hit!(&con, 0);
+    assert_miss!(&con, 1);
 
-            let val: Option<String> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
-            assert_eq!(val, None);
-            // key_1 must be invalidated because a disconnection happened in cluster connection.
-            assert_hit!(&con, 1);
-            assert_miss!(&con, 2);
-            assert_invalidate!(&con, 1);
-            Ok::<_, RedisError>(())
-        },
-        runtime,
-    )
-    .unwrap();
+    let val: Option<String> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
+    assert_eq!(val, None);
+    // key_1's value should be returned from cache even if it doesn't exist in server yet.
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 1);
+    // disconnect from all nodes
+    let _ = con
+        .route_command(
+            &redis::cmd("QUIT"),
+            redis::cluster_routing::RoutingInfo::MultiNode((
+                redis::cluster_routing::MultipleNodeRoutingInfo::AllNodes,
+                None,
+            )),
+        )
+        .await?;
+    // send ping so connections knows they have been disconnected
+    let _ = con
+        .route_command(
+            &redis::cmd("PING"),
+            redis::cluster_routing::RoutingInfo::MultiNode((
+                redis::cluster_routing::MultipleNodeRoutingInfo::AllNodes,
+                None,
+            )),
+        )
+        .await;
+
+    let val: Option<String> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
+    assert_eq!(val, None);
+    // key_1 must be invalidated because a disconnection happened in cluster connection.
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 2);
+    assert_invalidate!(&con, 1);
+    Ok::<_, RedisError>(())
 }
 
-#[rstest]
-#[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 #[cfg(feature = "cluster-async")]
-fn test_cache_async_cluster_mget(#[case] runtime: RuntimeType) {
+#[async_test]
+async fn cache_async_cluster_mget() -> RedisResult<()> {
     let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
         builder.cache_config(CacheConfig::default())
     });
     if ctx.protocol == ProtocolVersion::RESP2 {
-        return;
+        return Ok(());
     }
-    block_on_all(
-        async move {
-            let mut con = ctx.async_connection().await;
 
-            let _: redis::Value = con.set("key_1", 41).await?;
-            let _: redis::Value = con.set("key_3", 43).await?;
+    let mut con = ctx.async_connection().await;
 
-            let res1: Vec<Option<String>> = redis::cmd("MGET")
-                .arg("key_1")
-                .arg("key_2")
-                .query_async(&mut con)
-                .await?;
-            assert_hit!(&con, 0);
-            assert_miss!(&con, 2);
-            assert_eq!(res1, vec![Some("41".to_string()), None]);
+    let _: redis::Value = con.set("key_1", 41).await?;
+    let _: redis::Value = con.set("key_3", 43).await?;
 
-            let res2: Vec<Option<String>> = redis::cmd("MGET")
-                .arg("key_1")
-                .arg("key_3")
-                .arg("key_2")
-                .query_async(&mut con)
-                .await?;
-            assert_hit!(&con, 2);
-            assert_miss!(&con, 3);
-            assert_eq!(
-                res2,
-                vec![Some("41".to_string()), Some("43".to_string()), None]
-            );
+    let res1: Vec<Option<String>> = redis::cmd("MGET")
+        .arg("key_1")
+        .arg("key_2")
+        .query_async(&mut con)
+        .await?;
+    assert_hit!(&con, 0);
+    assert_miss!(&con, 2);
+    assert_eq!(res1, vec![Some("41".to_string()), None]);
 
-            let _: Option<String> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
-            assert_hit!(&con, 3);
-            assert_miss!(&con, 3);
-            Ok::<_, RedisError>(())
-        },
-        runtime,
-    )
-    .unwrap();
+    let res2: Vec<Option<String>> = redis::cmd("MGET")
+        .arg("key_1")
+        .arg("key_3")
+        .arg("key_2")
+        .query_async(&mut con)
+        .await?;
+    assert_hit!(&con, 2);
+    assert_miss!(&con, 3);
+    assert_eq!(
+        res2,
+        vec![Some("41".to_string()), Some("43".to_string()), None]
+    );
+
+    let _: Option<String> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
+    assert_hit!(&con, 3);
+    assert_miss!(&con, 3);
+    Ok::<_, RedisError>(())
 }
 
 // Support function for testing pipelines

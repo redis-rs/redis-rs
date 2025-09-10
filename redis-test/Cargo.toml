@@ -28,9 +28,4 @@ redis = { version = "1.0.0-alpha", path = "../redis", features = [
     "aio",
     "tokio-comp",
 ] }
-tokio = { version = "1", features = [
-    "rt",
-    "macros",
-    "rt-multi-thread",
-    "time",
-] }
+tokio = { workspace = true }
