@@ -162,19 +162,25 @@ where
     // Read messages from the stream and send them back to the caller
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Result<(), ()>> {
         loop {
-            let item = ready!(self.as_mut().project().sink_stream.poll_next(cx));
-            let item = match item {
-                Some(result) => result,
-                // The redis response stream is not going to produce any more items so we simulate a disconnection error to break out of the loop.
-                None => Err(closed_connection_error()),
-            };
-
-            let is_unrecoverable = item.as_ref().is_err_and(|err| err.is_unrecoverable_error());
-            self.as_mut().send_result(item);
-            if is_unrecoverable {
-                let self_ = self.project();
-                send_disconnect(self_.push_sender);
-                return Poll::Ready(Err(()));
+            match ready!(self.as_mut().project().sink_stream.poll_next(cx)) {
+                Some(Ok(value)) => {
+                    self.as_mut().send_result(Ok(value));
+                }
+                Some(Err(err)) => {
+                    let is_io_error = err.is_io_error();
+                    let is_unrecoverable = err.is_unrecoverable_error();
+                    self.as_mut().send_result(Err(err));
+                    if is_io_error || is_unrecoverable {
+                        let self_ = self.project();
+                        send_disconnect(self_.push_sender);
+                        return Poll::Ready(Err(()));
+                    }
+                }
+                None => {
+                    let self_ = self.project();
+                    send_disconnect(self_.push_sender);
+                    return Poll::Ready(Err(()));
+                }
             }
         }
     }

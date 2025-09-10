@@ -106,6 +106,10 @@ pub(crate) struct ClusterParams {
     pub(crate) async_push_sender: Option<Arc<dyn AsyncPushSender>>,
     pub(crate) tcp_settings: TcpSettings,
     #[cfg(feature = "cluster-async")]
+    pub(crate) internal_push_sender:
+        Option<tokio::sync::mpsc::UnboundedSender<(arcstr::ArcStr, crate::PushInfo)>>,
+
+    #[cfg(feature = "cluster-async")]
     pub(crate) async_dns_resolver: Option<Arc<dyn AsyncDNSResolver>>,
     #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
     pub(crate) cache_manager: Option<CacheManager>,
@@ -154,9 +158,12 @@ impl ClusterParams {
             connection_timeout: value
                 .connection_timeout
                 .unwrap_or(DEFAULT_CONNECTION_TIMEOUT.unwrap()),
+            #[cfg(feature = "cluster-async")]
+            internal_push_sender: None,
             response_timeout: value.response_timeout,
             protocol: value.protocol,
-            #[cfg(feature = "cluster-async")]
+
+                        #[cfg(feature = "cluster-async")]
             async_push_sender: value.async_push_sender,
             tcp_settings: value.tcp_settings,
             #[cfg(feature = "cluster-async")]
