@@ -1285,22 +1285,6 @@ pub(crate) fn connection_setup_pipeline(
     // including SETINFO in the setup pipeline would cause the whole pipeline to fail
     // despite being logically ignorable for functionality. Therefore, skip SETINFO when
     // authenticating with a username unless explicitly requested.
-    let should_set_lib_info =
-        !connection_info.skip_set_lib_name && connection_info.username.is_none();
-    if should_set_lib_info {
-        pipeline
-            .cmd("CLIENT")
-            .arg("SETINFO")
-            .arg("LIB-NAME")
-            .arg("redis-rs")
-            .ignore();
-        pipeline
-            .cmd("CLIENT")
-            .arg("SETINFO")
-            .arg("LIB-VER")
-            .arg(env!("CARGO_PKG_VERSION"))
-            .ignore();
-    }
 
     (
         pipeline,
@@ -1480,6 +1464,24 @@ fn setup_connection(
                 cache_config,
             ),
         )?;
+    }
+
+    // Best-effort: set library identification if supported by the server.
+    // Important: do this AFTER the setup pipeline so older servers (e.g., 6.2)
+    // that don't support CLIENT SETINFO won't cause the initial pipeline to fail.
+    let should_set_lib_info =
+        !connection_info.skip_set_lib_name && connection_info.username.is_none();
+    if should_set_lib_info {
+        let _ = cmd("CLIENT")
+            .arg("SETINFO")
+            .arg("LIB-NAME")
+            .arg("redis-rs")
+            .exec(&mut rv);
+        let _ = cmd("CLIENT")
+            .arg("SETINFO")
+            .arg("LIB-VER")
+            .arg(env!("CARGO_PKG_VERSION"))
+            .exec(&mut rv);
     }
 
     Ok(rv)
