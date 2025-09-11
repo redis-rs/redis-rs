@@ -164,16 +164,14 @@ futures-time = "3"
 criterion = "0.7"
 partial-io = { version = "0.5", features = ["tokio", "quickcheck1"] }
 quickcheck = "1.0.3"
-tokio = { version = "1", features = [
-  "rt",
-  "macros",
-  "rt-multi-thread",
-  "test-util",
-  "time",
-] }
+tokio = { version = "1", features = ["full", "test-util"] }
 tempfile = "=3.20.0"
 once_cell = "1"
 anyhow = "1"
+env_logger = "0.11"
+
+
+
 redis-test = { path = "../redis-test" }
 rstest = "0.26"
 rand = "0.9"
@@ -197,6 +195,7 @@ required-features = ["json", "serde/derive"]
 [[test]]
 name = "test_cluster_async"
 required-features = ["cluster-async"]
+
 
 [[test]]
 name = "test_bignum"
@@ -263,3 +262,6 @@ name = "typed"
 [[example]]
 name = "async-caching"
 required-features = ["tokio-comp", "cache-aio"]
+
+
+

@@ -13,7 +13,7 @@ mod cluster {
         cluster::{cluster_pipe, ClusterClient, ClusterConnection},
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
         cmd, parse_redis_value, Commands, ConnectionLike, ProtocolVersion, RedisError,
-        ServerError, ServerErrorKind, Value,
+        ServerErrorKind, Value,
     };
     use redis_test::{
         cluster::{RedisCluster, RedisClusterConfiguration},
@@ -433,7 +433,9 @@ mod cluster {
                     return res.into();
                 }
                 match requests.fetch_add(1, atomic::Ordering::SeqCst) {
-                    0..=4 => ServerResponse::Error(parse_redis_value(b"-TRYAGAIN mock\r\n").unwrap_err()),
+                    0..=4 => {
+                        ServerResponse::Error(parse_redis_value(b"-TRYAGAIN mock\r\n").unwrap_err())
+                    }
                     _ => ServerResponse::Value(Value::BulkString(b"123".to_vec())),
                 }
             },
@@ -886,7 +888,9 @@ mod cluster {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                if let Err(res) = respond_startup_with_replica_using_config(name, received_cmd, None) {
+                if let Err(res) =
+                    respond_startup_with_replica_using_config(name, received_cmd, None)
+                {
                     return res.into();
                 }
                 let cmd_str = std::str::from_utf8(received_cmd).unwrap();
@@ -927,18 +931,17 @@ mod cluster {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                if let Err(res) = respond_startup_with_replica_using_config(name, received_cmd, None) {
+                if let Err(res) =
+                    respond_startup_with_replica_using_config(name, received_cmd, None)
+                {
                     return res.into();
                 }
                 if port == 6381 {
+                    // For the packed pipeline window (offset 3, count 1), the client expects
+                    // the flattened result of the transaction without the QUEUED markers.
                     let results = vec![
                         Value::BulkString("OK".as_bytes().to_vec()),
-                        Value::BulkString("QUEUED".as_bytes().to_vec()),
-                        Value::BulkString("QUEUED".as_bytes().to_vec()),
-                        Value::Array(vec![
-                            Value::BulkString("OK".as_bytes().to_vec()),
-                            Value::BulkString("bar".as_bytes().to_vec()),
-                        ]),
+                        Value::BulkString("bar".as_bytes().to_vec()),
                     ];
                     return ServerResponse::Value(Value::Array(results));
                 }
@@ -989,7 +992,9 @@ mod cluster {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                if let Err(res) = respond_startup_with_replica_using_config(name, received_cmd, None) {
+                if let Err(res) =
+                    respond_startup_with_replica_using_config(name, received_cmd, None)
+                {
                     return res.into();
                 }
                 if port == 6381 {

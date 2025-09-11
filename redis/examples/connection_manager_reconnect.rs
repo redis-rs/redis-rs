@@ -4,9 +4,9 @@
 #[cfg(all(feature = "connection-manager", feature = "tokio-comp"))]
 #[tokio::main]
 async fn main() -> redis::RedisResult<()> {
-    use std::time::Duration;
-    use redis::{AsyncCommands, Client};
     use redis::aio::ConnectionManagerConfig;
+    use redis::{AsyncCommands, Client};
+    use std::time::Duration;
     use tokio::sync::mpsc::unbounded_channel;
 
     // This example requires a running Redis server with RESP3 support.

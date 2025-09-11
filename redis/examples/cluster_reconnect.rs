@@ -4,8 +4,8 @@
 #[cfg(all(feature = "cluster-async", feature = "tokio-comp"))]
 #[tokio::main]
 async fn main() -> redis::RedisResult<()> {
-    use std::time::Duration;
     use redis::{cluster::ClusterClient, AsyncCommands};
+    use std::time::Duration;
     use tokio::sync::mpsc::unbounded_channel;
 
     // Add a delay to allow the cluster to initialize before connecting.

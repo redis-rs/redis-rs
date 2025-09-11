@@ -90,7 +90,9 @@
 //!     connection.route_command(&redis::cmd("PING"), routing_info).await
 //! }
 //! ```
+
 use crate::PushInfo;
+
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -191,18 +193,23 @@ where
         initial_nodes: &[ConnectionInfo],
         mut cluster_params: ClusterParams,
     ) -> RedisResult<ClusterConnection<C>> {
-        let protocol = cluster_params.protocol.unwrap_or_default();
         let response_timeout = cluster_params.response_timeout;
         #[cfg(feature = "cache-aio")]
         let cache_manager = cluster_params.cache_manager.clone();
         let runtime = Runtime::locate();
 
         #[cfg(feature = "cluster-async")]
-        let internal_push_receiver = {
+        let internal_push_receiver = if cluster_params.async_push_sender.is_some() {
             let (internal_push_sender, internal_push_receiver) = mpsc::unbounded_channel();
             cluster_params.internal_push_sender = Some(internal_push_sender);
+            // Ensure RESP3 when any push sender is configured (internal or external)
+            cluster_params.protocol = Some(crate::types::ProtocolVersion::RESP3);
             Some(internal_push_receiver)
+        } else {
+            None
         };
+        // Determine protocol after any RESP3 adjustments above
+        let protocol = cluster_params.protocol.unwrap_or_default();
 
         ClusterConnInner::new(initial_nodes, cluster_params)
             .await
@@ -1495,9 +1502,7 @@ where
             if let Some(sender) = &core.cluster_params.internal_push_sender {
                 let _ = sender.send((addr.clone(), PushInfo::disconnect()));
             }
-            if let Some(sender) = &core.cluster_params.async_push_sender {
-                let _ = sender.send(PushInfo::disconnect());
-            }
+            // Do not notify external push sender on initial connection failure; only internal tracking
             Err(err)
         }
     }

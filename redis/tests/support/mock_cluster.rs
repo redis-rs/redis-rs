@@ -1,3 +1,7 @@
+// Compatibility adapters to allow older tests that returned nested Results
+// (e.g., Err(Ok(Value::...))) to compile against the newer ServerResponse API.
+// This keeps test code changes minimal while the harness uses explicit ServerResponse.
+
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
@@ -26,7 +30,6 @@ type Handler = Arc<dyn Fn(&[u8], u16) -> ServerResponse + Send + Sync>;
 
 static HANDLERS: Lazy<RwLock<HashMap<String, Handler>>> = Lazy::new(Default::default);
 
-
 impl From<Result<Value, RedisError>> for ServerResponse {
     fn from(res: Result<Value, RedisError>) -> Self {
         match res {
@@ -35,9 +38,6 @@ impl From<Result<Value, RedisError>> for ServerResponse {
         }
     }
 }
-
-
-
 
 #[derive(Clone)]
 pub struct MockConnection {
