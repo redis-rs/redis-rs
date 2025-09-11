@@ -353,10 +353,10 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use tokio::sync::RwLock;
 
-    fn test_core() -> Core<usize> {
-        Arc::new(InnerCore {
+    fn test_core() -> super::Core<usize> {
+        std::sync::Arc::new(crate::cluster_handling::async_connection::InnerCore {
             conn_lock: RwLock::new((HashMap::new(), SlotMap::new(false))),
-            cluster_params: RetryParams::default().into(),
+            cluster_params: crate::cluster_handling::client::ClusterParams::default(),
             pending_requests: std::sync::Mutex::new(Vec::new()),
             initial_nodes: Vec::<ConnectionInfo>::new(),
             subscription_tracker: None,
@@ -408,10 +408,8 @@ mod tests {
     }
 
     fn to_err(error: &str) -> RedisError {
-        crate::parse_redis_value(error.as_bytes())
-            .unwrap()
-            .extract_error()
-            .unwrap_err()
+        // parse_redis_value now returns Err(RedisError) for server error replies like -ASK/-MOVED
+        crate::parse_redis_value(error.as_bytes()).unwrap_err()
     }
 
     #[test]

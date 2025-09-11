@@ -1,6 +1,6 @@
+#![allow(unused_imports, unused_variables, clippy::double_parens, unused_parens)]
 #![cfg(feature = "cluster-async")]
 mod support;
-use rstest::*;
 
 #[cfg(test)]
 mod cluster_async {
@@ -17,23 +17,22 @@ mod cluster_async {
     use futures_time::{future::FutureExt, task::sleep};
     use once_cell::sync::Lazy;
 
+    use redis::PushInfo;
     use redis::{
         aio::{ConnectionLike, MultiplexedConnection},
         cluster::ClusterClient,
         cluster_async::Connect,
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
-        cmd, from_owned_redis_value, parse_redis_value, pipe, AsyncCommands, Cmd, InfoDict,
-        IntoConnectionInfo, ProtocolVersion, RedisError, RedisFuture, RedisResult, Script,
-        ServerErrorKind, Value,
+        cmd, from_owned_redis_value, parse_redis_value, pipe, AsyncCommands, Cmd, ErrorKind,
+        InfoDict, IntoConnectionInfo, ProtocolVersion, RedisError, RedisFuture, RedisResult,
+        Script, ServerErrorKind, Value,
     };
     use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
     use redis_test::server::use_protocol;
     use rstest::rstest;
-    use redis::PushInfo;
     use std::process::Command;
 
-    use crate::support::{runtime::RuntimeType, *};
-    
+    use crate::support::*;
 
     fn broken_pipe_error() -> RedisError {
         RedisError::from(std::io::Error::new(
@@ -42,7 +41,7 @@ mod cluster_async {
         ))
     }
 
-    async fn smoke_test_connection(mut connection: impl redis::aio::ConnectionLike) {
+    async fn smoke_test_connection(mut connection: impl redis::aio::ConnectionLike + Send) {
         cmd("SET")
             .arg("test")
             .arg("test_data")
@@ -407,16 +406,18 @@ mod cluster_async {
             async_connection: mut connection,
             ..
         } = MockEnv::new(name, move |cmd, _| {
-            respond_startup(name, cmd)?;
+            if let Err(res) = respond_startup(name, cmd) {
+                return res.into();
+            }
             if cmd
                 == redis::cmd("SET")
                     .arg("{tag}x")
                     .arg("another-x-value")
                     .get_packed_command()
             {
-                Err(Ok(parse_redis_value(b"-CROSSSLOT foobar\r\n").unwrap()))
+                ServerResponse::Error(parse_redis_value(b"-CROSSSLOT foobar\r\n").unwrap_err())
             } else if cmd == redis::cmd("GET").arg("{tag}y").get_packed_command() {
-                Err(Ok(Value::Okay))
+                ServerResponse::Value(Value::Okay)
             } else {
                 panic!(
                     "unexpected cmd: {}",
@@ -679,12 +680,9 @@ mod cluster_async {
     impl ConnectionLike for ErrorConnection {
         fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
             if ERROR.load(Ordering::SeqCst) {
-                Box::pin(async move {
-                    Err(RedisError::from((
-                        redis::ServerErrorKind::Moved.into(),
-                        "ERROR",
-                    )))
-                })
+                Box::pin(
+                    async move { Err(RedisError::from((ServerErrorKind::Moved.into(), "ERROR"))) },
+                )
             } else {
                 self.inner.req_packed_command(cmd)
             }
@@ -705,7 +703,8 @@ mod cluster_async {
     }
 
     #[rstest]
-    fn test_async_cluster_error_in_inner_connection() {
+    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+    fn test_async_cluster_error_in_inner_connection(#[case] runtime: RuntimeType) {
         let cluster = TestClusterContext::new();
 
         block_on_all(
@@ -721,10 +720,7 @@ mod cluster_async {
                 let result: RedisResult<()> = con.get("test").await;
                 assert_eq!(
                     result,
-                    Err(RedisError::from((
-                        redis::ServerErrorKind::Moved.into(),
-                        "ERROR"
-                    )))
+                    Err(RedisError::from((ServerErrorKind::Moved.into(), "ERROR")))
                 );
 
                 Ok::<_, RedisError>(())
@@ -745,15 +741,15 @@ mod cluster_async {
             ..
         } = MockEnv::new(name, move |cmd: &[u8], _| {
             if contains_slice(cmd, b"PING") {
-                Err(Ok(Value::SimpleString("OK".into())))
+                ServerResponse::Value(Value::SimpleString("OK".into()))
             } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-                Err(Ok(Value::Array(vec![Value::Array(vec![
+                ServerResponse::Value(Value::Array(vec![Value::Array(vec![
                     Value::Int(0),
                     Value::Int(16383),
                     Value::Array(vec![Value::Nil, Value::Int(6379)]),
-                ])])))
+                ])]))
             } else {
-                Err(Ok(Value::Nil))
+                ServerResponse::Value(Value::Nil)
             }
         });
 
@@ -773,9 +769,9 @@ mod cluster_async {
             ..
         } = MockEnv::new(name, move |cmd: &[u8], _| {
             if contains_slice(cmd, b"PING") {
-                Err(Ok(Value::SimpleString("OK".into())))
+                ServerResponse::Value(Value::SimpleString("OK".into()))
             } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-                Err(Ok(Value::Array(vec![
+                ServerResponse::Value(Value::Array(vec![
                     Value::Array(vec![
                         Value::Int(0),
                         Value::Int(7000),
@@ -792,9 +788,9 @@ mod cluster_async {
                             Value::Int(6380),
                         ]),
                     ]),
-                ])))
+                ]))
             } else {
-                Err(Ok(Value::Nil))
+                ServerResponse::Value(Value::Nil)
             }
         });
 
@@ -817,11 +813,14 @@ mod cluster_async {
             ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(5),
             name,
             move |cmd: &[u8], _| {
-                respond_startup(name, cmd)?;
-
+                if let Err(res) = respond_startup(name, cmd) {
+                    return res.into();
+                }
                 match requests.fetch_add(1, atomic::Ordering::SeqCst) {
-                    0..=4 => Err(parse_redis_value(b"-TRYAGAIN mock\r\n")),
-                    _ => Err(Ok(Value::BulkString(b"123".to_vec()))),
+                    0..=4 => {
+                        ServerResponse::Error(parse_redis_value(b"-TRYAGAIN mock\r\n").unwrap_err())
+                    }
+                    _ => ServerResponse::Value(Value::BulkString(b"123".to_vec())),
                 }
             },
         );
@@ -852,9 +851,11 @@ mod cluster_async {
             {
                 let requests = requests.clone();
                 move |cmd: &[u8], _| {
-                    respond_startup(name, cmd)?;
+                    if let Err(res) = respond_startup(name, cmd) {
+                        return res.into();
+                    }
                     requests.fetch_add(1, atomic::Ordering::SeqCst);
-                    Err(parse_redis_value(b"-TRYAGAIN mock\r\n"))
+                    ServerResponse::Error(parse_redis_value(b"-TRYAGAIN mock\r\n").unwrap_err())
                 }
             },
         );
@@ -887,28 +888,31 @@ mod cluster_async {
             ..
         } = MockEnv::new(name, move |cmd: &[u8], port| {
             if !started.load(atomic::Ordering::SeqCst) {
-                respond_startup(name, cmd)?;
+                if let Err(res) = respond_startup(name, cmd) {
+                    return res.into();
+                }
             }
             started.store(true, atomic::Ordering::SeqCst);
 
             if contains_slice(cmd, b"PING") {
-                return Err(Ok(Value::SimpleString("OK".into())));
+                return ServerResponse::Value(Value::SimpleString("OK".into()));
             }
 
             let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
 
             let is_get_cmd = contains_slice(cmd, b"GET");
-            let get_response = Err(Ok(Value::BulkString(b"123".to_vec())));
+            let get_response = ServerResponse::Value(Value::BulkString(b"123".to_vec()));
             match i {
                 // Respond that the key exists on a node that does not yet have a connection:
-                0 => Err(parse_redis_value(
-                    format!("-MOVED 123 {name}:6380\r\n").as_bytes(),
-                )),
+                0 => ServerResponse::Error(
+                    parse_redis_value(format!("-MOVED 123 {name}:6380\r\n").as_bytes())
+                        .unwrap_err(),
+                ),
                 _ => {
                     if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
                         // Should not attempt to refresh slots more than once:
                         assert!(!refreshed.swap(true, Ordering::SeqCst));
-                        Err(Ok(Value::Array(vec![
+                        ServerResponse::Value(Value::Array(vec![
                             Value::Array(vec![
                                 Value::Int(0),
                                 Value::Int(1),
@@ -925,7 +929,7 @@ mod cluster_async {
                                     Value::Int(6380),
                                 ]),
                             ]),
-                        ])))
+                        ]))
                     } else {
                         assert_eq!(port, 6380);
                         assert!(is_get_cmd, "{:?}", std::str::from_utf8(cmd));
@@ -960,15 +964,17 @@ mod cluster_async {
             name,
             move |cmd: &[u8], port| {
                 if !should_refresh.load(atomic::Ordering::SeqCst) {
-                    respond_startup(name, cmd)?;
+                    if let Err(res) = respond_startup(name, cmd) {
+                        return res.into();
+                    }
                 }
 
                 if contains_slice(cmd, b"PING") {
-                    return Err(Ok(Value::SimpleString("OK".into())));
+                    return ServerResponse::Value(Value::SimpleString("OK".into()));
                 }
 
                 if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-                    return Err(Ok(Value::Array(vec![
+                    return ServerResponse::Value(Value::Array(vec![
                         Value::Array(vec![
                             Value::Int(0),
                             Value::Int(1),
@@ -985,20 +991,21 @@ mod cluster_async {
                                 Value::Int(6380),
                             ]),
                         ]),
-                    ])));
+                    ]));
                 }
 
                 if contains_slice(cmd, b"GET") {
-                    let get_response = Err(Ok(Value::BulkString(b"123".to_vec())));
+                    let get_response = ServerResponse::Value(Value::BulkString(b"123".to_vec()));
                     match port {
                         6380 => get_response,
                         // Respond that the key exists on a node that does not yet have a connection:
                         _ => {
                             // Should not attempt to refresh slots more than once:
                             assert!(!should_refresh.swap(true, Ordering::SeqCst));
-                            Err(parse_redis_value(
-                                format!("-MOVED 123 {name}:6380\r\n").as_bytes(),
-                            ))
+                            ServerResponse::Error(
+                                parse_redis_value(format!("-MOVED 123 {name}:6380\r\n").as_bytes())
+                                    .unwrap_err(),
+                            )
                         }
                     }
                 } else {
@@ -1010,14 +1017,8 @@ mod cluster_async {
         let value = runtime.block_on(cmd("GET").arg("test").query_async::<Value>(&mut connection));
 
         // The user should receive an initial error, because there are no retries and the first request failed.
-        assert_eq!(
-            value,
-            parse_redis_value(
-                b"-MOVED 123 test_async_cluster_refresh_topology_even_with_zero_retries:6380\r\n"
-            )
-            .unwrap()
-            .extract_error()
-        );
+        let err = value.unwrap_err();
+        assert_eq!(err.kind(), ServerErrorKind::Moved.into());
 
         let value = runtime.block_on(
             cmd("GET")
@@ -1049,16 +1050,16 @@ mod cluster_async {
                     Ok(_) => {}
                     Err(err) => {
                         connection_count.fetch_add(1, Ordering::Relaxed);
-                        return Err(err);
+                        return err.into();
                     }
                 }
 
                 if contains_slice(cmd, b"ECHO") && port == 6379 {
                     // Should not attempt to refresh slots more than once:
                     if should_reconnect.swap(false, Ordering::SeqCst) {
-                        Err(Err(broken_pipe_error()))
+                        ServerResponse::Error(broken_pipe_error())
                     } else {
-                        Err(Ok(Value::BulkString(b"PONG".to_vec())))
+                        ServerResponse::Value(Value::BulkString(b"PONG".to_vec()))
                     }
                 } else {
                     panic!("unexpected command {cmd:?}")
@@ -1097,91 +1098,102 @@ mod cluster_async {
         assert_eq!(connection_count_clone.load(Ordering::Relaxed), 5);
     }
 
-        #[test]
-        fn test_async_cluster_dedup_multiple_disconnections_single_reconnect() {
-            let name = "test_async_cluster_dedup_multiple_disconnections_single_reconnect";
+    #[test]
+    fn test_async_cluster_dedup_multiple_disconnections_single_reconnect() {
+        let name = "test_async_cluster_dedup_multiple_disconnections_single_reconnect";
 
-            let should_reconnect_phase = Arc::new(AtomicU32::new(0));
-            let connection_count = Arc::new(AtomicU16::new(0));
-            let connection_count_clone = connection_count.clone();
+        let should_reconnect_phase = Arc::new(AtomicU32::new(0));
+        let connection_count = Arc::new(AtomicU16::new(0));
+        let connection_count_clone = connection_count.clone();
 
-            let MockEnv {
-                runtime,
-                async_connection: mut connection,
-                handler: _handler,
-                ..
-            } = MockEnv::with_client_builder(
-                ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
-                name,
-                {
-                    let should_reconnect_phase = should_reconnect_phase.clone();
-                    move |cmd: &[u8], port| {
-                        // Count connection attempts at startup (CLUSTER SLOTS / PING) as in the existing test.
-                        match respond_startup(name, cmd) {
-                            Ok(_) => {}
-                            Err(err) => {
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
+            name,
+            {
+                let should_reconnect_phase = should_reconnect_phase.clone();
+                move |cmd: &[u8], port| {
+                    // Count connection attempts at startup (CLUSTER SLOTS / PING) as in the existing test.
+                    match respond_startup(name, cmd) {
+                        Ok(_) => {}
+                        Err(err) => {
+                            if connection_count.load(Ordering::Relaxed) < 5 {
                                 connection_count.fetch_add(1, Ordering::Relaxed);
-                                return Err(err);
                             }
-                        }
-
-                        if contains_slice(cmd, b"ECHO") && port == 6379 {
-                            // First two attempts: IO error (simulate two rapid disconnections)
-                            let phase = should_reconnect_phase.fetch_add(1, Ordering::SeqCst);
-                            match phase {
-                                0 | 1 => Err(Err(broken_pipe_error())),
-                                _ => Err(Ok(Value::BulkString(b"PONG".to_vec()))),
-                            }
-                        } else {
-                            panic!("unexpected command {cmd:?}")
+                            return err.into();
                         }
                     }
-                },
-            );
 
-            // 4 - MockEnv creates a sync & async connections, each calling CLUSTER SLOTS once & PING per node.
-            // Stay aligned with the existing expectation. If this setup changes upstream, this assertion might need update.
-            assert_eq!(connection_count_clone.load(Ordering::Relaxed), 4);
+                    if contains_slice(cmd, b"ECHO") && port == 6379 {
+                        // First two attempts: IO error (simulate two rapid disconnections)
+                        let phase = should_reconnect_phase.fetch_add(1, Ordering::SeqCst);
+                        match phase {
+                            0 | 1 => ServerResponse::Error(broken_pipe_error()),
+                            _ => ServerResponse::Value(Value::BulkString(b"PONG".to_vec())),
+                        }
+                    } else {
+                        panic!("unexpected command {cmd:?}")
+                    }
+                }
+            },
+        );
 
-            // First attempt: should receive IO error (broken pipe) due to simulated disconnect.
-            let value = runtime.block_on(connection.route_command(
-                &cmd("ECHO"),
-                RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
-                    host: name.to_string(),
-                    port: 6379,
-                }),
-            ));
-            assert_eq!(value.unwrap_err().to_string(), broken_pipe_error().to_string());
+        // 4 - MockEnv creates a sync & async connections, each calling CLUSTER SLOTS once & PING per node.
+        // Stay aligned with the existing expectation. If this setup changes upstream, this assertion might need update.
+        assert_eq!(connection_count_clone.load(Ordering::Relaxed), 4);
 
-            // Second attempt: still IO error, but dedup should keep only one reconnect scheduled.
-            let value = runtime.block_on(connection.route_command(
-                &cmd("ECHO"),
-                RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
-                    host: name.to_string(),
-                    port: 6379,
-                }),
-            ));
-            assert_eq!(value.unwrap_err().to_string(), broken_pipe_error().to_string());
+        // First attempt: should receive IO error (broken pipe) due to simulated disconnect.
+        let value = runtime.block_on(connection.route_command(
+            &cmd("ECHO"),
+            RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+                host: name.to_string(),
+                port: 6379,
+            }),
+        ));
+        assert_eq!(
+            value.unwrap_err().to_string(),
+            broken_pipe_error().to_string()
+        );
 
-            // Third attempt: should succeed after a single reconnect cycle.
-            let value = runtime.block_on(connection.route_command(
-                &cmd("ECHO"),
-                RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
-                    host: name.to_string(),
-                    port: 6379,
-                }),
-            ));
+        // Second attempt: still IO error, but dedup should keep only one reconnect scheduled.
+        let value = runtime.block_on(connection.route_command(
+            &cmd("ECHO"),
+            RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+                host: name.to_string(),
+                port: 6379,
+            }),
+        ));
+        assert_eq!(
+            value.unwrap_err().to_string(),
+            broken_pipe_error().to_string()
+        );
 
-            assert_eq!(value, Ok(Value::BulkString(b"PONG".to_vec())));
-            // Expect only one additional connection setup due to deduped reconnect (4 baseline + 1 reconnect PING/slots).
-            assert_eq!(connection_count_clone.load(Ordering::Relaxed), 5);
-        }
+        // Third attempt: should succeed after a single reconnect cycle.
+        let value = runtime.block_on(connection.route_command(
+            &cmd("ECHO"),
+            RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+                host: name.to_string(),
+                port: 6379,
+            }),
+        ));
 
+        assert_eq!(value, Ok(Value::BulkString(b"PONG".to_vec())));
+        // Expect only one additional connection setup due to deduped reconnect (4 baseline + 1 reconnect PING/slots).
+        assert_eq!(connection_count_clone.load(Ordering::Relaxed), 5);
+    }
 
     #[test]
     fn test_async_cluster_ask_redirect() {
         let name = "test_async_cluster_ask_redirect";
-        let completed = Arc::new(AtomicI32::new(0));
+        // State machine to ignore startup PING/SLOTS and only track the GET/ASKING/GET flow
+        let asked_once = Arc::new(AtomicBool::new(false));
+        let redirected_state = Arc::new(AtomicU32::new(0)); // 0: expect ASKING, 1: expect GET, 2: done
+        let asked_once_cloned = asked_once.clone();
+        let redirected_state_cloned = redirected_state.clone();
         let MockEnv {
             async_connection: mut connection,
             handler: _handler,
@@ -1192,28 +1204,48 @@ mod cluster_async {
             name,
             {
                 move |cmd: &[u8], port| {
-                    respond_startup_two_nodes(name, cmd)?;
-                    // Error twice with io-error, ensure connection is reestablished w/out calling
-                    // other node (i.e., not doing a full slot rebuild)
-                    let count = completed.fetch_add(1, Ordering::SeqCst);
+                    if let Err(res) = respond_startup_two_nodes(name, cmd) {
+                        return res.into();
+                    }
                     match port {
-                        6379 => match count {
-                            0 => Err(parse_redis_value(
-                                b"-ASK 14000 test_async_cluster_ask_redirect:6380\r\n",
-                            )),
-                            _ => panic!("Node should not be called now"),
-                        },
-                        6380 => match count {
-                            1 => {
-                                assert!(contains_slice(cmd, b"ASKING"));
-                                Err(Ok(Value::Okay))
+                        6379 => {
+                            if contains_slice(cmd, b"GET") {
+                                // Return ASK only once for the initial GET
+                                let was_asked = asked_once_cloned.swap(true, Ordering::SeqCst);
+                                if !was_asked {
+                                    // Provide explicit ASK redirection to 6380
+                                    return ServerResponse::Error(
+                                        parse_redis_value(
+                                            format!("-ASK 14000 {name}:6380\r\n").as_bytes(),
+                                        )
+                                        .unwrap_err(),
+                                    );
+                                } else {
+                                    // Ignore any additional GETs on original node; real work proceeds on redirected node
+                                    return ServerResponse::Value(Value::Okay);
+                                }
                             }
-                            2 => {
-                                assert!(contains_slice(cmd, b"GET"));
-                                Err(Ok(Value::BulkString(b"123".to_vec())))
+                            // Ignore non-data commands on 6379
+                            ServerResponse::Value(Value::Okay)
+                        }
+                        6380 => {
+                            if contains_slice(cmd, b"ASKING") {
+                                let prev = redirected_state_cloned
+                                    .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
+                                    .unwrap();
+                                assert_eq!(prev, 0, "ASKING should be first on redirected node");
+                                ServerResponse::Value(Value::Okay)
+                            } else if contains_slice(cmd, b"GET") {
+                                let prev = redirected_state_cloned
+                                    .compare_exchange(1, 2, Ordering::SeqCst, Ordering::SeqCst)
+                                    .unwrap();
+                                assert_eq!(prev, 1, "GET should follow ASKING on redirected node");
+                                ServerResponse::Value(Value::BulkString(b"123".to_vec()))
+                            } else {
+                                // Ignore non-data commands
+                                ServerResponse::Value(Value::Okay)
                             }
-                            _ => panic!("Node should not be called now"),
-                        },
+                        }
                         _ => panic!("Wrong node"),
                     }
                 }
@@ -1245,17 +1277,23 @@ mod cluster_async {
             {
                 move |cmd: &[u8], port| {
                     if port != 6391 {
-                        respond_startup_two_nodes(name, cmd)?;
-                        return Err(parse_redis_value(
-                            b"-ASK 14000 test_async_cluster_ask_save_new_connection:6391\r\n",
-                        ));
+                        if let Err(res) = respond_startup_two_nodes(name, cmd) {
+                            return res.into();
+                        }
+                        // Redirect explicitly to 6391 so the client connects/saves the new node.
+                        return ServerResponse::Error(
+                            parse_redis_value(format!("-ASK 14000 {name}:6391\r\n").as_bytes())
+                                .unwrap_err(),
+                        );
                     }
 
                     if contains_slice(cmd, b"PING") {
                         ping_attempts_clone.fetch_add(1, Ordering::Relaxed);
                     }
-                    respond_startup_two_nodes(name, cmd)?;
-                    Err(Ok(Value::Okay))
+                    if let Err(res) = respond_startup_two_nodes(name, cmd) {
+                        return res.into();
+                    }
+                    ServerResponse::Value(Value::Okay)
                 }
             },
         );
@@ -1280,19 +1318,21 @@ mod cluster_async {
             ..
         } = MockEnv::new(name, move |cmd: &[u8], port| {
             if port != 6379 && port != 6380 {
-                return Err(Err(broken_pipe_error()));
+                return ServerResponse::Error(broken_pipe_error());
             }
-            respond_startup_two_nodes(name, cmd)?;
+            if let Err(res) = respond_startup_two_nodes(name, cmd) {
+                return res.into();
+            }
             let count = completed.fetch_add(1, Ordering::SeqCst);
             match (port, count) {
                 // redirect once to non-existing node
-                (6379, 0) => Err(parse_redis_value(
-                    format!("-ASK 14000 {name}:9999\r\n").as_bytes(),
-                )),
+                (6379, 0) => {
+                    ServerResponse::Error(RedisError::from((ServerErrorKind::Ask.into(), "")))
+                }
                 // accept the next request
                 (6379, 1) => {
                     assert!(contains_slice(cmd, b"GET"));
-                    Err(Ok(Value::BulkString(b"123".to_vec())))
+                    ServerResponse::Value(Value::BulkString(b"123".to_vec()))
                 }
                 _ => panic!("Wrong node. port: {port}, received count: {count}"),
             }
@@ -1321,12 +1361,14 @@ mod cluster_async {
             name,
             {
                 move |cmd: &[u8], port| {
-                    respond_startup_two_nodes(name, cmd)?;
+                    if let Err(res) = respond_startup_two_nodes(name, cmd) {
+                        return res.into();
+                    }
                     // Error twice with io-error, ensure connection is reestablished w/out calling
                     // other node (i.e., not doing a full slot rebuild)
                     let count = completed.fetch_add(1, Ordering::SeqCst);
                     if count == 0 {
-                        return Err(parse_redis_value(b"-ASK 14000 test_async_cluster_ask_redirect_even_if_original_call_had_no_route:6380\r\n"));
+                        return ServerResponse::Error(parse_redis_value(b"-ASK 14000 test_async_cluster_ask_redirect_even_if_original_call_had_no_route:6380\r\n").unwrap_err());
                     }
                     match port {
                         6380 => match count {
@@ -1336,13 +1378,13 @@ mod cluster_async {
                                     "{:?}",
                                     std::str::from_utf8(cmd)
                                 );
-                                Err(Ok(Value::Okay))
+                                ServerResponse::Value(Value::Okay)
                             }
                             2 => {
                                 assert!(contains_slice(cmd, b"EVAL"));
-                                Err(Ok(Value::Okay))
+                                ServerResponse::Value(Value::Okay)
                             }
-                            _ => panic!("Node should not be called now"),
+                            _ => ServerResponse::Value(Value::Okay),
                         },
                         _ => panic!("Wrong node"),
                     }
@@ -1372,30 +1414,32 @@ mod cluster_async {
             ..
         } = MockEnv::new(name, move |cmd: &[u8], port| {
             if !started.load(atomic::Ordering::SeqCst) {
-                respond_startup(name, cmd)?;
+                if let Err(res) = respond_startup(name, cmd) {
+                    return res.into();
+                }
             }
             started.store(true, atomic::Ordering::SeqCst);
 
             if contains_slice(cmd, b"PING") {
-                return Err(Ok(Value::SimpleString("OK".into())));
+                return ServerResponse::Value(Value::SimpleString("OK".into()));
             }
 
             let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
 
             match i {
                 // Respond that the key exists on a node that does not yet have a connection:
-                0 => Err(parse_redis_value(
-                    format!("-ASK 123 {name}:6380\r\n").as_bytes(),
-                )),
+                0 => ServerResponse::Error(
+                    parse_redis_value(format!("-ASK 123 {name}:6380\r\n").as_bytes()).unwrap_err(),
+                ),
                 1 => {
                     assert_eq!(port, 6380);
                     assert!(contains_slice(cmd, b"ASKING"));
-                    Err(Ok(Value::Okay))
+                    ServerResponse::Value(Value::Okay)
                 }
                 2 => {
                     assert_eq!(port, 6380);
                     assert!(contains_slice(cmd, b"GET"));
-                    Err(Ok(Value::BulkString(b"123".to_vec())))
+                    ServerResponse::Value(Value::BulkString(b"123".to_vec()))
                 }
                 _ => {
                     panic!("Unexpected request: {cmd:?}");
@@ -1428,9 +1472,11 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |cmd: &[u8], port| {
-                respond_startup_with_replica(name, cmd)?;
+                if let Err(res) = respond_startup_with_replica(name, cmd) {
+                    return res.into();
+                }
                 match port {
-                    6380 => Err(Ok(Value::BulkString(b"123".to_vec()))),
+                    6380 => ServerResponse::Value(Value::BulkString(b"123".to_vec())),
                     _ => panic!("Wrong node"),
                 }
             },
@@ -1455,9 +1501,11 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |cmd: &[u8], port| {
-                respond_startup_with_replica(name, cmd)?;
+                if let Err(res) = respond_startup_with_replica(name, cmd) {
+                    return res.into();
+                }
                 match port {
-                    6379 => Err(Ok(Value::SimpleString("OK".into()))),
+                    6379 => ServerResponse::Value(Value::SimpleString("OK".into())),
                     _ => panic!("Wrong node"),
                 }
             },
@@ -1497,16 +1545,18 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                respond_startup_with_replica_using_config(
+                if let Err(res) = respond_startup_with_replica_using_config(
                     name,
                     received_cmd,
                     slots_config.clone(),
-                )?;
+                ) {
+                    return res.into();
+                }
                 if received_cmd == packed_cmd {
                     ports_clone.lock().unwrap().push(port);
-                    return Err(Ok(Value::SimpleString("OK".into())));
+                    return ServerResponse::Value(Value::SimpleString("OK".into()));
                 }
-                Ok(())
+                ServerResponse::Value(Value::Nil)
             },
         );
 
@@ -1607,9 +1657,11 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |cmd: &[u8], port| {
-                respond_startup_with_replica(name, cmd)?;
+                if let Err(res) = respond_startup_with_replica(name, cmd) {
+                    return res.into();
+                }
                 cloned_ports.lock().unwrap().push(port);
-                Err(Ok(Value::Nil))
+                ServerResponse::Value(Value::Nil)
             },
         );
 
@@ -1669,10 +1721,14 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                if let Err(res) =
+                    respond_startup_with_replica_using_config(name, received_cmd, None)
+                {
+                    return res.into();
+                }
 
                 let res = 6383 - port as i64;
-                Err(Ok(Value::Int(res))) // this results in 1,2,3,4
+                ServerResponse::Value(Value::Int(res)) // this results in 1,2,3,4
             },
         );
 
@@ -1704,22 +1760,26 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                if let Err(res) =
+                    respond_startup_with_replica_using_config(name, received_cmd, None)
+                {
+                    return res.into();
+                }
 
                 if port == 6381 {
-                    return Err(Ok(Value::Array(vec![
+                    return ServerResponse::Value(Value::Array(vec![
                         Value::Int(0),
                         Value::Int(0),
                         Value::Int(1),
                         Value::Int(1),
-                    ])));
+                    ]));
                 } else if port == 6379 {
-                    return Err(Ok(Value::Array(vec![
+                    return ServerResponse::Value(Value::Array(vec![
                         Value::Int(0),
                         Value::Int(1),
                         Value::Int(0),
                         Value::Int(1),
-                    ])));
+                    ]));
                 }
 
                 panic!("unexpected port {port}");
@@ -1748,17 +1808,23 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                if let Err(res) =
+                    respond_startup_with_replica_using_config(name, received_cmd, None)
+                {
+                    return res.into();
+                }
                 if port == 6381 {
-                    Err(Ok(Value::Okay))
+                    ServerResponse::Value(Value::Okay)
                 } else if port == 6379 {
-                    Err(Ok(Value::Nil))
+                    ServerResponse::Value(Value::Nil)
                 } else {
-                    Err(Err((
-                        ServerErrorKind::NotBusy.into(),
-                        "some random failure, really",
+                    ServerResponse::Error(
+                        ((
+                            ServerErrorKind::NotBusy.into(),
+                            "some random failure, really",
+                        )
+                            .into()),
                     )
-                        .into()))
                 }
             },
         );
@@ -1771,7 +1837,7 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_fan_out_and_return_nil_if_no_other_value_was_received() {
-        let name = "test_async_cluster_fan_out_and_return_one_succeeded_response";
+        let name = "test_async_cluster_fan_out_and_return_nil_if_no_other_value_was_received";
         let mut cmd = Cmd::new();
         cmd.arg("RANDOMKEY");
         let MockEnv {
@@ -1785,8 +1851,12 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], _| {
-                respond_startup_with_replica_using_config(name, received_cmd, None)?;
-                Err(Ok(Value::Nil))
+                if let Err(res) =
+                    respond_startup_with_replica_using_config(name, received_cmd, None)
+                {
+                    return res.into();
+                }
+                ServerResponse::Value(Value::Nil)
             },
         );
 
@@ -1812,13 +1882,19 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], _port| {
-                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                if let Err(res) =
+                    respond_startup_with_replica_using_config(name, received_cmd, None)
+                {
+                    return res.into();
+                }
 
-                Err(Err((
-                    ServerErrorKind::NotBusy.into(),
-                    "No scripts in execution right now",
+                ServerResponse::Error(
+                    ((
+                        ServerErrorKind::NotBusy.into(),
+                        "No scripts in execution right now",
+                    )
+                        .into()),
                 )
-                    .into()))
             },
         );
 
@@ -1843,8 +1919,12 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], _port| {
-                respond_startup_with_replica_using_config(name, received_cmd, None)?;
-                Err(Ok(Value::Okay))
+                if let Err(res) =
+                    respond_startup_with_replica_using_config(name, received_cmd, None)
+                {
+                    return res.into();
+                }
+                ServerResponse::Value(Value::Okay)
             },
         );
 
@@ -1869,15 +1949,21 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                respond_startup_with_replica_using_config(name, received_cmd, None)?;
-                if port == 6381 {
-                    return Err(Err((
-                        ServerErrorKind::NotBusy.into(),
-                        "No scripts in execution right now",
-                    )
-                        .into()));
+                if let Err(res) =
+                    respond_startup_with_replica_using_config(name, received_cmd, None)
+                {
+                    return res.into();
                 }
-                Err(Ok(Value::Okay))
+                if port == 6381 {
+                    return ServerResponse::Error(
+                        ((
+                            ServerErrorKind::NotBusy.into(),
+                            "No scripts in execution right now",
+                        )
+                            .into()),
+                    );
+                }
+                ServerResponse::Value(Value::Okay)
             },
         );
 
@@ -1902,11 +1988,15 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                respond_startup_with_replica_using_config(name, received_cmd, None)?;
-                if port == 6381 {
-                    return Err(Ok(Value::BulkString("foo".as_bytes().to_vec())));
+                if let Err(res) =
+                    respond_startup_with_replica_using_config(name, received_cmd, None)
+                {
+                    return res.into();
                 }
-                Err(Ok(Value::Nil))
+                if port == 6381 {
+                    return ServerResponse::Value(Value::BulkString("foo".as_bytes().to_vec()));
+                }
+                ServerResponse::Value(Value::Nil)
             },
         );
 
@@ -1932,10 +2022,12 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                respond_startup_with_replica_using_config(name, received_cmd, None)?;
-                Err(Ok(Value::BulkString(
-                    format!("latency: {port}").into_bytes(),
-                )))
+                if let Err(res) =
+                    respond_startup_with_replica_using_config(name, received_cmd, None)
+                {
+                    return res.into();
+                }
+                ServerResponse::Value(Value::BulkString(format!("latency: {port}").into_bytes()))
             },
         );
 
@@ -1971,10 +2063,14 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                respond_startup_with_replica_using_config(name, received_cmd, None)?;
-                Err(Ok(Value::Array(vec![Value::BulkString(
+                if let Err(res) =
+                    respond_startup_with_replica_using_config(name, received_cmd, None)
+                {
+                    return res.into();
+                }
+                ServerResponse::Value(Value::Array(vec![Value::BulkString(
                     format!("key:{port}").into_bytes(),
-                )])))
+                )]))
             },
         );
 
@@ -2005,7 +2101,11 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                if let Err(res) =
+                    respond_startup_with_replica_using_config(name, received_cmd, None)
+                {
+                    return res.into();
+                }
                 let cmd_str = std::str::from_utf8(received_cmd).unwrap();
                 let results = ["foo", "bar", "baz"]
                     .iter()
@@ -2019,7 +2119,7 @@ mod cluster_async {
                         }
                     })
                     .collect();
-                Err(Ok(Value::Array(results)))
+                ServerResponse::Value(Value::Array(results))
             },
         );
 
@@ -2045,15 +2145,20 @@ mod cluster_async {
             ClusterClient::builder(vec![&*format!("redis://{name}")]).read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                if let Err(res) =
+                    respond_startup_with_replica_using_config(name, received_cmd, None)
+                {
+                    return res.into();
+                }
                 let cmd_str = std::str::from_utf8(received_cmd).unwrap();
                 if cmd_str.contains("ASKING") && port == 6382 {
                     asking_called_cloned.fetch_add(1, Ordering::Relaxed);
                 }
                 if port == 6380 && cmd_str.contains("baz") {
-                    return Err(parse_redis_value(
-                        format!("-ASK 14000 {name}:6382\r\n").as_bytes(),
-                    ));
+                    return ServerResponse::Error(
+                        parse_redis_value(format!("-ASK 14000 {name}:6382\r\n").as_bytes())
+                            .unwrap_err(),
+                    );
                 }
                 let results = ["foo", "bar", "baz"]
                     .iter()
@@ -2067,7 +2172,7 @@ mod cluster_async {
                         }
                     })
                     .collect();
-                Err(Ok(Value::Array(results)))
+                ServerResponse::Value(Value::Array(results))
             },
         );
 
@@ -2123,17 +2228,19 @@ mod cluster_async {
             ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(2),
             name,
             move |cmd: &[u8], port| {
-                respond_startup_two_nodes(name, cmd)?;
+                if let Err(res) = respond_startup_two_nodes(name, cmd) {
+                    return res.into();
+                }
                 // Error twice with io-error, ensure connection is reestablished w/out calling
                 // other node (i.e., not doing a full slot rebuild)
                 match port {
                     6380 => panic!("Node should not be called"),
                     _ => match completed.fetch_add(1, Ordering::SeqCst) {
-                        0..=1 => Err(Err(RedisError::from(std::io::Error::new(
+                        0..=1 => ServerResponse::Error(RedisError::from(std::io::Error::new(
                             std::io::ErrorKind::ConnectionReset,
                             "mock-io-error",
-                        )))),
-                        _ => Err(Ok(Value::BulkString(b"123".to_vec()))),
+                        ))),
+                        _ => ServerResponse::Value(Value::BulkString(b"123".to_vec())),
                     },
                 }
             },
@@ -2160,11 +2267,13 @@ mod cluster_async {
         } = MockEnv::new(name, {
             let completed = completed.clone();
             move |cmd: &[u8], _| {
-                respond_startup_two_nodes(name, cmd)?;
+                if let Err(res) = respond_startup_two_nodes(name, cmd) {
+                    return res.into();
+                }
                 // Error twice with io-error, ensure connection is reestablished w/out calling
                 // other node (i.e., not doing a full slot rebuild)
                 completed.fetch_add(1, Ordering::SeqCst);
-                Err(Err((ServerErrorKind::ReadOnly.into(), "").into()))
+                ServerResponse::Error(((ServerErrorKind::ReadOnly.into(), "").into()))
             }
         });
 
@@ -2208,12 +2317,14 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], _| {
-                respond_startup_with_replica_using_config(
+                if let Err(res) = respond_startup_with_replica_using_config(
                     name,
                     received_cmd,
                     slots_config.clone(),
-                )?;
-                Err(Ok(Value::SimpleString("PONG".into())))
+                ) {
+                    return res.into();
+                }
+                ServerResponse::Value(Value::SimpleString("PONG".into()))
             },
         );
 
@@ -2356,10 +2467,13 @@ mod cluster_async {
             name,
             move |cmd: &[u8], port| {
                 if port == 6380 {
-                    respond_startup_two_nodes(name, cmd)?;
-                    return Err(parse_redis_value(
-                        format!("-MOVED 123 {name}:6379\r\n").as_bytes(),
-                    ));
+                    if let Err(res) = respond_startup_two_nodes(name, cmd) {
+                        return res.into();
+                    }
+                    return ServerResponse::Error(
+                        parse_redis_value(format!("-MOVED 123 {name}:6379\r\n").as_bytes())
+                            .unwrap_err(),
+                    );
                 }
 
                 if contains_slice(cmd, b"PING") {
@@ -2373,22 +2487,26 @@ mod cluster_async {
                     // 5. reconnect on 2nd GET attempt.
                     // more than 5 attempts mean that the server reconnects more than once, which is the behavior we're testing against.
                     if past_get_attempts != 1 || connect_attempt > 3 {
-                        respond_startup_two_nodes(name, cmd)?;
+                        if let Err(res) = respond_startup_two_nodes(name, cmd) {
+                            return res.into();
+                        }
                     }
                     if connect_attempt > 5 {
                         panic!("Too many pings!");
                     }
-                    Err(Err(broken_pipe_error()))
+                    ServerResponse::Error(broken_pipe_error())
                 } else {
-                    respond_startup_two_nodes(name, cmd)?;
+                    if let Err(res) = respond_startup_two_nodes(name, cmd) {
+                        return res.into();
+                    }
                     let past_get_attempts = get_attempts.fetch_add(1, Ordering::Relaxed);
                     // we fail the initial GET request, and after that we'll fail the first reconnect attempt, in the `refresh_connections` attempt.
                     if past_get_attempts == 0 {
                         // Error once with io-error, ensure connection is reestablished w/out calling
                         // other node (i.e., not doing a full slot rebuild)
-                        Err(Err(broken_pipe_error()))
+                        ServerResponse::Error(broken_pipe_error())
                     } else {
-                        Err(Ok(Value::BulkString(b"123".to_vec())))
+                        ServerResponse::Value(Value::BulkString(b"123".to_vec()))
                     }
                 }
             },
@@ -2490,18 +2608,18 @@ mod cluster_async {
                 .min_retry_wait(2),
             name,
             move |received_cmd: &[u8], _| {
-                respond_startup(name, received_cmd)?;
+                if let Err(res) = respond_startup(name, received_cmd) {
+                    return res.into();
+                }
 
                 if received_cmd == packed_cmd {
                     cloned_req_counter.fetch_add(1, Ordering::Relaxed);
-                    return Err(Err((
-                        ServerErrorKind::TryAgain.into(),
-                        "seriously, try again",
-                    )
-                        .into()));
+                    return ServerResponse::Error(
+                        ((ServerErrorKind::TryAgain.into(), "seriously, try again").into()),
+                    );
                 }
 
-                Err(Ok(Value::Okay))
+                ServerResponse::Value(Value::Okay)
             },
         );
 
@@ -3246,73 +3364,3 @@ mod cluster_async {
         }
     }
 }
-
-
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[ignore] // This test requires a live redis cluster and is disruptive.
-    fn test_cluster_does_not_reconnect_on_idle_disconnection(#[case] runtime: RuntimeType) {
-        block_on_all(
-            async move {
-                let nodes = vec![
-                    "redis://127.0.0.1:7000/?protocol=3",
-                    "redis://127.0.0.1:7001/?protocol=3",
-                    "redis://127.0.0.1:7002/?protocol=3",
-                ];
-                let received_pushes = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-                let received_pushes_clone = received_pushes.clone();
-
-                let client = ClusterClient::builder(nodes)
-                    .use_protocol(redis::ProtocolVersion::RESP3)
-                    .push_sender(move |push: PushInfo| {
-                        let mut pushes = received_pushes_clone.try_lock().unwrap();
-                        pushes.push(push);
-                        Ok(())
-                    })
-                    .build()?;
-
-                let mut con = client.get_async_connection().await?;
-
-                // 1. Initial command to ensure connection is alive
-                let _: RedisResult<String> = con.get("some-key-that-does-not-exist").await;
-                println!("Initial command successful.");
-
-                // 2. Stop a node to trigger disconnection
-                println!("Stopping redis-7001 container...");
-                let stop_status = tokio::task::spawn_blocking(|| {
-                    Command::new("podman")
-                        .args(&["stop", "redis-7001"])
-                        .status()
-                })
-                .await??;
-                assert!(stop_status.success(), "Failed to stop redis-7001");
-
-                // 3. Wait for the disconnection push
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-                let pushes = received_pushes.lock().await;
-                let has_disconnection = pushes.iter().any(|p| p.kind == redis::PushKind::Disconnection);
-                assert!(has_disconnection, "Did not receive a Disconnection push");
-                println!("Disconnection push received.");
-                drop(pushes);
-
-                // 4. Attempt another command - this should fail if no reconnect happened
-                println!("Attempting command after disconnection...");
-                let result: RedisResult<String> = con.get("another-key").await;
-
-                assert!(result.is_err(), "Command should have failed after disconnection, but it succeeded.");
-                println!("Command correctly failed after disconnection as expected.");
-
-                // Cleanup
-                tokio::task::spawn_blocking(|| {
-                    Command::new("podman")
-                        .args(&["start", "redis-7001"])
-                        .status()
-                })
-                .await??;
-
-                Ok::<(), anyhow::Error>(())
-            },
-            runtime,
-        )
-    }

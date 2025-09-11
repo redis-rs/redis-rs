@@ -8,6 +8,7 @@ use crate::errors::ErrorKind;
 use crate::types::{
     from_owned_redis_value, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,
 };
+use crate::{RedisError, ServerErrorKind};
 
 /// Represents a redis command pipeline.
 #[derive(Clone)]
@@ -178,22 +179,100 @@ impl Pipeline {
         self.query_async::<()>(con).await
     }
 
+    fn collect_server_errors_deep(value: &Value, out: &mut Vec<crate::errors::ServerError>) {
+        match value {
+            Value::ServerError(e) => out.push(e.clone()),
+            Value::Array(items) | Value::Set(items) => {
+                for v in items {
+                    Self::collect_server_errors_deep(v, out);
+                }
+            }
+            Value::Map(entries) => {
+                for (k, v) in entries {
+                    Self::collect_server_errors_deep(k, out);
+                    Self::collect_server_errors_deep(v, out);
+                }
+            }
+            Value::Attribute { data, attributes } => {
+                Self::collect_server_errors_deep(data, out);
+                for (k, v) in attributes {
+                    Self::collect_server_errors_deep(k, out);
+                    Self::collect_server_errors_deep(v, out);
+                }
+            }
+            Value::Push { data, .. } => {
+                for v in data {
+                    Self::collect_server_errors_deep(v, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn complete_request<T: FromRedisValue>(&self, mut response: Vec<Value>) -> RedisResult<T> {
         let response = if self.is_transaction() {
             match response.pop() {
-                Some(Value::Nil) => {
-                    return Ok(from_owned_redis_value(Value::Nil)?);
+                // EXEC returned some items. This is the common case.
+                Some(Value::Array(response_items)) => {
+                    // If EXECABORT is returned as a top-level server error within the results,
+                    // surface it as-is.
+                    if let Some(Value::ServerError(err)) = response_items.first() {
+                        if err.kind() == Some(ServerErrorKind::ExecAbort) {
+                            return Err(err.clone().into());
+                        }
+                    }
+
+                    // Scan each item for nested server errors (RESP3 may wrap errors)
+                    let mut txn_errors: Vec<(usize, crate::errors::ServerError)> = Vec::new();
+                    for (idx, v) in response_items.iter().enumerate() {
+                        let mut errs = Vec::new();
+                        Self::collect_server_errors_deep(v, &mut errs);
+                        if let Some(first_err) = errs.into_iter().next() {
+                            // Only record a single error per command index
+                            txn_errors.push((idx, first_err));
+                        }
+                    }
+
+                    if !txn_errors.is_empty() {
+                        return Err(RedisError::make_aborted_transaction(txn_errors));
+                    }
+
+                    response_items
                 }
-                Some(Value::Array(items)) => items,
+
+                // EXEC returned nil. Treat as an aborted transaction.
+                Some(Value::Nil) => {
+                    return Err(RedisError::make_aborted_transaction(Vec::new()));
+                }
+
+                // EXEC returned a top-level error (RESP2 style or certain server versions).
+                Some(Value::ServerError(err)) => {
+                    return Err(RedisError::make_aborted_transaction(vec![(0, err)]));
+                }
+
+                // Anything else is unexpected.
                 _ => {
-                    return Err((
+                    return Err(RedisError::from((
                         ErrorKind::UnexpectedReturnType,
-                        "Invalid response when parsing multi response",
-                    )
-                        .into());
+                        "Received unexpected response from EXEC",
+                    )));
                 }
             }
         } else {
+            // Non-transactional pipeline: if any command (even ignored) returned a server error,
+            // return a pipeline error that lists all failing command indices.
+            let mut pl_errors: Vec<(usize, crate::errors::ServerError)> = Vec::new();
+            for (index, value) in response.iter().enumerate() {
+                let mut errs = Vec::new();
+                Self::collect_server_errors_deep(value, &mut errs);
+                for e in errs {
+                    pl_errors.push((index, e));
+                }
+            }
+            if !pl_errors.is_empty() {
+                return Err(RedisError::pipeline(pl_errors));
+            }
+
             response
         };
 
@@ -310,17 +389,24 @@ macro_rules! implement_pipeline_commands {
             }
 
             fn compose_response<T: FromRedisValue>(&self, response: Vec<Value>) -> RedisResult<T> {
-                let server_errors: Vec<_> = response
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, value)| match value {
-                        Value::ServerError(error) => Some((index, error.clone())),
-                        _ => None,
-                    })
-                    .collect();
+                // Build a list of all server errors, per index, by attempting to extract
+                // errors from each top-level item. This also catches RESP3 nested errors
+                // since extract_error() recurses.
+                let mut server_errors: Vec<(usize, crate::errors::ServerError)> = Vec::new();
+                for (index, value) in response.iter().cloned().enumerate() {
+                    if let Err(err) = value.extract_error() {
+                        if let Some(items) = err.into_server_errors() {
+                            for (_inner_idx, server_err) in items.iter() {
+                                server_errors.push((index, server_err.clone()));
+                            }
+                        }
+                    }
+                }
+
                 if server_errors.is_empty() {
+                    let filtered = self.filter_ignored_results(response);
                     Ok(from_owned_redis_value(
-                        Value::Array(self.filter_ignored_results(response)).extract_error()?,
+                        Value::Array(filtered).extract_error()?,
                     )?)
                 } else {
                     Err(crate::RedisError::pipeline(server_errors))

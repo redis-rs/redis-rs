@@ -13,6 +13,10 @@ pub fn use_protocol() -> ProtocolVersion {
         ProtocolVersion::RESP2
     }
 }
+fn redis_server_bin() -> String {
+    // Allow overriding the redis-server binary path for environments without a system install
+    std::env::var("REDIS_SERVER_BIN").unwrap_or_else(|_| "redis-server".to_string())
+}
 
 pub fn redis_settings() -> RedisConnectionInfo {
     RedisConnectionInfo::default().set_protocol(use_protocol())
@@ -149,7 +153,14 @@ impl RedisServer {
         modules: &[Module],
         spawner: F,
     ) -> RedisServer {
-        let mut redis_cmd = process::Command::new("redis-server");
+        let bin = redis_server_bin();
+        let mut redis_cmd = process::Command::new(&bin);
+        if process::Command::new(&bin).arg("-v").output().is_err() {
+            panic!(
+                "redis-server binary not found: {}. Install Redis (e.g., `brew install redis`) or set REDIS_SERVER_BIN to a valid path.",
+                bin
+            );
+        }
 
         if let Some(config_path) = config_file {
             redis_cmd.arg(config_path);
@@ -280,15 +291,20 @@ impl RedisServer {
 }
 
 fn get_major_version() -> u8 {
-    let full_string = String::from_utf8(
-        process::Command::new("redis-server")
-            .arg("-v")
-            .output()
-            .unwrap()
-            .stdout,
-    )
-    .unwrap();
-    let (_, res) = full_string.split_once(" v=").unwrap();
-    let (res, _) = res.split_once(".").unwrap();
-    res.parse().unwrap()
+    let output = process::Command::new(redis_server_bin()).arg("-v").output();
+
+    if let Ok(output) = output {
+        if let Ok(full_string) = String::from_utf8(output.stdout) {
+            if let Some((_, res)) = full_string.split_once(" v=") {
+                if let Some((res, _)) = res.split_once(".") {
+                    if let Ok(v) = res.parse() {
+                        return v;
+                    }
+                }
+            }
+        }
+    }
+
+    // Sensible default if we cannot detect the version
+    7
 }

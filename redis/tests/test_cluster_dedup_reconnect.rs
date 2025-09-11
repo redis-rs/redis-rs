@@ -22,7 +22,6 @@ fn test_cluster_dedup_reconnect_isolated() {
     let disconnects_cl = disconnects.clone();
     let conn_count = Arc::new(AtomicU16::new(0));
 
-
     let MockEnv {
         runtime,
         async_connection: mut connection,
@@ -67,7 +66,6 @@ fn test_cluster_dedup_reconnect_isolated() {
     );
 
     // Baseline: MockEnv sets up a few connections (sync & async); expect >= 1
-    
 
     // Perform up to three attempts; first two should cause disconnects in the handler,
     // but cluster may recover fast and retry internally, so we don't assert on errors here.
