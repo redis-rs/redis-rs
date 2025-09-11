@@ -149,11 +149,20 @@ impl ClusterParams {
             .map(|cache_config| CacheManager::new(*cache_config));
 
         // If a push sender is configured, force RESP3 to support push messages.
-        let mut protocol = value.protocol;
-        #[cfg(feature = "cluster-async")]
-        if value.async_push_sender.is_some() {
-            protocol = Some(ProtocolVersion::RESP3);
-        }
+        let protocol = {
+            #[cfg(feature = "cluster-async")]
+            {
+                if value.async_push_sender.is_some() {
+                    Some(ProtocolVersion::RESP3)
+                } else {
+                    value.protocol
+                }
+            }
+            #[cfg(not(feature = "cluster-async"))]
+            {
+                value.protocol
+            }
+        };
 
         Ok(Self {
             password: value.password,
