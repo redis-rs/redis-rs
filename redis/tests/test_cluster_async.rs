@@ -415,7 +415,8 @@ mod cluster_async {
                     .arg("another-x-value")
                     .get_packed_command()
             {
-                ServerResponse::Error(parse_redis_value(b"-CROSSSLOT foobar\r\n").unwrap_err())
+                // Return a Value::ServerError so pipeline aggregation can collect indices
+                ServerResponse::Value(parse_redis_value(b"-CROSSSLOT foobar\r\n").unwrap())
             } else if cmd == redis::cmd("GET").arg("{tag}y").get_packed_command() {
                 ServerResponse::Value(Value::Okay)
             } else {
@@ -855,7 +856,11 @@ mod cluster_async {
                         return res.into();
                     }
                     requests.fetch_add(1, atomic::Ordering::SeqCst);
-                    ServerResponse::Error(parse_redis_value(b"-TRYAGAIN mock\r\n").unwrap_err())
+                    // For single-command flow, simulate a server TRYAGAIN as a RedisError
+                    ServerResponse::Error(redis::RedisError::from((
+                        redis::ErrorKind::Server(redis::ServerErrorKind::TryAgain),
+                        "mock",
+                    )))
                 }
             },
         );
