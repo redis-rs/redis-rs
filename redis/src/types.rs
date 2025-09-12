@@ -76,9 +76,10 @@ pub enum NumericBehavior {
 }
 
 /// Internal low-level redis value enum.
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Default)]
 pub enum Value {
     /// A nil response from the server.
+    #[default]
     Nil,
     /// An integer response.  Note that there are a few situations
     /// in which redis actually returns a string for an integer which
@@ -1393,6 +1394,10 @@ impl<T: FromRedisValue, const N: usize> FromRedisValue for [T; N] {
             _ => crate::errors::invalid_type_error!(value, "Response type not array compatible"),
         }
     }
+
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        Self::from_redis_value_ref(&v)
+    }
 }
 
 /// This trait is used to convert a redis value into a more appropriate
@@ -1412,17 +1417,17 @@ pub trait FromRedisValue: Sized {
     /// Given a redis `Value` this attempts to convert it into the given
     /// destination type.  If that fails because it's not compatible an
     /// appropriate error is generated.
-    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError>;
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
+        // By default, fall back to `from_redis_value_ref`.
+        // This function only needs to be implemented if it can benefit
+        // from taking `v` by value.
+        Self::from_redis_value(v.clone())
+    }
 
     /// Given a redis `Value` this attempts to convert it into the given
     /// destination type.  If that fails because it's not compatible an
     /// appropriate error is generated.
-    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
-        // By default, fall back to `from_redis_value_ref`.
-        // This function only needs to be implemented if it can benefit
-        // from taking `v` by value.
-        Self::from_redis_value_ref(&v)
-    }
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError>;
 
     /// Similar to `from_redis_value_ref` but constructs a vector of objects
     /// from another vector of values.  This primarily exists internally
@@ -1522,6 +1527,10 @@ macro_rules! from_redis_value_for_num {
             fn from_redis_value_ref(v: &Value) -> Result<$t, ParsingError> {
                 from_redis_value_for_num_internal!($t, v)
             }
+
+            fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+                Self::from_redis_value_ref(&v)
+            }
         }
     };
 }
@@ -1529,6 +1538,10 @@ macro_rules! from_redis_value_for_num {
 impl FromRedisValue for u8 {
     fn from_redis_value_ref(v: &Value) -> Result<u8, ParsingError> {
         from_redis_value_for_num_internal!(u8, v)
+    }
+
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        Self::from_redis_value_ref(&v)
     }
 
     // this hack allows us to specialize Vec<u8> to work with binary data.
@@ -1590,6 +1603,10 @@ macro_rules! from_redis_value_for_bignum {
             fn from_redis_value_ref(v: &Value) -> Result<$t, ParsingError> {
                 from_redis_value_for_bignum_internal!($t, v)
             }
+
+            fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+                Self::from_redis_value_ref(&v)
+            }
         }
     };
 }
@@ -1631,6 +1648,10 @@ impl FromRedisValue for bool {
             Value::Okay => Ok(true),
             _ => crate::errors::invalid_type_error!(v, "Response type not bool compatible."),
         }
+    }
+
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        Self::from_redis_value_ref(&v)
     }
 }
 
@@ -1913,6 +1934,10 @@ impl FromRedisValue for () {
             _ => Ok(()),
         }
     }
+
+    fn from_redis_value(v: Value) -> Result<(), ParsingError> {
+        Self::from_redis_value_ref(&v)
+    }
 }
 
 macro_rules! from_redis_value_for_tuple {
@@ -2178,6 +2203,10 @@ impl FromRedisValue for uuid::Uuid {
             Value::BulkString(ref bytes) => Ok(uuid::Uuid::from_slice(bytes)?),
             _ => crate::errors::invalid_type_error!(v, "Response type not uuid compatible."),
         }
+    }
+
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        Self::from_redis_value_ref(&v)
     }
 }
 

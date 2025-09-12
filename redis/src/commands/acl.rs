@@ -140,7 +140,7 @@ pub struct AclInfo {
 }
 
 impl FromRedisValue for AclInfo {
-    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let mut it = v
             .as_sequence()
             .ok_or_else(|| not_convertible_error!(v, ""))?

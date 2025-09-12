@@ -932,13 +932,13 @@ mod basic_async {
             struct Container(String);
 
             impl redis::FromRedisValue for Container {
-                fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
-                    let text = String::from_redis_value_ref(v)?;
+                fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+                    let text = String::from_redis_value(v.clone())?;
 
                     // If container does not start with [`PREFIX`], return error
                     if !text.starts_with(PREFIX) {
                         // hack to create a parsing error
-                        return Err(u64::from_redis_value_ref(v).unwrap_err());
+                        return Err(u64::from_redis_value(v).unwrap_err());
                     }
 
                     Ok(Container(text))
