@@ -1280,11 +1280,20 @@ pub(crate) fn connection_setup_pipeline(
 
     // result is ignored, as per the command's instructions.
     // https://redis.io/commands/client-setinfo/
-    // Note: If a username is provided for authentication, the user might lack permission
-    // to run CLIENT SETINFO (e.g., tests create a user with narrow ACLs). In such cases,
-    // including SETINFO in the setup pipeline would cause the whole pipeline to fail
-    // despite being logically ignorable for functionality. Therefore, skip SETINFO when
-    // authenticating with a username unless explicitly requested.
+    if !connection_info.skip_set_lib_name {
+        pipeline
+            .cmd("CLIENT")
+            .arg("SETINFO")
+            .arg("LIB-NAME")
+            .arg("redis-rs")
+            .ignore();
+        pipeline
+            .cmd("CLIENT")
+            .arg("SETINFO")
+            .arg("LIB-VER")
+            .arg(env!("CARGO_PKG_VERSION"))
+            .ignore();
+    }
 
     (
         pipeline,
@@ -1464,24 +1473,6 @@ fn setup_connection(
                 cache_config,
             ),
         )?;
-    }
-
-    // Best-effort: set library identification if supported by the server.
-    // Important: do this AFTER the setup pipeline so older servers (e.g., 6.2)
-    // that don't support CLIENT SETINFO won't cause the initial pipeline to fail.
-    let should_set_lib_info =
-        !connection_info.skip_set_lib_name && connection_info.username.is_none();
-    if should_set_lib_info {
-        let _ = cmd("CLIENT")
-            .arg("SETINFO")
-            .arg("LIB-NAME")
-            .arg("redis-rs")
-            .exec(&mut rv);
-        let _ = cmd("CLIENT")
-            .arg("SETINFO")
-            .arg("LIB-VER")
-            .arg(env!("CARGO_PKG_VERSION"))
-            .exec(&mut rv);
     }
 
     Ok(rv)
@@ -1908,7 +1899,7 @@ impl ConnectionLike for Connection {
         self.send_bytes(cmd)?;
         let mut rv = vec![];
         let mut first_err = None;
-        let mut server_errors: Vec<(usize, crate::errors::ServerError)> = Vec::new();
+        let mut server_errors = vec![];
         let mut count = count;
         let mut idx = 0;
         while idx < (offset + count) {
@@ -1920,16 +1911,18 @@ impl ConnectionLike for Connection {
             match response {
                 Ok(Value::ServerError(err)) => {
                     if idx < offset {
-                        // Error before EXEC: map to the transaction command index (account for MULTI)
-                        server_errors.push((idx.saturating_sub(1), err));
+                        server_errors.push((idx - 1, err)); // -1, to offset the added MULTI call.
                     } else {
-                        // Error as part of the regular response stream (e.g., EXEC array or non-transaction)
                         rv.push(Value::ServerError(err));
                     }
                 }
                 Ok(item) => {
                     // RESP3 can insert push data between command replies
-                    if let Value::Push { .. } = item {
+                    if let Value::Push {
+                        kind: _kind,
+                        data: _data,
+                    } = item
+                    {
                         // if that is the case we have to extend the loop and handle push data
                         count += 1;
                     } else if idx >= offset {
@@ -1937,32 +1930,8 @@ impl ConnectionLike for Connection {
                     }
                 }
                 Err(err) => {
-                    if offset == 0 {
-                        // Non-transactional pipeline: aggregate error indices, but keep reading to drain all replies
-                        if let Some(items) = err.clone().into_server_errors() {
-                            for (_inner_idx, server_err) in items.iter() {
-                                server_errors.push((idx, server_err.clone()));
-                            }
-                        }
-                        // keep first_err for IO/parse propagation if no server errors were collected
-                        if first_err.is_none() {
-                            first_err = Some(err);
-                        }
-                    } else {
-                        // Transaction queued-phase: collect per-command indices, but keep reading until EXEC
-                        if idx < offset {
-                            if let Some(items) = err.clone().into_server_errors() {
-                                for (_inner_idx, server_err) in items.iter() {
-                                    server_errors.push((idx.saturating_sub(1), server_err.clone()));
-                                }
-                            }
-                            // don't set first_err to allow reading until EXEC
-                        } else {
-                            // EXEC-phase general read error: record and break at the end via first_err
-                            if first_err.is_none() {
-                                first_err = Some(err);
-                            }
-                        }
+                    if first_err.is_none() {
+                        first_err = Some(err);
                     }
                 }
             }
@@ -1970,13 +1939,7 @@ impl ConnectionLike for Connection {
         }
 
         if !server_errors.is_empty() {
-            if offset == 0 {
-                // Non-transaction pipeline errors
-                return Err(RedisError::pipeline(server_errors));
-            } else {
-                // Transaction queued-phase errors detected
-                return Err(RedisError::make_aborted_transaction(server_errors));
-            }
+            return Err(RedisError::make_aborted_transaction(server_errors));
         }
 
         first_err.map_or(Ok(rv), Err)

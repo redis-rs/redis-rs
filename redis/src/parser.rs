@@ -466,16 +466,7 @@ impl Parser {
         });
         match result {
             Err(err) => Err(to_redis_err!(err, decoder)),
-            Ok(result) => {
-                // If the top-level item is an error reply (-ERR/-ASK/-MOVED/etc),
-                // surface it as a RedisError instead of a Value::ServerError.
-                // Nested errors (e.g., inside arrays/transactions) remain as Value::ServerError
-                // so callers can inspect them.
-                if let Value::ServerError(err) = &result {
-                    return Err(err.clone().into());
-                }
-                Ok(result)
-            }
+            Ok(result) => Ok(result),
         }
     }
 }
@@ -625,10 +616,14 @@ mod tests {
 
     #[test]
     fn decode_resp3_blob_error() {
-        let err = parse_redis_value(b"!21\r\nSYNTAX invalid syntax\r\n").unwrap_err();
-        assert_eq!(err.to_string(), "\"SYNTAX\": invalid syntax");
-        // Blob errors are extension errors, not a known server kind
-        assert!(matches!(err.kind(), crate::errors::ErrorKind::Extension));
+        let val = parse_redis_value(b"!21\r\nSYNTAX invalid syntax\r\n");
+        assert_eq!(
+            val.unwrap(),
+            Value::ServerError(ServerError(Repr::Extension {
+                code: arcstr::literal!("SYNTAX"),
+                detail: Some(arcstr::literal!("invalid syntax"))
+            }))
+        )
     }
 
     #[test]

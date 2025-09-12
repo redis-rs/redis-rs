@@ -553,8 +553,10 @@ mod tests {
 
     #[test]
     fn test_redirect_node() {
-        // Top-level error replies should be returned as Err
-        let err = parse_redis_value(b"-ASK 123 foobar:6380\r\n").unwrap_err();
+        let err = parse_redis_value(b"-ASK 123 foobar:6380\r\n")
+            .unwrap()
+            .extract_error()
+            .unwrap_err();
         let node = err.redirect_node();
 
         assert_eq!(node, Some(("foobar:6380", 123)));
