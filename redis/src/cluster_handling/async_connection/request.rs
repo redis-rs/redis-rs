@@ -408,8 +408,12 @@ mod tests {
     }
 
     fn to_err(error: &str) -> RedisError {
-        // parse_redis_value now returns Err(RedisError) for server error replies like -ASK/-MOVED
-        crate::parse_redis_value(error.as_bytes()).unwrap_err()
+        // parse_redis_value returns Ok(Value::ServerError) for server error replies like -ASK/-MOVED
+        match crate::parse_redis_value(error.as_bytes()) {
+            Ok(crate::Value::ServerError(err)) => err.into(),
+            Ok(other) => panic!("Expected ServerError Value, got {:?}", other),
+            Err(e) => e,
+        }
     }
 
     #[test]

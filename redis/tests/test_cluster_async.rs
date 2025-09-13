@@ -818,9 +818,9 @@ mod cluster_async {
                     return res.into();
                 }
                 match requests.fetch_add(1, atomic::Ordering::SeqCst) {
-                    0..=4 => {
-                        ServerResponse::Error(parse_redis_value(b"-TRYAGAIN mock\r\n").unwrap_err())
-                    }
+                    0..=4 => ServerResponse::Error(crate::support::parse_server_error(
+                        b"-TRYAGAIN mock\r\n",
+                    )),
                     _ => ServerResponse::Value(Value::BulkString(b"123".to_vec())),
                 }
             },
@@ -909,10 +909,9 @@ mod cluster_async {
             let get_response = ServerResponse::Value(Value::BulkString(b"123".to_vec()));
             match i {
                 // Respond that the key exists on a node that does not yet have a connection:
-                0 => ServerResponse::Error(
-                    parse_redis_value(format!("-MOVED 123 {name}:6380\r\n").as_bytes())
-                        .unwrap_err(),
-                ),
+                0 => ServerResponse::Error(crate::support::parse_server_error(
+                    format!("-MOVED 123 {name}:6380\r\n").as_bytes(),
+                )),
                 _ => {
                     if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
                         // Should not attempt to refresh slots more than once:
@@ -1007,10 +1006,9 @@ mod cluster_async {
                         _ => {
                             // Should not attempt to refresh slots more than once:
                             assert!(!should_refresh.swap(true, Ordering::SeqCst));
-                            ServerResponse::Error(
-                                parse_redis_value(format!("-MOVED 123 {name}:6380\r\n").as_bytes())
-                                    .unwrap_err(),
-                            )
+                            ServerResponse::Error(crate::support::parse_server_error(
+                                format!("-MOVED 123 {name}:6380\r\n").as_bytes(),
+                            ))
                         }
                     }
                 } else {
@@ -1220,10 +1218,9 @@ mod cluster_async {
                                 if !was_asked {
                                     // Provide explicit ASK redirection to 6380
                                     return ServerResponse::Error(
-                                        parse_redis_value(
+                                        crate::support::parse_server_error(
                                             format!("-ASK 14000 {name}:6380\r\n").as_bytes(),
-                                        )
-                                        .unwrap_err(),
+                                        ),
                                     );
                                 } else {
                                     // Ignore any additional GETs on original node; real work proceeds on redirected node
@@ -1286,10 +1283,9 @@ mod cluster_async {
                             return res.into();
                         }
                         // Redirect explicitly to 6391 so the client connects/saves the new node.
-                        return ServerResponse::Error(
-                            parse_redis_value(format!("-ASK 14000 {name}:6391\r\n").as_bytes())
-                                .unwrap_err(),
-                        );
+                        return ServerResponse::Error(crate::support::parse_server_error(
+                            format!("-ASK 14000 {name}:6391\r\n").as_bytes(),
+                        ));
                     }
 
                     if contains_slice(cmd, b"PING") {
@@ -1373,7 +1369,7 @@ mod cluster_async {
                     // other node (i.e., not doing a full slot rebuild)
                     let count = completed.fetch_add(1, Ordering::SeqCst);
                     if count == 0 {
-                        return ServerResponse::Error(parse_redis_value(b"-ASK 14000 test_async_cluster_ask_redirect_even_if_original_call_had_no_route:6380\r\n").unwrap_err());
+                        return ServerResponse::Error(crate::support::parse_server_error(b"-ASK 14000 test_async_cluster_ask_redirect_even_if_original_call_had_no_route:6380\r\n"));
                     }
                     match port {
                         6380 => match count {
@@ -1433,9 +1429,9 @@ mod cluster_async {
 
             match i {
                 // Respond that the key exists on a node that does not yet have a connection:
-                0 => ServerResponse::Error(
-                    parse_redis_value(format!("-ASK 123 {name}:6380\r\n").as_bytes()).unwrap_err(),
-                ),
+                0 => ServerResponse::Error(crate::support::parse_server_error(
+                    format!("-ASK 123 {name}:6380\r\n").as_bytes(),
+                )),
                 1 => {
                     assert_eq!(port, 6380);
                     assert!(contains_slice(cmd, b"ASKING"));
@@ -2160,10 +2156,9 @@ mod cluster_async {
                     asking_called_cloned.fetch_add(1, Ordering::Relaxed);
                 }
                 if port == 6380 && cmd_str.contains("baz") {
-                    return ServerResponse::Error(
-                        parse_redis_value(format!("-ASK 14000 {name}:6382\r\n").as_bytes())
-                            .unwrap_err(),
-                    );
+                    return ServerResponse::Error(crate::support::parse_server_error(
+                        format!("-ASK 14000 {name}:6382\r\n").as_bytes(),
+                    ));
                 }
                 let results = ["foo", "bar", "baz"]
                     .iter()
@@ -2475,10 +2470,9 @@ mod cluster_async {
                     if let Err(res) = respond_startup_two_nodes(name, cmd) {
                         return res.into();
                     }
-                    return ServerResponse::Error(
-                        parse_redis_value(format!("-MOVED 123 {name}:6379\r\n").as_bytes())
-                            .unwrap_err(),
-                    );
+                    return ServerResponse::Error(crate::support::parse_server_error(
+                        format!("-MOVED 123 {name}:6379\r\n").as_bytes(),
+                    ));
                 }
 
                 if contains_slice(cmd, b"PING") {

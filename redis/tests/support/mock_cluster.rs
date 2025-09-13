@@ -39,6 +39,15 @@ impl From<Result<Value, RedisError>> for ServerResponse {
     }
 }
 
+/// Helper to construct a RedisError from a RESP error frame string like b"-MOVED ...\r\n".
+pub fn parse_server_error(bytes: &[u8]) -> redis::RedisError {
+    match redis::parse_redis_value(bytes) {
+        Ok(redis::Value::ServerError(err)) => err.into(),
+        Ok(other) => panic!("Expected ServerError value, got {:?}", other),
+        Err(e) => e,
+    }
+}
+
 #[derive(Clone)]
 pub struct MockConnection {
     pub handler: Handler,

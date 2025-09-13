@@ -12,8 +12,7 @@ mod cluster {
     use redis::{
         cluster::{cluster_pipe, ClusterClient, ClusterConnection},
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
-        cmd, parse_redis_value, Commands, ConnectionLike, ProtocolVersion, RedisError,
-        ServerErrorKind, Value,
+        cmd, Commands, ConnectionLike, ProtocolVersion, RedisError, ServerErrorKind, Value,
     };
     use redis_test::{
         cluster::{RedisCluster, RedisClusterConfiguration},
@@ -433,9 +432,9 @@ mod cluster {
                     return res.into();
                 }
                 match requests.fetch_add(1, atomic::Ordering::SeqCst) {
-                    0..=4 => {
-                        ServerResponse::Error(parse_redis_value(b"-TRYAGAIN mock\r\n").unwrap_err())
-                    }
+                    0..=4 => ServerResponse::Error(crate::support::parse_server_error(
+                        b"-TRYAGAIN mock\r\n",
+                    )),
                     _ => ServerResponse::Value(Value::BulkString(b"123".to_vec())),
                 }
             },
@@ -466,7 +465,7 @@ mod cluster {
                         return res.into();
                     }
                     requests.fetch_add(1, atomic::Ordering::SeqCst);
-                    ServerResponse::Error(parse_redis_value(b"-TRYAGAIN mock\r\n").unwrap_err())
+                    ServerResponse::Error(crate::support::parse_server_error(b"-TRYAGAIN mock\r\n"))
                 }
             },
         );
@@ -506,7 +505,7 @@ mod cluster {
 
             match i {
                 // Respond that the key exists on a node that does not yet have a connection:
-                0 => ServerResponse::Error(parse_redis_value(b"-MOVED 123\r\n").unwrap_err()),
+                0 => ServerResponse::Error(crate::support::parse_server_error(b"-MOVED 123\r\n")),
                 // Respond with the new masters
                 1 => ServerResponse::Value(Value::Array(vec![
                     Value::Array(vec![
@@ -560,10 +559,9 @@ mod cluster {
                     let count = completed.fetch_add(1, Ordering::SeqCst);
                     match port {
                         6379 => match count {
-                            0 => ServerResponse::Error(
-                                parse_redis_value(b"-ASK 14000 test_cluster_ask_redirect:6380\r\n")
-                                    .unwrap_err(),
-                            ),
+                            0 => ServerResponse::Error(crate::support::parse_server_error(
+                                b"-ASK 14000 test_cluster_ask_redirect:6380\r\n",
+                            )),
                             _ => panic!("Node should not be called now"),
                         },
                         6380 => match count {
@@ -615,9 +613,9 @@ mod cluster {
 
             match i {
                 // Respond that the key exists on a node that does not yet have a connection:
-                0 => ServerResponse::Error(
-                    parse_redis_value(format!("-ASK 123 {name}:6380\r\n").as_bytes()).unwrap_err(),
-                ),
+                0 => ServerResponse::Error(crate::support::parse_server_error(
+                    format!("-ASK 123 {name}:6380\r\n").as_bytes(),
+                )),
                 1 => {
                     assert_eq!(port, 6380);
                     assert!(contains_slice(cmd, b"ASKING"));
