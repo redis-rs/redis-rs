@@ -11,7 +11,7 @@ use std::time::Duration;
 use std::{fmt, io, io::Write};
 
 use crate::pipeline::Pipeline;
-use crate::types::{from_owned_redis_value, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs};
+use crate::types::{from_redis_value, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs};
 use crate::{connection::ConnectionLike, ParsingError};
 
 /// An argument to a redis command
@@ -127,9 +127,9 @@ impl<T: FromRedisValue> Iterator for CheckedIter<'_, T> {
             let (cursor, batch) = match self
                 .con
                 .req_packed_command(&self.cmd.get_packed_command())
-                .and_then(|val| Ok(from_owned_redis_value::<(u64, _)>(val)?))
+                .and_then(|val| Ok(from_redis_value::<(u64, _)>(val)?))
             {
-                Ok((cursor, values)) => (cursor, T::from_each_owned_redis_values(values)),
+                Ok((cursor, values)) => (cursor, T::from_each_redis_values(values)),
                 Err(e) => return Some(Err(e)),
             };
 
@@ -184,9 +184,9 @@ impl<'a, T: FromRedisValue + 'a> AsyncIterInner<'a, T> {
                 .con
                 .req_packed_command(&self.cmd)
                 .await
-                .and_then(|val| Ok(from_owned_redis_value::<(u64, _)>(val)?))
+                .and_then(|val| Ok(from_redis_value::<(u64, _)>(val)?))
             {
-                Ok((cursor, items)) => (cursor, T::from_each_owned_redis_values(items)),
+                Ok((cursor, items)) => (cursor, T::from_each_redis_values(items)),
                 Err(e) => return Some(Err(e)),
             };
 
@@ -607,7 +607,7 @@ impl Cmd {
     #[inline]
     pub fn query<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
         match con.req_command(self) {
-            Ok(val) => Ok(from_owned_redis_value(val.extract_error()?)?),
+            Ok(val) => Ok(from_redis_value(val.extract_error()?)?),
             Err(e) => Err(e),
         }
     }
@@ -620,7 +620,7 @@ impl Cmd {
         con: &mut impl crate::aio::ConnectionLike,
     ) -> RedisResult<T> {
         let val = con.req_packed_command(self).await?;
-        Ok(from_owned_redis_value(val.extract_error()?)?)
+        Ok(from_redis_value(val.extract_error()?)?)
     }
 
     /// Sets the cursor and converts the passed value to a batch used by the
@@ -630,15 +630,15 @@ impl Cmd {
         value: crate::Value,
     ) -> RedisResult<Vec<Result<T, ParsingError>>> {
         let (cursor, values) = if value.looks_like_cursor() {
-            let (cursor, values) = from_owned_redis_value::<(u64, _)>(value)?;
+            let (cursor, values) = from_redis_value::<(u64, _)>(value)?;
             (cursor, values)
         } else {
-            (0, from_owned_redis_value(value)?)
+            (0, from_redis_value(value)?)
         };
 
         self.cursor = Some(cursor);
 
-        Ok(T::from_each_owned_redis_values(values))
+        Ok(T::from_each_redis_values(values))
     }
 
     /// Similar to `query()` but returns an iterator over the items of the
