@@ -628,7 +628,7 @@ impl MultiplexedConnection {
                             cmd.is_no_response(),
                         )
                         .await?;
-                    let replies: Vec<Value> = crate::types::from_owned_redis_value(result)?;
+                    let replies: Vec<Value> = crate::types::from_redis_value(result)?;
                     return cacheable_command.resolve(cache_manager, replies.into_iter());
                 }
                 _ => (),

@@ -324,7 +324,7 @@ impl RedisCluster {
             // retry 500 times
             for _ in 1..500 {
                 let value = redis::cmd("CLUSTER").arg("SLOTS").query(&mut con).unwrap();
-                let slots: Vec<Vec<redis::Value>> = redis::from_owned_redis_value(value).unwrap();
+                let slots: Vec<Vec<redis::Value>> = redis::from_redis_value(value).unwrap();
 
                 // all slots should have following items:
                 // [start slot range, end slot range, master's IP, replica1's IP, replica2's IP,... ]

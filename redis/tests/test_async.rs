@@ -1206,8 +1206,8 @@ mod basic_async {
             struct Container(String);
 
             impl redis::FromRedisValue for Container {
-                fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
-                    let text = String::from_redis_value(v)?;
+                fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+                    let text = String::from_redis_value(v.clone())?;
 
                     // If container does not start with [`PREFIX`], return error
                     if !text.starts_with(PREFIX) {

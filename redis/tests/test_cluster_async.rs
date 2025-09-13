@@ -23,9 +23,9 @@ mod cluster_async {
         cluster::ClusterClient,
         cluster_async::Connect,
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
-        cmd, from_owned_redis_value, parse_redis_value, pipe, AsyncCommands, Cmd, ErrorKind,
-        InfoDict, IntoConnectionInfo, ProtocolVersion, RedisError, RedisFuture, RedisResult,
-        Script, ServerErrorKind, Value,
+        cmd, from_redis_value, parse_redis_value, pipe, AsyncCommands, Cmd, InfoDict,
+        IntoConnectionInfo, ProtocolVersion, RedisError, RedisFuture, RedisResult, Script,
+        ServerErrorKind, Value,
     };
     use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
     use redis_test::server::use_protocol;
@@ -263,8 +263,8 @@ mod cluster_async {
                     .into_iter()
                     .map(|(key, value)| {
                         (
-                            redis::from_redis_value::<String>(&key).unwrap(),
-                            redis::from_redis_value::<String>(&value).unwrap(),
+                            redis::from_redis_value_ref::<String>(&key).unwrap(),
+                            redis::from_redis_value_ref::<String>(&value).unwrap(),
                         )
                     })
                     .collect();
@@ -2653,7 +2653,7 @@ mod cluster_async {
                 )
                 .await
                 .unwrap();
-            let info = from_owned_redis_value::<InfoDict>(response).unwrap();
+            let info = from_redis_value::<InfoDict>(response).unwrap();
             parse_version(info).0 == 6
         }
 

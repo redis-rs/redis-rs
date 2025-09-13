@@ -14,10 +14,10 @@ use crate::io::tcp::{stream_with_settings, TcpSettings};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
 use crate::types::{
-    from_redis_value, FromRedisValue, HashMap, PushKind, RedisResult, SyncPushSender, ToRedisArgs,
-    Value,
+    from_redis_value_ref, FromRedisValue, HashMap, PushKind, RedisResult, SyncPushSender,
+    ToRedisArgs, Value,
 };
-use crate::{check_resp3, from_owned_redis_value, ProtocolVersion};
+use crate::{check_resp3, from_redis_value, ProtocolVersion};
 
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
@@ -1665,7 +1665,7 @@ impl Connection {
                     return Err(err.into());
                 }
                 Value::Array(vec) => {
-                    let res: (Vec<u8>, (), isize) = from_owned_redis_value(Value::Array(vec))?;
+                    let res: (Vec<u8>, (), isize) = from_redis_value(Value::Array(vec))?;
                     if resp2_is_pub_sub_state_cleared(
                         &mut received_unsub,
                         &mut received_punsub,
@@ -2072,13 +2072,13 @@ impl<'a> PubSub<'a> {
 
     /// Sends a ping with a message to the server
     pub fn ping_message<T: FromRedisValue>(&mut self, message: impl ToRedisArgs) -> RedisResult<T> {
-        Ok(from_owned_redis_value(
+        Ok(from_redis_value(
             self.cache_messages_until_received_response(cmd("PING").arg(message), false)?,
         )?)
     }
     /// Sends a ping to the server
     pub fn ping<T: FromRedisValue>(&mut self) -> RedisResult<T> {
-        Ok(from_owned_redis_value(
+        Ok(from_redis_value(
             self.cache_messages_until_received_response(&mut cmd("PING"), false)?,
         )?)
     }
@@ -2135,9 +2135,9 @@ impl Msg {
         if let Value::Push { kind, data } = value {
             return Self::from_push_info(PushInfo { kind, data });
         } else {
-            let raw_msg: Vec<Value> = from_owned_redis_value(value).ok()?;
+            let raw_msg: Vec<Value> = from_redis_value(value).ok()?;
             let mut iter = raw_msg.into_iter();
-            let msg_type: String = from_owned_redis_value(iter.next()?).ok()?;
+            let msg_type: String = from_redis_value(iter.next()?).ok()?;
             if msg_type == "message" {
                 channel = iter.next()?;
                 payload = iter.next()?;
@@ -2183,7 +2183,7 @@ impl Msg {
 
     /// Returns the channel this message came on.
     pub fn get_channel<T: FromRedisValue>(&self) -> RedisResult<T> {
-        Ok(from_redis_value(&self.channel)?)
+        Ok(from_redis_value_ref(&self.channel)?)
     }
 
     /// Convenience method to get a string version of the channel.  Unless
@@ -2199,7 +2199,7 @@ impl Msg {
 
     /// Returns the message's payload in a specific format.
     pub fn get_payload<T: FromRedisValue>(&self) -> RedisResult<T> {
-        Ok(from_redis_value(&self.payload)?)
+        Ok(from_redis_value_ref(&self.payload)?)
     }
 
     /// Returns the bytes that are the message's payload.  This can be used
@@ -2225,8 +2225,8 @@ impl Msg {
     /// to figure out if a pattern was set.
     pub fn get_pattern<T: FromRedisValue>(&self) -> RedisResult<T> {
         Ok(match self.pattern {
-            None => from_redis_value(&Value::Nil),
-            Some(ref x) => from_redis_value(x),
+            None => from_redis_value_ref(&Value::Nil),
+            Some(ref x) => from_redis_value_ref(x),
         }?)
     }
 }
