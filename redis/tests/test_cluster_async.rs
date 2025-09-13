@@ -222,8 +222,7 @@ mod cluster_async {
                     .await
                     .unwrap();
 
-                let info_by_address =
-                    from_owned_redis_value::<HashMap<String, String>>(value).unwrap();
+                let info_by_address = from_redis_value::<HashMap<String, String>>(value).unwrap();
                 // find the info of the first returned node
                 let (address, info) = info_by_address.into_iter().next().unwrap();
                 let mut split_address = address.split(':');
@@ -237,7 +236,7 @@ mod cluster_async {
                     )
                     .await
                     .unwrap();
-                let new_info = from_owned_redis_value::<String>(value).unwrap();
+                let new_info = from_redis_value::<String>(value).unwrap();
 
                 assert_eq!(new_info, info);
                 Ok::<_, RedisError>(())
