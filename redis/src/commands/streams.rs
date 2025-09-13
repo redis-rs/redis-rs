@@ -3,10 +3,10 @@
 #[cfg(feature = "streams")]
 use crate::{
     errors::{invalid_type_error, ParsingError},
-    from_redis_value,
     types::HashMap,
     FromRedisValue, RedisWrite, ToRedisArgs, Value,
 };
+use crate::{from_redis_value, from_redis_value_ref};
 
 // Stream Maxlen Enum
 
@@ -679,14 +679,14 @@ pub struct StreamId {
 
 impl StreamId {
     /// Converts a `Value::Array` into a `StreamId`.
-    fn from_array_value(v: &Value) -> Result<Self, ParsingError> {
+    fn from_array_value(v: Value) -> Result<Self, ParsingError> {
         let mut stream_id = StreamId::default();
-        if let Value::Array(ref values) = *v {
-            if let Some(v) = values.first() {
-                stream_id.id = from_redis_value(v)?;
+        if let Value::Array(mut values) = v {
+            if let Some(v) = values.first_mut() {
+                stream_id.id = from_redis_value(std::mem::take(v))?;
             }
-            if let Some(v) = values.get(1) {
-                stream_id.map = from_redis_value(v)?;
+            if let Some(v) = values.first_mut() {
+                stream_id.map = from_redis_value(std::mem::take(v))?;
             }
         }
 
@@ -697,7 +697,7 @@ impl StreamId {
     /// type.
     pub fn get<T: FromRedisValue>(&self, key: &str) -> Option<T> {
         match self.map.get(key) {
-            Some(x) => from_redis_value(x).ok(),
+            Some(x) => from_redis_value_ref(x).ok(),
             None => None,
         }
     }
@@ -721,60 +721,57 @@ impl StreamId {
 type SACRows = Vec<HashMap<String, HashMap<String, Value>>>;
 
 impl FromRedisValue for StreamAutoClaimReply {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
-        match *v {
-            Value::Array(ref items) => {
-                if let 2..=3 = items.len() {
-                    let deleted_ids = if let Some(o) = items.get(2) {
-                        from_redis_value(o)?
-                    } else {
-                        Vec::new()
-                    };
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        let Value::Array(mut items) = v else {
+            invalid_type_error!("Not a array response", v);
+        };
 
-                    let claimed: Vec<StreamId> = match &items[1] {
-                        // JUSTID response
-                        Value::Array(x)
-                            if matches!(x.first(), None | Some(Value::BulkString(_))) =>
-                        {
-                            let ids: Vec<String> = from_redis_value(&items[1])?;
-
-                            ids.into_iter()
-                                .map(|id| StreamId {
-                                    id,
-                                    ..Default::default()
-                                })
-                                .collect()
-                        }
-                        // full response
-                        Value::Array(x) if matches!(x.first(), Some(Value::Array(_))) => {
-                            let rows: SACRows = from_redis_value(&items[1])?;
-
-                            rows.into_iter()
-                                .flat_map(|id_row| {
-                                    id_row.into_iter().map(|(id, map)| StreamId { id, map })
-                                })
-                                .collect()
-                        }
-                        _ => invalid_type_error!("Incorrect type", &items[1]),
-                    };
-
-                    Ok(Self {
-                        next_stream_id: from_redis_value(&items[0])?,
-                        claimed,
-                        deleted_ids,
-                    })
-                } else {
-                    invalid_type_error!("Wrong number of entries in array response", v)
-                }
-            }
-            _ => invalid_type_error!("Not a array response", v),
+        if items.len() > 3 || items.len() < 2 {
+            invalid_type_error!("Incorrect number of items", &items);
         }
+
+        let deleted_ids = if items.len() == 3 {
+            from_redis_value(items.pop().unwrap())?
+        } else {
+            Vec::new()
+        };
+        // safe, because we've checked for length beforehand
+        let claimed = items.pop().unwrap();
+
+        let claimed: Vec<StreamId> = match &claimed {
+            // JUSTID response
+            Value::Array(x) if matches!(x.first(), None | Some(Value::BulkString(_))) => {
+                let ids: Vec<String> = from_redis_value(claimed)?;
+
+                ids.into_iter()
+                    .map(|id| StreamId {
+                        id,
+                        ..Default::default()
+                    })
+                    .collect()
+            }
+            // full response
+            Value::Array(x) if matches!(x.first(), Some(Value::Array(_))) => {
+                let rows: SACRows = from_redis_value(claimed)?;
+
+                rows.into_iter()
+                    .flat_map(|id_row| id_row.into_iter().map(|(id, map)| StreamId { id, map }))
+                    .collect()
+            }
+            _ => invalid_type_error!("Incorrect type", claimed),
+        };
+
+        Ok(Self {
+            next_stream_id: from_redis_value(items.pop().unwrap())?,
+            claimed,
+            deleted_ids,
+        })
     }
 }
 
 type SRRows = Vec<HashMap<String, Vec<HashMap<String, HashMap<String, Value>>>>>;
 impl FromRedisValue for StreamReadReply {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let rows: SRRows = from_redis_value(v)?;
         let keys = rows
             .into_iter()
@@ -793,7 +790,7 @@ impl FromRedisValue for StreamReadReply {
 }
 
 impl FromRedisValue for StreamRangeReply {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let rows: Vec<HashMap<String, HashMap<String, Value>>> = from_redis_value(v)?;
         let ids: Vec<StreamId> = rows
             .into_iter()
@@ -804,7 +801,7 @@ impl FromRedisValue for StreamRangeReply {
 }
 
 impl FromRedisValue for StreamClaimReply {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let rows: Vec<HashMap<String, HashMap<String, Value>>> = from_redis_value(v)?;
         let ids: Vec<StreamId> = rows
             .into_iter()
@@ -821,7 +818,7 @@ type SPRInner = (
     Vec<Option<(String, String)>>,
 );
 impl FromRedisValue for StreamPendingReply {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let (count, start, end, consumer_data): SPRInner = from_redis_value(v)?;
 
         if count == 0 {
@@ -857,7 +854,7 @@ impl FromRedisValue for StreamPendingReply {
 }
 
 impl FromRedisValue for StreamPendingCountReply {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let mut reply = StreamPendingCountReply::default();
         match v {
             Value::Array(outer_tuple) => {
@@ -896,25 +893,25 @@ impl FromRedisValue for StreamPendingCountReply {
 }
 
 impl FromRedisValue for StreamInfoStreamReply {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
-        let map: HashMap<String, Value> = from_redis_value(v)?;
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        let mut map: HashMap<String, Value> = from_redis_value(v)?;
         let mut reply = StreamInfoStreamReply::default();
-        if let Some(v) = &map.get("last-generated-id") {
+        if let Some(v) = map.remove("last-generated-id") {
             reply.last_generated_id = from_redis_value(v)?;
         }
-        if let Some(v) = &map.get("radix-tree-nodes") {
+        if let Some(v) = map.remove("radix-tree-nodes") {
             reply.radix_tree_keys = from_redis_value(v)?;
         }
-        if let Some(v) = &map.get("groups") {
+        if let Some(v) = map.remove("groups") {
             reply.groups = from_redis_value(v)?;
         }
-        if let Some(v) = &map.get("length") {
+        if let Some(v) = map.remove("length") {
             reply.length = from_redis_value(v)?;
         }
-        if let Some(v) = &map.get("first-entry") {
+        if let Some(v) = map.remove("first-entry") {
             reply.first_entry = StreamId::from_array_value(v)?;
         }
-        if let Some(v) = &map.get("last-entry") {
+        if let Some(v) = map.remove("last-entry") {
             reply.last_entry = StreamId::from_array_value(v)?;
         }
         Ok(reply)
@@ -922,18 +919,18 @@ impl FromRedisValue for StreamInfoStreamReply {
 }
 
 impl FromRedisValue for StreamInfoConsumersReply {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let consumers: Vec<HashMap<String, Value>> = from_redis_value(v)?;
         let mut reply = StreamInfoConsumersReply::default();
-        for map in consumers {
+        for mut map in consumers {
             let mut c = StreamInfoConsumer::default();
-            if let Some(v) = &map.get("name") {
+            if let Some(v) = map.remove("name") {
                 c.name = from_redis_value(v)?;
             }
-            if let Some(v) = &map.get("pending") {
+            if let Some(v) = map.remove("pending") {
                 c.pending = from_redis_value(v)?;
             }
-            if let Some(v) = &map.get("idle") {
+            if let Some(v) = map.remove("idle") {
                 c.idle = from_redis_value(v)?;
             }
             reply.consumers.push(c);
@@ -944,31 +941,31 @@ impl FromRedisValue for StreamInfoConsumersReply {
 }
 
 impl FromRedisValue for StreamInfoGroupsReply {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let groups: Vec<HashMap<String, Value>> = from_redis_value(v)?;
         let mut reply = StreamInfoGroupsReply::default();
-        for map in groups {
+        for mut map in groups {
             let mut g = StreamInfoGroup::default();
-            if let Some(v) = &map.get("name") {
+            if let Some(v) = map.remove("name") {
                 g.name = from_redis_value(v)?;
             }
-            if let Some(v) = &map.get("pending") {
+            if let Some(v) = map.remove("pending") {
                 g.pending = from_redis_value(v)?;
             }
-            if let Some(v) = &map.get("consumers") {
+            if let Some(v) = map.remove("consumers") {
                 g.consumers = from_redis_value(v)?;
             }
-            if let Some(v) = &map.get("last-delivered-id") {
+            if let Some(v) = map.remove("last-delivered-id") {
                 g.last_delivered_id = from_redis_value(v)?;
             }
-            if let Some(v) = &map.get("entries-read") {
+            if let Some(v) = map.remove("entries-read") {
                 g.entries_read = if let Value::Nil = v {
                     None
                 } else {
                     Some(from_redis_value(v)?)
                 };
             }
-            if let Some(v) = &map.get("lag") {
+            if let Some(v) = map.remove("lag") {
                 g.lag = if let Value::Nil = v {
                     None
                 } else {
@@ -1022,9 +1019,9 @@ pub enum XDelExStatusCode {
 
 #[cfg(feature = "streams")]
 impl FromRedisValue for XDelExStatusCode {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         match v {
-            Value::Int(code) => match *code {
+            Value::Int(code) => match code {
                 -1 => Ok(XDelExStatusCode::IdNotFound),
                 1 => Ok(XDelExStatusCode::Deleted),
                 2 => Ok(XDelExStatusCode::NotDeletedUnacknowledgedOrStillReferenced),
@@ -1054,9 +1051,9 @@ pub enum XAckDelStatusCode {
 
 #[cfg(feature = "streams")]
 impl FromRedisValue for XAckDelStatusCode {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         match v {
-            Value::Int(code) => match *code {
+            Value::Int(code) => match code {
                 -1 => Ok(XAckDelStatusCode::IdNotFound),
                 1 => Ok(XAckDelStatusCode::AcknowledgedAndDeleted),
                 2 => Ok(XAckDelStatusCode::AcknowledgedNotDeletedStillReferenced),
@@ -1100,7 +1097,7 @@ mod tests {
         fn short_response() {
             let value = Value::Array(vec![Value::BulkString("1713465536578-0".into())]);
 
-            StreamAutoClaimReply::from_redis_value(&value).unwrap_err();
+            StreamAutoClaimReply::from_redis_value(value).unwrap_err();
         }
 
         #[test]
@@ -1111,7 +1108,7 @@ mod tests {
                 Value::Array(vec![]),
             ]);
 
-            let reply: StreamAutoClaimReply = FromRedisValue::from_redis_value(&value).unwrap();
+            let reply: StreamAutoClaimReply = FromRedisValue::from_redis_value(value).unwrap();
 
             assert_eq!(reply.next_stream_id.as_str(), "0-0");
             assert_eq!(reply.claimed.len(), 0);
@@ -1146,7 +1143,7 @@ mod tests {
                 Value::Array(vec![Value::BulkString("123456789-0".into())]),
             ]);
 
-            let reply: StreamAutoClaimReply = FromRedisValue::from_redis_value(&value).unwrap();
+            let reply: StreamAutoClaimReply = FromRedisValue::from_redis_value(value).unwrap();
 
             assert_eq!(reply.next_stream_id.as_str(), "1713465536578-0");
             assert_eq!(reply.claimed.len(), 2);
@@ -1186,7 +1183,7 @@ mod tests {
                 // V6 and lower lack the deleted_ids array
             ]);
 
-            let reply: StreamAutoClaimReply = FromRedisValue::from_redis_value(&value).unwrap();
+            let reply: StreamAutoClaimReply = FromRedisValue::from_redis_value(value).unwrap();
 
             assert_eq!(reply.next_stream_id.as_str(), "1713465536578-0");
             assert_eq!(reply.claimed.len(), 2);
@@ -1207,7 +1204,7 @@ mod tests {
                 Value::Array(vec![Value::BulkString("123456789-0".into())]),
             ]);
 
-            let reply: StreamAutoClaimReply = FromRedisValue::from_redis_value(&value).unwrap();
+            let reply: StreamAutoClaimReply = FromRedisValue::from_redis_value(value).unwrap();
 
             assert_eq!(reply.next_stream_id.as_str(), "1713465536578-0");
             assert_eq!(reply.claimed.len(), 2);
@@ -1229,7 +1226,7 @@ mod tests {
                 // V6 and lower lack the deleted_ids array
             ]);
 
-            let reply: StreamAutoClaimReply = FromRedisValue::from_redis_value(&value).unwrap();
+            let reply: StreamAutoClaimReply = FromRedisValue::from_redis_value(value).unwrap();
 
             assert_eq!(reply.next_stream_id.as_str(), "1713465536578-0");
             assert_eq!(reply.claimed.len(), 2);

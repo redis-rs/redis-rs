@@ -589,6 +589,7 @@ let primary = sentinel.get_async_connection().await.unwrap();
 //! * Vector set types have been moved into the `vector_sets` module, instead of being exposed directly.
 //! * ErrorKind::TypeError was renamed ErrorKind::UnexpectedReturnType, to clarify its meaning. Also fixed some cases where it and ErrorKind::Parse were used interchangeably.
 //! * Connecting to a wildcard address (`0.0.0.0` or `::`) is now explicitly disallowed and will return an error. This change prevents connection timeouts and provides a clearer error message. This affects both standalone and cluster connections. Users relying on this behavior should now connect to a specific, non-wildcard address.
+//! * If you implemented [crate::FromRedisValue] directly, or used `FromRedisValue::from_redis_value`/`FromRedisValue::from_owned_redis_value`, notice that the trait's semantics changed - now the trait requires an owned value by default, instead of a reference. See [the PR](https://github.com/redis-rs/redis-rs/pull/1784) for details.
 //!
 //!
 
@@ -633,8 +634,8 @@ pub use crate::script::{Script, ScriptInvocation};
 #[rustfmt::skip]
 pub use crate::types::{
     // utility functions
+    from_redis_value_ref,
     from_redis_value,
-    from_owned_redis_value,
 
     // conversion traits
     FromRedisValue,

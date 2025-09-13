@@ -127,7 +127,7 @@ pub fn wait_for_master_server(
             Ok(client) => match client.get_connection() {
                 Ok(mut conn) => {
                     let r: Vec<redis::Value> = rolecmd.query(&mut conn).unwrap();
-                    let role = String::from_redis_value(r.first().unwrap()).unwrap();
+                    let role = String::from_redis_value_ref(r.first().unwrap()).unwrap();
                     if role.starts_with("master") {
                         return Ok(());
                     } else {
@@ -159,8 +159,8 @@ pub fn wait_for_replica(
             Ok(client) => match client.get_connection() {
                 Ok(mut conn) => {
                     let r: Vec<redis::Value> = rolecmd.query(&mut conn).unwrap();
-                    let role = String::from_redis_value(r.first().unwrap()).unwrap();
-                    let state = String::from_redis_value(r.get(3).unwrap()).unwrap();
+                    let role = String::from_redis_value_ref(r.first().unwrap()).unwrap();
+                    let state = String::from_redis_value_ref(r.get(3).unwrap()).unwrap();
                     if role.starts_with("slave") && state == "connected" {
                         return Ok(());
                     } else {

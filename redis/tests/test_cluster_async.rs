@@ -21,7 +21,7 @@ mod cluster_async {
         cluster::ClusterClient,
         cluster_async::Connect,
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
-        cmd, from_owned_redis_value, parse_redis_value, pipe, AsyncCommands, Cmd, InfoDict,
+        cmd, from_redis_value, parse_redis_value, pipe, AsyncCommands, Cmd, InfoDict,
         IntoConnectionInfo, ProtocolVersion, RedisError, RedisFuture, RedisResult, Script,
         ServerErrorKind, Value,
     };
@@ -172,7 +172,7 @@ mod cluster_async {
             .await
             .unwrap();
 
-        let info_by_address = from_owned_redis_value::<HashMap<String, String>>(value).unwrap();
+        let info_by_address = from_redis_value::<HashMap<String, String>>(value).unwrap();
         // find the info of the first returned node
         let (address, info) = info_by_address.into_iter().next().unwrap();
         let mut split_address = address.split(':');
@@ -186,7 +186,7 @@ mod cluster_async {
             )
             .await
             .unwrap();
-        let new_info = from_owned_redis_value::<String>(value).unwrap();
+        let new_info = from_redis_value::<String>(value).unwrap();
 
         assert_eq!(new_info, info);
         Ok::<_, RedisError>(())
@@ -206,8 +206,8 @@ mod cluster_async {
                     .into_iter()
                     .map(|(key, value)| {
                         (
-                            redis::from_redis_value::<String>(&key).unwrap(),
-                            redis::from_redis_value::<String>(&value).unwrap(),
+                            redis::from_redis_value_ref::<String>(&key).unwrap(),
+                            redis::from_redis_value_ref::<String>(&value).unwrap(),
                         )
                     })
                     .collect();
@@ -2295,7 +2295,7 @@ mod cluster_async {
                 )
                 .await
                 .unwrap();
-            let info = from_owned_redis_value::<InfoDict>(response).unwrap();
+            let info = from_redis_value::<InfoDict>(response).unwrap();
             parse_version(info).0 == 6
         }
 
