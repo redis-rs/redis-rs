@@ -15,6 +15,11 @@ macro_rules! invalid_type_error_inner {
 }
 
 macro_rules! invalid_type_error {
+    ($det:expr) => {{
+        fail!(crate::errors::ParsingError {
+            description: format!("{:?}", $det).into(),
+        })
+    }};
     ($v:expr, $det:expr) => {{
         fail!(crate::errors::invalid_type_error_inner!($v, $det))
     }};

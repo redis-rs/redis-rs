@@ -140,7 +140,7 @@ pub struct AclInfo {
 }
 
 impl FromRedisValue for AclInfo {
-    fn from_redis_value(v: &Value) -> Result<Self, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let mut it = v
             .as_sequence()
             .ok_or_else(|| not_convertible_error!(v, ""))?
@@ -181,7 +181,7 @@ impl FromRedisValue for AclInfo {
                         not_convertible_error!(flags, "Expect an array response of ACL flags")
                     })?
                     .iter()
-                    .map(|pass| Ok(Rule::AddHashedPass(String::from_redis_value(pass)?)))
+                    .map(|pass| Ok(Rule::AddHashedPass(String::from_redis_value_ref(pass)?)))
                     .collect::<Result<_, ParsingError>>()?;
 
                 let commands = match commands {
@@ -210,7 +210,7 @@ impl FromRedisValue for AclInfo {
                     .as_sequence()
                     .ok_or_else(|| not_convertible_error!(keys, ""))?
                     .iter()
-                    .map(|pat| Ok(Rule::Pattern(String::from_redis_value(pat)?)))
+                    .map(|pat| Ok(Rule::Pattern(String::from_redis_value_ref(pat)?)))
                     .collect::<Result<_, ParsingError>>()?;
 
                 (flags, passwords, commands, keys)
@@ -291,7 +291,7 @@ mod tests {
             Value::BulkString("keys".into()),
             Value::Array(vec![Value::BulkString("pat:*".into())]),
         ]);
-        let acl_info = AclInfo::from_redis_value(&redis_value).expect("Parse successfully");
+        let acl_info = AclInfo::from_redis_value_ref(&redis_value).expect("Parse successfully");
 
         assert_eq!(
             acl_info,

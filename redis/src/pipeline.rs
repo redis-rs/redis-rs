@@ -5,9 +5,7 @@ use crate::cmd::CommandCacheConfig;
 use crate::cmd::{cmd, cmd_len, Cmd};
 use crate::connection::ConnectionLike;
 use crate::errors::ErrorKind;
-use crate::types::{
-    from_owned_redis_value, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,
-};
+use crate::types::{from_redis_value, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value};
 
 /// Represents a redis command pipeline.
 #[derive(Clone)]
@@ -182,7 +180,7 @@ impl Pipeline {
         let response = if self.is_transaction() {
             match response.pop() {
                 Some(Value::Nil) => {
-                    return Ok(from_owned_redis_value(Value::Nil)?);
+                    return Ok(from_redis_value(Value::Nil)?);
                 }
                 Some(Value::Array(items)) => items,
                 _ => {
@@ -319,7 +317,7 @@ macro_rules! implement_pipeline_commands {
                     })
                     .collect();
                 if server_errors.is_empty() {
-                    Ok(from_owned_redis_value(
+                    Ok(from_redis_value(
                         Value::Array(self.filter_ignored_results(response)).extract_error()?,
                     )?)
                 } else {

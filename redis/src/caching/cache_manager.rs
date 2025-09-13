@@ -3,7 +3,7 @@ use super::sharded_lru::*;
 use super::{CacheConfig, CacheMode, CacheStatistics};
 use crate::cmd::{cmd_len, Cmd};
 use crate::commands::is_readonly_cmd;
-use crate::{Pipeline, PushKind, Value};
+use crate::{FromRedisValue, Pipeline, PushKind, Value};
 use std::cmp::min;
 use std::ops::Add;
 use std::sync::Arc;
@@ -58,7 +58,7 @@ impl CacheManager {
         client_side_expire_time: Instant,
         server_side_ttl_value: &Value,
     ) {
-        let pttl: Result<i64, _> = crate::FromRedisValue::from_redis_value(server_side_ttl_value);
+        let pttl: Result<i64, _> = FromRedisValue::from_redis_value_ref(server_side_ttl_value);
         let expire_time = match pttl {
             Ok(pttl) if pttl > 0 => {
                 let server_side_expire_time =
@@ -79,7 +79,7 @@ impl CacheManager {
         if kind == &PushKind::Invalidate {
             if let Some(Value::Array(redis_key)) = data.first() {
                 if let Some(redis_key) = redis_key.first() {
-                    if let Ok(redis_key) = crate::FromRedisValue::from_redis_value(redis_key) {
+                    if let Ok(redis_key) = FromRedisValue::from_redis_value_ref(redis_key) {
                         self.lru.invalidate(&redis_key)
                     }
                 }

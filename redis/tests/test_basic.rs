@@ -1813,7 +1813,8 @@ mod basic {
             let mut received_values = vec![];
             for _ in &expected_values {
                 let PushInfo { kind, data } = rx.try_recv().unwrap();
-                let channel_name: String = redis::from_redis_value(data.first().unwrap()).unwrap();
+                let channel_name: String =
+                    redis::from_redis_value_ref(data.first().unwrap()).unwrap();
                 received_values.push((kind, channel_name));
             }
             for val in expected_values {
