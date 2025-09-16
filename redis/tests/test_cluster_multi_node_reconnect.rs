@@ -55,20 +55,20 @@ fn test_cluster_multi_node_disconnect_reconnects_successfully() {
                 if let Err(res) = respond_startup_with_replica_using_config(name, cmd, slots_config)
                 {
                     return match res {
-                        Ok(v) => ServerResponse::Value(v),
-                        Err(e) => ServerResponse::Error(e),
+                        Ok(v) => Err(Ok(v)),
+                        Err(e) => Err(Err(e)),
                     };
                 }
 
                 if contains_slice(cmd, b"ECHO") {
                     if port == 6379 && d1.swap(false, Ordering::SeqCst) {
-                        return ServerResponse::Disconnect;
+                        return Err(Err(std::io::Error::other("disconnect").into()));
                     }
                     if port == 6380 && d2.swap(false, Ordering::SeqCst) {
-                        return ServerResponse::Disconnect;
+                        return Err(Err(std::io::Error::other("disconnect").into()));
                     }
                 }
-                ServerResponse::Value(Value::BulkString(b"PONG".to_vec()))
+                Err(Ok(Value::BulkString(b"PONG".to_vec())))
             }
         },
     );

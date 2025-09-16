@@ -9,7 +9,6 @@ mod support;
 use crate::support::*;
 
 #[test]
-#[ignore]
 fn test_acl_whoami() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
@@ -17,7 +16,6 @@ fn test_acl_whoami() {
 }
 
 #[test]
-#[ignore]
 fn test_acl_help() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
@@ -96,7 +94,6 @@ fn test_acl_getsetdel_users() {
 }
 
 #[test]
-#[ignore]
 fn test_acl_cat() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
@@ -138,7 +135,6 @@ fn test_acl_cat() {
 }
 
 #[test]
-#[ignore]
 fn test_acl_genpass() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
@@ -150,7 +146,6 @@ fn test_acl_genpass() {
 }
 
 #[test]
-#[ignore]
 fn test_acl_log() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
@@ -160,7 +155,6 @@ fn test_acl_log() {
 }
 
 #[test]
-#[ignore]
 fn test_acl_dryrun() {
     let ctx = TestContext::new();
     if ctx.get_version() < (7, 0, 0) {

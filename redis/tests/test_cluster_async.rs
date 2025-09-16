@@ -1,4 +1,3 @@
-#![allow(unused_imports, unused_variables, clippy::double_parens, unused_parens)]
 #![cfg(feature = "cluster-async")]
 mod support;
 
@@ -17,7 +16,6 @@ mod cluster_async {
     use futures_time::{future::FutureExt, task::sleep};
     use once_cell::sync::Lazy;
 
-    use redis::PushInfo;
     use redis::{
         aio::{ConnectionLike, MultiplexedConnection},
         cluster::ClusterClient,
@@ -30,7 +28,7 @@ mod cluster_async {
     use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
     use redis_test::server::use_protocol;
     use rstest::rstest;
-    use std::process::Command;
+    use test_macros::async_test;
 
     use crate::support::*;
 
@@ -41,7 +39,7 @@ mod cluster_async {
         ))
     }
 
-    async fn smoke_test_connection(mut connection: impl redis::aio::ConnectionLike + Send) {
+    async fn smoke_test_connection(mut connection: impl redis::aio::ConnectionLike) {
         cmd("SET")
             .arg("test")
             .arg("test_data")
@@ -57,199 +55,145 @@ mod cluster_async {
         assert_eq!(res, "test_data");
     }
 
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_async_cluster_basic_cmd(#[case] runtime: RuntimeType) {
+    #[async_test]
+    async fn async_cluster_basic_cmd() -> RedisResult<()> {
         let cluster = TestClusterContext::new();
 
-        block_on_all(
-            async move {
-                let connection = cluster.async_connection().await;
-                smoke_test_connection(connection).await;
-                Ok::<_, RedisError>(())
-            },
-            runtime,
-        )
-        .unwrap();
+        let connection = cluster.async_connection().await;
+        smoke_test_connection(connection).await;
+        Ok::<_, RedisError>(())
     }
 
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_no_response_skips_response_even_on_error(#[case] runtime: RuntimeType) {
+    #[async_test]
+    async fn no_response_skips_response_even_on_error() -> RedisResult<()> {
         let cluster = TestClusterContext::new();
 
-        block_on_all(
-            async move {
-                let mut connection = cluster.async_connection().await;
-                redis::cmd("SET")
-                    .arg("key")
-                    .arg(b"foo")
-                    .set_no_response(true)
-                    .exec_async(&mut connection)
-                    .await?;
+        let mut connection = cluster.async_connection().await;
+        redis::cmd("SET")
+            .arg("key")
+            .arg(b"foo")
+            .set_no_response(true)
+            .exec_async(&mut connection)
+            .await?;
 
-                // this should error, since we hset a string value, but we shouldn't receive the error, because we ignore the response
-                redis::cmd("HSET")
-                    .arg("key")
-                    .arg(b"foo")
-                    .arg("bar")
-                    .set_no_response(true)
-                    .exec_async(&mut connection)
-                    .await?;
+        // this should error, since we hset a string value, but we shouldn't receive the error, because we ignore the response
+        redis::cmd("HSET")
+            .arg("key")
+            .arg(b"foo")
+            .arg("bar")
+            .set_no_response(true)
+            .exec_async(&mut connection)
+            .await?;
 
-                let result = redis::cmd("GET")
-                    .arg("key")
-                    .query_async(&mut connection)
-                    .await;
-                assert_eq!(result, Ok("foo".to_string()));
-                result
-            },
-            runtime,
-        )
-        .unwrap();
+        let result = redis::cmd("GET")
+            .arg("key")
+            .query_async(&mut connection)
+            .await;
+        assert_eq!(result, Ok("foo".to_string()));
+        Ok(())
     }
 
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_async_cluster_basic_eval(#[case] runtime: RuntimeType) {
+    #[async_test]
+    async fn async_cluster_basic_eval() -> RedisResult<()> {
         let cluster = TestClusterContext::new();
 
-        block_on_all(
-            async move {
-                let mut connection = cluster.async_connection().await;
-                let res: String = cmd("EVAL")
-                    .arg(
-                        r#"redis.call("SET", KEYS[1], ARGV[1]); return redis.call("GET", KEYS[1])"#,
-                    )
-                    .arg(1)
-                    .arg("key")
-                    .arg("test")
-                    .query_async(&mut connection)
-                    .await?;
-                assert_eq!(res, "test");
-                Ok::<_, RedisError>(())
-            },
-            runtime,
-        )
-        .unwrap();
+        let mut connection = cluster.async_connection().await;
+        let res: String = cmd("EVAL")
+            .arg(r#"redis.call("SET", KEYS[1], ARGV[1]); return redis.call("GET", KEYS[1])"#)
+            .arg(1)
+            .arg("key")
+            .arg("test")
+            .query_async(&mut connection)
+            .await?;
+        assert_eq!(res, "test");
+        Ok::<_, RedisError>(())
     }
 
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_async_cluster_basic_script(#[case] runtime: RuntimeType) {
+    #[async_test]
+    async fn async_cluster_basic_script() -> RedisResult<()> {
         let cluster = TestClusterContext::new();
 
-        block_on_all(
-            async move {
-                let mut connection = cluster.async_connection().await;
-                let res: String = Script::new(
-                    r#"redis.call("SET", KEYS[1], ARGV[1]); return redis.call("GET", KEYS[1])"#,
-                )
-                .key("key")
-                .arg("test")
-                .invoke_async(&mut connection)
-                .await?;
-                assert_eq!(res, "test");
-                Ok::<_, RedisError>(())
-            },
-            runtime,
+        let mut connection = cluster.async_connection().await;
+        let res: String = Script::new(
+            r#"redis.call("SET", KEYS[1], ARGV[1]); return redis.call("GET", KEYS[1])"#,
         )
-        .unwrap();
+        .key("key")
+        .arg("test")
+        .invoke_async(&mut connection)
+        .await?;
+        assert_eq!(res, "test");
+        Ok::<_, RedisError>(())
     }
 
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_async_cluster_route_flush_to_specific_node(#[case] runtime: RuntimeType) {
+    #[async_test]
+    async fn async_cluster_route_flush_to_specific_node() -> RedisResult<()> {
         let cluster = TestClusterContext::new();
 
-        block_on_all(
-            async move {
-                let mut connection = cluster.async_connection().await;
-                let _: () = connection.set("foo", "bar").await.unwrap();
-                let _: () = connection.set("bar", "foo").await.unwrap();
+        let mut connection = cluster.async_connection().await;
+        let _: () = connection.set("foo", "bar").await.unwrap();
+        let _: () = connection.set("bar", "foo").await.unwrap();
 
-                let res: String = connection.get("foo").await.unwrap();
-                assert_eq!(res, "bar".to_string());
-                let res2: Option<String> = connection.get("bar").await.unwrap();
-                assert_eq!(res2, Some("foo".to_string()));
+        let res: String = connection.get("foo").await.unwrap();
+        assert_eq!(res, "bar".to_string());
+        let res2: Option<String> = connection.get("bar").await.unwrap();
+        assert_eq!(res2, Some("foo".to_string()));
 
-                let route =
-                    redis::cluster_routing::Route::new(1, redis::cluster_routing::SlotAddr::Master);
-                let single_node_route =
-                    redis::cluster_routing::SingleNodeRoutingInfo::SpecificNode(route);
-                let routing = RoutingInfo::SingleNode(single_node_route);
-                assert_eq!(
-                    connection
-                        .route_command(&redis::cmd("FLUSHALL"), routing)
-                        .await
-                        .unwrap(),
-                    Value::Okay
-                );
-                let res: String = connection.get("foo").await.unwrap();
-                assert_eq!(res, "bar".to_string());
-                let res2: Option<String> = connection.get("bar").await.unwrap();
-                assert_eq!(res2, None);
-                Ok::<_, RedisError>(())
-            },
-            runtime,
-        )
-        .unwrap();
+        let route = redis::cluster_routing::Route::new(1, redis::cluster_routing::SlotAddr::Master);
+        let single_node_route = redis::cluster_routing::SingleNodeRoutingInfo::SpecificNode(route);
+        let routing = RoutingInfo::SingleNode(single_node_route);
+        assert_eq!(
+            connection
+                .route_command(&redis::cmd("FLUSHALL"), routing)
+                .await
+                .unwrap(),
+            Value::Okay
+        );
+        let res: String = connection.get("foo").await.unwrap();
+        assert_eq!(res, "bar".to_string());
+        let res2: Option<String> = connection.get("bar").await.unwrap();
+        assert_eq!(res2, None);
+        Ok::<_, RedisError>(())
     }
 
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_async_cluster_route_flush_to_node_by_address(#[case] runtime: RuntimeType) {
+    #[async_test]
+    async fn async_cluster_route_flush_to_node_by_address() -> RedisResult<()> {
         let cluster = TestClusterContext::new();
 
-        block_on_all(
-            async move {
-                let mut connection = cluster.async_connection().await;
-                let mut cmd = redis::cmd("INFO");
-                // The other sections change with time.
-                // TODO - after we remove support of redis 6, we can add more than a single section - .arg("Persistence").arg("Memory").arg("Replication")
-                cmd.arg("Clients");
-                let value = connection
-                    .route_command(
-                        &cmd,
-                        RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
-                    )
-                    .await
-                    .unwrap();
+        let mut connection = cluster.async_connection().await;
+        let mut cmd = redis::cmd("INFO");
+        // The other sections change with time.
+        // TODO - after we remove support of redis 6, we can add more than a single section - .arg("Persistence").arg("Memory").arg("Replication")
+        cmd.arg("Clients");
+        let value = connection
+            .route_command(
+                &cmd,
+                RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
+            )
+            .await
+            .unwrap();
 
-                let info_by_address = from_redis_value::<HashMap<String, String>>(value).unwrap();
-                // find the info of the first returned node
-                let (address, info) = info_by_address.into_iter().next().unwrap();
-                let mut split_address = address.split(':');
-                let host = split_address.next().unwrap().to_string();
-                let port = split_address.next().unwrap().parse().unwrap();
+        let info_by_address = from_redis_value::<HashMap<String, String>>(value).unwrap();
+        // find the info of the first returned node
+        let (address, info) = info_by_address.into_iter().next().unwrap();
+        let mut split_address = address.split(':');
+        let host = split_address.next().unwrap().to_string();
+        let port = split_address.next().unwrap().parse().unwrap();
 
-                let value = connection
-                    .route_command(
-                        &cmd,
-                        RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress { host, port }),
-                    )
-                    .await
-                    .unwrap();
-                let new_info = from_redis_value::<String>(value).unwrap();
+        let value = connection
+            .route_command(
+                &cmd,
+                RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress { host, port }),
+            )
+            .await
+            .unwrap();
+        let new_info = from_redis_value::<String>(value).unwrap();
 
-                assert_eq!(new_info, info);
-                Ok::<_, RedisError>(())
-            },
-            runtime,
-        )
-        .unwrap();
+        assert_eq!(new_info, info);
+        Ok::<_, RedisError>(())
     }
 
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_async_cluster_route_info_to_nodes(#[case] runtime: RuntimeType) {
+    #[async_test]
+    async fn async_cluster_route_info_to_nodes() -> RedisResult<()> {
         let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
             num_nodes: 12,
             num_replicas: 1,
@@ -274,126 +218,104 @@ mod cluster_async {
             }
         };
 
-        block_on_all(
-            async move {
-                let cluster_addresses: Vec<_> = cluster
-                    .cluster
-                    .servers
-                    .iter()
-                    .map(|server| server.connection_info())
-                    .collect();
-                let client = ClusterClient::builder(cluster_addresses.clone())
-                    .read_from_replicas()
-                    .build()?;
-                let mut connection = client.get_async_connection().await?;
+        let cluster_addresses: Vec<_> = cluster
+            .cluster
+            .servers
+            .iter()
+            .map(|server| server.connection_info())
+            .collect();
+        let client = ClusterClient::builder(cluster_addresses.clone())
+            .read_from_replicas()
+            .build()?;
+        let mut connection = client.get_async_connection().await?;
 
-                let route_to_all_nodes = redis::cluster_routing::MultipleNodeRoutingInfo::AllNodes;
-                let routing = RoutingInfo::MultiNode((route_to_all_nodes, None));
-                let res = connection
-                    .route_command(&redis::cmd("INFO"), routing)
-                    .await
-                    .unwrap();
-                let (addresses, infos) = split_to_addresses_and_info(res);
+        let route_to_all_nodes = redis::cluster_routing::MultipleNodeRoutingInfo::AllNodes;
+        let routing = RoutingInfo::MultiNode((route_to_all_nodes, None));
+        let res = connection
+            .route_command(&redis::cmd("INFO"), routing)
+            .await
+            .unwrap();
+        let (addresses, infos) = split_to_addresses_and_info(res);
 
-                let mut cluster_addresses: Vec<_> = cluster_addresses
-                    .into_iter()
-                    .map(|info| info.addr().to_string())
-                    .collect();
-                cluster_addresses.sort();
+        let mut cluster_addresses: Vec<_> = cluster_addresses
+            .into_iter()
+            .map(|info| info.addr().to_string())
+            .collect();
+        cluster_addresses.sort();
 
-                assert_eq!(addresses.len(), 12);
-                assert_eq!(addresses, cluster_addresses);
-                assert_eq!(infos.len(), 12);
-                for i in 0..12 {
-                    let split: Vec<_> = addresses[i].split(':').collect();
-                    assert!(infos[i].contains(&format!("tcp_port:{}", split[1])));
-                }
-
-                let route_to_all_primaries =
-                    redis::cluster_routing::MultipleNodeRoutingInfo::AllMasters;
-                let routing = RoutingInfo::MultiNode((route_to_all_primaries, None));
-                let res = connection
-                    .route_command(&redis::cmd("INFO"), routing)
-                    .await
-                    .unwrap();
-                let (addresses, infos) = split_to_addresses_and_info(res);
-                assert_eq!(addresses.len(), 6);
-                assert_eq!(infos.len(), 6);
-                // verify that all primaries have the correct port & host, and are marked as primaries.
-                for i in 0..6 {
-                    assert!(cluster_addresses.contains(&addresses[i]));
-                    let split: Vec<_> = addresses[i].split(':').collect();
-                    assert!(infos[i].contains(&format!("tcp_port:{}", split[1])));
-                    assert!(infos[i].contains("role:primary") || infos[i].contains("role:master"));
-                }
-
-                Ok::<_, RedisError>(())
-            },
-            runtime,
-        )
-        .unwrap();
-    }
-
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_cluster_resp3(#[case] runtime: RuntimeType) {
-        if use_protocol() == ProtocolVersion::RESP2 {
-            return;
+        assert_eq!(addresses.len(), 12);
+        assert_eq!(addresses, cluster_addresses);
+        assert_eq!(infos.len(), 12);
+        for i in 0..12 {
+            let split: Vec<_> = addresses[i].split(':').collect();
+            assert!(infos[i].contains(&format!("tcp_port:{}", split[1])));
         }
-        block_on_all(
-            async move {
-                let cluster = TestClusterContext::new();
 
-                let mut connection = cluster.async_connection().await;
+        let route_to_all_primaries = redis::cluster_routing::MultipleNodeRoutingInfo::AllMasters;
+        let routing = RoutingInfo::MultiNode((route_to_all_primaries, None));
+        let res = connection
+            .route_command(&redis::cmd("INFO"), routing)
+            .await
+            .unwrap();
+        let (addresses, infos) = split_to_addresses_and_info(res);
+        assert_eq!(addresses.len(), 6);
+        assert_eq!(infos.len(), 6);
+        // verify that all primaries have the correct port & host, and are marked as primaries.
+        for i in 0..6 {
+            assert!(cluster_addresses.contains(&addresses[i]));
+            let split: Vec<_> = addresses[i].split(':').collect();
+            assert!(infos[i].contains(&format!("tcp_port:{}", split[1])));
+            assert!(infos[i].contains("role:primary") || infos[i].contains("role:master"));
+        }
 
-                let _: () = connection.hset("hash", "foo", "baz").await.unwrap();
-                let _: () = connection.hset("hash", "bar", "foobar").await.unwrap();
-                let result: Value = connection.hgetall("hash").await.unwrap();
-
-                assert_eq!(
-                    result,
-                    Value::Map(vec![
-                        (
-                            Value::BulkString("foo".as_bytes().to_vec()),
-                            Value::BulkString("baz".as_bytes().to_vec())
-                        ),
-                        (
-                            Value::BulkString("bar".as_bytes().to_vec()),
-                            Value::BulkString("foobar".as_bytes().to_vec())
-                        )
-                    ])
-                );
-
-                Ok(())
-            },
-            runtime,
-        )
-        .unwrap();
+        Ok::<_, RedisError>(())
     }
 
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_async_cluster_basic_pipe(#[case] runtime: RuntimeType) {
+    #[async_test]
+    async fn cluster_resp3() -> RedisResult<()> {
+        if use_protocol() == ProtocolVersion::RESP2 {
+            return Ok(());
+        }
+
         let cluster = TestClusterContext::new();
 
-        block_on_all(
-            async move {
-                let mut connection = cluster.async_connection().await;
-                let mut pipe = redis::pipe();
-                pipe.add_command(cmd("SET").arg("test").arg("test_data").clone());
-                pipe.add_command(cmd("SET").arg("{test}3").arg("test_data3").clone());
-                pipe.exec_async(&mut connection).await?;
-                let res: String = connection.get("test").await?;
-                assert_eq!(res, "test_data");
-                let res: String = connection.get("{test}3").await?;
-                assert_eq!(res, "test_data3");
-                Ok::<_, RedisError>(())
-            },
-            runtime,
-        )
-        .unwrap()
+        let mut connection = cluster.async_connection().await;
+
+        let _: () = connection.hset("hash", "foo", "baz").await.unwrap();
+        let _: () = connection.hset("hash", "bar", "foobar").await.unwrap();
+        let result: Value = connection.hgetall("hash").await.unwrap();
+
+        assert_eq!(
+            result,
+            Value::Map(vec![
+                (
+                    Value::BulkString("foo".as_bytes().to_vec()),
+                    Value::BulkString("baz".as_bytes().to_vec())
+                ),
+                (
+                    Value::BulkString("bar".as_bytes().to_vec()),
+                    Value::BulkString("foobar".as_bytes().to_vec())
+                )
+            ])
+        );
+
+        Ok(())
+    }
+
+    #[async_test]
+    async fn async_cluster_basic_pipe() -> RedisResult<()> {
+        let cluster = TestClusterContext::new();
+
+        let mut connection = cluster.async_connection().await;
+        let mut pipe = redis::pipe();
+        pipe.add_command(cmd("SET").arg("test").arg("test_data").clone());
+        pipe.add_command(cmd("SET").arg("{test}3").arg("test_data3").clone());
+        pipe.exec_async(&mut connection).await?;
+        let res: String = connection.get("test").await?;
+        assert_eq!(res, "test_data");
+        let res: String = connection.get("{test}3").await?;
+        assert_eq!(res, "test_data3");
+        Ok::<_, RedisError>(())
     }
 
     #[test]
@@ -405,19 +327,16 @@ mod cluster_async {
             async_connection: mut connection,
             ..
         } = MockEnv::new(name, move |cmd, _| {
-            if let Err(res) = respond_startup(name, cmd) {
-                return res.into();
-            }
+            respond_startup(name, cmd)?;
             if cmd
                 == redis::cmd("SET")
                     .arg("{tag}x")
                     .arg("another-x-value")
                     .get_packed_command()
             {
-                // Return a Value::ServerError so pipeline aggregation can collect indices
-                ServerResponse::Value(parse_redis_value(b"-CROSSSLOT foobar\r\n").unwrap())
+                Err(Ok(parse_redis_value(b"-CROSSSLOT foobar\r\n").unwrap()))
             } else if cmd == redis::cmd("GET").arg("{tag}y").get_packed_command() {
-                ServerResponse::Value(Value::Okay)
+                Err(Ok(Value::Okay))
             } else {
                 panic!(
                     "unexpected cmd: {}",
@@ -436,38 +355,29 @@ mod cluster_async {
         assert_eq!(res.unwrap_err().kind(), ServerErrorKind::CrossSlot.into());
     }
 
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_async_cluster_multi_shard_commands(#[case] runtime: RuntimeType) {
+    #[async_test]
+    async fn async_cluster_multi_shard_commands() -> RedisResult<()> {
         let cluster = TestClusterContext::new();
 
-        block_on_all(
-            async move {
-                let mut connection = cluster.async_connection().await;
+        let mut connection = cluster.async_connection().await;
 
-                let res: String = connection
-                    .mset(&[("foo", "bar"), ("bar", "foo"), ("baz", "bazz")])
-                    .await?;
-                assert_eq!(res, "OK");
-                let res: Vec<String> = connection.mget(&["baz", "foo", "bar"]).await?;
-                assert_eq!(res, vec!["bazz", "bar", "foo"]);
-                Ok::<_, RedisError>(())
-            },
-            runtime,
-        )
-        .unwrap()
+        let res: String = connection
+            .mset(&[("foo", "bar"), ("bar", "foo"), ("baz", "bazz")])
+            .await?;
+        assert_eq!(res, "OK");
+        let res: Vec<String> = connection.mget(&["baz", "foo", "bar"]).await?;
+        assert_eq!(res, vec!["bazz", "bar", "foo"]);
+        Ok::<_, RedisError>(())
     }
 
     #[cfg(feature = "tls-rustls")]
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    fn test_async_cluster_default_reject_invalid_hostnames(#[case] runtime: RuntimeType) {
+    #[async_test]
+    async fn async_cluster_default_reject_invalid_hostnames() -> RedisResult<()> {
         use redis_test::cluster::ClusterType;
 
         if ClusterType::get_intended() != ClusterType::TcpTls {
             // Only TLS causes invalid certificates to be rejected as desired.
-            return;
+            return Ok(());
         }
 
         let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
@@ -476,25 +386,18 @@ mod cluster_async {
             ..Default::default()
         });
 
-        block_on_all(
-            async move {
-                assert!(cluster.client.get_async_connection().await.is_err());
-                Ok(())
-            },
-            runtime,
-        )
-        .unwrap();
+        assert!(cluster.client.get_async_connection().await.is_err());
+        Ok(())
     }
 
     #[cfg(feature = "tls-rustls-insecure")]
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    fn test_async_cluster_danger_accept_invalid_hostnames(#[case] runtime: RuntimeType) {
+    #[async_test]
+    async fn async_cluster_danger_accept_invalid_hostnames() -> RedisResult<()> {
         use redis_test::cluster::ClusterType;
 
         if ClusterType::get_intended() != ClusterType::TcpTls {
             // No point testing this TLS-specific mode in non-TLS configurations.
-            return;
+            return Ok(());
         }
 
         let cluster = TestClusterContext::new_with_config_and_builder(
@@ -506,24 +409,14 @@ mod cluster_async {
             |builder| builder.danger_accept_invalid_hostnames(true),
         );
 
-        block_on_all(
-            async move {
-                let connection = cluster.async_connection().await;
-                smoke_test_connection(connection).await;
-                Ok(())
-            },
-            runtime,
-        )
-        .unwrap();
+        let connection = cluster.async_connection().await;
+        smoke_test_connection(connection).await;
+        Ok(())
     }
 
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_async_cluster_basic_failover(#[case] runtime: RuntimeType) {
-        block_on_all(
-            async move {
-                test_failover(
+    #[async_test]
+    async fn async_cluster_basic_failover() -> RedisResult<()> {
+        test_failover(
                     &TestClusterContext::new_with_config(
                         RedisClusterConfiguration::single_replica_config(),
                     ),
@@ -532,11 +425,7 @@ mod cluster_async {
                     false,
                 )
                 .await;
-                Ok::<_, RedisError>(())
-            },
-            runtime,
-        )
-        .unwrap()
+        Ok::<_, RedisError>(())
     }
 
     async fn do_failover(
@@ -547,7 +436,6 @@ mod cluster_async {
     }
 
     // parameter `_mtls_enabled` can only be used if `feature = tls-rustls` is active
-    #[allow(dead_code)]
     async fn test_failover(
         env: &TestClusterContext,
         requests: i32,
@@ -680,9 +568,12 @@ mod cluster_async {
     impl ConnectionLike for ErrorConnection {
         fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
             if ERROR.load(Ordering::SeqCst) {
-                Box::pin(
-                    async move { Err(RedisError::from((ServerErrorKind::Moved.into(), "ERROR"))) },
-                )
+                Box::pin(async move {
+                    Err(RedisError::from((
+                        redis::ServerErrorKind::Moved.into(),
+                        "ERROR",
+                    )))
+                })
             } else {
                 self.inner.req_packed_command(cmd)
             }
@@ -702,32 +593,28 @@ mod cluster_async {
         }
     }
 
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    fn test_async_cluster_error_in_inner_connection(#[case] runtime: RuntimeType) {
+    #[async_test]
+    async fn async_cluster_error_in_inner_connection() -> RedisResult<()> {
         let cluster = TestClusterContext::new();
 
-        block_on_all(
-            async move {
-                let mut con = cluster.async_generic_connection::<ErrorConnection>().await;
+        let mut con = cluster.async_generic_connection::<ErrorConnection>().await;
 
-                ERROR.store(false, Ordering::SeqCst);
-                let r: Option<i32> = con.get("test").await?;
-                assert_eq!(r, None::<i32>);
+        ERROR.store(false, Ordering::SeqCst);
+        let r: Option<i32> = con.get("test").await?;
+        assert_eq!(r, None::<i32>);
 
-                ERROR.store(true, Ordering::SeqCst);
+        ERROR.store(true, Ordering::SeqCst);
 
-                let result: RedisResult<()> = con.get("test").await;
-                assert_eq!(
-                    result,
-                    Err(RedisError::from((ServerErrorKind::Moved.into(), "ERROR")))
-                );
+        let result: RedisResult<()> = con.get("test").await;
+        assert_eq!(
+            result,
+            Err(RedisError::from((
+                redis::ServerErrorKind::Moved.into(),
+                "ERROR"
+            )))
+        );
 
-                Ok::<_, RedisError>(())
-            },
-            RuntimeType::Tokio,
-        )
-        .unwrap();
+        Ok::<_, RedisError>(())
     }
 
     #[test]
@@ -741,15 +628,15 @@ mod cluster_async {
             ..
         } = MockEnv::new(name, move |cmd: &[u8], _| {
             if contains_slice(cmd, b"PING") {
-                ServerResponse::Value(Value::SimpleString("OK".into()))
+                Err(Ok(Value::SimpleString("OK".into())))
             } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-                ServerResponse::Value(Value::Array(vec![Value::Array(vec![
+                Err(Ok(Value::Array(vec![Value::Array(vec![
                     Value::Int(0),
                     Value::Int(16383),
                     Value::Array(vec![Value::Nil, Value::Int(6379)]),
-                ])]))
+                ])])))
             } else {
-                ServerResponse::Value(Value::Nil)
+                Err(Ok(Value::Nil))
             }
         });
 
@@ -769,9 +656,9 @@ mod cluster_async {
             ..
         } = MockEnv::new(name, move |cmd: &[u8], _| {
             if contains_slice(cmd, b"PING") {
-                ServerResponse::Value(Value::SimpleString("OK".into()))
+                Err(Ok(Value::SimpleString("OK".into())))
             } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-                ServerResponse::Value(Value::Array(vec![
+                Err(Ok(Value::Array(vec![
                     Value::Array(vec![
                         Value::Int(0),
                         Value::Int(7000),
@@ -788,9 +675,9 @@ mod cluster_async {
                             Value::Int(6380),
                         ]),
                     ]),
-                ]))
+                ])))
             } else {
-                ServerResponse::Value(Value::Nil)
+                Err(Ok(Value::Nil))
             }
         });
 
@@ -813,14 +700,11 @@ mod cluster_async {
             ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(5),
             name,
             move |cmd: &[u8], _| {
-                if let Err(res) = respond_startup(name, cmd) {
-                    return res.into();
-                }
+                respond_startup(name, cmd)?;
+
                 match requests.fetch_add(1, atomic::Ordering::SeqCst) {
-                    0..=4 => ServerResponse::Error(crate::support::parse_server_error(
-                        b"-TRYAGAIN mock\r\n",
-                    )),
-                    _ => ServerResponse::Value(Value::BulkString(b"123".to_vec())),
+                    0..=4 => Err(parse_redis_value(b"-TRYAGAIN mock\r\n")),
+                    _ => Err(Ok(Value::BulkString(b"123".to_vec()))),
                 }
             },
         );
@@ -851,15 +735,9 @@ mod cluster_async {
             {
                 let requests = requests.clone();
                 move |cmd: &[u8], _| {
-                    if let Err(res) = respond_startup(name, cmd) {
-                        return res.into();
-                    }
+                    respond_startup(name, cmd)?;
                     requests.fetch_add(1, atomic::Ordering::SeqCst);
-                    // For single-command flow, simulate a server TRYAGAIN as a RedisError
-                    ServerResponse::Error(redis::RedisError::from((
-                        redis::ErrorKind::Server(redis::ServerErrorKind::TryAgain),
-                        "mock",
-                    )))
+                    Err(parse_redis_value(b"-TRYAGAIN mock\r\n"))
                 }
             },
         );
@@ -892,30 +770,28 @@ mod cluster_async {
             ..
         } = MockEnv::new(name, move |cmd: &[u8], port| {
             if !started.load(atomic::Ordering::SeqCst) {
-                if let Err(res) = respond_startup(name, cmd) {
-                    return res.into();
-                }
+                respond_startup(name, cmd)?;
             }
             started.store(true, atomic::Ordering::SeqCst);
 
             if contains_slice(cmd, b"PING") {
-                return ServerResponse::Value(Value::SimpleString("OK".into()));
+                return Err(Ok(Value::SimpleString("OK".into())));
             }
 
             let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
 
             let is_get_cmd = contains_slice(cmd, b"GET");
-            let get_response = ServerResponse::Value(Value::BulkString(b"123".to_vec()));
+            let get_response = Err(Ok(Value::BulkString(b"123".to_vec())));
             match i {
                 // Respond that the key exists on a node that does not yet have a connection:
-                0 => ServerResponse::Error(crate::support::parse_server_error(
+                0 => Err(parse_redis_value(
                     format!("-MOVED 123 {name}:6380\r\n").as_bytes(),
                 )),
                 _ => {
                     if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
                         // Should not attempt to refresh slots more than once:
                         assert!(!refreshed.swap(true, Ordering::SeqCst));
-                        ServerResponse::Value(Value::Array(vec![
+                        Err(Ok(Value::Array(vec![
                             Value::Array(vec![
                                 Value::Int(0),
                                 Value::Int(1),
@@ -932,7 +808,7 @@ mod cluster_async {
                                     Value::Int(6380),
                                 ]),
                             ]),
-                        ]))
+                        ])))
                     } else {
                         assert_eq!(port, 6380);
                         assert!(is_get_cmd, "{:?}", std::str::from_utf8(cmd));
@@ -967,17 +843,15 @@ mod cluster_async {
             name,
             move |cmd: &[u8], port| {
                 if !should_refresh.load(atomic::Ordering::SeqCst) {
-                    if let Err(res) = respond_startup(name, cmd) {
-                        return res.into();
-                    }
+                    respond_startup(name, cmd)?;
                 }
 
                 if contains_slice(cmd, b"PING") {
-                    return ServerResponse::Value(Value::SimpleString("OK".into()));
+                    return Err(Ok(Value::SimpleString("OK".into())));
                 }
 
                 if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-                    return ServerResponse::Value(Value::Array(vec![
+                    return Err(Ok(Value::Array(vec![
                         Value::Array(vec![
                             Value::Int(0),
                             Value::Int(1),
@@ -994,18 +868,18 @@ mod cluster_async {
                                 Value::Int(6380),
                             ]),
                         ]),
-                    ]));
+                    ])));
                 }
 
                 if contains_slice(cmd, b"GET") {
-                    let get_response = ServerResponse::Value(Value::BulkString(b"123".to_vec()));
+                    let get_response = Err(Ok(Value::BulkString(b"123".to_vec())));
                     match port {
                         6380 => get_response,
                         // Respond that the key exists on a node that does not yet have a connection:
                         _ => {
                             // Should not attempt to refresh slots more than once:
                             assert!(!should_refresh.swap(true, Ordering::SeqCst));
-                            ServerResponse::Error(crate::support::parse_server_error(
+                            Err(parse_redis_value(
                                 format!("-MOVED 123 {name}:6380\r\n").as_bytes(),
                             ))
                         }
@@ -1019,8 +893,14 @@ mod cluster_async {
         let value = runtime.block_on(cmd("GET").arg("test").query_async::<Value>(&mut connection));
 
         // The user should receive an initial error, because there are no retries and the first request failed.
-        let err = value.unwrap_err();
-        assert_eq!(err.kind(), ServerErrorKind::Moved.into());
+        assert_eq!(
+            value,
+            parse_redis_value(
+                b"-MOVED 123 test_async_cluster_refresh_topology_even_with_zero_retries:6380\r\n"
+            )
+            .unwrap()
+            .extract_error()
+        );
 
         let value = runtime.block_on(
             cmd("GET")
@@ -1052,16 +932,16 @@ mod cluster_async {
                     Ok(_) => {}
                     Err(err) => {
                         connection_count.fetch_add(1, Ordering::Relaxed);
-                        return err.into();
+                        return Err(err);
                     }
                 }
 
                 if contains_slice(cmd, b"ECHO") && port == 6379 {
                     // Should not attempt to refresh slots more than once:
                     if should_reconnect.swap(false, Ordering::SeqCst) {
-                        ServerResponse::Error(broken_pipe_error())
+                        Err(Err(broken_pipe_error()))
                     } else {
-                        ServerResponse::Value(Value::BulkString(b"PONG".to_vec()))
+                        Err(Ok(Value::BulkString(b"PONG".to_vec())))
                     }
                 } else {
                     panic!("unexpected command {cmd:?}")
@@ -1101,101 +981,9 @@ mod cluster_async {
     }
 
     #[test]
-    fn test_async_cluster_dedup_multiple_disconnections_single_reconnect() {
-        let name = "test_async_cluster_dedup_multiple_disconnections_single_reconnect";
-
-        let should_reconnect_phase = Arc::new(AtomicU32::new(0));
-        let connection_count = Arc::new(AtomicU16::new(0));
-        let connection_count_clone = connection_count.clone();
-
-        let MockEnv {
-            runtime,
-            async_connection: mut connection,
-            handler: _handler,
-            ..
-        } = MockEnv::with_client_builder(
-            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
-            name,
-            {
-                let should_reconnect_phase = should_reconnect_phase.clone();
-                move |cmd: &[u8], port| {
-                    // Count connection attempts at startup (CLUSTER SLOTS / PING) as in the existing test.
-                    match respond_startup(name, cmd) {
-                        Ok(_) => {}
-                        Err(err) => {
-                            if connection_count.load(Ordering::Relaxed) < 5 {
-                                connection_count.fetch_add(1, Ordering::Relaxed);
-                            }
-                            return err.into();
-                        }
-                    }
-
-                    if contains_slice(cmd, b"ECHO") && port == 6379 {
-                        // First two attempts: IO error (simulate two rapid disconnections)
-                        let phase = should_reconnect_phase.fetch_add(1, Ordering::SeqCst);
-                        match phase {
-                            0 | 1 => ServerResponse::Error(broken_pipe_error()),
-                            _ => ServerResponse::Value(Value::BulkString(b"PONG".to_vec())),
-                        }
-                    } else {
-                        panic!("unexpected command {cmd:?}")
-                    }
-                }
-            },
-        );
-
-        // 4 - MockEnv creates a sync & async connections, each calling CLUSTER SLOTS once & PING per node.
-        // Stay aligned with the existing expectation. If this setup changes upstream, this assertion might need update.
-        assert_eq!(connection_count_clone.load(Ordering::Relaxed), 4);
-
-        // First attempt: should receive IO error (broken pipe) due to simulated disconnect.
-        let value = runtime.block_on(connection.route_command(
-            &cmd("ECHO"),
-            RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
-                host: name.to_string(),
-                port: 6379,
-            }),
-        ));
-        assert_eq!(
-            value.unwrap_err().to_string(),
-            broken_pipe_error().to_string()
-        );
-
-        // Second attempt: still IO error, but dedup should keep only one reconnect scheduled.
-        let value = runtime.block_on(connection.route_command(
-            &cmd("ECHO"),
-            RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
-                host: name.to_string(),
-                port: 6379,
-            }),
-        ));
-        assert_eq!(
-            value.unwrap_err().to_string(),
-            broken_pipe_error().to_string()
-        );
-
-        // Third attempt: should succeed after a single reconnect cycle.
-        let value = runtime.block_on(connection.route_command(
-            &cmd("ECHO"),
-            RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
-                host: name.to_string(),
-                port: 6379,
-            }),
-        ));
-
-        assert_eq!(value, Ok(Value::BulkString(b"PONG".to_vec())));
-        // Expect only one additional connection setup due to deduped reconnect (4 baseline + 1 reconnect PING/slots).
-        assert_eq!(connection_count_clone.load(Ordering::Relaxed), 5);
-    }
-
-    #[test]
     fn test_async_cluster_ask_redirect() {
         let name = "test_async_cluster_ask_redirect";
-        // State machine to ignore startup PING/SLOTS and only track the GET/ASKING/GET flow
-        let asked_once = Arc::new(AtomicBool::new(false));
-        let redirected_state = Arc::new(AtomicU32::new(0)); // 0: expect ASKING, 1: expect GET, 2: done
-        let asked_once_cloned = asked_once.clone();
-        let redirected_state_cloned = redirected_state.clone();
+        let completed = Arc::new(AtomicI32::new(0));
         let MockEnv {
             async_connection: mut connection,
             handler: _handler,
@@ -1206,47 +994,28 @@ mod cluster_async {
             name,
             {
                 move |cmd: &[u8], port| {
-                    if let Err(res) = respond_startup_two_nodes(name, cmd) {
-                        return res.into();
-                    }
+                    respond_startup_two_nodes(name, cmd)?;
+                    // Error twice with io-error, ensure connection is reestablished w/out calling
+                    // other node (i.e., not doing a full slot rebuild)
+                    let count = completed.fetch_add(1, Ordering::SeqCst);
                     match port {
-                        6379 => {
-                            if contains_slice(cmd, b"GET") {
-                                // Return ASK only once for the initial GET
-                                let was_asked = asked_once_cloned.swap(true, Ordering::SeqCst);
-                                if !was_asked {
-                                    // Provide explicit ASK redirection to 6380
-                                    return ServerResponse::Error(
-                                        crate::support::parse_server_error(
-                                            format!("-ASK 14000 {name}:6380\r\n").as_bytes(),
-                                        ),
-                                    );
-                                } else {
-                                    // Ignore any additional GETs on original node; real work proceeds on redirected node
-                                    return ServerResponse::Value(Value::Okay);
-                                }
+                        6379 => match count {
+                            0 => Err(parse_redis_value(
+                                b"-ASK 14000 test_async_cluster_ask_redirect:6380\r\n",
+                            )),
+                            _ => panic!("Node should not be called now"),
+                        },
+                        6380 => match count {
+                            1 => {
+                                assert!(contains_slice(cmd, b"ASKING"));
+                                Err(Ok(Value::Okay))
                             }
-                            // Ignore non-data commands on 6379
-                            ServerResponse::Value(Value::Okay)
-                        }
-                        6380 => {
-                            if contains_slice(cmd, b"ASKING") {
-                                let prev = redirected_state_cloned
-                                    .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
-                                    .unwrap();
-                                assert_eq!(prev, 0, "ASKING should be first on redirected node");
-                                ServerResponse::Value(Value::Okay)
-                            } else if contains_slice(cmd, b"GET") {
-                                let prev = redirected_state_cloned
-                                    .compare_exchange(1, 2, Ordering::SeqCst, Ordering::SeqCst)
-                                    .unwrap();
-                                assert_eq!(prev, 1, "GET should follow ASKING on redirected node");
-                                ServerResponse::Value(Value::BulkString(b"123".to_vec()))
-                            } else {
-                                // Ignore non-data commands
-                                ServerResponse::Value(Value::Okay)
+                            2 => {
+                                assert!(contains_slice(cmd, b"GET"));
+                                Err(Ok(Value::BulkString(b"123".to_vec())))
                             }
-                        }
+                            _ => panic!("Node should not be called now"),
+                        },
                         _ => panic!("Wrong node"),
                     }
                 }
@@ -1278,22 +1047,17 @@ mod cluster_async {
             {
                 move |cmd: &[u8], port| {
                     if port != 6391 {
-                        if let Err(res) = respond_startup_two_nodes(name, cmd) {
-                            return res.into();
-                        }
-                        // Redirect explicitly to 6391 so the client connects/saves the new node.
-                        return ServerResponse::Error(crate::support::parse_server_error(
-                            format!("-ASK 14000 {name}:6391\r\n").as_bytes(),
+                        respond_startup_two_nodes(name, cmd)?;
+                        return Err(parse_redis_value(
+                            b"-ASK 14000 test_async_cluster_ask_save_new_connection:6391\r\n",
                         ));
                     }
 
                     if contains_slice(cmd, b"PING") {
                         ping_attempts_clone.fetch_add(1, Ordering::Relaxed);
                     }
-                    if let Err(res) = respond_startup_two_nodes(name, cmd) {
-                        return res.into();
-                    }
-                    ServerResponse::Value(Value::Okay)
+                    respond_startup_two_nodes(name, cmd)?;
+                    Err(Ok(Value::Okay))
                 }
             },
         );
@@ -1318,21 +1082,19 @@ mod cluster_async {
             ..
         } = MockEnv::new(name, move |cmd: &[u8], port| {
             if port != 6379 && port != 6380 {
-                return ServerResponse::Error(broken_pipe_error());
+                return Err(Err(broken_pipe_error()));
             }
-            if let Err(res) = respond_startup_two_nodes(name, cmd) {
-                return res.into();
-            }
+            respond_startup_two_nodes(name, cmd)?;
             let count = completed.fetch_add(1, Ordering::SeqCst);
             match (port, count) {
                 // redirect once to non-existing node
-                (6379, 0) => {
-                    ServerResponse::Error(RedisError::from((ServerErrorKind::Ask.into(), "")))
-                }
+                (6379, 0) => Err(parse_redis_value(
+                    format!("-ASK 14000 {name}:9999\r\n").as_bytes(),
+                )),
                 // accept the next request
                 (6379, 1) => {
                     assert!(contains_slice(cmd, b"GET"));
-                    ServerResponse::Value(Value::BulkString(b"123".to_vec()))
+                    Err(Ok(Value::BulkString(b"123".to_vec())))
                 }
                 _ => panic!("Wrong node. port: {port}, received count: {count}"),
             }
@@ -1361,14 +1123,12 @@ mod cluster_async {
             name,
             {
                 move |cmd: &[u8], port| {
-                    if let Err(res) = respond_startup_two_nodes(name, cmd) {
-                        return res.into();
-                    }
+                    respond_startup_two_nodes(name, cmd)?;
                     // Error twice with io-error, ensure connection is reestablished w/out calling
                     // other node (i.e., not doing a full slot rebuild)
                     let count = completed.fetch_add(1, Ordering::SeqCst);
                     if count == 0 {
-                        return ServerResponse::Error(crate::support::parse_server_error(b"-ASK 14000 test_async_cluster_ask_redirect_even_if_original_call_had_no_route:6380\r\n"));
+                        return Err(parse_redis_value(b"-ASK 14000 test_async_cluster_ask_redirect_even_if_original_call_had_no_route:6380\r\n"));
                     }
                     match port {
                         6380 => match count {
@@ -1378,13 +1138,13 @@ mod cluster_async {
                                     "{:?}",
                                     std::str::from_utf8(cmd)
                                 );
-                                ServerResponse::Value(Value::Okay)
+                                Err(Ok(Value::Okay))
                             }
                             2 => {
                                 assert!(contains_slice(cmd, b"EVAL"));
-                                ServerResponse::Value(Value::Okay)
+                                Err(Ok(Value::Okay))
                             }
-                            _ => ServerResponse::Value(Value::Okay),
+                            _ => panic!("Node should not be called now"),
                         },
                         _ => panic!("Wrong node"),
                     }
@@ -1414,32 +1174,30 @@ mod cluster_async {
             ..
         } = MockEnv::new(name, move |cmd: &[u8], port| {
             if !started.load(atomic::Ordering::SeqCst) {
-                if let Err(res) = respond_startup(name, cmd) {
-                    return res.into();
-                }
+                respond_startup(name, cmd)?;
             }
             started.store(true, atomic::Ordering::SeqCst);
 
             if contains_slice(cmd, b"PING") {
-                return ServerResponse::Value(Value::SimpleString("OK".into()));
+                return Err(Ok(Value::SimpleString("OK".into())));
             }
 
             let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
 
             match i {
                 // Respond that the key exists on a node that does not yet have a connection:
-                0 => ServerResponse::Error(crate::support::parse_server_error(
+                0 => Err(parse_redis_value(
                     format!("-ASK 123 {name}:6380\r\n").as_bytes(),
                 )),
                 1 => {
                     assert_eq!(port, 6380);
                     assert!(contains_slice(cmd, b"ASKING"));
-                    ServerResponse::Value(Value::Okay)
+                    Err(Ok(Value::Okay))
                 }
                 2 => {
                     assert_eq!(port, 6380);
                     assert!(contains_slice(cmd, b"GET"));
-                    ServerResponse::Value(Value::BulkString(b"123".to_vec()))
+                    Err(Ok(Value::BulkString(b"123".to_vec())))
                 }
                 _ => {
                     panic!("Unexpected request: {cmd:?}");
@@ -1472,11 +1230,9 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |cmd: &[u8], port| {
-                if let Err(res) = respond_startup_with_replica(name, cmd) {
-                    return res.into();
-                }
+                respond_startup_with_replica(name, cmd)?;
                 match port {
-                    6380 => ServerResponse::Value(Value::BulkString(b"123".to_vec())),
+                    6380 => Err(Ok(Value::BulkString(b"123".to_vec()))),
                     _ => panic!("Wrong node"),
                 }
             },
@@ -1501,11 +1257,9 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |cmd: &[u8], port| {
-                if let Err(res) = respond_startup_with_replica(name, cmd) {
-                    return res.into();
-                }
+                respond_startup_with_replica(name, cmd)?;
                 match port {
-                    6379 => ServerResponse::Value(Value::SimpleString("OK".into())),
+                    6379 => Err(Ok(Value::SimpleString("OK".into()))),
                     _ => panic!("Wrong node"),
                 }
             },
@@ -1545,18 +1299,16 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                if let Err(res) = respond_startup_with_replica_using_config(
+                respond_startup_with_replica_using_config(
                     name,
                     received_cmd,
                     slots_config.clone(),
-                ) {
-                    return res.into();
-                }
+                )?;
                 if received_cmd == packed_cmd {
                     ports_clone.lock().unwrap().push(port);
-                    return ServerResponse::Value(Value::SimpleString("OK".into()));
+                    return Err(Ok(Value::SimpleString("OK".into())));
                 }
-                ServerResponse::Value(Value::Nil)
+                Ok(())
             },
         );
 
@@ -1657,11 +1409,9 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |cmd: &[u8], port| {
-                if let Err(res) = respond_startup_with_replica(name, cmd) {
-                    return res.into();
-                }
+                respond_startup_with_replica(name, cmd)?;
                 cloned_ports.lock().unwrap().push(port);
-                ServerResponse::Value(Value::Nil)
+                Err(Ok(Value::Nil))
             },
         );
 
@@ -1721,14 +1471,10 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                if let Err(res) =
-                    respond_startup_with_replica_using_config(name, received_cmd, None)
-                {
-                    return res.into();
-                }
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
 
                 let res = 6383 - port as i64;
-                ServerResponse::Value(Value::Int(res)) // this results in 1,2,3,4
+                Err(Ok(Value::Int(res))) // this results in 1,2,3,4
             },
         );
 
@@ -1760,26 +1506,22 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                if let Err(res) =
-                    respond_startup_with_replica_using_config(name, received_cmd, None)
-                {
-                    return res.into();
-                }
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
 
                 if port == 6381 {
-                    return ServerResponse::Value(Value::Array(vec![
+                    return Err(Ok(Value::Array(vec![
                         Value::Int(0),
                         Value::Int(0),
                         Value::Int(1),
                         Value::Int(1),
-                    ]));
+                    ])));
                 } else if port == 6379 {
-                    return ServerResponse::Value(Value::Array(vec![
+                    return Err(Ok(Value::Array(vec![
                         Value::Int(0),
                         Value::Int(1),
                         Value::Int(0),
                         Value::Int(1),
-                    ]));
+                    ])));
                 }
 
                 panic!("unexpected port {port}");
@@ -1808,23 +1550,17 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                if let Err(res) =
-                    respond_startup_with_replica_using_config(name, received_cmd, None)
-                {
-                    return res.into();
-                }
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
                 if port == 6381 {
-                    ServerResponse::Value(Value::Okay)
+                    Err(Ok(Value::Okay))
                 } else if port == 6379 {
-                    ServerResponse::Value(Value::Nil)
+                    Err(Ok(Value::Nil))
                 } else {
-                    ServerResponse::Error(
-                        ((
-                            ServerErrorKind::NotBusy.into(),
-                            "some random failure, really",
-                        )
-                            .into()),
+                    Err(Err((
+                        ServerErrorKind::NotBusy.into(),
+                        "some random failure, really",
                     )
+                        .into()))
                 }
             },
         );
@@ -1837,7 +1573,7 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_fan_out_and_return_nil_if_no_other_value_was_received() {
-        let name = "test_async_cluster_fan_out_and_return_nil_if_no_other_value_was_received";
+        let name = "test_async_cluster_fan_out_and_return_one_succeeded_response";
         let mut cmd = Cmd::new();
         cmd.arg("RANDOMKEY");
         let MockEnv {
@@ -1851,12 +1587,8 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], _| {
-                if let Err(res) =
-                    respond_startup_with_replica_using_config(name, received_cmd, None)
-                {
-                    return res.into();
-                }
-                ServerResponse::Value(Value::Nil)
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                Err(Ok(Value::Nil))
             },
         );
 
@@ -1882,19 +1614,13 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], _port| {
-                if let Err(res) =
-                    respond_startup_with_replica_using_config(name, received_cmd, None)
-                {
-                    return res.into();
-                }
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
 
-                ServerResponse::Error(
-                    ((
-                        ServerErrorKind::NotBusy.into(),
-                        "No scripts in execution right now",
-                    )
-                        .into()),
+                Err(Err((
+                    ServerErrorKind::NotBusy.into(),
+                    "No scripts in execution right now",
                 )
+                    .into()))
             },
         );
 
@@ -1919,12 +1645,8 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], _port| {
-                if let Err(res) =
-                    respond_startup_with_replica_using_config(name, received_cmd, None)
-                {
-                    return res.into();
-                }
-                ServerResponse::Value(Value::Okay)
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                Err(Ok(Value::Okay))
             },
         );
 
@@ -1949,21 +1671,15 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                if let Err(res) =
-                    respond_startup_with_replica_using_config(name, received_cmd, None)
-                {
-                    return res.into();
-                }
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
                 if port == 6381 {
-                    return ServerResponse::Error(
-                        ((
-                            ServerErrorKind::NotBusy.into(),
-                            "No scripts in execution right now",
-                        )
-                            .into()),
-                    );
+                    return Err(Err((
+                        ServerErrorKind::NotBusy.into(),
+                        "No scripts in execution right now",
+                    )
+                        .into()));
                 }
-                ServerResponse::Value(Value::Okay)
+                Err(Ok(Value::Okay))
             },
         );
 
@@ -1988,15 +1704,11 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                if let Err(res) =
-                    respond_startup_with_replica_using_config(name, received_cmd, None)
-                {
-                    return res.into();
-                }
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
                 if port == 6381 {
-                    return ServerResponse::Value(Value::BulkString("foo".as_bytes().to_vec()));
+                    return Err(Ok(Value::BulkString("foo".as_bytes().to_vec())));
                 }
-                ServerResponse::Value(Value::Nil)
+                Err(Ok(Value::Nil))
             },
         );
 
@@ -2022,12 +1734,10 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                if let Err(res) =
-                    respond_startup_with_replica_using_config(name, received_cmd, None)
-                {
-                    return res.into();
-                }
-                ServerResponse::Value(Value::BulkString(format!("latency: {port}").into_bytes()))
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                Err(Ok(Value::BulkString(
+                    format!("latency: {port}").into_bytes(),
+                )))
             },
         );
 
@@ -2063,14 +1773,10 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                if let Err(res) =
-                    respond_startup_with_replica_using_config(name, received_cmd, None)
-                {
-                    return res.into();
-                }
-                ServerResponse::Value(Value::Array(vec![Value::BulkString(
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                Err(Ok(Value::Array(vec![Value::BulkString(
                     format!("key:{port}").into_bytes(),
-                )]))
+                )])))
             },
         );
 
@@ -2101,11 +1807,7 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                if let Err(res) =
-                    respond_startup_with_replica_using_config(name, received_cmd, None)
-                {
-                    return res.into();
-                }
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
                 let cmd_str = std::str::from_utf8(received_cmd).unwrap();
                 let results = ["foo", "bar", "baz"]
                     .iter()
@@ -2119,7 +1821,7 @@ mod cluster_async {
                         }
                     })
                     .collect();
-                ServerResponse::Value(Value::Array(results))
+                Err(Ok(Value::Array(results)))
             },
         );
 
@@ -2145,17 +1847,13 @@ mod cluster_async {
             ClusterClient::builder(vec![&*format!("redis://{name}")]).read_from_replicas(),
             name,
             move |received_cmd: &[u8], port| {
-                if let Err(res) =
-                    respond_startup_with_replica_using_config(name, received_cmd, None)
-                {
-                    return res.into();
-                }
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
                 let cmd_str = std::str::from_utf8(received_cmd).unwrap();
                 if cmd_str.contains("ASKING") && port == 6382 {
                     asking_called_cloned.fetch_add(1, Ordering::Relaxed);
                 }
                 if port == 6380 && cmd_str.contains("baz") {
-                    return ServerResponse::Error(crate::support::parse_server_error(
+                    return Err(parse_redis_value(
                         format!("-ASK 14000 {name}:6382\r\n").as_bytes(),
                     ));
                 }
@@ -2171,7 +1869,7 @@ mod cluster_async {
                         }
                     })
                     .collect();
-                ServerResponse::Value(Value::Array(results))
+                Err(Ok(Value::Array(results)))
             },
         );
 
@@ -2182,10 +1880,8 @@ mod cluster_async {
         assert_eq!(asking_called.load(Ordering::Relaxed), 1);
     }
 
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_async_cluster_with_username_and_password(#[case] runtime: RuntimeType) {
+    #[async_test]
+    async fn async_cluster_with_username_and_password() -> RedisResult<()> {
         let cluster = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
             builder
                 .username(RedisCluster::username())
@@ -2193,25 +1889,19 @@ mod cluster_async {
         });
         cluster.disable_default_user();
 
-        block_on_all(
-            async move {
-                let mut connection = cluster.async_connection().await;
-                cmd("SET")
-                    .arg("test")
-                    .arg("test_data")
-                    .exec_async(&mut connection)
-                    .await?;
-                let res: String = cmd("GET")
-                    .arg("test")
-                    .clone()
-                    .query_async(&mut connection)
-                    .await?;
-                assert_eq!(res, "test_data");
-                Ok::<_, RedisError>(())
-            },
-            runtime,
-        )
-        .unwrap();
+        let mut connection = cluster.async_connection().await;
+        cmd("SET")
+            .arg("test")
+            .arg("test_data")
+            .exec_async(&mut connection)
+            .await?;
+        let res: String = cmd("GET")
+            .arg("test")
+            .clone()
+            .query_async(&mut connection)
+            .await?;
+        assert_eq!(res, "test_data");
+        Ok::<_, RedisError>(())
     }
 
     #[test]
@@ -2227,19 +1917,17 @@ mod cluster_async {
             ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(2),
             name,
             move |cmd: &[u8], port| {
-                if let Err(res) = respond_startup_two_nodes(name, cmd) {
-                    return res.into();
-                }
+                respond_startup_two_nodes(name, cmd)?;
                 // Error twice with io-error, ensure connection is reestablished w/out calling
                 // other node (i.e., not doing a full slot rebuild)
                 match port {
                     6380 => panic!("Node should not be called"),
                     _ => match completed.fetch_add(1, Ordering::SeqCst) {
-                        0..=1 => ServerResponse::Error(RedisError::from(std::io::Error::new(
+                        0..=1 => Err(Err(RedisError::from(std::io::Error::new(
                             std::io::ErrorKind::ConnectionReset,
                             "mock-io-error",
-                        ))),
-                        _ => ServerResponse::Value(Value::BulkString(b"123".to_vec())),
+                        )))),
+                        _ => Err(Ok(Value::BulkString(b"123".to_vec()))),
                     },
                 }
             },
@@ -2266,13 +1954,11 @@ mod cluster_async {
         } = MockEnv::new(name, {
             let completed = completed.clone();
             move |cmd: &[u8], _| {
-                if let Err(res) = respond_startup_two_nodes(name, cmd) {
-                    return res.into();
-                }
+                respond_startup_two_nodes(name, cmd)?;
                 // Error twice with io-error, ensure connection is reestablished w/out calling
                 // other node (i.e., not doing a full slot rebuild)
                 completed.fetch_add(1, Ordering::SeqCst);
-                ServerResponse::Error(((ServerErrorKind::ReadOnly.into(), "").into()))
+                Err(Err((ServerErrorKind::ReadOnly.into(), "").into()))
             }
         });
 
@@ -2316,14 +2002,12 @@ mod cluster_async {
                 .read_from_replicas(),
             name,
             move |received_cmd: &[u8], _| {
-                if let Err(res) = respond_startup_with_replica_using_config(
+                respond_startup_with_replica_using_config(
                     name,
                     received_cmd,
                     slots_config.clone(),
-                ) {
-                    return res.into();
-                }
-                ServerResponse::Value(Value::SimpleString("PONG".into()))
+                )?;
+                Err(Ok(Value::SimpleString("PONG".into())))
             },
         );
 
@@ -2331,122 +2015,97 @@ mod cluster_async {
         assert!(res.is_ok());
     }
 
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_async_cluster_handle_complete_server_disconnect_without_panicking(
-        #[case] runtime: RuntimeType,
-    ) {
+    #[async_test]
+    async fn async_cluster_handle_complete_server_disconnect_without_panicking() -> RedisResult<()>
+    {
         let cluster =
             TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(2));
-        block_on_all(
-            async move {
-                let mut connection = cluster.async_connection().await;
-                drop(cluster);
-                for _ in 0..5 {
-                    let cmd = cmd("PING");
-                    let result = connection
-                        .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
-                        .await;
-                    // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-                    assert!(result.is_err());
-                    // This will route to all nodes - different path through the code.
-                    let result = connection.req_packed_command(&cmd).await;
-                    // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-                    assert!(result.is_err());
-                }
-                Ok::<_, RedisError>(())
-            },
-            runtime,
-        )
-        .unwrap();
+
+        let mut connection = cluster.async_connection().await;
+        drop(cluster);
+        for _ in 0..5 {
+            let cmd = cmd("PING");
+            let result = connection
+                .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                .await;
+            // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
+            assert!(result.is_err());
+            // This will route to all nodes - different path through the code.
+            let result = connection.req_packed_command(&cmd).await;
+            // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
+            assert!(result.is_err());
+        }
+        Ok::<_, RedisError>(())
     }
 
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_async_cluster_reconnect_after_complete_server_disconnect(#[case] runtime: RuntimeType) {
+    #[async_test]
+    async fn async_cluster_reconnect_after_complete_server_disconnect() -> RedisResult<()> {
         let cluster = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
             builder.retries(2)
         });
 
-        block_on_all(
-            async move {
-                let ports: Vec<_> = cluster.get_ports();
+        let ports: Vec<_> = cluster.get_ports();
 
-                let mut connection = cluster.async_connection().await;
-                drop(cluster);
+        let mut connection = cluster.async_connection().await;
+        drop(cluster);
 
-                let cmd = cmd("PING");
+        let cmd = cmd("PING");
 
-                let result = connection
-                    .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
-                    .await;
-                // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-                assert!(result.is_err());
+        let result = connection
+            .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+            .await;
+        // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
+        assert!(result.is_err());
 
-                // This will route to all nodes - different path through the code.
-                let result = connection.req_packed_command(&cmd).await;
-                // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-                assert!(result.is_err());
+        // This will route to all nodes - different path through the code.
+        let result = connection.req_packed_command(&cmd).await;
+        // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
+        assert!(result.is_err());
 
-                let _cluster = RedisCluster::new(RedisClusterConfiguration {
-                    ports: ports.clone(),
-                    ..Default::default()
-                });
+        let _cluster = RedisCluster::new(RedisClusterConfiguration {
+            ports: ports.clone(),
+            ..Default::default()
+        });
 
-                let result = connection.req_packed_command(&cmd).await.unwrap();
-                assert_eq!(result, Value::SimpleString("PONG".to_string()));
+        let result = connection.req_packed_command(&cmd).await.unwrap();
+        assert_eq!(result, Value::SimpleString("PONG".to_string()));
 
-                Ok::<_, RedisError>(())
-            },
-            runtime,
-        )
-        .unwrap();
+        Ok::<_, RedisError>(())
     }
 
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_async_cluster_reconnect_after_complete_server_disconnect_route_to_many(
-        #[case] runtime: RuntimeType,
-    ) {
+    #[async_test]
+    async fn async_cluster_reconnect_after_complete_server_disconnect_route_to_many(
+    ) -> RedisResult<()> {
         let cluster = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
             builder.retries(3)
         });
 
-        block_on_all(
-            async move {
-                let ports: Vec<_> = cluster.get_ports();
+        let ports: Vec<_> = cluster.get_ports();
 
-                let mut connection = cluster.async_connection().await;
-                drop(cluster);
+        let mut connection = cluster.async_connection().await;
+        drop(cluster);
 
-                // recreate cluster
-                let _cluster = RedisCluster::new(RedisClusterConfiguration {
-                    ports: ports.clone(),
-                    ..Default::default()
-                });
+        // recreate cluster
+        let _cluster = RedisCluster::new(RedisClusterConfiguration {
+            ports: ports.clone(),
+            ..Default::default()
+        });
 
-                let cmd = cmd("PING");
-                // explicitly route to all primaries and request all succeeded
-                let result = connection
-                    .route_command(
-                        &cmd,
-                        RoutingInfo::MultiNode((
-                            MultipleNodeRoutingInfo::AllMasters,
-                            Some(redis::cluster_routing::ResponsePolicy::AllSucceeded),
-                        )),
-                    )
-                    .await
-                    .unwrap();
-                assert_eq!(result, Value::SimpleString("PONG".to_string()));
+        let cmd = cmd("PING");
+        // explicitly route to all primaries and request all succeeded
+        let result = connection
+            .route_command(
+                &cmd,
+                RoutingInfo::MultiNode((
+                    MultipleNodeRoutingInfo::AllMasters,
+                    Some(redis::cluster_routing::ResponsePolicy::AllSucceeded),
+                )),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result, Value::SimpleString("PONG".to_string()));
 
-                Ok::<_, RedisError>(())
-            },
-            runtime,
-        )
-        .unwrap();
+        Ok::<_, RedisError>(())
     }
 
     #[test]
@@ -2466,10 +2125,8 @@ mod cluster_async {
             name,
             move |cmd: &[u8], port| {
                 if port == 6380 {
-                    if let Err(res) = respond_startup_two_nodes(name, cmd) {
-                        return res.into();
-                    }
-                    return ServerResponse::Error(crate::support::parse_server_error(
+                    respond_startup_two_nodes(name, cmd)?;
+                    return Err(parse_redis_value(
                         format!("-MOVED 123 {name}:6379\r\n").as_bytes(),
                     ));
                 }
@@ -2485,26 +2142,22 @@ mod cluster_async {
                     // 5. reconnect on 2nd GET attempt.
                     // more than 5 attempts mean that the server reconnects more than once, which is the behavior we're testing against.
                     if past_get_attempts != 1 || connect_attempt > 3 {
-                        if let Err(res) = respond_startup_two_nodes(name, cmd) {
-                            return res.into();
-                        }
+                        respond_startup_two_nodes(name, cmd)?;
                     }
                     if connect_attempt > 5 {
                         panic!("Too many pings!");
                     }
-                    ServerResponse::Error(broken_pipe_error())
+                    Err(Err(broken_pipe_error()))
                 } else {
-                    if let Err(res) = respond_startup_two_nodes(name, cmd) {
-                        return res.into();
-                    }
+                    respond_startup_two_nodes(name, cmd)?;
                     let past_get_attempts = get_attempts.fetch_add(1, Ordering::Relaxed);
                     // we fail the initial GET request, and after that we'll fail the first reconnect attempt, in the `refresh_connections` attempt.
                     if past_get_attempts == 0 {
                         // Error once with io-error, ensure connection is reestablished w/out calling
                         // other node (i.e., not doing a full slot rebuild)
-                        ServerResponse::Error(broken_pipe_error())
+                        Err(Err(broken_pipe_error()))
                     } else {
-                        ServerResponse::Value(Value::BulkString(b"123".to_vec()))
+                        Err(Ok(Value::BulkString(b"123".to_vec())))
                     }
                 }
             },
@@ -2524,68 +2177,58 @@ mod cluster_async {
         assert_eq!(ping_attempts.load(Ordering::Acquire), 5);
     }
 
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_kill_connection_on_drop_even_when_blocking(#[case] runtime: RuntimeType) {
+    #[async_test]
+    async fn kill_connection_on_drop_even_when_blocking() -> RedisResult<()> {
         let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(3));
 
-        block_on_all(
-            async move {
-                async fn count_ids(
-                    conn: &mut impl redis::aio::ConnectionLike,
-                ) -> RedisResult<usize> {
-                    // we use a pipeline with a fake command in order to ensure that the CLIENT LIST command gets routed to the correct node.
-                    // we use LIST as the key, in order to ensure that adding CLIENT LIST doesn't trigger a CROSSSLOTS error.
-                    let initial_connections: String = pipe()
-                        .cmd("GET")
-                        .arg("LIST")
-                        .cmd("CLIENT")
-                        .arg("LIST")
-                        .query_async::<Vec<Option<String>>>(conn)
-                        .await?
-                        .pop()
-                        .unwrap()
-                        .unwrap();
+        async fn count_ids(conn: &mut impl redis::aio::ConnectionLike) -> RedisResult<usize> {
+            // we use a pipeline with a fake command in order to ensure that the CLIENT LIST command gets routed to the correct node.
+            // we use LIST as the key, in order to ensure that adding CLIENT LIST doesn't trigger a CROSSSLOTS error.
+            let initial_connections: String = pipe()
+                .cmd("GET")
+                .arg("LIST")
+                .cmd("CLIENT")
+                .arg("LIST")
+                .query_async::<Vec<Option<String>>>(conn)
+                .await?
+                .pop()
+                .unwrap()
+                .unwrap();
 
-                    Ok(initial_connections
-                        .as_bytes()
-                        .windows(3)
-                        .filter(|substr| substr == b"id=")
-                        .count())
-                }
+            Ok(initial_connections
+                .as_bytes()
+                .windows(3)
+                .filter(|substr| substr == b"id=")
+                .count())
+        }
 
-                let mut conn = ctx.async_connection().await;
-                let mut connection_to_dispose_of = ctx.async_connection().await;
+        let mut conn = ctx.async_connection().await;
+        let mut connection_to_dispose_of = ctx.async_connection().await;
 
-                assert_eq!(count_ids(&mut conn).await.unwrap(), 2);
+        assert_eq!(count_ids(&mut conn).await.unwrap(), 2);
 
-                let mut cmd = cmd("BLPOP");
-                let command_that_blocks = Box::pin(async move {
-                    () = cmd
-                        .arg("LIST")
-                        .arg(0)
-                        .exec_async(&mut connection_to_dispose_of)
-                        .await
-                        .unwrap();
-                    unreachable!("This shouldn't happen");
-                })
-                .fuse();
-                let timeout =
-                    futures_time::task::sleep(futures_time::time::Duration::from_millis(1)).fuse();
+        let mut cmd = cmd("BLPOP");
+        let command_that_blocks = Box::pin(async move {
+            () = cmd
+                .arg("LIST")
+                .arg(0)
+                .exec_async(&mut connection_to_dispose_of)
+                .await
+                .unwrap();
+            unreachable!("This shouldn't happen");
+        })
+        .fuse();
+        let timeout =
+            futures_time::task::sleep(futures_time::time::Duration::from_millis(1)).fuse();
 
-                let others = futures::future::select(command_that_blocks, timeout).await;
-                drop(others);
+        let others = futures::future::select(command_that_blocks, timeout).await;
+        drop(others);
 
-                futures_time::task::sleep(futures_time::time::Duration::from_millis(100)).await;
+        futures_time::task::sleep(futures_time::time::Duration::from_millis(100)).await;
 
-                assert_eq!(count_ids(&mut conn).await.unwrap(), 1);
+        assert_eq!(count_ids(&mut conn).await.unwrap(), 1);
 
-                Ok(())
-            },
-            runtime,
-        )
-        .unwrap();
+        Ok(())
     }
 
     #[test]
@@ -2606,18 +2249,18 @@ mod cluster_async {
                 .min_retry_wait(2),
             name,
             move |received_cmd: &[u8], _| {
-                if let Err(res) = respond_startup(name, received_cmd) {
-                    return res.into();
-                }
+                respond_startup(name, received_cmd)?;
 
                 if received_cmd == packed_cmd {
                     cloned_req_counter.fetch_add(1, Ordering::Relaxed);
-                    return ServerResponse::Error(
-                        ((ServerErrorKind::TryAgain.into(), "seriously, try again").into()),
-                    );
+                    return Err(Err((
+                        ServerErrorKind::TryAgain.into(),
+                        "seriously, try again",
+                    )
+                        .into()));
                 }
 
-                ServerResponse::Value(Value::Okay)
+                Err(Ok(Value::Okay))
             },
         );
 
@@ -2748,10 +2391,8 @@ mod cluster_async {
             Ok(())
         }
 
-        #[rstest]
-        #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-        #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-        fn pub_sub_subscription(#[case] runtime: RuntimeType) {
+        #[async_test]
+        async fn pub_sub_subscription() -> RedisResult<()> {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
                 builder
@@ -2759,87 +2400,64 @@ mod cluster_async {
                     .push_sender(tx.clone())
             });
 
-            block_on_all(
-                async move {
-                    let (mut publish_conn, mut pubsub_conn) =
-                        join!(ctx.async_connection(), ctx.async_connection());
-                    let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
+            let (mut publish_conn, mut pubsub_conn) =
+                join!(ctx.async_connection(), ctx.async_connection());
+            let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
 
-                    subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await?;
+            subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await?;
 
-                    check_publishing(&mut publish_conn, &mut rx, is_redis_6).await?;
+            check_publishing(&mut publish_conn, &mut rx, is_redis_6).await?;
 
-                    Ok::<_, RedisError>(())
-                },
-                runtime,
-            )
-            .unwrap();
+            Ok::<_, RedisError>(())
         }
 
-        #[rstest]
-        #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-        #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-        fn pub_sub_subscription_with_config(#[case] runtime: RuntimeType) {
+        #[async_test]
+        async fn pub_sub_subscription_with_config() -> RedisResult<()> {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
                 builder.use_protocol(ProtocolVersion::RESP3)
             });
             let config = redis::cluster::ClusterConfig::new().set_push_sender(tx.clone());
-            block_on_all(
-                async move {
-                    let (mut publish_conn, mut pubsub_conn) = join!(
-                        ctx.async_connection_with_config(config.clone()),
-                        ctx.async_connection_with_config(config)
-                    );
-                    let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
 
-                    subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await?;
+            let (mut publish_conn, mut pubsub_conn) = join!(
+                ctx.async_connection_with_config(config.clone()),
+                ctx.async_connection_with_config(config)
+            );
+            let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
 
-                    check_publishing(&mut publish_conn, &mut rx, is_redis_6).await?;
+            subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await?;
 
-                    Ok::<_, RedisError>(())
-                },
-                runtime,
-            )
-            .unwrap();
+            check_publishing(&mut publish_conn, &mut rx, is_redis_6).await?;
+
+            Ok::<_, RedisError>(())
         }
 
-        #[rstest]
-        #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-        #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-        fn pub_sub_shardnumsub(#[case] runtime: RuntimeType) {
+        #[async_test]
+        async fn pub_sub_shardnumsub() -> RedisResult<()> {
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
                 builder.use_protocol(ProtocolVersion::RESP3)
             });
 
-            block_on_all(
-                async move {
-                    let mut pubsub_conn = ctx.async_connection().await;
-                    if check_if_redis_6(&mut pubsub_conn).await {
-                        return Ok(());
-                    }
+            let mut pubsub_conn = ctx.async_connection().await;
+            if check_if_redis_6(&mut pubsub_conn).await {
+                return Ok(());
+            }
 
-                    let _: () = pubsub_conn.ssubscribe("foo").await?;
+            let _: () = pubsub_conn.ssubscribe("foo").await?;
 
-                    let res = cmd("pubsub")
-                        .arg("SHARDNUMSUB")
-                        .arg("foo")
-                        .query_async::<(String, usize)>(&mut pubsub_conn)
-                        .await
-                        .unwrap();
-                    assert_eq!(res, ("foo".to_string(), 1));
+            let res = cmd("pubsub")
+                .arg("SHARDNUMSUB")
+                .arg("foo")
+                .query_async::<(String, usize)>(&mut pubsub_conn)
+                .await
+                .unwrap();
+            assert_eq!(res, ("foo".to_string(), 1));
 
-                    Ok::<_, RedisError>(())
-                },
-                runtime,
-            )
-            .unwrap();
+            Ok::<_, RedisError>(())
         }
 
-        #[rstest]
-        #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-        #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-        fn pub_sub_unsubscription(#[case] runtime: RuntimeType) {
+        #[async_test]
+        async fn pub_sub_unsubscription() -> RedisResult<()> {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
                 builder
@@ -2847,105 +2465,91 @@ mod cluster_async {
                     .push_sender(tx.clone())
             });
 
-            block_on_all(
-                async move {
-                    let (mut publish_conn, mut pubsub_conn) =
-                        join!(ctx.async_connection(), ctx.async_connection());
-                    let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
+            let (mut publish_conn, mut pubsub_conn) =
+                join!(ctx.async_connection(), ctx.async_connection());
+            let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
 
-                    let _: () = pubsub_conn.subscribe("regular-phonewave").await?;
-                    let push = rx.recv().await.unwrap();
-                    assert_eq!(
-                        push,
-                        PushInfo {
-                            kind: PushKind::Subscribe,
-                            data: vec![
-                                Value::BulkString(b"regular-phonewave".to_vec()),
-                                Value::Int(1)
-                            ]
-                        }
-                    );
-                    let _: () = pubsub_conn.unsubscribe("regular-phonewave").await?;
-                    let push = rx.recv().await.unwrap();
-                    assert_eq!(
-                        push,
-                        PushInfo {
-                            kind: PushKind::Unsubscribe,
-                            data: vec![
-                                Value::BulkString(b"regular-phonewave".to_vec()),
-                                Value::Int(0)
-                            ]
-                        }
-                    );
+            let _: () = pubsub_conn.subscribe("regular-phonewave").await?;
+            let push = rx.recv().await.unwrap();
+            assert_eq!(
+                push,
+                PushInfo {
+                    kind: PushKind::Subscribe,
+                    data: vec![
+                        Value::BulkString(b"regular-phonewave".to_vec()),
+                        Value::Int(1)
+                    ]
+                }
+            );
+            let _: () = pubsub_conn.unsubscribe("regular-phonewave").await?;
+            let push = rx.recv().await.unwrap();
+            assert_eq!(
+                push,
+                PushInfo {
+                    kind: PushKind::Unsubscribe,
+                    data: vec![
+                        Value::BulkString(b"regular-phonewave".to_vec()),
+                        Value::Int(0)
+                    ]
+                }
+            );
 
-                    let _: () = pubsub_conn.psubscribe("phonewave*").await?;
-                    let push = rx.recv().await.unwrap();
-                    assert_eq!(
-                        push,
-                        PushInfo {
-                            kind: PushKind::PSubscribe,
-                            data: vec![Value::BulkString(b"phonewave*".to_vec()), Value::Int(1)]
-                        }
-                    );
-                    let _: () = pubsub_conn.punsubscribe("phonewave*").await?;
-                    let push = rx.recv().await.unwrap();
-                    assert_eq!(
-                        push,
-                        PushInfo {
-                            kind: PushKind::PUnsubscribe,
-                            data: vec![Value::BulkString(b"phonewave*".to_vec()), Value::Int(0)]
-                        }
-                    );
+            let _: () = pubsub_conn.psubscribe("phonewave*").await?;
+            let push = rx.recv().await.unwrap();
+            assert_eq!(
+                push,
+                PushInfo {
+                    kind: PushKind::PSubscribe,
+                    data: vec![Value::BulkString(b"phonewave*".to_vec()), Value::Int(1)]
+                }
+            );
+            let _: () = pubsub_conn.punsubscribe("phonewave*").await?;
+            let push = rx.recv().await.unwrap();
+            assert_eq!(
+                push,
+                PushInfo {
+                    kind: PushKind::PUnsubscribe,
+                    data: vec![Value::BulkString(b"phonewave*".to_vec()), Value::Int(0)]
+                }
+            );
 
-                    if !is_redis_6 {
-                        let _: () = pubsub_conn.ssubscribe("sphonewave").await?;
-                        let push = rx.recv().await.unwrap();
-                        assert_eq!(
-                            push,
-                            PushInfo {
-                                kind: PushKind::SSubscribe,
-                                data: vec![
-                                    Value::BulkString(b"sphonewave".to_vec()),
-                                    Value::Int(1)
-                                ]
-                            }
-                        );
-                        let _: () = pubsub_conn.sunsubscribe("sphonewave").await?;
-                        let push = rx.recv().await.unwrap();
-                        assert_eq!(
-                            push,
-                            PushInfo {
-                                kind: PushKind::SUnsubscribe,
-                                data: vec![
-                                    Value::BulkString(b"sphonewave".to_vec()),
-                                    Value::Int(0)
-                                ]
-                            }
-                        );
+            if !is_redis_6 {
+                let _: () = pubsub_conn.ssubscribe("sphonewave").await?;
+                let push = rx.recv().await.unwrap();
+                assert_eq!(
+                    push,
+                    PushInfo {
+                        kind: PushKind::SSubscribe,
+                        data: vec![Value::BulkString(b"sphonewave".to_vec()), Value::Int(1)]
                     }
-
-                    let _: () = publish_conn.publish("regular-phonewave", "banana").await?;
-                    let _: () = publish_conn.publish("phonewave-pattern", "banana").await?;
-                    if !is_redis_6 {
-                        let _: () = publish_conn.spublish("sphonewave", "banana").await?;
+                );
+                let _: () = pubsub_conn.sunsubscribe("sphonewave").await?;
+                let push = rx.recv().await.unwrap();
+                assert_eq!(
+                    push,
+                    PushInfo {
+                        kind: PushKind::SUnsubscribe,
+                        data: vec![Value::BulkString(b"sphonewave".to_vec()), Value::Int(0)]
                     }
+                );
+            }
 
-                    assert_eq!(
-                        rx.try_recv(),
-                        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
-                    );
+            let _: () = publish_conn.publish("regular-phonewave", "banana").await?;
+            let _: () = publish_conn.publish("phonewave-pattern", "banana").await?;
+            if !is_redis_6 {
+                let _: () = publish_conn.spublish("sphonewave", "banana").await?;
+            }
 
-                    Ok::<_, RedisError>(())
-                },
-                runtime,
-            )
-            .unwrap();
+            assert_eq!(
+                rx.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            );
+
+            Ok::<_, RedisError>(())
         }
 
-        #[rstest]
-        #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-        #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-        fn connection_is_still_usable_if_pubsub_receiver_is_dropped(#[case] runtime: RuntimeType) {
+        #[async_test]
+        async fn connection_is_still_usable_if_pubsub_receiver_is_dropped() -> RedisResult<()> {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
                 builder
@@ -2953,34 +2557,26 @@ mod cluster_async {
                     .push_sender(tx.clone())
             });
 
-            block_on_all(
-                async move {
-                    let mut pubsub_conn = ctx.async_connection().await;
-                    let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
+            let mut pubsub_conn = ctx.async_connection().await;
+            let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
 
-                    subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await?;
+            subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await?;
 
-                    drop(rx);
+            drop(rx);
 
-                    assert_eq!(
-                        cmd("PING")
-                            .query_async::<String>(&mut pubsub_conn)
-                            .await
-                            .unwrap(),
-                        "PONG".to_string()
-                    );
+            assert_eq!(
+                cmd("PING")
+                    .query_async::<String>(&mut pubsub_conn)
+                    .await
+                    .unwrap(),
+                "PONG".to_string()
+            );
 
-                    Ok::<_, RedisError>(())
-                },
-                runtime,
-            )
-            .unwrap();
+            Ok::<_, RedisError>(())
         }
 
-        #[rstest]
-        #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-        #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-        fn multiple_subscribes_and_unsubscribes_work(#[case] runtime: RuntimeType) {
+        #[async_test]
+        async fn multiple_subscribes_and_unsubscribes_work() -> RedisResult<()> {
             // In this test we subscribe on all subscription variations to 3 channels in a single call, then unsubscribe from 2 channels.
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
@@ -2989,142 +2585,126 @@ mod cluster_async {
                     .push_sender(tx.clone())
             });
 
-            block_on_all(
-                async move {
-                    let mut pubsub_conn = ctx.async_connection().await;
-                    let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
+            let mut pubsub_conn = ctx.async_connection().await;
+            let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
 
-                    let _: () = pubsub_conn
-                        .subscribe(&[
-                            "regular-phonewave1",
-                            "regular-phonewave2",
-                            "regular-phonewave3",
-                        ])
-                        .await?;
-                    for i in 1..4 {
-                        let push = rx.recv().await.unwrap();
-                        assert_eq!(
-                            push,
-                            PushInfo {
-                                kind: PushKind::Subscribe,
-                                data: vec![
-                                    Value::BulkString(
-                                        format!("regular-phonewave{i}").as_bytes().to_vec()
-                                    ),
-                                    Value::Int(i)
-                                ]
-                            }
-                        );
+            let _: () = pubsub_conn
+                .subscribe(&[
+                    "regular-phonewave1",
+                    "regular-phonewave2",
+                    "regular-phonewave3",
+                ])
+                .await?;
+            for i in 1..4 {
+                let push = rx.recv().await.unwrap();
+                assert_eq!(
+                    push,
+                    PushInfo {
+                        kind: PushKind::Subscribe,
+                        data: vec![
+                            Value::BulkString(format!("regular-phonewave{i}").as_bytes().to_vec()),
+                            Value::Int(i)
+                        ]
                     }
-                    let _: () = pubsub_conn
-                        .unsubscribe(&["regular-phonewave1", "regular-phonewave2"])
-                        .await?;
-                    for i in 1..3 {
-                        let push = rx.recv().await.unwrap();
-                        assert_eq!(
-                            push,
-                            PushInfo {
-                                kind: PushKind::Unsubscribe,
-                                data: vec![
-                                    Value::BulkString(
-                                        format!("regular-phonewave{i}").as_bytes().to_vec()
-                                    ),
-                                    Value::Int(3 - i)
-                                ]
-                            }
-                        );
+                );
+            }
+            let _: () = pubsub_conn
+                .unsubscribe(&["regular-phonewave1", "regular-phonewave2"])
+                .await?;
+            for i in 1..3 {
+                let push = rx.recv().await.unwrap();
+                assert_eq!(
+                    push,
+                    PushInfo {
+                        kind: PushKind::Unsubscribe,
+                        data: vec![
+                            Value::BulkString(format!("regular-phonewave{i}").as_bytes().to_vec()),
+                            Value::Int(3 - i)
+                        ]
                     }
+                );
+            }
 
-                    let _: () = pubsub_conn
-                        .psubscribe(&["phonewave*1", "phonewave*2", "phonewave*3"])
-                        .await?;
-                    for i in 1..4 {
-                        let push = rx.recv().await.unwrap();
-                        assert_eq!(
-                            push,
-                            PushInfo {
-                                kind: PushKind::PSubscribe,
-                                data: vec![
-                                    Value::BulkString(format!("phonewave*{i}").as_bytes().to_vec()),
-                                    Value::Int(i)
-                                ]
-                            }
-                        );
+            let _: () = pubsub_conn
+                .psubscribe(&["phonewave*1", "phonewave*2", "phonewave*3"])
+                .await?;
+            for i in 1..4 {
+                let push = rx.recv().await.unwrap();
+                assert_eq!(
+                    push,
+                    PushInfo {
+                        kind: PushKind::PSubscribe,
+                        data: vec![
+                            Value::BulkString(format!("phonewave*{i}").as_bytes().to_vec()),
+                            Value::Int(i)
+                        ]
                     }
+                );
+            }
 
-                    let _: () = pubsub_conn
-                        .punsubscribe(&["phonewave*1", "phonewave*2"])
-                        .await?;
-                    for i in 1..3 {
-                        let push = rx.recv().await.unwrap();
-                        assert_eq!(
-                            push,
-                            PushInfo {
-                                kind: PushKind::PUnsubscribe,
-                                data: vec![
-                                    Value::BulkString(format!("phonewave*{i}").as_bytes().to_vec()),
-                                    Value::Int(3 - i)
-                                ]
-                            }
-                        );
+            let _: () = pubsub_conn
+                .punsubscribe(&["phonewave*1", "phonewave*2"])
+                .await?;
+            for i in 1..3 {
+                let push = rx.recv().await.unwrap();
+                assert_eq!(
+                    push,
+                    PushInfo {
+                        kind: PushKind::PUnsubscribe,
+                        data: vec![
+                            Value::BulkString(format!("phonewave*{i}").as_bytes().to_vec()),
+                            Value::Int(3 - i)
+                        ]
                     }
-                    if !is_redis_6 {
-                        // we use the curly braces in order to avoid cross slots errors.
-                        let _: () = pubsub_conn
-                            .ssubscribe(&["{sphonewave}1", "{sphonewave}2", "{sphonewave}3"])
-                            .await?;
-                        for i in 1..4 {
-                            let push = rx.recv().await.unwrap();
-                            assert_eq!(
-                                push,
-                                PushInfo {
-                                    kind: PushKind::SSubscribe,
-                                    data: vec![
-                                        Value::BulkString(
-                                            format!("{{sphonewave}}{i}").as_bytes().to_vec()
-                                        ),
-                                        Value::Int(i)
-                                    ]
-                                }
-                            );
-                        }
-
-                        let _: () = pubsub_conn
-                            .sunsubscribe(&["{sphonewave}1", "{sphonewave}2"])
-                            .await?;
-                        for i in 1..3 {
-                            let push = rx.recv().await.unwrap();
-                            assert_eq!(
-                                push,
-                                PushInfo {
-                                    kind: PushKind::SUnsubscribe,
-                                    data: vec![
-                                        Value::BulkString(
-                                            format!("{{sphonewave}}{i}").as_bytes().to_vec()
-                                        ),
-                                        Value::Int(3 - i)
-                                    ]
-                                }
-                            );
-                        }
-                    }
-
+                );
+            }
+            if !is_redis_6 {
+                // we use the curly braces in order to avoid cross slots errors.
+                let _: () = pubsub_conn
+                    .ssubscribe(&["{sphonewave}1", "{sphonewave}2", "{sphonewave}3"])
+                    .await?;
+                for i in 1..4 {
+                    let push = rx.recv().await.unwrap();
                     assert_eq!(
-                        rx.try_recv(),
-                        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+                        push,
+                        PushInfo {
+                            kind: PushKind::SSubscribe,
+                            data: vec![
+                                Value::BulkString(format!("{{sphonewave}}{i}").as_bytes().to_vec()),
+                                Value::Int(i)
+                            ]
+                        }
                     );
+                }
 
-                    Ok::<_, RedisError>(())
-                },
-                runtime,
-            )
-            .unwrap();
+                let _: () = pubsub_conn
+                    .sunsubscribe(&["{sphonewave}1", "{sphonewave}2"])
+                    .await?;
+                for i in 1..3 {
+                    let push = rx.recv().await.unwrap();
+                    assert_eq!(
+                        push,
+                        PushInfo {
+                            kind: PushKind::SUnsubscribe,
+                            data: vec![
+                                Value::BulkString(format!("{{sphonewave}}{i}").as_bytes().to_vec()),
+                                Value::Int(3 - i)
+                            ]
+                        }
+                    );
+                }
+            }
+
+            assert_eq!(
+                rx.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            );
+
+            Ok::<_, RedisError>(())
         }
 
-        #[rstest]
-        #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-        #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-        fn pub_sub_reconnect_after_disconnect(#[case] runtime: RuntimeType) {
+        #[async_test]
+        async fn pub_sub_reconnect_after_disconnect() -> RedisResult<()> {
             // in this test we will subscribe to channels, then restart the server, and check that the connection
             // doesn't send disconnect message, but instead resubscribes automatically.
 
@@ -3135,96 +2715,88 @@ mod cluster_async {
                     .push_sender(tx.clone())
             });
 
-            block_on_all(
-                async move {
-                    let ports: Vec<_> = ctx.get_ports();
+            let ports: Vec<_> = ctx.get_ports();
 
-                    let (mut publish_conn, mut pubsub_conn) =
-                        join!(ctx.async_connection(), ctx.async_connection());
-                    let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
+            let (mut publish_conn, mut pubsub_conn) =
+                join!(ctx.async_connection(), ctx.async_connection());
+            let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
 
-                    subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await?;
+            subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await?;
 
-                    println!("dropped");
-                    drop(ctx);
+            println!("dropped");
+            drop(ctx);
 
-                    // we expect 1 disconnect per connection to node. 2 connections * 3 node = 6 disconnects.
-                    for _ in 0..6 {
-                        let push = rx.recv().await.unwrap();
-                        assert_eq!(
-                            push,
-                            PushInfo {
-                                kind: PushKind::Disconnection,
-                                data: vec![]
-                            }
-                        );
+            // we expect 1 disconnect per connection to node. 2 connections * 3 node = 6 disconnects.
+            for _ in 0..6 {
+                let push = rx.recv().await.unwrap();
+                assert_eq!(
+                    push,
+                    PushInfo {
+                        kind: PushKind::Disconnection,
+                        data: vec![]
                     }
+                );
+            }
 
-                    // recreate cluster
-                    let _cluster = RedisCluster::new(RedisClusterConfiguration {
-                        ports: ports.clone(),
-                        ..Default::default()
-                    });
+            // recreate cluster
+            let _cluster = RedisCluster::new(RedisClusterConfiguration {
+                ports: ports.clone(),
+                ..Default::default()
+            });
 
-                    // verify that we didn't get any disconnect notices.
-                    assert_eq!(
-                        rx.try_recv(),
-                        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
-                    );
+            // verify that we didn't get any disconnect notices.
+            assert_eq!(
+                rx.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            );
 
-                    // send request to trigger reconnection.
-                    let cmd = cmd("PING");
-                    let _ = pubsub_conn
-                        .route_command(
-                            &cmd,
-                            RoutingInfo::MultiNode((
-                                MultipleNodeRoutingInfo::AllMasters,
-                                Some(redis::cluster_routing::ResponsePolicy::AllSucceeded),
-                            )),
-                        )
-                        .await?;
+            // send request to trigger reconnection.
+            let cmd = cmd("PING");
+            let _ = pubsub_conn
+                .route_command(
+                    &cmd,
+                    RoutingInfo::MultiNode((
+                        MultipleNodeRoutingInfo::AllMasters,
+                        Some(redis::cluster_routing::ResponsePolicy::AllSucceeded),
+                    )),
+                )
+                .await?;
 
-                    // the resubsriptions can be received in any order, so we assert without assuming order.
-                    let mut pushes = Vec::new();
-                    pushes.push(rx.recv().await.unwrap());
-                    pushes.push(rx.recv().await.unwrap());
-                    if !is_redis_6 {
-                        pushes.push(rx.recv().await.unwrap());
-                    }
-                    // we expect only 3 resubscriptions.
-                    assert!(rx.try_recv().is_err());
-                    assert!(pushes.contains(&PushInfo {
-                        kind: PushKind::Subscribe,
-                        data: vec![
-                            Value::BulkString(b"regular-phonewave".to_vec()),
-                            Value::Int(1)
-                        ]
-                    }));
-                    assert!(pushes.contains(&PushInfo {
-                        kind: PushKind::PSubscribe,
-                        data: vec![Value::BulkString(b"phonewave*".to_vec()), Value::Int(2)]
-                    }));
+            // the resubsriptions can be received in any order, so we assert without assuming order.
+            let mut pushes = Vec::new();
+            pushes.push(rx.recv().await.unwrap());
+            pushes.push(rx.recv().await.unwrap());
+            if !is_redis_6 {
+                pushes.push(rx.recv().await.unwrap());
+            }
+            // we expect only 3 resubscriptions.
+            assert!(rx.try_recv().is_err());
+            assert!(pushes.contains(&PushInfo {
+                kind: PushKind::Subscribe,
+                data: vec![
+                    Value::BulkString(b"regular-phonewave".to_vec()),
+                    Value::Int(1)
+                ]
+            }));
+            assert!(pushes.contains(&PushInfo {
+                kind: PushKind::PSubscribe,
+                data: vec![Value::BulkString(b"phonewave*".to_vec()), Value::Int(2)]
+            }));
 
-                    if !is_redis_6 {
-                        assert!(pushes.contains(&PushInfo {
-                            kind: PushKind::SSubscribe,
-                            data: vec![Value::BulkString(b"sphonewave".to_vec()), Value::Int(1)]
-                        }));
-                    }
+            if !is_redis_6 {
+                assert!(pushes.contains(&PushInfo {
+                    kind: PushKind::SSubscribe,
+                    data: vec![Value::BulkString(b"sphonewave".to_vec()), Value::Int(1)]
+                }));
+            }
 
-                    check_publishing(&mut publish_conn, &mut rx, is_redis_6).await?;
+            check_publishing(&mut publish_conn, &mut rx, is_redis_6).await?;
 
-                    Ok::<_, RedisError>(())
-                },
-                runtime,
-            )
-            .unwrap();
+            Ok::<_, RedisError>(())
         }
 
-        #[rstest]
-        #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-        #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-        fn pub_sub_should_not_reconnect_if_subscription_failed(#[case] runtime: RuntimeType) {
+        #[async_test]
+        async fn pub_sub_should_not_reconnect_if_subscription_failed() -> RedisResult<()> {
             // in this test we will try to subscribe to a disconnected cluster, fail, and check that once the connection reconnects it won't try and resubscribe.
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let ctx = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
@@ -3233,71 +2805,65 @@ mod cluster_async {
                     .push_sender(tx.clone())
             });
 
-            block_on_all(
-                async move {
-                    let ports: Vec<_> = ctx.get_ports();
+            let ports: Vec<_> = ctx.get_ports();
 
-                    let mut pubsub_conn = ctx.async_connection().await;
+            let mut pubsub_conn = ctx.async_connection().await;
 
-                    drop(ctx);
+            drop(ctx);
 
-                    let err = pubsub_conn
-                        .subscribe("regular-phonewave")
-                        .await
-                        .unwrap_err();
-                    assert!(err.is_unrecoverable_error(), "{err:?}");
+            let err = pubsub_conn
+                .subscribe("regular-phonewave")
+                .await
+                .unwrap_err();
+            assert!(err.is_unrecoverable_error(), "{err:?}");
 
-                    // we expect 1 disconnect per connection to node.
-                    for _ in 0..3 {
-                        let push = rx
-                            .recv()
-                            .timeout(futures_time::time::Duration::from_millis(5))
-                            .await
-                            .unwrap();
-                        assert_eq!(
-                            push,
-                            Some(PushInfo {
-                                kind: PushKind::Disconnection,
-                                data: vec![]
-                            })
-                        );
-                    }
+            // we expect 1 disconnect per connection to node.
+            for _ in 0..3 {
+                let push = rx
+                    .recv()
+                    .timeout(futures_time::time::Duration::from_millis(5))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    push,
+                    Some(PushInfo {
+                        kind: PushKind::Disconnection,
+                        data: vec![]
+                    })
+                );
+            }
 
-                    // recreate cluster
-                    let _cluster = RedisCluster::new(RedisClusterConfiguration {
-                        ports: ports.clone(),
-                        ..Default::default()
-                    });
+            // recreate cluster
+            let _cluster = RedisCluster::new(RedisClusterConfiguration {
+                ports: ports.clone(),
+                ..Default::default()
+            });
 
-                    // verify that we didn't get any disconnect notices.
-                    assert_eq!(
-                        rx.try_recv(),
-                        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
-                    );
+            // verify that we didn't get any disconnect notices.
+            assert_eq!(
+                rx.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            );
 
-                    // send request to trigger reconnection.
-                    let cmd = cmd("PING");
-                    let _ = pubsub_conn
-                        .route_command(
-                            &cmd,
-                            RoutingInfo::MultiNode((
-                                MultipleNodeRoutingInfo::AllMasters,
-                                Some(redis::cluster_routing::ResponsePolicy::AllSucceeded),
-                            )),
-                        )
-                        .await?;
+            // send request to trigger reconnection.
+            let cmd = cmd("PING");
+            let _ = pubsub_conn
+                .route_command(
+                    &cmd,
+                    RoutingInfo::MultiNode((
+                        MultipleNodeRoutingInfo::AllMasters,
+                        Some(redis::cluster_routing::ResponsePolicy::AllSucceeded),
+                    )),
+                )
+                .await?;
 
-                    // verify that we didn't get any subscription notices.
-                    assert_eq!(
-                        rx.try_recv(),
-                        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
-                    );
+            // verify that we didn't get any subscription notices.
+            assert_eq!(
+                rx.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            );
 
-                    Ok::<_, RedisError>(())
-                },
-                runtime,
-            )
-            .unwrap();
+            Ok::<_, RedisError>(())
         }
     }
 
@@ -3307,44 +2873,40 @@ mod cluster_async {
 
         use super::*;
 
-        #[rstest]
-        #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-        #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-        fn test_async_cluster_basic_cmd_with_mtls(#[case] runtime: RuntimeType) {
+        #[async_test]
+        async fn async_cluster_basic_cmd_with_mtls() -> RedisResult<()> {
             let cluster = TestClusterContext::new_with_mtls();
-            block_on_all(
-                async move {
-                    let client = create_cluster_client_from_cluster(&cluster, true).unwrap();
-                    let mut connection = client.get_async_connection().await.unwrap();
-                    cmd("SET")
-                        .arg("test")
-                        .arg("test_data")
-                        .exec_async(&mut connection)
-                        .await?;
-                    let res: String = cmd("GET")
-                        .arg("test")
-                        .clone()
-                        .query_async(&mut connection)
-                        .await?;
-                    assert_eq!(res, "test_data");
-                    Ok::<_, RedisError>(())
-                },
-                runtime,
-            )
-            .unwrap();
+
+            let client = create_cluster_client_from_cluster(&cluster, true).unwrap();
+            let mut connection = client.get_async_connection().await.unwrap();
+            cmd("SET")
+                .arg("test")
+                .arg("test_data")
+                .exec_async(&mut connection)
+                .await?;
+            let res: String = cmd("GET")
+                .arg("test")
+                .clone()
+                .query_async(&mut connection)
+                .await?;
+            assert_eq!(res, "test_data");
+            Ok::<_, RedisError>(())
         }
 
-        #[rstest]
-        #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-        #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-        fn test_async_cluster_should_not_connect_without_mtls_enabled(
-            #[case] runtime: RuntimeType,
-        ) {
+        #[async_test]
+        async fn async_cluster_should_not_connect_without_mtls_enabled() -> RedisResult<()> {
             let cluster = TestClusterContext::new_with_mtls();
-            block_on_all(async move {
+
             let client = create_cluster_client_from_cluster(&cluster, false).unwrap();
             let connection = client.get_async_connection().await;
-            match cluster.cluster.servers.first().unwrap().connection_info().addr() {
+            match cluster
+                .cluster
+                .servers
+                .first()
+                .unwrap()
+                .connection_info()
+                .addr()
+            {
                 redis::ConnectionAddr::TcpTls { .. } => {
                     if connection.is_ok() {
                         panic!("Must NOT be able to connect without client credentials if server accepts TLS");
@@ -3357,8 +2919,6 @@ mod cluster_async {
                 }
             }
             Ok::<_, RedisError>(())
-        },
-            runtime,).unwrap();
         }
     }
 }

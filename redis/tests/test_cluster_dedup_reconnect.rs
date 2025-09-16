@@ -32,34 +32,31 @@ fn test_cluster_dedup_reconnect_isolated() {
         {
             let phase = phase.clone();
             move |cmd: &[u8], port: u16| {
-                // Map startup responses explicitly to ServerResponse
+                // Pass startup responses through to the mock as Value/RedisError
                 if let Err(res) = respond_startup(name, cmd) {
                     return match res {
-                        Ok(v) => ServerResponse::Value(v),
-                        Err(e) => ServerResponse::Error(e),
+                        Ok(v) => Err(Ok(v)),
+                        Err(e) => Err(Err(e)),
                     };
                 }
-
-                // Count attempts to create/start connections (when startup failed)
-                // We approximate by tracking errors from respond_startup above; for simplicity,
-                // we increment counter here only when not handling command, relying on baseline below.
 
                 // Simulate app-level command
                 if contains_slice(cmd, b"ECHO") && port == 6379 {
                     match phase.fetch_add(1, Ordering::SeqCst) {
                         0 | 1 => {
                             disconnects_cl.fetch_add(1, Ordering::Relaxed);
-                            ServerResponse::Disconnect
+                            // Simulate a disconnect via an IO error
+                            Err(Err(std::io::Error::other("disconnect").into()))
                         }
-                        _ => ServerResponse::Value(Value::BulkString(b"PONG".to_vec())),
+                        _ => Err(Ok(Value::BulkString(b"PONG".to_vec()))),
                     }
                 } else if contains_slice(cmd, b"PING") {
                     // Validate new connection PINGs
                     conn_count.fetch_add(1, Ordering::Relaxed);
-                    ServerResponse::Value(Value::SimpleString("OK".into()))
+                    Err(Ok(Value::SimpleString("OK".into())))
                 } else {
                     // Default noop
-                    ServerResponse::Value(Value::Nil)
+                    Err(Ok(Value::Nil))
                 }
             }
         },
