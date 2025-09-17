@@ -1,3 +1,14 @@
+### Unreleased
+
+#### Added
+
+* ConnectionManager: initialization configuration supporting CLIENT SETNAME and CLIENT SETINFO; optional user-provided initialization pipeline with safe-by-default behavior (arbitrary commands require explicit opt-in); await_ready() gating to ensure post-connect usage only after init completes; and per-init command timeout configuration.
+
+#### Fixed
+
+* Sync connection: Mark connection as closed on additional OS-level read errors (ConnectionReset, BrokenPipe, NotConnected, ConnectionAborted) in addition to UnexpectedEof. This resolves macOS "Connection reset by peer (os error 54)" causing is_open() to remain true after server shutdown.
+
+
 ### 0.32.5 (2025-08-10)
 
 #### Changes & Bug fixes
@@ -183,9 +194,9 @@
 
 #### Changes & Bug fixes
 
-* feat(cluster): add `get(_async)?_connection_with_config` ([#1487](https://github\.com/redis-rs/redis-rs/pull/1487) by @Totodore) 
-* Fix connection creation timeout. ([#1490](https://github\.com/redis-rs/redis-rs/pull/1490)) 
-* Fix RetryMethod Import ([#1494](https://github\.com/redis-rs/redis-rs/pull/1494) by @Braedon-Wooding-Displayr) 
+* feat(cluster): add `get(_async)?_connection_with_config` ([#1487](https://github\.com/redis-rs/redis-rs/pull/1487) by @Totodore)
+* Fix connection creation timeout. ([#1490](https://github\.com/redis-rs/redis-rs/pull/1490))
+* Fix RetryMethod Import ([#1494](https://github\.com/redis-rs/redis-rs/pull/1494) by @Braedon-Wooding-Displayr)
 
 ### 0.28.1 (2025-01-11)
 
@@ -522,7 +533,7 @@ have been pushed to 0.24.0.
 ### 0.23.3 (2023-09-01)
 
 Note that this release fixes a small regression in async Redis Cluster handling of the `PING` command.
-Based on updated response aggregation logic in [#888](https://github.com/redis-rs/redis-rs/pull/888), it 
+Based on updated response aggregation logic in [#888](https://github.com/redis-rs/redis-rs/pull/888), it
 will again return a single response instead of an array.
 
 #### Features
@@ -597,9 +608,9 @@ sought feature. Thanks to @rharish101 and @LeoRowan for getting this in!
 This release adds the `cluster_async` module, which introduces async Redis Cluster support. The code therein
 is largely taken from @Marwes's [redis-cluster-async crate](https://github.com/redis-rs/redis-cluster-async), which itself
 appears to have started from a sync Redis Cluster implementation started by @atuk721. In any case, thanks to @Marwes and @atuk721
-for the great work, and we hope to keep development moving forward in `redis-rs`. 
+for the great work, and we hope to keep development moving forward in `redis-rs`.
 
-Though async Redis Cluster functionality for the time being has been kept as close to the originating crate as possible, previous users of 
+Though async Redis Cluster functionality for the time being has been kept as close to the originating crate as possible, previous users of
 `redis-cluster-async` should note the following changes:
 * Retries, while still configurable, can no longer be set to `None`/infinite retries
 * Routing and slot parsing logic has been removed and merged with existing `redis-rs` functionality
@@ -647,7 +658,7 @@ This release adds various incremental improvements and fixes a few long-standing
 contributors for making this release happen.
 
 #### Features
-*   Implement ToRedisArgs for HashMap ([#722](https://github.com/redis-rs/redis-rs/pull/722) @gibranamparan) 
+*   Implement ToRedisArgs for HashMap ([#722](https://github.com/redis-rs/redis-rs/pull/722) @gibranamparan)
 *   Add explicit `MGET` command ([#729](https://github.com/redis-rs/redis-rs/pull/729) @vamshiaruru-virgodesigns)
 
 #### Bug fixes
@@ -658,8 +669,8 @@ contributors for making this release happen.
 
 #### Changes
 *   Add test case for atomic pipeline ([#702](https://github.com/redis-rs/redis-rs/pull/702) @CNLHC)
-*   Capture subscribe result error in PubSub doc example ([#739](https://github.com/redis-rs/redis-rs/pull/739) @baoyachi) 
-*   Use async-std name resolution when necessary ([#701](https://github.com/redis-rs/redis-rs/pull/701) @UgnilJoZ) 
+*   Capture subscribe result error in PubSub doc example ([#739](https://github.com/redis-rs/redis-rs/pull/739) @baoyachi)
+*   Use async-std name resolution when necessary ([#701](https://github.com/redis-rs/redis-rs/pull/701) @UgnilJoZ)
 *   Add Script::invoke_async method ([#711](https://github.com/redis-rs/redis-rs/pull/711) @r-bk)
 *   Cluster Refactorings ([#717](https://github.com/redis-rs/redis-rs/pull/717), [#716](https://github.com/redis-rs/redis-rs/pull/716), [#709](https://github.com/redis-rs/redis-rs/pull/709), [#707](https://github.com/redis-rs/redis-rs/pull/707), [#706](https://github.com/redis-rs/redis-rs/pull/706) @0xWOF, @utkarshgupta137)
 *   Fix intermittent test failure ([#714](https://github.com/redis-rs/redis-rs/pull/714) @0xWOF, @utkarshgupta137)
@@ -681,10 +692,10 @@ This release adds various incremental improvements, including
 additional convenience commands, improved Cluster APIs, and various other bug
 fixes/library improvements.
 
-Although the changes here are incremental, this is a major release due to the 
+Although the changes here are incremental, this is a major release due to the
 breaking changes listed below.
 
-This release would not be possible without our many wonderful 
+This release would not be possible without our many wonderful
 contributors -- thank you!
 
 #### Breaking changes

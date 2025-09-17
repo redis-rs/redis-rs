@@ -11,7 +11,7 @@ use crate::{
 use arc_swap::ArcSwap;
 use backon::{ExponentialBuilder, Retryable};
 use futures_channel::oneshot;
-use futures_util::future::{self, BoxFuture, FutureExt, Shared};
+use futures_util::future::{BoxFuture, FutureExt, Shared};
 use std::sync::{Arc, Weak};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::Mutex;
@@ -43,6 +43,66 @@ pub struct ConnectionManagerConfig {
     tcp_settings: crate::io::tcp::TcpSettings,
     #[cfg(feature = "cache-aio")]
     pub(crate) cache_config: Option<crate::caching::CacheConfig>,
+    /// Security configuration for the connection manager
+    security_config: SecurityConfig,
+    /// Optional client name to set on (re)connect
+    client_name: Option<String>,
+    /// Optional CLIENT SETINFO key/value pairs
+    client_setinfo_pairs: Option<Vec<(String, String)>>,
+    /// Optional user-provided initialization pipeline
+    user_init_pipeline: Option<Pipeline>,
+    /// Whether to allow arbitrary init commands (dangerous). Default: false
+    allow_arbitrary_init_commands: bool,
+}
+
+/// Security configuration for ConnectionManager initialization
+#[derive(Clone)]
+pub struct SecurityConfig {
+    /// Maximum size for client names in bytes (default: 64KB)
+    max_client_name_size: usize,
+    /// Whether to restrict client names to ASCII-only (default: false)
+    validate_ascii: bool,
+    /// Timeout for initialization pipeline commands (default: 30 seconds)
+    init_timeout: std::time::Duration,
+    /// Whether to enable resource monitoring hooks (default: false)
+    enable_resource_monitoring: bool,
+    /// Resource monitoring callback
+    resource_monitor: Option<Arc<dyn ResourceMonitor>>,
+}
+
+/// Trait for monitoring resource usage during connection initialization
+pub trait ResourceMonitor: Send + Sync {
+    /// Called when connection initialization starts
+    fn on_init_start(&self, client_info: &str);
+
+    /// Called when a command is executed during initialization
+    fn on_command_executed(
+        &self,
+        command: &str,
+        duration: std::time::Duration,
+        memory_delta: Option<i64>,
+    );
+
+    /// Called when initialization completes successfully
+    fn on_init_complete(&self, total_duration: std::time::Duration, final_memory: Option<u64>);
+
+    /// Called when initialization fails
+    fn on_init_failed(&self, error: &InitializationError, total_duration: std::time::Duration);
+}
+
+/// Resource usage statistics
+#[derive(Debug, Clone)]
+pub struct ResourceStats {
+    /// Approximate memory usage observed during initialization (bytes), if available
+    pub memory_usage: Option<u64>,
+    /// Number of connections observed during initialization, if available
+    pub connection_count: Option<u32>,
+    /// CPU time spent during initialization, if available
+    pub cpu_time: Option<std::time::Duration>,
+    /// Total network bytes sent during initialization, if available
+    pub network_bytes_sent: Option<u64>,
+    /// Total network bytes received during initialization, if available
+    pub network_bytes_received: Option<u64>,
 }
 
 impl std::fmt::Debug for ConnectionManagerConfig {
@@ -59,6 +119,8 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             tcp_settings,
             #[cfg(feature = "cache-aio")]
             cache_config,
+            security_config: _,
+            ..
         } = &self;
         let mut str = f.debug_struct("ConnectionManagerConfig");
         str.field("exponent_base", &exponent_base)
@@ -85,6 +147,61 @@ impl std::fmt::Debug for ConnectionManagerConfig {
     }
 }
 
+impl SecurityConfig {
+    const DEFAULT_MAX_CLIENT_NAME_SIZE: usize = 65536; // 64KB
+    const DEFAULT_VALIDATE_ASCII: bool = false;
+    const DEFAULT_INIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+    const DEFAULT_ENABLE_RESOURCE_MONITORING: bool = false;
+
+    /// Creates a new SecurityConfig with default values
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set maximum client name size in bytes
+    pub fn set_max_client_name_size(mut self, size: usize) -> Self {
+        self.max_client_name_size = size;
+        self
+    }
+
+    /// Restrict client names to ASCII-only
+    pub fn set_validate_ascii(mut self, validate: bool) -> Self {
+        self.validate_ascii = validate;
+        self
+    }
+
+    /// Set timeout for initialization pipeline commands
+    pub fn set_init_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.init_timeout = timeout;
+        self
+    }
+
+    /// Enable resource monitoring hooks
+    pub fn set_enable_resource_monitoring(mut self, enable: bool) -> Self {
+        self.enable_resource_monitoring = enable;
+        self
+    }
+
+    /// Set resource monitoring callback
+    pub fn set_resource_monitor(mut self, monitor: impl ResourceMonitor + 'static) -> Self {
+        self.resource_monitor = Some(Arc::new(monitor));
+        self.enable_resource_monitoring = true;
+        self
+    }
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            max_client_name_size: Self::DEFAULT_MAX_CLIENT_NAME_SIZE,
+            validate_ascii: Self::DEFAULT_VALIDATE_ASCII,
+            init_timeout: Self::DEFAULT_INIT_TIMEOUT,
+            enable_resource_monitoring: Self::DEFAULT_ENABLE_RESOURCE_MONITORING,
+            resource_monitor: None,
+        }
+    }
+}
+
 impl ConnectionManagerConfig {
     const DEFAULT_CONNECTION_RETRY_EXPONENT_BASE: u64 = 2;
     const DEFAULT_CONNECTION_RETRY_FACTOR: u64 = 100;
@@ -97,9 +214,10 @@ impl ConnectionManagerConfig {
         Self::default()
     }
 
-    /// A multiplicative factor that will be applied to the retry delay.
+    /// A multiplicative scale applied to the exponential backoff delay (milliseconds).
     ///
-    /// For example, using a factor of `1000` will make each delay in units of seconds.
+    /// For example, with `exponent_base = 2` and `factor = 1000`, backoff delays are approximately
+    /// 1000ms, 2000ms, 4000ms (with jitter).
     pub fn set_factor(mut self, factor: u64) -> ConnectionManagerConfig {
         self.factor = factor;
         self
@@ -194,6 +312,38 @@ impl ConnectionManagerConfig {
             ..self
         }
     }
+
+    /// Set security configuration
+    pub fn set_security_config(mut self, security_config: SecurityConfig) -> Self {
+        self.security_config = security_config;
+        self
+    }
+
+    /// Sets a client name to be applied via CLIENT SETNAME during (re)initialization.
+    pub fn set_client_name(mut self, name: String) -> Self {
+        // Validate length and UTF-8 if configured
+        let _ = validate_client_name(&name, &self.security_config);
+        self.client_name = Some(name);
+        self
+    }
+
+    /// Sets key/value pairs to be applied via CLIENT SETINFO during (re)initialization.
+    pub fn set_client_setinfo(mut self, setinfo_pairs: Vec<(String, String)>) -> Self {
+        self.client_setinfo_pairs = Some(setinfo_pairs);
+        self
+    }
+
+    /// Sets a custom initialization pipeline.
+    pub fn set_init_pipeline(mut self, pipeline: Pipeline) -> Self {
+        self.user_init_pipeline = Some(pipeline);
+        self
+    }
+
+    /// Enables arbitrary initialization commands (dangerous). Use with caution.
+    pub fn enable_arbitrary_init_commands(mut self) -> Self {
+        self.allow_arbitrary_init_commands = true;
+        self
+    }
 }
 
 impl Default for ConnectionManagerConfig {
@@ -210,9 +360,114 @@ impl Default for ConnectionManagerConfig {
             tcp_settings: Default::default(),
             #[cfg(feature = "cache-aio")]
             cache_config: None,
+            security_config: SecurityConfig::default(),
+            client_name: None,
+            client_setinfo_pairs: None,
+            user_init_pipeline: None,
+            allow_arbitrary_init_commands: false,
         }
     }
 }
+
+/// Validates a client name according to security configuration
+fn validate_client_name(name: &str, config: &SecurityConfig) -> RedisResult<()> {
+    // Check size limit
+    if name.len() > config.max_client_name_size {
+        return Err(crate::RedisError::from((
+            crate::ErrorKind::ClientError,
+            "Client name too large",
+            format!(
+                "{} bytes exceeds limit of {} bytes",
+                name.len(),
+                config.max_client_name_size
+            ),
+        )));
+    }
+
+    // Check ASCII-only constraint if enabled
+    if config.validate_ascii && !name.is_ascii() {
+        return Err(crate::RedisError::from((
+            crate::ErrorKind::ClientError,
+            "Client name contains invalid UTF-8 sequences",
+        )));
+    }
+
+    Ok(())
+}
+
+/// Enhanced error handling for initialization pipeline commands
+#[derive(Debug, Clone)]
+pub struct InitializationError {
+    /// The command (or logical step) that failed during initialization
+    pub command: String,
+    /// The underlying error, wrapped so the result can be cloned
+    pub error: Arc<RedisError>,
+    /// How many retries were attempted before surfacing the error
+    pub retry_count: usize,
+    /// Whether the error is considered recoverable by reconnect/retry logic
+    pub is_recoverable: bool,
+}
+
+impl InitializationError {
+    fn new(command: String, error: RedisError, retry_count: usize) -> Self {
+        let is_recoverable = Self::is_error_recoverable(&error);
+        Self {
+            command,
+            error: Arc::new(error),
+            retry_count,
+            is_recoverable,
+        }
+    }
+
+    fn is_error_recoverable(error: &RedisError) -> bool {
+        match error.kind() {
+            crate::ErrorKind::IoError => true,
+            crate::ErrorKind::ResponseError => {
+                // Some response errors are recoverable (timeouts, temporary failures)
+                let error_str = error.to_string().to_lowercase();
+                error_str.contains("timeout")
+                    || error_str.contains("loading")
+                    || error_str.contains("busy")
+            }
+            crate::ErrorKind::AuthenticationFailed => false,
+            crate::ErrorKind::TypeError => false,
+            crate::ErrorKind::ExecAbortError => false,
+            crate::ErrorKind::BusyLoadingError => true,
+            crate::ErrorKind::NoScriptError => false,
+            crate::ErrorKind::InvalidClientConfig => false,
+            crate::ErrorKind::Moved => true,
+            crate::ErrorKind::Ask => true,
+            crate::ErrorKind::TryAgain => true,
+            crate::ErrorKind::ClusterDown => true,
+            crate::ErrorKind::CrossSlot => false,
+            crate::ErrorKind::MasterDown => true,
+            crate::ErrorKind::ReadOnly => false,
+            crate::ErrorKind::ClientError => false,
+            _ => false,
+        }
+    }
+}
+
+impl std::fmt::Display for InitializationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Initialization command '{}' failed after {} retries: {}",
+            self.command, self.retry_count, self.error
+        )
+    }
+}
+
+impl std::error::Error for InitializationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.error.as_ref())
+    }
+}
+
+// Readiness tracking types
+type ReadyResult = CloneableRedisResult<()>;
+type ReadySender = tokio::sync::watch::Sender<ReadyResult>;
+type ReadyReceiver = tokio::sync::watch::Receiver<ReadyResult>;
 
 struct Internals {
     /// Information used for the connection. This is needed to be able to reconnect.
@@ -226,10 +481,16 @@ struct Internals {
     runtime: Runtime,
     retry_strategy: ExponentialBuilder,
     connection_config: AsyncConnectionConfig,
+    /// Configured initialization pipeline (built from config)
+    init_pipeline: Option<Pipeline>,
     subscription_tracker: Option<Mutex<SubscriptionTracker>>,
     #[cfg(feature = "cache-aio")]
     cache_manager: Option<CacheManager>,
     _task_handle: HandleContainer,
+    security_config: SecurityConfig,
+    /// Readiness watch channel
+    ready_tx: ReadySender,
+    ready_rx: ReadyReceiver,
 }
 
 /// A `ConnectionManager` is a proxy that wraps a [multiplexed
@@ -294,6 +555,30 @@ macro_rules! reconnect_if_io_error {
 }
 
 impl ConnectionManager {
+    /// Wait until the connection is fully initialized (post-connect init completed)
+    pub async fn await_ready(&self) -> RedisResult<()> {
+        let mut rx = self.0.ready_rx.clone();
+        loop {
+            // Take a snapshot without holding the borrow across await
+            let snapshot = { rx.borrow().clone() };
+            match snapshot {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    if e.kind() == crate::ErrorKind::ClientError {
+                        if rx.changed().await.is_err() {
+                            return Err(
+                                (crate::ErrorKind::IoError, "readiness channel closed").into()
+                            );
+                        }
+                        continue;
+                    } else {
+                        return Err((*e).clone_mostly("await_ready"));
+                    }
+                }
+            }
+        }
+    }
+
     /// Connect to the server and store the connection inside the returned `ConnectionManager`.
     ///
     /// This requires the `connection-manager` feature, which will also pull in
@@ -356,6 +641,50 @@ impl ConnectionManager {
         Self::new_with_config(client, config).await
     }
 
+    /// Build initialization pipeline based on configuration (safe by default)
+    fn build_config_init_pipeline(config: &ConnectionManagerConfig) -> Option<Pipeline> {
+        let mut pipeline = Pipeline::new();
+        let mut has_any = false;
+
+        // CLIENT SETNAME (validated earlier in setter, but validate again defensively)
+        if let Some(name) = &config.client_name {
+            if validate_client_name(name, &config.security_config).is_ok() {
+                pipeline.cmd("CLIENT").arg("SETNAME").arg(name);
+                has_any = true;
+            }
+        }
+
+        // CLIENT SETINFO key/value pairs
+        if let Some(pairs) = &config.client_setinfo_pairs {
+            if !pairs.is_empty() {
+                let mut cmd = cmd("CLIENT");
+                cmd.arg("SETINFO");
+                for (k, v) in pairs.iter() {
+                    cmd.arg(k).arg(v);
+                }
+                pipeline.add_command(cmd);
+                has_any = true;
+            }
+        }
+
+        // User-provided pipeline only if arbitrary init is enabled
+        if config.allow_arbitrary_init_commands {
+            if let Some(user) = &config.user_init_pipeline {
+                // Append user commands as-is
+                for c in user.cmd_iter() {
+                    pipeline.add_command(c.clone());
+                    has_any = true;
+                }
+            }
+        }
+
+        if has_any {
+            Some(pipeline)
+        } else {
+            None
+        }
+    }
+
     /// Connect to the server and store the connection inside the returned `ConnectionManager`.
     ///
     /// This requires the `connection-manager` feature, which will also pull in
@@ -396,7 +725,7 @@ impl ConnectionManager {
         if let Some(response_timeout) = config.response_timeout {
             connection_config = connection_config.set_response_timeout(response_timeout);
         }
-        connection_config = connection_config.set_tcp_settings(config.tcp_settings);
+        connection_config = connection_config.set_tcp_settings(config.tcp_settings.clone());
         #[cfg(feature = "cache-aio")]
         let cache_manager = config
             .cache_config
@@ -412,6 +741,11 @@ impl ConnectionManager {
             runtime.spawn(Self::check_for_disconnect_pushes(oneshot_receiver)),
         );
 
+        // Early security validation (e.g., client name)
+        if let Some(ref name) = config.client_name {
+            validate_client_name(name, &config.security_config)?;
+        }
+
         let mut components_for_reconnection_on_push = None;
         if let Some(push_sender) = config.push_sender.clone() {
             check_resp3!(
@@ -425,6 +759,8 @@ impl ConnectionManager {
             connection_config =
                 connection_config.set_push_sender_internal(Arc::new(internal_sender));
         } else if client.connection_info.redis.protocol != ProtocolVersion::RESP2 {
+            // await_ready will be defined later in impl block, not inside this function body.
+
             let (internal_sender, internal_receiver) = unbounded_channel();
             components_for_reconnection_on_push = Some((internal_receiver, None));
 
@@ -432,25 +768,55 @@ impl ConnectionManager {
                 connection_config.set_push_sender_internal(Arc::new(internal_sender));
         }
 
-        let connection =
-            Self::new_connection(&client, retry_strategy, &connection_config, None).await?;
+        // Build initial initialization pipeline from config (no resubscriptions on first connect)
+        let initial_init = Self::build_config_init_pipeline(&config);
+        let connection = Self::new_connection(
+            &client,
+            retry_strategy,
+            &connection_config,
+            initial_init,
+            &config.security_config,
+        )
+        .await?;
+        // Provide await_ready on the manager
+        // Note: method implemented below in the impl block
+
         let subscription_tracker = if config.resubscribe_automatically {
             Some(Mutex::new(SubscriptionTracker::default()))
         } else {
             None
         };
 
+        // Initialize readiness channel: start as not ready
+        let (ready_tx, ready_rx) = tokio::sync::watch::channel::<ReadyResult>(Err(Arc::new(
+            (crate::ErrorKind::ClientError, "not ready").into(),
+        )));
+
+        // Built init pipeline from config
+        let cfg_init = Self::build_config_init_pipeline(&config);
+
+        // Create initial ready shared future in the required CloneableRedisResult form
+        let initial_future: SharedRedisFuture<MultiplexedConnection> =
+            futures_util::future::ready(Ok(connection)).boxed().shared();
+
         let new_self = Self(Arc::new(Internals {
             client,
-            connection: ArcSwap::from_pointee(future::ok(connection).boxed().shared()),
+            connection: ArcSwap::from_pointee(initial_future),
             runtime,
             retry_strategy,
             connection_config,
+            init_pipeline: cfg_init,
             subscription_tracker,
             #[cfg(feature = "cache-aio")]
             cache_manager,
             _task_handle,
+            security_config: config.security_config,
+            ready_tx,
+            ready_rx,
         }));
+
+        // Mark as ready if there is no init pipeline; otherwise set OK (already executed in new_connection)
+        let _ = new_self.0.ready_tx.send(Ok(()));
 
         if let Some((internal_receiver, external_sender)) = components_for_reconnection_on_push {
             oneshot_sender
@@ -475,6 +841,7 @@ impl ConnectionManager {
         exponential_backoff: ExponentialBuilder,
         connection_config: &AsyncConnectionConfig,
         additional_commands: Option<Pipeline>,
+        security_config: &SecurityConfig,
     ) -> RedisResult<MultiplexedConnection> {
         let connection_config = connection_config.clone();
         let get_conn = || async {
@@ -486,11 +853,57 @@ impl ConnectionManager {
             .retry(exponential_backoff)
             .sleep(|duration| async move { Runtime::locate().sleep(duration).await })
             .await?;
+
         if let Some(pipeline) = additional_commands {
-            // TODO - should we ignore these failures?
-            let _ = pipeline.exec_async(&mut conn).await;
+            // Execute initialization pipeline with timeout and enhanced error handling
+            Self::execute_init_pipeline(&mut conn, pipeline, security_config).await?;
         }
         Ok(conn)
+    }
+
+    /// Execute initialization pipeline with proper timeout and error handling
+    async fn execute_init_pipeline(
+        conn: &mut MultiplexedConnection,
+        pipeline: Pipeline,
+        security_config: &SecurityConfig,
+    ) -> RedisResult<()> {
+        let start_time = std::time::Instant::now();
+
+        // Use runtime timeout helper for portability across runtimes
+        let runtime = Runtime::locate();
+        let result = runtime
+            .timeout(security_config.init_timeout, pipeline.exec_async(conn))
+            .await
+            .map_err(crate::RedisError::from);
+
+        let duration = start_time.elapsed();
+
+        // Handle the result with enhanced error reporting
+        match result {
+            Ok(_values) => {
+                if let Some(monitor) = &security_config.resource_monitor {
+                    monitor.on_init_complete(duration, None);
+                }
+                Ok(())
+            }
+            Err(e) => {
+                let init_error = InitializationError::new(
+                    "initialization_pipeline".to_string(),
+                    e,
+                    0, // retry count handled at higher level
+                );
+
+                if let Some(monitor) = &security_config.resource_monitor {
+                    monitor.on_init_failed(&init_error, duration);
+                }
+
+                Err(crate::RedisError::from((
+                    crate::ErrorKind::ClientError,
+                    "Initialization pipeline failed",
+                    format!("{}", init_error),
+                )))
+            }
+        }
     }
 
     /// Reconnect and overwrite the old connection.
@@ -514,8 +927,15 @@ impl ConnectionManager {
             let new_cache_manager = manager.clone_and_increase_epoch();
             connection_config = connection_config.set_cache_manager(new_cache_manager);
         }
+        // Set readiness to not ready during reconnect
+        let _ = internals.ready_tx.send(Err(Arc::new(
+            (crate::ErrorKind::ClientError, "reconnecting").into(),
+        )));
+
         let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
-            let additional_commands = match &internals_clone.subscription_tracker {
+            // Combine configured init pipeline with resubscriptions
+            let cfg_init = internals_clone.init_pipeline.clone();
+            let subs_pipe = match &internals_clone.subscription_tracker {
                 Some(subscription_tracker) => Some(
                     subscription_tracker
                         .lock()
@@ -524,15 +944,41 @@ impl ConnectionManager {
                 ),
                 None => None,
             };
+            let combined = match (cfg_init, subs_pipe) {
+                (None, None) => None,
+                (Some(p), None) => Some(p),
+                (None, Some(s)) => Some(s),
+                (Some(mut p), Some(s)) => {
+                    for c in s.cmd_iter() {
+                        p.add_command(c.clone());
+                    }
+                    Some(p)
+                }
+            };
 
-            let con = Self::new_connection(
+            let res = Self::new_connection(
                 &internals_clone.client,
                 internals_clone.retry_strategy,
                 &connection_config,
-                additional_commands,
+                combined,
+                &internals_clone.security_config,
             )
-            .await?;
-            Ok(con)
+            .await;
+
+            // Update readiness based on result
+            match &res {
+                Ok(_) => {
+                    let _ = internals_clone.ready_tx.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = internals_clone
+                        .ready_tx
+                        .send(Err(Arc::new(e.clone_mostly("reconnect"))));
+                }
+            }
+
+            // Convert to cloneable result for Shared
+            res.map_err(Arc::new)
         }
         .boxed()
         .shared();
@@ -634,7 +1080,7 @@ impl ConnectionManager {
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     /// It should be noted that unless [ConnectionManagerConfig::set_automatic_resubscription] was called,
     /// the subscription will be removed on a disconnect and must be re-subscribed.
-    ///  
+    ///
     /// ```rust,no_run
     /// # async fn func() -> redis::RedisResult<()> {
     /// let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();

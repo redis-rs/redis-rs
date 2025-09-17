@@ -1670,11 +1670,22 @@ impl Connection {
                 }
                 return result;
             };
-            // shutdown connection on protocol error
-            if io_error.kind() == io::ErrorKind::UnexpectedEof {
-                self.close_connection();
-            } else if is_response {
-                self.messages_to_skip += 1;
+            // Treat common OS-level disconnects as a closed connection across platforms
+            match io_error.kind() {
+                io::ErrorKind::UnexpectedEof
+                | io::ErrorKind::ConnectionReset
+                | io::ErrorKind::BrokenPipe
+                | io::ErrorKind::NotConnected
+                | io::ErrorKind::ConnectionAborted => {
+                    self.close_connection();
+                }
+                _ => {
+                    // For other errors during a response read, mark that we should skip one message
+                    // on the next successful read to keep parser state consistent.
+                    if is_response {
+                        self.messages_to_skip += 1;
+                    }
+                }
             }
 
             return result;

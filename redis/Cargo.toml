@@ -10,6 +10,7 @@ license = "BSD-3-Clause"
 edition = "2021"
 rust-version = "1.80"
 readme = "../README.md"
+autoexamples = false
 
 [package.metadata.docs.rs]
 all-features = true
@@ -248,43 +249,4 @@ required-features = ["cluster-async", "tokio-comp"]
 [[bench]]
 name = "bench_cache"
 harness = false
-required-features = ["tokio-comp", "cache-aio"]
-
-[[example]]
-name = "async-multiplexed"
-required-features = ["tokio-comp"]
-
-[[example]]
-name = "async-await"
-required-features = ["aio"]
-
-[[example]]
-name = "async-resp2-pub-sub"
-required-features = ["aio"]
-
-[[example]]
-name = "async-resp3-pub-sub"
-required-features = ["aio", "connection-manager"]
-
-[[example]]
-name = "async-scan"
-required-features = ["aio"]
-
-[[example]]
-name = "async-connection-loss"
-required-features = ["connection-manager"]
-
-[[example]]
-name = "streams"
-required-features = ["streams"]
-
-[[example]]
-name = "async-typed"
-required-features = ["aio"]
-
-[[example]]
-name = "typed"
-
-[[example]]
-name = "async-caching"
 required-features = ["tokio-comp", "cache-aio"]
