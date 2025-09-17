@@ -4,7 +4,7 @@
 [![crates.io](https://img.shields.io/crates/v/redis.svg)](https://crates.io/crates/redis)
 [![Chat](https://img.shields.io/discord/976380008299917365?logo=discord)](https://discord.gg/WHKcJK9AKP)
 
-Redis-rs is a high level Rust library for Redis, Valkey and any other RESP 
+Redis-rs is a high level Rust library for Redis, Valkey and any other RESP
 (Redis Serialization Protocol) compliant DB. It provides convenient access
 to all Redis functionality through a very flexible but low-level API. It
 uses a customizable type conversion trait so that any operation can return
@@ -96,8 +96,8 @@ redis = { version = "0.32.5", features = ["r2d2"] }
 ```
 
 For async connections, connection pooling isn't necessary, unless blocking commands are used.
-The `MultiplexedConnection` is cheaply cloneable and can be used safely from multiple threads, so a 
-single connection can be easily reused. For automatic reconnections consider using 
+The `MultiplexedConnection` is cheaply cloneable and can be used safely from multiple threads, so a
+single connection can be easily reused. For automatic reconnections consider using
 `ConnectionManager` with the `connection-manager` feature.
 Async cluster connections also don't require pooling and are thread-safe and reusable.
 
@@ -184,6 +184,62 @@ Support for Redis Cluster can be enabled by enabling the `cluster` feature in yo
 Then you can simply use the `ClusterClient`, which accepts a list of available nodes. Note
 that only one node in the cluster needs to be specified when instantiating the client, though
 you can specify multiple.
+
+## ConnectionManager initialization
+
+The async `ConnectionManager` can be configured to initialize connections with a client name, optional CLIENT SETINFO key/value pairs, and an optional user-provided initialization pipeline. Initialization runs on initial connect and on reconnect. By default, only safe configuration (SETNAME/SETINFO) is applied. Arbitrary commands must be explicitly enabled.
+
+```rust
+use redis::aio::ConnectionManagerConfig;
+use redis::{cmd, Client};
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() -> redis::RedisResult<()> {
+    let client = Client::open("redis://127.0.0.1/?protocol=resp3")?;
+
+    // Build initialization behavior
+    let config = ConnectionManagerConfig::new()
+        .set_client_name("svc-app".to_string())
+        .set_client_setinfo(vec![
+            ("env".to_string(), "prod".to_string()),
+            ("lib".to_string(), "redis-rs".to_string()),
+        ])
+        // Optional: user pipeline (safe-by-default: ignored unless arbitrary init is enabled)
+        .set_init_pipeline({
+            let mut p = redis::pipe();
+            p.cmd("SET").arg("cm:initialized").arg("1");
+            p
+        })
+        // Enable arbitrary initialization commands only if you trust the pipeline contents
+        // Security note: arbitrary init may leak credentials or affect reconnect behavior
+        .enable_arbitrary_init_commands()
+        // Optional: security configuration (per-init timeout, ASCII-only client names)
+        .set_security_config(
+            redis::aio::SecurityConfig::new()
+                .set_init_timeout(Duration::from_secs(3))
+                .set_validate_ascii(true),
+        );
+
+    let mut cm = client.get_connection_manager_with_config(config).await?;
+
+    // Gate usage until initialization completes
+    cm.await_ready().await?;
+
+    // Use the manager as a connection
+    let pong: String = cmd("PING").query_async(&mut cm).await?;
+    assert_eq!(pong, "PONG");
+    Ok(())
+}
+```
+
+Notes
+- Safe by default: Only CLIENT SETNAME/SETINFO are executed unless you call `enable_arbitrary_init_commands()`.
+- Initialization runs on reconnect and is combined with automatic resubscriptions if enabled.
+- For RESP3 pub/sub resubscription, configure a push sender (see async pub/sub docs in README and rustdoc).
+- See rustdoc for `ConnectionManagerConfig` and `SecurityConfig` for full options.
+```
+
 
 ```rust
 use redis::cluster::ClusterClient;
@@ -274,7 +330,7 @@ Note: `make test` requires cargo-nextest installed, to learn more about it pleas
 
 
     $ make test
-    
+
 To run benchmarks:
 
     $ make bench

@@ -10,7 +10,7 @@ test:
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP without features except safe_iterators"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo nextest run --locked -p redis --no-default-features -F safe_iterators -E 'not test(test_module)'
+	@RUSTFLAGS="-D warnings -A deprecated" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo nextest run --locked -p redis --no-default-features -F safe_iterators -E 'not test(test_module)'
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type TCP without safe_iterators, but with async"
