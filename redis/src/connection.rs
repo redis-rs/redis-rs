@@ -1775,11 +1775,19 @@ impl Connection {
                 }
                 return result;
             };
-            // shutdown connection on protocol error
-            if io_error.kind() == io::ErrorKind::UnexpectedEof {
-                self.close_connection();
-            } else if is_response {
-                self.messages_to_skip += 1;
+            // Mark connection as closed on terminal read-side errors
+            match io_error.kind() {
+                io::ErrorKind::UnexpectedEof
+                | io::ErrorKind::ConnectionReset
+                | io::ErrorKind::ConnectionAborted => {
+                    self.close_connection();
+                }
+                _ => {
+                    if is_response {
+                        // We were expecting a response but got a transient IO error; skip the next message
+                        self.messages_to_skip += 1;
+                    }
+                }
             }
 
             return result;

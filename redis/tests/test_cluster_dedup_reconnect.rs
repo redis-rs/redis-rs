@@ -22,12 +22,13 @@ fn test_cluster_dedup_reconnect_isolated() {
     let disconnects_cl = disconnects.clone();
     let conn_count = Arc::new(AtomicU16::new(0));
 
-    let MockEnv {
-        runtime,
-        async_connection: mut connection,
-        ..
-    } = MockEnv::with_client_builder(
-        ClusterClient::builder(vec![&*format!("redis://{name}")]),
+    // Keep the environment alive so the handler stays installed for the whole test.
+    let mut env = MockEnv::with_client_builder(
+        ClusterClient::builder(vec![&*format!("redis://{name}")])
+            .retries(3)
+            .min_retry_wait(1)
+            .max_retry_wait(2)
+            .retry_wait_formula(1, 1),
         name,
         {
             let phase = phase.clone();
@@ -45,8 +46,12 @@ fn test_cluster_dedup_reconnect_isolated() {
                     match phase.fetch_add(1, Ordering::SeqCst) {
                         0 | 1 => {
                             disconnects_cl.fetch_add(1, Ordering::Relaxed);
-                            // Simulate a disconnect via an IO error
-                            Err(Err(std::io::Error::other("disconnect").into()))
+                            // Simulate a disconnect via an IO error that should trigger reconnect logic
+                            Err(Err(std::io::Error::new(
+                                std::io::ErrorKind::ConnectionReset,
+                                "disconnect",
+                            )
+                            .into()))
                         }
                         _ => Err(Ok(Value::BulkString(b"PONG".to_vec()))),
                     }
@@ -61,6 +66,9 @@ fn test_cluster_dedup_reconnect_isolated() {
             }
         },
     );
+    // Bind references so the handler remains installed via env's lifetime
+    let runtime = &env.runtime;
+    let connection = &mut env.async_connection;
 
     // Baseline: MockEnv sets up a few connections (sync & async); expect >= 1
 
