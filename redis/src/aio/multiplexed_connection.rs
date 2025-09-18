@@ -163,14 +163,11 @@ where
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Result<(), ()>> {
         loop {
             match ready!(self.as_mut().project().sink_stream.poll_next(cx)) {
-                Some(Ok(value)) => {
-                    self.as_mut().send_result(Ok(value));
-                }
+                Some(Ok(value)) => self.as_mut().send_result(Ok(value)),
                 Some(Err(err)) => {
-                    let is_io_error = err.is_io_error();
                     let is_unrecoverable = err.is_unrecoverable_error();
                     self.as_mut().send_result(Err(err));
-                    if is_io_error || is_unrecoverable {
+                    if is_unrecoverable {
                         let self_ = self.project();
                         send_disconnect(self_.push_sender);
                         return Poll::Ready(Err(()));
