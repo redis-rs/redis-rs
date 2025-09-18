@@ -8,17 +8,13 @@ pub use server_error::*;
 
 macro_rules! invalid_type_error_inner {
     ($v:expr, $det:expr) => {
-        ParsingError {
-            description: format!("{:?} (value was {:?})", $det, $v).into(),
-        }
+        ParsingError::from(format!("{:?} (value was {:?})", $det, $v))
     };
 }
 
 macro_rules! invalid_type_error {
     ($det:expr) => {{
-        fail!(crate::errors::ParsingError {
-            description: format!("{:?}", $det).into(),
-        })
+        fail!(crate::errors::ParsingError::from(format!("{:?}", $det)))
     }};
     ($v:expr, $det:expr) => {{
         fail!(crate::errors::invalid_type_error_inner!($v, $det))

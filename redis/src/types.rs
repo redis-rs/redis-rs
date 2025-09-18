@@ -1928,9 +1928,7 @@ impl FromRedisValue for Value {
 impl FromRedisValue for () {
     fn from_redis_value_ref(v: &Value) -> Result<(), ParsingError> {
         match v {
-            Value::ServerError(err) => Err(ParsingError {
-                description: err.to_string().into(),
-            }),
+            Value::ServerError(err) => Err(ParsingError::from(err.to_string())),
             _ => Ok(()),
         }
     }
