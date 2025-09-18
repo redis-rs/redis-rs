@@ -826,12 +826,16 @@ impl FromRedisValue for StreamPendingReply {
         } else {
             let mut result = StreamPendingData::default();
 
-            let start_id = start.ok_or_else(|| ParsingError {
-                description: "IllegalState: Non-zero pending expects start id".into(),
+            let start_id = start.ok_or_else(|| {
+                ParsingError::from(arcstr::literal!(
+                    "IllegalState: Non-zero pending expects start id"
+                ))
             })?;
 
-            let end_id = end.ok_or_else(|| ParsingError {
-                description: "IllegalState: Non-zero pending expects end id".into(),
+            let end_id = end.ok_or_else(|| {
+                ParsingError::from(arcstr::literal!(
+                    "IllegalState: Non-zero pending expects end id"
+                ))
             })?;
 
             result.count = count;
@@ -874,19 +878,19 @@ impl FromRedisValue for StreamPendingCountReply {
                                     times_delivered,
                                 });
                             }
-                            _ => fail!(ParsingError {
-                                description: "Cannot parse redis data (3)".into()
-                            }),
+                            _ => fail!(ParsingError::from(arcstr::literal!(
+                                "Cannot parse redis data (3)"
+                            ))),
                         },
-                        _ => fail!(ParsingError {
-                            description: "Cannot parse redis data (2)".into()
-                        }),
+                        _ => fail!(ParsingError::from(arcstr::literal!(
+                            "Cannot parse redis data (2)"
+                        ))),
                     }
                 }
             }
-            _ => fail!(ParsingError {
-                description: "Cannot parse redis data (1)".into()
-            }),
+            _ => fail!(ParsingError::from(arcstr::literal!(
+                "Cannot parse redis data (1)"
+            ))),
         };
         Ok(reply)
     }
@@ -1025,13 +1029,9 @@ impl FromRedisValue for XDelExStatusCode {
                 -1 => Ok(XDelExStatusCode::IdNotFound),
                 1 => Ok(XDelExStatusCode::Deleted),
                 2 => Ok(XDelExStatusCode::NotDeletedUnacknowledgedOrStillReferenced),
-                _ => Err(ParsingError {
-                    description: format!("Invalid XDelExStatusCode status code: {code}").into(),
-                }),
+                _ => Err(format!("Invalid XDelExStatusCode status code: {code}").into()),
             },
-            _ => Err(ParsingError {
-                description: "Response type not XAckDelStatusCode compatible".into(),
-            }),
+            _ => Err(arcstr::literal!("Response type not XAckDelStatusCode compatible").into()),
         }
     }
 }
@@ -1057,13 +1057,9 @@ impl FromRedisValue for XAckDelStatusCode {
                 -1 => Ok(XAckDelStatusCode::IdNotFound),
                 1 => Ok(XAckDelStatusCode::AcknowledgedAndDeleted),
                 2 => Ok(XAckDelStatusCode::AcknowledgedNotDeletedStillReferenced),
-                _ => Err(ParsingError {
-                    description: format!("Invalid XAckDelStatusCode status code: {code}").into(),
-                }),
+                _ => Err(arcstr::literal!("Invalid XAckDelStatusCode status code: {code}").into()),
             },
-            _ => Err(ParsingError {
-                description: "Response type not XAckDelStatusCode compatible".into(),
-            }),
+            _ => Err(arcstr::literal!("Response type not XAckDelStatusCode compatible").into()),
         }
     }
 }
