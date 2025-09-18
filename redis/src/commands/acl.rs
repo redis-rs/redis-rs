@@ -5,9 +5,7 @@ use crate::types::{FromRedisValue, RedisWrite, ToRedisArgs, Value};
 
 macro_rules! not_convertible_error {
     ($v:expr, $det:expr) => {
-        ParsingError {
-            description: format!("{:?} (response was {:?})", $det, $v).into(),
-        }
+        ParsingError::from(format!("{:?} (response was {:?})", $det, $v))
     };
 }
 

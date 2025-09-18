@@ -291,11 +291,7 @@ impl RadiusSearchResult {
         // First item is always the member name
         let name: String = match iter.next().map(FromRedisValue::from_redis_value) {
             Some(Ok(n)) => n,
-            _ => {
-                return Err(ParsingError {
-                    description: arcstr::literal!("Missing member name"),
-                })
-            }
+            _ => return Err(arcstr::literal!("Missing member name").into()),
         };
 
         let (dist, coord) = match (iter.next(), iter.next()) {
