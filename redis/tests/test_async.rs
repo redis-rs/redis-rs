@@ -1398,6 +1398,49 @@ mod basic_async {
             Ok::<_, RedisError>(())
         }
 
+
+        #[async_test]
+        async fn no_disconnect_on_recoverable_error() -> RedisResult<()> {
+            use tokio::sync::mpsc::error::TryRecvError;
+
+            // Use RESP3 so we can observe push messages; install a push sender.
+            let ctx = TestContext::new();
+            if ctx.protocol != ProtocolVersion::RESP3 {
+                return Ok(());
+            }
+
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
+            let mut con = ctx
+                .client
+                .get_multiplexed_async_connection_with_config(&config)
+                .await?;
+
+            // Create a key with a string value, then issue a list command to get a WRONGTYPE server error.
+            let _: () = con.set("key_wrongtype", "value").await?;
+            let err = redis::cmd("LPUSH")
+                .arg("key_wrongtype")
+                .arg("x")
+                .exec_async(&mut con)
+                .await
+                .unwrap_err();
+            // Ensure this is not treated as an unrecoverable error.
+            assert!(!err.is_unrecoverable_error(), "unexpected unrecoverable error: {err}");
+
+            // Give a small grace period for any potential disconnect push to be sent; we shouldn't see any.
+            futures_time::task::sleep(futures_time::time::Duration::from_millis(50)).await;
+            match rx.try_recv() {
+                Err(TryRecvError::Empty) => {}
+                Ok(push) => panic!("unexpected push received: {:?}", push.kind),
+                Err(e) => panic!("unexpected channel error: {e}"),
+            }
+
+            // The connection should still be usable; perform a simple GET.
+            let _: Option<String> = con.get("key_wrongtype").await?;
+
+            Ok(())
+        }
+
         #[cfg(feature = "connection-manager")]
         #[async_test]
         async fn manager_should_resubscribe_to_pubsub_channels_after_disconnect() -> RedisResult<()>

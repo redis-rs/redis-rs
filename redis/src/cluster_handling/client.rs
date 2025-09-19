@@ -152,11 +152,9 @@ impl ClusterParams {
         let protocol = {
             #[cfg(feature = "cluster-async")]
             {
-                if value.async_push_sender.is_some() {
-                    Some(ProtocolVersion::RESP3)
-                } else {
-                    value.protocol
-                }
+                // Respect user's protocol selection; do not auto-upgrade.
+                // Validation occurs below: if a push sender is configured, RESP3 is required.
+                value.protocol
             }
             #[cfg(not(feature = "cluster-async"))]
             {
@@ -197,8 +195,7 @@ impl ClusterParams {
 
         #[cfg(feature = "cluster-async")]
         if let Some(async_push_sender) = config.async_push_sender {
-            // Ensure RESP3 is used when a push sender is configured via ClusterConfig
-            self.protocol = Some(ProtocolVersion::RESP3);
+            // Respect user's protocol; validation for RESP3 happens during connection creation.
             self.async_push_sender = Some(async_push_sender);
         }
 

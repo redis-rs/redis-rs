@@ -199,16 +199,31 @@ where
         let runtime = Runtime::locate();
 
         #[cfg(feature = "cluster-async")]
-        let internal_push_receiver = if cluster_params.async_push_sender.is_some() {
-            let (internal_push_sender, internal_push_receiver) = mpsc::unbounded_channel();
-            cluster_params.internal_push_sender = Some(internal_push_sender);
-            // Ensure RESP3 when any push sender is configured (internal or external)
-            cluster_params.protocol = Some(crate::types::ProtocolVersion::RESP3);
-            Some(internal_push_receiver)
-        } else {
-            None
+        let internal_push_receiver = {
+            // Validate external push sender protocol: require RESP3
+            if cluster_params.async_push_sender.is_some() {
+                match cluster_params.protocol {
+                    Some(crate::types::ProtocolVersion::RESP3) => {}
+                    Some(_) | None => {
+                        return Err((
+                            crate::ErrorKind::Client,
+                            "Push sender requires RESP3 protocol",
+                        )
+                            .into());
+                    }
+                }
+            }
+            // Internal push channel is used only when RESP3 is selected. Respect user's choice and
+            // do not auto-upgrade protocol; if not RESP3, disable internal push-based detection.
+            match cluster_params.protocol {
+                Some(crate::types::ProtocolVersion::RESP3) => {
+                    let (internal_push_sender, internal_push_receiver) = mpsc::unbounded_channel();
+                    cluster_params.internal_push_sender = Some(internal_push_sender);
+                    Some(internal_push_receiver)
+                }
+                _ => None,
+            }
         };
-        // Determine protocol after any RESP3 adjustments above
         let protocol = cluster_params.protocol.unwrap_or_default();
 
         ClusterConnInner::new(initial_nodes, cluster_params)
