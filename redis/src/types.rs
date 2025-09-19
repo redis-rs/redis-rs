@@ -847,10 +847,18 @@ impl RedisWrite for Vec<Vec<u8>> {
     }
 }
 
+pub struct SingleArg;
+pub struct MultipleArgs;
+
 /// Used to convert a value into one or multiple redis argument
 /// strings.  Most values will produce exactly one item but in
 /// some cases it might make sense to produce more than one.
 pub trait ToRedisArgs: Sized {
+    /// Represents whether the type can contain multiple values.
+    ///
+    /// Should be overridden to `true` when using a collection.
+    type ValueType;
+
     /// This converts the value into a vector of bytes.  Each item
     /// is a single argument.  Most items generate a vector of a
     /// single item.
@@ -921,6 +929,8 @@ pub trait ToRedisArgs: Sized {
 macro_rules! itoa_based_to_redis_impl {
     ($t:ty, $numeric:expr) => {
         impl ToRedisArgs for $t {
+            type ValueType = SingleArg;
+
             fn write_redis_args<W>(&self, out: &mut W)
             where
                 W: ?Sized + RedisWrite,
@@ -940,6 +950,8 @@ macro_rules! itoa_based_to_redis_impl {
 macro_rules! non_zero_itoa_based_to_redis_impl {
     ($t:ty, $numeric:expr) => {
         impl ToRedisArgs for $t {
+            type ValueType = SingleArg;
+
             fn write_redis_args<W>(&self, out: &mut W)
             where
                 W: ?Sized + RedisWrite,
@@ -959,6 +971,8 @@ macro_rules! non_zero_itoa_based_to_redis_impl {
 macro_rules! ryu_based_to_redis_impl {
     ($t:ty, $numeric:expr) => {
         impl ToRedisArgs for $t {
+            type ValueType = SingleArg;
+
             fn write_redis_args<W>(&self, out: &mut W)
             where
                 W: ?Sized + RedisWrite,
@@ -976,6 +990,8 @@ macro_rules! ryu_based_to_redis_impl {
 }
 
 impl ToRedisArgs for u8 {
+    type ValueType = SingleArg;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1033,6 +1049,8 @@ ryu_based_to_redis_impl!(f64, NumericBehavior::NumberIsFloat);
 macro_rules! bignum_to_redis_impl {
     ($t:ty) => {
         impl ToRedisArgs for $t {
+            type ValueType = SingleArg;
+
             fn write_redis_args<W>(&self, out: &mut W)
             where
                 W: ?Sized + RedisWrite,
@@ -1053,6 +1071,8 @@ bignum_to_redis_impl!(num_bigint::BigInt);
 bignum_to_redis_impl!(num_bigint::BigUint);
 
 impl ToRedisArgs for bool {
+    type ValueType = SingleArg;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1062,6 +1082,8 @@ impl ToRedisArgs for bool {
 }
 
 impl ToRedisArgs for String {
+    type ValueType = SingleArg;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1071,6 +1093,8 @@ impl ToRedisArgs for String {
 }
 
 impl ToRedisArgs for &str {
+    type ValueType = SingleArg;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1083,8 +1107,10 @@ impl<'a, T> ToRedisArgs for Cow<'a, T>
 where
     T: ToOwned + ?Sized,
     &'a T: ToRedisArgs,
-    for<'b> &'b T::Owned: ToRedisArgs,
+    T::Owned: ToRedisArgs,
 {
+    type ValueType = <T::Owned as ToRedisArgs>::ValueType;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1097,6 +1123,8 @@ where
 }
 
 impl<T: ToRedisArgs> ToRedisArgs for Vec<T> {
+    type ValueType = MultipleArgs;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1117,6 +1145,8 @@ impl<T: ToRedisArgs> ToRedisArgs for Vec<T> {
 }
 
 impl<T: ToRedisArgs> ToRedisArgs for &[T] {
+    type ValueType = MultipleArgs;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1137,6 +1167,8 @@ impl<T: ToRedisArgs> ToRedisArgs for &[T] {
 }
 
 impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
+    type ValueType = MultipleArgs;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1168,6 +1200,7 @@ macro_rules! deref_to_write_redis_args_impl {
     ) => {
         $(#[$attr])*
         impl <$($desc)+ {
+            type ValueType = <T as ToRedisArgs>::ValueType;
             #[inline]
             fn write_redis_args<W>(&self, out: &mut W)
                 where
@@ -1216,6 +1249,8 @@ macro_rules! impl_to_redis_args_for_set {
         where
             $($WhereClause)+
         {
+           type ValueType = Collection;
+
             fn write_redis_args<W>(&self, out: &mut W)
             where
                 W: ?Sized + RedisWrite,
@@ -1266,6 +1301,8 @@ macro_rules! impl_to_redis_args_for_map {
         where
             $($WhereClause)+
         {
+           type ValueType = Collection;
+
             fn write_redis_args<W>(&self, out: &mut W)
             where
                 W: ?Sized + RedisWrite,
@@ -1306,6 +1343,8 @@ macro_rules! to_redis_args_for_tuple {
     ($(#[$meta:meta],)*$($name:ident,)+) => (
         $(#[$meta])*
         impl<$($name: ToRedisArgs),*> ToRedisArgs for ($($name,)*) {
+           type ValueType = Collection;
+
             // we have local variables named T1 as dummies and those
             // variables are unused.
             #[allow(non_snake_case, unused_variables)]
@@ -1338,6 +1377,8 @@ to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T
 to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
 
 impl<T: ToRedisArgs, const N: usize> ToRedisArgs for &[T; N] {
+    type ValueType = MultipleArgs;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1943,6 +1984,8 @@ macro_rules! from_redis_value_for_tuple {
     ($(#[$meta:meta],)*$($name:ident,)+) => (
         $(#[$meta])*
         impl<$($name: FromRedisValue),*> FromRedisValue for ($($name,)*) {
+
+
             // we have local variables named T1 as dummies and those
             // variables are unused.
             #[allow(non_snake_case, unused_variables)]
@@ -2210,6 +2253,8 @@ impl FromRedisValue for uuid::Uuid {
 
 #[cfg(feature = "uuid")]
 impl ToRedisArgs for uuid::Uuid {
+    type ValueType = SingleArg;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -2260,6 +2305,8 @@ pub enum ExpireOption {
 }
 
 impl ToRedisArgs for ExpireOption {
+    type ValueType = MultipleArgs;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,

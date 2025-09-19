@@ -2623,7 +2623,7 @@ mod basic {
         con.set(1, "1").unwrap();
         let keys = vec![1];
         assert_eq!(keys.len(), 1);
-        let data: Vec<String> = redis::Commands::get(&mut con, &keys).unwrap();
+        let data: Vec<String> = redis::Commands::mget(&mut con, &keys).unwrap();
         assert_eq!(data, vec!["1"]);
     }
 

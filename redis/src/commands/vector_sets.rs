@@ -1,6 +1,6 @@
 //! Defines types to use with the vector sets commands.
 
-use crate::{RedisWrite, ToRedisArgs};
+use crate::{types::MultipleArgs, RedisWrite, ToRedisArgs};
 
 /// Options for the VSIM command
 ///
@@ -90,6 +90,8 @@ impl VSimOptions {
 }
 
 impl ToRedisArgs for VSimOptions {
+    type ValueType = MultipleArgs;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -144,6 +146,8 @@ pub enum EmbeddingInput<'a> {
 }
 
 impl ToRedisArgs for EmbeddingInput<'_> {
+    type ValueType = MultipleArgs;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -181,6 +185,8 @@ pub enum VectorAddInput<'a> {
 }
 
 impl ToRedisArgs for VectorAddInput<'_> {
+    type ValueType = MultipleArgs;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -295,6 +301,8 @@ impl VAddOptions {
 }
 
 impl ToRedisArgs for VAddOptions {
+    type ValueType = MultipleArgs;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -357,6 +365,8 @@ impl VEmbOptions {
 }
 
 impl ToRedisArgs for VEmbOptions {
+    type ValueType = MultipleArgs;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -380,6 +390,8 @@ pub enum VectorSimilaritySearchInput<'a> {
 }
 
 impl ToRedisArgs for VectorSimilaritySearchInput<'_> {
+    type ValueType = MultipleArgs;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,

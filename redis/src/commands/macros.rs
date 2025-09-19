@@ -5,7 +5,7 @@ macro_rules! implement_command_async {
 	(
         $lifetime: lifetime
 		$(#[$attr:meta])+
-		fn $name:ident<$($tyargs:ident : $ty:ident),*>(
+		fn $name:ident<$($tyargs:ident : $ty:ident<$($conditional_left:ident = $conditional_right:ident),*>),*>(
 			$($argname:ident: $argty:ty),*) $body:block Generic
     ) => {
 		$(#[$attr])*
@@ -24,7 +24,7 @@ macro_rules! implement_command_async {
 	(
         $lifetime: lifetime
 		$(#[$attr:meta])+
-		fn $name:ident<$($tyargs:ident : $ty:ident),*>(
+		fn $name:ident<$($tyargs:ident : $ty:ident<$($conditional_left:ident = $conditional_right:ident),*>),*>(
 			$($argname:ident: $argty:ty),*) $body:block $rettype:ty
     ) => {
 		$(#[$attr])*
@@ -46,13 +46,13 @@ macro_rules! implement_command_sync {
 	(
         $lifetime: lifetime
 		$(#[$attr:meta])+
-		fn $name:ident<$($tyargs:ident : $ty:ident),*>(
+		fn $name:ident<$($tyargs:ident : $ty:ident<$($conditional_left:ident = $conditional_right:ident),*>),*>(
 			$($argname:ident: $argty:ty),*) $body:block Generic
     ) => {
 		$(#[$attr])*
 		#[inline]
 		#[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-		fn $name<$lifetime, RV: FromRedisValue, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
+		fn $name<$lifetime, RV: FromRedisValue, $($tyargs: $ty<$($conditional_left = $conditional_right)*> + Send + Sync + $lifetime,)*>(
 			& $lifetime mut self
 			$(, $argname: $argty)*
 		) -> RedisResult<RV>
@@ -65,13 +65,13 @@ macro_rules! implement_command_sync {
 	(
         $lifetime: lifetime
 		$(#[$attr:meta])+
-		fn $name:ident<$($tyargs:ident : $ty:ident),*>(
+		fn $name:ident<$($tyargs:ident : $ty:ident<$($conditional_left:ident = $conditional_right:ident),*>),*>(
 			$($argname:ident: $argty:ty),*) $body:block $rettype:ty
     ) => {
 		$(#[$attr])*
 		#[inline]
 		#[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-		fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
+		fn $name<$lifetime, $($tyargs: $ty<$($conditional_left = $conditional_right),*> + Send + Sync + $lifetime,)*>(
 			& $lifetime mut self
 			$(, $argname: $argty)*
 		) -> RedisResult<$rettype>
@@ -176,7 +176,7 @@ macro_rules! implement_commands {
         $lifetime: lifetime
         $(
             $(#[$attr:meta])+
-            fn $name:ident<$($tyargs:ident : $ty:ident),*>(
+            fn $name:ident<$($tyargs:ident : $ty:ident<$($conditional_left:ident = $conditional_right:ident),*>),*>(
                 $($argname:ident: $argty:ty),*) -> $rettype:tt $body:block
         )*
     ) =>
@@ -215,7 +215,7 @@ macro_rules! implement_commands {
                 $(#[$attr])*
                 #[inline]
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-                fn $name<$lifetime, $($tyargs: $ty, )* RV: FromRedisValue>(
+                fn $name<$lifetime, $($tyargs: $ty<$($conditional_left = $conditional_right)*>, )* RV: FromRedisValue>(
                     &mut self $(, $argname: $argty)*) -> RedisResult<RV>
                     { Cmd::$name($($argname),*).query(self) }
             )*
@@ -230,7 +230,7 @@ macro_rules! implement_commands {
             $(
                 $(#[$attr])*
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-                pub fn $name<$lifetime, $($tyargs: $ty),*>($($argname: $argty),*) -> Self {
+                pub fn $name<$lifetime, $($tyargs: $ty<$($conditional_left = $conditional_right)*>),*>($($argname: $argty),*) -> Self {
                     ::std::mem::take($body)
                 }
             )*
@@ -271,7 +271,7 @@ macro_rules! implement_commands {
                 $(#[$attr])*
                 #[inline]
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-                fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)* RV>(
+                fn $name<$lifetime, $($tyargs: $ty<$($conditional_left = $conditional_right)*> + Send + Sync + $lifetime,)* RV>(
                     & $lifetime mut self
                     $(, $argname: $argty)*
                 ) -> crate::types::RedisFuture<$lifetime, RV>
@@ -295,7 +295,7 @@ macro_rules! implement_commands {
 				implement_command_sync! {
 					$lifetime
 					$(#[$attr])*
-					fn $name<$($tyargs: $ty),*>(
+					fn $name<$($tyargs: $ty<$($conditional_left = $conditional_right)*>),*>(
 						$($argname: $argty),*
 					)
 
@@ -311,12 +311,12 @@ macro_rules! implement_commands {
             }
 
 			/// Get a value from Redis and convert it to an `Option<isize>`.
-			fn get_int<K: ToRedisArgs>(&mut self, key: K) -> RedisResult<Option<isize>> {
+			fn get_int<K: ToRedisArgs<ValueType = SingleArg> >(&mut self, key: K) -> RedisResult<Option<isize>> {
         		cmd("GET").arg(key).query(self)
     		}
 
 			/// Get values from Redis and convert them to `Option<isize>`s.
-			fn mget_ints<K: ToRedisArgs>(&mut self, key: K) -> RedisResult<Vec<Option<isize>>> {
+			fn mget_ints<K: ToRedisArgs<> >(&mut self, key: K) -> RedisResult<Vec<Option<isize>>> {
         		cmd("MGET").arg(key).query(self)
     		}
         }
@@ -329,7 +329,7 @@ macro_rules! implement_commands {
 				implement_command_async! {
 					$lifetime
 					$(#[$attr])*
-					fn $name<$($tyargs: $ty),*>(
+					fn $name<$($tyargs: $ty<$($conditional_left = $conditional_right)*>),*>(
 						$($argname: $argty),*
 					)
 
@@ -345,12 +345,12 @@ macro_rules! implement_commands {
 			}
 
 			/// Get a value from Redis and convert it to an `Option<isize>`.
-			fn get_int<$lifetime, K: ToRedisArgs + Send + Sync + $lifetime>(&$lifetime mut self, key: K) -> crate::types::RedisFuture<$lifetime, Option<isize>> {
+			fn get_int<$lifetime, K: ToRedisArgs<ValueType = SingleArg> + Send + Sync + $lifetime>(&$lifetime mut self, key: K) -> crate::types::RedisFuture<$lifetime, Option<isize>> {
 				Box::pin(async move { cmd("GET").arg(key).query_async(self).await })
     		}
 
 			/// Get values from Redis and convert them to `Option<isize>`s.
-			fn mget_ints<$lifetime, K: ToRedisArgs + Send + Sync + $lifetime>(&$lifetime mut self, key: K) -> crate::types::RedisFuture<$lifetime, Vec<Option<isize>>> {
+			fn mget_ints<$lifetime, K: ToRedisArgs<ValueType = SingleArg> + Send + Sync + $lifetime>(&$lifetime mut self, key: K) -> crate::types::RedisFuture<$lifetime, Vec<Option<isize>>> {
 				Box::pin(async move { cmd("MGET").arg(key).query_async(self).await })
     		}
         }
@@ -363,7 +363,7 @@ macro_rules! implement_commands {
                 $(#[$attr])*
                 #[inline]
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-                pub fn $name<$lifetime, $($tyargs: $ty),*>(
+                pub fn $name<$lifetime, $($tyargs: $ty<$($conditional_left = $conditional_right)*>),*>(
                     &mut self $(, $argname: $argty)*
                 ) -> &mut Self {
                     self.add_command(::std::mem::take($body))
