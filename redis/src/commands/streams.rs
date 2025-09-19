@@ -6,7 +6,10 @@ use crate::{
     types::HashMap,
     FromRedisValue, RedisWrite, ToRedisArgs, Value,
 };
-use crate::{from_redis_value, from_redis_value_ref};
+use crate::{
+    from_redis_value, from_redis_value_ref,
+    types::{MultipleArgs, SingleArg},
+};
 
 // Stream Maxlen Enum
 
@@ -22,6 +25,8 @@ pub enum StreamMaxlen {
 }
 
 impl ToRedisArgs for StreamMaxlen {
+    type ValueType = MultipleArgs;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -47,6 +52,8 @@ pub enum StreamTrimmingMode {
 }
 
 impl ToRedisArgs for StreamTrimmingMode {
+    type ValueType = MultipleArgs;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -90,6 +97,8 @@ impl StreamTrimStrategy {
 }
 
 impl ToRedisArgs for StreamTrimStrategy {
+    type ValueType = MultipleArgs;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -156,6 +165,8 @@ impl StreamTrimOptions {
 }
 
 impl ToRedisArgs for StreamTrimOptions {
+    type ValueType = MultipleArgs;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -199,6 +210,8 @@ impl StreamAddOptions {
 }
 
 impl ToRedisArgs for StreamAddOptions {
+    type ValueType = MultipleArgs;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -241,6 +254,8 @@ impl StreamAutoClaimOptions {
 }
 
 impl ToRedisArgs for StreamAutoClaimOptions {
+    type ValueType = MultipleArgs;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -316,6 +331,8 @@ impl StreamClaimOptions {
 }
 
 impl ToRedisArgs for StreamClaimOptions {
+    type ValueType = MultipleArgs;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -408,6 +425,8 @@ impl StreamReadOptions {
 }
 
 impl ToRedisArgs for StreamReadOptions {
+    type ValueType = MultipleArgs;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -995,6 +1014,8 @@ pub enum StreamDeletionPolicy {
 }
 
 impl ToRedisArgs for StreamDeletionPolicy {
+    type ValueType = SingleArg;
+
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
