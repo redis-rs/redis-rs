@@ -54,13 +54,13 @@ where
     // Once Tokio stabilizes the `unhandled_panic` field on the runtime builder, it should be used instead.
     panic::set_hook(Box::new(|panic| {
         println!("Panic: {panic}");
-        CHECK.store(true, Ordering::Relaxed);
+        CHECK.store(true, Ordering::SeqCst);
     }));
 
     // This continuously query the flag, in order to abort ASAP after a panic.
     let check_future = futures_util::FutureExt::fuse(async {
         loop {
-            if CHECK.load(Ordering::Relaxed) {
+            if CHECK.load(Ordering::SeqCst) {
                 return Err((redis::ErrorKind::Io, "panic was caught").into());
             }
             futures_time::task::sleep(futures_time::time::Duration::from_millis(1)).await;
@@ -70,7 +70,8 @@ where
     futures::pin_mut!(f, check_future);
 
     let f = async move {
-        futures::select! {res = f => res, err = check_future => err}
+        // Prefer the panic detector if both become ready around the same time.
+        futures::select! { err = check_future => err, res = f => res }
     };
 
     let res = match runtime {
@@ -80,8 +81,16 @@ where
         RuntimeType::Smol => block_on_all_using_smol(f),
     };
 
+    // Give a brief grace period for any late panics to trigger the hook before we check the flag.
+    for _ in 0..20 {
+        if CHECK.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+
     let _ = panic::take_hook();
-    if CHECK.swap(false, Ordering::Relaxed) {
+    if CHECK.swap(false, Ordering::SeqCst) {
         panic!("Internal thread panicked");
     }
 

@@ -1110,16 +1110,26 @@ mod basic_async {
 
             let _: () = pubsub.subscribe("phonewave").await?;
             let mut stream = pubsub.into_on_message();
-            // wait a bit
-            sleep(Duration::from_secs(2).into()).await;
+
+            // Publish a few messages and then consume them with a bounded wait instead of sleeping.
             let repeats = 6;
             for _ in 0..repeats {
                 let _: () = publish_conn.publish("phonewave", "banana").await?;
             }
 
             for _ in 0..repeats {
-                let message: String = stream.next().await.unwrap().get_payload().unwrap();
-
+                // Wait up to ~500ms for each message to arrive
+                let mut attempts = 10;
+                let mut got = None;
+                while attempts > 0 {
+                    if let Some(msg) = stream.next().await {
+                        got = Some(msg);
+                        break;
+                    }
+                    sleep(Duration::from_millis(50).into()).await;
+                    attempts -= 1;
+                }
+                let message: String = got.unwrap().get_payload().unwrap();
                 assert_eq!("banana".to_string(), message);
             }
 
@@ -1398,7 +1408,6 @@ mod basic_async {
             Ok::<_, RedisError>(())
         }
 
-
         #[async_test]
         async fn no_disconnect_on_recoverable_error() -> RedisResult<()> {
             use tokio::sync::mpsc::error::TryRecvError;
@@ -1425,7 +1434,10 @@ mod basic_async {
                 .await
                 .unwrap_err();
             // Ensure this is not treated as an unrecoverable error.
-            assert!(!err.is_unrecoverable_error(), "unexpected unrecoverable error: {err}");
+            assert!(
+                !err.is_unrecoverable_error(),
+                "unexpected unrecoverable error: {err}"
+            );
 
             // Give a small grace period for any potential disconnect push to be sent; we shouldn't see any.
             futures_time::task::sleep(futures_time::time::Duration::from_millis(50)).await;
@@ -1437,6 +1449,73 @@ mod basic_async {
 
             // The connection should still be usable; perform a simple GET.
             let _: Option<String> = con.get("key_wrongtype").await?;
+
+            Ok(())
+        }
+
+        #[async_test]
+        async fn poll_read_loop_behaviour_regression() -> RedisResult<()> {
+            use tokio::sync::mpsc::error::TryRecvError;
+
+            // We rely on push messages to detect disconnect, which requires RESP3
+            let ctx = TestContext::new();
+            if ctx.protocol != ProtocolVersion::RESP3 {
+                return Ok(());
+            }
+
+            // Set up a connection with a push sender so poll_read will propagate disconnects
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
+            let mut con = ctx
+                .client
+                .get_multiplexed_async_connection_with_config(&config)
+                .await?;
+
+            // 1) Regular replies are properly delivered to callers
+            let _: () = con.set("poll_read:key", "v").await?;
+            let got: String = con.get("poll_read:key").await?;
+            assert_eq!(got, "v");
+
+            // 2) Connection continues processing after recoverable (server) errors
+            // Generate a WRONGTYPE error by using a list command on a string key
+            let err = redis::cmd("LPUSH")
+                .arg("poll_read:key")
+                .arg("x")
+                .exec_async(&mut con)
+                .await
+                .unwrap_err();
+            assert!(
+                !err.is_unrecoverable_error(),
+                "expected recoverable server error, got: {err}"
+            );
+
+            // Ensure no disconnect push was produced by the recoverable error
+            futures_time::task::sleep(futures_time::time::Duration::from_millis(50)).await;
+            match rx.try_recv() {
+                Err(TryRecvError::Empty) => {}
+                Ok(push) => panic!("unexpected push after recoverable error: {:?}", push.kind),
+                Err(e) => panic!("unexpected channel error: {e}"),
+            }
+
+            // Still usable after the error
+            let got: Option<String> = con.get("poll_read:key").await?;
+            assert_eq!(got.as_deref(), Some("v"));
+
+            // 3) A disconnect message is sent and the loop terminates on EOF/unrecoverable errors
+            // Simulate connection drop from the server side
+            kill_client_async(&mut con, &ctx.client).await.unwrap();
+
+            // Expect a single Disconnection push
+            let push = rx.recv().await.unwrap();
+            assert_eq!(push.kind, PushKind::Disconnection);
+
+            // After disconnect, issuing a command should fail with an unrecoverable error
+            let res: RedisResult<()> = redis::cmd("PING").exec_async(&mut con).await;
+            let err = res.unwrap_err();
+            assert!(
+                err.is_unrecoverable_error(),
+                "expected unrecoverable error after disconnect, got: {err}"
+            );
 
             Ok(())
         }
