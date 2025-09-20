@@ -682,6 +682,42 @@ mod basic_async {
         assert!(result.unwrap_err().is_timeout());
         Ok(())
     }
+    #[async_test]
+    async fn response_timeout_does_not_disconnect() -> RedisResult<()> {
+        let ctx = TestContext::new();
+
+        // Be a bit resilient to CI flakiness when spinning up a fresh connection
+        let mut connection = loop {
+            match ctx.async_connection().await {
+                Ok(c) => break c,
+                Err(_) => {
+                    sleep(Duration::from_millis(50).into()).await;
+                    continue;
+                }
+            }
+        };
+        // Set a very small response timeout so a blocking command times out quickly
+        connection.set_response_timeout(Duration::from_millis(1));
+
+        // Use a server-side 1s timeout so that the connection eventually unblocks even if the
+        // client timed out much earlier.
+        let mut cmd = redis::Cmd::new();
+        cmd.arg("BLPOP").arg("foo").arg(1);
+        let timeout_err = connection.req_packed_command(&cmd).await.unwrap_err();
+        assert!(timeout_err.is_timeout());
+
+        // Wait long enough for the server-side BLPOP to complete and release the connection.
+        sleep(Duration::from_millis(1200).into()).await;
+
+        // Increase timeout back to a reasonable value so normal commands can succeed.
+        connection.set_response_timeout(Duration::from_millis(500));
+
+        // After a transient error (timeout), the same connection should still be usable.
+        let _: () = connection.set("post-timeout", "ok").await?;
+        let v: String = connection.get("post-timeout").await?;
+        assert_eq!(v, "ok");
+        Ok(())
+    }
 
     #[async_test]
     #[cfg(feature = "script")]

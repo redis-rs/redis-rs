@@ -164,15 +164,14 @@ where
         loop {
             match ready!(self.as_mut().project().sink_stream.poll_next(cx)) {
                 Some(Ok(value)) => self.as_mut().send_result(Ok(value)),
-                Some(Err(err)) => {
-                    let is_unrecoverable = err.is_unrecoverable_error();
+                Some(Err(err)) if err.is_unrecoverable_error() => {
+                    // Propagate the error to the waiting request and signal disconnect once.
                     self.as_mut().send_result(Err(err));
-                    if is_unrecoverable {
-                        let self_ = self.project();
-                        send_disconnect(self_.push_sender);
-                        return Poll::Ready(Err(()));
-                    }
+                    let self_ = self.project();
+                    send_disconnect(self_.push_sender);
+                    return Poll::Ready(Err(()));
                 }
+                Some(Err(err)) => self.as_mut().send_result(Err(err)),
                 None => {
                     let self_ = self.project();
                     send_disconnect(self_.push_sender);
