@@ -1588,3 +1588,117 @@ where
         .choose(&mut rng())
         .map(|(addr, conn)| (addr.clone(), conn.clone()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures_util::stream;
+    use std::collections::{HashMap, HashSet};
+    use tokio::sync::RwLock;
+
+    #[derive(Clone)]
+    struct DummyConn;
+
+    // Implement minimal traits to satisfy ClusterConnInner<C> bounds in tests
+    impl crate::aio::ConnectionLike for DummyConn {
+        fn req_packed_command<'a>(
+            &'a mut self,
+            _cmd: &'a crate::Cmd,
+        ) -> crate::RedisFuture<'a, crate::Value> {
+            Box::pin(futures_util::future::ready(Ok(crate::Value::Nil)))
+        }
+        fn req_packed_commands<'a>(
+            &'a mut self,
+            _pipe: &'a crate::Pipeline,
+            _offset: usize,
+            _count: usize,
+        ) -> crate::RedisFuture<'a, Vec<crate::Value>> {
+            Box::pin(futures_util::future::ready(Ok(Vec::new())))
+        }
+        fn get_db(&self) -> i64 {
+            0
+        }
+    }
+    impl super::Connect for DummyConn {
+        fn connect_with_config<'a, T>(
+            _info: T,
+            _config: crate::AsyncConnectionConfig,
+        ) -> crate::RedisFuture<'a, Self>
+        where
+            T: crate::IntoConnectionInfo + Send + 'a,
+        {
+            Box::pin(futures_util::future::ready(Ok(DummyConn)))
+        }
+    }
+
+    // Helper to create a minimal Core with empty connections/slots and a reconnect set
+    fn make_core() -> Core<DummyConn> {
+        Arc::new(InnerCore {
+            conn_lock: RwLock::new((
+                HashMap::new(),
+                crate::cluster_handling::slot_map::SlotMap::new(false),
+            )),
+            cluster_params: crate::cluster_handling::client::ClusterParams::default(),
+            pending_requests: Mutex::new(Vec::new()),
+            initial_nodes: Vec::new(),
+            subscription_tracker: None,
+            #[cfg(feature = "cluster-async")]
+            nodes_to_reconnect: Mutex::new(HashSet::new()),
+        })
+    }
+
+    // Build a ClusterConnInner with empty state so we can call poll_complete directly
+    fn make_conn_inner() -> ClusterConnInner<DummyConn> {
+        ClusterConnInner {
+            inner: make_core(),
+            state: ConnectionState::PollComplete,
+            in_flight_requests: stream::FuturesUnordered::new(),
+            refresh_error: None,
+        }
+    }
+
+    #[test]
+    fn poll_complete_batches_reconnects_by_cap() {
+        // Only applicable when cluster-async feature is enabled (nodes_to_reconnect exists)
+        #[cfg(feature = "cluster-async")]
+        {
+            let mut conn = make_conn_inner();
+            let mut guard = conn.inner.nodes_to_reconnect.lock().unwrap();
+            let total = MAX_RECONNECTS_PER_CYCLE + 5;
+            for i in 0..total {
+                let addr = format!("node:{}", i).into();
+                guard.insert(addr);
+            }
+            drop(guard);
+
+            // First poll should take exactly MAX_RECONNECTS_PER_CYCLE
+            let waker = futures_util::task::noop_waker();
+            let mut ctx = std::task::Context::from_waker(&waker);
+            match conn.poll_complete(&mut ctx) {
+                std::task::Poll::Ready(PollFlushAction::Reconnect(batch)) => {
+                    assert_eq!(batch.len(), MAX_RECONNECTS_PER_CYCLE);
+                }
+                other => panic!("unexpected poll result: {:?}", other),
+            }
+
+            // Remaining should be 5
+            let remaining = conn.inner.nodes_to_reconnect.lock().unwrap().len();
+            assert_eq!(remaining, 5);
+
+            // Second poll should take the rest (<= cap)
+            let waker = futures_util::task::noop_waker();
+            let mut ctx = std::task::Context::from_waker(&waker);
+            match conn.poll_complete(&mut ctx) {
+                std::task::Poll::Ready(PollFlushAction::Reconnect(batch)) => {
+                    assert!(batch.len() <= MAX_RECONNECTS_PER_CYCLE);
+                    assert_eq!(batch.len(), 5);
+                }
+                other => panic!("unexpected poll result: {:?}", other),
+            }
+
+            // No more reconnect work pending
+            let remaining = conn.inner.nodes_to_reconnect.lock().unwrap().len();
+            assert_eq!(remaining, 0);
+        }
+    }
+}

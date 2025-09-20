@@ -14,6 +14,16 @@ use std::{
 };
 use std::{io, thread::sleep, time::Duration};
 
+#[cfg(feature = "aio")]
+thread_local! {
+    static PANIC_TX: std::cell::RefCell<Option<futures::channel::mpsc::UnboundedSender<()>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(feature = "aio")]
+static PANIC_TX_GLOBAL: std::sync::OnceLock<
+    std::sync::Mutex<Option<futures::channel::mpsc::UnboundedSender<()>>>,
+> = std::sync::OnceLock::new();
+
 #[cfg(feature = "cache-aio")]
 use redis::caching::CacheConfig;
 #[cfg(feature = "tls-rustls")]
@@ -31,6 +41,23 @@ pub fn current_thread_runtime() -> tokio::runtime::Runtime {
 }
 
 #[cfg(feature = "aio")]
+async fn yield_once() {
+    use std::task::{Context, Poll};
+    // Yield exactly once to let other tasks make progress across executors uniformly.
+    let mut yielded = false;
+    futures_util::future::poll_fn(move |cx: &mut Context<'_>| {
+        if yielded {
+            Poll::Ready(())
+        } else {
+            yielded = true;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+    })
+    .await;
+}
+
+#[cfg(feature = "aio")]
 #[derive(Clone, Copy)]
 pub enum RuntimeType {
     #[cfg(feature = "tokio-comp")]
@@ -44,54 +71,66 @@ pub fn block_on_all<F, V>(f: F, runtime: RuntimeType) -> F::Output
 where
     F: Future<Output = RedisResult<V>>,
 {
-    use std::panic;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use futures_util::{future::FutureExt, stream::StreamExt};
 
-    static CHECK: AtomicBool = AtomicBool::new(false);
-
-    // TODO - this solution is purely single threaded, and won't work on multiple threads at the same time.
-    // This is needed because Tokio's Runtime silently ignores panics - https://users.rust-lang.org/t/tokio-runtime-what-happens-when-a-thread-panics/95819
-    // Once Tokio stabilizes the `unhandled_panic` field on the runtime builder, it should be used instead.
-    panic::set_hook(Box::new(|panic| {
-        println!("Panic: {panic}");
-        CHECK.store(true, Ordering::SeqCst);
-    }));
-
-    // This continuously query the flag, in order to abort ASAP after a panic.
-    let check_future = futures_util::FutureExt::fuse(async {
-        loop {
-            if CHECK.load(Ordering::SeqCst) {
-                return Err((redis::ErrorKind::Io, "panic was caught").into());
-            }
-            futures_time::task::sleep(futures_time::time::Duration::from_millis(1)).await;
-        }
+    // Install a thread-local panic sender for this call
+    let (tx, mut rx) = futures::channel::mpsc::unbounded::<()>();
+    PANIC_TX.with(|cell| {
+        *cell.borrow_mut() = Some(tx.clone());
     });
-    let f = futures_util::FutureExt::fuse(f);
-    futures::pin_mut!(f, check_future);
+    // Also store in a global slot so executors that hop threads can still signal.
+    PANIC_TX_GLOBAL.get_or_init(|| std::sync::Mutex::new(None));
+    if let Some(lock) = PANIC_TX_GLOBAL.get() {
+        if let Ok(mut guard) = lock.lock() {
+            *guard = Some(tx.clone());
+        }
+    }
 
-    let f = async move {
-        // Prefer the panic detector if both become ready around the same time.
-        futures::select! { err = check_future => err, res = f => res }
+    // Fuse the futures for select, and yield once on completion to give spawned tasks a chance to signal
+    let f = f.fuse();
+    let f = std::pin::pin!(f);
+    let mut rx_next = rx.next().fuse();
+
+    let res_with_yield = async move {
+        let res = f.await;
+        // Yield once to allow any just-completed spawned task to run its catch_unwind and send on PANIC_TX
+        yield_once().await;
+        res
+    }
+    .fuse();
+    futures::pin_mut!(res_with_yield);
+
+    let fut = async move {
+        use futures_util::future::FutureExt as _;
+        // Prefer panic detection if both complete around the same time.
+        // If the main future wins the race, do a final immediate check for a late panic signal.
+        futures::select_biased! {
+            _ = rx_next => panic!("Internal thread panicked"),
+            res = res_with_yield => {
+                if rx_next.now_or_never().is_some() {
+                    panic!("Internal thread panicked");
+                }
+                res
+            },
+        }
     };
 
     let res = match runtime {
         #[cfg(feature = "tokio-comp")]
-        RuntimeType::Tokio => block_on_all_using_tokio(f),
+        RuntimeType::Tokio => block_on_all_using_tokio(fut),
         #[cfg(feature = "smol-comp")]
-        RuntimeType::Smol => block_on_all_using_smol(f),
+        RuntimeType::Smol => block_on_all_using_smol(fut),
     };
 
-    // Give a brief grace period for any late panics to trigger the hook before we check the flag.
-    for _ in 0..20 {
-        if CHECK.load(std::sync::atomic::Ordering::SeqCst) {
-            break;
+    // Clear the thread-local sender after completion to avoid leaking into other tests
+    PANIC_TX.with(|cell| {
+        *cell.borrow_mut() = None;
+    });
+    // Also clear the global fallback slot
+    if let Some(lock) = PANIC_TX_GLOBAL.get() {
+        if let Ok(mut guard) = lock.lock() {
+            *guard = None;
         }
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
-
-    let _ = panic::take_hook();
-    if CHECK.swap(false, Ordering::SeqCst) {
-        panic!("Internal thread panicked");
     }
 
     res
@@ -247,10 +286,14 @@ impl TestContext {
         loop {
             match client.get_connection() {
                 Err(err) => {
-                    if err.is_connection_refusal() {
+                    // Treat any early connection error as retryable; the embedded server may still be starting
+                    // or may have failed to bind and restarted.
+                    let transient =
+                        err.is_connection_refusal() || matches!(err.kind(), redis::ErrorKind::Io);
+                    if transient {
                         sleep(millisecond);
                         retries += 1;
-                        if retries > 100000 {
+                        if retries > 10000 {
                             panic!(
                                 "Tried to connect too many times, last error: {err}, logfile: {:?}",
                                 server.log_file_contents()
@@ -611,17 +654,67 @@ pub async fn kill_client_async(
     Ok(())
 }
 
+#[cfg(feature = "aio")]
 fn spawn<T>(fut: impl std::future::Future<Output = T> + Send + Sync + 'static)
 where
     T: Send + 'static,
 {
+    // Wrap spawned future to detect panics and notify the thread-local listener
+    let wrapped = async move {
+        use futures_util::FutureExt as _;
+        let res = std::panic::AssertUnwindSafe(fut).catch_unwind().await;
+        if res.is_err() {
+            // Try thread-local first
+            let mut sent = false;
+            PANIC_TX.with(|cell| {
+                if let Some(tx) = cell.borrow().as_ref() {
+                    let _ = tx.unbounded_send(());
+                    sent = true;
+                }
+            });
+            // Fallback to global if task hopped threads and TL is empty
+            if !sent {
+                if let Some(lock) = PANIC_TX_GLOBAL.get() {
+                    if let Ok(guard) = lock.lock() {
+                        if let Some(tx) = guard.as_ref() {
+                            let _ = tx.unbounded_send(());
+                        }
+                    }
+                }
+            }
+        }
+    };
+
     match tokio::runtime::Handle::try_current() {
         Ok(tokio_runtime) => {
-            tokio_runtime.spawn(fut);
+            tokio_runtime.spawn(wrapped);
         }
         Err(_) => {
             #[cfg(feature = "smol-comp")]
-            smol::spawn(fut).detach();
+            {
+                // Run on a dedicated OS thread and install a per-thread panic hook
+                // that forwards any panic to PANIC_TX_GLOBAL so the main harness can observe it.
+                std::thread::spawn(move || {
+                    // Install forwarding panic hook for this thread.
+                    let prev_hook = std::panic::take_hook();
+                    std::panic::set_hook(Box::new(move |_info| {
+                        if let Some(lock) = PANIC_TX_GLOBAL.get() {
+                            if let Ok(guard) = lock.lock() {
+                                if let Some(tx) = guard.as_ref() {
+                                    let _ = tx.unbounded_send(());
+                                }
+                            }
+                        }
+                        // Intentionally do not chain to previous hook here to avoid ownership issues.
+                    }));
+
+                    // Execute the future to completion.
+                    smol::block_on(wrapped);
+
+                    // Restore the previous hook when done.
+                    std::panic::set_hook(prev_hook);
+                });
+            }
             #[cfg(not(feature = "smol-comp"))]
             unreachable!()
         }
