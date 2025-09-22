@@ -1198,6 +1198,8 @@ where
     }
 
     fn poll_complete(&mut self, cx: &mut task::Context<'_>) -> Poll<PollFlushAction> {
+        let mut poll_flush_action = PollFlushAction::None;
+
         #[cfg(feature = "cluster-async")]
         {
             let mut nodes_to_reconnect_guard = self.inner.nodes_to_reconnect.lock().unwrap();
@@ -1212,12 +1214,11 @@ where
                     nodes_to_reconnect_guard.remove(addr);
                 }
                 if !batch.is_empty() {
-                    return Poll::Ready(PollFlushAction::Reconnect(batch));
+                    poll_flush_action = PollFlushAction::Reconnect(batch);
                 }
             }
         }
 
-        let mut poll_flush_action = PollFlushAction::None;
 
         let mut pending_requests_guard = self.inner.pending_requests.lock().unwrap();
         if !pending_requests_guard.is_empty() {
