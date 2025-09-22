@@ -200,7 +200,6 @@ where
 
         #[cfg(feature = "cluster-async")]
         let internal_push_receiver = {
-            // Validate external push sender protocol: require RESP3
             if cluster_params.async_push_sender.is_some() {
                 match cluster_params.protocol {
                     Some(crate::types::ProtocolVersion::RESP3) => {}
