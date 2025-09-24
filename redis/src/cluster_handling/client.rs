@@ -116,6 +116,27 @@ pub(crate) struct ClusterParams {
 }
 
 impl ClusterParams {
+    /// Validate cross-field configuration for cluster async connections.
+    ///
+    /// Currently validates:
+    /// - RESP3 is required whenever an external async push sender is provided.
+    pub(crate) fn validate(&self) -> crate::RedisResult<()> {
+        #[cfg(feature = "cluster-async")]
+        {
+            if self.async_push_sender.is_some()
+                && matches!(self.protocol, None | Some(crate::ProtocolVersion::RESP2))
+            {
+                return Err(crate::RedisError::from((
+                    crate::ErrorKind::InvalidClientConfig,
+                    "async_push_sender requires RESP3. Set Client::protocol(ProtocolVersion::RESP3).",
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl ClusterParams {
     fn from(value: BuilderParams) -> RedisResult<Self> {
         #[cfg(not(feature = "tls-rustls"))]
         let tls_params: Option<TlsConnParams> = None;
@@ -450,10 +471,16 @@ impl ClusterClientBuilder {
     }
 
     #[cfg(feature = "cluster-async")]
-    /// Sets sender sender for push values.
+    /// Sets the sender for push values (e.g., Pub/Sub messages) in async cluster connections.
     ///
-    /// The sender can be a channel, or an arbitrary function that handles [crate::PushInfo] values.
-    /// This will fail client creation if the connection isn't configured for RESP3 communications via the [crate::RedisConnectionInfo::set_protocol] function.
+    /// The sender can be a channel, or any function implementing [crate::aio::AsyncPushSender]
+    /// that handles [crate::PushInfo] values.
+    ///
+    /// RESP3 requirement:
+    /// - Providing a push sender requires RESP3. If a push sender is provided while the
+    ///   protocol is RESP2 or unspecified, client creation will fail with
+    ///   [crate::ErrorKind::InvalidClientConfig]. Call [`use_protocol(ProtocolVersion::RESP3)`]
+    ///   before calling `push_sender`.
     ///
     /// # Examples
     ///

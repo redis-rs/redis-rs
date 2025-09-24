@@ -50,6 +50,11 @@
 //! when defining a connection with [crate::ProtocolVersion::RESP3] and some
 //! [crate::aio::AsyncPushSender] to receive the messages on.
 //!
+//! Note: Providing a push sender without configuring RESP3 will cause client creation to
+//! fail with [crate::ErrorKind::InvalidClientConfig]. Use
+//! [`ClusterClientBuilder::use_protocol`](crate::cluster::ClusterClientBuilder::use_protocol)
+//! with `ProtocolVersion::RESP3`.
+//!
 //! ```rust,no_run
 //! use redis::cluster::ClusterClientBuilder;
 //! use redis::{Value, AsyncCommands};
@@ -199,20 +204,9 @@ where
         let runtime = Runtime::locate();
 
         let internal_push_receiver = {
-            if cluster_params.async_push_sender.is_some() {
-                match cluster_params.protocol {
-                    Some(crate::types::ProtocolVersion::RESP3) => {}
-                    Some(_) | None => {
-                        return Err((
-                            crate::ErrorKind::Client,
-                            "Push sender requires RESP3 protocol",
-                        )
-                            .into());
-                    }
-                }
-            }
-            // Internal push channel is used only when RESP3 is selected. Respect user's choice and
-            // do not auto-upgrade protocol; if not RESP3, disable internal push-based detection.
+            // Centralized validation of cluster params
+            cluster_params.validate()?;
+
             match cluster_params.protocol {
                 Some(crate::types::ProtocolVersion::RESP3) => {
                     let (internal_push_sender, internal_push_receiver) = mpsc::unbounded_channel();

@@ -21,10 +21,11 @@ mod cluster_async {
         cluster::ClusterClient,
         cluster_async::Connect,
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
-        cmd, from_redis_value, parse_redis_value, pipe, AsyncCommands, Cmd, InfoDict,
+        cmd, from_redis_value, parse_redis_value, pipe, AsyncCommands, Cmd, ErrorKind, InfoDict,
         IntoConnectionInfo, ProtocolVersion, RedisError, RedisFuture, RedisResult, Script,
         ServerErrorKind, Value,
     };
+
     use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
     use redis_test::server::use_protocol;
     use rstest::rstest;
@@ -2436,6 +2437,62 @@ mod cluster_async {
         }
 
         #[async_test]
+        async fn async_push_sender_errors_with_resp2() -> RedisResult<()> {
+            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+            let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
+                builder
+                    .use_protocol(ProtocolVersion::RESP2)
+                    .push_sender(tx.clone())
+            });
+            let res = ctx.client.get_async_connection().await;
+            assert!(res.is_err(), "expected configuration error");
+            let err = res.err().unwrap();
+            assert!(matches!(err.kind(), ErrorKind::InvalidClientConfig));
+            let msg = format!("{err}");
+            assert!(
+                msg.contains("ProtocolVersion::RESP3"),
+                "unexpected message: {msg}"
+            );
+            Ok(())
+        }
+
+        #[async_test]
+        async fn async_push_sender_ok_with_resp3() -> RedisResult<()> {
+            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+            let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
+                builder
+                    .use_protocol(ProtocolVersion::RESP3)
+                    .push_sender(tx.clone())
+            });
+            let mut connection = ctx.client.get_async_connection().await?;
+            // sanity command
+            let _: () = cmd("SET")
+                .arg("k")
+                .arg("v")
+                .query_async(&mut connection)
+                .await?;
+            Ok(())
+        }
+
+        #[async_test]
+        async fn backward_compat_no_sender_protocol_none_ok() -> RedisResult<()> {
+            let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| builder);
+            let mut connection = ctx.client.get_async_connection().await?;
+            let _: () = cmd("PING").query_async(&mut connection).await?;
+            Ok(())
+        }
+
+        #[async_test]
+        async fn backward_compat_no_sender_resp2_ok() -> RedisResult<()> {
+            let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
+                builder.use_protocol(ProtocolVersion::RESP2)
+            });
+            let mut connection = ctx.client.get_async_connection().await?;
+            let _: () = cmd("PING").query_async(&mut connection).await?;
+            Ok(())
+        }
+
+        #[allow(dead_code)]
         async fn pub_sub_subscription() -> RedisResult<()> {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
