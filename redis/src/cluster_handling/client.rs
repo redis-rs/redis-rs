@@ -341,6 +341,9 @@ impl ClusterClientBuilder {
             }
         }
 
+        // Enforce cross-field configuration (and ensure `validate` is used across builds)
+        cluster_params.validate()?;
+
         Ok(ClusterClient {
             initial_nodes,
             cluster_params,

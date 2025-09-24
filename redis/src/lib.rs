@@ -188,7 +188,7 @@
 //! In most cases, you may like to use defaults provided by the library, to avoid the clutter and development overhead
 //! of specifying types for each command.
 //!
-//! The library facilitates this by providing the [commands::TypedCommands] and [commands::AsyncTypedCommands]. These traits provide functions
+//! The library facilitates this by providing the [commands::TypedCommands] and `AsyncTypedCommands`. These traits provide functions
 //! with pre-defined and opinionated return types. For example, `set` returns `()`, avoiding the need
 //! for developers to explicitly type each call as returning `()`.
 //!
@@ -209,8 +209,8 @@
 //! ## Custom Type Conversions
 //!
 //! In some cases, the user might want to define their own return value types to various Redis calls.
-//! The library facilitates this by providing the [commands::Commands] and [commands::AsyncCommands]
-//! as alternatives to [commands::TypedCommands] and [commands::AsyncTypedCommands] respectively.
+//! The library facilitates this by providing the [commands::Commands] and `AsyncCommands`
+//! as alternatives to [commands::TypedCommands] and `AsyncTypedCommands` respectively.
 //!
 //! The `arg` method of the command will accept a wide range of types through
 //! the [ToRedisArgs] trait and the `query` method of a command can convert the
@@ -581,8 +581,8 @@ let primary = sentinel.get_async_connection().await.unwrap();
 //! * Iterators are now safe by default, without an opt out. This means that the iterators return `RedisResult<Value>` instead of `Value`. See [this PR](https://github.com/redis-rs/redis-rs/pull/1641) for background. If you previously used the "safe_iterators" feature to opt-in to this behavior, just remove the feature declaration. Otherwise you will need to adjust your usage of iterators to account for potential conversion failures.
 //! * Parsing values using [FromRedisValue] no longer returns [RedisError] on failure, in order to save the users checking for various server & client errors in such scenarios. if you rely on the error type when using this trait, you will need to adjust your error handling code. [ParsingError] should only be printed, since it does not contain any user actionable info outside of its error message.
 //! * If you used the `tcp_nodelay`, `keep-alive`, or `disable-client-setinfo` features, you'll need to set these values on the connection info you pass to the client use [ConnectionInfo::set_tcp_settings].
-//! * If you create [ConnectionInfo], [RedisConnectionInfo], or [sentinel::SentinelNodeConnectionInfo] objects explicitly, now you need to use the builder pattern setters instead of setting fields.
-//! * if you used `MultiplexedConnection::new_with_response_timeout`, it is replaced by [aio::MultiplexedConnection::new_with_config]. `Client::get_multiplexed_tokio_connection_with_response_timeouts`, `Client::get_multiplexed_tokio_connection`, `Client::create_multiplexed_tokio_connection_with_response_timeout`, `Client::create_multiplexed_tokio_connection` were replaced by [Client::get_multiplexed_async_connection_with_config].
+//! * If you create [ConnectionInfo], [RedisConnectionInfo], or `sentinel::SentinelNodeConnectionInfo` objects explicitly, now you need to use the builder pattern setters instead of setting fields.
+//! * if you used `MultiplexedConnection::new_with_response_timeout`, it is replaced by `aio::MultiplexedConnection::new_with_config`. `Client::get_multiplexed_tokio_connection_with_response_timeouts`, `Client::get_multiplexed_tokio_connection`, `Client::create_multiplexed_tokio_connection_with_response_timeout`, `Client::create_multiplexed_tokio_connection` were replaced by `Client::get_multiplexed_async_connection_with_config`.
 //! * If you're using `tokio::time::pause()` or otherwise manipulating time, you might need to opt out of timeouts using `AsyncConnectionConfig::new().set_connection_timeout(None).set_response_timeout(None)`.
 //! * Async connections now have default timeouts. If you're using blocking commands or other potentially long running commands, you should adjust the timeouts accordingly.
 //! * If you're manually setting `ConnectionManager`'s retry setting, then please re-examine the values you set. `exponential_base` has been made a f32, and `factor` was replaced by `min_delay`, in order to match the documented behavior, instead of the actual erroneous behavior of past versions.
