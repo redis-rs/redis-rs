@@ -586,7 +586,7 @@ implement_commands! {
     }
 
 
-    /// Set the expiration for one or more fields as a UNIX timestamp in milliseconds.
+    /// Set the expiration for one or more fields as a UNIX timestamp in seconds.
     /// Returns an array where each element corresponds to the field at the same index in the fields argument.
     /// Each element of the array is either:
     /// 0 if the specified condition has not been met.
