@@ -1193,18 +1193,18 @@ where
             let mut nodes_to_reconnect_guard = self.inner.nodes_to_reconnect.lock().unwrap();
             if !nodes_to_reconnect_guard.is_empty() {
                 // Batch up to MAX_RECONNECTS_PER_CYCLE nodes to avoid spikes.
-                let mut remaining = std::mem::take(&mut *nodes_to_reconnect_guard);
-                let mut batch: Vec<ArcStr> = Vec::with_capacity(MAX_RECONNECTS_PER_CYCLE);
-                for _ in 0..MAX_RECONNECTS_PER_CYCLE {
-                    if let Some(addr) = remaining.iter().next().cloned() {
-                        remaining.remove(&addr);
-                        batch.push(addr);
-                    } else {
-                        break;
-                    }
-                }
+                // Use drain to avoid repeated remove() calls.
+                let mut drained: Vec<ArcStr> = nodes_to_reconnect_guard.drain().collect();
+                let remainder = if drained.len() > MAX_RECONNECTS_PER_CYCLE {
+                    drained.split_off(MAX_RECONNECTS_PER_CYCLE)
+                } else {
+                    Vec::new()
+                };
+                // drained now contains up to MAX_RECONNECTS_PER_CYCLE items
+                let batch: Vec<ArcStr> = drained;
                 // Put back the remainder for future cycles
-                *nodes_to_reconnect_guard = remaining;
+                nodes_to_reconnect_guard.extend(remainder);
+
                 if !batch.is_empty() {
                     trace!(
                         "poll_complete: scheduling reconnect for {} node(s)",
