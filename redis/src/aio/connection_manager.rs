@@ -549,10 +549,7 @@ impl ConnectionManager {
     /// If the manager was configured without a push sender, the connection won't be able to pass messages back to the user.
     ///
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
-    /// If [ConnectionManagerConfig::set_automatic_resubscription] was called, the manager will
-    /// automatically resubscribe to all channels after a disconnect. Otherwise, the subscription
-    /// will be lost and must be re-established manually.
-    ///  
+    ///
     /// ```rust,no_run
     /// # async fn func() -> redis::RedisResult<()> {
     /// let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();

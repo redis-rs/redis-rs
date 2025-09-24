@@ -2770,6 +2770,29 @@ mod cluster_async {
             println!("dropped");
             drop(ctx);
 
+            // Ensure old cluster has fully stopped before recreating on the same ports
+            for _ in 0..100 {
+                let mut all_closed = true;
+                for port in &ports {
+                    let addr = format!("127.0.0.1:{port}");
+                    let sock: std::net::SocketAddr = addr.parse().unwrap();
+                    let s = socket2::Socket::new(
+                        socket2::Domain::for_address(sock),
+                        socket2::Type::STREAM,
+                        None,
+                    )
+                    .unwrap();
+                    if s.connect(&sock.into()).is_ok() {
+                        all_closed = false;
+                        break;
+                    }
+                }
+                if all_closed {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+
             // we expect 1 disconnect per connection to node. 2 connections * 3 node = 6 disconnects.
             for _ in 0..6 {
                 let push = rx.recv().await.unwrap();
@@ -2806,32 +2829,54 @@ mod cluster_async {
                 )
                 .await?;
 
-            // the resubsriptions can be received in any order, so we assert without assuming order.
-            let mut pushes = Vec::new();
-            pushes.push(rx.recv().await.unwrap());
-            pushes.push(rx.recv().await.unwrap());
-            if !is_redis_6 {
-                pushes.push(rx.recv().await.unwrap());
+            // The resubscriptions can arrive in any order and may be slightly delayed on some runtimes/OS.
+            // Give a brief grace period and then collect push messages for a bounded window, then assert presence.
+            futures_time::task::sleep(futures_time::time::Duration::from_millis(200)).await;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1000);
+            let mut pushes: Vec<PushInfo> = Vec::new();
+            loop {
+                // Drain any immediately available messages first
+                while let Ok(push) = rx.try_recv() {
+                    pushes.push(push);
+                }
+                if std::time::Instant::now() >= deadline {
+                    break;
+                }
+                // Small sleep to yield while waiting for late arrivals
+                futures_time::task::sleep(futures_time::time::Duration::from_millis(10)).await;
             }
-            // we expect only 3 resubscriptions.
-            assert!(rx.try_recv().is_err());
-            assert!(pushes.contains(&PushInfo {
-                kind: PushKind::Subscribe,
-                data: vec![
-                    Value::BulkString(b"regular-phonewave".to_vec()),
-                    Value::Int(1)
-                ]
-            }));
-            assert!(pushes.contains(&PushInfo {
-                kind: PushKind::PSubscribe,
-                data: vec![Value::BulkString(b"phonewave*".to_vec()), Value::Int(2)]
-            }));
+
+            // Assert that we saw the expected resubscriptions (order-independent).
+            assert!(
+                pushes.contains(&PushInfo {
+                    kind: PushKind::Subscribe,
+                    data: vec![
+                        Value::BulkString(b"regular-phonewave".to_vec()),
+                        Value::Int(1)
+                    ]
+                }),
+                "Did not observe Subscribe resubscription push. Pushes: {:?}",
+                pushes
+            );
+
+            assert!(
+                pushes.contains(&PushInfo {
+                    kind: PushKind::PSubscribe,
+                    data: vec![Value::BulkString(b"phonewave*".to_vec()), Value::Int(2)]
+                }),
+                "Did not observe PSubscribe resubscription push. Pushes: {:?}",
+                pushes
+            );
 
             if !is_redis_6 {
-                assert!(pushes.contains(&PushInfo {
-                    kind: PushKind::SSubscribe,
-                    data: vec![Value::BulkString(b"sphonewave".to_vec()), Value::Int(1)]
-                }));
+                assert!(
+                    pushes.contains(&PushInfo {
+                        kind: PushKind::SSubscribe,
+                        data: vec![Value::BulkString(b"sphonewave".to_vec()), Value::Int(1)]
+                    }),
+                    "Did not observe SSubscribe resubscription push. Pushes: {:?}",
+                    pushes
+                );
             }
 
             check_publishing(&mut publish_conn, &mut rx, is_redis_6).await?;

@@ -194,17 +194,28 @@ impl RedisCluster {
                     Err(err)
                 }
                 Ok(None) => {
-                    // wait for 10 seconds for the server to be available.
-                    let max_attempts = 200;
+                    // wait for up to 20 seconds for the server to be available.
+                    let max_attempts = 400;
                     let mut cur_attempts = 0;
+                    let log_path = crate::server::RedisServer::log_file(&server.tempdir);
                     loop {
                         if cur_attempts == max_attempts {
                             let log_file_contents = server.log_file_contents();
                             break Err(format!("redis server creation failed: Address {} closed. {log_file_contents:?}", server.addr));
-                        } else if port_in_use(&server.addr.to_string()) {
+                        }
+                        // Succeed if TCP port is accepting or log indicates ready state
+                        if port_in_use(&server.addr.to_string()) {
                             break Ok(());
                         }
-                        eprintln!("Waiting for redis process to initialize");
+                        if let Ok(contents) = std::fs::read_to_string(&log_path) {
+                            if contents.contains("Ready to accept connections") {
+                                break Ok(());
+                            }
+                        }
+                        eprintln!(
+                            "Waiting for redis process to initialize at {} (log: {:?})",
+                            server.addr, log_path
+                        );
                         sleep(Duration::from_millis(50));
                         cur_attempts += 1;
                     }

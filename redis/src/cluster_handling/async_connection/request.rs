@@ -165,7 +165,6 @@ fn choose_response<C>(
     result: OperationResult,
     mut request: PendingRequest<C>,
     retry_params: &RetryParams,
-    _core: &Core<C>,
 ) -> (Option<Retry<C>>, PollFlushAction) {
     let (target, result) = result;
     let err = match result {
@@ -311,12 +310,7 @@ impl<C> Future for Request<C> {
 
         // can unwrap, because we tested for `is_none`` earlier in the function
         let request = this.request.take().unwrap();
-        Poll::Ready(choose_response(
-            result,
-            request,
-            this.retry_params,
-            this.core,
-        ))
+        Poll::Ready(choose_response(result, request, this.retry_params))
     }
 }
 
@@ -345,25 +339,6 @@ mod tests {
     };
 
     use super::*;
-    // Minimal Core setup for tests. choose_response() does not read `core` internals,
-    // but the function signature requires a &Core. Construct a minimal usable Core.
-    use crate::cluster_handling::slot_map::SlotMap;
-    use crate::ConnectionInfo;
-    use arcstr::ArcStr;
-    use std::collections::{HashMap, HashSet};
-    use tokio::sync::RwLock;
-
-    fn test_core() -> super::Core<usize> {
-        std::sync::Arc::new(crate::cluster_handling::async_connection::InnerCore {
-            conn_lock: RwLock::new((HashMap::new(), SlotMap::new(false))),
-            cluster_params: crate::cluster_handling::client::ClusterParams::default(),
-            pending_requests: std::sync::Mutex::new(Vec::new()),
-            initial_nodes: Vec::<ConnectionInfo>::new(),
-            subscription_tracker: None,
-            #[cfg(feature = "cluster-async")]
-            nodes_to_reconnect: std::sync::Mutex::new(HashSet::<ArcStr>::new()),
-        })
-    }
 
     fn get_redirect<C>(request: &PendingRequest<C>) -> Option<Redirect> {
         match &request.cmd {
@@ -428,8 +403,7 @@ mod tests {
             err(),
         );
         let retry_params = RetryParams::default();
-        let core = test_core();
-        let (retry, next) = choose_response(result, request, &retry_params, &core);
+        let (retry, next) = choose_response(result, request, &retry_params);
 
         assert!(receiver.try_recv().is_err());
         if let Some(super::Retry::Immediately { request, .. }) = retry {
@@ -447,8 +421,8 @@ mod tests {
             },
             err(),
         );
-        let core = test_core();
-        let (retry, next) = choose_response(result, request, &retry_params, &core);
+
+        let (retry, next) = choose_response(result, request, &retry_params);
 
         assert_eq!(receiver.try_recv(), Ok(Err(to_err(&err_string))));
         assert!(retry.is_none());
@@ -467,8 +441,8 @@ mod tests {
             err(),
         );
         let retry_params = RetryParams::default();
-        let core = test_core();
-        let (retry, next) = choose_response(result, request, &retry_params, &core);
+
+        let (retry, next) = choose_response(result, request, &retry_params);
 
         if let Some(super::Retry::Immediately { request, .. }) = retry {
             assert_eq!(
@@ -489,8 +463,8 @@ mod tests {
             },
             err(),
         );
-        let core = test_core();
-        let (retry, next) = choose_response(result, request, &retry_params, &core);
+
+        let (retry, next) = choose_response(result, request, &retry_params);
 
         assert_eq!(receiver.try_recv(), Ok(Err(to_err(&err_string))));
         assert!(retry.is_none());
@@ -503,8 +477,8 @@ mod tests {
         let err_string = format!("-MOVED 123 {ADDRESS}\r\n");
         let result = (OperationTarget::FanOut, single_result(&err_string));
         let retry_params = RetryParams::default();
-        let core = test_core();
-        let (retry, next) = choose_response(result, request, &retry_params, &core);
+
+        let (retry, next) = choose_response(result, request, &retry_params);
 
         assert_eq!(receiver.try_recv(), Ok(Err(to_err(&err_string))));
         assert!(retry.is_none());
@@ -519,8 +493,8 @@ mod tests {
         let (request, mut receiver) = request_and_receiver(0);
         let result = (OperationTarget::NotFound, err());
         let retry_params = RetryParams::default();
-        let core = test_core();
-        let (retry, next) = choose_response(result, request, &retry_params, &core);
+
+        let (retry, next) = choose_response(result, request, &retry_params);
 
         assert!(receiver.try_recv().is_err());
         if let Some(super::Retry::AfterSleep { request, .. }) = retry {
@@ -538,8 +512,8 @@ mod tests {
             },
             err(),
         );
-        let core = test_core();
-        let (retry, next) = choose_response(result, request, &retry_params, &core);
+
+        let (retry, next) = choose_response(result, request, &retry_params);
 
         assert_eq!(receiver.try_recv(), Ok(Err(to_err(&err_string))));
         assert!(retry.is_none());
@@ -553,8 +527,8 @@ mod tests {
         let (request, mut receiver) = request_and_receiver(0);
         let result = (OperationTarget::NotFound, Err(err()));
         let retry_params = RetryParams::default();
-        let core = test_core();
-        let (retry, next) = choose_response(result, request, &retry_params, &core);
+
+        let (retry, next) = choose_response(result, request, &retry_params);
 
         assert!(receiver.try_recv().is_err());
         if let Some(super::Retry::MoveToPending { request, .. }) = retry {
@@ -572,8 +546,8 @@ mod tests {
             },
             Err(err()),
         );
-        let core = test_core();
-        let (retry, next) = choose_response(result, request, &retry_params, &core);
+
+        let (retry, next) = choose_response(result, request, &retry_params);
 
         assert!(receiver.try_recv().is_err());
         if let Some(super::Retry::MoveToPending { request, .. }) = retry {
@@ -586,8 +560,8 @@ mod tests {
         // and another target
         let (request, mut receiver) = request_and_receiver(0);
         let result = (OperationTarget::FanOut, Err(err()));
-        let core = test_core();
-        let (retry, next) = choose_response(result, request, &retry_params, &core);
+
+        let (retry, next) = choose_response(result, request, &retry_params);
 
         assert!(receiver.try_recv().is_err());
         if let Some(super::Retry::MoveToPending { request, .. }) = retry {

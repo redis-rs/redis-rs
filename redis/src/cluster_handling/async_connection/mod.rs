@@ -141,7 +141,7 @@ struct CombinedPushSender {
 impl AsyncPushSender for CombinedPushSender {
     fn send(&self, info: crate::PushInfo) -> Result<(), SendError> {
         if let Some(external) = &self.external {
-            // Replicate ConnectionManager behavior: if external sender is disconnected, we don't care.
+            // Best-effort: ignore errors from external sender.
             let _ = external.send(info.clone());
         }
         self.internal
@@ -198,7 +198,6 @@ where
         let cache_manager = cluster_params.cache_manager.clone();
         let runtime = Runtime::locate();
 
-        #[cfg(feature = "cluster-async")]
         let internal_push_receiver = {
             if cluster_params.async_push_sender.is_some() {
                 match cluster_params.protocol {
@@ -230,15 +229,13 @@ where
             .map(|inner| {
                 let (sender, mut receiver) = mpsc::channel::<Message<_>>(100);
 
-                #[cfg(feature = "cluster-async")]
-                {
-                    if let Some(internal_push_receiver) = internal_push_receiver {
-                        let stream_inner = inner.inner.clone();
-                        let _ = runtime.spawn(check_for_disconnect_pushes(
-                            stream_inner,
-                            internal_push_receiver,
-                        ));
-                    }
+                if let Some(internal_push_receiver) = internal_push_receiver {
+                    trace!("Spawning internal disconnect-push listener task");
+                    let stream_inner = inner.inner.clone();
+                    let _ = runtime.spawn(check_for_disconnect_pushes(
+                        stream_inner,
+                        internal_push_receiver,
+                    ));
                 }
 
                 let stream = async move {
@@ -475,7 +472,6 @@ where
 
 type ConnectionMap<C> = HashMap<ArcStr, C>;
 
-#[cfg(feature = "cluster-async")]
 async fn check_for_disconnect_pushes<C>(
     inner: Core<C>,
     mut receiver: mpsc::UnboundedReceiver<(ArcStr, crate::PushInfo)>,
@@ -484,6 +480,7 @@ async fn check_for_disconnect_pushes<C>(
 {
     while let Some((node_address, push_info)) = receiver.recv().await {
         if push_info.kind == crate::PushKind::Disconnection {
+            trace!("Internal push: Disconnection observed from {node_address}, enqueueing for reconnect");
             inner
                 .nodes_to_reconnect
                 .lock()
@@ -502,7 +499,6 @@ struct InnerCore<C> {
     pending_requests: Mutex<Vec<PendingRequest<C>>>,
     initial_nodes: Vec<ConnectionInfo>,
     subscription_tracker: Option<Mutex<SubscriptionTracker>>,
-    #[cfg(feature = "cluster-async")]
     nodes_to_reconnect: Mutex<HashSet<ArcStr>>,
 }
 
@@ -590,7 +586,6 @@ where
             pending_requests: Mutex::new(Vec::new()),
             initial_nodes: initial_nodes.to_vec(),
             subscription_tracker,
-            #[cfg(feature = "cluster-async")]
             nodes_to_reconnect: Mutex::new(HashSet::new()),
         });
         let connection = ClusterConnInner {
@@ -1200,25 +1195,31 @@ where
     fn poll_complete(&mut self, cx: &mut task::Context<'_>) -> Poll<PollFlushAction> {
         let mut poll_flush_action = PollFlushAction::None;
 
-        #[cfg(feature = "cluster-async")]
         {
             let mut nodes_to_reconnect_guard = self.inner.nodes_to_reconnect.lock().unwrap();
             if !nodes_to_reconnect_guard.is_empty() {
                 // Batch up to MAX_RECONNECTS_PER_CYCLE nodes to avoid spikes.
-                let batch: Vec<ArcStr> = nodes_to_reconnect_guard
-                    .iter()
-                    .take(MAX_RECONNECTS_PER_CYCLE)
-                    .cloned()
-                    .collect();
-                for addr in &batch {
-                    nodes_to_reconnect_guard.remove(addr);
+                let mut remaining = std::mem::take(&mut *nodes_to_reconnect_guard);
+                let mut batch: Vec<ArcStr> = Vec::with_capacity(MAX_RECONNECTS_PER_CYCLE);
+                for _ in 0..MAX_RECONNECTS_PER_CYCLE {
+                    if let Some(addr) = remaining.iter().next().cloned() {
+                        remaining.remove(&addr);
+                        batch.push(addr);
+                    } else {
+                        break;
+                    }
                 }
+                // Put back the remainder for future cycles
+                *nodes_to_reconnect_guard = remaining;
                 if !batch.is_empty() {
+                    trace!(
+                        "poll_complete: scheduling reconnect for {} node(s)",
+                        batch.len()
+                    );
                     poll_flush_action = PollFlushAction::Reconnect(batch);
                 }
             }
         }
-
 
         let mut pending_requests_guard = self.inner.pending_requests.lock().unwrap();
         if !pending_requests_guard.is_empty() {
@@ -1532,7 +1533,6 @@ where
         AsyncConnectionConfig::default().set_connection_timeout(Some(params.connection_timeout));
     config = config.set_response_timeout(params.response_timeout);
 
-    #[cfg(feature = "cluster-async")]
     if let Some(internal_sender) = &params.internal_push_sender {
         let combined = CombinedPushSender {
             external: params.async_push_sender.clone(),
@@ -1642,7 +1642,6 @@ mod tests {
             pending_requests: Mutex::new(Vec::new()),
             initial_nodes: Vec::new(),
             subscription_tracker: None,
-            #[cfg(feature = "cluster-async")]
             nodes_to_reconnect: Mutex::new(HashSet::new()),
         })
     }
@@ -1659,46 +1658,42 @@ mod tests {
 
     #[test]
     fn poll_complete_batches_reconnects_by_cap() {
-        // Only applicable when cluster-async feature is enabled (nodes_to_reconnect exists)
-        #[cfg(feature = "cluster-async")]
-        {
-            let mut conn = make_conn_inner();
-            let mut guard = conn.inner.nodes_to_reconnect.lock().unwrap();
-            let total = MAX_RECONNECTS_PER_CYCLE + 5;
-            for i in 0..total {
-                let addr = format!("node:{}", i).into();
-                guard.insert(addr);
-            }
-            drop(guard);
-
-            // First poll should take exactly MAX_RECONNECTS_PER_CYCLE
-            let waker = futures_util::task::noop_waker();
-            let mut ctx = std::task::Context::from_waker(&waker);
-            match conn.poll_complete(&mut ctx) {
-                std::task::Poll::Ready(PollFlushAction::Reconnect(batch)) => {
-                    assert_eq!(batch.len(), MAX_RECONNECTS_PER_CYCLE);
-                }
-                other => panic!("unexpected poll result: {:?}", other),
-            }
-
-            // Remaining should be 5
-            let remaining = conn.inner.nodes_to_reconnect.lock().unwrap().len();
-            assert_eq!(remaining, 5);
-
-            // Second poll should take the rest (<= cap)
-            let waker = futures_util::task::noop_waker();
-            let mut ctx = std::task::Context::from_waker(&waker);
-            match conn.poll_complete(&mut ctx) {
-                std::task::Poll::Ready(PollFlushAction::Reconnect(batch)) => {
-                    assert!(batch.len() <= MAX_RECONNECTS_PER_CYCLE);
-                    assert_eq!(batch.len(), 5);
-                }
-                other => panic!("unexpected poll result: {:?}", other),
-            }
-
-            // No more reconnect work pending
-            let remaining = conn.inner.nodes_to_reconnect.lock().unwrap().len();
-            assert_eq!(remaining, 0);
+        let mut conn = make_conn_inner();
+        let mut guard = conn.inner.nodes_to_reconnect.lock().unwrap();
+        let total = MAX_RECONNECTS_PER_CYCLE + 5;
+        for i in 0..total {
+            let addr = format!("node:{}", i).into();
+            guard.insert(addr);
         }
+        drop(guard);
+
+        // First poll should take exactly MAX_RECONNECTS_PER_CYCLE
+        let waker = futures_util::task::noop_waker();
+        let mut ctx = std::task::Context::from_waker(&waker);
+        match conn.poll_complete(&mut ctx) {
+            std::task::Poll::Ready(PollFlushAction::Reconnect(batch)) => {
+                assert_eq!(batch.len(), MAX_RECONNECTS_PER_CYCLE);
+            }
+            other => panic!("unexpected poll result: {:?}", other),
+        }
+
+        // Remaining should be 5
+        let remaining = conn.inner.nodes_to_reconnect.lock().unwrap().len();
+        assert_eq!(remaining, 5);
+
+        // Second poll should take the rest (<= cap)
+        let waker = futures_util::task::noop_waker();
+        let mut ctx = std::task::Context::from_waker(&waker);
+        match conn.poll_complete(&mut ctx) {
+            std::task::Poll::Ready(PollFlushAction::Reconnect(batch)) => {
+                assert!(batch.len() <= MAX_RECONNECTS_PER_CYCLE);
+                assert_eq!(batch.len(), 5);
+            }
+            other => panic!("unexpected poll result: {:?}", other),
+        }
+
+        // No more reconnect work pending
+        let remaining = conn.inner.nodes_to_reconnect.lock().unwrap().len();
+        assert_eq!(remaining, 0);
     }
 }
