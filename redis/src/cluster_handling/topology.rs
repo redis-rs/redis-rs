@@ -1,9 +1,9 @@
 //! This module provides the functionality to refresh and calculate the cluster topology for Redis Cluster.
 
-use arcstr::ArcStr;
-
 use super::slot_map::Slot;
-use crate::{connection::is_wildcard_address, RedisResult, Value};
+use crate::{
+    cluster_handling::slot_map::Node, connection::is_wildcard_address, RedisResult, Value,
+};
 
 // Parse slot data from raw redis value.
 pub(crate) fn parse_slots(
@@ -66,7 +66,10 @@ pub(crate) fn parse_slots(
                 } else {
                     return None;
                 };
-                Some(format!("{hostname}:{port}").into())
+                Some(Node {
+                    host: hostname.into(),
+                    port,
+                })
             };
 
             let mut iterator = item.into_iter().skip(2);
@@ -80,9 +83,11 @@ pub(crate) fn parse_slots(
             let Some(primary) = primary else {
                 continue;
             };
-            let replicas: Vec<ArcStr> = iterator.filter_map(try_to_address).collect();
+            let replicas: Vec<_> = iterator.filter_map(try_to_address).collect();
 
-            slots.push(Slot::new(start, end, primary, replicas));
+            if let Ok(slot) = Slot::new(start, end, primary, replicas) {
+                slots.push(slot);
+            }
         }
     }
 
@@ -117,7 +122,8 @@ mod tests {
         let view = Value::Array(vec![slot_value(0, 4000, "", 6379)]);
 
         let slots = parse_slots(view, "node").unwrap();
-        assert_eq!(slots[0].master, "node:6379");
+        assert_eq!(slots[0].primary.host, "node");
+        assert_eq!(slots[0].primary.port, 6379);
     }
 
     #[test]
@@ -129,11 +135,17 @@ mod tests {
             vec![("0.0.0.0", 7000)],
         )]);
         let slots = parse_slots(view, "answer.host").unwrap();
-        assert_eq!(slots[0].master, "answer.host:7000");
+        assert_eq!(
+            slots[0].primary,
+            Node::from_addr("answer.host:7000").unwrap()
+        );
 
         // IPv6 wildcard :: similarly falls back to answering node
         let view_v6 = Value::Array(vec![slot_value_with_replicas(200, 300, vec![("::", 7001)])]);
         let slots_v6 = parse_slots(view_v6, "answer6.host").unwrap();
-        assert_eq!(slots_v6[0].master, "answer6.host:7001");
+        assert_eq!(
+            slots_v6[0].primary,
+            Node::from_addr("answer6.host:7001").unwrap()
+        );
     }
 }

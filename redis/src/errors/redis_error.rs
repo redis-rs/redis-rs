@@ -407,6 +407,17 @@ impl RedisError {
         Some((addr, slot_id))
     }
 
+    #[cfg(feature = "cluster")]
+    pub(crate) fn redirect_node_internal(
+        &self,
+    ) -> Option<(crate::cluster_handling::slot_map::Node, u16)> {
+        self.redirect_node().map(|(addr, slot)| {
+            crate::cluster_handling::slot_map::Node::from_addr(addr)
+                .map(|node| (node, slot))
+                .ok()
+        })?
+    }
+
     /// Specifies what method (if any) should be used to retry this request.
     ///
     /// If you are using the cluster api retrying of requests is already handled by the library.

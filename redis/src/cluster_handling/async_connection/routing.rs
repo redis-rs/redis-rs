@@ -1,6 +1,5 @@
-use arcstr::ArcStr;
-
 use crate::{
+    cluster_handling::slot_map::Node,
     cluster_routing::{
         MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, RoutingInfo,
         SingleNodeRoutingInfo, SlotAddr,
@@ -34,9 +33,9 @@ impl<C> From<InternalSingleNodeRouting<C>> for InternalRoutingInfo<C> {
 pub(super) enum InternalSingleNodeRouting<C> {
     Random,
     SpecificNode(Route),
-    ByAddress(ArcStr),
+    ByNode(Node),
     Connection {
-        identifier: ArcStr,
+        identifier: Node,
         conn: C,
     },
     Redirect {
@@ -59,7 +58,10 @@ impl<C> From<SingleNodeRoutingInfo> for InternalSingleNodeRouting<C> {
                 InternalSingleNodeRouting::SpecificNode(route)
             }
             SingleNodeRoutingInfo::ByAddress { host, port } => {
-                InternalSingleNodeRouting::ByAddress(format!("{host}:{port}").into())
+                InternalSingleNodeRouting::ByNode(Node {
+                    host: host.into(),
+                    port,
+                })
             }
             SingleNodeRoutingInfo::RandomPrimary => {
                 InternalSingleNodeRouting::SpecificNode(Route::new_random_primary())

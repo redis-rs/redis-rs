@@ -89,7 +89,7 @@ impl<C> CmdArg<C> {
                 // If a specific connection is specified, then reconnecting without resetting the routing
                 // will mean that the request is still routed to the old connection.
                 InternalSingleNodeRouting::Connection { identifier, .. } => {
-                    *route = InternalSingleNodeRouting::ByAddress(std::mem::take(identifier));
+                    *route = InternalSingleNodeRouting::ByNode(identifier.clone());
                 }
                 _ => {}
             }
@@ -214,12 +214,12 @@ fn choose_response<C>(
             (retry, PollFlushAction::ReconnectFromInitialConnections)
         }
 
-        (OperationTarget::Node { address }, RetryMethod::Reconnect) => (
+        (OperationTarget::Node { node }, RetryMethod::Reconnect) => (
             retry_or_send!(|mut request: PendingRequest<C>| {
                 request.cmd.reset_routing();
                 Retry::MoveToPending { request }
             }),
-            PollFlushAction::Reconnect(vec![address]),
+            PollFlushAction::Reconnect(vec![node]),
         ),
 
         (OperationTarget::FanOut, _) => {
@@ -241,8 +241,8 @@ fn choose_response<C>(
         (_, RetryMethod::AskRedirect) => {
             let retry = retry_or_send!(|mut request: PendingRequest<C>| {
                 request.cmd.set_redirect(
-                    err.redirect_node()
-                        .map(|(node, _slot)| Redirect::Ask(node.into())),
+                    err.redirect_node_internal()
+                        .map(|(node, _slot)| Redirect::Ask(node)),
                 );
                 Retry::Immediately { request }
             });
@@ -252,8 +252,8 @@ fn choose_response<C>(
         (_, RetryMethod::MovedRedirect) => {
             let retry = retry_or_send!(|mut request: PendingRequest<C>| {
                 request.cmd.set_redirect(
-                    err.redirect_node()
-                        .map(|(node, _slot)| Redirect::Moved(node.into())),
+                    err.redirect_node_internal()
+                        .map(|(node, _slot)| Redirect::Moved(node)),
                 );
                 Retry::Immediately { request }
             });
@@ -333,7 +333,7 @@ mod tests {
 
     use crate::{
         cluster_async::{routing, PollFlushAction},
-        cluster_handling::client::RetryParams,
+        cluster_handling::{client::RetryParams, slot_map::Node},
         parse_redis_value, RedisError, RedisResult,
     };
 
@@ -377,6 +377,10 @@ mod tests {
 
     const ADDRESS: &str = "foo:1234";
 
+    fn make_node() -> Node {
+        Node::from_addr(ADDRESS).unwrap()
+    }
+
     fn single_result(val: &str) -> RedisResult<Response> {
         parse_redis_value(val.as_bytes()).map(Response::Single)
     }
@@ -393,18 +397,13 @@ mod tests {
         let (request, mut receiver) = request_and_receiver(0);
         let err_string = format!("-ASK 123 {ADDRESS}\r\n");
         let err = || single_result(&err_string);
-        let result = (
-            OperationTarget::Node {
-                address: ADDRESS.into(),
-            },
-            err(),
-        );
+        let result = (OperationTarget::Node { node: make_node() }, err());
         let retry_params = RetryParams::default();
         let (retry, next) = choose_response(result, request, &retry_params);
 
         assert!(receiver.try_recv().is_err());
         if let Some(super::Retry::Immediately { request, .. }) = retry {
-            assert_eq!(get_redirect(&request), Some(Redirect::Ask(ADDRESS.into())));
+            assert_eq!(get_redirect(&request), Some(Redirect::Ask(make_node())));
         } else {
             panic!("Expected retry");
         };
@@ -412,12 +411,7 @@ mod tests {
 
         // try the same, without remaining retries
         let (request, mut receiver) = request_and_receiver(retry_params.number_of_retries);
-        let result = (
-            OperationTarget::Node {
-                address: ADDRESS.into(),
-            },
-            err(),
-        );
+        let result = (OperationTarget::Node { node: make_node() }, err());
         let (retry, next) = choose_response(result, request, &retry_params);
 
         assert_eq!(receiver.try_recv(), Ok(Err(to_err(&err_string))));
@@ -430,20 +424,12 @@ mod tests {
         let err_string = format!("-MOVED 123 {ADDRESS}\r\n");
         let err = || single_result(&err_string);
         let (request, mut receiver) = request_and_receiver(0);
-        let result = (
-            OperationTarget::Node {
-                address: ADDRESS.into(),
-            },
-            err(),
-        );
+        let result = (OperationTarget::Node { node: make_node() }, err());
         let retry_params = RetryParams::default();
         let (retry, next) = choose_response(result, request, &retry_params);
 
         if let Some(super::Retry::Immediately { request, .. }) = retry {
-            assert_eq!(
-                get_redirect(&request),
-                Some(Redirect::Moved(ADDRESS.into()))
-            );
+            assert_eq!(get_redirect(&request), Some(Redirect::Moved(make_node())));
         } else {
             panic!("Expected retry");
         };
@@ -452,12 +438,7 @@ mod tests {
 
         // try the same, without remaining retries
         let (request, mut receiver) = request_and_receiver(retry_params.number_of_retries);
-        let result = (
-            OperationTarget::Node {
-                address: ADDRESS.into(),
-            },
-            err(),
-        );
+        let result = (OperationTarget::Node { node: make_node() }, err());
         let (retry, next) = choose_response(result, request, &retry_params);
 
         assert_eq!(receiver.try_recv(), Ok(Err(to_err(&err_string))));
@@ -498,12 +479,7 @@ mod tests {
 
         // try the same, without remaining retries
         let (request, mut receiver) = request_and_receiver(retry_params.number_of_retries);
-        let result = (
-            OperationTarget::Node {
-                address: ADDRESS.into(),
-            },
-            err(),
-        );
+        let result = (OperationTarget::Node { node: make_node() }, err());
         let (retry, next) = choose_response(result, request, &retry_params);
 
         assert_eq!(receiver.try_recv(), Ok(Err(to_err(&err_string))));
@@ -530,12 +506,7 @@ mod tests {
 
         // try the same, with a different target
         let (request, mut receiver) = request_and_receiver(0);
-        let result = (
-            OperationTarget::Node {
-                address: ADDRESS.into(),
-            },
-            Err(err()),
-        );
+        let result = (OperationTarget::Node { node: make_node() }, Err(err()));
         let (retry, next) = choose_response(result, request, &retry_params);
 
         assert!(receiver.try_recv().is_err());

@@ -76,7 +76,8 @@ use super::{
     routing::{Redirect, Route, RoutingInfo},
     slot_map::{SlotMap, SLOT_SIZE},
 };
-use crate::cluster_handling::{get_connection_info, slot_cmd, split_node_address};
+use crate::cluster_handling::slot_map::Node;
+use crate::cluster_handling::{get_connection_info, slot_cmd};
 use crate::cluster_routing::{
     MultipleNodeRoutingInfo, ResponsePolicy, Routable, SingleNodeRoutingInfo, SlotAddr,
 };
@@ -87,7 +88,6 @@ use crate::parser::parse_redis_value;
 use crate::types::{HashMap, RedisResult, Value};
 use crate::IntoConnectionInfo;
 pub use crate::TlsMode; // Pub for backwards compatibility
-use arcstr::ArcStr;
 use pipeline::UNROUTABLE_ERROR;
 use rand::{rng, seq::IteratorRandom, Rng};
 
@@ -300,7 +300,7 @@ impl ClusterConfig {
 /// as well as common parameters for connecting to nodes and executing commands.
 pub struct ClusterConnection<C = Connection> {
     initial_nodes: Vec<ConnectionInfo>,
-    connections: RefCell<HashMap<ArcStr, C>>,
+    connections: RefCell<HashMap<Node, C>>,
     slots: RefCell<SlotMap>,
     auto_reconnect: RefCell<bool>,
     read_timeout: RefCell<Option<Duration>>,
@@ -405,16 +405,16 @@ where
         let mut failed_connections = Vec::new();
 
         for info in self.initial_nodes.iter() {
-            let addr = info.addr.to_string().into();
+            let node = (&info.addr).into();
 
-            match self.connect(&addr) {
+            match self.connect(&node) {
                 Ok(mut conn) => {
                     if conn.check_connection() {
-                        connections.insert(addr, conn);
+                        connections.insert(node, conn);
                         break;
                     } else {
                         failed_connections.push((
-                            addr,
+                            node,
                             RedisError::from((
                                 ErrorKind::Io,
                                 "Node failed to respond to connection check,",
@@ -423,7 +423,7 @@ where
                     }
                 }
                 Err(conn_err) => {
-                    failed_connections.push((addr, conn_err));
+                    failed_connections.push((node, conn_err));
                 }
             }
         }
@@ -435,12 +435,12 @@ where
             } else {
                 let mut formatted_detail = "Failed to connect to each cluster node (".to_string();
 
-                for (index, (addr, conn_err)) in failed_connections.into_iter().enumerate() {
+                for (index, (node, conn_err)) in failed_connections.into_iter().enumerate() {
                     if index != 0 {
                         formatted_detail += "; ";
                     }
                     use std::fmt::Write;
-                    let _ = write!(&mut formatted_detail, "{addr}: {conn_err}");
+                    let _ = write!(&mut formatted_detail, "{node}: {conn_err}");
                 }
                 formatted_detail += ")";
                 formatted_detail
@@ -470,16 +470,16 @@ where
         let mut connections = self.connections.borrow_mut();
         *connections = nodes
             .into_iter()
-            .filter_map(|addr| {
-                if let Some(mut conn) = connections.remove(addr) {
+            .filter_map(|node| {
+                if let Some(mut conn) = connections.remove(node) {
                     if conn.check_connection() {
-                        return Some((addr.clone(), conn));
+                        return Some((node.clone(), conn));
                     }
                 }
 
-                if let Ok(mut conn) = self.connect(addr) {
+                if let Ok(mut conn) = self.connect(node) {
                     if conn.check_connection() {
-                        return Some((addr.clone(), conn));
+                        return Some((node.clone(), conn));
                     }
                 }
 
@@ -494,9 +494,9 @@ where
         let mut connections = self.connections.borrow_mut();
         let mut new_slots = None;
 
-        for (addr, conn) in connections.iter_mut() {
+        for (node, conn) in connections.iter_mut() {
             let value = conn.req_command(&slot_cmd())?;
-            if let Ok(slots_data) = parse_slots(value, addr.rsplit_once(':').unwrap().0) {
+            if let Ok(slots_data) = parse_slots(value, &node.host) {
                 new_slots = Some(SlotMap::from_slots(
                     slots_data,
                     self.cluster_params.read_from_replicas,
@@ -514,8 +514,8 @@ where
         }
     }
 
-    fn connect(&self, node: &ArcStr) -> RedisResult<C> {
-        let info = get_connection_info(node, &self.cluster_params)?;
+    fn connect(&self, node: &Node) -> RedisResult<C> {
+        let info = get_connection_info(node, &self.cluster_params);
 
         let mut conn = C::connect(info, Some(self.cluster_params.connection_timeout))?;
         if self.cluster_params.read_from_replicas {
@@ -529,12 +529,12 @@ where
 
     fn get_connection<'a>(
         &self,
-        connections: &'a mut HashMap<ArcStr, C>,
+        connections: &'a mut HashMap<Node, C>,
         route: &Route,
-    ) -> (ArcStr, RedisResult<&'a mut C>) {
+    ) -> (Node, RedisResult<&'a mut C>) {
         let slots = self.slots.borrow();
-        if let Some(addr) = slots.slot_addr_for_route(route) {
-            (addr.clone(), self.get_connection_by_addr(connections, addr))
+        if let Some(node) = slots.slot_addr_for_route(route) {
+            (node.clone(), self.get_connection_by_node(connections, node))
         } else {
             // try a random node next.  This is safe if slots are involved
             // as a wrong node would reject the request.
@@ -542,28 +542,28 @@ where
         }
     }
 
-    fn get_connection_by_addr<'a>(
+    fn get_connection_by_node<'a>(
         &self,
-        connections: &'a mut HashMap<ArcStr, C>,
-        addr: &ArcStr,
+        connections: &'a mut HashMap<Node, C>,
+        node: &Node,
     ) -> RedisResult<&'a mut C> {
-        match connections.entry(addr.clone()) {
+        match connections.entry(node.clone()) {
             std::collections::hash_map::Entry::Occupied(occupied_entry) => {
                 Ok(occupied_entry.into_mut())
             }
             std::collections::hash_map::Entry::Vacant(vacant_entry) => {
                 // Create new connection.
                 // TODO: error handling
-                let conn = self.connect(addr)?;
+                let conn = self.connect(node)?;
                 Ok(vacant_entry.insert(conn))
             }
         }
     }
 
-    fn get_addr_for_cmd(&self, cmd: &Cmd) -> RedisResult<ArcStr> {
+    fn get_node_for_cmd(&self, cmd: &Cmd) -> RedisResult<Node> {
         let slots = self.slots.borrow();
 
-        let addr_for_slot = |route: Route| -> RedisResult<ArcStr> {
+        let addr_for_slot = |route: Route| -> RedisResult<Node> {
             let slot_addr = slots
                 .slot_addr_for_route(&route)
                 .ok_or((ErrorKind::Client, "Missing slot coverage"))?;
@@ -586,13 +586,13 @@ where
     }
 
     fn map_cmds_to_nodes(&self, cmds: &[Cmd]) -> RedisResult<Vec<NodeCmd>> {
-        let mut cmd_map: HashMap<ArcStr, NodeCmd> = HashMap::new();
+        let mut cmd_map: HashMap<_, _> = HashMap::new();
 
         for (idx, cmd) in cmds.iter().enumerate() {
-            let addr = self.get_addr_for_cmd(cmd)?;
+            let node = self.get_node_for_cmd(cmd)?;
             let nc = cmd_map
-                .entry(addr.clone())
-                .or_insert_with(|| NodeCmd::new(addr));
+                .entry(node.clone())
+                .or_insert_with(|| NodeCmd::new(node));
             nc.indexes.push(idx);
             cmd.write_packed_command(&mut nc.pipe);
         }
@@ -607,23 +607,23 @@ where
     fn execute_on_all<'a>(
         &'a self,
         input: Input,
-        addresses: HashSet<&'a ArcStr>,
-    ) -> Vec<RedisResult<(&'a ArcStr, Value)>> {
-        addresses
+        nodes: HashSet<&'a Node>,
+    ) -> Vec<RedisResult<(&'a Node, Value)>> {
+        nodes
             .into_iter()
-            .map(|addr| {
-                let (host, port) = split_node_address(addr).unwrap();
+            .map(|node| {
+                let Node { host, port } = node;
                 self.request(
                     input.clone(),
                     Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
                         host: host.to_string(),
-                        port,
+                        port: *port,
                     })),
                 )
                 .map(|res| match res {
-                    Output::Single(value) => (addr, value),
+                    Output::Single(value) => (node, value),
                     // technically this shouldn't be possible, but I prefer not to crash here.
-                    Output::Multi(values) => (addr, Value::Array(values)),
+                    Output::Multi(values) => (node, Value::Array(values)),
                 })
             })
             .collect()
@@ -633,41 +633,41 @@ where
         &'a self,
         input: Input,
         slots: &'a mut SlotMap,
-    ) -> Vec<RedisResult<(&'a ArcStr, Value)>> {
-        self.execute_on_all(input, slots.addresses_for_all_nodes())
+    ) -> Vec<RedisResult<(&'a Node, Value)>> {
+        self.execute_on_all(input, slots.nodes_for_all_nodes())
     }
 
     fn execute_on_all_primaries<'a>(
         &'a self,
         input: Input,
         slots: &'a mut SlotMap,
-    ) -> Vec<RedisResult<(&'a ArcStr, Value)>> {
-        self.execute_on_all(input, slots.addresses_for_all_primaries())
+    ) -> Vec<RedisResult<(&'a Node, Value)>> {
+        self.execute_on_all(input, slots.nodes_for_all_primaries())
     }
 
     fn execute_multi_slot<'a, 'b>(
         &'a self,
         input: Input,
         slots: &'a mut SlotMap,
-        connections: &'a mut HashMap<ArcStr, C>,
+        connections: &'a mut HashMap<Node, C>,
         routes: &'b [(Route, Vec<usize>)],
-    ) -> Vec<RedisResult<(&'a ArcStr, Value)>>
+    ) -> Vec<RedisResult<(&'a Node, Value)>>
     where
         'b: 'a,
     {
         slots
-            .addresses_for_multi_slot(routes)
+            .nodes_for_multi_slot(routes)
             .enumerate()
-            .map(|(index, addr)| {
-                let addr = addr.ok_or(RedisError::from((
+            .map(|(index, node)| {
+                let node = node.ok_or(RedisError::from((
                     ErrorKind::Io,
                     "Couldn't find connection",
                 )))?;
-                let connection = self.get_connection_by_addr(connections, addr)?;
+                let connection = self.get_connection_by_node(connections, node)?;
                 let (_, indices) = routes.get(index).unwrap();
                 let cmd =
                     crate::cluster_routing::command_for_multi_slot_indices(&input, indices.iter());
-                connection.req_command(&cmd).map(|res| (addr, res))
+                connection.req_command(&cmd).map(|res| (node, res))
             })
             .collect()
     }
@@ -788,7 +788,9 @@ where
                 let results = results
                     .into_iter()
                     .map(|result| {
-                        result.map(|(addr, val)| (Value::BulkString(addr.as_bytes().to_vec()), val))
+                        result.map(|(node, val)| {
+                            (Value::BulkString(node.to_string().into_bytes()), val)
+                        })
                     })
                     .collect::<RedisResult<Vec<_>>>()?;
                 Ok(Value::Map(results))
@@ -812,15 +814,15 @@ where
         let mut redirected = None::<Redirect>;
 
         loop {
-            // Get target address and response.
-            let (addr, rv) = {
+            // Get target node and response.
+            let (node, rv) = {
                 let mut connections = self.connections.borrow_mut();
-                let (addr, conn) = if let Some(redirected) = redirected.take() {
-                    let (addr, is_asking) = match redirected {
-                        Redirect::Moved(addr) => (addr, false),
-                        Redirect::Ask(addr) => (addr, true),
+                let (node, conn) = if let Some(redirected) = redirected.take() {
+                    let (node, is_asking) = match redirected {
+                        Redirect::Moved(node) => (node, false),
+                        Redirect::Ask(node) => (node, true),
                     };
-                    let mut conn = self.get_connection_by_addr(&mut connections, &addr);
+                    let mut conn = self.get_connection_by_node(&mut connections, &node);
                     if is_asking {
                         // if we are in asking mode we want to feed a single
                         // ASKING command into the connection before what we
@@ -831,7 +833,7 @@ where
                             Ok(conn)
                         });
                     }
-                    (addr, conn)
+                    (node, conn)
                 } else {
                     match &single_node_routing {
                         SingleNodeRoutingInfo::Random => {
@@ -841,16 +843,19 @@ where
                             self.get_connection(&mut connections, route)
                         }
                         SingleNodeRoutingInfo::ByAddress { host, port } => {
-                            let address = format!("{host}:{port}").into();
-                            let conn = self.get_connection_by_addr(&mut connections, &address);
-                            (address, conn)
+                            let node = Node {
+                                host: host.into(),
+                                port: *port,
+                            };
+                            let conn = self.get_connection_by_node(&mut connections, &node);
+                            (node, conn)
                         }
                         SingleNodeRoutingInfo::RandomPrimary => {
                             self.get_connection(&mut connections, &Route::new_random_primary())
                         }
                     }
                 };
-                (addr, conn.and_then(|conn| input.send(conn)))
+                (node, conn.and_then(|conn| input.send(conn)))
             };
 
             match rv {
@@ -860,10 +865,10 @@ where
                         && *self.auto_reconnect.borrow()
                     {
                         for node in &self.initial_nodes {
-                            let addr = node.addr.to_string().into();
-                            if let Ok(mut conn) = self.connect(&addr) {
+                            let node = (&node.addr).into();
+                            if let Ok(mut conn) = self.connect(&node) {
                                 if conn.check_connection() {
-                                    self.connections.borrow_mut().insert(addr, conn);
+                                    self.connections.borrow_mut().insert(node, conn);
                                 }
                             }
                         }
@@ -878,16 +883,16 @@ where
                     match err.retry_method() {
                         RetryMethod::AskRedirect => {
                             redirected = err
-                                .redirect_node()
-                                .map(|(node, _slot)| Redirect::Ask(node.into()));
+                                .redirect_node_internal()
+                                .map(|(node, _slot)| Redirect::Ask(node));
                         }
                         RetryMethod::MovedRedirect => {
                             // Refresh slots.
                             self.refresh_slots()?;
                             // Request again.
                             redirected = err
-                                .redirect_node()
-                                .map(|(node, _slot)| Redirect::Moved(node.into()));
+                                .redirect_node_internal()
+                                .map(|(node, _slot)| Redirect::Moved(node));
                         }
                         RetryMethod::WaitAndRetry => {
                             // Sleep and retry.
@@ -900,10 +905,10 @@ where
                         RetryMethod::Reconnect => {
                             if *self.auto_reconnect.borrow() {
                                 // if the connection is no longer valid, we should remove it.
-                                self.connections.borrow_mut().remove(&addr);
-                                if let Ok(mut conn) = self.connect(&addr) {
+                                self.connections.borrow_mut().remove(&node);
+                                if let Ok(mut conn) = self.connect(&node) {
                                     if conn.check_connection() {
-                                        self.connections.borrow_mut().insert(addr, conn);
+                                        self.connections.borrow_mut().insert(node, conn);
                                     }
                                 }
                             }
@@ -915,9 +920,9 @@ where
                         RetryMethod::ReconnectFromInitialConnections => {
                             // TODO - implement reconnect from initial connections
                             if *self.auto_reconnect.borrow() {
-                                if let Ok(mut conn) = self.connect(&addr) {
+                                if let Ok(mut conn) = self.connect(&node) {
                                     if conn.check_connection() {
-                                        self.connections.borrow_mut().insert(addr, conn);
+                                        self.connections.borrow_mut().insert(node, conn);
                                     }
                                 }
                             }
@@ -962,7 +967,7 @@ where
 
         let node_cmds = self.map_cmds_to_nodes(cmds)?;
         for nc in &node_cmds {
-            self.get_connection_by_addr(&mut connections, &nc.addr)?
+            self.get_connection_by_node(&mut connections, &nc.node)?
                 .send_packed_command(&nc.pipe)?;
         }
         Ok(node_cmds)
@@ -981,7 +986,7 @@ where
         for nc in node_cmds {
             for cmd_idx in &nc.indexes {
                 match self
-                    .get_connection_by_addr(&mut connections, &nc.addr)?
+                    .get_connection_by_node(&mut connections, &nc.node)?
                     .recv_response()
                 {
                     Ok(item) => results[*cmd_idx] = item,
@@ -1088,86 +1093,43 @@ struct NodeCmd {
     // The original command indexes
     indexes: Vec<usize>,
     pipe: Vec<u8>,
-    addr: ArcStr,
+    node: Node,
 }
 
 impl NodeCmd {
-    fn new(a: ArcStr) -> NodeCmd {
+    fn new(node: Node) -> NodeCmd {
         NodeCmd {
             indexes: vec![],
             pipe: vec![],
-            addr: a,
+            node,
         }
     }
 }
 
 fn get_random_connection<C: ConnectionLike + Connect + Sized>(
-    connections: &mut HashMap<ArcStr, C>,
-) -> Option<(ArcStr, &mut C)> {
+    connections: &mut HashMap<Node, C>,
+) -> Option<(Node, &mut C)> {
     connections
         .iter_mut()
         .choose(&mut rng())
-        .map(|(addr, conn)| (addr.clone(), conn))
+        .map(|(node, conn)| (node.clone(), conn))
 }
 
 fn get_random_connection_or_error<C: ConnectionLike + Connect + Sized>(
-    connections: &mut HashMap<ArcStr, C>,
-) -> (ArcStr, RedisResult<&mut C>) {
+    connections: &mut HashMap<Node, C>,
+) -> (Node, RedisResult<&mut C>) {
     match get_random_connection(connections) {
-        Some((addr, conn)) => (addr, Ok(conn)),
+        Some((node, conn)) => (node, Ok(conn)),
         None => (
-            // we need to add a fake address in order for the error to be handled - the code that uses it assumes there's an address attached.
-            String::new().into(),
+            // we need to add a fake node in order for the error to be handled - the code that uses it assumes there's an node attached.
+            Node {
+                host: String::new().into(),
+                port: 0,
+            },
             Err(RedisError::from((
                 ErrorKind::ClusterConnectionNotFound,
                 "No connections found",
             ))),
         ),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::ConnectionAddr;
-
-    use super::*;
-
-    #[test]
-    fn parse_cluster_node_host_port() {
-        let cases = vec![
-            (
-                "127.0.0.1:6379",
-                ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379u16),
-            ),
-            (
-                "localhost.localdomain:6379",
-                ConnectionAddr::Tcp("localhost.localdomain".to_string(), 6379u16),
-            ),
-            (
-                "dead::cafe:beef:30001",
-                ConnectionAddr::Tcp("dead::cafe:beef".to_string(), 30001u16),
-            ),
-            (
-                "[fe80::cafe:beef%en1]:30001",
-                ConnectionAddr::Tcp("fe80::cafe:beef%en1".to_string(), 30001u16),
-            ),
-        ];
-
-        for (input, expected) in cases {
-            let res = get_connection_info(input, &ClusterParams::default());
-            assert_eq!(res.unwrap().addr, expected);
-        }
-
-        let cases = vec![":0", "[]:6379"];
-        for input in cases {
-            let res = get_connection_info(input, &ClusterParams::default());
-            assert_eq!(
-                res.err(),
-                Some(RedisError::from((
-                    ErrorKind::InvalidClientConfig,
-                    "Invalid node string",
-                ))),
-            );
-        }
     }
 }
