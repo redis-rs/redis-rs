@@ -219,7 +219,7 @@ fn choose_response<C>(
                 request.cmd.reset_routing();
                 Retry::MoveToPending { request }
             }),
-            PollFlushAction::Reconnect(vec![address]),
+            PollFlushAction::Reconnect([address].into_iter().collect()),
         ),
 
         (OperationTarget::FanOut, _) => {

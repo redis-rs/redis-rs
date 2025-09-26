@@ -91,17 +91,18 @@
 //! }
 //! ```
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt,
     future::Future,
     io, mem,
     ops::Deref,
-    pin::Pin,
+    pin::{pin, Pin},
     sync::{Arc, Mutex},
     task::{self, Poll},
     time::Duration,
 };
 
+mod addressed_push_sender;
 mod request;
 mod routing;
 use crate::{
@@ -110,9 +111,7 @@ use crate::{
     cluster_handling::{
         client::ClusterParams,
         get_connection_info,
-        routing::{
-            MultipleNodeRoutingInfo, Redirect, ResponsePolicy, RoutingInfo, SingleNodeRoutingInfo,
-        },
+        routing::*,
         slot_cmd,
         slot_map::{Slot, SlotMap},
         topology::parse_slots,
@@ -120,25 +119,27 @@ use crate::{
     cmd,
     errors::closed_connection_error,
     subscription_tracker::SubscriptionTracker,
-    AsyncConnectionConfig, Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError,
-    RedisFuture, RedisResult, ToRedisArgs, Value,
+    AsyncConnectionConfig, Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, PushInfo, PushKind,
+    RedisError, RedisFuture, RedisResult, ToRedisArgs, Value,
 };
+use addressed_push_sender::*;
 
 #[cfg(feature = "cache-aio")]
 use crate::caching::{CacheManager, CacheStatistics};
 use crate::ProtocolVersion;
 use arcstr::ArcStr;
+use futures_channel::mpsc::{self, UnboundedSender};
 use futures_util::{
-    future::{self, BoxFuture, FutureExt},
+    future::{self, select, BoxFuture, FutureExt},
     ready,
-    sink::Sink,
     stream::{self, Stream, StreamExt},
+    Sink, SinkExt,
 };
 use log::{debug, trace, warn};
 use rand::{rng, seq::IteratorRandom};
-use request::{CmdArg, PendingRequest, Request, RequestState, Retry};
-use routing::{route_for_pipeline, InternalRoutingInfo, InternalSingleNodeRouting};
-use tokio::sync::{mpsc, oneshot, RwLock};
+use request::*;
+use routing::*;
+use tokio::sync::{oneshot, RwLock};
 
 struct ClientSideState {
     protocol: ProtocolVersion,
@@ -165,37 +166,65 @@ where
 {
     pub(crate) async fn new(
         initial_nodes: &[ConnectionInfo],
-        cluster_params: ClusterParams,
+        mut cluster_params: ClusterParams,
     ) -> RedisResult<ClusterConnection<C>> {
         let protocol = cluster_params.protocol.unwrap_or_default();
         let response_timeout = cluster_params.response_timeout;
         #[cfg(feature = "cache-aio")]
         let cache_manager = cluster_params.cache_manager.clone();
         let runtime = Runtime::locate();
-        ClusterConnInner::new(initial_nodes, cluster_params)
-            .await
-            .map(|inner| {
-                let (sender, mut receiver) = mpsc::channel::<Message<_>>(100);
-                let stream = async move {
-                    let _ = stream::poll_fn(move |cx| receiver.poll_recv(cx))
-                        .map(Ok)
-                        .forward(inner)
-                        .await;
-                };
-                let _task_handle = HandleContainer::new(runtime.spawn(stream));
-
-                ClusterConnection {
-                    sender,
-                    state: Arc::new(ClientSideState {
-                        protocol,
-                        _task_handle,
-                        response_timeout,
-                        runtime,
-                        #[cfg(feature = "cache-aio")]
-                        cache_manager,
-                    }),
+        let (sender, mut receiver) = mpsc::unbounded();
+        let push_sender = cluster_params.async_push_sender.take();
+        let inner = match ClusterConnInner::new(initial_nodes, cluster_params, sender).await {
+            Ok(inner) => inner,
+            Err(err) => {
+                warn!("Failed to create cluster connection: {err:?}");
+                return Err(err);
+            }
+        };
+        let reconnect_from_pushes_task = if protocol.supports_resp3() {
+            let inner = inner.inner.clone();
+            async move {
+                while let Some((addr, msg)) = receiver.next().await {
+                    println!("XXXX {addr} sent {msg:?}");
+                    if msg.kind == PushKind::Disconnection {
+                        println!("XXXX {addr} disconnected");
+                        inner.addresses_for_reconnection.lock().unwrap().push(addr);
+                        if let Some(waker) = inner.latest_waker.lock().unwrap().take() {
+                            waker.wake();
+                        }
+                    }
+                    if let Some(push_sender) = &push_sender {
+                        _ = push_sender.send(msg);
+                    }
                 }
-            })
+            }
+            .boxed()
+        } else {
+            future::pending().boxed()
+        };
+        let (sender, mut receiver) = mpsc::channel::<Message<_>>(100);
+        let request_stream = async move {
+            let _ = stream::poll_fn(move |cx| receiver.poll_next_unpin(cx))
+                .map(Ok)
+                .forward(inner)
+                .await;
+        };
+        let _task_handle = HandleContainer::new(runtime.spawn(async move {
+            select(pin!(request_stream), pin!(reconnect_from_pushes_task)).await;
+        }));
+
+        Ok(ClusterConnection {
+            sender,
+            state: Arc::new(ClientSideState {
+                protocol,
+                _task_handle,
+                response_timeout,
+                runtime,
+                #[cfg(feature = "cache-aio")]
+                cache_manager,
+            }),
+        })
     }
 
     /// Send a command to the given `routing`, and aggregate the response according to `response_policy`.
@@ -417,6 +446,9 @@ struct InnerCore<C> {
     pending_requests: Mutex<Vec<PendingRequest<C>>>,
     initial_nodes: Vec<ConnectionInfo>,
     subscription_tracker: Option<Mutex<SubscriptionTracker>>,
+    push_sender: UnboundedSender<(ArcStr, PushInfo)>,
+    addresses_for_reconnection: Mutex<Vec<ArcStr>>,
+    latest_waker: Mutex<Option<task::Waker>>,
 }
 
 /// This is a clonable wrapper.
@@ -815,7 +847,7 @@ where
     }
 
     async fn connect_check_and_add(&self, addr: &ArcStr) -> RedisResult<C> {
-        match connect_and_check::<C>(addr, &self.cluster_params).await {
+        match connect_and_check::<C>(addr, &self.cluster_params, &self.push_sender).await {
             Ok(conn) => {
                 self.conn_lock
                     .write()
@@ -850,9 +882,7 @@ where
         }
         result?;
 
-        let mut nodes = slots.values().flatten().cloned().collect::<Vec<_>>();
-        nodes.sort_unstable();
-        nodes.dedup();
+        let nodes = slots.values().flatten().cloned().collect::<HashSet<_>>();
         self.refresh_connections_locked(connections, nodes).await;
 
         Ok(())
@@ -861,8 +891,9 @@ where
     async fn refresh_connections_locked(
         &self,
         connections: &mut ConnectionMap<C>,
-        nodes: Vec<ArcStr>,
+        nodes: HashSet<ArcStr>,
     ) {
+        println!("Reconnect to {nodes:?}");
         let nodes_len = nodes.len();
 
         let addresses_and_connections_iter = nodes.into_iter().map(|addr| {
@@ -872,7 +903,9 @@ where
 
         *connections = stream::iter(addresses_and_connections_iter)
             .map(|(addr, connection)| async move {
-                let res = get_or_create_conn(&addr, connection, &self.cluster_params).await;
+                let res =
+                    get_or_create_conn(&addr, connection, &self.cluster_params, &self.push_sender)
+                        .await;
                 (addr, res)
             })
             .buffer_unordered(nodes_len.max(8))
@@ -886,6 +919,35 @@ where
                 },
             )
             .await;
+    }
+
+    fn resubscribe(&self) {
+        println!("resubscribe");
+        let Some(subscription_tracker) = self.subscription_tracker.as_ref() else {
+            return;
+        };
+        println!("resubscribe continuing");
+
+        let subscription_pipe = subscription_tracker
+            .lock()
+            .unwrap()
+            .get_subscription_pipeline();
+
+        // we send request per cmd, instead of sending the pipe together, in order to send each command to the relevant node, instead of all together to a single node.
+        let requests = subscription_pipe.into_cmd_iter().map(|cmd| {
+            let routing = RoutingInfo::for_routable(&cmd)
+                .unwrap_or(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                .into();
+            PendingRequest {
+                retry: 0,
+                sender: request::ResultExpectation::Internal,
+                cmd: CmdArg::Cmd {
+                    cmd: Arc::new(cmd),
+                    routing,
+                },
+            }
+        });
+        self.pending_requests.lock().unwrap().extend(requests);
     }
 }
 
@@ -965,9 +1027,11 @@ where
     async fn new(
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
+        push_sender: UnboundedSender<(ArcStr, PushInfo)>,
     ) -> RedisResult<Self> {
-        let connections = Self::create_initial_connections(initial_nodes, &cluster_params).await?;
-        let subscription_tracker = if cluster_params.async_push_sender.is_some() {
+        let connections =
+            Self::create_initial_connections(initial_nodes, &cluster_params, &push_sender).await?;
+        let subscription_tracker = if cluster_params.protocol.unwrap_or_default().supports_resp3() {
             Some(Mutex::new(SubscriptionTracker::default()))
         } else {
             None
@@ -978,6 +1042,9 @@ where
             pending_requests: Mutex::new(Vec::new()),
             initial_nodes: initial_nodes.to_vec(),
             subscription_tracker,
+            push_sender,
+            addresses_for_reconnection: Mutex::new(vec![]),
+            latest_waker: Mutex::new(None),
         });
         let connection = ClusterConnInner {
             inner: Core(inner),
@@ -992,11 +1059,12 @@ where
     async fn create_initial_connections(
         initial_nodes: &[ConnectionInfo],
         params: &ClusterParams,
+        push_sender: &UnboundedSender<(ArcStr, PushInfo)>,
     ) -> RedisResult<ConnectionMap<C>> {
         let (connections, error) = stream::iter(initial_nodes.iter().cloned())
             .map(async move |info| {
-                let addr = info.addr.to_string();
-                let result = connect_and_check(&addr, params).await;
+                let addr = info.addr.to_string().into();
+                let result = connect_and_check(&addr, params, push_sender).await;
                 match result {
                     Ok(conn) => Ok((addr, conn)),
                     Err(e) => {
@@ -1011,7 +1079,7 @@ where
                 |(mut connections, mut error), result| async move {
                     match result {
                         Ok((addr, conn)) => {
-                            connections.insert(addr.into(), conn);
+                            connections.insert(addr, conn);
                         }
                         Err(err) => {
                             // Store at least one error to use as detail in the connection error if
@@ -1040,47 +1108,23 @@ where
         Ok(connections)
     }
 
-    fn resubscribe(&self) {
-        let Some(subscription_tracker) = self.inner.subscription_tracker.as_ref() else {
-            return;
-        };
-
-        let subscription_pipe = subscription_tracker
-            .lock()
-            .unwrap()
-            .get_subscription_pipeline();
-
-        // we send request per cmd, instead of sending the pipe together, in order to send each command to the relevant node, instead of all together to a single node.
-        let requests = subscription_pipe.into_cmd_iter().map(|cmd| {
-            let routing = RoutingInfo::for_routable(&cmd)
-                .unwrap_or(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
-                .into();
-            PendingRequest {
-                retry: 0,
-                sender: request::ResultExpectation::Internal,
-                cmd: CmdArg::Cmd {
-                    cmd: Arc::new(cmd),
-                    routing,
-                },
-            }
-        });
-        self.inner.pending_requests.lock().unwrap().extend(requests);
-    }
-
     fn reconnect_to_initial_nodes(&mut self) -> impl Future<Output = ()> {
         debug!("Received request to reconnect to initial nodes");
         let inner = self.inner.clone();
         async move {
-            let connection_map =
-                match Self::create_initial_connections(&inner.initial_nodes, &inner.cluster_params)
-                    .await
-                {
-                    Ok(map) => map,
-                    Err(err) => {
-                        warn!("Can't reconnect to initial nodes: `{err}`");
-                        return;
-                    }
-                };
+            let connection_map = match Self::create_initial_connections(
+                &inner.initial_nodes,
+                &inner.cluster_params,
+                &inner.push_sender,
+            )
+            .await
+            {
+                Ok(map) => map,
+                Err(err) => {
+                    warn!("Can't reconnect to initial nodes: `{err}`");
+                    return;
+                }
+            };
             let mut write_lock = inner.conn_lock.write().await;
             *write_lock = (
                 connection_map,
@@ -1093,7 +1137,7 @@ where
         }
     }
 
-    fn refresh_connections(&mut self, addrs: Vec<ArcStr>) -> impl Future<Output = ()> {
+    fn refresh_connections(&mut self, addrs: HashSet<ArcStr>) -> impl Future<Output = ()> {
         let inner = self.inner.clone();
         async move {
             let mut write_guard = inner.conn_lock.write().await;
@@ -1130,19 +1174,30 @@ where
             }
         };
         if res.is_ok() {
-            self.resubscribe();
+            self.inner.resubscribe();
         }
         Poll::Ready(res)
     }
 
     fn poll_complete(&mut self, cx: &mut task::Context<'_>) -> Poll<PollFlushAction> {
-        let mut poll_flush_action = PollFlushAction::None;
+        let mut addresses_to_reconnect = self.inner.addresses_for_reconnection.lock().unwrap();
+        let mut poll_flush_action = if addresses_to_reconnect.is_empty() {
+            PollFlushAction::None
+        } else {
+            PollFlushAction::Reconnect(
+                std::mem::take(&mut *addresses_to_reconnect)
+                    .into_iter()
+                    .collect(),
+            )
+        };
+        println!("poll flush action initial {poll_flush_action:?}");
+        drop(addresses_to_reconnect);
 
         let mut pending_requests_guard = self.inner.pending_requests.lock().unwrap();
         if !pending_requests_guard.is_empty() {
             let mut pending_requests = mem::take(&mut *pending_requests_guard);
             for request in pending_requests.drain(..) {
-                // Drop the request if noone is waiting for a response to free up resources for
+                // Drop the request if no one is waiting for a response to free up resources for
                 // requests callers care about (load shedding). It will be ambiguous whether the
                 // request actually goes through regardless.
                 if request.sender.is_closed() {
@@ -1200,6 +1255,7 @@ where
 
         if !matches!(poll_flush_action, PollFlushAction::None) || self.in_flight_requests.is_empty()
         {
+            println!("poll flush action ready {poll_flush_action:?}");
             Poll::Ready(poll_flush_action)
         } else {
             Poll::Pending
@@ -1227,28 +1283,27 @@ where
 }
 
 async fn get_or_create_conn<C>(
-    addr: &str,
+    addr: &ArcStr,
     conn_option: Option<C>,
     params: &ClusterParams,
+    sender: &UnboundedSender<(ArcStr, PushInfo)>,
 ) -> RedisResult<C>
 where
     C: Connect + ConnectionLike + Clone + Send + Sync + 'static,
 {
     if let Some(mut conn) = conn_option {
-        match check_connection(&mut conn).await {
-            Ok(_) => Ok(conn),
-            Err(_) => connect_and_check(addr, params).await,
+        if check_connection(&mut conn).await.is_ok() {
+            return Ok(conn);
         }
-    } else {
-        connect_and_check(addr, params).await
     }
+    connect_and_check(addr, params, sender).await
 }
 
 #[derive(Debug, PartialEq)]
 enum PollFlushAction {
     None,
     RebuildSlots,
-    Reconnect(Vec<ArcStr>),
+    Reconnect(HashSet<ArcStr>),
     ReconnectFromInitialConnections,
 }
 
@@ -1304,7 +1359,9 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut task::Context,
     ) -> Poll<Result<(), Self::Error>> {
-        trace!("poll_flush: {:?}", self.state);
+        println!("poll_flush: {:?}", self.state);
+        // drop the old waker, since its no longer usable.
+        self.inner.latest_waker.lock().unwrap().take();
         loop {
             self.send_refresh_error();
 
@@ -1321,7 +1378,12 @@ where
                 return Poll::Pending;
             }
 
-            match ready!(self.poll_complete(cx)) {
+            let Poll::Ready(result) = self.poll_complete(cx) else {
+                let mut guard = self.inner.latest_waker.lock().unwrap();
+                *guard = Some(cx.waker().clone());
+                return Poll::Pending;
+            };
+            match result {
                 PollFlushAction::None => return Poll::Ready(Ok(())),
                 PollFlushAction::RebuildSlots => {
                     self.state = ConnectionState::Recover(RecoverFuture::RecoverSlots(Box::pin(
@@ -1415,18 +1477,22 @@ impl Connect for MultiplexedConnection {
     }
 }
 
-async fn connect_and_check<C>(node: &str, params: &ClusterParams) -> RedisResult<C>
+async fn connect_and_check<C>(
+    node: &ArcStr,
+    params: &ClusterParams,
+    sender: &UnboundedSender<(ArcStr, PushInfo)>,
+) -> RedisResult<C>
 where
     C: ConnectionLike + Connect + Send + 'static,
 {
     let info = get_connection_info(node, params)?;
-    let mut config =
-        AsyncConnectionConfig::default().set_connection_timeout(Some(params.connection_timeout));
-    config = config.set_response_timeout(params.response_timeout);
-
-    if let Some(push_sender) = &params.async_push_sender {
-        config = config.set_push_sender_internal(push_sender.clone());
+    let mut config = AsyncConnectionConfig::default()
+        .set_connection_timeout(Some(params.connection_timeout))
+        .set_response_timeout(params.response_timeout);
+    if info.redis.protocol.supports_resp3() {
+        config = config.set_push_sender(AddressedPushSender::new(node.clone(), sender.clone()));
     }
+
     if let Some(resolver) = &params.async_dns_resolver {
         config = config.set_dns_resolver_internal(resolver.clone());
     }

@@ -2356,6 +2356,7 @@ mod cluster_async {
             is_redis_6: bool,
         ) -> RedisResult<()> {
             let _: () = publish_conn.publish("regular-phonewave", "banana").await?;
+            println!("pub1");
             let push = get_push(rx).await;
             assert_eq!(
                 push,
@@ -2369,6 +2370,7 @@ mod cluster_async {
             );
 
             let _: () = publish_conn.publish("phonewave-pattern", "banana").await?;
+            println!("pub2");
             let push = get_push(rx).await;
             assert_eq!(
                 push,
@@ -2384,6 +2386,7 @@ mod cluster_async {
 
             if !is_redis_6 {
                 let _: () = publish_conn.spublish("sphonewave", "banana").await?;
+                println!("pub3");
                 let push = get_push(rx).await;
                 assert_eq!(
                     push,
@@ -2736,6 +2739,7 @@ mod cluster_async {
 
             // we expect 1 disconnect per connection to node. 2 connections * 3 node = 6 disconnects.
             for _ in 0..6 {
+                println!("waiting for disconnect");
                 let push = get_push(&mut rx).await;
                 assert_eq!(
                     push,
@@ -2752,51 +2756,52 @@ mod cluster_async {
                 ..Default::default()
             });
 
-            // verify that we didn't get any disconnect notices.
-            assert_eq!(
-                rx.try_recv(),
-                Err(tokio::sync::mpsc::error::TryRecvError::Empty)
-            );
-
-            // send request to trigger reconnection.
-            let cmd = cmd("PING");
-            let _ = pubsub_conn
-                .route_command(
-                    &cmd,
-                    RoutingInfo::MultiNode((
-                        MultipleNodeRoutingInfo::AllMasters,
-                        Some(redis::cluster_routing::ResponsePolicy::AllSucceeded),
-                    )),
-                )
-                .await?;
-
             // the resubsriptions can be received in any order, so we assert without assuming order.
             let mut pushes = Vec::new();
+
+            println!("waiting for reconnect");
+
             pushes.push(get_push(&mut rx).await);
+            println!("waiting for reconnect");
             pushes.push(get_push(&mut rx).await);
+            println!("waiting for reconnect");
             if !is_redis_6 {
                 pushes.push(get_push(&mut rx).await);
             }
+            println!("waiting for reconnect");
+
             // we expect only 3 resubscriptions.
-            assert!(rx.try_recv().is_err());
-            assert!(pushes.contains(&PushInfo {
-                kind: PushKind::Subscribe,
-                data: vec![
-                    Value::BulkString(b"regular-phonewave".to_vec()),
-                    Value::Int(1)
-                ]
-            }));
-            assert!(pushes.contains(&PushInfo {
-                kind: PushKind::PSubscribe,
-                data: vec![Value::BulkString(b"phonewave*".to_vec()), Value::Int(2)]
-            }));
+            let result = rx.try_recv();
+            assert!(result.is_err(), "{result:?}");
+            assert!(
+                pushes.contains(&PushInfo {
+                    kind: PushKind::Subscribe,
+                    data: vec![
+                        Value::BulkString(b"regular-phonewave".to_vec()),
+                        Value::Int(1)
+                    ]
+                }),
+                "{pushes:?}"
+            );
+            assert!(
+                pushes.contains(&PushInfo {
+                    kind: PushKind::PSubscribe,
+                    data: vec![Value::BulkString(b"phonewave*".to_vec()), Value::Int(1)]
+                }),
+                "{pushes:?}"
+            );
 
             if !is_redis_6 {
-                assert!(pushes.contains(&PushInfo {
-                    kind: PushKind::SSubscribe,
-                    data: vec![Value::BulkString(b"sphonewave".to_vec()), Value::Int(1)]
-                }));
+                assert!(
+                    pushes.contains(&PushInfo {
+                        kind: PushKind::SSubscribe,
+                        data: vec![Value::BulkString(b"sphonewave".to_vec()), Value::Int(1)]
+                    }),
+                    "{pushes:?}"
+                );
             }
+
+            println!("check publishing");
 
             check_publishing(&mut publish_conn, &mut rx, is_redis_6).await?;
 
