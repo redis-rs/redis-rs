@@ -847,18 +847,16 @@ impl RedisWrite for Vec<Vec<u8>> {
     }
 }
 
-pub struct SingleArg;
-pub struct MultipleArgs;
+/// This trait marks that a value is serialized only into a single Redis value.
+///
+/// This should be implemented only for types that are serialized into exactly one value,
+/// otherwise the compiler can't ensure the correctness of some commands.
+pub trait ToSingleRedisArg: ToRedisArgs {}
 
 /// Used to convert a value into one or multiple redis argument
 /// strings.  Most values will produce exactly one item but in
 /// some cases it might make sense to produce more than one.
 pub trait ToRedisArgs: Sized {
-    /// Represents whether the type can contain multiple values.
-    ///
-    /// Should be overridden to `true` when using a collection.
-    type ValueType;
-
     /// This converts the value into a vector of bytes.  Each item
     /// is a single argument.  Most items generate a vector of a
     /// single item.
@@ -929,8 +927,6 @@ pub trait ToRedisArgs: Sized {
 macro_rules! itoa_based_to_redis_impl {
     ($t:ty, $numeric:expr) => {
         impl ToRedisArgs for $t {
-            type ValueType = SingleArg;
-
             fn write_redis_args<W>(&self, out: &mut W)
             where
                 W: ?Sized + RedisWrite,
@@ -944,14 +940,14 @@ macro_rules! itoa_based_to_redis_impl {
                 $numeric
             }
         }
+
+        impl ToSingleRedisArg for $t {}
     };
 }
 
 macro_rules! non_zero_itoa_based_to_redis_impl {
     ($t:ty, $numeric:expr) => {
         impl ToRedisArgs for $t {
-            type ValueType = SingleArg;
-
             fn write_redis_args<W>(&self, out: &mut W)
             where
                 W: ?Sized + RedisWrite,
@@ -965,14 +961,14 @@ macro_rules! non_zero_itoa_based_to_redis_impl {
                 $numeric
             }
         }
+
+        impl ToSingleRedisArg for $t {}
     };
 }
 
 macro_rules! ryu_based_to_redis_impl {
     ($t:ty, $numeric:expr) => {
         impl ToRedisArgs for $t {
-            type ValueType = SingleArg;
-
             fn write_redis_args<W>(&self, out: &mut W)
             where
                 W: ?Sized + RedisWrite,
@@ -986,12 +982,12 @@ macro_rules! ryu_based_to_redis_impl {
                 $numeric
             }
         }
+
+        impl ToSingleRedisArg for $t {}
     };
 }
 
 impl ToRedisArgs for u8 {
-    type ValueType = SingleArg;
-
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1012,6 +1008,8 @@ impl ToRedisArgs for u8 {
         true
     }
 }
+
+impl ToSingleRedisArg for u8 {}
 
 itoa_based_to_redis_impl!(i8, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(i16, NumericBehavior::NumberIsInteger);
@@ -1049,8 +1047,6 @@ ryu_based_to_redis_impl!(f64, NumericBehavior::NumberIsFloat);
 macro_rules! bignum_to_redis_impl {
     ($t:ty) => {
         impl ToRedisArgs for $t {
-            type ValueType = SingleArg;
-
             fn write_redis_args<W>(&self, out: &mut W)
             where
                 W: ?Sized + RedisWrite,
@@ -1058,6 +1054,8 @@ macro_rules! bignum_to_redis_impl {
                 out.write_arg(&self.to_string().into_bytes())
             }
         }
+
+        impl ToSingleRedisArg for $t {}
     };
 }
 
@@ -1071,8 +1069,6 @@ bignum_to_redis_impl!(num_bigint::BigInt);
 bignum_to_redis_impl!(num_bigint::BigUint);
 
 impl ToRedisArgs for bool {
-    type ValueType = SingleArg;
-
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1081,9 +1077,9 @@ impl ToRedisArgs for bool {
     }
 }
 
-impl ToRedisArgs for String {
-    type ValueType = SingleArg;
+impl ToSingleRedisArg for bool {}
 
+impl ToRedisArgs for String {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1091,10 +1087,9 @@ impl ToRedisArgs for String {
         out.write_arg(self.as_bytes())
     }
 }
+impl ToSingleRedisArg for String {}
 
 impl ToRedisArgs for &str {
-    type ValueType = SingleArg;
-
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1102,6 +1097,8 @@ impl ToRedisArgs for &str {
         out.write_arg(self.as_bytes())
     }
 }
+
+impl ToSingleRedisArg for &str {}
 
 impl<'a, T> ToRedisArgs for Cow<'a, T>
 where
@@ -1109,8 +1106,6 @@ where
     &'a T: ToRedisArgs,
     T::Owned: ToRedisArgs,
 {
-    type ValueType = <T::Owned as ToRedisArgs>::ValueType;
-
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1122,9 +1117,15 @@ where
     }
 }
 
-impl<T: ToRedisArgs> ToRedisArgs for Vec<T> {
-    type ValueType = MultipleArgs;
+impl<'a, T> ToSingleRedisArg for Cow<'a, T>
+where
+    T: ToOwned + ?Sized,
+    &'a T: ToSingleRedisArg,
+    T::Owned: ToSingleRedisArg,
+{
+}
 
+impl<T: ToRedisArgs> ToRedisArgs for Vec<T> {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1145,8 +1146,6 @@ impl<T: ToRedisArgs> ToRedisArgs for Vec<T> {
 }
 
 impl<T: ToRedisArgs> ToRedisArgs for &[T] {
-    type ValueType = MultipleArgs;
-
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1167,8 +1166,6 @@ impl<T: ToRedisArgs> ToRedisArgs for &[T] {
 }
 
 impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
-    type ValueType = MultipleArgs;
-
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1194,16 +1191,14 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
 }
 
 macro_rules! deref_to_write_redis_args_impl {
-    (
-        $(#[$attr:meta])*
-        <$($desc:tt)+
-    ) => {
-        $(#[$attr])*
-        impl <$($desc)+ {
-            type ValueType = <T as ToRedisArgs>::ValueType;
+    ($type:ty) => {
+        impl<'a, T> ToRedisArgs for $type
+        where
+            T: ToRedisArgs,
+        {
             #[inline]
             fn write_redis_args<W>(&self, out: &mut W)
-                where
+            where
                 W: ?Sized + RedisWrite,
             {
                 (**self).write_redis_args(out)
@@ -1217,28 +1212,17 @@ macro_rules! deref_to_write_redis_args_impl {
                 (**self).describe_numeric_behavior()
             }
         }
+
+        impl<'a, T> ToSingleRedisArg for $type where T: ToSingleRedisArg {}
     };
 }
 
-deref_to_write_redis_args_impl! {
-    <'a, T> ToRedisArgs for &'a T where T: ToRedisArgs
-}
-
-deref_to_write_redis_args_impl! {
-    <'a, T> ToRedisArgs for &'a mut T where T: ToRedisArgs
-}
-
-deref_to_write_redis_args_impl! {
-    <T> ToRedisArgs for Box<T> where T: ToRedisArgs
-}
-
-deref_to_write_redis_args_impl! {
-    <T> ToRedisArgs for std::sync::Arc<T> where T: ToRedisArgs
-}
-
-deref_to_write_redis_args_impl! {
-    <T> ToRedisArgs for std::rc::Rc<T> where T: ToRedisArgs
-}
+deref_to_write_redis_args_impl! {&'a T}
+deref_to_write_redis_args_impl! {&'a mut T}
+deref_to_write_redis_args_impl! {Box<T>}
+deref_to_write_redis_args_impl! {std::sync::Arc<T>}
+deref_to_write_redis_args_impl! {std::rc::Rc<T>}
+impl ToSingleRedisArg for &[u8] {}
 
 /// @note: Redis cannot store empty sets so the application has to
 /// check whether the set is empty and if so, not attempt to use that
@@ -1249,8 +1233,6 @@ macro_rules! impl_to_redis_args_for_set {
         where
             $($WhereClause)+
         {
-           type ValueType = Collection;
-
             fn write_redis_args<W>(&self, out: &mut W)
             where
                 W: ?Sized + RedisWrite,
@@ -1301,8 +1283,6 @@ macro_rules! impl_to_redis_args_for_map {
         where
             $($WhereClause)+
         {
-           type ValueType = Collection;
-
             fn write_redis_args<W>(&self, out: &mut W)
             where
                 W: ?Sized + RedisWrite,
@@ -1343,8 +1323,6 @@ macro_rules! to_redis_args_for_tuple {
     ($(#[$meta:meta],)*$($name:ident,)+) => (
         $(#[$meta])*
         impl<$($name: ToRedisArgs),*> ToRedisArgs for ($($name,)*) {
-           type ValueType = Collection;
-
             // we have local variables named T1 as dummies and those
             // variables are unused.
             #[allow(non_snake_case, unused_variables)]
@@ -1377,8 +1355,6 @@ to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T
 to_redis_args_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
 
 impl<T: ToRedisArgs, const N: usize> ToRedisArgs for &[T; N] {
-    type ValueType = MultipleArgs;
-
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1397,6 +1373,7 @@ impl<T: ToRedisArgs, const N: usize> ToRedisArgs for &[T; N] {
         }
     }
 }
+impl<const N: usize> ToSingleRedisArg for &[u8; N] {}
 
 fn vec_to_array<T, const N: usize>(
     items: Vec<T>,
@@ -1984,8 +1961,6 @@ macro_rules! from_redis_value_for_tuple {
     ($(#[$meta:meta],)*$($name:ident,)+) => (
         $(#[$meta])*
         impl<$($name: FromRedisValue),*> FromRedisValue for ($($name,)*) {
-
-
             // we have local variables named T1 as dummies and those
             // variables are unused.
             #[allow(non_snake_case, unused_variables)]
@@ -2253,8 +2228,6 @@ impl FromRedisValue for uuid::Uuid {
 
 #[cfg(feature = "uuid")]
 impl ToRedisArgs for uuid::Uuid {
-    type ValueType = SingleArg;
-
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -2262,6 +2235,9 @@ impl ToRedisArgs for uuid::Uuid {
         out.write_arg(self.as_bytes());
     }
 }
+
+#[cfg(feature = "uuid")]
+impl ToSingleRedisArg for uuid::Uuid {}
 
 /// A shortcut function to invoke `FromRedisValue::from_redis_value_ref`
 /// to make the API slightly nicer.
@@ -2305,8 +2281,6 @@ pub enum ExpireOption {
 }
 
 impl ToRedisArgs for ExpireOption {
-    type ValueType = MultipleArgs;
-
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,

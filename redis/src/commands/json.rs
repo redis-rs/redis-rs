@@ -1,7 +1,7 @@
 use crate::cmd::{cmd, Cmd};
 use crate::connection::ConnectionLike;
 use crate::pipeline::Pipeline;
-use crate::types::{FromRedisValue, RedisResult, ToRedisArgs};
+use crate::types::{FromRedisValue, RedisResult, ToRedisArgs, ToSingleRedisArg};
 use crate::RedisError;
 
 #[cfg(feature = "cluster")]
@@ -174,7 +174,7 @@ implement_json_commands! {
     'a
 
     /// Append the JSON `value` to the array at `path` after the last element in it.
-    fn json_arr_append<K: ToRedisArgs, P: ToRedisArgs, V: Serialize>(key: K, path: P, value: &'a V) {
+    fn json_arr_append<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V) {
         let mut cmd = cmd("JSON.ARRAPPEND");
 
         cmd.arg(key)
@@ -185,7 +185,7 @@ implement_json_commands! {
     }
 
     /// Index array at `path`, returns first occurrence of `value`
-    fn json_arr_index<K: ToRedisArgs, P: ToRedisArgs, V: Serialize>(key: K, path: P, value: &'a V) {
+    fn json_arr_index<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V) {
         let mut cmd = cmd("JSON.ARRINDEX");
 
         cmd.arg(key)
@@ -199,7 +199,7 @@ implement_json_commands! {
     /// they make no effect on the query
     ///
     /// The default values for `start` and `stop` are `0`, so pass those in if you want them to take no effect
-    fn json_arr_index_ss<K: ToRedisArgs, P: ToRedisArgs, V: Serialize>(key: K, path: P, value: &'a V, start: &'a isize, stop: &'a isize) {
+    fn json_arr_index_ss<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V, start: &'a isize, stop: &'a isize) {
         let mut cmd = cmd("JSON.ARRINDEX");
 
         cmd.arg(key)
@@ -214,7 +214,7 @@ implement_json_commands! {
     /// Inserts the JSON `value` in the array at `path` before the `index` (shifts to the right).
     ///
     /// `index` must be within the array's range.
-    fn json_arr_insert<K: ToRedisArgs, P: ToRedisArgs, V: Serialize>(key: K, path: P, index: i64, value: &'a V) {
+    fn json_arr_insert<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, index: i64, value: &'a V) {
         let mut cmd = cmd("JSON.ARRINSERT");
 
         cmd.arg(key)
@@ -227,7 +227,7 @@ implement_json_commands! {
     }
 
     /// Reports the length of the JSON Array at `path` in `key`.
-    fn json_arr_len<K: ToRedisArgs, P: ToRedisArgs>(key: K, path: P) {
+    fn json_arr_len<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) {
         let mut cmd = cmd("JSON.ARRLEN");
 
         cmd.arg(key)
@@ -239,7 +239,7 @@ implement_json_commands! {
     /// Removes and returns an element from the `index` in the array.
     ///
     /// `index` defaults to `-1` (the end of the array).
-    fn json_arr_pop<K: ToRedisArgs, P: ToRedisArgs>(key: K, path: P, index: i64) {
+    fn json_arr_pop<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P, index: i64) {
         let mut cmd = cmd("JSON.ARRPOP");
 
         cmd.arg(key)
@@ -253,7 +253,7 @@ implement_json_commands! {
     ///
     /// This command is extremely forgiving and using it with out-of-range indexes will not produce an error.
     /// There are a few differences between how RedisJSON v2.0 and legacy versions handle out-of-range indexes.
-    fn json_arr_trim<K: ToRedisArgs, P: ToRedisArgs>(key: K, path: P, start: i64, stop: i64) {
+    fn json_arr_trim<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P, start: i64, stop: i64) {
         let mut cmd = cmd("JSON.ARRTRIM");
 
         cmd.arg(key)
@@ -265,7 +265,7 @@ implement_json_commands! {
     }
 
     /// Clears container values (Arrays/Objects), and sets numeric values to 0.
-    fn json_clear<K: ToRedisArgs, P: ToRedisArgs>(key: K, path: P) {
+    fn json_clear<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) {
         let mut cmd = cmd("JSON.CLEAR");
 
         cmd.arg(key)
@@ -275,7 +275,7 @@ implement_json_commands! {
     }
 
     /// Deletes a value at `path`.
-    fn json_del<K: ToRedisArgs, P: ToRedisArgs>(key: K, path: P) {
+    fn json_del<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) {
         let mut cmd = cmd("JSON.DEL");
 
         cmd.arg(key)
@@ -284,15 +284,27 @@ implement_json_commands! {
         Ok::<_, RedisError>(cmd)
     }
 
-    /// Gets JSON Value(s) at `path`.
-    ///
-    /// Runs `JSON.GET` if key is singular, `JSON.MGET` if there are multiple keys.
+    /// Gets JSON Value at `path`.
     ///
     /// With RedisJSON commands, you have to note that all results will be wrapped
     /// in square brackets (or empty brackets if not found). If you want to deserialize it
     /// with e.g. `serde_json` you have to use `Vec<T>` for your output type instead of `T`.
-    fn json_get<K: ToRedisArgs, P: ToRedisArgs>(key: K, path: P) {
-        let mut cmd = cmd(if key.num_of_args() <= 1 { "JSON.GET" } else { "JSON.MGET" });
+    fn json_get<K: ToSingleRedisArg, P: ToRedisArgs>(key: K, path: P) {
+        let mut cmd = cmd("JSON.GET");
+
+        cmd.arg(key)
+           .arg(path);
+
+        Ok::<_, RedisError>(cmd)
+    }
+
+    /// Gets JSON Values at `path`.
+    ///
+    /// With RedisJSON commands, you have to note that all results will be wrapped
+    /// in square brackets (or empty brackets if not found). If you want to deserialize it
+    /// with e.g. `serde_json` you have to use `Vec<T>` for your output type instead of `T`.
+    fn json_mget<K: ToRedisArgs, P: ToSingleRedisArg>(key: K, path: P) {
+        let mut cmd = cmd("JSON.MGET");
 
         cmd.arg(key)
            .arg(path);
@@ -301,7 +313,7 @@ implement_json_commands! {
     }
 
     /// Increments the number value stored at `path` by `number`.
-    fn json_num_incr_by<K: ToRedisArgs, P: ToRedisArgs>(key: K, path: P, value: i64) {
+    fn json_num_incr_by<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P, value: i64) {
         let mut cmd = cmd("JSON.NUMINCRBY");
 
         cmd.arg(key)
@@ -312,7 +324,7 @@ implement_json_commands! {
     }
 
     /// Returns the keys in the object that's referenced by `path`.
-    fn json_obj_keys<K: ToRedisArgs, P: ToRedisArgs>(key: K, path: P) {
+    fn json_obj_keys<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) {
         let mut cmd = cmd("JSON.OBJKEYS");
 
         cmd.arg(key)
@@ -322,7 +334,7 @@ implement_json_commands! {
     }
 
     /// Reports the number of keys in the JSON Object at `path` in `key`.
-    fn json_obj_len<K: ToRedisArgs, P: ToRedisArgs>(key: K, path: P) {
+    fn json_obj_len<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) {
         let mut cmd = cmd("JSON.OBJLEN");
 
         cmd.arg(key)
@@ -332,7 +344,7 @@ implement_json_commands! {
     }
 
     /// Sets the JSON Value at `path` in `key`.
-    fn json_set<K: ToRedisArgs, P: ToRedisArgs, V: Serialize>(key: K, path: P, value: &'a V) {
+    fn json_set<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V) {
         let mut cmd = cmd("JSON.SET");
 
         cmd.arg(key)
@@ -342,8 +354,21 @@ implement_json_commands! {
         Ok::<_, RedisError>(cmd)
     }
 
+        /// Sets the value at the path per key, for every given tuple.
+    fn json_mset<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key_path_values: &'a [(K,P,V)]) {
+        let mut cmd = cmd("JSON.MSET");
+
+        for (key, path, value) in key_path_values {
+            cmd.arg(key)
+               .arg(path)
+               .arg(serde_json::to_string(value)?);
+        }
+
+        Ok::<_, RedisError>(cmd)
+    }
+
     /// Appends the `json-string` values to the string at `path`.
-    fn json_str_append<K: ToRedisArgs, P: ToRedisArgs, V: ToRedisArgs>(key: K, path: P, value: V) {
+    fn json_str_append<K: ToSingleRedisArg, P: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, path: P, value: V) {
         let mut cmd = cmd("JSON.STRAPPEND");
 
         cmd.arg(key)
@@ -354,7 +379,7 @@ implement_json_commands! {
     }
 
     /// Reports the length of the JSON String at `path` in `key`.
-    fn json_str_len<K: ToRedisArgs, P: ToRedisArgs>(key: K, path: P) {
+    fn json_str_len<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) {
         let mut cmd = cmd("JSON.STRLEN");
 
         cmd.arg(key)
@@ -364,7 +389,7 @@ implement_json_commands! {
     }
 
     /// Toggle a `boolean` value stored at `path`.
-    fn json_toggle<K: ToRedisArgs, P: ToRedisArgs>(key: K, path: P) {
+    fn json_toggle<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) {
         let mut cmd = cmd("JSON.TOGGLE");
 
         cmd.arg(key)
@@ -374,7 +399,7 @@ implement_json_commands! {
     }
 
     /// Reports the type of JSON value at `path`.
-    fn json_type<K: ToRedisArgs, P: ToRedisArgs>(key: K, path: P) {
+    fn json_type<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) {
         let mut cmd = cmd("JSON.TYPE");
 
         cmd.arg(key)

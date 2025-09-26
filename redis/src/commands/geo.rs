@@ -1,7 +1,7 @@
 //! Defines types to use with the geospatial commands.
 
 use crate::errors::{invalid_type_error, ParsingError};
-use crate::types::{FromRedisValue, MultipleArgs, RedisWrite, SingleArg, ToRedisArgs, Value};
+use crate::types::{FromRedisValue, RedisWrite, ToRedisArgs, ToSingleRedisArg, Value};
 
 /// Units used by [`geo_dist`][1] and [`geo_radius`][2].
 ///
@@ -19,8 +19,6 @@ pub enum Unit {
 }
 
 impl ToRedisArgs for Unit {
-    type ValueType = SingleArg;
-
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -34,6 +32,8 @@ impl ToRedisArgs for Unit {
         out.write_arg(unit.as_bytes());
     }
 }
+
+impl ToSingleRedisArg for Unit {}
 
 /// A coordinate (longitude, latitude).
 ///
@@ -84,8 +84,6 @@ impl<T: FromRedisValue> FromRedisValue for Coord<T> {
 }
 
 impl<T: ToRedisArgs> ToRedisArgs for Coord<T> {
-    type ValueType = MultipleArgs;
-
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -194,8 +192,6 @@ impl RadiusOptions {
 }
 
 impl ToRedisArgs for RadiusOptions {
-    type ValueType = MultipleArgs;
-
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,

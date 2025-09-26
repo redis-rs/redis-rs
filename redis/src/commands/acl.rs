@@ -1,7 +1,7 @@
 //! Defines types to use with the ACL commands.
 
 use crate::errors::ParsingError;
-use crate::types::{FromRedisValue, MultipleArgs, RedisWrite, ToRedisArgs, Value};
+use crate::types::{FromRedisValue, RedisWrite, ToRedisArgs, Value};
 
 macro_rules! not_convertible_error {
     ($v:expr, $det:expr) => {
@@ -66,8 +66,6 @@ pub enum Rule {
 }
 
 impl ToRedisArgs for Rule {
-    type ValueType = MultipleArgs;
-
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,

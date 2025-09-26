@@ -296,7 +296,7 @@ fn test_module_json_get() {
 
     assert_eq!(json_get, Ok("[3,null]".into()));
 
-    let json_get_multi: RedisResult<String> = con.json_get(TEST_KEY, vec!["..a", "$..b"]);
+    let json_get_multi: RedisResult<String> = con.json_get(TEST_KEY, &["..a", "$..b"]);
 
     if json_get_multi != Ok("{\"$..b\":[3,null],\"..a\":[2,4]}".into())
         && json_get_multi != Ok("{\"..a\":[2,4],\"$..b\":[3,null]}".into())
@@ -310,21 +310,22 @@ fn test_module_json_mget() {
     let ctx = TestContext::with_modules(&[Module::Json], MTLS_NOT_ENABLED);
     let mut con = ctx.connection();
 
-    let set_initial_a: RedisResult<bool> = con.json_set(
-        format!("{TEST_KEY}-a"),
-        "$",
-        &json!({"a":1i64, "b": 2i64, "nested": {"a": 3i64, "b": null}}),
-    );
-    let set_initial_b: RedisResult<bool> = con.json_set(
-        format!("{TEST_KEY}-b"),
-        "$",
-        &json!({"a":4i64, "b": 5i64, "nested": {"a": 6i64, "b": null}}),
-    );
+    let set_initial: RedisResult<bool> = con.json_mset(&[
+        (
+            format!("{TEST_KEY}-a"),
+            "$",
+            &json!({"a":1i64, "b": 2i64, "nested": {"a": 3i64, "b": null}}),
+        ),
+        (
+            format!("{TEST_KEY}-b"),
+            "$",
+            &json!({"a":4i64, "b": 5i64, "nested": {"a": 6i64, "b": null}}),
+        ),
+    ]);
 
-    assert_eq!(set_initial_a, Ok(true));
-    assert_eq!(set_initial_b, Ok(true));
+    assert_eq!(set_initial, Ok(true));
 
-    let json_mget: RedisResult<Value> = con.json_get(
+    let json_mget: RedisResult<Value> = con.json_mget(
         vec![format!("{TEST_KEY}-a"), format!("{TEST_KEY}-b")],
         "$..a",
     );
