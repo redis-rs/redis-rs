@@ -33,11 +33,6 @@ test:
 	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp+tls RUST_BACKTRACE=1 cargo nextest run --locked -p redis --features=json,tokio-native-tls-comp,smol-native-tls-comp,connection-manager,cluster-async -E 'not test(test_module)'
 
 	@echo "===================================================================="
-	@echo "Testing Connection Type UNIX"
-	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=unix RUST_BACKTRACE=1 cargo nextest run --locked -p redis --test parser --test test_basic --test test_types --all-features -E 'not test(test_module)'
-
-	@echo "===================================================================="
 	@echo "Testing Connection Type UNIX SOCKETS"
 	@echo "===================================================================="
 	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=unix RUST_BACKTRACE=1 cargo nextest run --locked -p redis --all-features -E 'not (test(test_module) | test(cluster))'
