@@ -284,3 +284,16 @@ jobs:
 
       - name: Build
         run: make build
+
+      - run: cargo clippy --all-features --all-targets -- -D warnings
+        name: clippy
+
+      - name: Check features
+        run: |
+          cargo check -p redis --benches --all-features
+          cargo check -p redis --no-default-features --features tokio-comp
+          # Remove dev-dependencies so they do not enable features accidentally
+          # https://github.com/rust-lang/cargo/issues/4664
+          sed -i '/dev-dependencies/,/dev-dependencies/d' Cargo.toml
+          cargo check -p redis --all-features
+          cargo check -p redis --no-default-features --features smol-comp            
