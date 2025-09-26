@@ -1218,14 +1218,11 @@ macro_rules! deref_to_write_redis_args_impl {
 }
 
 deref_to_write_redis_args_impl! {&'a T}
-
 deref_to_write_redis_args_impl! {&'a mut T}
-
 deref_to_write_redis_args_impl! {Box<T>}
-
 deref_to_write_redis_args_impl! {std::sync::Arc<T>}
-
 deref_to_write_redis_args_impl! {std::rc::Rc<T>}
+impl ToSingleRedisArg for &[u8] {}
 
 /// @note: Redis cannot store empty sets so the application has to
 /// check whether the set is empty and if so, not attempt to use that
