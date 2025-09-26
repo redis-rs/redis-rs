@@ -1,3 +1,10 @@
+### 0.32.6 (2025-09-26)
+
+#### Changes
+
+* Remove unnecessary dependency by @nihohit in ([#1760](https://github.com/redis-rs/redis-rs/pull/1760) by @nihohit)
+* docs: fix `hexpire_at` command measurement unit by ([#1793](https://github.com/redis-rs/redis-rs/pull/1793) by @chrxn1c)
+
 ### 0.32.5 (2025-08-10)
 
 #### Changes & Bug fixes

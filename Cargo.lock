@@ -1940,7 +1940,7 @@ dependencies = [
 
 [[package]]
 name = "redis"
-version = "0.32.5"
+version = "0.32.6"
 dependencies = [
  "ahash 0.8.11",
  "anyhow",
