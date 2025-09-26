@@ -1,7 +1,7 @@
 use crate::cmd::{cmd, Cmd};
 use crate::connection::ConnectionLike;
 use crate::pipeline::Pipeline;
-use crate::types::{FromRedisValue, RedisResult, ToRedisArgs};
+use crate::types::{FromRedisValue, RedisResult, ToRedisArgs, ToSingleRedisArg};
 use crate::RedisError;
 
 #[cfg(feature = "cluster")]
@@ -174,7 +174,7 @@ implement_json_commands! {
     'a
 
     /// Append the JSON `value` to the array at `path` after the last element in it.
-    fn json_arr_append<K: ToRedisArgs, P: ToRedisArgs, V: Serialize>(key: K, path: P, value: &'a V) {
+    fn json_arr_append<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V) {
         let mut cmd = cmd("JSON.ARRAPPEND");
 
         cmd.arg(key)
