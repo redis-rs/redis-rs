@@ -590,6 +590,16 @@ let primary = sentinel.get_async_connection().await.unwrap();
 //! * ErrorKind::TypeError was renamed ErrorKind::UnexpectedReturnType, to clarify its meaning. Also fixed some cases where it and ErrorKind::Parse were used interchangeably.
 //! * Connecting to a wildcard address (`0.0.0.0` or `::`) is now explicitly disallowed and will return an error. This change prevents connection timeouts and provides a clearer error message. This affects both standalone and cluster connections. Users relying on this behavior should now connect to a specific, non-wildcard address.
 //! * If you implemented [crate::FromRedisValue] directly, or used `FromRedisValue::from_redis_value`/`FromRedisValue::from_owned_redis_value`, notice that the trait's semantics changed - now the trait requires an owned value by default, instead of a reference. See [the PR](https://github.com/redis-rs/redis-rs/pull/1784) for details.
+//! * The implicit replacement of `GET` with `MGET` or `SET` with `MSET` has been replaced, and now similar mistakes are a compilation error. Use `MSET` or `MGET` explicitly. Example:
+//! ```rust,no_run
+//! use redis::Commands;
+//! fn main() {
+//!     let client = redis::Client::open("redis://127.0.0.1/")?;
+//!     let mut con = client.get_connection()?;
+//!     // `get` should fail compilation, because it receives multiple values
+//!     _ = con.get(["foo","bar"]);
+//! }
+//! ```
 //!
 //!
 

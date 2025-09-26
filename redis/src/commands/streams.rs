@@ -6,7 +6,7 @@ use crate::{
     types::HashMap,
     FromRedisValue, RedisWrite, ToRedisArgs, Value,
 };
-use crate::{from_redis_value, from_redis_value_ref};
+use crate::{from_redis_value, from_redis_value_ref, types::ToSingleRedisArg};
 
 // Stream Maxlen Enum
 
@@ -1006,6 +1006,7 @@ impl ToRedisArgs for StreamDeletionPolicy {
         }
     }
 }
+impl ToSingleRedisArg for StreamDeletionPolicy {}
 
 /// Status codes returned by the `XDELEX` command
 #[cfg(feature = "streams")]
