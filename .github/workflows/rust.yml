@@ -52,7 +52,7 @@ jobs:
 
       - name: Cache RedisJSON
         id: cache-redisjson
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: |
             /tmp/librejson.so
@@ -108,7 +108,7 @@ jobs:
           cp ./Cargo.toml ./Cargo.toml.actual
           echo $'\nexclude = [\"./__ci/redis-json\"]' >> Cargo.toml
           cargo +stable build --release --manifest-path ./__ci/redis-json/Cargo.toml
-          mv ./__ci/redis-json/target/release/librejson.so /tmp/librejson.so
+          mv ./__ci/redis-json/target/release/librejson.so ${{ env.REDIS_RS_REDIS_JSON_PATH }}
           rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
           rm -rf ./__ci/redis-json
 
@@ -117,6 +117,13 @@ jobs:
         run: make test-module
         env:
           REDIS_VERSION: ${{ matrix.config.db-version }}
+
+      - name: Cache RedisJSON
+        id: cache-redisjson-save
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.REDIS_RS_REDIS_JSON_PATH }}
+          key: ${{ runner.os }}-redisjson          
 
       - name: Check features
         run: |
