@@ -20,31 +20,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
-      fail-fast: false
       matrix:
         config: [
             # Different DB cases:
-            { rust: stable, db-org: redis, db-name: redis, db-version: 6.2.13 },
-            { rust: stable, db-org: redis, db-name: redis, db-version: 7.2.4 },
-            {
-              rust: stable,
-              db-org: valkey-io,
-              db-name: valkey,
-              db-version: 7.2.6,
-            },
-            {
-              rust: stable,
-              db-org: valkey-io,
-              db-name: valkey,
-              db-version: 8.0.1,
-            },
-            { rust: stable, db-org: redis, db-name: redis, db-version: 8.0.2 },
-            { rust: stable, db-org: redis, db-name: redis, db-version: 8.2.0 },
-
-            # Different rust cases
-            { rust: beta, db-org: redis, db-name: redis, db-version: 7.2.4 },
-            { rust: nightly, db-org: redis, db-name: redis, db-version: 7.2.4 },
-            { rust: 1.85.0, db-org: redis, db-name: redis, db-version: 7.2.4 },
+            {  db-org: redis, db-name: redis, db-version: 6.2.13 },
+            {  db-org: redis, db-name: redis, db-version: 7.2.4 },
+            {  db-org: redis, db-name: redis, db-version: 8.0.2 },
+            {  db-org: redis, db-name: redis, db-version: 8.2.0 },
+            {  db-org: valkey-io, db-name: valkey, db-version: 7.2.6, },
+            {  db-org: valkey-io, db-name: valkey, db-version: 8.0.1, },
           ]
 
     steps:
@@ -68,7 +52,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain/@master
         with:
-          toolchain: ${{ matrix.config.rust }}
+          toolchain: stable
           components: rustfmt
 
       - uses: Swatinem/rust-cache@v2
@@ -188,35 +172,33 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        config: [
+          {toolchain: stable},
+          {toolchain: beta},
+          {toolchain: nightly},
+          {toolchain: 1.85.0},
+        ]
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain/@master
+      - name: lint
+        uses: ./.github/actions/lint-and-check
         with:
-          toolchain: stable
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+          rust-toolchain: ${{ matrix.config.toolchain }}
+
       - run: cargo fmt --all -- --check
         name: fmt
 
-      - run: cargo clippy --all-features --all-targets -- -D warnings
-        name: clippy
       - name: doc
         run: cargo doc --all-features --no-deps --document-private-items
         env:
           RUSTDOCFLAGS: -Dwarnings
+          
       - name: doc tests
         run: cargo test --doc --locked --all-features
         env:
-          RUSTDOCFLAGS: -Dwarnings
-
-      - name: Check features
-        run: |
-          cargo check --workspace --all-targets --all-features
-          # Remove dev-dependencies so they do not enable features accidentally
-          # https://github.com/rust-lang/cargo/issues/4664
-          sed -i '/dev-dependencies/,/dev-dependencies/d' Cargo.toml
-          cargo check -p redis --no-default-features --features tokio-comp
-          cargo check -p redis --no-default-features --features smol-comp        
+          RUSTDOCFLAGS: -Dwarnings      
 
   benchmark:
     needs: lint
@@ -274,24 +256,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain/@master
+      - name: lint
+        uses: ./.github/actions/lint-and-check
         with:
-          toolchain: stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Build
-        run: make build
-
-      - run: cargo clippy --all-features --all-targets -- -D warnings
-        name: clippy
-
-      - name: Check features
-        run: |
-          cargo check --workspace --all-targets --all-features
-          # Remove dev-dependencies so they do not enable features accidentally
-          # https://github.com/rust-lang/cargo/issues/4664
-          sed -i '/dev-dependencies/,/dev-dependencies/d' Cargo.toml
-          cargo check -p redis --no-default-features --features tokio-comp
-          cargo check -p redis --no-default-features --features smol-comp            
+          rust-toolchain: stable    
