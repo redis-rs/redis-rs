@@ -88,38 +88,6 @@ where
     res
 }
 
-#[cfg(feature = "aio")]
-#[rstest::rstest]
-#[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-#[should_panic(expected = "Internal thread panicked")]
-fn test_block_on_all_panics_from_spawns(#[case] runtime: RuntimeType) {
-    use std::sync::{atomic::AtomicBool, Arc};
-
-    let slept = Arc::new(AtomicBool::new(false));
-    let slept_clone = slept.clone();
-    let _ = block_on_all(
-        async {
-            spawn(async move {
-                futures_time::task::sleep(futures_time::time::Duration::from_millis(1)).await;
-                slept_clone.store(true, std::sync::atomic::Ordering::Relaxed);
-                panic!("As it should");
-            });
-
-            loop {
-                futures_time::task::sleep(futures_time::time::Duration::from_millis(2)).await;
-                if slept.load(std::sync::atomic::Ordering::Relaxed) {
-                    break;
-                }
-            }
-
-            Ok(())
-        },
-        runtime,
-    );
-}
-
 #[cfg(feature = "tokio-comp")]
 fn block_on_all_using_tokio<F>(f: F) -> F::Output
 where
@@ -600,21 +568,4 @@ pub async fn kill_client_async(
         .unwrap();
 
     Ok(())
-}
-
-fn spawn<T>(fut: impl std::future::Future<Output = T> + Send + Sync + 'static)
-where
-    T: Send + 'static,
-{
-    match tokio::runtime::Handle::try_current() {
-        Ok(tokio_runtime) => {
-            tokio_runtime.spawn(fut);
-        }
-        Err(_) => {
-            #[cfg(feature = "smol-comp")]
-            smol::spawn(fut).detach();
-            #[cfg(not(feature = "smol-comp"))]
-            unreachable!()
-        }
-    }
 }

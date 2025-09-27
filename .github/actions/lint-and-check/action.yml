@@ -1,0 +1,36 @@
+name: "Build and lint"
+inputs:
+  rust-toolchain: 
+    type: string,
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - uses: dtolnay/rust-toolchain/@master
+      with:
+        toolchain: ${{ inputs.rust-toolchain }}
+        components: rustfmt, clippy
+    - uses: Swatinem/rust-cache@v2
+
+    - name: Build default
+      shell: bash
+      run: RUSTFLAGS="-D warnings" cargo build --locked -p redis
+
+    - name: Build all features
+      shell: bash
+      run: RUSTFLAGS="-D warnings" cargo build --locked -p redis --all-features
+
+    - run: cargo clippy --all-features --all-targets -- -D warnings
+      name: clippy
+      shell: bash
+
+    - name: Check features
+      shell: bash
+      run: |
+        cargo check --workspace --all-targets --all-features
+        # Remove dev-dependencies so they do not enable features accidentally
+        # https://github.com/rust-lang/cargo/issues/4664
+        sed -i '/dev-dependencies/,/dev-dependencies/d' Cargo.toml
+        cargo check -p redis --no-default-features --features tokio-comp
+        cargo check -p redis --no-default-features --features smol-comp
