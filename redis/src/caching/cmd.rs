@@ -17,10 +17,10 @@ impl CacheablePipeline<'_> {
     ) -> RedisResult<Vec<Value>> {
         let replies: Vec<Value> = if self.transaction_mode {
             // With transaction mode, result is contained in an array, so it requires special care.
-            let (replies,): (Vec<Value>,) = crate::types::from_owned_redis_value(result)?;
+            let (replies,): (Vec<Value>,) = crate::types::from_redis_value(result)?;
             replies
         } else {
-            crate::types::from_owned_redis_value(result)?
+            crate::types::from_redis_value(result)?
         };
         let mut replies = replies.into_iter();
 
@@ -96,7 +96,7 @@ impl CacheableCommand<'_> {
                     Ok(reply)
                 } else {
                     Err(RedisError::from((
-                        ErrorKind::ParseError,
+                        ErrorKind::UnexpectedReturnType,
                         "Expected two Value from server",
                     )))
                 }
@@ -125,7 +125,7 @@ impl CacheableCommand<'_> {
                     }
                 } else {
                     return Err(RedisError::from((
-                        ErrorKind::ParseError,
+                        ErrorKind::UnexpectedReturnType,
                         "Expected Value::Array from server",
                     )));
                 }
@@ -175,7 +175,7 @@ fn get_next_reply(mut replies: impl Iterator<Item = Value>) -> RedisResult<Value
         Ok(reply)
     } else {
         Err(RedisError::from((
-            ErrorKind::ParseError,
+            ErrorKind::UnexpectedReturnType,
             "Expected Value from server",
         )))
     }

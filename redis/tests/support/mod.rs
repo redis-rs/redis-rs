@@ -35,8 +35,6 @@ pub fn current_thread_runtime() -> tokio::runtime::Runtime {
 pub enum RuntimeType {
     #[cfg(feature = "tokio-comp")]
     Tokio,
-    #[cfg(feature = "async-std-comp")]
-    AsyncStd,
     #[cfg(feature = "smol-comp")]
     Smol,
 }
@@ -63,7 +61,7 @@ where
     let check_future = futures_util::FutureExt::fuse(async {
         loop {
             if CHECK.load(Ordering::Relaxed) {
-                return Err((redis::ErrorKind::IoError, "panic was caught").into());
+                return Err((redis::ErrorKind::Io, "panic was caught").into());
             }
             futures_time::task::sleep(futures_time::time::Duration::from_millis(1)).await;
         }
@@ -78,8 +76,6 @@ where
     let res = match runtime {
         #[cfg(feature = "tokio-comp")]
         RuntimeType::Tokio => block_on_all_using_tokio(f),
-        #[cfg(feature = "async-std-comp")]
-        RuntimeType::AsyncStd => block_on_all_using_async_std(f),
         #[cfg(feature = "smol-comp")]
         RuntimeType::Smol => block_on_all_using_smol(f),
     };
@@ -95,7 +91,7 @@ where
 #[cfg(feature = "aio")]
 #[rstest::rstest]
 #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-#[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+#[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
 #[should_panic(expected = "Internal thread panicked")]
 fn test_block_on_all_panics_from_spawns(#[case] runtime: RuntimeType) {
@@ -129,19 +125,9 @@ fn block_on_all_using_tokio<F>(f: F) -> F::Output
 where
     F: Future,
 {
-    #[cfg(any(feature = "async-std-comp", feature = "smol-comp"))]
+    #[cfg(feature = "smol-comp")]
     redis::aio::prefer_tokio().unwrap();
     current_thread_runtime().block_on(f)
-}
-
-#[cfg(feature = "async-std-comp")]
-fn block_on_all_using_async_std<F>(f: F) -> F::Output
-where
-    F: Future,
-{
-    #[cfg(any(feature = "tokio-comp", feature = "smol-comp"))]
-    redis::aio::prefer_async_std().unwrap();
-    async_std::task::block_on(f)
 }
 
 #[cfg(feature = "smol-comp")]
@@ -149,7 +135,7 @@ fn block_on_all_using_smol<F>(f: F) -> F::Output
 where
     F: Future,
 {
-    #[cfg(any(feature = "tokio-comp", feature = "async-std-comp"))]
+    #[cfg(feature = "tokio-comp")]
     redis::aio::prefer_smol().unwrap();
     smol::block_on(f)
 }
@@ -400,7 +386,18 @@ where
             // format is always 3 bytes
             write!(writer, "={}\r\n{}:{}\r\n", 3 + text.len(), format, text)
         }
-        Value::BigNumber(ref val) => write!(writer, "({val}\r\n"),
+        Value::BigNumber(ref val) => {
+            #[cfg(feature = "num-bigint")]
+            return write!(writer, "({val}\r\n");
+            #[cfg(not(feature = "num-bigint"))]
+            {
+                write!(writer, "(")?;
+                for byte in val {
+                    write!(writer, "{byte}")?;
+                }
+                write!(writer, "\r\n")
+            }
+        }
         Value::Push { ref kind, ref data } => {
             write!(writer, ">{}\r\n+{kind}\r\n", data.len() + 1)?;
             for val in data.iter() {
@@ -524,24 +521,20 @@ pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
 #[cfg(feature = "tls-rustls")]
 pub(crate) mod mtls_test {
     use super::*;
-    use redis::{cluster::ClusterClient, ConnectionInfo, RedisError};
+    use redis::{cluster::ClusterClient, ConnectionInfo, IntoConnectionInfo, RedisError};
 
     fn clean_node_info(nodes: &[ConnectionInfo]) -> Vec<ConnectionInfo> {
         let nodes = nodes
             .iter()
-            .map(|node| match node {
-                ConnectionInfo {
-                    addr: redis::ConnectionAddr::TcpTls { host, port, .. },
-                    redis,
-                } => ConnectionInfo {
-                    addr: redis::ConnectionAddr::TcpTls {
-                        host: host.to_owned(),
-                        port: *port,
-                        insecure: false,
-                        tls_params: None,
-                    },
-                    redis: redis.clone(),
-                },
+            .map(|node| match node.addr() {
+                redis::ConnectionAddr::TcpTls { host, port, .. } => redis::ConnectionAddr::TcpTls {
+                    host: host.to_owned(),
+                    port: *port,
+                    insecure: false,
+                    tls_params: None,
+                }
+                .into_connection_info()
+                .unwrap(),
                 _ => node.clone(),
             })
             .collect();
@@ -617,11 +610,11 @@ where
         Ok(tokio_runtime) => {
             tokio_runtime.spawn(fut);
         }
-        #[cfg(feature = "async-std-comp")]
         Err(_) => {
-            async_std::task::spawn(fut);
+            #[cfg(feature = "smol-comp")]
+            smol::spawn(fut).detach();
+            #[cfg(not(feature = "smol-comp"))]
+            unreachable!()
         }
-        #[cfg(not(feature = "async-std-comp"))]
-        Err(_) => unreachable!(),
     }
 }

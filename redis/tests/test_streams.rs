@@ -178,7 +178,7 @@ fn test_xgroup_create() {
     // no key exists... this call breaks the connection pipe for some reason
     let reply = con.xinfo_stream("k10");
     assert!(
-        matches!(&reply, Err(e) if e.kind() == redis::ErrorKind::ResponseError
+        matches!(&reply, Err(e) if e.kind() == redis::ServerErrorKind::ResponseError.into()
             && e.code() == Some("ERR")
             && e.detail() == Some("no such key"))
     );
@@ -448,7 +448,7 @@ fn test_xadd_options() {
 
     let result = con.xinfo_stream("k1");
     assert!(
-        matches!(&result, Err(e) if e.kind() == redis::ErrorKind::ResponseError
+        matches!(&result, Err(e) if e.kind() == redis::ServerErrorKind::ResponseError.into()
             && e.code() == Some("ERR")
             && e.detail() == Some("no such key"))
     );

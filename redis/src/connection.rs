@@ -9,19 +9,21 @@ use std::str::{from_utf8, FromStr};
 use std::time::{Duration, Instant};
 
 use crate::cmd::{cmd, pipe, Cmd};
+use crate::errors::{ErrorKind, RedisError, ServerError, ServerErrorKind};
 use crate::io::tcp::{stream_with_settings, TcpSettings};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
 use crate::types::{
-    from_redis_value, ErrorKind, FromRedisValue, HashMap, PushKind, RedisError, RedisResult,
-    ServerError, ServerErrorKind, SyncPushSender, ToRedisArgs, Value,
+    from_redis_value_ref, FromRedisValue, HashMap, PushKind, RedisResult, SyncPushSender,
+    ToRedisArgs, Value,
 };
-use crate::{check_resp3, from_owned_redis_value, ProtocolVersion};
+use crate::{check_resp3, from_redis_value, ProtocolVersion};
 
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 
 use crate::commands::resp3_hello;
+use arcstr::ArcStr;
 #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
 use native_tls::{TlsConnector, TlsStream};
 
@@ -57,15 +59,19 @@ pub struct TlsConnParams {
 static DEFAULT_PORT: u16 = 6379;
 
 #[inline(always)]
-fn connect_tcp(addr: (&str, u16)) -> io::Result<TcpStream> {
+fn connect_tcp(addr: (&str, u16), tcp_settings: &TcpSettings) -> io::Result<TcpStream> {
     let socket = TcpStream::connect(addr)?;
-    stream_with_settings(socket, &TcpSettings::default())
+    stream_with_settings(socket, tcp_settings)
 }
 
 #[inline(always)]
-fn connect_tcp_timeout(addr: &SocketAddr, timeout: Duration) -> io::Result<TcpStream> {
+fn connect_tcp_timeout(
+    addr: &SocketAddr,
+    timeout: Duration,
+    tcp_settings: &TcpSettings,
+) -> io::Result<TcpStream> {
     let socket = TcpStream::connect_timeout(addr, timeout)?;
-    stream_with_settings(socket, &TcpSettings::default())
+    stream_with_settings(socket, tcp_settings)
 }
 
 /// This function takes a redis URL string and parses it into a URL
@@ -101,6 +107,7 @@ pub enum TlsMode {
 /// to connect to a unix socket you need to run this on an operating system
 /// that supports them.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum ConnectionAddr {
     /// Format for this is `(host, port)`.
     Tcp(String, u16),
@@ -231,23 +238,78 @@ impl fmt::Display for ConnectionAddr {
 #[derive(Clone, Debug)]
 pub struct ConnectionInfo {
     /// A connection address for where to connect to.
-    pub addr: ConnectionAddr,
+    pub(crate) addr: ConnectionAddr,
 
+    /// The settings for the TCP connection
+    pub(crate) tcp_settings: TcpSettings,
     /// A redis connection info for how to handshake with redis.
-    pub redis: RedisConnectionInfo,
+    pub(crate) redis: RedisConnectionInfo,
+}
+
+impl ConnectionInfo {
+    /// Returns the connection address
+    pub fn addr(&self) -> &ConnectionAddr {
+        &self.addr
+    }
+
+    /// Sets the TCP settings for the connection.
+    pub fn set_tcp_settings(mut self, tcp_settings: TcpSettings) -> Self {
+        self.tcp_settings = tcp_settings;
+        self
+    }
+
+    /// Set all redis connection info fields at once
+    pub fn set_redis_settings(mut self, redis: RedisConnectionInfo) -> Self {
+        self.redis = redis;
+        self
+    }
 }
 
 /// Redis specific/connection independent information used to establish a connection to redis.
 #[derive(Clone, Debug, Default)]
 pub struct RedisConnectionInfo {
     /// The database number to use.  This is usually `0`.
-    pub db: i64,
+    pub(crate) db: i64,
     /// Optionally a username that should be used for connection.
-    pub username: Option<String>,
+    pub(crate) username: Option<ArcStr>,
     /// Optionally a password that should be used for connection.
-    pub password: Option<String>,
+    pub(crate) password: Option<ArcStr>,
     /// Version of the protocol to use.
-    pub protocol: ProtocolVersion,
+    pub(crate) protocol: ProtocolVersion,
+    /// If set, the connection shouldn't send the library name to the server.
+    pub(crate) skip_set_lib_name: bool,
+}
+
+impl RedisConnectionInfo {
+    /// Sets the username for the connection's ACL
+    pub fn set_username(mut self, username: impl AsRef<str>) -> Self {
+        self.username = Some(username.as_ref().into());
+        self
+    }
+
+    /// Sets the password for the connection's ACL
+    pub fn set_password(mut self, password: impl AsRef<str>) -> Self {
+        self.password = Some(password.as_ref().into());
+        self
+    }
+
+    /// Sets the version of the RESP to use
+    pub fn set_protocol(mut self, protocol: ProtocolVersion) -> Self {
+        self.protocol = protocol;
+        self
+    }
+
+    /// Removes the pipelined CLIENT SETINFO call from the connection creation.
+    pub fn set_skip_set_lib_name(mut self) -> Self {
+        self.skip_set_lib_name = true;
+        self
+    }
+
+    /// Sets the database number to use
+    pub fn set_db(mut self, db: i64) -> Self {
+        self.db = db;
+        self
+    }
 }
 
 impl FromStr for ConnectionInfo {
@@ -269,6 +331,16 @@ pub trait IntoConnectionInfo {
 impl IntoConnectionInfo for ConnectionInfo {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         Ok(self)
+    }
+}
+
+impl IntoConnectionInfo for ConnectionAddr {
+    fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
+        Ok(ConnectionInfo {
+            addr: self,
+            redis: Default::default(),
+            tcp_settings: Default::default(),
+        })
     }
 }
 
@@ -298,6 +370,7 @@ where
         Ok(ConnectionInfo {
             addr: ConnectionAddr::Tcp(self.0.into(), self.1),
             redis: RedisConnectionInfo::default(),
+            tcp_settings: TcpSettings::default(),
         })
     }
 }
@@ -339,6 +412,11 @@ fn parse_protocol(query: &HashMap<Cow<str>, Cow<str>>) -> RedisResult<ProtocolVe
     })
 }
 
+#[inline]
+pub(crate) fn is_wildcard_address(address: &str) -> bool {
+    address == "0.0.0.0" || address == "::"
+}
+
 fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
     let host = match url.host() {
         Some(host) => {
@@ -353,11 +431,19 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             // https://doc.rust-lang.org/src/std/net/parser.rs.html#255
             // But if we call Ipv6Addr.to_string directly, it follows rfc5952 without brackets:
             // https://doc.rust-lang.org/src/std/net/ip.rs.html#1755
-            match host {
+            let host_str = match host {
                 url::Host::Domain(path) => path.to_string(),
                 url::Host::Ipv4(v4) => v4.to_string(),
                 url::Host::Ipv6(v6) => v6.to_string(),
+            };
+
+            if is_wildcard_address(&host_str) {
+                return Err(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "Cannot connect to a wildcard address (0.0.0.0 or ::)",
+                )));
             }
+            host_str
         }
         None => fail!((ErrorKind::InvalidClientConfig, "Missing hostname")),
     };
@@ -407,7 +493,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 None
             } else {
                 match percent_encoding::percent_decode(url.username().as_bytes()).decode_utf8() {
-                    Ok(decoded) => Some(decoded.into_owned()),
+                    Ok(decoded) => Some(decoded.into()),
                     Err(_) => fail!((
                         ErrorKind::InvalidClientConfig,
                         "Username is not valid UTF-8 string"
@@ -416,7 +502,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             },
             password: match url.password() {
                 Some(pw) => match percent_encoding::percent_decode(pw.as_bytes()).decode_utf8() {
-                    Ok(decoded) => Some(decoded.into_owned()),
+                    Ok(decoded) => Some(decoded.into()),
                     Err(_) => fail!((
                         ErrorKind::InvalidClientConfig,
                         "Password is not valid UTF-8 string"
@@ -425,7 +511,9 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 None => None,
             },
             protocol: parse_protocol(&query)?,
+            skip_set_lib_name: false,
         },
+        tcp_settings: TcpSettings::default(),
     })
 }
 
@@ -444,10 +532,12 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
 
                 None => 0,
             },
-            username: query.get("user").map(|username| username.to_string()),
-            password: query.get("pass").map(|password| password.to_string()),
+            username: query.get("user").map(|username| username.as_ref().into()),
+            password: query.get("pass").map(|password| password.as_ref().into()),
             protocol: parse_protocol(&query)?,
+            ..Default::default()
         },
+        tcp_settings: TcpSettings::default(),
     })
 }
 
@@ -671,17 +761,27 @@ pub struct Msg {
 }
 
 impl ActualConnection {
-    pub fn new(addr: &ConnectionAddr, timeout: Option<Duration>) -> RedisResult<ActualConnection> {
+    pub fn new(
+        addr: &ConnectionAddr,
+        timeout: Option<Duration>,
+        tcp_settings: &TcpSettings,
+    ) -> RedisResult<ActualConnection> {
         Ok(match *addr {
             ConnectionAddr::Tcp(ref host, ref port) => {
+                if is_wildcard_address(host) {
+                    fail!((
+                        ErrorKind::InvalidClientConfig,
+                        "Cannot connect to a wildcard address (0.0.0.0 or ::)"
+                    ));
+                }
                 let addr = (host.as_str(), *port);
                 let tcp = match timeout {
-                    None => connect_tcp(addr)?,
+                    None => connect_tcp(addr, tcp_settings)?,
                     Some(timeout) => {
                         let mut tcp = None;
                         let mut last_error = None;
                         for addr in addr.to_socket_addrs()? {
-                            match connect_tcp_timeout(&addr, timeout) {
+                            match connect_tcp_timeout(&addr, timeout, tcp_settings) {
                                 Ok(l) => {
                                     tcp = Some(l);
                                     break;
@@ -733,11 +833,11 @@ impl ActualConnection {
                 let addr = (host.as_str(), port);
                 let tls = match timeout {
                     None => {
-                        let tcp = connect_tcp(addr)?;
+                        let tcp = connect_tcp(addr, tcp_settings)?;
                         match tls_connector.connect(host, tcp) {
                             Ok(res) => res,
                             Err(e) => {
-                                fail!((ErrorKind::IoError, "SSL Handshake error", e.to_string()));
+                                fail!((ErrorKind::Io, "SSL Handshake error", e.to_string()));
                             }
                         }
                     }
@@ -745,7 +845,7 @@ impl ActualConnection {
                         let mut tcp = None;
                         let mut last_error = None;
                         for addr in (host.as_str(), port).to_socket_addrs()? {
-                            match connect_tcp_timeout(&addr, timeout) {
+                            match connect_tcp_timeout(&addr, timeout, tcp_settings) {
                                 Ok(l) => {
                                     tcp = Some(l);
                                     break;
@@ -789,14 +889,14 @@ impl ActualConnection {
                 )?;
                 let reader = match timeout {
                     None => {
-                        let tcp = connect_tcp((host, port))?;
+                        let tcp = connect_tcp((host, port), tcp_settings)?;
                         StreamOwned::new(conn, tcp)
                     }
                     Some(timeout) => {
                         let mut tcp = None;
                         let mut last_error = None;
                         for addr in (host, port).to_socket_addrs()? {
-                            match connect_tcp_timeout(&addr, timeout) {
+                            match connect_tcp_timeout(&addr, timeout, tcp_settings) {
                                 Ok(l) => {
                                     tcp = Some(l);
                                     break;
@@ -1087,7 +1187,7 @@ fn authenticate_cmd(
     let mut command = cmd("AUTH");
     if check_username {
         if let Some(username) = &connection_info.username {
-            command.arg(username);
+            command.arg(username.as_str());
         }
     }
     command.arg(password);
@@ -1099,7 +1199,11 @@ pub fn connect(
     timeout: Option<Duration>,
 ) -> RedisResult<Connection> {
     let start = Instant::now();
-    let con: ActualConnection = ActualConnection::new(&connection_info.addr, timeout)?;
+    let con: ActualConnection = ActualConnection::new(
+        &connection_info.addr,
+        timeout,
+        &connection_info.tcp_settings,
+    )?;
 
     // we temporarily set the timeout, and will remove it after finishing setup.
     let remaining_timeout = timeout.and_then(|timeout| timeout.checked_sub(start.elapsed()));
@@ -1176,20 +1280,20 @@ pub(crate) fn connection_setup_pipeline(
 
     // result is ignored, as per the command's instructions.
     // https://redis.io/commands/client-setinfo/
-    #[cfg(not(feature = "disable-client-setinfo"))]
-    pipeline
-        .cmd("CLIENT")
-        .arg("SETINFO")
-        .arg("LIB-NAME")
-        .arg("redis-rs")
-        .ignore();
-    #[cfg(not(feature = "disable-client-setinfo"))]
-    pipeline
-        .cmd("CLIENT")
-        .arg("SETINFO")
-        .arg("LIB-VER")
-        .arg(env!("CARGO_PKG_VERSION"))
-        .ignore();
+    if !connection_info.skip_set_lib_name {
+        pipeline
+            .cmd("CLIENT")
+            .arg("SETINFO")
+            .arg("LIB-NAME")
+            .arg("redis-rs")
+            .ignore();
+        pipeline
+            .cmd("CLIENT")
+            .arg("SETINFO")
+            .arg("LIB-VER")
+            .arg(env!("CARGO_PKG_VERSION"))
+            .ignore();
+    }
 
     (
         pipeline,
@@ -1224,7 +1328,7 @@ fn check_resp2_auth(result: &Value) -> RedisResult<AuthResult> {
         Value::ServerError(err) => err,
         _ => {
             return Err((
-                ErrorKind::ResponseError,
+                ServerErrorKind::ResponseError.into(),
                 "Redis server refused to authenticate, returns Ok() != Value::Okay",
             )
                 .into());
@@ -1252,13 +1356,13 @@ fn check_db_select(value: &Value) -> RedisResult<()> {
 
     match err.details() {
         Some(err_msg) => Err((
-            ErrorKind::ResponseError,
+            ServerErrorKind::ResponseError.into(),
             "Redis server refused to switch database",
             err_msg.to_string(),
         )
             .into()),
         None => Err((
-            ErrorKind::ResponseError,
+            ServerErrorKind::ResponseError.into(),
             "Redis server refused to switch database",
         )
             .into()),
@@ -1270,8 +1374,9 @@ fn check_caching(result: &Value) -> RedisResult<()> {
     match result {
         Value::Okay => Ok(()),
         _ => Err((
-            ErrorKind::ResponseError,
+            ServerErrorKind::ResponseError.into(),
             "Client-side caching returned unknown response",
+            format!("{result:?}"),
         )
             .into()),
     }
@@ -1292,12 +1397,12 @@ pub(crate) fn check_connection_setup(
 
     if let Some(index) = resp3_auth_cmd_idx {
         let Some(value) = results.get(index) else {
-            return Err((ErrorKind::ClientError, "Missing RESP3 auth response").into());
+            return Err((ErrorKind::Client, "Missing RESP3 auth response").into());
         };
         check_resp3_auth(value)?;
     } else if let Some(index) = resp2_auth_cmd_idx {
         let Some(value) = results.get(index) else {
-            return Err((ErrorKind::ClientError, "Missing RESP2 auth response").into());
+            return Err((ErrorKind::Client, "Missing RESP2 auth response").into());
         };
         if check_resp2_auth(value)? == AuthResult::ShouldRetryWithoutUsername {
             return Ok(AuthResult::ShouldRetryWithoutUsername);
@@ -1306,7 +1411,7 @@ pub(crate) fn check_connection_setup(
 
     if let Some(index) = select_cmd_idx {
         let Some(value) = results.get(index) else {
-            return Err((ErrorKind::ClientError, "Missing SELECT DB response").into());
+            return Err((ErrorKind::Client, "Missing SELECT DB response").into());
         };
         check_db_select(value)?;
     }
@@ -1314,7 +1419,7 @@ pub(crate) fn check_connection_setup(
     #[cfg(feature = "cache-aio")]
     if let Some(index) = cache_cmd_idx {
         let Some(value) = results.get(index) else {
-            return Err((ErrorKind::ClientError, "Missing Caching response").into());
+            return Err((ErrorKind::Client, "Missing Caching response").into());
         };
         check_caching(value)?;
     }
@@ -1560,7 +1665,7 @@ impl Connection {
                     return Err(err.into());
                 }
                 Value::Array(vec) => {
-                    let res: (Vec<u8>, (), isize) = from_owned_redis_value(Value::Array(vec))?;
+                    let res: (Vec<u8>, (), isize) = from_redis_value(Value::Array(vec))?;
                     if resp2_is_pub_sub_state_cleared(
                         &mut received_unsub,
                         &mut received_punsub,
@@ -1572,7 +1677,7 @@ impl Connection {
                 }
                 _ => {
                     return Err((
-                        ErrorKind::ClientError,
+                        ErrorKind::Client,
                         "Unexpected unsubscribe response",
                         format!("{resp:?}"),
                     )
@@ -1794,6 +1899,7 @@ impl ConnectionLike for Connection {
         self.send_bytes(cmd)?;
         let mut rv = vec![];
         let mut first_err = None;
+        let mut server_errors = vec![];
         let mut count = count;
         let mut idx = 0;
         while idx < (offset + count) {
@@ -1805,9 +1911,7 @@ impl ConnectionLike for Connection {
             match response {
                 Ok(Value::ServerError(err)) => {
                     if idx < offset {
-                        if first_err.is_none() {
-                            first_err = Some(err.into());
-                        }
+                        server_errors.push((idx - 1, err)); // -1, to offset the added MULTI call.
                     } else {
                         rv.push(Value::ServerError(err));
                     }
@@ -1832,6 +1936,10 @@ impl ConnectionLike for Connection {
                 }
             }
             idx += 1;
+        }
+
+        if !server_errors.is_empty() {
+            return Err(RedisError::make_aborted_transaction(server_errors));
         }
 
         first_err.map_or(Ok(rv), Err)
@@ -1938,7 +2046,7 @@ impl<'a> PubSub<'a> {
         }
     }
 
-    /// Subscribes to a new channel(s).    
+    /// Subscribes to a new channel(s).
     pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         self.cache_messages_until_received_response(cmd("SUBSCRIBE").arg(channel), true)?;
         Ok(())
@@ -1964,15 +2072,15 @@ impl<'a> PubSub<'a> {
 
     /// Sends a ping with a message to the server
     pub fn ping_message<T: FromRedisValue>(&mut self, message: impl ToRedisArgs) -> RedisResult<T> {
-        from_owned_redis_value(
+        Ok(from_redis_value(
             self.cache_messages_until_received_response(cmd("PING").arg(message), false)?,
-        )
+        )?)
     }
     /// Sends a ping to the server
     pub fn ping<T: FromRedisValue>(&mut self) -> RedisResult<T> {
-        from_owned_redis_value(
+        Ok(from_redis_value(
             self.cache_messages_until_received_response(&mut cmd("PING"), false)?,
-        )
+        )?)
     }
 
     /// Fetches the next message from the pubsub connection.  Blocks until
@@ -2027,9 +2135,9 @@ impl Msg {
         if let Value::Push { kind, data } = value {
             return Self::from_push_info(PushInfo { kind, data });
         } else {
-            let raw_msg: Vec<Value> = from_owned_redis_value(value).ok()?;
+            let raw_msg: Vec<Value> = from_redis_value(value).ok()?;
             let mut iter = raw_msg.into_iter();
-            let msg_type: String = from_owned_redis_value(iter.next()?).ok()?;
+            let msg_type: String = from_redis_value(iter.next()?).ok()?;
             if msg_type == "message" {
                 channel = iter.next()?;
                 payload = iter.next()?;
@@ -2075,7 +2183,7 @@ impl Msg {
 
     /// Returns the channel this message came on.
     pub fn get_channel<T: FromRedisValue>(&self) -> RedisResult<T> {
-        from_redis_value(&self.channel)
+        Ok(from_redis_value_ref(&self.channel)?)
     }
 
     /// Convenience method to get a string version of the channel.  Unless
@@ -2091,7 +2199,7 @@ impl Msg {
 
     /// Returns the message's payload in a specific format.
     pub fn get_payload<T: FromRedisValue>(&self) -> RedisResult<T> {
-        from_redis_value(&self.payload)
+        Ok(from_redis_value_ref(&self.payload)?)
     }
 
     /// Returns the bytes that are the message's payload.  This can be used
@@ -2116,10 +2224,10 @@ impl Msg {
     /// an `Option<String>` so that you do not need to use `from_pattern`
     /// to figure out if a pattern was set.
     pub fn get_pattern<T: FromRedisValue>(&self) -> RedisResult<T> {
-        match self.pattern {
-            None => from_redis_value(&Value::Nil),
-            Some(ref x) => from_redis_value(x),
-        }
+        Ok(match self.pattern {
+            None => from_redis_value_ref(&Value::Nil),
+            Some(ref x) => from_redis_value_ref(x),
+        }?)
     }
 }
 
@@ -2285,6 +2393,7 @@ mod tests {
                 ConnectionInfo {
                     addr: ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379),
                     redis: Default::default(),
+                    tcp_settings: TcpSettings::default(),
                 },
             ),
             (
@@ -2292,6 +2401,7 @@ mod tests {
                 ConnectionInfo {
                     addr: ConnectionAddr::Tcp("::1".to_string(), 6379),
                     redis: Default::default(),
+                    tcp_settings: TcpSettings::default(),
                 },
             ),
             (
@@ -2300,10 +2410,11 @@ mod tests {
                     addr: ConnectionAddr::Tcp("example.com".to_string(), 6379),
                     redis: RedisConnectionInfo {
                         db: 2,
-                        username: Some("%johndoe%".to_string()),
-                        password: Some("#@<>$".to_string()),
+                        username: Some("%johndoe%".into()),
+                        password: Some("#@<>$".into()),
                         ..Default::default()
                     },
+                    tcp_settings: TcpSettings::default(),
                 },
             ),
             (
@@ -2311,6 +2422,7 @@ mod tests {
                 ConnectionInfo {
                     addr: ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379),
                     redis: Default::default(),
+                    tcp_settings: TcpSettings::default(),
                 },
             ),
             (
@@ -2321,6 +2433,7 @@ mod tests {
                         protocol: ProtocolVersion::RESP3,
                         ..Default::default()
                     },
+                    tcp_settings: TcpSettings::default(),
                 },
             ),
         ];
@@ -2373,16 +2486,10 @@ mod tests {
         ];
         for (url, expected, detail) in cases.into_iter() {
             let res = url_to_tcp_connection_info(url).unwrap_err();
-            assert_eq!(
-                res.kind(),
-                crate::ErrorKind::InvalidClientConfig,
-                "{}",
-                &res,
-            );
-            #[allow(deprecated)]
-            let desc = std::error::Error::description(&res);
-            assert_eq!(desc, expected, "{}", &res);
-            assert_eq!(res.detail(), detail, "{}", &res);
+            assert_eq!(res.kind(), crate::ErrorKind::InvalidClientConfig,);
+            let desc = res.to_string();
+            assert!(desc.contains(expected), "{desc}");
+            assert_eq!(res.detail(), detail);
         }
     }
 
@@ -2399,7 +2506,9 @@ mod tests {
                         username: None,
                         password: None,
                         protocol: ProtocolVersion::RESP2,
+                        skip_set_lib_name: false,
                     },
+                    tcp_settings: Default::default(),
                 },
             ),
             (
@@ -2410,6 +2519,7 @@ mod tests {
                         db: 1,
                         ..Default::default()
                     },
+                    tcp_settings: TcpSettings::default(),
                 },
             ),
             (
@@ -2421,10 +2531,11 @@ mod tests {
                     addr: ConnectionAddr::Unix("/example.sock".into()),
                     redis: RedisConnectionInfo {
                         db: 2,
-                        username: Some("%johndoe%".to_string()),
-                        password: Some("#@<>$".to_string()),
+                        username: Some("%johndoe%".into()),
+                        password: Some("#@<>$".into()),
                         ..Default::default()
                     },
+                    tcp_settings: TcpSettings::default(),
                 },
             ),
             (
@@ -2436,10 +2547,11 @@ mod tests {
                     addr: ConnectionAddr::Unix("/example.sock".into()),
                     redis: RedisConnectionInfo {
                         db: 2,
-                        username: Some("%johndoe%".to_string()),
-                        password: Some("&?= *+".to_string()),
+                        username: Some("%johndoe%".into()),
+                        password: Some("&?= *+".into()),
                         ..Default::default()
                     },
+                    tcp_settings: TcpSettings::default(),
                 },
             ),
             (
@@ -2450,6 +2562,7 @@ mod tests {
                         protocol: ProtocolVersion::RESP3,
                         ..Default::default()
                     },
+                    tcp_settings: TcpSettings::default(),
                 },
             ),
         ];

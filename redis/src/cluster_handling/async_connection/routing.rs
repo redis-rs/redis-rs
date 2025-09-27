@@ -1,9 +1,12 @@
+use arcstr::ArcStr;
+
 use crate::{
     cluster_routing::{
-        self, MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, SingleNodeRoutingInfo,
-        SlotAddr,
+        MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, RoutingInfo,
+        SingleNodeRoutingInfo, SlotAddr,
     },
-    Cmd, ErrorKind, RedisResult,
+    errors::ServerErrorKind,
+    Cmd, RedisResult,
 };
 
 #[derive(Clone)]
@@ -12,15 +15,11 @@ pub(super) enum InternalRoutingInfo<C> {
     MultiNode((MultipleNodeRoutingInfo, Option<ResponsePolicy>)),
 }
 
-impl<C> From<cluster_routing::RoutingInfo> for InternalRoutingInfo<C> {
-    fn from(value: cluster_routing::RoutingInfo) -> Self {
+impl<C> From<RoutingInfo> for InternalRoutingInfo<C> {
+    fn from(value: RoutingInfo) -> Self {
         match value {
-            cluster_routing::RoutingInfo::SingleNode(route) => {
-                InternalRoutingInfo::SingleNode(route.into())
-            }
-            cluster_routing::RoutingInfo::MultiNode(routes) => {
-                InternalRoutingInfo::MultiNode(routes)
-            }
+            RoutingInfo::SingleNode(route) => InternalRoutingInfo::SingleNode(route.into()),
+            RoutingInfo::MultiNode(routes) => InternalRoutingInfo::MultiNode(routes),
         }
     }
 }
@@ -35,9 +34,9 @@ impl<C> From<InternalSingleNodeRouting<C>> for InternalRoutingInfo<C> {
 pub(super) enum InternalSingleNodeRouting<C> {
     Random,
     SpecificNode(Route),
-    ByAddress(String),
+    ByAddress(ArcStr),
     Connection {
-        identifier: String,
+        identifier: ArcStr,
         conn: C,
     },
     Redirect {
@@ -60,7 +59,10 @@ impl<C> From<SingleNodeRoutingInfo> for InternalSingleNodeRouting<C> {
                 InternalSingleNodeRouting::SpecificNode(route)
             }
             SingleNodeRoutingInfo::ByAddress { host, port } => {
-                InternalSingleNodeRouting::ByAddress(format!("{host}:{port}"))
+                InternalSingleNodeRouting::ByAddress(format!("{host}:{port}").into())
+            }
+            SingleNodeRoutingInfo::RandomPrimary => {
+                InternalSingleNodeRouting::SpecificNode(Route::new_random_primary())
             }
         }
     }
@@ -68,15 +70,16 @@ impl<C> From<SingleNodeRoutingInfo> for InternalSingleNodeRouting<C> {
 
 pub(super) fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Option<Route>> {
     fn route_for_command(cmd: &Cmd) -> Option<Route> {
-        match cluster_routing::RoutingInfo::for_routable(cmd) {
-            Some(cluster_routing::RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => None,
-            Some(cluster_routing::RoutingInfo::SingleNode(
-                SingleNodeRoutingInfo::SpecificNode(route),
-            )) => Some(route),
-            Some(cluster_routing::RoutingInfo::MultiNode(_)) => None,
-            Some(cluster_routing::RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
-                ..
-            })) => None,
+        match RoutingInfo::for_routable(cmd) {
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => None,
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
+                Some(route)
+            }
+            Some(RoutingInfo::MultiNode(_)) => None,
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress { .. })) => None,
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::RandomPrimary)) => {
+                Some(Route::new_random_primary())
+            }
             None => None,
         }
     }
@@ -90,8 +93,12 @@ pub(super) fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Opti
             (_, None) => Ok(chosen_route),
             (Some(chosen_route), Some(next_cmd_route)) => {
                 if chosen_route.slot() != next_cmd_route.slot() {
-                    Err((ErrorKind::CrossSlot, "Received crossed slots in pipeline").into())
-                } else if chosen_route.slot_addr() != &SlotAddr::Master {
+                    Err((
+                        ServerErrorKind::CrossSlot.into(),
+                        "Received crossed slots in pipeline",
+                    )
+                        .into())
+                } else if chosen_route.slot_addr() != SlotAddr::Master {
                     Ok(Some(next_cmd_route))
                 } else {
                     Ok(Some(chosen_route))
@@ -163,7 +170,7 @@ mod pipeline_routing_tests {
 
         assert_eq!(
             route_for_pipeline(&pipeline).unwrap_err().kind(),
-            crate::ErrorKind::CrossSlot
+            crate::ServerErrorKind::CrossSlot.into()
         );
     }
 

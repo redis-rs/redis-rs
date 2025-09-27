@@ -10,22 +10,24 @@ mod basic {
     use rand::distr::Alphanumeric;
     use rand::prelude::IndexedRandom;
     use rand::{rng, Rng};
-    use redis::IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply};
+
+    use redis::ServerErrorKind;
     use redis::{
-        cmd, Client, Connection, CopyOptions, ProtocolVersion, PushInfo, RedisConnectionInfo, Role,
-        ScanOptions, UpdateCheck, Value, ValueType,
-    };
-    use redis::{
-        ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck, ExpireOption,
-        Expiry, FieldExistenceCheck, HashFieldExpirationOptions, PubSubCommands, PushKind,
-        RedisResult, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs, TypedCommands,
+        cmd, Client, Connection, ConnectionInfo, ConnectionLike, ControlFlow, CopyOptions,
+        ErrorKind, ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck,
+        HashFieldExpirationOptions,
+        IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply},
+        ProtocolVersion, PubSubCommands, PushInfo, PushKind, RedisConnectionInfo, RedisResult,
+        Role, ScanOptions, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs, TypedCommands,
+        UpdateCheck, Value, ValueType,
     };
 
     #[cfg(feature = "vector-sets")]
-    use redis::{
+    use redis::vector_sets::{
         EmbeddingInput, VAddOptions, VEmbOptions, VSimOptions, VectorAddInput, VectorQuantization,
         VectorSimilaritySearchInput,
     };
+    use redis_test::server::redis_settings;
     use redis_test::utils::get_listener_on_free_port;
 
     #[cfg(feature = "vector-sets")]
@@ -119,17 +121,13 @@ mod basic {
             .arg(format!(">{password}"));
         assert_eq!(con.req_command(&set_user_cmd), Ok(Value::Okay));
 
-        let mut conn = redis::Client::open(ConnectionInfo {
-            addr: ctx.server.client_addr().clone(),
-            redis: RedisConnectionInfo {
-                username: Some(username.to_string()),
-                password: Some(password.to_string()),
-                ..Default::default()
-            },
-        })
-        .unwrap()
-        .get_connection()
-        .unwrap();
+        let redis = redis_settings()
+            .set_password(password)
+            .set_username(username);
+        let mut conn = redis::Client::open(ctx.server.connection_info().set_redis_settings(redis))
+            .unwrap()
+            .get_connection()
+            .unwrap();
 
         let result: String = cmd("ACL").arg("whoami").query(&mut conn).unwrap();
         assert_eq!(result, username)
@@ -1167,7 +1165,6 @@ mod basic {
             .iter(&mut con)
             .unwrap();
 
-        #[cfg(feature = "safe_iterators")]
         let iter = iter.map(std::result::Result::unwrap);
 
         for x in iter {
@@ -1178,7 +1175,6 @@ mod basic {
         assert_eq!(unseen.len(), 0);
     }
 
-    #[cfg(feature = "safe_iterators")]
     #[test]
     fn test_checked_scanning_error() {
         const KEY_COUNT: u32 = 1000;
@@ -1229,7 +1225,7 @@ mod basic {
         assert_eq!(count, KEY_COUNT);
 
         // make sure we encountered the error (i.e. instead of silent failure)
-        assert!(matches!(error_kind, Some(ErrorKind::TypeError)));
+        assert_eq!(error_kind, Some(ErrorKind::Parse));
     }
 
     #[test]
@@ -1250,7 +1246,6 @@ mod basic {
             .hscan_match::<&str, &str, (String, usize)>("foo", "key_0_*")
             .unwrap();
 
-        #[cfg(feature = "safe_iterators")]
         let iter = iter.map(std::result::Result::unwrap);
 
         for (_field, value) in iter {
@@ -1342,7 +1337,10 @@ mod basic {
             .ignore()
             .get("y")
             .exec(&mut con);
-        assert_eq!(res.unwrap_err().kind(), ErrorKind::ReadOnly);
+        assert_eq!(
+            res.unwrap_err().kind(),
+            redis::ServerErrorKind::ReadOnly.into()
+        );
 
         // Make sure we don't get leftover responses from the pipeline ("y-value"). See #436.
         let res = redis::cmd("GET")
@@ -1350,6 +1348,22 @@ mod basic {
             .query::<String>(&mut con)
             .unwrap();
         assert_eq!(res, "x-value");
+    }
+
+    #[test]
+    fn test_pipeline_returns_server_errors() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+        let mut pipe = redis::pipe();
+        pipe.set("x", "x-value")
+            .ignore()
+            .hset("x", "field", "field_value")
+            .ignore()
+            .get("x");
+
+        let res = pipe.exec(&mut con);
+        let error_message = res.unwrap_err().to_string();
+        assert_eq!(&error_message, "Pipeline failure: [(Index 1, error: \"WRONGTYPE\": Operation against a key holding the wrong kind of value)]");
     }
 
     #[test]
@@ -1401,14 +1415,23 @@ mod basic {
             .unwrap();
 
         // Ensure that a write command fails with a READONLY error
-        let err: RedisResult<()> = redis::pipe()
+        let err = redis::pipe()
             .atomic()
+            .ping()
             .set("x", 142)
             .ignore()
             .get("x")
-            .query(&mut con);
+            .set("x", 142)
+            .query::<()>(&mut con)
+            .unwrap_err();
 
-        assert_eq!(err.unwrap_err().kind(), ErrorKind::ReadOnly);
+        assert_eq!(err.kind(), ServerErrorKind::ExecAbort.into());
+        let errors = err.into_server_errors().unwrap();
+        assert_eq!(errors.len(), 2);
+        assert_eq!(errors[0].0, 1);
+        assert_eq!(errors[0].1.kind(), ServerErrorKind::ReadOnly.into());
+        assert_eq!(errors[1].0, 3);
+        assert_eq!(errors[1].1.kind(), ServerErrorKind::ReadOnly.into());
 
         let x: i32 = redis::Commands::get(&mut con, "x").unwrap();
         assert_eq!(x, 42);
@@ -1790,7 +1813,8 @@ mod basic {
             let mut received_values = vec![];
             for _ in &expected_values {
                 let PushInfo { kind, data } = rx.try_recv().unwrap();
-                let channel_name: String = redis::from_redis_value(data.first().unwrap()).unwrap();
+                let channel_name: String =
+                    redis::from_redis_value_ref(data.first().unwrap()).unwrap();
                 received_values.push((kind, channel_name));
             }
             for val in expected_values {
@@ -2076,7 +2100,6 @@ mod basic {
         let iter: redis::Iter<'_, (String, isize)> = con.hscan("my_hash").unwrap();
         let mut found = HashSet::new();
 
-        #[cfg(feature = "safe_iterators")]
         let iter = iter.map(std::result::Result::unwrap);
 
         for item in iter {
@@ -2159,7 +2182,6 @@ mod basic {
 
         let mut counter = 0;
         for kv in iter {
-            #[cfg(feature = "safe_iterators")]
             let kv = kv.unwrap();
 
             let (key, num) = kv;
@@ -2784,24 +2806,22 @@ mod basic {
             let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
 
             // handle initial handshake if sent
-            #[cfg(not(feature = "disable-client-setinfo"))]
-            {
-                let mut pipeline = redis::pipe();
-                pipeline
-                    .cmd("CLIENT")
-                    .arg("SETINFO")
-                    .arg("LIB-NAME")
-                    .arg("redis-rs");
-                pipeline
-                    .cmd("CLIENT")
-                    .arg("SETINFO")
-                    .arg("LIB-VER")
-                    .arg(env!("CARGO_PKG_VERSION"));
-                let expected_length = pipeline.get_packed_pipeline().len();
-                let mut buf = vec![0; expected_length];
-                reader.read_exact(&mut buf).unwrap();
-                stream.write_all(b"$2\r\nOK\r\n$2\r\nOK\r\n").unwrap();
-            }
+
+            let mut pipeline = redis::pipe();
+            pipeline
+                .cmd("CLIENT")
+                .arg("SETINFO")
+                .arg("LIB-NAME")
+                .arg("redis-rs");
+            pipeline
+                .cmd("CLIENT")
+                .arg("SETINFO")
+                .arg("LIB-VER")
+                .arg(env!("CARGO_PKG_VERSION"));
+            let expected_length = pipeline.get_packed_pipeline().len();
+            let mut buf = vec![0; expected_length];
+            reader.read_exact(&mut buf).unwrap();
+            stream.write_all(b"$2\r\nOK\r\n$2\r\nOK\r\n").unwrap();
 
             // reply with canned responses to known requests.
             loop {
@@ -3485,7 +3505,7 @@ mod basic {
         let result = con.vdim(non_existent_key);
         assert!(result.is_err(), "Expected an error for non-existent key");
         let error = result.unwrap_err();
-        assert_eq!(error.kind(), redis::ErrorKind::ResponseError);
+        assert_eq!(error.kind(), redis::ServerErrorKind::ResponseError.into());
         assert!(
             error.to_string().contains("key does not exist"),
             "Expected error message = 'key does not exist', got: {error}"
@@ -3526,7 +3546,7 @@ mod basic {
             "Expected an error for dimensionality mismatch"
         );
         let error = result.unwrap_err();
-        assert_eq!(error.kind(), redis::ErrorKind::ResponseError);
+        assert_eq!(error.kind(), redis::ServerErrorKind::ResponseError.into());
 
         // VEMB returns NIL for non-existent keys or elements.
         assert_eq!(
@@ -3594,14 +3614,15 @@ mod basic {
             "Expected an error for non-existent element"
         );
         let error = result.unwrap_err();
-        assert_eq!(error.kind(), redis::ErrorKind::ResponseError);
+        assert_eq!(error.kind(), redis::ServerErrorKind::ResponseError.into());
     }
 
     #[test]
     fn test_push_manager() {
         let ctx = TestContext::new();
-        let mut connection_info = ctx.server.connection_info();
-        connection_info.redis.protocol = ProtocolVersion::RESP3;
+        let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);
+        let connection_info = ctx.server.connection_info().set_redis_settings(redis);
+
         let client = redis::Client::open(connection_info).unwrap();
 
         let mut con = client.get_connection().unwrap();
@@ -3656,8 +3677,8 @@ mod basic {
     #[test]
     fn test_push_manager_disconnection() {
         let ctx = TestContext::new();
-        let mut connection_info = ctx.server.connection_info();
-        connection_info.redis.protocol = ProtocolVersion::RESP3;
+        let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);
+        let connection_info = ctx.server.connection_info().set_redis_settings(redis);
         let client = redis::Client::open(connection_info).unwrap();
 
         let mut con = client.get_connection().unwrap();
@@ -3777,8 +3798,9 @@ mod basic {
     #[test]
     fn test_select_db() {
         let ctx = TestContext::new();
-        let mut connection_info = ctx.client.get_connection_info().clone();
-        connection_info.redis.db = 5;
+        let redis = redis_settings().set_db(5);
+        let connection_info = ctx.server.connection_info().set_redis_settings(redis);
+
         let client = redis::Client::open(connection_info).unwrap();
         let mut connection = client.get_connection().unwrap();
         let info: String = redis::cmd("CLIENT")
@@ -3841,9 +3863,10 @@ mod basic {
         // we wait, to ensure that the debug sleep has started.
         thread::sleep(Duration::from_millis(5));
         // we set a DB, in order to force calling requests on the server.
-        let mut addr = ctx.server.connection_info().clone();
-        addr.redis.db = 1;
-        let client = Client::open(addr).unwrap();
+        let redis = redis_settings().set_db(1);
+        let connection_info = ctx.server.connection_info().set_redis_settings(redis);
+
+        let client = Client::open(connection_info).unwrap();
         let try_connect = client.get_connection_with_timeout(Duration::from_millis(2));
 
         assert!(try_connect.is_err_and(|err| { err.is_timeout() }));

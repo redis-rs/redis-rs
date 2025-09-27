@@ -1,11 +1,10 @@
-use crate::cluster::ClusterConnection;
+use super::ClusterConnection;
 use crate::cmd::{cmd, Cmd};
-use crate::types::{
-    from_owned_redis_value, ErrorKind, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,
-};
+use crate::errors::ErrorKind;
+use crate::types::{from_redis_value, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value};
 
 pub(crate) const UNROUTABLE_ERROR: (ErrorKind, &str) = (
-    ErrorKind::ClientError,
+    ErrorKind::Client,
     "This command cannot be safely routed in cluster mode",
 );
 
@@ -118,29 +117,11 @@ impl ClusterPipeline {
             }
         }
 
-        from_owned_redis_value(if self.commands.is_empty() {
-            Value::Array(vec![])
+        if self.commands.is_empty() {
+            Ok(from_redis_value(Value::Array(vec![]))?)
         } else {
-            self.make_pipeline_results(con.execute_pipeline(self)?)?
-        })
-    }
-
-    /// This is a shortcut to `query()` that does not return a value and
-    /// will fail the task if the query of the pipeline fails.
-    ///
-    /// This is equivalent to a call to query like this:
-    ///
-    /// ```rust,no_run
-    /// # let nodes = vec!["redis://127.0.0.1:6379/"];
-    /// # let client = redis::cluster::ClusterClient::new(nodes).unwrap();
-    /// # let mut con = client.get_connection().unwrap();
-    /// let mut pipe = redis::cluster::cluster_pipe();
-    /// pipe.cmd("SET").arg("key_1").arg(42).ignore().query::<()>(&mut con).unwrap();
-    /// ```
-    #[inline]
-    #[deprecated(note = "Use Cmd::exec + unwrap, instead")]
-    pub fn execute(&self, con: &mut ClusterConnection) {
-        self.exec(con).unwrap();
+            self.compose_response(con.execute_pipeline(self)?)
+        }
     }
 
     /// This is an alternative to `query`` that can be used if you want to be able to handle a

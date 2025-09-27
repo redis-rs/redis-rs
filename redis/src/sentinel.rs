@@ -3,7 +3,7 @@
 //!
 //! # Example
 //! ```rust,no_run
-//! use redis::Commands;
+//! use redis::TypedCommands;
 //! use redis::sentinel::Sentinel;
 //!
 //! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
@@ -11,8 +11,8 @@
 //! let mut master = sentinel.master_for("master_name", None).unwrap().get_connection().unwrap();
 //! let mut replica = sentinel.replica_for("master_name", None).unwrap().get_connection().unwrap();
 //!
-//! let _: () = master.set("test", "test_data").unwrap();
-//! let rv: String = replica.get("test").unwrap();
+//! master.set("test", "test_data").unwrap();
+//! let rv = replica.get("test").unwrap().unwrap();
 //!
 //! assert_eq!(rv, "test_data");
 //! ```
@@ -23,7 +23,7 @@
 //!
 //! # Example
 //! ```rust,no_run
-//! use redis::Commands;
+//! use redis::TypedCommands;
 //! use redis::sentinel::{ SentinelServerType, SentinelClient };
 //!
 //! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
@@ -32,8 +32,8 @@
 //! let mut master_conn = master_client.get_connection().unwrap();
 //! let mut replica_conn = replica_client.get_connection().unwrap();
 //!
-//! let _: () = master_conn.set("test", "test_data").unwrap();
-//! let rv: String = replica_conn.get("test").unwrap();
+//! master_conn.set("test", "test_data").unwrap();
+//! let rv = replica_conn.get("test").unwrap().unwrap();
 //!
 //! assert_eq!(rv, "test_data");
 //! ```
@@ -48,40 +48,30 @@
 //! use redis::{ Commands, ConnectionAddr, ConnectionInfo, RedisConnectionInfo };
 //! use redis::sentinel::{ Sentinel, SentinelNodeConnectionInfo };
 //!
-//! let nodes = vec![ConnectionInfo {
-//!   addr: ConnectionAddr::Tcp(String::from("redis://127.0.0.1"), 6379),
-//!   redis: RedisConnectionInfo {
-//!     username: Some(String::from("sentinel_username")),
-//!     password: Some(String::from("sentinel_password")),
-//!     ..Default::default()
-//!   },
-//! }];
+//! let nodes = vec!["redis://sentinel_user:sentinel_pass@127.0.0.1"];
 //! let mut sentinel = Sentinel::build(nodes).unwrap();
 //!
+//! let redis_connection_info = RedisConnectionInfo::default()
+//!     .set_db(1)
+//!     .set_username("user")
+//!     .set_password("pass");
+//! let sentinel_master_node_connection_info = SentinelNodeConnectionInfo::default()
+//!     .set_redis_connection_info(redis_connection_info);
 //! let mut master_with_auth = sentinel
 //!     .master_for(
 //!         "master_name",
-//!         Some(&SentinelNodeConnectionInfo {
-//!             tls_mode: None,
-//!             redis_connection_info: Some(RedisConnectionInfo {
-//!                 db: 1,
-//!                 username: Some(String::from("foo")),
-//!                 password: Some(String::from("bar")),
-//!                 ..Default::default()
-//!             }),
-//!         }),
+//!         Some(&sentinel_master_node_connection_info),
 //!     )
 //!     .unwrap()
 //!     .get_connection()
 //!     .unwrap();
 //!
+//! let sentinel_replica_node_connection_info = SentinelNodeConnectionInfo::default()
+//!     .set_tls_mode(redis::TlsMode::Secure);
 //! let mut replica_with_tls = sentinel
 //!     .master_for(
 //!         "master_name",
-//!         Some(&SentinelNodeConnectionInfo {
-//!             tls_mode: Some(redis::TlsMode::Secure),
-//!             redis_connection_info: None,
-//!         }),
+//!         Some(&sentinel_replica_node_connection_info),
 //!     )
 //!     .unwrap()
 //!     .get_connection()
@@ -94,18 +84,16 @@
 //! use redis::sentinel::{ SentinelServerType, SentinelClient, SentinelNodeConnectionInfo };
 //!
 //! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/", "redis://127.0.0.1:6377/"];
+//! let redis_connection_info = RedisConnectionInfo::default()
+//!     .set_username("user")
+//!     .set_password("pass");
+//! let sentinel_node_connection_info = SentinelNodeConnectionInfo::default()
+//!     .set_tls_mode(redis::TlsMode::Insecure)
+//!     .set_redis_connection_info(redis_connection_info);
 //! let mut master_client = SentinelClient::build(
 //!     nodes,
 //!     String::from("master1"),
-//!     Some(SentinelNodeConnectionInfo {
-//!         tls_mode: Some(redis::TlsMode::Insecure),
-//!         redis_connection_info: Some(RedisConnectionInfo {
-//!             db: 0,
-//!             username: Some(String::from("user")),
-//!             password: Some(String::from("pass")),
-//!             ..Default::default()
-//!         }),
-//!     }),
+//!     Some(sentinel_node_connection_info),
 //!     redis::sentinel::SentinelServerType::Master,
 //! )
 //! .unwrap();
@@ -136,6 +124,7 @@
 
 #[cfg(feature = "aio")]
 use crate::aio::MultiplexedConnection as AsyncConnection;
+use arcstr::ArcStr;
 #[cfg(feature = "aio")]
 use futures_util::StreamExt;
 use rand::Rng;
@@ -152,9 +141,9 @@ use crate::tls::retrieve_tls_certificates;
 #[cfg(feature = "tls-rustls")]
 use crate::TlsCertificates;
 use crate::{
-    cmd, connection::ConnectionInfo, types::RedisResult, Client, Cmd, Connection, ConnectionAddr,
-    ErrorKind, FromRedisValue, IntoConnectionInfo, ProtocolVersion, RedisConnectionInfo,
-    RedisError, Role, TlsMode,
+    cmd, connection::ConnectionInfo, errors::ServerErrorKind, types::RedisResult, Client, Cmd,
+    Connection, ConnectionAddr, ErrorKind, FromRedisValue, IntoConnectionInfo, ProtocolVersion,
+    RedisConnectionInfo, RedisError, Role, TlsMode,
 };
 
 /// The Sentinel type, serves as a special purpose client which builds other clients on
@@ -175,13 +164,29 @@ pub struct Sentinel {
 pub struct SentinelNodeConnectionInfo {
     /// The TLS mode of the connection, or None if we do not want to connect using TLS
     /// (just a plain TCP connection).
-    pub tls_mode: Option<TlsMode>,
+    tls_mode: Option<TlsMode>,
 
     /// The Redis specific/connection independent information to be used.
-    pub redis_connection_info: Option<RedisConnectionInfo>,
+    redis_connection_info: Option<RedisConnectionInfo>,
 }
 
 impl SentinelNodeConnectionInfo {
+    /// Sets the TLS mode of the connection
+    pub fn set_tls_mode(self, tls_mode: TlsMode) -> Self {
+        Self {
+            tls_mode: Some(tls_mode),
+            ..self
+        }
+    }
+
+    /// Sets the Redis specific/connection independent information to be used, if needed
+    pub fn set_redis_connection_info(self, redis_connection_info: RedisConnectionInfo) -> Self {
+        Self {
+            redis_connection_info: Some(redis_connection_info),
+            ..self
+        }
+    }
+
     fn create_connection_info(
         &self,
         ip: String,
@@ -210,6 +215,7 @@ impl SentinelNodeConnectionInfo {
         Ok(ConnectionInfo {
             addr,
             redis: self.redis_connection_info.clone().unwrap_or_default(),
+            tcp_settings: Default::default(),
         })
     }
 }
@@ -356,7 +362,10 @@ fn check_info_replication(conn: &mut Connection) -> RedisResult<String> {
     let info_map = parse_replication_info(info);
     match info_map.get("role") {
         Some(x) => Ok(x.clone()),
-        None => Err(RedisError::from((ErrorKind::ParseError, "parse error"))),
+        None => Err(RedisError::from((
+            ErrorKind::UnexpectedReturnType,
+            "Missing \"role\" field",
+        ))),
     }
 }
 
@@ -365,7 +374,7 @@ fn evaluate_role_check_errors(
     fallback_role_err: RedisError,
 ) -> RedisResult<bool> {
     // unknown commands are expressed as response errors
-    if !matches!(role_err.kind(), ErrorKind::ResponseError) {
+    if role_err.kind() != ServerErrorKind::ResponseError.into() {
         return Err(role_err);
     }
 
@@ -468,7 +477,10 @@ async fn async_check_info_replication(conn: &mut MultiplexedConnection) -> Redis
     let info_map = parse_replication_info(info);
     match info_map.get("role") {
         Some(x) => Ok(x.clone()),
-        None => Err(RedisError::from((ErrorKind::ParseError, "parse error"))),
+        None => Err(RedisError::from((
+            ErrorKind::UnexpectedReturnType,
+            "Missing \"role\" field",
+        ))),
     }
 }
 
@@ -1068,7 +1080,7 @@ impl LockedSentinelClient {
 /// "mymaster123", or always to replicas of the master "another-master-abc").
 pub struct SentinelClient {
     sentinel: Sentinel,
-    service_name: String,
+    service_name: ArcStr,
     node_connection_info: SentinelNodeConnectionInfo,
     server_type: SentinelServerType,
 }
@@ -1091,7 +1103,7 @@ impl SentinelClient {
     /// result in an error.
     pub fn build<T: IntoConnectionInfo>(
         params: Vec<T>,
-        service_name: String,
+        service_name: impl AsRef<str>,
         node_connection_info: Option<SentinelNodeConnectionInfo>,
         server_type: SentinelServerType,
     ) -> RedisResult<Self> {
@@ -1106,7 +1118,7 @@ impl SentinelClient {
 
     fn build_inner<T: IntoConnectionInfo>(
         params: Vec<T>,
-        service_name: String,
+        service_name: impl AsRef<str>,
         node_connection_info: Option<SentinelNodeConnectionInfo>,
         server_type: SentinelServerType,
         #[cfg(feature = "tls-rustls")] certs: Option<TlsCertificates>,
@@ -1116,7 +1128,7 @@ impl SentinelClient {
             sentinel: Sentinel::build_inner(params)?,
             #[cfg(feature = "tls-rustls")]
             sentinel: Sentinel::build_inner(params, certs)?,
-            service_name,
+            service_name: service_name.as_ref().into(),
             node_connection_info: node_connection_info.unwrap_or_default(),
             server_type,
         })
@@ -1193,7 +1205,7 @@ impl SentinelClient {
 }
 
 /// To enable async support you need to chose one of the supported runtimes and active its
-/// corresponding feature: `tokio-comp` or `async-std-comp`
+/// corresponding feature: `tokio-comp` or `smol-comp`
 #[cfg(feature = "aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 impl SentinelClient {
@@ -1289,8 +1301,8 @@ impl SentinelClient {
 struct BuilderConnectionParams {
     tls_mode: Option<TlsMode>,
     db: Option<i64>,
-    username: Option<String>,
-    password: Option<String>,
+    username: Option<ArcStr>,
+    password: Option<ArcStr>,
     protocol: Option<ProtocolVersion>,
     #[cfg(feature = "tls-rustls")]
     certificates: Option<TlsCertificates>,
@@ -1302,7 +1314,7 @@ struct BuilderConnectionParams {
 /// 2. The connection towards the sentinel nodes (configure via `set_client_to_sentinel_..` functions)
 pub struct SentinelClientBuilder {
     sentinels: Vec<ConnectionAddr>,
-    service_name: String,
+    service_name: ArcStr,
     server_type: SentinelServerType,
     client_to_redis_params: BuilderConnectionParams,
     client_to_sentinel_params: BuilderConnectionParams,
@@ -1315,12 +1327,12 @@ impl SentinelClientBuilder {
     /// - `server_type` - The server type to be queried via the sentinels
     pub fn new<T: IntoIterator<Item = ConnectionAddr>>(
         sentinels: T,
-        service_name: String,
+        service_name: impl AsRef<str>,
         server_type: SentinelServerType,
     ) -> RedisResult<SentinelClientBuilder> {
         Ok(SentinelClientBuilder {
             sentinels: sentinels.into_iter().collect::<Vec<_>>(),
-            service_name,
+            service_name: service_name.as_ref().into(),
             server_type,
             client_to_redis_params: BuilderConnectionParams {
                 tls_mode: None,
@@ -1452,6 +1464,7 @@ impl SentinelClientBuilder {
             .map(|connection_addr| ConnectionInfo {
                 addr: connection_addr,
                 redis: client_to_sentinel_redis_connection_info.clone(),
+                tcp_settings: Default::default(),
             })
             .collect();
 
@@ -1478,14 +1491,20 @@ impl SentinelClientBuilder {
     }
 
     /// Set username for the connection to redis
-    pub fn set_client_to_redis_username(mut self, username: String) -> SentinelClientBuilder {
-        self.client_to_redis_params.username = Some(username);
+    pub fn set_client_to_redis_username(
+        mut self,
+        username: impl AsRef<str>,
+    ) -> SentinelClientBuilder {
+        self.client_to_redis_params.username = Some(username.as_ref().into());
         self
     }
 
     /// Set password for the connection to redis
-    pub fn set_client_to_redis_password(mut self, password: String) -> SentinelClientBuilder {
-        self.client_to_redis_params.password = Some(password);
+    pub fn set_client_to_redis_password(
+        mut self,
+        password: impl AsRef<str>,
+    ) -> SentinelClientBuilder {
+        self.client_to_redis_params.password = Some(password.as_ref().into());
         self
     }
 
@@ -1515,14 +1534,20 @@ impl SentinelClientBuilder {
     }
 
     /// Set username for the connection to the sentinels
-    pub fn set_client_to_sentinel_username(mut self, username: String) -> SentinelClientBuilder {
-        self.client_to_sentinel_params.username = Some(username);
+    pub fn set_client_to_sentinel_username(
+        mut self,
+        username: impl AsRef<str>,
+    ) -> SentinelClientBuilder {
+        self.client_to_sentinel_params.username = Some(username.as_ref().into());
         self
     }
 
     /// Set password for the connection to the sentinels
-    pub fn set_client_to_sentinel_password(mut self, password: String) -> SentinelClientBuilder {
-        self.client_to_sentinel_params.password = Some(password);
+    pub fn set_client_to_sentinel_password(
+        mut self,
+        password: impl AsRef<str>,
+    ) -> SentinelClientBuilder {
+        self.client_to_sentinel_params.password = Some(password.as_ref().into());
         self
     }
 

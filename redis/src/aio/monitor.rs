@@ -8,7 +8,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::Decoder;
 
 use crate::{
-    cmd, parser::ValueCodec, types::closed_connection_error, FromRedisValue, RedisConnectionInfo,
+    cmd, errors::closed_connection_error, parser::ValueCodec, FromRedisValue, RedisConnectionInfo,
     RedisResult, Value,
 };
 
@@ -42,12 +42,6 @@ impl Monitor {
         Ok(Self { stream })
     }
 
-    /// Deliver the MONITOR command to this [`Monitor`]ing wrapper.
-    #[deprecated(note = "A monitor now sends the MONITOR command automatically")]
-    pub async fn monitor(&mut self) -> RedisResult<()> {
-        Ok(())
-    }
-
     /// Returns [`Stream`] of [`FromRedisValue`] values from this [`Monitor`]ing connection
     pub fn on_message<'a, T: FromRedisValue + 'a>(&'a mut self) -> impl Stream<Item = T> + 'a {
         MonitorStreamRef {
@@ -75,9 +69,7 @@ fn convert_value<T>(value: RedisResult<Value>) -> Option<T>
 where
     T: FromRedisValue,
 {
-    value
-        .ok()
-        .and_then(|value| T::from_owned_redis_value(value).ok())
+    value.ok().and_then(|value| T::from_redis_value(value).ok())
 }
 
 impl<T> Stream for MonitorStream<T>

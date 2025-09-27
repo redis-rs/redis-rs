@@ -5,8 +5,8 @@ use crate::connection::{
     RedisConnectionInfo,
 };
 use crate::io::AsyncDNSResolver;
-use crate::types::{closed_connection_error, RedisFuture, RedisResult, Value};
-use crate::{ErrorKind, PushInfo, RedisError};
+use crate::types::{RedisFuture, RedisResult, Value};
+use crate::{errors::closed_connection_error, ErrorKind, PushInfo, RedisError};
 use ::tokio::io::{AsyncRead, AsyncWrite};
 use futures_util::{
     future::{Future, FutureExt},
@@ -20,11 +20,6 @@ use std::path::Path;
 use std::pin::Pin;
 
 mod monitor;
-
-/// Enables the async_std compatibility
-#[cfg(feature = "async-std-comp")]
-#[cfg_attr(docsrs, doc(cfg(feature = "async-std-comp")))]
-pub mod async_std;
 
 #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 use crate::connection::TlsConnParams;
@@ -173,20 +168,9 @@ mod connection_manager;
 #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
 pub use connection_manager::*;
 mod runtime;
-#[cfg(all(
-    feature = "async-std-comp",
-    any(feature = "smol-comp", feature = "tokio-comp")
-))]
-pub use runtime::prefer_async_std;
-#[cfg(all(
-    feature = "smol-comp",
-    any(feature = "async-std-comp", feature = "tokio-comp")
-))]
+#[cfg(all(feature = "smol-comp", feature = "tokio-comp"))]
 pub use runtime::prefer_smol;
-#[cfg(all(
-    feature = "tokio-comp",
-    any(feature = "async-std-comp", feature = "smol-comp")
-))]
+#[cfg(all(feature = "tokio-comp", feature = "smol-comp"))]
 pub use runtime::prefer_tokio;
 pub(super) use runtime::*;
 
@@ -268,12 +252,7 @@ async fn get_socket_addrs(host: &str, port: u16) -> RedisResult<Vec<SocketAddr>>
             .await
             .map_err(RedisError::from)
             .map(|iter| iter.collect()),
-        #[cfg(feature = "async-std-comp")]
-        Runtime::AsyncStd => Ok::<_, RedisError>(
-            ::async_std::net::ToSocketAddrs::to_socket_addrs(&(host, port))
-                .await
-                .map(|iter| iter.collect())?,
-        ),
+
         #[cfg(feature = "smol-comp")]
         Runtime::Smol => ::smol::net::resolve((host, port))
             .await

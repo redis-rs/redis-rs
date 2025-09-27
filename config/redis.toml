@@ -104,27 +104,22 @@ require = ["tokio-rustls-comp"]
 when = "r2d2"
 forbid = "bb8"
 
+# The users are expected to use only one hashmap
+[[rule]]
+when = "ahash"
+forbid = "hashbrown"
+
+# The users are expected to use only one big decimal implementation
+[[rule]]
+when = "rust_decimal"
+forbid = "bigdecimal"
+
 # This feature can't run by itself
 [[rule]]
 when = true
 forbid = "aio"
 
-# deprecated
-[[rule]]
-when = true
-forbid = [
-  "tls",
-  "OR",
-  "async-std-tls-comp",
-  "OR",
-  "async-std-comp",
-  "OR",
-  "async-std-native-tls-comp",
-  "OR",
-  "async-std-rustls-comp",
-]
-
-# If you're using the library with sentinel or targetiing 
+# If you're using the library with sentinel or targeting connection manager, you probably don't want cluster connections
 [[rule]]
 when = ["sentinel", "OR", "connection-manager"]
 forbid = ["cluster", "OR", "cluster-async"]
@@ -141,12 +136,5 @@ forbid = [
   "OR",
   "script",
   "OR",
-  "keep-alive",
-  "OR",
   "num-bigint",
 ]
-
-# Since the omission of the feature `safe_iterators` will produce deprecation errors, it is always required.
-[[rule]]
-when = true
-require = ["safe_iterators"]

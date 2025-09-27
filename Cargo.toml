@@ -1,3 +1,19 @@
 [workspace]
-members = ["redis", "redis-test", "valkey", "afl/parser"]
+members = [
+  "redis",
+  "redis-test",
+  "valkey",
+  "afl/parser",
+  "test-macros",
+]
 resolver = "2"
+
+[workspace.dependencies]
+smol = { version = "2" }
+tokio = { version = "1", features = [
+  "rt",
+  "macros",
+  "rt-multi-thread",
+  "test-util",
+  "time",
+] }

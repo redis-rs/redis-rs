@@ -1,12 +1,15 @@
 use super::{AsyncPushSender, ConnectionLike, Runtime, SharedHandleContainer, TaskHandle};
-use crate::aio::setup_connection;
 #[cfg(feature = "cache-aio")]
 use crate::caching::{CacheManager, CacheStatistics, PrepareCacheResult};
-use crate::parser::ValueCodec;
-use crate::types::{closed_connection_error, RedisError, RedisFuture, RedisResult, Value};
 use crate::{
-    check_resp3, cmd, cmd::Cmd, AsyncConnectionConfig, ProtocolVersion, PushInfo,
-    RedisConnectionInfo, ToRedisArgs,
+    aio::setup_connection,
+    check_resp3, cmd,
+    cmd::Cmd,
+    errors::{closed_connection_error, RedisError},
+    parser::ValueCodec,
+    types::{RedisFuture, RedisResult, Value},
+    AsyncConnectionConfig, ProtocolVersion, PushInfo, RedisConnectionInfo, ServerError,
+    ToRedisArgs,
 };
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -31,11 +34,17 @@ use tokio_util::codec::Decoder;
 // Senders which the result of a single request are sent through
 type PipelineOutput = oneshot::Sender<RedisResult<Value>>;
 
+enum ErrorOrErrors {
+    Errors(Vec<(usize, ServerError)>),
+    // only set if we receive a transmission error
+    FirstError(RedisError),
+}
+
 enum ResponseAggregate {
     SingleCommand,
     Pipeline {
         buffer: Vec<Value>,
-        first_err: Option<RedisError>,
+        error_or_errors: ErrorOrErrors,
         expectation: PipelineResponseExpectation,
     },
 }
@@ -48,6 +57,7 @@ struct PipelineResponseExpectation {
     expected_response_count: usize,
     // whether the pipelined request is a transaction
     is_transaction: bool,
+    seen_responses: usize,
 }
 
 impl ResponseAggregate {
@@ -55,7 +65,7 @@ impl ResponseAggregate {
         match expectation {
             Some(expectation) => ResponseAggregate::Pipeline {
                 buffer: Vec::new(),
-                first_err: None,
+                error_or_errors: ErrorOrErrors::Errors(Vec::new()),
                 expectation,
             },
             None => ResponseAggregate::SingleCommand,
@@ -64,14 +74,15 @@ impl ResponseAggregate {
 }
 
 struct InFlight {
-    output: PipelineOutput,
+    output: Option<PipelineOutput>,
     response_aggregate: ResponseAggregate,
 }
 
 // A single message sent through the pipeline
 struct PipelineMessage {
     input: Vec<u8>,
-    output: PipelineOutput,
+    // If `output` is None, then the caller doesn't expect to receive an answer.
+    output: Option<PipelineOutput>,
     // If `None`, this is a single request, not a pipeline of multiple requests.
     // If `Some`, the first value is the number of responses to skip,
     // the second is the number of responses to keep, and the third is whether the pipeline is a transaction.
@@ -202,23 +213,35 @@ where
 
         match &mut entry.response_aggregate {
             ResponseAggregate::SingleCommand => {
-                entry.output.send(result).ok();
+                if let Some(output) = entry.output.take() {
+                    _ = output.send(result);
+                }
             }
             ResponseAggregate::Pipeline {
                 buffer,
-                first_err,
+                error_or_errors,
                 expectation:
                     PipelineResponseExpectation {
                         expected_response_count,
                         skipped_response_count,
                         is_transaction,
+                        seen_responses,
                     },
             } => {
+                *seen_responses += 1;
                 if *skipped_response_count > 0 {
-                    // errors in skipped values are still counted for errors in transactions, since they're errors that will cause the transaction to fail,
+                    // server errors in skipped values are still counted for errors in transactions, since they're errors that will cause the transaction to fail,
                     // and we only skip values in transaction.
-                    if first_err.is_none() && *is_transaction {
-                        *first_err = result.and_then(Value::extract_error).err();
+                    if *is_transaction {
+                        if let ErrorOrErrors::Errors(errs) = error_or_errors {
+                            match result {
+                                Ok(Value::ServerError(err)) => {
+                                    errs.push((*seen_responses - 2, err)); // - 1 to offset the early increment, and -1 to offset the added MULTI call.
+                                }
+                                Err(err) => *error_or_errors = ErrorOrErrors::FirstError(err),
+                                _ => {}
+                            }
+                        }
                     }
 
                     *skipped_response_count -= 1;
@@ -231,8 +254,8 @@ where
                         buffer.push(item);
                     }
                     Err(err) => {
-                        if first_err.is_none() {
-                            *first_err = Some(err);
+                        if matches!(error_or_errors, ErrorOrErrors::Errors(_)) {
+                            *error_or_errors = ErrorOrErrors::FirstError(err)
                         }
                     }
                 }
@@ -243,15 +266,24 @@ where
                     return;
                 }
 
-                let response = match first_err.take() {
-                    Some(err) => Err(err),
-                    None => Ok(Value::Array(std::mem::take(buffer))),
-                };
+                let response =
+                    match std::mem::replace(error_or_errors, ErrorOrErrors::Errors(Vec::new())) {
+                        ErrorOrErrors::Errors(errors) => {
+                            if errors.is_empty() {
+                                Ok(Value::Array(std::mem::take(buffer)))
+                            } else {
+                                Err(RedisError::make_aborted_transaction(errors))
+                            }
+                        }
+                        ErrorOrErrors::FirstError(redis_error) => Err(redis_error),
+                    };
 
                 // `Err` means that the receiver was dropped in which case it does not
                 // care about the output and we can continue by just dropping the value
                 // and sender
-                entry.output.send(response).ok();
+                if let Some(output) = entry.output.take() {
+                    _ = output.send(response);
+                }
             }
         }
     }
@@ -281,21 +313,23 @@ where
         mut self: Pin<&mut Self>,
         PipelineMessage {
             input,
-            output,
+            mut output,
             expectation,
         }: PipelineMessage,
     ) -> Result<(), Self::Error> {
-        // If there is nothing to receive our output we do not need to send the message as it is
+        // If initially a receiver was created, but then dropped, there is nothing to receive our output we do not need to send the message as it is
         // ambiguous whether the message will be sent anyway. Helps shed some load on the
         // connection.
-        if output.is_closed() {
+        if output.as_ref().is_some_and(|output| output.is_closed()) {
             return Ok(());
         }
 
         let self_ = self.as_mut().project();
 
         if let Some(err) = self_.error.take() {
-            let _ = output.send(Err(err));
+            if let Some(output) = output.take() {
+                _ = output.send(Err(err));
+            }
             return Err(());
         }
 
@@ -311,7 +345,9 @@ where
                 Ok(())
             }
             Err(err) => {
-                let _ = output.send(Err(err));
+                if let Some(output) = output.take() {
+                    _ = output.send(Err(err));
+                }
                 Err(())
             }
         }
@@ -382,15 +418,29 @@ impl Pipeline {
         // If `Some`, the value inside defines how the response should look like
         expectation: Option<PipelineResponseExpectation>,
         timeout: Option<Duration>,
+        skip_response: bool,
     ) -> Result<Value, RedisError> {
-        let (sender, receiver) = oneshot::channel();
-
         let request = async {
+            if skip_response {
+                self.sender
+                    .send(PipelineMessage {
+                        input,
+                        expectation,
+                        output: None,
+                    })
+                    .await
+                    .map_err(|_| None)?;
+
+                return Ok(Value::Nil);
+            }
+
+            let (sender, receiver) = oneshot::channel();
+
             self.sender
                 .send(PipelineMessage {
                     input,
                     expectation,
-                    output: sender,
+                    output: Some(sender),
                 })
                 .await
                 .map_err(|_| None)?;
@@ -458,28 +508,7 @@ impl MultiplexedConnection {
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
-        Self::new_with_response_timeout(connection_info, stream, None).await
-    }
-
-    /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
-    /// and a `RedisConnectionInfo`. The new object will wait on operations for the given `response_timeout`.
-    pub async fn new_with_response_timeout<C>(
-        connection_info: &RedisConnectionInfo,
-        stream: C,
-        response_timeout: Option<std::time::Duration>,
-    ) -> RedisResult<(Self, impl Future<Output = ()>)>
-    where
-        C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
-    {
-        Self::new_with_config(
-            connection_info,
-            stream,
-            AsyncConnectionConfig {
-                response_timeout,
-                ..Default::default()
-            },
-        )
-        .await
+        Self::new_with_config(connection_info, stream, AsyncConnectionConfig::default()).await
     }
 
     /// Constructs a new `MultiplexedConnection` out of a `AsyncRead + AsyncWrite` object
@@ -587,18 +616,25 @@ impl MultiplexedConnection {
                                 skipped_response_count: 0,
                                 expected_response_count: pipeline.commands.len(),
                                 is_transaction: false,
+                                seen_responses: 0,
                             }),
                             self.response_timeout,
+                            cmd.is_no_response(),
                         )
                         .await?;
-                    let replies: Vec<Value> = crate::types::from_owned_redis_value(result)?;
+                    let replies: Vec<Value> = crate::types::from_redis_value(result)?;
                     return cacheable_command.resolve(cache_manager, replies.into_iter());
                 }
                 _ => (),
             }
         }
         self.pipeline
-            .send_recv(cmd.get_packed_command(), None, self.response_timeout)
+            .send_recv(
+                cmd.get_packed_command(),
+                None,
+                self.response_timeout,
+                cmd.is_no_response(),
+            )
             .await
     }
 
@@ -623,8 +659,10 @@ impl MultiplexedConnection {
                         skipped_response_count,
                         expected_response_count,
                         is_transaction: cacheable_pipeline.transaction_mode,
+                        seen_responses: 0,
                     }),
                     self.response_timeout,
+                    false,
                 )
                 .await?;
 
@@ -638,8 +676,10 @@ impl MultiplexedConnection {
                     skipped_response_count: offset,
                     expected_response_count: count,
                     is_transaction: cmd.is_transaction(),
+                    seen_responses: 0,
                 }),
                 self.response_timeout,
+                false,
             )
             .await?;
         match value {

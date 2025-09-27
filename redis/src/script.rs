@@ -1,10 +1,12 @@
 #![cfg(feature = "script")]
 use sha1_smol::Sha1;
 
-use crate::cmd::cmd;
-use crate::connection::ConnectionLike;
-use crate::types::{ErrorKind, FromRedisValue, RedisResult, ToRedisArgs};
-use crate::Cmd;
+use crate::{
+    cmd::cmd,
+    connection::ConnectionLike,
+    types::{FromRedisValue, RedisResult, ToRedisArgs},
+    Cmd, ErrorKind,
+};
 
 /// Represents a lua script.
 #[derive(Debug, Clone)]
@@ -177,7 +179,7 @@ impl<'a> ScriptInvocation<'a> {
         match eval_cmd.query(con) {
             Ok(val) => Ok(val),
             Err(err) => {
-                if err.kind() == ErrorKind::NoScriptError {
+                if err.kind() == ErrorKind::Server(crate::ServerErrorKind::NoScript) {
                     self.load(con)?;
                     eval_cmd.query(con)
                 } else {
@@ -202,7 +204,7 @@ impl<'a> ScriptInvocation<'a> {
             }
             Err(err) => {
                 // Load the script into Redis if the script hash wasn't there already
-                if err.kind() == ErrorKind::NoScriptError {
+                if err.kind() == ErrorKind::Server(crate::ServerErrorKind::NoScript) {
                     self.load_async(con).await?;
                     eval_cmd.query_async(con).await
                 } else {

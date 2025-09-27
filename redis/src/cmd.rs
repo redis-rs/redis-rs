@@ -10,9 +10,9 @@ use std::pin::Pin;
 use std::time::Duration;
 use std::{fmt, io, io::Write};
 
-use crate::connection::ConnectionLike;
 use crate::pipeline::Pipeline;
-use crate::types::{from_owned_redis_value, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs};
+use crate::types::{from_redis_value, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs};
+use crate::{connection::ConnectionLike, ParsingError};
 
 /// An argument to a redis command
 #[derive(Clone, PartialEq, Debug)]
@@ -86,30 +86,10 @@ pub struct Cmd {
     cache: Option<CommandCacheConfig>,
 }
 
-#[cfg_attr(
-    not(feature = "safe_iterators"),
-    deprecated(
-        note = "Deprecated due to the fact that this implementation silently stops at the first value that can't be converted to T. Enable the feature `safe_iterators` for a safe version."
-    )
-)]
 /// Represents a redis iterator.
 pub struct Iter<'a, T: FromRedisValue> {
     iter: CheckedIter<'a, T>,
 }
-
-#[cfg(not(feature = "safe_iterators"))]
-impl<T: FromRedisValue> Iterator for Iter<'_, T> {
-    type Item = T;
-
-    #[inline]
-    fn next(&mut self) -> Option<T> {
-        // use the checked iterator, but keep the behavior of the deprecated
-        // iterator.  This will return silently `None` if an error occurs.
-        self.iter.next()?.ok()
-    }
-}
-
-#[cfg(feature = "safe_iterators")]
 impl<T: FromRedisValue> Iterator for Iter<'_, T> {
     type Item = RedisResult<T>;
 
@@ -121,7 +101,7 @@ impl<T: FromRedisValue> Iterator for Iter<'_, T> {
 
 /// Represents a safe(r) redis iterator.
 struct CheckedIter<'a, T: FromRedisValue> {
-    batch: std::vec::IntoIter<RedisResult<T>>,
+    batch: std::vec::IntoIter<Result<T, ParsingError>>,
     con: &'a mut (dyn ConnectionLike + 'a),
     cmd: Cmd,
 }
@@ -137,7 +117,7 @@ impl<T: FromRedisValue> Iterator for CheckedIter<'_, T> {
         // chunk is not matching the pattern and thus yielding empty results.
         loop {
             if let Some(value) = self.batch.next() {
-                return Some(value);
+                return Some(value.map_err(|err| err.into()));
             };
 
             if self.cmd.cursor? == 0 {
@@ -147,9 +127,9 @@ impl<T: FromRedisValue> Iterator for CheckedIter<'_, T> {
             let (cursor, batch) = match self
                 .con
                 .req_packed_command(&self.cmd.get_packed_command())
-                .and_then(from_owned_redis_value::<(u64, _)>)
+                .and_then(|val| Ok(from_redis_value::<(u64, _)>(val)?))
             {
-                Ok((cursor, values)) => (cursor, T::from_each_owned_redis_values(values)),
+                Ok((cursor, values)) => (cursor, T::from_each_redis_values(values)),
                 Err(e) => return Some(Err(e)),
             };
 
@@ -165,7 +145,7 @@ use crate::aio::ConnectionLike as AsyncConnection;
 /// The inner future of AsyncIter
 #[cfg(feature = "aio")]
 struct AsyncIterInner<'a, T: FromRedisValue + 'a> {
-    batch: std::vec::IntoIter<RedisResult<T>>,
+    batch: std::vec::IntoIter<Result<T, ParsingError>>,
     con: &'a mut (dyn AsyncConnection + Send + 'a),
     cmd: Cmd,
 }
@@ -180,12 +160,6 @@ enum IterOrFuture<'a, T: FromRedisValue + 'a> {
 
 /// Represents a redis iterator that can be used with async connections.
 #[cfg(feature = "aio")]
-#[cfg_attr(
-    all(feature = "aio", not(feature = "safe_iterators")),
-    deprecated(
-        note = "Deprecated due to the fact that this implementation silently stops at the first value that can't be converted to T. Enable the feature `safe_iterators` for a safe version."
-    )
-)]
 pub struct AsyncIter<'a, T: FromRedisValue + 'a> {
     inner: IterOrFuture<'a, T>,
 }
@@ -199,7 +173,7 @@ impl<'a, T: FromRedisValue + 'a> AsyncIterInner<'a, T> {
         // chunk is not matching the pattern and thus yielding empty results.
         loop {
             if let Some(v) = self.batch.next() {
-                return Some(v);
+                return Some(v.map_err(|err| err.into()));
             };
 
             if self.cmd.cursor? == 0 {
@@ -210,9 +184,9 @@ impl<'a, T: FromRedisValue + 'a> AsyncIterInner<'a, T> {
                 .con
                 .req_packed_command(&self.cmd)
                 .await
-                .and_then(from_owned_redis_value::<(u64, _)>)
+                .and_then(|val| Ok(from_redis_value::<(u64, _)>(val)?))
             {
-                Ok((cursor, items)) => (cursor, T::from_each_owned_redis_values(items)),
+                Ok((cursor, items)) => (cursor, T::from_each_redis_values(items)),
                 Err(e) => return Some(Err(e)),
             };
 
@@ -239,39 +213,15 @@ impl<'a, T: FromRedisValue + 'a + Unpin + Send> AsyncIter<'a, T> {
     /// # Ok(())
     /// # }
     /// ```
-    #[cfg(feature = "safe_iterators")]
     #[inline]
     pub async fn next_item(&mut self) -> Option<RedisResult<T>> {
-        StreamExt::next(self).await
-    }
-
-    /// ```rust,no_run
-    /// # use redis::AsyncCommands;
-    /// # async fn scan_set() -> redis::RedisResult<()> {
-    /// # let client = redis::Client::open("redis://127.0.0.1/")?;
-    /// # let mut con = client.get_multiplexed_async_connection().await?;
-    /// let _: () = con.sadd("my_set", 42i32).await?;
-    /// let _: () = con.sadd("my_set", 43i32).await?;
-    /// let mut iter: redis::AsyncIter<i32> = con.sscan("my_set").await?;
-    /// while let Some(element) = iter.next_item().await {
-    ///     assert!(element == 42 || element == 43);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[cfg(not(feature = "safe_iterators"))]
-    #[inline]
-    pub async fn next_item(&mut self) -> Option<T> {
         StreamExt::next(self).await
     }
 }
 
 #[cfg(feature = "aio")]
 impl<'a, T: FromRedisValue + Unpin + Send + 'a> Stream for AsyncIter<'a, T> {
-    #[cfg(feature = "safe_iterators")]
     type Item = RedisResult<T>;
-    #[cfg(not(feature = "safe_iterators"))]
-    type Item = T;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
@@ -293,10 +243,7 @@ impl<'a, T: FromRedisValue + Unpin + Send + 'a> Stream for AsyncIter<'a, T> {
                 Poll::Ready((iter, value)) => {
                     this.inner = IterOrFuture::Iter(iter);
 
-                    #[cfg(feature = "safe_iterators")]
-                    return Poll::Ready(value);
-                    #[cfg(not(feature = "safe_iterators"))]
-                    Poll::Ready(value.map(|res| res.ok()).flatten())
+                    Poll::Ready(value)
                 }
             },
             IterOrFuture::Empty => unreachable!(),
@@ -660,7 +607,7 @@ impl Cmd {
     #[inline]
     pub fn query<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
         match con.req_command(self) {
-            Ok(val) => from_owned_redis_value(val.extract_error()?),
+            Ok(val) => Ok(from_redis_value(val.extract_error()?)?),
             Err(e) => Err(e),
         }
     }
@@ -673,7 +620,7 @@ impl Cmd {
         con: &mut impl crate::aio::ConnectionLike,
     ) -> RedisResult<T> {
         let val = con.req_packed_command(self).await?;
-        from_owned_redis_value(val.extract_error()?)
+        Ok(from_redis_value(val.extract_error()?)?)
     }
 
     /// Sets the cursor and converts the passed value to a batch used by the
@@ -681,17 +628,17 @@ impl Cmd {
     fn set_cursor_and_get_batch<T: FromRedisValue>(
         &mut self,
         value: crate::Value,
-    ) -> RedisResult<Vec<RedisResult<T>>> {
+    ) -> RedisResult<Vec<Result<T, ParsingError>>> {
         let (cursor, values) = if value.looks_like_cursor() {
-            let (cursor, values) = from_owned_redis_value::<(u64, _)>(value)?;
+            let (cursor, values) = from_redis_value::<(u64, _)>(value)?;
             (cursor, values)
         } else {
-            (0, from_owned_redis_value(value)?)
+            (0, from_redis_value(value)?)
         };
 
         self.cursor = Some(cursor);
 
-        Ok(T::from_each_owned_redis_values(values))
+        Ok(T::from_each_redis_values(values))
     }
 
     /// Similar to `query()` but returns an iterator over the items of the
@@ -760,24 +707,6 @@ impl Cmd {
         })
     }
 
-    /// This is a shortcut to `query()` that does not return a value and
-    /// will fail the task if the query fails because of an error.  This is
-    /// mainly useful in examples and for simple commands like setting
-    /// keys.
-    ///
-    /// This is equivalent to a call of query like this:
-    ///
-    /// ```rust,no_run
-    /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-    /// # let mut con = client.get_connection().unwrap();
-    /// redis::cmd("PING").query::<()>(&mut con).unwrap();
-    /// ```
-    #[inline]
-    #[deprecated(note = "Use Cmd::exec + unwrap, instead")]
-    pub fn execute(&self, con: &mut dyn ConnectionLike) {
-        self.exec(con).unwrap();
-    }
-
     /// This is an alternative to `query`` that can be used if you want to be able to handle a
     /// command's success or failure but don't care about the command's response. For example,
     /// this is useful for "SET" commands for which the response's content is not important.
@@ -836,6 +765,9 @@ impl Cmd {
     }
 
     /// Client won't read and wait for results. Currently only used for Pub/Sub commands in RESP3.
+    ///
+    /// This is mostly set internally. The user can set it if they know that a certain command doesn't return a response, or if they use an async connection and don't want to wait for the server response.
+    /// For sync connections, setting this wrongly can affect the connection's correctness, and should be avoided.
     #[inline]
     pub fn set_no_response(&mut self, nr: bool) -> &mut Cmd {
         self.no_response = nr;

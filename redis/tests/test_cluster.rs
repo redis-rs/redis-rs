@@ -12,8 +12,8 @@ mod cluster {
     use redis::{
         cluster::{cluster_pipe, ClusterClient, ClusterConnection},
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
-        cmd, parse_redis_value, Commands, ConnectionLike, ErrorKind, ProtocolVersion, RedisError,
-        Value,
+        cmd, parse_redis_value, Commands, ConnectionLike, ProtocolVersion, RedisError,
+        ServerErrorKind, Value,
     };
     use redis_test::{
         cluster::{RedisCluster, RedisClusterConfiguration},
@@ -89,8 +89,8 @@ mod cluster {
     fn test_cluster_with_username_and_password() {
         let cluster = TestClusterContext::new_with_cluster_client_builder(|builder| {
             builder
-                .username(RedisCluster::username().to_string())
-                .password(RedisCluster::password().to_string())
+                .username(RedisCluster::username())
+                .password(RedisCluster::password())
         });
         cluster.disable_default_user();
 
@@ -101,8 +101,8 @@ mod cluster {
     fn test_cluster_with_bad_password() {
         let cluster = TestClusterContext::new_with_cluster_client_builder(|builder| {
             builder
-                .username(RedisCluster::username().to_string())
-                .password("not the right password".to_string())
+                .username(RedisCluster::username())
+                .password("not the right password")
         });
         assert!(cluster.client.get_connection().is_err());
     }
@@ -262,10 +262,10 @@ mod cluster {
             .query::<Vec<redis::Value>>(&mut con)
             .unwrap();
 
-        let resp_1: String = FromRedisValue::from_redis_value(&resp[0]).unwrap();
+        let resp_1: String = FromRedisValue::from_redis_value_ref(&resp[0]).unwrap();
         assert_eq!(resp_1, "value_1".to_string());
 
-        let resp_2: usize = FromRedisValue::from_redis_value(&resp[1]).unwrap();
+        let resp_2: usize = FromRedisValue::from_redis_value_ref(&resp[1]).unwrap();
         assert_eq!(resp_2, 1);
     }
 
@@ -286,14 +286,14 @@ mod cluster {
 
         assert_eq!(
         err.to_string(),
-        "This command cannot be safely routed in cluster mode - ClientError: Command 'SCRIPT KILL' can't be executed in a cluster pipeline."
+        "This command cannot be safely routed in cluster mode - Client: Command 'SCRIPT KILL' can't be executed in a cluster pipeline."
     );
 
         let err = cluster_pipe().keys("*").exec(&mut con).unwrap_err();
 
         assert_eq!(
         err.to_string(),
-        "This command cannot be safely routed in cluster mode - ClientError: Command 'KEYS' can't be executed in a cluster pipeline."
+        "This command cannot be safely routed in cluster mode - Client: Command 'KEYS' can't be executed in a cluster pipeline."
     );
     }
 
@@ -468,13 +468,10 @@ mod cluster {
 
         let result = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
 
-        match result {
-            Ok(_) => panic!("result should be an error"),
-            Err(e) => match e.kind() {
-                ErrorKind::TryAgain => {}
-                _ => panic!("Expected TryAgain but got {:?}", e.kind()),
-            },
-        }
+        assert!(
+            matches!(&result, Err(err) if err.kind() == ServerErrorKind::TryAgain.into()),
+            "{result:?}",
+        );
         assert_eq!(requests.load(atomic::Ordering::SeqCst), 3);
     }
 
@@ -727,19 +724,16 @@ mod cluster {
                 // Error twice with io-error, ensure connection is reestablished w/out calling
                 // other node (i.e., not doing a full slot rebuild)
                 completed.fetch_add(1, Ordering::SeqCst);
-                Err(Err((ErrorKind::ReadOnly, "").into()))
+                Err(Err((ServerErrorKind::ReadOnly.into(), "").into()))
             }
         });
 
-        let value = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
+        let result = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
 
-        match value {
-            Ok(_) => panic!("result should be an error"),
-            Err(e) => match e.kind() {
-                ErrorKind::ReadOnly => {}
-                _ => panic!("Expected ReadOnly but got {:?}", e.kind()),
-            },
-        }
+        assert!(
+            matches!(&result, Err(err) if err.kind() == ServerErrorKind::ReadOnly.into()),
+            "{result:?}",
+        );
         assert_eq!(completed.load(Ordering::SeqCst), 1);
     }
 
@@ -1052,15 +1046,7 @@ mod cluster {
             builder.retries(3)
         });
 
-        let ports: Vec<_> = cluster
-            .nodes
-            .iter()
-            .map(|info| match info.addr {
-                redis::ConnectionAddr::Tcp(_, port) => port,
-                redis::ConnectionAddr::TcpTls { port, .. } => port,
-                redis::ConnectionAddr::Unix(_) => panic!("no unix sockets in cluster tests"),
-            })
-            .collect();
+        let ports: Vec<_> = cluster.get_ports();
 
         let mut connection = cluster.connection();
         drop(cluster);
@@ -1078,7 +1064,7 @@ mod cluster {
         assert!(result.is_err());
 
         let _cluster = RedisCluster::new(RedisClusterConfiguration {
-            ports: ports.clone(),
+            ports,
             ..Default::default()
         });
 
@@ -1094,22 +1080,14 @@ mod cluster {
             builder.retries(3)
         });
 
-        let ports: Vec<_> = cluster
-            .nodes
-            .iter()
-            .map(|info| match info.addr {
-                redis::ConnectionAddr::Tcp(_, port) => port,
-                redis::ConnectionAddr::TcpTls { port, .. } => port,
-                redis::ConnectionAddr::Unix(_) => panic!("no unix sockets in cluster tests"),
-            })
-            .collect();
+        let ports: Vec<_> = cluster.get_ports();
 
         let mut connection = cluster.connection();
         drop(cluster);
 
         // recreate cluster
-        let _cluster = RedisCluster::new(RedisClusterConfiguration {
-            ports: ports.clone(),
+        let _cluster: RedisCluster = RedisCluster::new(RedisClusterConfiguration {
+            ports,
             ..Default::default()
         });
 
@@ -1131,7 +1109,6 @@ mod cluster {
     mod mtls_test {
         use super::*;
         use crate::support::mtls_test::create_cluster_client_from_cluster;
-        use redis::ConnectionInfo;
 
         #[test]
         fn test_cluster_basics_with_mtls() {
@@ -1165,11 +1142,15 @@ mod cluster {
             let client = create_cluster_client_from_cluster(&cluster, false).unwrap();
             let connection = client.get_connection();
 
-            match cluster.cluster.servers.first().unwrap().connection_info() {
-                ConnectionInfo {
-                    addr: redis::ConnectionAddr::TcpTls { .. },
-                    ..
-                } => {
+            match cluster
+                .cluster
+                .servers
+                .first()
+                .unwrap()
+                .connection_info()
+                .addr()
+            {
+                redis::ConnectionAddr::TcpTls { .. } => {
                     if connection.is_ok() {
                         panic!("Must NOT be able to connect without client credentials if server accepts TLS");
                     }

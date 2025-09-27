@@ -2,11 +2,15 @@
 use crate::aio::AsyncPushSender;
 #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
 use crate::caching::{CacheConfig, CacheManager};
+use crate::client::DEFAULT_CONNECTION_TIMEOUT;
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
+use crate::errors::{ErrorKind, RedisError};
+use crate::io::tcp::TcpSettings;
 #[cfg(feature = "cluster-async")]
-use crate::io::{tcp::TcpSettings, AsyncDNSResolver};
-use crate::types::{ErrorKind, ProtocolVersion, RedisError, RedisResult};
-use crate::{cluster, cluster::TlsMode};
+use crate::io::AsyncDNSResolver;
+use crate::types::{ProtocolVersion, RedisResult};
+use crate::{cluster, TlsMode};
+use arcstr::ArcStr;
 use rand::Rng;
 #[cfg(feature = "cluster-async")]
 use std::sync::Arc;
@@ -25,8 +29,8 @@ use crate::tls::{retrieve_tls_certificates, TlsCertificates};
 /// than final ClusterParams
 #[derive(Default)]
 struct BuilderParams {
-    password: Option<String>,
-    username: Option<String>,
+    password: Option<ArcStr>,
+    username: Option<ArcStr>,
     read_from_replicas: bool,
     tls: Option<TlsMode>,
     #[cfg(feature = "tls-rustls")]
@@ -39,7 +43,6 @@ struct BuilderParams {
     protocol: Option<ProtocolVersion>,
     #[cfg(feature = "cluster-async")]
     async_push_sender: Option<Arc<dyn AsyncPushSender>>,
-    #[cfg(feature = "cluster-async")]
     pub(crate) tcp_settings: TcpSettings,
     #[cfg(feature = "cluster-async")]
     async_dns_resolver: Option<Arc<dyn AsyncDNSResolver>>,
@@ -87,8 +90,8 @@ impl RetryParams {
 /// Redis cluster specific parameters.
 #[derive(Default, Clone)]
 pub(crate) struct ClusterParams {
-    pub(crate) password: Option<String>,
-    pub(crate) username: Option<String>,
+    pub(crate) password: Option<ArcStr>,
+    pub(crate) username: Option<ArcStr>,
     pub(crate) read_from_replicas: bool,
     /// tls indicates tls behavior of connections.
     /// When Some(TlsMode), connections use tls and verify certification depends on TlsMode.
@@ -101,7 +104,6 @@ pub(crate) struct ClusterParams {
     pub(crate) protocol: Option<ProtocolVersion>,
     #[cfg(feature = "cluster-async")]
     pub(crate) async_push_sender: Option<Arc<dyn AsyncPushSender>>,
-    #[cfg(feature = "cluster-async")]
     pub(crate) tcp_settings: TcpSettings,
     #[cfg(feature = "cluster-async")]
     pub(crate) async_dns_resolver: Option<Arc<dyn AsyncDNSResolver>>,
@@ -149,12 +151,13 @@ impl ClusterParams {
             tls: value.tls,
             retry_params: value.retries_configuration,
             tls_params,
-            connection_timeout: value.connection_timeout.unwrap_or(Duration::from_secs(1)),
+            connection_timeout: value
+                .connection_timeout
+                .unwrap_or(DEFAULT_CONNECTION_TIMEOUT.unwrap()),
             response_timeout: value.response_timeout,
             protocol: value.protocol,
             #[cfg(feature = "cluster-async")]
             async_push_sender: value.async_push_sender,
-            #[cfg(feature = "cluster-async")]
             tcp_settings: value.tcp_settings,
             #[cfg(feature = "cluster-async")]
             async_dns_resolver: value.async_dns_resolver,
@@ -234,7 +237,7 @@ impl ClusterClientBuilder {
         let password = if cluster_params.password.is_none() {
             cluster_params
                 .password
-                .clone_from(&first_node.redis.password);
+                .clone_from(&first_node.redis.password.as_ref().map(|str| str.into()));
             &cluster_params.password
         } else {
             &None
@@ -242,7 +245,7 @@ impl ClusterClientBuilder {
         let username = if cluster_params.username.is_none() {
             cluster_params
                 .username
-                .clone_from(&first_node.redis.username);
+                .clone_from(&first_node.redis.username.as_ref().map(|str| str.into()));
             &cluster_params.username
         } else {
             &None
@@ -267,14 +270,14 @@ impl ClusterClientBuilder {
                                              "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
             }
 
-            if password.is_some() && node.redis.password != *password {
+            if password.is_some() && node.redis.password.as_deref() != password.as_deref() {
                 return Err(RedisError::from((
                     ErrorKind::InvalidClientConfig,
                     "Cannot use different password among initial nodes.",
                 )));
             }
 
-            if username.is_some() && node.redis.username != *username {
+            if username.is_some() && node.redis.username.as_deref() != username.as_deref() {
                 return Err(RedisError::from((
                     ErrorKind::InvalidClientConfig,
                     "Cannot use different username among initial nodes.",
@@ -302,14 +305,14 @@ impl ClusterClientBuilder {
     }
 
     /// Sets password for the new ClusterClient.
-    pub fn password(mut self, password: String) -> ClusterClientBuilder {
-        self.builder_params.password = Some(password);
+    pub fn password(mut self, password: impl AsRef<str>) -> ClusterClientBuilder {
+        self.builder_params.password = Some(password.as_ref().into());
         self
     }
 
     /// Sets username for the new ClusterClient.
-    pub fn username(mut self, username: String) -> ClusterClientBuilder {
-        self.builder_params.username = Some(username);
+    pub fn username(mut self, username: impl AsRef<str>) -> ClusterClientBuilder {
+        self.builder_params.username = Some(username.as_ref().into());
         self
     }
 
@@ -424,24 +427,11 @@ impl ClusterClientBuilder {
         self
     }
 
-    /// Use `build()`.
-    #[deprecated(since = "0.22.0", note = "Use build()")]
-    pub fn open(self) -> RedisResult<ClusterClient> {
-        self.build()
-    }
-
-    /// Use `read_from_replicas()`.
-    #[deprecated(since = "0.22.0", note = "Use read_from_replicas()")]
-    pub fn readonly(mut self, read_from_replicas: bool) -> ClusterClientBuilder {
-        self.builder_params.read_from_replicas = read_from_replicas;
-        self
-    }
-
     #[cfg(feature = "cluster-async")]
     /// Sets sender sender for push values.
     ///
     /// The sender can be a channel, or an arbitrary function that handles [crate::PushInfo] values.
-    /// This will fail client creation if the connection isn't configured for RESP3 communications via the [crate::RedisConnectionInfo::protocol] field.
+    /// This will fail client creation if the connection isn't configured for RESP3 communications via the [crate::RedisConnectionInfo::set_protocol] function.
     ///
     /// # Examples
     ///
@@ -472,14 +462,13 @@ impl ClusterClientBuilder {
         self
     }
 
-    /// Set the behavior of the underlying TCP connection.
-    #[cfg(feature = "cluster-async")]
+    /// Set the behavior of the underlying TCP connections.
     pub fn tcp_settings(mut self, tcp_settings: TcpSettings) -> ClusterClientBuilder {
         self.builder_params.tcp_settings = tcp_settings;
         self
     }
 
-    /// Set asynchronous DNS resolver for the underlying TCP connection.
+    /// Set asynchronous DNS resolver for the underlying TCP connections.
     ///
     /// The parameter resolver must implement the [`crate::io::AsyncDNSResolver`] trait.
     #[cfg(feature = "cluster-async")]
@@ -607,12 +596,6 @@ impl ClusterClient {
         cluster_async::ClusterConnection::new(&self.initial_nodes, self.cluster_params.clone())
             .await
     }
-
-    /// Use `new()`.
-    #[deprecated(since = "0.22.0", note = "Use new()")]
-    pub fn open<T: IntoConnectionInfo>(initial_nodes: Vec<T>) -> RedisResult<ClusterClient> {
-        Self::new(initial_nodes)
-    }
 }
 
 #[cfg(test)]
@@ -664,14 +647,14 @@ mod tests {
     #[test]
     fn give_password_by_initial_nodes() {
         let client = ClusterClient::new(get_connection_data_with_password()).unwrap();
-        assert_eq!(client.cluster_params.password, Some("password".to_string()));
+        assert_eq!(client.cluster_params.password, Some("password".into()));
     }
 
     #[test]
     fn give_username_and_password_by_initial_nodes() {
         let client = ClusterClient::new(get_connection_data_with_username_and_password()).unwrap();
-        assert_eq!(client.cluster_params.password, Some("password".to_string()));
-        assert_eq!(client.cluster_params.username, Some("user1".to_string()));
+        assert_eq!(client.cluster_params.password, Some("password".into()));
+        assert_eq!(client.cluster_params.username, Some("user1".into()));
     }
 
     #[test]
@@ -717,12 +700,12 @@ mod tests {
     #[test]
     fn give_username_password_by_method() {
         let client = ClusterClientBuilder::new(get_connection_data_with_username_and_password())
-            .password("password".to_string())
-            .username("user1".to_string())
+            .password("password")
+            .username("user1")
             .build()
             .unwrap();
-        assert_eq!(client.cluster_params.password, Some("password".to_string()));
-        assert_eq!(client.cluster_params.username, Some("user1".to_string()));
+        assert_eq!(client.cluster_params.password, Some("password".into()));
+        assert_eq!(client.cluster_params.username, Some("user1".into()));
     }
 
     #[test]

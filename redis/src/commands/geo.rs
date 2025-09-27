@@ -1,17 +1,7 @@
 //! Defines types to use with the geospatial commands.
 
-use super::{ErrorKind, RedisResult};
+use crate::errors::{invalid_type_error, ParsingError};
 use crate::types::{FromRedisValue, RedisWrite, ToRedisArgs, Value};
-
-macro_rules! invalid_type_error {
-    ($v:expr, $det:expr) => {{
-        fail!((
-            ErrorKind::TypeError,
-            "Response was of incompatible type",
-            format!("{:?} (response was {:?})", $det, $v)
-        ));
-    }};
-}
 
 /// Units used by [`geo_dist`][1] and [`geo_radius`][2].
 ///
@@ -73,8 +63,8 @@ impl<T> Coord<T> {
 }
 
 impl<T: FromRedisValue> FromRedisValue for Coord<T> {
-    fn from_redis_value(v: &Value) -> RedisResult<Self> {
-        let values: Vec<T> = FromRedisValue::from_redis_value(v)?;
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
+        let values: Vec<T> = FromRedisValue::from_redis_value_ref(v)?;
         let mut values = values.into_iter();
         let (longitude, latitude) = match (values.next(), values.next(), values.next()) {
             (Some(longitude), Some(latitude), None) => (longitude, latitude),
@@ -84,6 +74,10 @@ impl<T: FromRedisValue> FromRedisValue for Coord<T> {
             longitude,
             latitude,
         })
+    }
+
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        Self::from_redis_value_ref(&v)
     }
 }
 
@@ -274,56 +268,51 @@ pub struct RadiusSearchResult {
 }
 
 impl FromRedisValue for RadiusSearchResult {
-    fn from_redis_value(v: &Value) -> RedisResult<Self> {
-        // If we receive only the member name, it will be a plain string
-        if let Ok(name) = FromRedisValue::from_redis_value(v) {
-            return Ok(RadiusSearchResult {
-                name,
-                coord: None,
-                dist: None,
-            });
-        }
-
-        // Try to parse the result from multitple values
-        if let Value::Array(ref items) = *v {
-            if let Some(result) = RadiusSearchResult::parse_multi_values(items) {
-                return Ok(result);
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        match v {
+            Value::BulkString(b) => {
+                let s = String::from_utf8(b)?;
+                Ok(RadiusSearchResult {
+                    name: s,
+                    coord: None,
+                    dist: None,
+                })
             }
+            Value::Array(items) => RadiusSearchResult::parse_multi_values(items),
+            _ => invalid_type_error!(v, "Response type not RadiusSearchResult compatible."),
         }
-
-        invalid_type_error!(v, "Response type not RadiusSearchResult compatible.");
     }
 }
 
 impl RadiusSearchResult {
-    fn parse_multi_values(items: &[Value]) -> Option<Self> {
-        let mut iter = items.iter();
+    fn parse_multi_values(items: Vec<Value>) -> Result<Self, ParsingError> {
+        let mut iter = items.into_iter();
 
         // First item is always the member name
         let name: String = match iter.next().map(FromRedisValue::from_redis_value) {
             Some(Ok(n)) => n,
-            _ => return None,
+            _ => return Err(arcstr::literal!("Missing member name").into()),
         };
 
-        let mut next = iter.next();
-
-        // Next element, if present, will be the distance.
-        let dist = match next.map(FromRedisValue::from_redis_value) {
-            Some(Ok(c)) => {
-                next = iter.next();
-                Some(c)
+        let (dist, coord) = match (iter.next(), iter.next()) {
+            (None, None) => (None, None),
+            (Some(Value::Array(coords)), None) => {
+                (None, Some(Coord::from_redis_value(Value::Array(coords))?))
             }
-            _ => None,
+            (Some(dist), coord) => {
+                let dist = FromRedisValue::from_redis_value(dist)?;
+
+                let coord = match coord.map(FromRedisValue::from_redis_value) {
+                    Some(Ok(c)) => Some(c),
+                    _ => None,
+                };
+
+                (dist, coord)
+            }
+            _ => invalid_type_error!("Response type not RadiusSearchResult compatible."),
         };
 
-        // Finally, if present, the last item will be the coordinates
-
-        let coord = match next.map(FromRedisValue::from_redis_value) {
-            Some(Ok(c)) => Some(c),
-            _ => None,
-        };
-
-        Some(RadiusSearchResult { name, coord, dist })
+        Ok(RadiusSearchResult { name, coord, dist })
     }
 }
 

@@ -7,16 +7,16 @@ homepage = "https://github.com/redis-rs/redis-rs"
 repository = "https://github.com/redis-rs/redis-rs"
 documentation = "https://docs.rs/redis-test"
 license = "BSD-3-Clause"
-rust-version = "1.80"
+rust-version = "1.85"
 
 [lib]
 bench = false
 
 [dependencies]
-redis = { version = "0.32", path = "../redis" }
+redis = { version = "1.0.0-alpha.1", path = "../redis", default-features = false }
 bytes = { version = "1", optional = true }
 futures = { version = "0.3", optional = true }
-tempfile = "=3.21.0"
+tempfile = "3.23.0"
 socket2 = "0.6"
 rand = "0.9"
 
@@ -24,14 +24,8 @@ rand = "0.9"
 aio = ["futures", "redis/aio"]
 
 [dev-dependencies]
-redis = { version = "0.32", path = "../redis", features = [
+redis = { version = "1.0.0-alpha.1", path = "../redis", features = [
     "aio",
     "tokio-comp",
-    "safe_iterators",
 ] }
-tokio = { version = "1", features = [
-    "rt",
-    "macros",
-    "rt-multi-thread",
-    "time",
-] }
+tokio = { workspace = true }

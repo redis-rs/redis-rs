@@ -6,9 +6,10 @@ use std::{
     time::Duration,
 };
 
+use crate::errors::RetryMethod;
 use crate::{
-    cluster_async::OperationTarget, cluster_client::RetryParams, cluster_routing::Redirect,
-    types::RetryMethod, Cmd, RedisResult,
+    cluster_async::OperationTarget, cluster_handling::client::RetryParams,
+    cluster_routing::Redirect, Cmd, RedisResult,
 };
 
 use futures_util::{future::BoxFuture, ready};
@@ -164,13 +165,27 @@ fn choose_response<C>(
     mut request: PendingRequest<C>,
     retry_params: &RetryParams,
 ) -> (Option<Retry<C>>, PollFlushAction) {
-    let (target, err) = match result {
+    let (target, result) = result;
+    let err = match result {
         Ok(item) => {
-            trace!("Ok");
-            request.sender.send(Ok(item));
-            return (None, PollFlushAction::None);
+            if let Some(error) = match &item {
+                Response::Single(value) if value.is_error_that_requires_action() => {
+                    Some(value.clone().extract_error().unwrap_err())
+                }
+                Response::Multiple(values) => values
+                    .iter()
+                    .position(|value| value.is_error_that_requires_action())
+                    .map(|position| values[position].clone().extract_error().unwrap_err()),
+                _ => None,
+            } {
+                error
+            } else {
+                trace!("Ok");
+                request.sender.send(Ok(item));
+                return (None, PollFlushAction::None);
+            }
         }
-        Err((target, err)) => (target, err),
+        Err(err) => err,
     };
 
     let has_retries_remaining = request.retry < retry_params.number_of_retries;
@@ -227,7 +242,7 @@ fn choose_response<C>(
             let retry = retry_or_send!(|mut request: PendingRequest<C>| {
                 request.cmd.set_redirect(
                     err.redirect_node()
-                        .map(|(node, _slot)| Redirect::Ask(node.to_string())),
+                        .map(|(node, _slot)| Redirect::Ask(node.into())),
                 );
                 Retry::Immediately { request }
             });
@@ -238,7 +253,7 @@ fn choose_response<C>(
             let retry = retry_or_send!(|mut request: PendingRequest<C>| {
                 request.cmd.set_redirect(
                     err.redirect_node()
-                        .map(|(node, _slot)| Redirect::Moved(node.to_string())),
+                        .map(|(node, _slot)| Redirect::Moved(node.into())),
                 );
                 Retry::Immediately { request }
             });
@@ -318,8 +333,8 @@ mod tests {
 
     use crate::{
         cluster_async::{routing, PollFlushAction},
-        cluster_client::RetryParams,
-        RedisError, RedisResult,
+        cluster_handling::client::RetryParams,
+        parse_redis_value, RedisError, RedisResult,
     };
 
     use super::*;
@@ -338,13 +353,6 @@ mod tests {
                 _ => None,
             },
         }
-    }
-
-    fn to_err(error: &str) -> RedisError {
-        crate::parse_redis_value(error.as_bytes())
-            .unwrap()
-            .extract_error()
-            .unwrap_err()
     }
 
     fn request_and_receiver(
@@ -369,25 +377,34 @@ mod tests {
 
     const ADDRESS: &str = "foo:1234";
 
+    fn single_result(val: &str) -> RedisResult<Response> {
+        parse_redis_value(val.as_bytes()).map(Response::Single)
+    }
+
+    fn to_err(error: &str) -> RedisError {
+        crate::parse_redis_value(error.as_bytes())
+            .unwrap()
+            .extract_error()
+            .unwrap_err()
+    }
+
     #[test]
     fn should_redirect_and_retry_on_ask_error_if_retries_remain() {
         let (request, mut receiver) = request_and_receiver(0);
-        let err = || to_err(&format!("-ASK 123 {ADDRESS}\r\n"));
-        let result = Err((
+        let err_string = format!("-ASK 123 {ADDRESS}\r\n");
+        let err = || single_result(&err_string);
+        let result = (
             OperationTarget::Node {
-                address: ADDRESS.to_string(),
+                address: ADDRESS.into(),
             },
             err(),
-        ));
+        );
         let retry_params = RetryParams::default();
         let (retry, next) = choose_response(result, request, &retry_params);
 
         assert!(receiver.try_recv().is_err());
         if let Some(super::Retry::Immediately { request, .. }) = retry {
-            assert_eq!(
-                get_redirect(&request),
-                Some(Redirect::Ask(ADDRESS.to_string()))
-            );
+            assert_eq!(get_redirect(&request), Some(Redirect::Ask(ADDRESS.into())));
         } else {
             panic!("Expected retry");
         };
@@ -395,36 +412,37 @@ mod tests {
 
         // try the same, without remaining retries
         let (request, mut receiver) = request_and_receiver(retry_params.number_of_retries);
-        let result = Err((
+        let result = (
             OperationTarget::Node {
-                address: ADDRESS.to_string(),
+                address: ADDRESS.into(),
             },
             err(),
-        ));
+        );
         let (retry, next) = choose_response(result, request, &retry_params);
 
-        assert_eq!(receiver.try_recv(), Ok(Err(err())));
+        assert_eq!(receiver.try_recv(), Ok(Err(to_err(&err_string))));
         assert!(retry.is_none());
         assert_eq!(next, PollFlushAction::None);
     }
 
     #[test]
     fn should_retry_and_refresh_slots_on_move_error_if_retries_remain() {
-        let err = || to_err(&format!("-MOVED 123 {ADDRESS}\r\n"));
+        let err_string = format!("-MOVED 123 {ADDRESS}\r\n");
+        let err = || single_result(&err_string);
         let (request, mut receiver) = request_and_receiver(0);
-        let result = Err((
+        let result = (
             OperationTarget::Node {
-                address: ADDRESS.to_string(),
+                address: ADDRESS.into(),
             },
             err(),
-        ));
+        );
         let retry_params = RetryParams::default();
         let (retry, next) = choose_response(result, request, &retry_params);
 
         if let Some(super::Retry::Immediately { request, .. }) = retry {
             assert_eq!(
                 get_redirect(&request),
-                Some(Redirect::Moved(ADDRESS.to_string()))
+                Some(Redirect::Moved(ADDRESS.into()))
             );
         } else {
             panic!("Expected retry");
@@ -434,15 +452,15 @@ mod tests {
 
         // try the same, without remaining retries
         let (request, mut receiver) = request_and_receiver(retry_params.number_of_retries);
-        let result = Err((
+        let result = (
             OperationTarget::Node {
-                address: ADDRESS.to_string(),
+                address: ADDRESS.into(),
             },
             err(),
-        ));
+        );
         let (retry, next) = choose_response(result, request, &retry_params);
 
-        assert_eq!(receiver.try_recv(), Ok(Err(err())));
+        assert_eq!(receiver.try_recv(), Ok(Err(to_err(&err_string))));
         assert!(retry.is_none());
         assert_eq!(next, PollFlushAction::RebuildSlots);
     }
@@ -450,25 +468,23 @@ mod tests {
     #[test]
     fn never_retry_on_fanout_operation_target() {
         let (request, mut receiver) = request_and_receiver(0);
-        let result = Err((
-            OperationTarget::FanOut,
-            to_err(&format!("-MOVED 123 {ADDRESS}\r\n")),
-        ));
+        let err_string = format!("-MOVED 123 {ADDRESS}\r\n");
+        let result = (OperationTarget::FanOut, single_result(&err_string));
         let retry_params = RetryParams::default();
         let (retry, next) = choose_response(result, request, &retry_params);
 
-        let expected = to_err(&format!("-MOVED 123 {ADDRESS}\r\n"));
-        assert_eq!(receiver.try_recv(), Ok(Err(expected)));
+        assert_eq!(receiver.try_recv(), Ok(Err(to_err(&err_string))));
         assert!(retry.is_none());
         assert_eq!(next, PollFlushAction::None);
     }
 
     #[test]
     fn should_sleep_and_retry_on_not_found_operation_target() {
-        let err = || to_err(&format!("-ASK 123 {ADDRESS}\r\n"));
+        let err_string = format!("-ASK 123 {ADDRESS}\r\n");
+        let err = || single_result(&err_string);
 
         let (request, mut receiver) = request_and_receiver(0);
-        let result = Err((OperationTarget::NotFound, err()));
+        let result = (OperationTarget::NotFound, err());
         let retry_params = RetryParams::default();
         let (retry, next) = choose_response(result, request, &retry_params);
 
@@ -482,15 +498,15 @@ mod tests {
 
         // try the same, without remaining retries
         let (request, mut receiver) = request_and_receiver(retry_params.number_of_retries);
-        let result = Err((
+        let result = (
             OperationTarget::Node {
-                address: ADDRESS.to_string(),
+                address: ADDRESS.into(),
             },
             err(),
-        ));
+        );
         let (retry, next) = choose_response(result, request, &retry_params);
 
-        assert_eq!(receiver.try_recv(), Ok(Err(err())));
+        assert_eq!(receiver.try_recv(), Ok(Err(to_err(&err_string))));
         assert!(retry.is_none());
         assert_eq!(next, PollFlushAction::None);
     }
@@ -500,7 +516,7 @@ mod tests {
         let err = || RedisError::from((crate::ErrorKind::ClusterConnectionNotFound, ""));
 
         let (request, mut receiver) = request_and_receiver(0);
-        let result = Err((OperationTarget::NotFound, err()));
+        let result = (OperationTarget::NotFound, Err(err()));
         let retry_params = RetryParams::default();
         let (retry, next) = choose_response(result, request, &retry_params);
 
@@ -514,12 +530,12 @@ mod tests {
 
         // try the same, with a different target
         let (request, mut receiver) = request_and_receiver(0);
-        let result = Err((
+        let result = (
             OperationTarget::Node {
-                address: ADDRESS.to_string(),
+                address: ADDRESS.into(),
             },
-            err(),
-        ));
+            Err(err()),
+        );
         let (retry, next) = choose_response(result, request, &retry_params);
 
         assert!(receiver.try_recv().is_err());
@@ -532,7 +548,7 @@ mod tests {
 
         // and another target
         let (request, mut receiver) = request_and_receiver(0);
-        let result = Err((OperationTarget::FanOut, err()));
+        let result = (OperationTarget::FanOut, Err(err()));
         let (retry, next) = choose_response(result, request, &retry_params);
 
         assert!(receiver.try_recv().is_err());

@@ -6,7 +6,7 @@ use std::{
 
 use redis::{
     cluster::{self, ClusterClient, ClusterClientBuilder},
-    ErrorKind, FromRedisValue,
+    FromRedisValue, ServerErrorKind,
 };
 
 use {
@@ -44,7 +44,7 @@ impl cluster_async::Connect for MockConnection {
     {
         let info = info.into_connection_info().unwrap();
 
-        let (name, port) = match &info.addr {
+        let (name, port) = match &info.addr() {
             redis::ConnectionAddr::Tcp(addr, port) => (addr, *port),
             _ => unreachable!(),
         };
@@ -67,7 +67,7 @@ impl cluster::Connect for MockConnection {
     {
         let info = info.into_connection_info().unwrap();
 
-        let (name, port) = match &info.addr {
+        let (name, port) = match &info.addr() {
             redis::ConnectionAddr::Tcp(addr, port) => (addr, *port),
             _ => unreachable!(),
         };
@@ -258,13 +258,15 @@ impl redis::ConnectionLike for MockConnection {
                 if let Value::Array(results) = res {
                     match results.into_iter().nth(offset) {
                         Some(Value::Array(res)) => Ok(res),
-                        _ => Err((ErrorKind::ResponseError, "non-array response").into()),
+                        _ => Err(
+                            (ServerErrorKind::ResponseError.into(), "non-array response").into(),
+                        ),
                     }
                 } else {
                     Err((
-                        ErrorKind::ResponseError,
+                        ServerErrorKind::ResponseError.into(),
                         "non-array response",
-                        String::from_owned_redis_value(res).unwrap(),
+                        String::from_redis_value(res).unwrap(),
                     )
                         .into())
                 }

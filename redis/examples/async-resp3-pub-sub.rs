@@ -1,4 +1,4 @@
-use redis::{from_owned_redis_value, AsyncTypedCommands};
+use redis::{from_redis_value, AsyncTypedCommands};
 
 #[tokio::main]
 async fn main() -> redis::RedisResult<()> {
@@ -18,7 +18,7 @@ async fn main() -> redis::RedisResult<()> {
     _ = rx.recv().await.unwrap(); // ignore the first message, its the subscription notice
     let mut pubsub_msg = rx.recv().await.unwrap();
     println!("Received {pubsub_msg:?}");
-    let message: String = from_owned_redis_value(pubsub_msg.data.pop().unwrap()).unwrap();
+    let message: String = from_redis_value(pubsub_msg.data.pop().unwrap()).unwrap();
     assert_eq!(&message, "banana");
 
     Ok(())

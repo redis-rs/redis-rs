@@ -1,7 +1,8 @@
-use crate::aio::Runtime;
-use crate::parser::ValueCodec;
-use crate::types::{closed_connection_error, RedisError, RedisResult, Value};
-use crate::{cmd, from_owned_redis_value, FromRedisValue, Msg, RedisConnectionInfo, ToRedisArgs};
+use crate::types::{RedisResult, Value};
+use crate::{
+    aio::Runtime, cmd, errors::closed_connection_error, errors::RedisError, from_redis_value,
+    parser::ValueCodec, FromRedisValue, Msg, RedisConnectionInfo, ToRedisArgs,
+};
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::oneshot,
@@ -357,14 +358,14 @@ impl PubSubSink {
     ) -> RedisResult<T> {
         let cmd = cmd("PING").arg(message).get_packed_command();
         let response = self.send_recv(cmd).await?;
-        from_owned_redis_value(response)
+        Ok(from_redis_value(response)?)
     }
 
     /// Sends a ping to the server
     pub async fn ping<T: FromRedisValue>(&mut self) -> RedisResult<T> {
         let cmd = cmd("PING").get_packed_command();
         let response = self.send_recv(cmd).await?;
-        from_owned_redis_value(response)
+        Ok(from_redis_value(response)?)
     }
 }
 
