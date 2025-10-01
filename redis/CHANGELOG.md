@@ -1,3 +1,36 @@
+### 1.0.0-alpha
+
+#### Changes
+
+* Prepare 1.0.x branch for usage([#1659](https://github.com/redis-rs/redis-rs/pull/1659) by @nihohit)
+* Remove unsafe iterators([#1660](https://github.com/redis-rs/redis-rs/pull/1660) by @nihohit)
+* Remove deprecated features([#1662](https://github.com/redis-rs/redis-rs/pull/1662) by @nihohit)
+* Add a specific error type for parsing errors([#1661](https://github.com/redis-rs/redis-rs/pull/1661) by @nihohit)
+* Upgrade criterion version([#1657](https://github.com/redis-rs/redis-rs/pull/1657) by @nihohit)
+* Remove all deprecated functions([#1672](https://github.com/redis-rs/redis-rs/pull/1672) by @nihohit)
+* Make the num-bigint crate optional again([#1670](https://github.com/redis-rs/redis-rs/pull/1670) by @nihohit)
+* Move TCP features to settings([#1669](https://github.com/redis-rs/redis-rs/pull/1669) by @nihohit)
+* Set default timeouts for async connections([#1686](https://github.com/redis-rs/redis-rs/pull/1686) by @nihohit)
+* Fix ConnectionManager retry behavior([#1717](https://github.com/redis-rs/redis-rs/pull/1717) by @nihohit)
+* Move module files to the commands folder([#1719](https://github.com/redis-rs/redis-rs/pull/1719) by @nihohit)
+* Refactor the error types([#1706](https://github.com/redis-rs/redis-rs/pull/1706) by @nihohit)
+* Refactor cluster file order and routing([#1711](https://github.com/redis-rs/redis-rs/pull/1711) by @nihohit)
+* Use builder pattern for SentinelNodeConnectionInfo([#1723](https://github.com/redis-rs/redis-rs/pull/1723) by @nihohit)
+* Improve pipeline errors([#1718](https://github.com/redis-rs/redis-rs/pull/1718) by @nihohit)
+* Various minor performance improvements to cluster usage([#1729](https://github.com/redis-rs/redis-rs/pull/1729) by @nihohit)
+* Enhance visibility of typed traits in docs([#1732](https://github.com/redis-rs/redis-rs/pull/1732) by @nihohit)
+* Allow async fire and forget([#1756](https://github.com/redis-rs/redis-rs/pull/1756) by @nihohit)
+* Add a detailed TransactionAborted error([#1755](https://github.com/redis-rs/redis-rs/pull/1755) by @nihohit)
+* Reduce number of clones([#1759](https://github.com/redis-rs/redis-rs/pull/1759) by @nihohit)
+* Align async resubscribe behavior([#1757](https://github.com/redis-rs/redis-rs/pull/1757) by @nihohit)
+* fix: Reject wildcard addresses in client and cluster connections ([#1762](https://github.com/redis-rs/redis-rs/pull/1762) by @naoNao89)
+* Create a macro for async tests([#1779](https://github.com/redis-rs/redis-rs/pull/1779) by @nihohit)
+* Handle more tests in testing macro([#1783](https://github.com/redis-rs/redis-rs/pull/1783) by @nihohit)
+* CI: Only run builds after lints pass([#1785](https://github.com/redis-rs/redis-rs/pull/1785) by @nihohit)
+* Make FromRedisValue take an owned value by default([#1784](https://github.com/redis-rs/redis-rs/pull/1784) by @nihohit)
+* Enable more ways to build a parsing error([#1788](https://github.com/redis-rs/redis-rs/pull/1788) by @nihohit)
+* Require single arguments for some calls ([#1792](https://github.com/redis-rs/redis-rs/pull/1792) by @nihohit)
+
 ### 0.32.6 (2025-09-26)
 
 #### Changes

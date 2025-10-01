@@ -102,7 +102,7 @@ macro_rules! implement_iterators {
 
         /// Incrementally iterate the keys space for keys matching a pattern.
         #[inline]
-        fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&mut self, pattern: P) -> $ret {
+        fn scan_match<P: ToSingleRedisArg, RV: FromRedisValue>(&mut self, pattern: P) -> $ret {
             let mut c = cmd("SCAN");
             c.cursor_arg(0).arg("MATCH").arg(pattern);
             $iter(c, self)
@@ -110,7 +110,7 @@ macro_rules! implement_iterators {
 
         /// Incrementally iterate hash fields and associated values.
         #[inline]
-        fn hscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> $ret {
+        fn hscan<K: ToSingleRedisArg, RV: FromRedisValue>(&mut self, key: K) -> $ret {
             let mut c = cmd("HSCAN");
             c.arg(key).cursor_arg(0);
             $iter(c, self)
@@ -119,7 +119,7 @@ macro_rules! implement_iterators {
         /// Incrementally iterate hash fields and associated values for
         /// field names matching a pattern.
         #[inline]
-        fn hscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>(
+        fn hscan_match<K: ToSingleRedisArg, P: ToSingleRedisArg, RV: FromRedisValue>(
             &mut self,
             key: K,
             pattern: P,
@@ -131,7 +131,7 @@ macro_rules! implement_iterators {
 
         /// Incrementally iterate set elements.
         #[inline]
-        fn sscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> $ret {
+        fn sscan<K: ToSingleRedisArg, RV: FromRedisValue>(&mut self, key: K) -> $ret {
             let mut c = cmd("SSCAN");
             c.arg(key).cursor_arg(0);
             $iter(c, self)
@@ -139,7 +139,7 @@ macro_rules! implement_iterators {
 
         /// Incrementally iterate set elements for elements matching a pattern.
         #[inline]
-        fn sscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>(
+        fn sscan_match<K: ToSingleRedisArg, P: ToSingleRedisArg, RV: FromRedisValue>(
             &mut self,
             key: K,
             pattern: P,
@@ -151,7 +151,7 @@ macro_rules! implement_iterators {
 
         /// Incrementally iterate sorted set elements.
         #[inline]
-        fn zscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> $ret {
+        fn zscan<K: ToSingleRedisArg, RV: FromRedisValue>(&mut self, key: K) -> $ret {
             let mut c = cmd("ZSCAN");
             c.arg(key).cursor_arg(0);
             $iter(c, self)
@@ -159,7 +159,7 @@ macro_rules! implement_iterators {
 
         /// Incrementally iterate sorted set elements for elements matching a pattern.
         #[inline]
-        fn zscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>(
+        fn zscan_match<K: ToSingleRedisArg, P: ToSingleRedisArg, RV: FromRedisValue>(
             &mut self,
             key: K,
             pattern: P,
@@ -311,7 +311,7 @@ macro_rules! implement_commands {
             }
 
 			/// Get a value from Redis and convert it to an `Option<isize>`.
-			fn get_int<K: ToRedisArgs>(&mut self, key: K) -> RedisResult<Option<isize>> {
+			fn get_int<K: ToSingleRedisArg>(&mut self, key: K) -> RedisResult<Option<isize>> {
         		cmd("GET").arg(key).query(self)
     		}
 
@@ -345,7 +345,7 @@ macro_rules! implement_commands {
 			}
 
 			/// Get a value from Redis and convert it to an `Option<isize>`.
-			fn get_int<$lifetime, K: ToRedisArgs + Send + Sync + $lifetime>(&$lifetime mut self, key: K) -> crate::types::RedisFuture<$lifetime, Option<isize>> {
+			fn get_int<$lifetime, K: ToSingleRedisArg + Send + Sync + $lifetime>(&$lifetime mut self, key: K) -> crate::types::RedisFuture<$lifetime, Option<isize>> {
 				Box::pin(async move { cmd("GET").arg(key).query_async(self).await })
     		}
 

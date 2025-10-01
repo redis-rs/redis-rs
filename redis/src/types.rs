@@ -847,6 +847,12 @@ impl RedisWrite for Vec<Vec<u8>> {
     }
 }
 
+/// This trait marks that a value is serialized only into a single Redis value.
+///
+/// This should be implemented only for types that are serialized into exactly one value,
+/// otherwise the compiler can't ensure the correctness of some commands.
+pub trait ToSingleRedisArg: ToRedisArgs {}
+
 /// Used to convert a value into one or multiple redis argument
 /// strings.  Most values will produce exactly one item but in
 /// some cases it might make sense to produce more than one.
@@ -934,6 +940,8 @@ macro_rules! itoa_based_to_redis_impl {
                 $numeric
             }
         }
+
+        impl ToSingleRedisArg for $t {}
     };
 }
 
@@ -953,6 +961,8 @@ macro_rules! non_zero_itoa_based_to_redis_impl {
                 $numeric
             }
         }
+
+        impl ToSingleRedisArg for $t {}
     };
 }
 
@@ -972,6 +982,8 @@ macro_rules! ryu_based_to_redis_impl {
                 $numeric
             }
         }
+
+        impl ToSingleRedisArg for $t {}
     };
 }
 
@@ -996,6 +1008,8 @@ impl ToRedisArgs for u8 {
         true
     }
 }
+
+impl ToSingleRedisArg for u8 {}
 
 itoa_based_to_redis_impl!(i8, NumericBehavior::NumberIsInteger);
 itoa_based_to_redis_impl!(i16, NumericBehavior::NumberIsInteger);
@@ -1040,6 +1054,8 @@ macro_rules! bignum_to_redis_impl {
                 out.write_arg(&self.to_string().into_bytes())
             }
         }
+
+        impl ToSingleRedisArg for $t {}
     };
 }
 
@@ -1061,6 +1077,8 @@ impl ToRedisArgs for bool {
     }
 }
 
+impl ToSingleRedisArg for bool {}
+
 impl ToRedisArgs for String {
     fn write_redis_args<W>(&self, out: &mut W)
     where
@@ -1069,6 +1087,7 @@ impl ToRedisArgs for String {
         out.write_arg(self.as_bytes())
     }
 }
+impl ToSingleRedisArg for String {}
 
 impl ToRedisArgs for &str {
     fn write_redis_args<W>(&self, out: &mut W)
@@ -1079,11 +1098,13 @@ impl ToRedisArgs for &str {
     }
 }
 
+impl ToSingleRedisArg for &str {}
+
 impl<'a, T> ToRedisArgs for Cow<'a, T>
 where
     T: ToOwned + ?Sized,
     &'a T: ToRedisArgs,
-    for<'b> &'b T::Owned: ToRedisArgs,
+    T::Owned: ToRedisArgs,
 {
     fn write_redis_args<W>(&self, out: &mut W)
     where
@@ -1094,6 +1115,14 @@ where
             Cow::Owned(inner) => inner.write_redis_args(out),
         }
     }
+}
+
+impl<'a, T> ToSingleRedisArg for Cow<'a, T>
+where
+    T: ToOwned + ?Sized,
+    &'a T: ToSingleRedisArg,
+    T::Owned: ToSingleRedisArg,
+{
 }
 
 impl<T: ToRedisArgs> ToRedisArgs for Vec<T> {
@@ -1162,15 +1191,14 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
 }
 
 macro_rules! deref_to_write_redis_args_impl {
-    (
-        $(#[$attr:meta])*
-        <$($desc:tt)+
-    ) => {
-        $(#[$attr])*
-        impl <$($desc)+ {
+    ($type:ty) => {
+        impl<'a, T> ToRedisArgs for $type
+        where
+            T: ToRedisArgs,
+        {
             #[inline]
             fn write_redis_args<W>(&self, out: &mut W)
-                where
+            where
                 W: ?Sized + RedisWrite,
             {
                 (**self).write_redis_args(out)
@@ -1184,28 +1212,17 @@ macro_rules! deref_to_write_redis_args_impl {
                 (**self).describe_numeric_behavior()
             }
         }
+
+        impl<'a, T> ToSingleRedisArg for $type where T: ToSingleRedisArg {}
     };
 }
 
-deref_to_write_redis_args_impl! {
-    <'a, T> ToRedisArgs for &'a T where T: ToRedisArgs
-}
-
-deref_to_write_redis_args_impl! {
-    <'a, T> ToRedisArgs for &'a mut T where T: ToRedisArgs
-}
-
-deref_to_write_redis_args_impl! {
-    <T> ToRedisArgs for Box<T> where T: ToRedisArgs
-}
-
-deref_to_write_redis_args_impl! {
-    <T> ToRedisArgs for std::sync::Arc<T> where T: ToRedisArgs
-}
-
-deref_to_write_redis_args_impl! {
-    <T> ToRedisArgs for std::rc::Rc<T> where T: ToRedisArgs
-}
+deref_to_write_redis_args_impl! {&'a T}
+deref_to_write_redis_args_impl! {&'a mut T}
+deref_to_write_redis_args_impl! {Box<T>}
+deref_to_write_redis_args_impl! {std::sync::Arc<T>}
+deref_to_write_redis_args_impl! {std::rc::Rc<T>}
+impl ToSingleRedisArg for &[u8] {}
 
 /// @note: Redis cannot store empty sets so the application has to
 /// check whether the set is empty and if so, not attempt to use that
@@ -1356,6 +1373,7 @@ impl<T: ToRedisArgs, const N: usize> ToRedisArgs for &[T; N] {
         }
     }
 }
+impl<const N: usize> ToSingleRedisArg for &[u8; N] {}
 
 fn vec_to_array<T, const N: usize>(
     items: Vec<T>,
@@ -2217,6 +2235,9 @@ impl ToRedisArgs for uuid::Uuid {
         out.write_arg(self.as_bytes());
     }
 }
+
+#[cfg(feature = "uuid")]
+impl ToSingleRedisArg for uuid::Uuid {}
 
 /// A shortcut function to invoke `FromRedisValue::from_redis_value_ref`
 /// to make the API slightly nicer.

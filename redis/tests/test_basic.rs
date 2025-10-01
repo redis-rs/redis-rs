@@ -2084,7 +2084,7 @@ mod basic {
         );
 
         assert_eq!(
-            redis::Commands::hget(&mut con, "my_hash", &["f2", "f4"]),
+            redis::Commands::hmget(&mut con, "my_hash", &["f2", "f4"]),
             Ok((2, 8))
         );
         assert_eq!(
@@ -2528,10 +2528,10 @@ mod basic {
         let setname = "myset";
         assert_eq!(con.sadd(setname, &["a"]), Ok(1));
 
-        let result: bool = con.sismember(setname, &["a"]).unwrap();
+        let result: bool = con.sismember(setname, "a").unwrap();
         assert!(result);
 
-        let result: bool = con.sismember(setname, &["b"]).unwrap();
+        let result: bool = con.sismember(setname, "b").unwrap();
         assert!(!result);
     }
 
@@ -2623,7 +2623,7 @@ mod basic {
         con.set(1, "1").unwrap();
         let keys = vec![1];
         assert_eq!(keys.len(), 1);
-        let data: Vec<String> = redis::Commands::get(&mut con, &keys).unwrap();
+        let data: Vec<String> = redis::Commands::mget(&mut con, &keys).unwrap();
         assert_eq!(data, vec!["1"]);
     }
 
