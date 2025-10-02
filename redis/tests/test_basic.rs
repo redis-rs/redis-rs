@@ -3724,46 +3724,46 @@ mod basic {
         // In sync connection it can't receive push messages from socket without requesting some command
         redis::cmd("PING").exec(&mut pubsub_con).unwrap();
 
-        // We have received verification from Redis that it's subscribed to channel.
-        let PushInfo { kind, data } = rx.try_recv().unwrap();
-        assert_eq!(
-            (
+        // we don't assume any order on the received messages, so we first receive them and them check that they exist regardless of order
+        let mut messages = vec![];
+        for _ in 0..4 {
+            let PushInfo { kind, data } = rx.try_recv().unwrap();
+            messages.push((kind, data));
+        }
+        assert!(
+            messages.contains(&(
                 PushKind::Subscribe,
                 vec![Value::BulkString("foo".as_bytes().to_vec()), Value::Int(1)]
-            ),
-            (kind, data)
+            )),
+            "{messages:?}"
         );
-        let PushInfo { kind, data } = rx.try_recv().unwrap();
-        assert_eq!(
-            (
+        assert!(
+            messages.contains(&(
                 PushKind::PSubscribe,
                 vec![Value::BulkString("bar*".as_bytes().to_vec()), Value::Int(2)]
-            ),
-            (kind, data)
+            )),
+            "{messages:?}"
         );
-
-        let PushInfo { kind, data } = rx.try_recv().unwrap();
-        assert_eq!(
-            (
+        assert!(
+            messages.contains(&(
                 PushKind::Message,
                 vec![
                     Value::BulkString("foo".as_bytes().to_vec()),
                     Value::BulkString("42".as_bytes().to_vec())
                 ]
-            ),
-            (kind, data)
+            )),
+            "{messages:?}"
         );
-        let PushInfo { kind, data } = rx.try_recv().unwrap();
-        assert_eq!(
-            (
+        assert!(
+            messages.contains(&(
                 PushKind::PMessage,
                 vec![
                     Value::BulkString("bar*".as_bytes().to_vec()),
                     Value::BulkString("barvaz".as_bytes().to_vec()),
                     Value::BulkString("23".as_bytes().to_vec())
                 ]
-            ),
-            (kind, data)
+            )),
+            "{messages:?}"
         );
 
         pubsub_con.unsubscribe_resp3("foo").unwrap();
