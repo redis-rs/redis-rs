@@ -11,6 +11,7 @@ runs:
       with:
         toolchain: ${{ inputs.rust-toolchain }}
         components: rustfmt, clippy
+        targets: wasm32-unknown-unknown
     - uses: Swatinem/rust-cache@v2
 
     - name: Build default
