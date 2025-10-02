@@ -198,7 +198,12 @@ jobs:
       - name: doc tests
         run: cargo test --doc --locked --all-features
         env:
-          RUSTDOCFLAGS: -Dwarnings      
+          RUSTDOCFLAGS: -Dwarnings
+
+      - name: webassembly build
+        run: cargo build --target wasm32-unknown-unknown -p redis
+        env:
+          RUSTDOCFLAGS: -Dwarnings                
 
   benchmark:
     needs: lint
