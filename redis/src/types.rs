@@ -17,6 +17,7 @@ use std::str::from_utf8;
 use crate::errors::{RedisError, ServerError};
 
 /// Helper enum that is used to define expiry time
+#[non_exhaustive]
 pub enum Expiry {
     /// EX seconds -- Set the specified expire time, in seconds.
     EX(u64),
@@ -32,6 +33,7 @@ pub enum Expiry {
 
 /// Helper enum that is used to define expiry time for SET command
 #[derive(Clone, Copy)]
+#[non_exhaustive]
 pub enum SetExpiry {
     /// EX seconds -- Set the specified expire time, in seconds.
     EX(u64),
@@ -47,6 +49,7 @@ pub enum SetExpiry {
 
 /// Helper enum that is used to define existence checks
 #[derive(Clone, Copy)]
+#[non_exhaustive]
 pub enum ExistenceCheck {
     /// NX -- Only set the key if it does not already exist.
     NX,
@@ -56,6 +59,7 @@ pub enum ExistenceCheck {
 
 /// Helper enum that is used to define field existence checks
 #[derive(Clone, Copy)]
+#[non_exhaustive]
 pub enum FieldExistenceCheck {
     /// FNX -- Only set the fields if all do not already exist.
     FNX,
@@ -66,6 +70,7 @@ pub enum FieldExistenceCheck {
 /// Helper enum that is used in some situations to describe
 /// the behavior of arguments in a numeric context.
 #[derive(PartialEq, Eq, Clone, Debug, Copy)]
+#[non_exhaustive]
 pub enum NumericBehavior {
     /// This argument is not numeric.
     NonNumeric,
@@ -77,6 +82,7 @@ pub enum NumericBehavior {
 
 /// Internal low-level redis value enum.
 #[derive(PartialEq, Clone, Default)]
+#[non_exhaustive]
 pub enum Value {
     /// A nil response from the server.
     #[default]
@@ -136,6 +142,7 @@ pub enum Value {
 
 /// `VerbatimString`'s format types defined by spec
 #[derive(PartialEq, Clone, Debug)]
+#[non_exhaustive]
 pub enum VerbatimFormat {
     /// Unknown type to catch future formats.
     Unknown(String),
@@ -147,6 +154,7 @@ pub enum VerbatimFormat {
 
 /// `Push` type's currently known kinds.
 #[derive(PartialEq, Clone, Debug)]
+#[non_exhaustive]
 pub enum PushKind {
     /// `Disconnection` is sent from the **library** when connection is closed.
     Disconnection,
@@ -218,6 +226,7 @@ impl fmt::Display for PushKind {
     }
 }
 
+#[non_exhaustive]
 pub enum MapIter<'a> {
     Array(std::slice::Iter<'a, Value>),
     Map(std::slice::Iter<'a, (Value, Value)>),
@@ -244,6 +253,7 @@ impl<'a> Iterator for MapIter<'a> {
     }
 }
 
+#[non_exhaustive]
 pub enum OwnedMapIter {
     Array(std::vec::IntoIter<Value>),
     Map(std::vec::IntoIter<(Value, Value)>),
@@ -539,6 +549,7 @@ impl Deref for InfoDict {
 ///
 /// [1]: https://redis.io/docs/latest/commands/role/
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Role {
     /// Represents a primary role, which is `master` in legacy Redis terminology.
     Primary {
@@ -2267,6 +2278,7 @@ pub enum ProtocolVersion {
 
 /// Helper enum that is used to define option for the hash expire commands
 #[derive(Clone, Copy)]
+#[non_exhaustive]
 pub enum ExpireOption {
     /// NONE -- Set expiration regardless of the field's current expiration.
     NONE,
@@ -2317,6 +2329,7 @@ pub(crate) type SyncPushSender = std::sync::mpsc::Sender<PushInfo>;
 
 /// Possible types of value held in Redis: [Redis Docs](https://redis.io/docs/latest/commands/type/)
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ValueType {
     /// Generally returned by anything that returns a single element. [Redis Docs](https://redis.io/docs/latest/develop/data-types/strings/)
     String,
@@ -2380,6 +2393,7 @@ impl FromRedisValue for ValueType {
 
 /// Returned by typed commands which either return a positive integer or some negative integer indicating some kind of no-op.
 #[derive(Debug, PartialEq, Clone)]
+#[non_exhaustive]
 pub enum IntegerReplyOrNoOp {
     /// A positive integer reply indicating success of some kind.
     IntegerReply(usize),

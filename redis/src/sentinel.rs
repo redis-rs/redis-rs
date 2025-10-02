@@ -1043,6 +1043,7 @@ impl Sentinel {
 
 /// Enum defining the server types from a sentinel's point of view.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum SentinelServerType {
     /// Master connections only
     Master,

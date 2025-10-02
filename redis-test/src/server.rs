@@ -24,6 +24,7 @@ enum ServerType {
     Unix,
 }
 
+#[non_exhaustive]
 pub enum Module {
     Json,
 }

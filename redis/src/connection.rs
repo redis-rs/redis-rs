@@ -46,7 +46,6 @@ use crate::tls::ClientTlsParams;
 
 // Non-exhaustive to prevent construction outside this crate
 #[derive(Clone, Debug)]
-#[non_exhaustive]
 pub struct TlsConnParams {
     #[cfg(feature = "tls-rustls")]
     pub(crate) client_tls_params: Option<ClientTlsParams>,
@@ -94,6 +93,7 @@ pub fn parse_redis_url(input: &str) -> Option<url::Url> {
 ///
 /// Check [ConnectionAddr](ConnectionAddr::TcpTls::insecure) for more.
 #[derive(Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum TlsMode {
     /// Secure verify certification.
     Secure,

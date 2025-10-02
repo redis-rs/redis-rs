@@ -5,6 +5,7 @@ use crate::RetryMethod;
 
 /// Kinds of errors returned from the server
 #[derive(PartialEq, Debug, Clone, Copy, Eq)]
+#[non_exhaustive]
 pub enum ServerErrorKind {
     /// The server generated an invalid response, or returned a general error.
     ResponseError,

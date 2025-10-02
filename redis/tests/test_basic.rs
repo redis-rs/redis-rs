@@ -3296,6 +3296,7 @@ mod basic {
                 VectorQuantization::NoQuant => (3, "f32"),
                 VectorQuantization::Q8 => (4, "int8"),
                 VectorQuantization::Bin => (3, "bin"),
+                _ => panic!("unknown quantization {quantization:?}"),
             };
         let max_number_of_links = 4;
 

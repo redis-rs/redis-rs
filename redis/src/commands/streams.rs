@@ -14,6 +14,7 @@ use crate::{from_redis_value, from_redis_value_ref, types::ToSingleRedisArg};
 /// arguments into `StreamCommands`.
 /// The enum value represents the count.
 #[derive(PartialEq, Eq, Clone, Debug, Copy)]
+#[non_exhaustive]
 pub enum StreamMaxlen {
     /// Match an exact count
     Equals(usize),
@@ -39,6 +40,7 @@ impl ToRedisArgs for StreamMaxlen {
 /// Utility enum for passing the trim mode`[=|~]`
 /// arguments into `StreamCommands`.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum StreamTrimmingMode {
     /// Match an exact count
     Exact,
@@ -62,6 +64,7 @@ impl ToRedisArgs for StreamTrimmingMode {
 /// arguments into `StreamCommands`.
 /// The enum values the trimming mode (=|~), the threshold, and the optional limit
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum StreamTrimStrategy {
     /// Evicts entries as long as the streams length exceeds threshold.  With an optional limit.
     MaxLen(StreamTrimmingMode, usize, Option<usize>),
@@ -503,6 +506,7 @@ pub struct StreamClaimReply {
 /// [`xpending`]: ../trait.Commands.html#method.xpending
 ///
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub enum StreamPendingReply {
     /// The stream is empty.
     #[default]
@@ -984,6 +988,7 @@ impl FromRedisValue for StreamInfoGroupsReply {
 
 /// Deletion policy for stream entries.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub enum StreamDeletionPolicy {
     /// Preserve existing references to the deleted entries in all consumer groups' PEL.
     #[default]
@@ -1012,6 +1017,7 @@ impl ToSingleRedisArg for StreamDeletionPolicy {}
 #[cfg(feature = "streams")]
 #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
 #[derive(Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum XDelExStatusCode {
     /// No entry with the given id exists in the stream
     IdNotFound = -1,
@@ -1041,6 +1047,7 @@ impl FromRedisValue for XDelExStatusCode {
 #[cfg(feature = "streams")]
 #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
 #[derive(Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum XAckDelStatusCode {
     /// No entry with the given id exists in the stream
     IdNotFound = -1,
