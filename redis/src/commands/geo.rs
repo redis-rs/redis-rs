@@ -7,6 +7,7 @@ use crate::types::{FromRedisValue, RedisWrite, ToRedisArgs, ToSingleRedisArg, Va
 ///
 /// [1]: ../trait.Commands.html#method.geo_dist
 /// [2]: ../trait.Commands.html#method.geo_radius
+#[non_exhaustive]
 pub enum Unit {
     /// Represents meters.
     Meters,
@@ -102,6 +103,7 @@ impl<T: ToRedisArgs> ToRedisArgs for Coord<T> {
 /// [1]: https://redis.io/commands/georadius
 /// [2]: https://redis.io/commands/georadiusbymember
 #[derive(Default)]
+#[non_exhaustive]
 pub enum RadiusOrder {
     /// Don't sort the results
     #[default]

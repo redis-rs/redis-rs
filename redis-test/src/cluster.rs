@@ -42,6 +42,7 @@ impl Default for RedisClusterConfiguration {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum ClusterType {
     Tcp,
     TcpTls,

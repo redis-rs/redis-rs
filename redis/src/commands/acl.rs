@@ -12,6 +12,7 @@ macro_rules! not_convertible_error {
 /// ACL rules are used in order to activate or remove a flag, or to perform a
 /// given change to the user ACL, which under the hood are just single words.
 #[derive(Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Rule {
     /// Enable the user: it is possible to authenticate as this user.
     On,

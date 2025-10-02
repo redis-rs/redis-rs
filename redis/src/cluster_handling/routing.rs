@@ -32,6 +32,7 @@ pub(crate) enum Redirect {
 
 /// Logical bitwise aggregating operators.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum LogicalAggregateOp {
     /// Aggregate by bitwise &&
     And,
@@ -40,6 +41,7 @@ pub enum LogicalAggregateOp {
 
 /// Numerical aggregating operators.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum AggregateOp {
     /// Choose minimal value
     Min,
@@ -50,6 +52,7 @@ pub enum AggregateOp {
 
 /// Policy defining how to combine multiple responses into one.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum ResponsePolicy {
     /// Wait for one request to succeed and return its results. Return error if all requests fail.
     OneSucceeded,
@@ -71,6 +74,7 @@ pub enum ResponsePolicy {
 
 /// Defines whether a request should be routed to a single node, or multiple ones.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum RoutingInfo {
     /// Route to single node
     SingleNode(SingleNodeRoutingInfo),
@@ -80,6 +84,7 @@ pub enum RoutingInfo {
 
 /// Defines which single node should receive a request.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum SingleNodeRoutingInfo {
     /// Route to any node at random
     Random,
@@ -106,6 +111,7 @@ impl From<Option<Route>> for SingleNodeRoutingInfo {
 
 /// Defines which collection of nodes should receive a request
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum MultipleNodeRoutingInfo {
     /// Route to all nodes in the clusters
     AllNodes,
@@ -446,6 +452,7 @@ fn get_route(is_readonly: bool, key: &[u8]) -> Route {
 /// Represents the pattern of argument structures in multi-slot commands,
 /// defining how the arguments are organized in the command.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum MultiSlotArgPattern {
     /// Pattern where only keys are provided in the command.
     /// For example: `MGET key1 key2`
@@ -952,6 +959,7 @@ impl Slot {
 
 /// What type of node should a request be routed to, assuming read from replica is enabled.
 #[derive(Eq, PartialEq, Clone, Copy, Debug, Hash)]
+#[non_exhaustive]
 pub enum SlotAddr {
     /// The request must be routed to primary node
     Master,

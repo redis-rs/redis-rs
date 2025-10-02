@@ -87,6 +87,7 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
             Value::ServerError(ref i) => {
                 Box::new(vec![ArbitraryValue(Value::ServerError(i.clone()))].into_iter())
             }
+            _ => panic!("unknown value {:?}", self.0),
         }
     }
 }

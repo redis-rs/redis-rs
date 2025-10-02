@@ -16,6 +16,7 @@ use crate::{connection::ConnectionLike, ParsingError};
 
 /// An argument to a redis command
 #[derive(Clone, PartialEq, Debug)]
+#[non_exhaustive]
 pub enum Arg<D> {
     /// A normal argument
     Simple(D),

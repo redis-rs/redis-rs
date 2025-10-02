@@ -3,6 +3,7 @@ use std::time::Duration;
 
 /// Defines the behavior of the cache regarding which commands should be cached.
 #[derive(Clone, PartialEq, Debug, Copy)]
+#[non_exhaustive]
 pub enum CacheMode {
     /// Try to cache every command. This is equivalent to calling [crate::Cmd::set_cache_config]/[crate::Pipeline::set_cache_config] on every command using OptIn mode.
     /// In this mode cache usage can't be disabled using [crate::Cmd::set_cache_config]/[crate::Pipeline::set_cache_config].

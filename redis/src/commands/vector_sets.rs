@@ -134,6 +134,7 @@ impl ToRedisArgs for VSimOptions {
 /// - 64-bit floats
 /// - Strings (e.g., numbers as strings)
 #[derive(Clone)]
+#[non_exhaustive]
 pub enum EmbeddingInput<'a> {
     /// 32-bit floating point input
     Float32(&'a [f32]),
@@ -173,6 +174,7 @@ impl ToRedisArgs for EmbeddingInput<'_> {
 
 /// Represents different ways to input data for vector add commands
 #[derive(Clone)]
+#[non_exhaustive]
 pub enum VectorAddInput<'a> {
     /// Binary representation of 32-bit floating point values
     Fp32(&'a [f32]),
@@ -203,7 +205,8 @@ impl ToRedisArgs for VectorAddInput<'_> {
 }
 
 /// Quantization options for vector storage
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub enum VectorQuantization {
     /// In the first VADD call for a given key, NOQUANT forces the vector to be created without int8 quantization, which is otherwise the default.
     NoQuant,
@@ -370,6 +373,7 @@ impl ToRedisArgs for VEmbOptions {
 /// Represents different ways to input query data for vector similarity search commands
 #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
 #[derive(Clone)]
+#[non_exhaustive]
 pub enum VectorSimilaritySearchInput<'a> {
     /// Binary representation of 32-bit floating point values to use as a reference
     Fp32(&'a [f32]),

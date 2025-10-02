@@ -2949,6 +2949,7 @@ assert_eq!(invok_2_res, 5);
 /// Allows pubsub callbacks to stop receiving messages.
 ///
 /// Arbitrary data may be returned from `Break`.
+#[non_exhaustive]
 pub enum ControlFlow<U> {
     /// Continues.
     Continue,
@@ -3225,6 +3226,7 @@ impl ToRedisArgs for LposOptions {
 }
 
 /// Enum for the LEFT | RIGHT args used by some commands
+#[non_exhaustive]
 pub enum Direction {
     /// Targets the first element (head) of the list
     Left,
@@ -3532,6 +3534,7 @@ impl ToRedisArgs for Expiry {
 
 /// Helper enum that is used to define update checks
 #[derive(Clone, Copy)]
+#[non_exhaustive]
 pub enum UpdateCheck {
     /// LT -- Only update if the new score is less than the current.
     LT,

@@ -32,6 +32,7 @@ pub fn current_thread_runtime() -> tokio::runtime::Runtime {
 
 #[cfg(feature = "aio")]
 #[derive(Clone, Copy)]
+#[non_exhaustive]
 pub enum RuntimeType {
     #[cfg(feature = "tokio-comp")]
     Tokio,
@@ -377,6 +378,7 @@ where
             Some(details) => write!(writer, "-{} {details}\r\n", err.code()),
             None => write!(writer, "-{}\r\n", err.code()),
         },
+        _ => panic!("unknown value {value:?}"),
     }
 }
 
