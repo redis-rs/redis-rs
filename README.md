@@ -163,6 +163,67 @@ To enable insecure mode, append `#insecure` at the end of the URL:
 let client = redis::Client::open("rediss://127.0.0.1/#insecure")?;
 ```
 
+## Token-Based Authentication with Azure Entra ID
+
+Redis-rs supports token-based authentication using Azure Entra ID, providing secure, dynamic authentication for Redis connections. This feature is particularly useful for Azure-hosted applications and enterprise environments.
+
+To enable Entra ID authentication, add the `entra-id` feature to your Cargo.toml:
+
+```toml
+redis = { version = "0.32.7", features = ["entra-id", "tokio-comp"] }
+```
+
+### Basic Usage
+
+```rust
+use redis::{Client, Commands, EntraIdCredentialsProvider, TokenRefreshConfig};
+
+#[tokio::main]
+async fn main() -> redis::RedisResult<()> {
+    // Create credentials provider using DefaultAzureCredential
+    let mut provider = EntraIdCredentialsProvider::new_default()?;
+    // Start the background refresh service, which will automatically refresh the token
+    provider.start(TokenRefreshConfig::default());
+
+    // Create Redis client with credentials provider
+    let client = Client::open("redis://your-redis-instance.com:6380")?
+        .with_credentials_provider(provider);
+
+    // Use the client to get a multiplexed connection.
+    // Since the client has an attached credentials provider, it will create a background task, which will subscribe for token updates.
+    // The client automatically re-authenticates itself once it receives new credentials from the stream.
+    let mut con = client.get_multiplexed_async_connection().await?;
+    redis::cmd("SET")
+        .arg("my_key")
+        .arg(42i32)
+        .exec_async(&mut con)
+        .await?;
+    let result: Option<String> = redis::cmd("GET")
+        .arg("my_key")
+        .query_async(&mut con)
+        .await?;
+    println!("Value: {:?}", result);
+
+    Ok(())
+}
+```
+
+### Supported Authentication Flows
+
+- **DefaultAzureCredential**: Provides a default `TokenCredential` authentication flow for applications that will be deployed to Azure
+- **Service Principal**: `Client secret` and `certificate-based` authentication
+- **Managed Identity**: `System-assigned` or `user-assigned` managed identities
+- **Custom Credentials**: Support for any `TokenCredential` implementation
+
+### Features
+
+- **Automatic Token Refresh & Streaming of Credentials**: Seamlessly handle token expiration and stream updated credentials to prevent connection errors due to token expiration
+- **Configurable Refresh Policies**: Customizable refresh thresholds and retry behavior
+
+### Async-First Design
+- Full async/await support for non-blocking operations
+- Seamless integration with multiplexed connections
+
 ## Cluster Support
 
 Support for Redis Cluster can be enabled by enabling the `cluster` feature in your Cargo.toml:

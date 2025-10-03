@@ -50,6 +50,7 @@ tokio = { version = "1", features = [
   "net",
   "time",
   "sync",
+  "macros"
 ], optional = true }
 
 # Only needed for the connection manager
@@ -113,6 +114,12 @@ arcstr = "1.2.0"
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 socket2 = { version = "0.6", features = ["all"] }
 
+# Only needed for Entra ID authentication
+azure_identity = { version = "0.27", optional = true, features = ["client_certificate"] }
+azure_core = { version = "0.27", optional = true }
+time = { version = "0.3", optional = true }
+base64 = { version = "0.22.1", optional = true }
+
 [features]
 default = ["acl", "streams", "geospatial", "script", "num-bigint"]
 acl = []
@@ -144,6 +151,8 @@ num-bigint = ["dep:num-bigint"]
 cache-aio = ["aio", "dep:lru"]
 r2d2 = ["dep:r2d2"]
 bb8 = ["dep:bb8"]
+token-based-authentication = ["aio"]
+entra-id = ["dep:azure_identity", "dep:azure_core", "dep:time", "dep:base64", "token-based-authentication", "tokio-comp"]
 
 # Instead of specifying "aio", use either "tokio-comp" or "smol-comp".
 aio = [
@@ -158,6 +167,7 @@ aio = [
 ]
 
 [dev-dependencies]
+async-trait = "0.1"
 assert_approx_eq = "1.0"
 fnv = "1.0.5"
 futures = "0.3"

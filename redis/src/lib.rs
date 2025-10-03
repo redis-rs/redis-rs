@@ -633,6 +633,13 @@ let primary = sentinel.get_async_connection().await.unwrap();
 )]
 
 // public api
+#[cfg(feature = "token-based-authentication")]
+pub use crate::auth::{
+    AsyncCredentialsProvider, BasicAuth, CredentialsProvider, StaticCredentialsProvider,
+    StreamingCredentialsProvider,
+};
+#[cfg(feature = "token-based-authentication")]
+pub use crate::auth_management::{RetryConfig, TokenRefreshConfig};
 #[cfg(feature = "aio")]
 pub use crate::client::AsyncConnectionConfig;
 pub use crate::client::Client;
@@ -647,6 +654,10 @@ pub use crate::commands::{
 pub use crate::connection::{
     Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, IntoConnectionInfo, Msg, PubSub,
     RedisConnectionInfo, TlsMode, parse_redis_url, transaction,
+};
+#[cfg(feature = "entra-id")]
+pub use crate::entra_id::{
+    ClientCertificateConfig, EntraIdCredentialsProvider, REDIS_SCOPE_DEFAULT,
 };
 pub use crate::parser::{Parser, parse_redis_value};
 pub use crate::pipeline::Pipeline;
@@ -777,6 +788,17 @@ pub use crate::tls::{ClientTlsConfig, TlsCertificates};
 #[cfg(feature = "cache-aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
 pub mod caching;
+
+#[cfg(feature = "entra-id")]
+#[cfg_attr(docsrs, doc(cfg(feature = "entra-id")))]
+pub mod entra_id;
+
+#[cfg(feature = "token-based-authentication")]
+#[cfg_attr(docsrs, doc(cfg(feature = "token-based-authentication")))]
+pub mod auth;
+#[cfg(feature = "token-based-authentication")]
+#[cfg_attr(docsrs, doc(cfg(feature = "token-based-authentication")))]
+pub mod auth_management;
 
 mod client;
 mod cmd;
