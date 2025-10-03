@@ -106,13 +106,16 @@ mod routing;
 use crate::{
     aio::{ConnectionLike, HandleContainer, MultiplexedConnection, Runtime},
     check_resp3,
-    cluster::{get_connection_info, slot_cmd},
-    cluster_client::ClusterParams,
-    cluster_routing::{
-        MultipleNodeRoutingInfo, Redirect, ResponsePolicy, RoutingInfo, SingleNodeRoutingInfo,
-        Slot, SlotMap,
+    cluster_handling::{
+        client::ClusterParams,
+        get_connection_info,
+        routing::{
+            MultipleNodeRoutingInfo, Redirect, ResponsePolicy, RoutingInfo, SingleNodeRoutingInfo,
+        },
+        slot_cmd,
+        slot_map::{Slot, SlotMap},
+        topology::parse_slots,
     },
-    cluster_topology::parse_slots,
     cmd,
     subscription_tracker::SubscriptionTracker,
     types::closed_connection_error,
@@ -437,6 +440,7 @@ pub(crate) enum Response {
     Multiple(Vec<Value>),
 }
 
+#[derive(Debug)]
 enum OperationTarget {
     Node { address: String },
     NotFound,
@@ -748,18 +752,46 @@ where
             )
             .await
             .map(|(result, _)| result),
-            Some(ResponsePolicy::OneSucceededNonEmpty) => {
-                future::select_ok(receivers.into_iter().map(|(_, receiver)| {
-                    Box::pin(async move {
-                        let result = convert_result(receiver.await)?;
-                        match result {
-                            Value::Nil => Err((ErrorKind::ResponseError, "no value found").into()),
-                            _ => Ok(result),
+            Some(ResponsePolicy::FirstSucceededNonEmptyOrAllEmpty) => {
+                // We want to see each response as it arrives, and:
+                //  • If we see `Value::Nil`, increment a counter.
+                //  • If we see `Value::ServerError`, remember it as `last_err`.
+                //  • If we see `other_value`, return it immediately.
+                //
+                // Once the stream is exhausted:
+                //  – if all successes were Nil → return Value::Nil (indicates that all shards are empty).
+                //  – else → return the last error we saw (or a generic “all‐unavailable” error).
+                //
+                // If we received a mix of errors and `Nil`s, we can't determine if all shards are empty, thus we return the last received error instead of `Nil`.
+                let mut nil_counter = 0;
+                let mut last_err = None;
+                let resolved = future::join_all(receivers.into_iter().map(get_receiver)).await;
+                let num_results = resolved.len();
+
+                for val in resolved {
+                    match val {
+                        Ok(Value::Nil) => nil_counter += 1,
+                        Ok(Value::ServerError(err)) => {
+                            last_err = Some(err.into());
                         }
-                    })
-                }))
-                .await
-                .map(|(result, _)| result)
+                        Err(err) => {
+                            last_err = Some(err);
+                        }
+                        Ok(val) => return Ok(val),
+                    }
+                }
+
+                if nil_counter == num_results {
+                    Ok(Value::Nil)
+                } else {
+                    Err(last_err.unwrap_or_else(|| {
+                        (
+                            ErrorKind::ClusterConnectionNotFound,
+                            "Couldn't find any connection",
+                        )
+                            .into()
+                    }))
+                }
             }
             Some(ResponsePolicy::Aggregate(op)) => {
                 future::try_join_all(receivers.into_iter().map(get_receiver))
@@ -775,14 +807,18 @@ where
                 future::try_join_all(receivers.into_iter().map(get_receiver))
                     .await
                     .and_then(|results| match routing {
-                        MultipleNodeRoutingInfo::MultiSlot(vec) => {
+                        MultipleNodeRoutingInfo::MultiSlot((vec, pattern)) => {
                             crate::cluster_routing::combine_and_sort_array_results(
-                                results,
-                                vec.iter().map(|(_, indices)| indices),
+                                results, vec, pattern,
                             )
                         }
                         _ => crate::cluster_routing::combine_array_results(results),
                     })
+            }
+            Some(ResponsePolicy::CombineMaps) => {
+                let resolved =
+                    future::try_join_all(receivers.into_iter().map(get_receiver)).await?;
+                crate::cluster_routing::combine_map_results(resolved)
             }
             Some(ResponsePolicy::Special) | None => {
                 // This is our assumption - if there's no coherent way to aggregate the responses, we just map each response to the sender, and pass it to the user.
@@ -852,7 +888,7 @@ where
                     .into_iter()
                     .filter_map(|addr| to_request((addr, cmd.clone())))
                     .unzip(),
-                MultipleNodeRoutingInfo::MultiSlot(routes) => slot_map
+                MultipleNodeRoutingInfo::MultiSlot((routes, _)) => slot_map
                     .addresses_for_multi_slot(routes)
                     .enumerate()
                     .filter_map(|(index, addr_opt)| {
