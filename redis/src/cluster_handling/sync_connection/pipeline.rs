@@ -1,4 +1,4 @@
-use crate::cluster::ClusterConnection;
+use super::ClusterConnection;
 use crate::cmd::{cmd, Cmd};
 use crate::types::{
     from_owned_redis_value, ErrorKind, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value,

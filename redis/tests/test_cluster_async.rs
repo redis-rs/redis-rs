@@ -1588,7 +1588,7 @@ mod cluster_async {
     fn test_async_cluster_fan_out_and_return_one_succeeded_response() {
         let name = "test_async_cluster_fan_out_and_return_one_succeeded_response";
         let mut cmd = Cmd::new();
-        cmd.arg("SCRIPT").arg("KILL");
+        cmd.arg("RANDOMKEY");
         let MockEnv {
             runtime,
             async_connection: mut connection,
@@ -1618,7 +1618,34 @@ mod cluster_async {
         let result = runtime
             .block_on(cmd.query_async::<Value>(&mut connection))
             .unwrap();
-        assert_eq!(result, Value::Okay, "{result:?}");
+        assert_eq!(result, Value::Okay);
+    }
+
+    #[test]
+    fn test_async_cluster_fan_out_and_return_nil_if_no_other_value_was_received() {
+        let name = "test_async_cluster_fan_out_and_return_nil_if_no_other_value_was_received";
+        let mut cmd = Cmd::new();
+        cmd.arg("RANDOMKEY");
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .retries(0)
+                .read_from_replicas(),
+            name,
+            move |received_cmd: &[u8], _| {
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                Err(Ok(Value::Nil))
+            },
+        );
+
+        let result = runtime
+            .block_on(cmd.query_async::<Value>(&mut connection))
+            .unwrap();
+        assert_eq!(result, Value::Nil);
     }
 
     #[test]

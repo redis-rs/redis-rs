@@ -7,8 +7,8 @@ use std::{
 };
 
 use crate::{
-    cluster_async::OperationTarget, cluster_client::RetryParams, cluster_routing::Redirect,
-    types::RetryMethod, Cmd, RedisResult,
+    cluster_async::OperationTarget, cluster_handling::client::RetryParams,
+    cluster_routing::Redirect, types::RetryMethod, Cmd, RedisResult,
 };
 
 use futures_util::{future::BoxFuture, ready};
@@ -318,7 +318,7 @@ mod tests {
 
     use crate::{
         cluster_async::{routing, PollFlushAction},
-        cluster_client::RetryParams,
+        cluster_handling::client::RetryParams,
         RedisError, RedisResult,
     };
 

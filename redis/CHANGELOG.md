@@ -1,3 +1,9 @@
+### 0.32.7 (2025-10-03)
+
+#### Changes
+
+* Port https://github.com/redis-rs/redis-rs/pull/1711 to 0.32.x ([#1819](https://github.com/redis-rs/redis-rs/pull/1819) by @nihohit)
+
 ### 0.32.6 (2025-09-26)
 
 #### Changes
