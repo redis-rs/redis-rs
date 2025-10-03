@@ -1553,14 +1553,11 @@ mod cluster_async {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
                 if port == 6381 {
                     Err(Ok(Value::Okay))
-                } else if port == 6379 {
-                    Err(Ok(Value::Nil))
                 } else {
-                    Err(Err((
-                        ServerErrorKind::NotBusy.into(),
-                        "some random failure, really",
-                    )
-                        .into()))
+                    Err(Err(RedisError::from(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionReset,
+                        "mock-io-error",
+                    ))))
                 }
             },
         );

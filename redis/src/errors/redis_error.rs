@@ -547,6 +547,17 @@ impl From<ParsingError> for RedisError {
     }
 }
 
+impl TryFrom<RedisError> for ServerError {
+    type Error = RedisError;
+
+    fn try_from(err: RedisError) -> Result<ServerError, RedisError> {
+        match err.repr {
+            ErrorRepr::Server(err) => Ok(err),
+            _ => Err(err),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::parse_redis_value;
