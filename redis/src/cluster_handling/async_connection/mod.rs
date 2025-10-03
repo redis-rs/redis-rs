@@ -721,7 +721,6 @@ where
             convert_result(receiver.await)
         };
 
-        // TODO - once Value::Error will be merged, these will need to be updated to handle this new value.
         match response_policy {
             Some(ResponsePolicy::AllSucceeded) => {
                 future::try_join_all(receivers.into_iter().map(get_receiver))
@@ -756,17 +755,19 @@ where
                 // If we received a mix of errors and `Nil`s, we can't determine if all shards are empty, thus we return the last received error instead of `Nil`.
                 let mut nil_counter = 0;
                 let mut last_err = None;
-                let resolved =
-                    future::try_join_all(receivers.into_iter().map(get_receiver)).await?;
+                let resolved = future::join_all(receivers.into_iter().map(get_receiver)).await;
                 let num_results = resolved.len();
 
                 for val in resolved {
                     match val {
-                        Value::Nil => nil_counter += 1,
-                        Value::ServerError(err) => {
+                        Ok(Value::Nil) => nil_counter += 1,
+                        Ok(Value::ServerError(err)) => {
                             last_err = Some(err.into());
                         }
-                        val => return Ok(val),
+                        Ok(val) => return Ok(val),
+                        Err(err) => {
+                            last_err = Some(err);
+                        }
                     }
                 }
 
@@ -811,14 +812,19 @@ where
             }
             Some(ResponsePolicy::Special) | None => {
                 // This is our assumption - if there's no coherent way to aggregate the responses, we just map each response to the sender, and pass it to the user.
-
-                // TODO - once Value::Error is merged, we can use join_all and report separate errors and also pass successes.
-                future::try_join_all(receivers.into_iter().map(|(addr, receiver)| async move {
-                    let result = convert_result(receiver.await)?;
-                    Ok((Value::BulkString(addr.as_bytes().to_vec()), result))
-                }))
-                .await
-                .map(Value::Map)
+                let results =
+                    future::join_all(receivers.into_iter().map(|(addr, receiver)| async move {
+                        let result =
+                            convert_result(receiver.await).or_else(|err| match err.try_into() {
+                                Ok(server_error) => Ok(Value::ServerError(server_error)),
+                                Err(err) => Err(err),
+                            })?;
+                        Ok::<_, RedisError>((Value::BulkString(addr.as_bytes().to_vec()), result))
+                    }))
+                    .await
+                    .into_iter()
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Value::Map(results))
             }
         }
     }
