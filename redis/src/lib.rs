@@ -667,6 +667,7 @@ pub use crate::types::{
     RedisResult,
     RedisWrite,
     ToRedisArgs,
+    ToSingleRedisArg,
 
     // low level values
     Value,
