@@ -456,6 +456,10 @@ pub struct StreamAutoClaimReply {
     pub claimed: Vec<StreamId>,
     /// The list of stream ids that were removed due to no longer being in the stream
     pub deleted_ids: Vec<String>,
+    /// If set, this means that the reply contained invalid nil entries, that were skipped during parsing.
+    ///
+    /// This should only happen when using Redis 6, see <https://github.com/redis-rs/redis-rs/issues/1798>
+    pub invalid_entries: bool,
 }
 
 /// Reply type used with [`xread`] or [`xread_options`] commands.
@@ -673,7 +677,7 @@ pub struct StreamKey {
 }
 
 /// Represents a stream `id` and its field/values as a `HashMap`
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Clone, PartialEq)]
 pub struct StreamId {
     /// The stream `id` (entry ID) of this particular message.
     pub id: String,
@@ -741,34 +745,59 @@ impl FromRedisValue for StreamAutoClaimReply {
         };
         // safe, because we've checked for length beforehand
         let claimed = items.pop().unwrap();
+        let next_stream_id = from_redis_value(items.pop().unwrap())?;
 
-        let claimed: Vec<StreamId> = match &claimed {
-            // JUSTID response
-            Value::Array(x) if matches!(x.first(), None | Some(Value::BulkString(_))) => {
-                let ids: Vec<String> = from_redis_value(claimed)?;
+        let Value::Array(arr) = &claimed else {
+            invalid_type_error!("Incorrect type", claimed)
+        };
+        let Some(entry) = arr.iter().find(|val| !matches!(val, Value::Nil)) else {
+            return Ok(Self {
+                next_stream_id,
+                claimed: Vec::new(),
+                deleted_ids,
+                invalid_entries: !arr.is_empty(),
+            });
+        };
+        let (claimed, invalid_entries) = match entry {
+            Value::BulkString(_) => {
+                // JUSTID response
+                let claimed_count = arr.len();
+                let ids: Vec<Option<String>> = from_redis_value(claimed)?;
 
-                ids.into_iter()
-                    .map(|id| StreamId {
-                        id,
-                        ..Default::default()
+                let claimed: Vec<_> = ids
+                    .into_iter()
+                    .filter_map(|id| {
+                        id.map(|id| StreamId {
+                            id,
+                            ..Default::default()
+                        })
                     })
-                    .collect()
+                    .collect();
+                // This means that some nil entries were filtered
+                let invalid_entries = claimed.len() < claimed_count;
+                (claimed, invalid_entries)
             }
-            // full response
-            Value::Array(x) if matches!(x.first(), Some(Value::Array(_))) => {
+            Value::Array(_) => {
+                // full response
+                let claimed_count = arr.len();
                 let rows: SACRows = from_redis_value(claimed)?;
 
-                rows.into_iter()
-                    .flat_map(|id_row| id_row.into_iter().map(|(id, map)| StreamId { id, map }))
-                    .collect()
+                let claimed: Vec<_> = rows
+                    .into_iter()
+                    .flat_map(|row| row.into_iter().map(|(id, map)| StreamId { id, map }))
+                    .collect();
+                // This means that some nil entries were filtered
+                let invalid_entries = claimed.len() < claimed_count;
+                (claimed, invalid_entries)
             }
             _ => invalid_type_error!("Incorrect type", claimed),
         };
 
         Ok(Self {
-            next_stream_id: from_redis_value(items.pop().unwrap())?,
+            next_stream_id,
             claimed,
             deleted_ids,
+            invalid_entries,
         })
     }
 }

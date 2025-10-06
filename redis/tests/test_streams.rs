@@ -544,6 +544,25 @@ fn test_xread_options_deleted_pel_entry() {
     );
 }
 
+fn create_group_add_and_read(con: &mut Connection) -> StreamReadReply {
+    con.flushall().unwrap();
+    let result = con.xgroup_create_mkstream("k1", "g1", "$");
+    assert!(result.is_ok());
+
+    xadd_keyrange(con, "k1", 0, 10);
+
+    let reply = con
+        .xread_options(
+            &["k1"],
+            &[">"],
+            &StreamReadOptions::default().group("g1", "c1"),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(reply.keys[0].ids.len(), 10);
+    reply
+}
+
 #[test]
 fn test_xautoclaim() {
     // Tests the following command....
@@ -558,24 +577,7 @@ fn test_xautoclaim() {
     // 3. then we need to sleep 5ms and call xautoclaim to claim message
     //    past the idle time and read them from a different consumer
 
-    // create the group
-    let result = con.xgroup_create_mkstream("k1", "g1", "$");
-    assert!(result.is_ok());
-
-    // add some keys
-    xadd_keyrange(&mut con, "k1", 0, 10);
-
-    // read the pending items for this key & group
-    let reply = con
-        .xread_options(
-            &["k1"],
-            &[">"],
-            &StreamReadOptions::default().group("g1", "c1"),
-        )
-        .unwrap()
-        .unwrap();
-    // verify we have 10 ids
-    assert_eq!(reply.keys[0].ids.len(), 10);
+    let reply = create_group_add_and_read(&mut con);
 
     // save this StreamId for later
     let claim = &reply.keys[0].ids[0];
@@ -642,24 +644,7 @@ fn test_xclaim() {
     // 4. from here we should be able to claim message
     //    past the idle time and read them from a different consumer
 
-    // create the group
-    let result = con.xgroup_create_mkstream("k1", "g1", "$");
-    assert!(result.is_ok());
-
-    // add some keys
-    xadd_keyrange(&mut con, "k1", 0, 10);
-
-    // read the pending items for this key & group
-    let reply = con
-        .xread_options(
-            &["k1"],
-            &[">"],
-            &StreamReadOptions::default().group("g1", "c1"),
-        )
-        .unwrap()
-        .unwrap();
-    // verify we have 10 ids
-    assert_eq!(reply.keys[0].ids.len(), 10);
+    let reply = create_group_add_and_read(&mut con);
 
     // save this StreamId for later
     let claim = &reply.keys[0].ids[0];
@@ -1954,4 +1939,126 @@ fn test_xrevrange() {
 
     let reply = con.xrevrange_count("k1", "+", "-", 1).unwrap();
     assert_eq!(reply.ids.len(), 1);
+}
+
+#[test]
+fn test_xautoclaim_invalid_pel_entries_claiming_full_entries() {
+    // The Redis PEL can include stale entries that have been deleted from the stream,
+    // due to either data corruption or client error.
+    // Redis v6 behaves differently from Redis v7 when encountering these invalid entries.
+    // We support v6, so we must ensure that stale entries do not cause a deserialization error.
+    // See https://github.com/redis-rs/redis-rs/issues/1798
+    // Note that this issue also applies to xclaim.
+
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    // xautoclaim-invalid basic idea:
+    // 1. add messages to a group
+    // 2. read the messages, but do not xack them
+    // 3. delete the messages from the stream
+    // 4. call xautoclaim
+
+    let reply = create_group_add_and_read(&mut con);
+
+    // save this StreamId for later
+    let claim = &reply.keys[0].ids[0];
+    let claim_1 = &reply.keys[0].ids[1];
+    let claimed_entries = vec![reply.keys[0].ids[2].clone(), reply.keys[0].ids[3].clone()];
+
+    // delete the messages from the stream
+    let _ = con.xdel("k1", &[claim.id.clone(), claim_1.id.clone()]);
+    sleep(Duration::from_millis(5));
+
+    let reply = con
+        .xautoclaim_options(
+            "k1",
+            "g1",
+            "c2",
+            1,
+            claim.id.clone(),
+            StreamAutoClaimOptions::default().count(4),
+        )
+        .unwrap();
+    assert_eq!(reply.claimed, claimed_entries);
+
+    if ctx.get_version().0 > 6 {
+        assert_eq!(
+            reply.deleted_ids,
+            vec![claim.id.clone(), claim_1.id.clone()]
+        );
+    } else {
+        assert_eq!(reply.deleted_ids.len(), 0);
+        assert!(reply.invalid_entries);
+    }
+}
+
+#[test]
+fn test_xautoclaim_invalid_pel_entries_claiming_just_ids() {
+    // The Redis PEL can include stale entries that have been deleted from the stream,
+    // due to either data corruption or client error.
+    // Redis v6 behaves differently from Redis v7 when encountering these invalid entries.
+    // We support v6, so we must ensure that stale entries do not cause a deserialization error.
+    // See https://github.com/redis-rs/redis-rs/issues/1798
+    // Note that this issue also applies to xclaim.
+
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    // xautoclaim-invalid basic idea:
+    // 1. add messages to a group
+    // 2. read the messages, but do not xack them
+    // 3. delete the messages from the stream
+    // 4. call xautoclaim
+
+    let reply = create_group_add_and_read(&mut con);
+
+    // save this StreamId for later
+    let claim = &reply.keys[0].ids[0];
+    let claim_1 = &reply.keys[0].ids[1];
+    let mut claimed_entries = vec![reply.keys[0].ids[2].clone(), reply.keys[0].ids[3].clone()];
+
+    // delete the messages from the stream
+    let _ = con.xdel("k1", &[claim.id.clone(), claim_1.id.clone()]);
+    sleep(Duration::from_millis(5));
+
+    let reply = con
+        .xautoclaim_options(
+            "k1",
+            "g1",
+            "c2",
+            1,
+            claim.id.clone(),
+            StreamAutoClaimOptions::default().count(4).with_justid(),
+        )
+        .unwrap();
+    // we expect to receive just IDs, so we remove the maps
+    std::mem::take(&mut claimed_entries[0].map);
+    std::mem::take(&mut claimed_entries[1].map);
+
+    if ctx.get_version().0 > 6 {
+        assert_eq!(reply.claimed, claimed_entries);
+        assert_eq!(
+            reply.deleted_ids,
+            vec![claim.id.clone(), claim_1.id.clone()]
+        );
+    } else {
+        // on redis 6, the deleted entries appear when passing JUSTID
+        claimed_entries.insert(
+            0,
+            StreamId {
+                id: claim.id.clone(),
+                map: Default::default(),
+            },
+        );
+        claimed_entries.insert(
+            1,
+            StreamId {
+                id: claim_1.id.clone(),
+                map: Default::default(),
+            },
+        );
+        assert_eq!(reply.claimed, claimed_entries);
+        assert_eq!(reply.deleted_ids.len(), 0);
+    }
 }
