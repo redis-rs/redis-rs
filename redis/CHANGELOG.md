@@ -1,4 +1,4 @@
-### 1.0.0-alpha.3
+### 1.0.0-rc.0
 
 #### Changes
 
@@ -7,7 +7,7 @@
 * Handle server errors more robustly in async aggregate responses. ([#1820](https://github.com/redis-rs/redis-rs/pull/1820) by @nihohit)
 * Fixed deserialization of autoclaim messages in Redis 6 ([#1822](https://github.com/redis-rs/redis-rs/pull/1822) by @nihohit)
 
-### 1.0.0-alpha.2 (2025-10-02)
+### 1.0.0-rc.0 (2025-10-02)
 
 #### Changes
 
@@ -39,9 +39,6 @@
 * Make FromRedisValue take an owned value by default([#1784](https://github.com/redis-rs/redis-rs/pull/1784) by @nihohit)
 * Enable more ways to build a parsing error([#1788](https://github.com/redis-rs/redis-rs/pull/1788) by @nihohit)
 * Require single arguments for some calls ([#1792](https://github.com/redis-rs/redis-rs/pull/1792) by @nihohit)
-* Mark all public enums as non_exhaustive ([#1817](https://github.com/redis-rs/redis-rs/pull/1817) by @nihohit)
-* Enable sync build for Webassembly ([#1818](https://github.com/redis-rs/redis-rs/pull/1818) by @nihohit)
-* Handle server errors more robustly in async aggregate responses. ([#1820](https://github.com/redis-rs/redis-rs/pull/1820) by @nihohit)
 
 ### 0.32.7 (2025-10-03)
 
