@@ -1,3 +1,9 @@
+### 1.0.0-rc.1
+
+#### Changes
+
+* Fix ToSingleRedisArg visiblity ([#1824](https://github.com/redis-rs/redis-rs/pull/1824) by @nihohit)
+
 ### 1.0.0-rc.0
 
 #### Changes
