@@ -1895,10 +1895,11 @@ impl_from_redis_value_for_map!(
     where (K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default)
 );
 
+// `AHashMap::default` is not generic over `S` param so we can't be generic over it as well.
 #[cfg(feature = "ahash")]
 impl_from_redis_value_for_map!(
-    for <K, V> ahash::AHashMap<K, V, S>,
-    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default)
+    for <K, V> ahash::AHashMap<K, V>,
+    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue)
 );
 
 macro_rules! impl_from_redis_value_for_set {
@@ -1945,10 +1946,11 @@ impl_from_redis_value_for_set!(
     where (T: FromRedisValue + Eq + Hash, S: BuildHasher + Default)
 );
 
+// `AHashSet::from_iter` is not generic over `S` param so we can't be generic over it as well.
 #[cfg(feature = "ahash")]
 impl_from_redis_value_for_set!(
-    for <T, S> ahash::AHashSet<T, S>,
-    where (T: FromRedisValue + Eq + Hash, S: BuildHasher + Default)
+    for <T> ahash::AHashSet<T>,
+    where (T: FromRedisValue + Eq + Hash)
 );
 
 impl FromRedisValue for Value {
