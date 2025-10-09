@@ -1260,7 +1260,7 @@ macro_rules! impl_to_redis_args_for_set {
 
 impl_to_redis_args_for_set!(
     for <T, S> std::collections::HashSet<T, S>,
-    where (T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default)
+    where (T: ToRedisArgs + Hash + Eq)
 );
 
 impl_to_redis_args_for_set!(
@@ -1271,13 +1271,13 @@ impl_to_redis_args_for_set!(
 #[cfg(feature = "hashbrown")]
 impl_to_redis_args_for_set!(
     for <T, S> hashbrown::HashSet<T, S>,
-    where (T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default)
+    where (T: ToRedisArgs + Hash + Eq)
 );
 
 #[cfg(feature = "ahash")]
 impl_to_redis_args_for_set!(
     for <T, S> ahash::AHashSet<T, S>,
-    where (T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default)
+    where (T: ToRedisArgs + Hash + Eq)
 );
 
 /// @note: Redis cannot store empty maps so the application has to
@@ -1312,8 +1312,9 @@ macro_rules! impl_to_redis_args_for_map {
         }
     };
 }
+
 impl_to_redis_args_for_map!(
-    for <K, V> std::collections::HashMap<K, V>,
+    for <K, V, S> std::collections::HashMap<K, V, S>,
     where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
 );
 
@@ -1325,7 +1326,13 @@ impl_to_redis_args_for_map!(
 
 #[cfg(feature = "hashbrown")]
 impl_to_redis_args_for_map!(
-    for <K, V> hashbrown::HashMap<K, V>,
+    for <K, V, S> hashbrown::HashMap<K, V, S>,
+    where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
+);
+
+#[cfg(feature = "ahash")]
+impl_to_redis_args_for_map!(
+    for <K, V, S> ahash::AHashMap<K, V, S>,
     where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
 );
 
