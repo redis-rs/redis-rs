@@ -1884,6 +1884,11 @@ impl_from_redis_value_for_map!(
     where (K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default)
 );
 
+impl_from_redis_value_for_map!(
+    for <K, V> std::collections::BTreeMap<K, V>,
+    where (K: FromRedisValue + Eq + Hash + Ord, V: FromRedisValue)
+);
+
 #[cfg(feature = "hashbrown")]
 impl_from_redis_value_for_map!(
     for <K, V, S> hashbrown::HashMap<K, V, S>,
@@ -1892,13 +1897,8 @@ impl_from_redis_value_for_map!(
 
 #[cfg(feature = "ahash")]
 impl_from_redis_value_for_map!(
-    for <K, V> ahash::AHashMap<K, V>,
-    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue)
-);
-
-impl_from_redis_value_for_map!(
-    for <K, V> std::collections::BTreeMap<K, V>,
-    where (K: FromRedisValue + Eq + Hash + Ord, V: FromRedisValue)
+    for <K, V> ahash::AHashMap<K, V, S>,
+    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default)
 );
 
 macro_rules! impl_from_redis_value_for_set {
@@ -1947,8 +1947,8 @@ impl_from_redis_value_for_set!(
 
 #[cfg(feature = "ahash")]
 impl_from_redis_value_for_set!(
-    for <T> ahash::AHashSet<T>,
-    where (T: FromRedisValue + Eq + Hash)
+    for <T, S> ahash::AHashSet<T, S>,
+    where (T: FromRedisValue + Eq + Hash, S: BuildHasher + Default)
 );
 
 impl FromRedisValue for Value {
