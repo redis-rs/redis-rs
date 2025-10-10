@@ -1260,7 +1260,7 @@ macro_rules! impl_to_redis_args_for_set {
 
 impl_to_redis_args_for_set!(
     for <T, S> std::collections::HashSet<T, S>,
-    where (T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default)
+    where (T: ToRedisArgs + Hash + Eq)
 );
 
 impl_to_redis_args_for_set!(
@@ -1271,13 +1271,13 @@ impl_to_redis_args_for_set!(
 #[cfg(feature = "hashbrown")]
 impl_to_redis_args_for_set!(
     for <T, S> hashbrown::HashSet<T, S>,
-    where (T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default)
+    where (T: ToRedisArgs + Hash + Eq)
 );
 
 #[cfg(feature = "ahash")]
 impl_to_redis_args_for_set!(
     for <T, S> ahash::AHashSet<T, S>,
-    where (T: ToRedisArgs + Hash + Eq, S: BuildHasher + Default)
+    where (T: ToRedisArgs + Hash + Eq)
 );
 
 /// @note: Redis cannot store empty maps so the application has to
@@ -1312,8 +1312,9 @@ macro_rules! impl_to_redis_args_for_map {
         }
     };
 }
+
 impl_to_redis_args_for_map!(
-    for <K, V> std::collections::HashMap<K, V>,
+    for <K, V, S> std::collections::HashMap<K, V, S>,
     where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
 );
 
@@ -1325,7 +1326,13 @@ impl_to_redis_args_for_map!(
 
 #[cfg(feature = "hashbrown")]
 impl_to_redis_args_for_map!(
-    for <K, V> hashbrown::HashMap<K, V>,
+    for <K, V, S> hashbrown::HashMap<K, V, S>,
+    where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
+);
+
+#[cfg(feature = "ahash")]
+impl_to_redis_args_for_map!(
+    for <K, V, S> ahash::AHashMap<K, V, S>,
     where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
 );
 
@@ -1877,21 +1884,22 @@ impl_from_redis_value_for_map!(
     where (K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default)
 );
 
+impl_from_redis_value_for_map!(
+    for <K, V> std::collections::BTreeMap<K, V>,
+    where (K: FromRedisValue + Eq + Hash + Ord, V: FromRedisValue)
+);
+
 #[cfg(feature = "hashbrown")]
 impl_from_redis_value_for_map!(
     for <K, V, S> hashbrown::HashMap<K, V, S>,
     where (K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default)
 );
 
+// `AHashMap::default` is not generic over `S` param so we can't be generic over it as well.
 #[cfg(feature = "ahash")]
 impl_from_redis_value_for_map!(
     for <K, V> ahash::AHashMap<K, V>,
     where (K: FromRedisValue + Eq + Hash, V: FromRedisValue)
-);
-
-impl_from_redis_value_for_map!(
-    for <K, V> std::collections::BTreeMap<K, V>,
-    where (K: FromRedisValue + Eq + Hash + Ord, V: FromRedisValue)
 );
 
 macro_rules! impl_from_redis_value_for_set {
@@ -1938,6 +1946,7 @@ impl_from_redis_value_for_set!(
     where (T: FromRedisValue + Eq + Hash, S: BuildHasher + Default)
 );
 
+// `AHashSet::from_iter` is not generic over `S` param so we can't be generic over it as well.
 #[cfg(feature = "ahash")]
 impl_from_redis_value_for_set!(
     for <T> ahash::AHashSet<T>,
@@ -2077,18 +2086,18 @@ macro_rules! from_redis_value_for_tuple {
                     return Ok(vec![]);
                 }
 
-                if items.iter().all(|item|item.is_collection_of_len(n)) {
-                    return items.iter().map(|item|from_redis_value_ref(item)).collect();
+                if items.iter().all(|item| item.is_collection_of_len(n)) {
+                    return items.iter().map(|item| from_redis_value_ref(item)).collect();
                 }
 
                 let mut rv = Vec::with_capacity(items.len() / n);
-                if let [$($name),*] = items{
-                    rv.push(($(from_redis_value_ref($name)?),*),);
+                if let [$($name),*] = items {
+                    rv.push(($(from_redis_value_ref($name)?,)*));
                     return Ok(rv);
                 }
                 for chunk in items.chunks_exact(n) {
                     match chunk {
-                        [$($name),*] => rv.push(($(from_redis_value_ref($name)?),*),),
+                        [$($name),*] => rv.push(($(from_redis_value_ref($name)?,)*)),
                          _ => {},
                     }
                 }
@@ -2097,11 +2106,10 @@ macro_rules! from_redis_value_for_tuple {
 
             #[allow(non_snake_case, unused_variables)]
             fn from_each_redis_values(mut items: Vec<Value>) -> Vec<Result<($($name,)*), ParsingError>> {
-
                 #[allow(unused_parens)]
-                let extract = |val: ($(Result<$name, ParsingError>),*)| -> Result<($($name,)*), ParsingError> {
-                    let ($($name),*) = val;
-                    Ok(($($name?),*,))
+                let extract = |val: ($(Result<$name, ParsingError>,)*)| -> Result<($($name,)*), ParsingError> {
+                    let ($($name,)*) = val;
+                    Ok(($($name?,)*))
                 };
 
                 // hacky way to count the tuple size
@@ -2112,8 +2120,8 @@ macro_rules! from_redis_value_for_tuple {
                 if items.len() == 0 {
                     return vec![];
                 }
-                if items.iter().all(|item|item.is_collection_of_len(n)) {
-                    return items.into_iter().map(|item|from_redis_value(item).map_err(|err|err.into())).collect();
+                if items.iter().all(|item| item.is_collection_of_len(n)) {
+                    return items.into_iter().map(|item| from_redis_value(item).map_err(|err|err.into())).collect();
                 }
 
                 let mut rv = Vec::with_capacity(items.len() / n);
@@ -2124,7 +2132,7 @@ macro_rules! from_redis_value_for_tuple {
                         // in its place. This allows each `Value` to be parsed without being copied.
                         // Since `items` is consumed by this function and not used later, this replacement
                         // is not observable to the rest of the code.
-                        [$($name),*] => rv.push(extract(($(from_redis_value(std::mem::replace($name, Value::Nil)).into()),*))),
+                        [$($name),*] => rv.push(extract(($(from_redis_value(std::mem::replace($name, Value::Nil)).into(),)*))),
                          _ => unreachable!(),
                     }
                 }
@@ -2141,8 +2149,8 @@ macro_rules! from_redis_value_for_tuple {
                 if items.len() == 0 {
                     return Ok(vec![])
                 }
-                if items.iter().all(|item|item.is_collection_of_len(n)) {
-                    return items.into_iter().map(|item|from_redis_value(item)).collect();
+                if items.iter().all(|item| item.is_collection_of_len(n)) {
+                    return items.into_iter().map(|item| from_redis_value(item)).collect();
                 }
 
                 let mut rv = Vec::with_capacity(items.len() / n);
@@ -2152,7 +2160,7 @@ macro_rules! from_redis_value_for_tuple {
                         // in its place. This allows each `Value` to be parsed without being copied.
                         // Since `items` is consume by this function and not used later, this replacement
                         // is not observable to the rest of the code.
-                        [$($name),*] => rv.push(($(from_redis_value(std::mem::replace($name, Value::Nil))?),*),),
+                        [$($name),*] => rv.push(($(from_redis_value(std::mem::replace($name, Value::Nil))?,)*)),
                          _ => unreachable!(),
                     }
                 }
