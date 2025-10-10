@@ -2086,18 +2086,18 @@ macro_rules! from_redis_value_for_tuple {
                     return Ok(vec![]);
                 }
 
-                if items.iter().all(|item|item.is_collection_of_len(n)) {
-                    return items.iter().map(|item|from_redis_value_ref(item)).collect();
+                if items.iter().all(|item| item.is_collection_of_len(n)) {
+                    return items.iter().map(|item| from_redis_value_ref(item)).collect();
                 }
 
                 let mut rv = Vec::with_capacity(items.len() / n);
-                if let [$($name),*] = items{
-                    rv.push(($(from_redis_value_ref($name)?),*),);
+                if let [$($name),*] = items {
+                    rv.push(($(from_redis_value_ref($name)?,)*));
                     return Ok(rv);
                 }
                 for chunk in items.chunks_exact(n) {
                     match chunk {
-                        [$($name),*] => rv.push(($(from_redis_value_ref($name)?),*),),
+                        [$($name),*] => rv.push(($(from_redis_value_ref($name)?,)*)),
                          _ => {},
                     }
                 }
@@ -2106,11 +2106,10 @@ macro_rules! from_redis_value_for_tuple {
 
             #[allow(non_snake_case, unused_variables)]
             fn from_each_redis_values(mut items: Vec<Value>) -> Vec<Result<($($name,)*), ParsingError>> {
-
                 #[allow(unused_parens)]
-                let extract = |val: ($(Result<$name, ParsingError>),*)| -> Result<($($name,)*), ParsingError> {
-                    let ($($name),*) = val;
-                    Ok(($($name?),*,))
+                let extract = |val: ($(Result<$name, ParsingError>,)*)| -> Result<($($name,)*), ParsingError> {
+                    let ($($name,)*) = val;
+                    Ok(($($name?,)*))
                 };
 
                 // hacky way to count the tuple size
@@ -2121,8 +2120,8 @@ macro_rules! from_redis_value_for_tuple {
                 if items.len() == 0 {
                     return vec![];
                 }
-                if items.iter().all(|item|item.is_collection_of_len(n)) {
-                    return items.into_iter().map(|item|from_redis_value(item).map_err(|err|err.into())).collect();
+                if items.iter().all(|item| item.is_collection_of_len(n)) {
+                    return items.into_iter().map(|item| from_redis_value(item).map_err(|err|err.into())).collect();
                 }
 
                 let mut rv = Vec::with_capacity(items.len() / n);
@@ -2133,7 +2132,7 @@ macro_rules! from_redis_value_for_tuple {
                         // in its place. This allows each `Value` to be parsed without being copied.
                         // Since `items` is consumed by this function and not used later, this replacement
                         // is not observable to the rest of the code.
-                        [$($name),*] => rv.push(extract(($(from_redis_value(std::mem::replace($name, Value::Nil)).into()),*))),
+                        [$($name),*] => rv.push(extract(($(from_redis_value(std::mem::replace($name, Value::Nil)).into(),)*))),
                          _ => unreachable!(),
                     }
                 }
@@ -2150,8 +2149,8 @@ macro_rules! from_redis_value_for_tuple {
                 if items.len() == 0 {
                     return Ok(vec![])
                 }
-                if items.iter().all(|item|item.is_collection_of_len(n)) {
-                    return items.into_iter().map(|item|from_redis_value(item)).collect();
+                if items.iter().all(|item| item.is_collection_of_len(n)) {
+                    return items.into_iter().map(|item| from_redis_value(item)).collect();
                 }
 
                 let mut rv = Vec::with_capacity(items.len() / n);
@@ -2161,7 +2160,7 @@ macro_rules! from_redis_value_for_tuple {
                         // in its place. This allows each `Value` to be parsed without being copied.
                         // Since `items` is consume by this function and not used later, this replacement
                         // is not observable to the rest of the code.
-                        [$($name),*] => rv.push(($(from_redis_value(std::mem::replace($name, Value::Nil))?),*),),
+                        [$($name),*] => rv.push(($(from_redis_value(std::mem::replace($name, Value::Nil))?,)*)),
                          _ => unreachable!(),
                     }
                 }
