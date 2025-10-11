@@ -96,6 +96,7 @@
 //! * `script`: enables script support (enabled by default)
 //! * `streams`: enables high-level interface for interaction with Redis streams (enabled by default)
 //! * `r2d2`: enables r2d2 connection pool support (optional)
+//! * `bb8`: enables bb8 connection pool support (optional)
 //! * `ahash`: enables ahash map/set support & uses ahash internally (+7-10% performance) (optional)
 //! * `cluster`: enables redis cluster support (optional)
 //! * `cluster-async`: enables async redis cluster support (optional)
