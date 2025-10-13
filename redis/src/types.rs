@@ -140,6 +140,20 @@ pub enum Value {
     ServerError(ServerError),
 }
 
+/// Helper enum that is used to define comparisons between values and their digests
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub enum ValueComparison {
+    /// Value is equal
+    IFEQ(&'static str),
+    /// Value is not equal
+    IFNE(&'static str),
+    /// Value's digest is equal
+    IFDEQ(&'static str),
+    /// Value's digest is not equal
+    IFDNE(&'static str),
+}
+
 /// `VerbatimString`'s format types defined by spec
 #[derive(PartialEq, Clone, Debug)]
 #[non_exhaustive]

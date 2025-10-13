@@ -19,7 +19,7 @@ mod basic {
         IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply},
         ProtocolVersion, PubSubCommands, PushInfo, PushKind, RedisConnectionInfo, RedisResult,
         Role, ScanOptions, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs, TypedCommands,
-        UpdateCheck, Value, ValueType,
+        UpdateCheck, Value, ValueComparison, ValueType,
     };
 
     #[cfg(feature = "vector-sets")]
@@ -2683,6 +2683,174 @@ mod basic {
         let opts = SetOptions::default().with_expiration(SetExpiry::EX(1000));
 
         assert_args!(&opts, "EX", "1000");
+    }
+
+    #[test]
+    fn test_set_options_value_comparison() {
+        let empty = SetOptions::default();
+        assert_eq!(ToRedisArgs::to_redis_args(&empty).len(), 0);
+        const OLD_VALUE: &str = "old_value";
+        const DIGEST: &str = "digest";
+
+        // Test all value comparison options
+        let opts = SetOptions::default().value_comparison(ValueComparison::IFEQ(OLD_VALUE));
+        assert_args!(&opts, "IFEQ", OLD_VALUE);
+        let opts = SetOptions::default().value_comparison(ValueComparison::IFNE(OLD_VALUE));
+        assert_args!(&opts, "IFNE", OLD_VALUE);
+        let opts = SetOptions::default().value_comparison(ValueComparison::IFDEQ(DIGEST));
+        assert_args!(&opts, "IFDEQ", DIGEST);
+        let opts = SetOptions::default().value_comparison(ValueComparison::IFDNE(DIGEST));
+        assert_args!(&opts, "IFDNE", DIGEST);
+
+        // Test combinations with other parameters
+        let opts = SetOptions::default()
+            .conditional_set(ExistenceCheck::NX)
+            .value_comparison(ValueComparison::IFEQ(OLD_VALUE))
+            .get(true)
+            .with_expiration(SetExpiry::PX(1000));
+        assert_args!(&opts, "NX", "IFEQ", OLD_VALUE, "GET", "PX", "1000");
+        let opts = SetOptions::default()
+            .conditional_set(ExistenceCheck::XX)
+            .value_comparison(ValueComparison::IFNE(OLD_VALUE))
+            .get(true)
+            .with_expiration(SetExpiry::EX(1000));
+        assert_args!(&opts, "XX", "IFNE", OLD_VALUE, "GET", "EX", "1000");
+        let opts = SetOptions::default()
+            .conditional_set(ExistenceCheck::NX)
+            .value_comparison(ValueComparison::IFDEQ(DIGEST))
+            .get(true)
+            .with_expiration(SetExpiry::PX(1000));
+        assert_args!(&opts, "NX", "IFDEQ", DIGEST, "GET", "PX", "1000");
+        let opts = SetOptions::default()
+            .conditional_set(ExistenceCheck::XX)
+            .value_comparison(ValueComparison::IFDNE(DIGEST))
+            .get(true)
+            .with_expiration(SetExpiry::EX(1000));
+        assert_args!(&opts, "XX", "IFDNE", DIGEST, "GET", "EX", "1000");
+    }
+
+    /// The test validates the IFEQ value comparison option for the SET command
+    #[test]
+    fn test_set_value_comparison_value_equals() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let mut con = ctx.connection();
+
+        let key = "test_ifeq_key";
+        let non_existent_key = "non_existent_key";
+        let initial_value = "initial_value";
+        let updated_value = "updated_value";
+        let non_matching_value = "non_matching_value";
+
+        // Set initial value
+        assert_eq!(con.set(key, initial_value), Ok(()));
+
+        // IFEQ with matching value should succeed and update the value
+        let result = con
+            .set_options(
+                key,
+                updated_value,
+                SetOptions::default()
+                    .value_comparison(ValueComparison::IFEQ(initial_value))
+                    .get(true),
+            )
+            .unwrap();
+        // When GET is specified, the previous value is returned, regardless of the conditional (IFEQ) result
+        assert_eq!(result, Some(initial_value.to_string()));
+        // Verify that the value was updated
+        assert_eq!(con.get(key).unwrap(), Some(updated_value.to_string()));
+
+        // IFEQ with non-existent key should not create the key
+        let result = con
+            .set_options(
+                non_existent_key,
+                updated_value,
+                SetOptions::default()
+                    .value_comparison(ValueComparison::IFEQ(initial_value))
+                    .get(true),
+            )
+            .unwrap();
+        assert_eq!(result, None);
+        assert_eq!(con.exists(non_existent_key).unwrap(), false);
+
+        // IFEQ with non-matching value should not update the value
+        let result = con
+            .set_options(
+                key,
+                initial_value,
+                SetOptions::default()
+                    .value_comparison(ValueComparison::IFEQ(non_matching_value))
+                    .get(true),
+            )
+            .unwrap();
+        // When GET is specified, the previous value is returned, regardless of the conditional (IFEQ) result
+        assert_eq!(result, Some(updated_value.to_string()));
+        // Verify that the value was not updated
+        assert_eq!(con.get(key).unwrap(), Some(updated_value.to_string()));
+    }
+
+    /// The test validates the IFNE value comparison option for the SET command
+    #[test]
+    fn test_set_value_comparison_value_not_equals() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let mut con = ctx.connection();
+
+        let key = "test_ifne_key";
+        let non_existent_key = "non_existent_key";
+        let initial_value = "initial_value";
+        let updated_value = "updated_value";
+        let non_matching_value = "non_matching_value";
+
+        // Set initial value
+        assert_eq!(con.set(key, initial_value), Ok(()));
+
+        // IFNE with non-matching value should succeed and update the value
+        let result = con
+            .set_options(
+                key,
+                updated_value,
+                SetOptions::default()
+                    .value_comparison(ValueComparison::IFNE(non_matching_value))
+                    .get(true),
+            )
+            .unwrap();
+        // When GET is specified, the previous value is returned, regardless of the conditional (IFNE) result
+        assert_eq!(result, Some(initial_value.to_string()));
+        // Verify that the value was updated
+        assert_eq!(con.get(key).unwrap(), Some(updated_value.to_string()));
+
+        // IFNE with non-existent key should create the key
+        assert_eq!(con.exists(non_existent_key).unwrap(), false);
+        let result = con
+            .set_options(
+                non_existent_key,
+                initial_value,
+                SetOptions::default()
+                    .value_comparison(ValueComparison::IFNE(non_matching_value))
+                    .get(true),
+            )
+            .unwrap();
+        // When GET is specified and the key didn't exist, the result is NIL
+        assert_eq!(result, None);
+        // Verify that the key was created
+        assert_eq!(
+            con.get(non_existent_key).unwrap(),
+            Some(initial_value.to_string())
+        );
+
+        // Test IFNE with matching value should not update the value
+        let result = con
+            .set_options(
+                key,
+                initial_value,
+                SetOptions::default()
+                    .value_comparison(ValueComparison::IFNE(updated_value))
+                    .get(true),
+            )
+            .unwrap();
+        // When GET is specified, the previous value is returned, regardless of the conditional (IFNE) result
+        assert_eq!(result, Some(updated_value.to_string()));
+        // Verify that the value was not updated
+        assert_eq!(con.get(key).unwrap(), Some(updated_value.to_string()));
     }
 
     #[test]

@@ -6,6 +6,7 @@ use crate::pipeline::Pipeline;
 use crate::types::{
     ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, IntegerReplyOrNoOp,
     NumericBehavior, RedisResult, RedisWrite, SetExpiry, ToRedisArgs, ToSingleRedisArg,
+    ValueComparison,
 };
 
 #[cfg(feature = "vector-sets")]
@@ -3317,7 +3318,7 @@ impl<Db: ToString> ToSingleRedisArg for CopyOptions<Db> {}
 ///
 /// # Example
 /// ```rust,no_run
-/// use redis::{Commands, RedisResult, SetOptions, SetExpiry, ExistenceCheck};
+/// use redis::{Commands, RedisResult, SetOptions, SetExpiry, ExistenceCheck, ValueComparison};
 /// fn set_key_value(
 ///     con: &mut redis::Connection,
 ///     key: &str,
@@ -3325,6 +3326,7 @@ impl<Db: ToString> ToSingleRedisArg for CopyOptions<Db> {}
 /// ) -> RedisResult<Vec<usize>> {
 ///     let opts = SetOptions::default()
 ///         .conditional_set(ExistenceCheck::NX)
+///         .value_comparison(ValueComparison::IFEQ("old_value".to_string()))
 ///         .get(true)
 ///         .with_expiration(SetExpiry::EX(60));
 ///     con.set_options(key, value, opts)
@@ -3333,6 +3335,15 @@ impl<Db: ToString> ToSingleRedisArg for CopyOptions<Db> {}
 #[derive(Clone, Copy, Default)]
 pub struct SetOptions {
     conditional_set: Option<ExistenceCheck>,
+    /// IFEQ <match-value> - Set the key's value and expiration only if its current value is equal to <match-value>.
+    /// If the key doesn't exist, it won't be created.
+    /// IFNE <match-value> - Set the key's value and expiration only if its current value is not equal to <match-value>.
+    /// If the key doesn't exist, it will be created.
+    /// IFDEQ <match-digest> - Set the key's value and expiration only if the digest of its current value is equal to <match-digest>.
+    /// If the key doesn't exist, it won't be created.
+    /// IFDNE <match-digest> - Set the key's value and expiration only if the digest of its current value is not equal to <match-digest>.
+    /// If the key doesn't exist, it will be created.
+    value_comparison: Option<ValueComparison>,
     get: bool,
     expiration: Option<SetExpiry>,
 }
@@ -3341,6 +3352,12 @@ impl SetOptions {
     /// Set the existence check for the SET command
     pub fn conditional_set(mut self, existence_check: ExistenceCheck) -> Self {
         self.conditional_set = Some(existence_check);
+        self
+    }
+
+    /// Set the value comparison for the SET command
+    pub fn value_comparison(mut self, value_comparison: ValueComparison) -> Self {
+        self.value_comparison = Some(value_comparison);
         self
     }
 
@@ -3369,6 +3386,26 @@ impl ToRedisArgs for SetOptions {
                 }
                 ExistenceCheck::XX => {
                     out.write_arg(b"XX");
+                }
+            }
+        }
+        if let Some(ref value_comparison) = self.value_comparison {
+            match value_comparison {
+                ValueComparison::IFEQ(value) => {
+                    out.write_arg(b"IFEQ");
+                    out.write_arg(value.to_string().as_bytes());
+                }
+                ValueComparison::IFNE(value) => {
+                    out.write_arg(b"IFNE");
+                    out.write_arg(value.to_string().as_bytes());
+                }
+                ValueComparison::IFDEQ(digest) => {
+                    out.write_arg(b"IFDEQ");
+                    out.write_arg(digest.as_bytes());
+                }
+                ValueComparison::IFDNE(digest) => {
+                    out.write_arg(b"IFDNE");
+                    out.write_arg(digest.as_bytes());
                 }
             }
         }
