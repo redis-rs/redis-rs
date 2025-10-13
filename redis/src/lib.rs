@@ -680,6 +680,7 @@ pub use crate::types::{
     RedisWrite,
     ToRedisArgs,
     ToSingleRedisArg,
+    ValueComparison,
 
     // low level values
     Value,
