@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, RwLock},
+    sync::{Arc, LazyLock, RwLock},
     time::Duration,
 };
 
@@ -9,10 +9,7 @@ use redis::{
     FromRedisValue, ServerErrorKind,
 };
 
-use {
-    once_cell::sync::Lazy,
-    redis::{IntoConnectionInfo, RedisResult, Value},
-};
+use redis::{IntoConnectionInfo, RedisResult, Value};
 
 #[cfg(feature = "cluster-async")]
 use redis::{aio, cluster_async, RedisFuture};
@@ -25,7 +22,7 @@ use tokio::runtime::Runtime;
 
 type Handler = Arc<dyn Fn(&[u8], u16) -> Result<(), RedisResult<Value>> + Send + Sync>;
 
-static HANDLERS: Lazy<RwLock<HashMap<String, Handler>>> = Lazy::new(Default::default);
+static HANDLERS: LazyLock<RwLock<HashMap<String, Handler>>> = LazyLock::new(Default::default);
 
 #[derive(Clone)]
 pub struct MockConnection {

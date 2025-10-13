@@ -7,14 +7,13 @@ mod cluster_async {
         collections::HashMap,
         sync::{
             atomic::{self, AtomicBool, AtomicI32, AtomicU16, AtomicU32, Ordering},
-            Arc,
+            Arc, LazyLock,
         },
         time::Duration,
     };
 
     use futures::prelude::*;
     use futures_time::{future::FutureExt, task::sleep};
-    use once_cell::sync::Lazy;
 
     use redis::{
         aio::{ConnectionLike, MultiplexedConnection},
@@ -543,7 +542,7 @@ mod cluster_async {
         );
     }
 
-    static ERROR: Lazy<AtomicBool> = Lazy::new(Default::default);
+    static ERROR: LazyLock<AtomicBool> = LazyLock::new(Default::default);
 
     #[derive(Clone)]
     struct ErrorConnection {
