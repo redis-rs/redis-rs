@@ -247,6 +247,15 @@ struct Internals {
 #[derive(Clone)]
 pub struct ConnectionManager(Arc<Internals>);
 
+impl std::fmt::Debug for ConnectionManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionManager")
+            .field("client", &self.0.client)
+            .field("retry_strategy", &self.0.retry_strategy)
+            .finish()
+    }
+}
+
 /// Type alias for a shared boxed future that will resolve to a `RedisResult`.
 type SharedRedisFuture<T> = Shared<BoxFuture<'static, RedisResult<T>>>;
 
