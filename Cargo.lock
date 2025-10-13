@@ -1895,7 +1895,6 @@ dependencies = [
  "lru",
  "native-tls",
  "num-bigint",
- "once_cell",
  "partial-io",
  "percent-encoding",
  "pin-project-lite",
