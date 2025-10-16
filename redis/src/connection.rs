@@ -31,7 +31,6 @@ use native_tls::{TlsConnector, TlsStream};
 use rustls::{RootCertStore, StreamOwned};
 #[cfg(feature = "tls-rustls")]
 use std::sync::Arc;
-
 use crate::PushInfo;
 
 #[cfg(all(
@@ -53,6 +52,9 @@ pub struct TlsConnParams {
     pub(crate) root_cert_store: Option<RootCertStore>,
     #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
     pub(crate) danger_accept_invalid_hostnames: bool,
+
+    #[cfg(feature = "tls-native-tls")]
+    pub(crate) tls_connector: Option<TlsConnector>,
 }
 
 static DEFAULT_PORT: u16 = 6379;
@@ -203,6 +205,7 @@ impl ConnectionAddr {
                     #[cfg(feature = "tls-rustls")]
                     root_cert_store: None,
                     danger_accept_invalid_hostnames: insecure,
+                    tls_connector: None,
                 });
             }
         }
@@ -817,15 +820,20 @@ impl ActualConnection {
                 insecure,
                 ref tls_params,
             } => {
-                let tls_connector = if insecure {
+                let tls_connector = if let Some(params) = tls_params {
+                    if let Some(tls_connector) = &params.tls_connector {
+                        // native-tls custom tls_connector (#1832)
+                        tls_connector.clone()
+                    } else {
+                        TlsConnector::builder()
+                            .danger_accept_invalid_hostnames(params.danger_accept_invalid_hostnames)
+                            .build()?
+                    }
+                } else if insecure {
                     TlsConnector::builder()
                         .danger_accept_invalid_certs(true)
                         .danger_accept_invalid_hostnames(true)
                         .use_sni(false)
-                        .build()?
-                } else if let Some(params) = tls_params {
-                    TlsConnector::builder()
-                        .danger_accept_invalid_hostnames(params.danger_accept_invalid_hostnames)
                         .build()?
                 } else {
                     TlsConnector::new()?
