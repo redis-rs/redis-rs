@@ -1136,46 +1136,6 @@ where
 {
 }
 
-impl<T: ToRedisArgs> ToRedisArgs for Vec<T> {
-    fn write_redis_args<W>(&self, out: &mut W)
-    where
-        W: ?Sized + RedisWrite,
-    {
-        ToRedisArgs::write_args_from_slice(self, out)
-    }
-
-    fn num_of_args(&self) -> usize {
-        if ToRedisArgs::is_single_vec_arg(&self[..]) {
-            return 1;
-        }
-        if self.len() == 1 {
-            self[0].num_of_args()
-        } else {
-            self.len()
-        }
-    }
-}
-
-impl<T: ToRedisArgs> ToRedisArgs for &[T] {
-    fn write_redis_args<W>(&self, out: &mut W)
-    where
-        W: ?Sized + RedisWrite,
-    {
-        ToRedisArgs::write_args_from_slice(self, out)
-    }
-
-    fn num_of_args(&self) -> usize {
-        if ToRedisArgs::is_single_vec_arg(&self[..]) {
-            return 1;
-        }
-        if self.len() == 1 {
-            self[0].num_of_args()
-        } else {
-            self.len()
-        }
-    }
-}
-
 impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
     fn write_redis_args<W>(&self, out: &mut W)
     where
@@ -1199,6 +1159,38 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
             None => 0,
         }
     }
+}
+
+macro_rules! impl_write_redis_args_for_collection {
+    ($type:ty) => {
+        impl<'a, T> ToRedisArgs for $type
+        where
+            T: ToRedisArgs,
+        {
+            #[inline]
+            fn write_redis_args<W>(&self, out: &mut W)
+            where
+                W: ?Sized + RedisWrite,
+            {
+                ToRedisArgs::write_args_from_slice(self, out)
+            }
+
+            fn num_of_args(&self) -> usize {
+                if ToRedisArgs::is_single_vec_arg(&self[..]) {
+                    return 1;
+                }
+                if self.len() == 1 {
+                    self[0].num_of_args()
+                } else {
+                    self.len()
+                }
+            }
+
+            fn describe_numeric_behavior(&self) -> NumericBehavior {
+                NumericBehavior::NonNumeric
+            }
+        }
+    };
 }
 
 macro_rules! deref_to_write_redis_args_impl {
@@ -1233,7 +1225,18 @@ deref_to_write_redis_args_impl! {&'a mut T}
 deref_to_write_redis_args_impl! {Box<T>}
 deref_to_write_redis_args_impl! {std::sync::Arc<T>}
 deref_to_write_redis_args_impl! {std::rc::Rc<T>}
+impl_write_redis_args_for_collection! {&'a [T]}
+impl_write_redis_args_for_collection! {&'a mut [T]}
+impl_write_redis_args_for_collection! {Box<[T]>}
+impl_write_redis_args_for_collection! {std::sync::Arc<[T]>}
+impl_write_redis_args_for_collection! {std::rc::Rc<[T]>}
+impl_write_redis_args_for_collection! {Vec<T>}
 impl ToSingleRedisArg for &[u8] {}
+impl ToSingleRedisArg for &mut [u8] {}
+impl ToSingleRedisArg for Vec<u8> {}
+impl ToSingleRedisArg for Box<[u8]> {}
+impl ToSingleRedisArg for std::rc::Rc<[u8]> {}
+impl ToSingleRedisArg for std::sync::Arc<[u8]> {}
 
 /// @note: Redis cannot store empty sets so the application has to
 /// check whether the set is empty and if so, not attempt to use that
