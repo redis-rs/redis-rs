@@ -418,6 +418,20 @@ mod types {
     }
 
     #[test]
+    fn test_tuple_does_not_panic_if_vec_is_wrong_size() {
+        let val = Value::Array(vec![Value::Array(vec![
+            Value::BulkString("1".into()),
+            Value::BulkString("2".into()),
+            Value::BulkString("3".into()),
+        ])]);
+        for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+            parse_mode
+                .parse_redis_value::<Vec<(u8, u8)>>(val.clone())
+                .unwrap_err();
+        }
+    }
+
+    #[test]
     fn test_hashmap() {
         use fnv::FnvHasher;
         use std::collections::HashMap;
