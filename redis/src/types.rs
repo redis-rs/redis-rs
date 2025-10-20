@@ -2098,10 +2098,10 @@ macro_rules! from_redis_value_for_tuple {
                     rv.push(($(from_redis_value_ref($name)?,)*));
                     return Ok(rv);
                 }
-                for chunk in items.chunks_exact(n) {
+                for chunk in items.chunks(n) {
                     match chunk {
                         [$($name),*] => rv.push(($(from_redis_value_ref($name)?,)*)),
-                         _ => {},
+                         _ => return Err(format!("Vector of length {} doesn't have arity of {n}", items.len()).into()),
                     }
                 }
                 Ok(rv)
@@ -2136,7 +2136,7 @@ macro_rules! from_redis_value_for_tuple {
                         // Since `items` is consumed by this function and not used later, this replacement
                         // is not observable to the rest of the code.
                         [$($name),*] => rv.push(extract(($(from_redis_value(std::mem::replace($name, Value::Nil)).into(),)*))),
-                         _ => unreachable!(),
+                         _ => return vec![Err(format!("Vector of length {} doesn't have arity of {n}", items.len()).into())],
                     }
                 }
                 rv
@@ -2164,7 +2164,7 @@ macro_rules! from_redis_value_for_tuple {
                         // Since `items` is consume by this function and not used later, this replacement
                         // is not observable to the rest of the code.
                         [$($name),*] => rv.push(($(from_redis_value(std::mem::replace($name, Value::Nil))?,)*)),
-                         _ => unreachable!(),
+                         _ => return Err(format!("Vector of length {} doesn't have arity of {n}", items.len()).into()),
                     }
                 }
                 Ok(rv)
