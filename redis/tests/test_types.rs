@@ -61,6 +61,13 @@ mod types {
         let twobytesvec = vec![bytes, bytes];
 
         assert_eq!("foo".num_of_args(), 1);
+        assert_eq!(b"foo".num_of_args(), 1);
+        let arg: &[u8] = &[1, 2, 3];
+        assert_eq!(arg.num_of_args(), 1);
+        let arg: &[u16] = &[1, 2, 3];
+        assert_eq!(arg.num_of_args(), 3);
+        let arg: &[i8] = &[1, 2, 3];
+        assert_eq!(arg.num_of_args(), 3);
         assert_eq!(sslice.num_of_args(), 1);
         assert_eq!(nestslice.num_of_args(), 1);
         assert_eq!(nestvec.num_of_args(), 1);

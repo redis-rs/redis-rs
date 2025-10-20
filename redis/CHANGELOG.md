@@ -1,4 +1,14 @@
-### 1.0.0-rc.1
+### 1.0.0-rc.2 (2025-10-20)
+
+#### Changes
+
+* Add more ToRedisArgs & FromRedisValue impls ([#1825](https://github.com/redis-rs/redis-rs/pull/1825) by @QuarticCat)
+* docs: add bb8 feature to Optional Features section ([#1826](https://github.com/redis-rs/redis-rs/pull/1826) by @tottoto)
+* Remove once_cell dependency and use std::LazyLock ([#1828](https://github.com/redis-rs/redis-rs/pull/1828) by @FalkWoldmann)
+* Implement Debug for ConnectionManager ([#1829](https://github.com/redis-rs/redis-rs/pull/1829) by @nihohit)
+* Improve support for collections, specifically [u8] ([#1835](https://github.com/redis-rs/redis-rs/pull/1835) by @nihohit)
+
+### 1.0.0-rc.1 (2025-10-06)
 
 #### Changes
 
