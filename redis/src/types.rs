@@ -2147,7 +2147,7 @@ impl FromRedisValue for () {
 
 macro_rules! from_redis_value_for_tuple {
     () => ();
-    ($(#[$meta:meta],)*$($name:ident,)+) => (
+    ($arity:expr, $(#[$meta:meta],)*$($name:ident,)+) => (
         $(#[$meta])*
         impl<$($name: FromRedisValue),*> FromRedisValue for ($($name,)*) {
             // we have local variables named T1 as dummies and those
@@ -2155,13 +2155,9 @@ macro_rules! from_redis_value_for_tuple {
             #[allow(non_snake_case, unused_variables)]
             fn from_redis_value_ref(v: &Value) -> Result<($($name,)*), ParsingError> {
                 let v = get_inner_value(v);
-                // hacky way to count the tuple size
-                let mut n = 0;
-                $(let $name = (); n += 1;)*
-
                 match *v {
                     Value::Array(ref items) => {
-                        if items.len() != n {
+                        if items.len() != $arity {
                             crate::errors::invalid_type_error!(v, "Array response of wrong dimension")
                         }
 
@@ -2172,7 +2168,7 @@ macro_rules! from_redis_value_for_tuple {
                     }
 
                     Value::Set(ref items) => {
-                        if items.len() != n {
+                        if items.len() != $arity {
                             crate::errors::invalid_type_error!(v, "Set response of wrong dimension")
                         }
 
@@ -2183,7 +2179,7 @@ macro_rules! from_redis_value_for_tuple {
                     }
 
                     Value::Map(ref items) => {
-                        if n != items.len() * 2 {
+                        if $arity != items.len() * 2 {
                             crate::errors::invalid_type_error!(v, "Map response of wrong dimension")
                         }
 
@@ -2202,12 +2198,9 @@ macro_rules! from_redis_value_for_tuple {
             #[allow(non_snake_case, unused_variables)]
             fn from_redis_value(v: Value) -> Result<($($name,)*), ParsingError> {
                 let v = get_owned_inner_value(v);
-                // hacky way to count the tuple size
-                let mut n = 0;
-                $(let $name = (); n += 1;)*
                 match v {
                     Value::Array(mut items) => {
-                        if items.len() != n {
+                        if items.len() != $arity {
                             crate::errors::invalid_type_error!(Value::Array(items), "Array response of wrong dimension")
                         }
 
@@ -2219,7 +2212,7 @@ macro_rules! from_redis_value_for_tuple {
                     }
 
                     Value::Set(mut items) => {
-                        if items.len() != n {
+                        if items.len() != $arity {
                             crate::errors::invalid_type_error!(Value::Array(items), "Set response of wrong dimension")
                         }
 
@@ -2231,7 +2224,7 @@ macro_rules! from_redis_value_for_tuple {
                     }
 
                     Value::Map(items) => {
-                        if n != items.len() * 2 {
+                        if $arity != items.len() * 2 {
                             crate::errors::invalid_type_error!(Value::Map(items), "Map response of wrong dimension")
                         }
 
@@ -2248,27 +2241,25 @@ macro_rules! from_redis_value_for_tuple {
 
             #[allow(non_snake_case, unused_variables)]
             fn from_redis_value_refs(items: &[Value]) -> Result<Vec<($($name,)*)>, ParsingError> {
-                // hacky way to count the tuple size
-                let mut n = 0;
-                $(let $name = (); n += 1;)*
                 if items.len() == 0 {
                     return Ok(vec![]);
                 }
 
-                if items.iter().all(|item| item.is_collection_of_len(n)) {
+                if items.iter().all(|item| item.is_collection_of_len($arity)) {
                     return items.iter().map(|item| from_redis_value_ref(item)).collect();
                 }
 
-                let mut rv = Vec::with_capacity(items.len() / n);
+                let mut rv = Vec::with_capacity(items.len() / $arity);
                 if let [$($name),*] = items {
                     rv.push(($(from_redis_value_ref($name)?,)*));
                     return Ok(rv);
                 }
-                for chunk in items.chunks(n) {
-                    match chunk {
-                        [$($name),*] => rv.push(($(from_redis_value_ref($name)?,)*)),
-                         _ => return Err(format!("Vector of length {} doesn't have arity of {n}", items.len()).into()),
-                    }
+                let (chunks, remainder) = items.as_chunks::<$arity>();
+                if !remainder.is_empty() {
+                    return Err(format!("Vector with length {} doesn't have arity of {}", items.len(), $arity).into());
+                }
+                for [$($name),*] in chunks {
+                    rv.push(($(from_redis_value_ref($name)?,)*));
                 }
                 Ok(rv)
             }
@@ -2281,57 +2272,52 @@ macro_rules! from_redis_value_for_tuple {
                     Ok(($($name?,)*))
                 };
 
-                // hacky way to count the tuple size
-                let mut n = 0;
-                $(let $name = (); n += 1;)*
-
                 // let mut rv = vec![];
                 if items.len() == 0 {
                     return vec![];
                 }
-                if items.iter().all(|item| item.is_collection_of_len(n)) {
+                if items.iter().all(|item| item.is_collection_of_len($arity)) {
                     return items.into_iter().map(|item| from_redis_value(item).map_err(|err|err.into())).collect();
                 }
 
-                let mut rv = Vec::with_capacity(items.len() / n);
+                let mut rv = Vec::with_capacity(items.len() / $arity);
 
-                for chunk in items.chunks_mut(n) {
-                    match chunk {
-                        // Take each element out of the chunk with `std::mem::replace`, leaving a `Value::Nil`
-                        // in its place. This allows each `Value` to be parsed without being copied.
-                        // Since `items` is consumed by this function and not used later, this replacement
-                        // is not observable to the rest of the code.
-                        [$($name),*] => rv.push(extract(($(from_redis_value(std::mem::replace($name, Value::Nil)).into(),)*))),
-                         _ => return vec![Err(format!("Vector of length {} doesn't have arity of {n}", items.len()).into())],
-                    }
+                let (chunks, remainder) = items.as_chunks_mut::<$arity>();
+                if !remainder.is_empty() {
+                    return vec![Err(format!("Vector with length {} doesn't have arity of {}", items.len(), $arity).into())];
+                }
+                for [$($name),*] in chunks {
+                    // Take each element out of the chunk with `std::mem::replace`, leaving a `Value::Nil`
+                    // in its place. This allows each `Value` to be parsed without being copied.
+                    // Since `items` is consumed by this function and not used later, this replacement
+                    // is not observable to the rest of the code.
+                    rv.push(extract(($(from_redis_value(std::mem::replace($name, Value::Nil)).into(),)*)));
                 }
                 rv
             }
 
             #[allow(non_snake_case, unused_variables)]
             fn from_redis_values(mut items: Vec<Value>) -> Result<Vec<($($name,)*)>, ParsingError> {
-                // hacky way to count the tuple size
-                let mut n = 0;
-                $(let $name = (); n += 1;)*
-
                 // let mut rv = vec![];
                 if items.len() == 0 {
                     return Ok(vec![])
                 }
-                if items.iter().all(|item| item.is_collection_of_len(n)) {
+                if items.iter().all(|item| item.is_collection_of_len($arity)) {
                     return items.into_iter().map(|item| from_redis_value(item)).collect();
                 }
 
-                let mut rv = Vec::with_capacity(items.len() / n);
-                for chunk in items.chunks_mut(n) {
-                    match chunk {
-                        // Take each element out of the chunk with `std::mem::replace`, leaving a `Value::Nil`
-                        // in its place. This allows each `Value` to be parsed without being copied.
-                        // Since `items` is consume by this function and not used later, this replacement
-                        // is not observable to the rest of the code.
-                        [$($name),*] => rv.push(($(from_redis_value(std::mem::replace($name, Value::Nil))?,)*)),
-                         _ => return Err(format!("Vector of length {} doesn't have arity of {n}", items.len()).into()),
-                    }
+                let mut rv = Vec::with_capacity(items.len() / $arity);
+
+                let (chunks, remainder) = items.as_chunks_mut::<$arity>();
+                if !remainder.is_empty() {
+                    return Err(format!("Vector with length {} doesn't have arity of {}", items.len(), $arity).into());
+                }
+                for [$($name),*] in chunks {
+                    // Take each element out of the chunk with `std::mem::replace`, leaving a `Value::Nil`
+                    // in its place. This allows each `Value` to be parsed without being copied.
+                    // Since `items` is consumed by this function and not used later, this replacement
+                    // is not observable to the rest of the code.
+                    rv.push(($(from_redis_value(std::mem::replace($name, Value::Nil))?,)*));
                 }
                 Ok(rv)
             }
@@ -2339,18 +2325,18 @@ macro_rules! from_redis_value_for_tuple {
     )
 }
 
-from_redis_value_for_tuple! { #[cfg_attr(docsrs, doc(fake_variadic))], #[doc = "This trait is implemented for tuples up to 12 items long."], T, }
-from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, }
-from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, }
-from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, }
-from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, }
-from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, }
-from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, }
-from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, }
-from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, }
-from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, }
-from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, }
-from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
+from_redis_value_for_tuple! { 1, #[cfg_attr(docsrs, doc(fake_variadic))], #[doc = "This trait is implemented for tuples up to 12 items long."], T, }
+from_redis_value_for_tuple! { 2, #[doc(hidden)], T1, T2, }
+from_redis_value_for_tuple! { 3, #[doc(hidden)], T1, T2, T3, }
+from_redis_value_for_tuple! { 4, #[doc(hidden)], T1, T2, T3, T4, }
+from_redis_value_for_tuple! { 5, #[doc(hidden)], T1, T2, T3, T4, T5, }
+from_redis_value_for_tuple! { 6, #[doc(hidden)], T1, T2, T3, T4, T5, T6, }
+from_redis_value_for_tuple! { 7, #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, }
+from_redis_value_for_tuple! { 8, #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, }
+from_redis_value_for_tuple! { 9, #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, }
+from_redis_value_for_tuple! { 10, #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, }
+from_redis_value_for_tuple! { 11, #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, }
+from_redis_value_for_tuple! { 12, #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
 
 impl FromRedisValue for InfoDict {
     fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
