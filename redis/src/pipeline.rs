@@ -110,6 +110,17 @@ impl Pipeline {
     /// NOTE: A Pipeline object may be reused after `query()` with all the commands as were inserted
     ///       to them. In order to clear a Pipeline object with minimal memory released/allocated,
     ///       it is necessary to call the `clear()` before inserting new commands.
+    ///
+    /// NOTE: This method returns a collection of results, even when there's only a sinle response.
+    ///       Make sure to wrap single-result values in a collection. For example:
+    ///
+    /// ```rust,no_run
+    /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    /// # let mut con = client.get_connection().unwrap();
+    /// let (k1,): (i32,) = redis::pipe()
+    ///     .cmd("SET").arg("key_1").arg(42).ignore()
+    ///     .cmd("GET").arg("key_1").query(&mut conn).unwrap();
+    /// ```
     #[inline]
     pub fn query<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
         if !con.supports_pipelining() {
