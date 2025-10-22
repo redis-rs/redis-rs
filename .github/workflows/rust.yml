@@ -120,9 +120,9 @@ jobs:
             # Different DB cases:
             { db-org: redis, db-name: redis, db-version: 6.2.13 },
             { db-org: redis, db-name: redis, db-version: 7.2.4 },
-            { db-org: valkey-io, db-name: valkey, db-version: 7.2.6 },
             { db-org: valkey-io, db-name: valkey, db-version: 8.0.1 },
-            { db-org: redis, db-name: redis, db-version: 8.0.2 },
+            { db-org: redis, db-name: redis, db-version: 8.2.2 },
+            { db-org: valkey-io, db-name: valkey, db-version: 9.0.0 },
           ]
 
     steps:
