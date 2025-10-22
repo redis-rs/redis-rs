@@ -94,7 +94,7 @@ impl Client {
     /// ```no_run
     /// use std::{fs::File, io::{BufReader, Read}};
     ///
-    /// use redis::{Client, AsyncCommands as _, TlsCertificates, ClientTlsConfig};
+    /// use redis::{Client, AsyncTypedCommands as _, TlsCertificates, ClientTlsConfig};
     ///
     /// async fn do_redis_code(
     ///     url: &str,
