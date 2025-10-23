@@ -370,7 +370,7 @@
 //! # Ok(()) }
 //! ```
 //!
-//! NOTE: Pipelines return a collection of results, even when there's only a sinle response.
+//! NOTE: Pipelines return a collection of results, even when there's only a single response.
 //!       Make sure to wrap single-result pipeline responses in a collection. For example:
 //!
 //! ```rust,no_run
