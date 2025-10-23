@@ -119,7 +119,7 @@ impl Pipeline {
     /// # let mut con = client.get_connection().unwrap();
     /// let (k1,): (i32,) = redis::pipe()
     ///     .cmd("SET").arg("key_1").arg(42).ignore()
-    ///     .cmd("GET").arg("key_1").query(&mut conn).unwrap();
+    ///     .cmd("GET").arg("key_1").query(&mut con).unwrap();
     /// ```
     #[inline]
     pub fn query<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
