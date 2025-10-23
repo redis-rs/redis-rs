@@ -111,7 +111,7 @@ impl Pipeline {
     ///       to them. In order to clear a Pipeline object with minimal memory released/allocated,
     ///       it is necessary to call the `clear()` before inserting new commands.
     ///
-    /// NOTE: This method returns a collection of results, even when there's only a sinle response.
+    /// NOTE: This method returns a collection of results, even when there's only a single response.
     ///       Make sure to wrap single-result values in a collection. For example:
     ///
     /// ```rust,no_run
