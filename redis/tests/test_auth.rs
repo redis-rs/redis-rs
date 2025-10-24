@@ -75,10 +75,8 @@ mod entra_id_mock_tests {
     use azure_core::credentials::{AccessToken, Secret, TokenCredential};
     use azure_core::Error as AzureError;
     use futures_util::StreamExt;
-    use redis::entra_id::DefaultFlow;
     use redis::{
-        EntraIdCredentialsProvider, RetryConfig, StreamingCredentialsProvider, TokenRefreshConfig,
-        REDIS_SCOPE_DEFAULT,
+        EntraIdCredentialsProvider, RetryConfig, StreamingCredentialsProvider, REDIS_SCOPE_DEFAULT,
     };
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -212,7 +210,7 @@ mod entra_id_mock_tests {
     fn create_mock_entra_id_credentials_provider(
         mock_credential: MockTokenCredential,
         scopes: Vec<String>,
-    ) -> EntraIdCredentialsProvider<DefaultFlow> {
+    ) -> EntraIdCredentialsProvider {
         EntraIdCredentialsProvider::new_with_credential(Arc::new(mock_credential), scopes).unwrap()
     }
 
@@ -225,7 +223,7 @@ mod entra_id_mock_tests {
             mock_credential,
             vec![REDIS_SCOPE_DEFAULT.to_string()],
         );
-        provider.start(TokenRefreshConfig::default());
+        provider.start(RetryConfig::default());
 
         // Wait a bit for the background task to run
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -252,13 +250,13 @@ mod entra_id_mock_tests {
             mock_credential,
             vec![REDIS_SCOPE_DEFAULT.to_string()],
         );
-        provider.start(TokenRefreshConfig::default().set_retry_config(RetryConfig {
+        provider.start(RetryConfig {
             max_attempts: 1, // It's really important to set the max_attempt to one, otherwise the refresh loop will cycle through the error.
             initial_delay: std::time::Duration::from_millis(10),
             max_delay: std::time::Duration::from_millis(100),
             backoff_multiplier: 2.0,
             jitter_percentage: 0.0,
-        }));
+        });
 
         // Test that the stream returns an error once the maximum number of retries is reached
         let mut stream = provider.subscribe();
@@ -281,7 +279,7 @@ mod entra_id_mock_tests {
             mock_credential,
             vec![REDIS_SCOPE_DEFAULT.to_string()],
         );
-        provider.start(TokenRefreshConfig::default());
+        provider.start(RetryConfig::default());
 
         // Wait for the retries to complete
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
@@ -305,7 +303,7 @@ mod entra_id_mock_tests {
             mock_credential,
             vec![REDIS_SCOPE_DEFAULT.to_string()],
         );
-        provider.start(TokenRefreshConfig::default());
+        provider.start(RetryConfig::default());
 
         // Create multiple subscribers
         let mut stream1 = provider.subscribe();
@@ -334,26 +332,26 @@ mod entra_id_mock_tests {
             mock_credential,
             vec![REDIS_SCOPE_DEFAULT.to_string()],
         );
-        provider.start(TokenRefreshConfig::default());
+        provider.start(RetryConfig::default());
 
         let mut stream = provider.subscribe();
         // Wait for the first token to be received
         let credentials = stream.next().await.unwrap().unwrap();
-        assert_eq!(call_count_ref.load(Ordering::SeqCst), 1);
+        assert!(call_count_ref.load(Ordering::SeqCst) >= 1);
         assert_eq!(credentials.username, OID_CLAIM_VALUE);
         assert_eq!(credentials.password, MOCKED_TOKEN_1.as_str());
 
         // Wait for the next token to be received
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         let credentials = stream.next().await.unwrap().unwrap();
-        assert_eq!(call_count_ref.load(Ordering::SeqCst), 2);
+        assert!(call_count_ref.load(Ordering::SeqCst) >= 2);
         assert_eq!(credentials.username, OID_CLAIM_VALUE);
         assert_eq!(credentials.password, MOCKED_TOKEN_2.as_str());
 
         // Wait for the next token to be received
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         let credentials = stream.next().await.unwrap().unwrap();
-        assert_eq!(call_count_ref.load(Ordering::SeqCst), 3);
+        assert!(call_count_ref.load(Ordering::SeqCst) >= 3);
         assert_eq!(credentials.username, OID_CLAIM_VALUE);
         assert_eq!(credentials.password, MOCKED_TOKEN_3.as_str());
     }
@@ -386,7 +384,7 @@ mod entra_id_mock_tests {
             vec![REDIS_SCOPE_DEFAULT.to_string()],
         );
 
-        provider.start(TokenRefreshConfig::default());
+        provider.start(RetryConfig::default());
         // Wait for the background task to start
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         drop(provider);

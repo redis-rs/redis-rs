@@ -176,14 +176,14 @@ redis = { version = "0.32.7", features = ["entra-id", "tokio-comp"] }
 ### Basic Usage
 
 ```rust
-use redis::{Client, Commands, EntraIdCredentialsProvider, TokenRefreshConfig};
+use redis::{Client, Commands, EntraIdCredentialsProvider, RetryConfig};
 
 #[tokio::main]
 async fn main() -> redis::RedisResult<()> {
     // Create credentials provider using DefaultAzureCredential
     let mut provider = EntraIdCredentialsProvider::new_default()?;
     // Start the background refresh service, which will automatically refresh the token
-    provider.start(TokenRefreshConfig::default());
+    provider.start(RetryConfig::default());
 
     // Create Redis client with credentials provider
     let client = Client::open("redis://your-redis-instance.com:6380")?
@@ -223,6 +223,8 @@ async fn main() -> redis::RedisResult<()> {
 ### Async-First Design
 - Full async/await support for non-blocking operations
 - Seamless integration with multiplexed connections
+
+For detailed documentation and examples, see [redis/docs/token_authentication.md](redis/docs/token_authentication.md).
 
 ## Cluster Support
 
