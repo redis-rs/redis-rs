@@ -370,6 +370,17 @@
 //! # Ok(()) }
 //! ```
 //!
+//! NOTE: Pipelines return a collection of results, even when there's only a single response.
+//!       Make sure to wrap single-result pipeline responses in a collection. For example:
+//!
+//! ```rust,no_run
+//! # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+//! # let mut con = client.get_connection().unwrap();
+//! let (k1,): (i32,) = redis::pipe()
+//!     .cmd("SET").arg("key_1").arg(42).ignore()
+//!     .cmd("GET").arg("key_1").query(&mut con).unwrap();
+//! ```
+//!
 //! # Transactions
 //!
 //! Transactions are available through atomic pipelines.  In order to use
