@@ -655,9 +655,7 @@ pub use crate::connection::{
     IntoConnectionInfo, Msg, PubSub, RedisConnectionInfo, TlsMode,
 };
 #[cfg(feature = "entra-id")]
-pub use crate::entra_id::{
-    ClientCertificateConfig, EntraIdCredentialsProvider, REDIS_SCOPE_DEFAULT,
-};
+pub use crate::entra_id::{ClientCertificate, EntraIdCredentialsProvider, REDIS_SCOPE_DEFAULT};
 pub use crate::parser::{parse_redis_value, Parser};
 pub use crate::pipeline::Pipeline;
 

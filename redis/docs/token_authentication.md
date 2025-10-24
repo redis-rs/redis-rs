@@ -47,13 +47,13 @@ redis = { version = "0.32.7", features = ["entra-id", "tokio-comp"] }
 ### 2. Basic Usage with DefaultAzureCredential
 
 ```rust
-use redis::{Client, EntraIdCredentialsProvider, TokenRefreshConfig};
+use redis::{Client, EntraIdCredentialsProvider, RetryConfig};
 
 #[tokio::main]
 async fn main() -> redis::RedisResult<()> {
     // Create credentials provider using DefaultAzureCredential
     let mut provider = EntraIdCredentialsProvider::new_default()?;
-    provider.start(TokenRefreshConfig::default());
+    provider.start(RetryConfig::default());
     
     // Create Redis client with credentials provider
     let client = Client::open("redis://your-redis-instance.com:6380")?
@@ -102,22 +102,23 @@ let provider = EntraIdCredentialsProvider::new_client_secret(
 For enhanced security:
 
 ```rust
-use redis::ClientCertificateConfig;
+use redis::ClientCertificate;
 use std::fs;
 
-// Load certificate and private key from files
-let certificate_pem = fs::read_to_string("path/to/certificate.pem")?;
-let private_key_pem = fs::read_to_string("path/to/private_key.pem")?;
+// Load certificate from file
+let certificate_base64 = fs::read_to_string("path/to/base64_pkcs12_certificate")
+    .expect("Base64 PKCS12 certificate not found.")
+    .trim()
+    .to_string();
 
-let cert_config = ClientCertificateConfig {
-    certificate_pem,
-    private_key_pem,
-};
-
+// Create credentials provider using service principal with client certificate
 let provider = EntraIdCredentialsProvider::new_client_certificate(
     "your-tenant-id".to_string(),
     "your-client-id".to_string(),
-    cert_config,
+    ClientCertificate {
+        base64_pkcs12: certificate_base64, // Base64 encoded PKCS12 data
+        password: None,
+    },
 )?;
 ```
 
@@ -138,40 +139,37 @@ let provider = EntraIdCredentialsProvider::new_user_assigned_managed_identity(
 ## Advanced Configuration
 
 ### TokenRefreshConfig
+The `TokenRefreshConfig` allows further customization of the token refresh behavior, based on the token's expiration time, when applicable.
 
 - `expiration_refresh_ratio`: Fraction of token lifetime before refresh (0.0-1.0)
 - `retry_config`: Configuration for retry behavior on failures
 
 ### RetryConfig
 
-- `max_attempts`: Maximum number of retry attempts
-- `initial_delay`: Initial delay before first retry
-- `max_delay`: Maximum delay between retries
-- `backoff_multiplier`: Exponential backoff multiplier
-- `jitter_percentage`: Random jitter percentage (0.0-1.0)
+Configuration for handling failed token refresh attempts.
+
+- `max_attempts`: Maximum number of retry attempts for token refresh.
+- `initial_delay`: Initial delay before attempting to refresh the token after a failure. Subsequent retries use exponential backoff based on this value.
+- `max_delay`: Upper bound for retry delays to prevent excessively long waits. Delays will never exceed this value, even with exponential backoff.
+- `backoff_multiplier`: Growth factor for exponential backoff (typically 2.0 for doubling). Each retry delay is multiplied by this value: `delay = delay * backoff_multiplier`.
+- `jitter_percentage`: Random variation added to delays as a fraction of the calculated delay (0.0 to 1.0). For example, 0.5 means up to ±50% variation to prevent synchronized retries.
 
 ### Token Refresh with Custom Configuration
-
-The token refresh behavior can be customized by providing a `TokenRefreshConfig` or a `RetryConfig`, based on the AuthenticationFlow, when starting the provider:
+The token refresh behavior can be customized by providing a `RetryConfig` when starting the provider:
 
 ```rust
-use redis::{TokenRefreshConfig, RetryConfig};
+use redis::RetryConfig;
 use std::time::Duration;
 
 let mut provider = EntraIdCredentialsProvider::new_default()?;
 
-let config = TokenRefreshConfig {
-    expiration_refresh_ratio: 0.75, // Refresh at 75% of token lifetime
-    retry_config: RetryConfig {
-        max_attempts: 3,
-        initial_delay: Duration::from_millis(200),
-        max_delay: Duration::from_secs(30),
-        backoff_multiplier: 2.0,
-        jitter_percentage: 0.1,
-    },
-};
-
-provider.start(config);
+provider.start(RetryConfig {
+    max_attempts: 3,
+    initial_delay: Duration::from_millis(100),
+    max_delay: Duration::from_secs(30),
+    backoff_multiplier: 2.0,
+    jitter_percentage: 0.1,
+});
 ```
 
 ## Error Handling
@@ -188,17 +186,12 @@ Once the maximum number of attempts is reached, the service will stop retrying a
 - **Production Services**: Service Principal with certificate
 - **Azure-hosted Apps**: Managed Identity
 
-### 2. Configure Appropriate Refresh Ratios
-
-- **High-frequency apps**: 0.5-0.7 (refresh early)
-- **Low-frequency apps**: 0.8-0.9 (refresh later)
-
-### 3. Handle Token Expiration
+### 2. Handle Token Expiration
 
 - Use background refresh services for long-running applications
 - Implement proper error handling for authentication failures
 
-### 4. Security Considerations
+### 3. Security Considerations
 
 - Store client secrets securely (Azure Key Vault, environment variables)
 - Use certificates instead of secrets when possible

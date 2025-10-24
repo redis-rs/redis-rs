@@ -4,8 +4,8 @@ use std::time::{Duration, SystemTime};
 /// Configuration for token refresh behavior
 #[derive(Debug, Clone)]
 pub struct TokenRefreshConfig {
-    /// Fraction of token lifetime after which refresh should be triggered (0.0 to 1.0)
-    /// For example, 0.8 means refresh when 80% of the token's lifetime has elapsed
+    /// Fraction of token lifetime after which refresh should be triggered (0.0 to 1.0).
+    /// For example, 0.8 means refresh when 80% of the token's lifetime has elapsed.
     pub expiration_refresh_ratio: f64,
     /// Retry configuration for failed refresh attempts
     pub retry_config: RetryConfig,
@@ -34,18 +34,22 @@ impl Default for TokenRefreshConfig {
     }
 }
 
-/// Configuration for retry behavior when token refresh fails
+/// Configuration for handling failed token refresh attempts
 #[derive(Debug, Clone)]
 pub struct RetryConfig {
-    /// Maximum number of retry attempts
+    /// Maximum number of retry attempts for token refresh.
     pub max_attempts: u32,
-    /// Initial delay before first retry
+    /// Initial delay before attempting to refresh the token after a failure.
+    /// Subsequent retries use exponential backoff based on this value.
     pub initial_delay: Duration,
-    /// Maximum delay between retries
+    /// Upper bound for retry delays to prevent excessively long waits.
+    /// Delays will never exceed this value, even with exponential backoff.
     pub max_delay: Duration,
-    /// Multiplier for exponential backoff
+    /// Growth factor for exponential backoff (typically 2.0 for doubling).
+    /// Each retry delay is multiplied by this value: `delay = delay * backoff_multiplier`.
     pub backoff_multiplier: f64,
-    /// Maximum random jitter as a percentage of the delay (0.0 to 1.0)
+    /// Random variation added to delays as a fraction of the calculated delay (0.0 to 1.0).
+    /// For example, 0.5 means up to ±50% variation to prevent synchronized retries.
     pub jitter_percentage: f64,
 }
 
