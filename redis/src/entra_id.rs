@@ -14,12 +14,12 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use redis::{Client, EntraIdCredentialsProvider, TokenRefreshConfig};
+//! use redis::{Client, EntraIdCredentialsProvider, RetryConfig};
 //!
 //! # async fn example() -> redis::RedisResult<()> {
 //! // Create credentials provider using DefaultAzureCredential
 //! let mut provider = EntraIdCredentialsProvider::new_default()?;
-//! provider.start(TokenRefreshConfig::default());
+//! provider.start(RetryConfig::default());
 //!
 //! // Create Redis client with credentials provider
 //! let client = Client::open("redis://your-redis-instance.com:6380")?
@@ -45,52 +45,47 @@ use crate::auth::StreamingCredentialsProvider;
 use crate::auth_management::credentials_management_utils;
 use crate::errors::{ErrorKind, RedisError};
 use crate::types::RedisResult;
-use crate::{RetryConfig, TokenRefreshConfig};
+use crate::RetryConfig;
 use azure_core::credentials::{AccessToken, TokenCredential};
 use azure_identity::{
     ClientCertificateCredential, ClientSecretCredential, DefaultAzureCredential,
     ManagedIdentityCredential, TokenCredentialOptions, UserAssignedId,
 };
 use futures_util::{Stream, StreamExt};
-use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::SystemTime;
 use time::OffsetDateTime;
 use tokio::sync::mpsc::Sender;
 
 /// The default Redis scope for Azure Managed Redis
 pub const REDIS_SCOPE_DEFAULT: &str = "https://redis.azure.com/.default";
 
-/// Configuration for client certificate authentication
+/// A client certificate in PKCS12 (PFX) that can be used for client certificate authentication.
+///
+/// The certificate data should be base64-encoded PKCS12 content.
+/// If the PKCS12 archive is password-protected, provide the password via `password`.
 #[derive(Debug, Clone)]
-pub struct ClientCertificateConfig {
-    /// The client certificate in PEM format
-    pub certificate_pem: String,
-    /// The private key in PEM format
-    pub private_key_pem: String,
+pub struct ClientCertificate {
+    /// Base64-encoded PKCS12 certificate data
+    pub base64_pkcs12: String,
+    /// The certificate's password if any
+    pub password: Option<String>,
 }
 
 type Subscriptions = Vec<Arc<Sender<RedisResult<BasicAuth>>>>;
 type SharedSubscriptions = Arc<Mutex<Subscriptions>>;
 
-/// Type that serves as a placeholder for various authentication flows
-pub struct DefaultFlow;
-/// Type representing the client secret authentication flow
-pub struct ClientSecretFlow;
-
 /// Entra ID credentials provider that uses Azure Identity for authentication
-pub struct EntraIdCredentialsProvider<AuthenticationFlow> {
+pub struct EntraIdCredentialsProvider {
     credential_provider: Arc<dyn TokenCredential + Send + Sync>,
     scopes: Vec<String>,
     background_handle: Option<tokio::task::JoinHandle<()>>,
     subscribers: SharedSubscriptions,
     current_credentials: Arc<RwLock<Option<BasicAuth>>>,
-    _mode: PhantomData<AuthenticationFlow>,
 }
 
 /// General methods for all authentication flows
-impl<AuthenticationFlow> EntraIdCredentialsProvider<AuthenticationFlow> {
+impl EntraIdCredentialsProvider {
     /// Validate that scopes are not empty
     fn validate_scopes(scopes: &[String]) -> RedisResult<()> {
         if scopes.is_empty() {
@@ -267,9 +262,7 @@ impl<AuthenticationFlow> EntraIdCredentialsProvider<AuthenticationFlow> {
             handle.abort();
         }
     }
-}
 
-impl EntraIdCredentialsProvider<DefaultFlow> {
     /// Create a new provider using DefaultAzureCredential
     /// This is recommended for development and will try multiple credential types
     pub fn new_default() -> RedisResult<Self> {
@@ -277,7 +270,7 @@ impl EntraIdCredentialsProvider<DefaultFlow> {
     }
 
     /// Create a new provider using DefaultAzureCredential with custom scopes
-    fn new_default_with_scopes(scopes: Vec<String>) -> RedisResult<Self> {
+    pub fn new_default_with_scopes(scopes: Vec<String>) -> RedisResult<Self> {
         Self::validate_scopes(&scopes)?;
         let credential_provider = DefaultAzureCredential::new().map_err(Self::convert_error)?;
         Ok(Self {
@@ -293,7 +286,47 @@ impl EntraIdCredentialsProvider<DefaultFlow> {
             background_handle: None,
             subscribers: Default::default(),
             current_credentials: Default::default(),
-            _mode: PhantomData,
+        })
+    }
+
+    /// Create a new provider using client secret authentication (service principal)
+    pub fn new_client_secret(
+        tenant_id: String,
+        client_id: String,
+        client_secret: String,
+    ) -> RedisResult<Self> {
+        Self::new_client_secret_with_scopes(
+            tenant_id,
+            client_id,
+            client_secret,
+            vec![REDIS_SCOPE_DEFAULT.to_string()],
+        )
+    }
+
+    /// Create a new provider using client secret authentication with custom scopes
+    pub fn new_client_secret_with_scopes(
+        tenant_id: String,
+        client_id: String,
+        client_secret: String,
+        scopes: Vec<String>,
+    ) -> RedisResult<Self> {
+        Self::validate_scopes(&scopes)?;
+        let credential_provider =
+            ClientSecretCredential::new(&tenant_id, client_id, client_secret.into(), None)
+                .map_err(Self::convert_error)?;
+        Ok(Self {
+            credential_provider: Arc::new(
+                std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
+                    RedisError::from((
+                        ErrorKind::AuthenticationFailed,
+                        "Failed to unwrap credential",
+                    ))
+                })?,
+            ),
+            scopes,
+            background_handle: None,
+            subscribers: Default::default(),
+            current_credentials: Default::default(),
         })
     }
 
@@ -301,29 +334,29 @@ impl EntraIdCredentialsProvider<DefaultFlow> {
     pub fn new_client_certificate(
         tenant_id: String,
         client_id: String,
-        certificate_config: ClientCertificateConfig,
+        client_certificate: ClientCertificate,
     ) -> RedisResult<Self> {
         Self::new_client_certificate_with_scopes(
             tenant_id,
             client_id,
-            certificate_config,
+            client_certificate,
             vec![REDIS_SCOPE_DEFAULT.to_string()],
         )
     }
 
     /// Create a new provider using client certificate authentication with custom scopes
-    fn new_client_certificate_with_scopes(
+    pub fn new_client_certificate_with_scopes(
         tenant_id: String,
         client_id: String,
-        certificate_config: ClientCertificateConfig,
+        client_certificate: ClientCertificate,
         scopes: Vec<String>,
     ) -> RedisResult<Self> {
         Self::validate_scopes(&scopes)?;
         let credential_provider = ClientCertificateCredential::new(
             tenant_id,
             client_id,
-            certificate_config.certificate_pem,
-            certificate_config.private_key_pem,
+            client_certificate.base64_pkcs12,
+            client_certificate.password.unwrap_or(String::new()),
             azure_identity::ClientCertificateCredentialOptions::new(
                 TokenCredentialOptions::default(),
                 false,
@@ -343,7 +376,6 @@ impl EntraIdCredentialsProvider<DefaultFlow> {
             background_handle: None,
             subscribers: Default::default(),
             current_credentials: Default::default(),
-            _mode: PhantomData,
         })
     }
 
@@ -355,7 +387,9 @@ impl EntraIdCredentialsProvider<DefaultFlow> {
     }
 
     /// Create a new provider using system-assigned managed identity with custom scopes
-    fn new_system_assigned_managed_identity_with_scopes(scopes: Vec<String>) -> RedisResult<Self> {
+    pub fn new_system_assigned_managed_identity_with_scopes(
+        scopes: Vec<String>,
+    ) -> RedisResult<Self> {
         Self::validate_scopes(&scopes)?;
         let credential_provider =
             ManagedIdentityCredential::new(None).map_err(Self::convert_error)?;
@@ -372,7 +406,6 @@ impl EntraIdCredentialsProvider<DefaultFlow> {
             background_handle: None,
             subscribers: Default::default(),
             current_credentials: Default::default(),
-            _mode: PhantomData,
         })
     }
 
@@ -385,7 +418,7 @@ impl EntraIdCredentialsProvider<DefaultFlow> {
     }
 
     /// Create a new provider using user-assigned managed identity with custom scopes
-    fn new_user_assigned_managed_identity_with_scopes(
+    pub fn new_user_assigned_managed_identity_with_scopes(
         client_id: String,
         scopes: Vec<String>,
     ) -> RedisResult<Self> {
@@ -409,7 +442,6 @@ impl EntraIdCredentialsProvider<DefaultFlow> {
             background_handle: None,
             subscribers: Default::default(),
             current_credentials: Default::default(),
-            _mode: PhantomData,
         })
     }
 
@@ -425,63 +457,6 @@ impl EntraIdCredentialsProvider<DefaultFlow> {
             background_handle: None,
             subscribers: Default::default(),
             current_credentials: Default::default(),
-            _mode: PhantomData,
-        })
-    }
-
-    /// Start the background refresh service
-    pub fn start(&mut self, token_refresh_config: TokenRefreshConfig) {
-        self.start_refresh_service(token_refresh_config.retry_config, move |access_token| {
-            credentials_management_utils::calculate_refresh_threshold(
-                SystemTime::now(),
-                access_token.expires_on.into(),
-                token_refresh_config.expiration_refresh_ratio,
-            )
-            .unwrap_or(std::time::Duration::ZERO)
-        });
-    }
-}
-
-impl EntraIdCredentialsProvider<ClientSecretFlow> {
-    /// Create a new provider using client secret authentication (service principal)
-    pub fn new_client_secret(
-        tenant_id: String,
-        client_id: String,
-        client_secret: String,
-    ) -> RedisResult<Self> {
-        Self::new_client_secret_with_scopes(
-            tenant_id,
-            client_id,
-            client_secret,
-            vec![REDIS_SCOPE_DEFAULT.to_string()],
-        )
-    }
-
-    /// Create a new provider using client secret authentication with custom scopes
-    fn new_client_secret_with_scopes(
-        tenant_id: String,
-        client_id: String,
-        client_secret: String,
-        scopes: Vec<String>,
-    ) -> RedisResult<Self> {
-        Self::validate_scopes(&scopes)?;
-        let credential_provider =
-            ClientSecretCredential::new(&tenant_id, client_id, client_secret.into(), None)
-                .map_err(Self::convert_error)?;
-        Ok(Self {
-            credential_provider: Arc::new(
-                std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
-                    RedisError::from((
-                        ErrorKind::AuthenticationFailed,
-                        "Failed to unwrap credential",
-                    ))
-                })?,
-            ),
-            scopes,
-            background_handle: None,
-            subscribers: Default::default(),
-            current_credentials: Default::default(),
-            _mode: PhantomData,
         })
     }
 
@@ -503,11 +478,7 @@ impl EntraIdCredentialsProvider<ClientSecretFlow> {
     }
 }
 
-impl<AuthenticationFlow> StreamingCredentialsProvider
-    for EntraIdCredentialsProvider<AuthenticationFlow>
-where
-    AuthenticationFlow: Send + Sync + 'static,
-{
+impl StreamingCredentialsProvider for EntraIdCredentialsProvider {
     fn subscribe(&self) -> Pin<Box<dyn Stream<Item = RedisResult<BasicAuth>> + Send + 'static>> {
         let (tx, rx) = tokio::sync::mpsc::channel::<RedisResult<BasicAuth>>(1);
 
@@ -535,7 +506,7 @@ where
     }
 }
 
-impl<AuthenticationFlow> std::fmt::Debug for EntraIdCredentialsProvider<AuthenticationFlow> {
+impl std::fmt::Debug for EntraIdCredentialsProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EntraIdCredentialsProvider")
             .field("scopes", &self.scopes)
@@ -544,7 +515,7 @@ impl<AuthenticationFlow> std::fmt::Debug for EntraIdCredentialsProvider<Authenti
     }
 }
 
-impl<AuthenticationFlow> Drop for EntraIdCredentialsProvider<AuthenticationFlow> {
+impl Drop for EntraIdCredentialsProvider {
     fn drop(&mut self) {
         self.stop();
     }
