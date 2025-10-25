@@ -12,8 +12,7 @@ mod cluster {
     use redis::{
         cluster::{cluster_pipe, ClusterClient, ClusterConnection},
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
-        cmd, parse_redis_value, Commands, ConnectionLike, ProtocolVersion, RedisError,
-        ServerErrorKind, Value,
+        cmd, parse_redis_value, Commands, ConnectionLike, RedisError, ServerErrorKind, Value,
     };
     use redis_test::{
         cluster::{RedisCluster, RedisClusterConfiguration},
@@ -158,7 +157,7 @@ mod cluster {
 
     #[test]
     fn test_cluster_resp3() {
-        if use_protocol() == ProtocolVersion::RESP2 {
+        if !use_protocol().supports_resp3() {
             return;
         }
         let cluster = TestClusterContext::new();

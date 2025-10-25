@@ -1628,7 +1628,7 @@ mod basic {
         assert_eq!(con.publish("foo", 23), Ok(1));
 
         thread.join().expect("Something went wrong");
-        if ctx.protocol == ProtocolVersion::RESP3 {
+        if ctx.protocol.supports_resp3() {
             // We expect all push messages to be here, since sync connection won't read in background
             // we can't receive push messages without requesting some command
             let PushInfo { kind, data } = rx.try_recv().unwrap();
@@ -1712,7 +1712,7 @@ mod basic {
             let _ = pubsub_barrier.wait();
             let _ = ping_barrier_clone.wait();
 
-            if ctx.protocol == ProtocolVersion::RESP3 {
+            if ctx.protocol.supports_resp3() {
                 let message: String = pubsub.ping().unwrap();
                 assert_eq!(message, "PONG");
             } else {
@@ -1720,7 +1720,7 @@ mod basic {
                 assert_eq!(message, vec!["pong", ""]);
             }
 
-            if ctx.protocol == ProtocolVersion::RESP3 {
+            if ctx.protocol.supports_resp3() {
                 let message: String = pubsub.ping_message("foobar").unwrap();
                 assert_eq!(message, "foobar");
             } else {
@@ -1793,7 +1793,7 @@ mod basic {
         let value = con.get("foo").unwrap().unwrap();
         assert_eq!(&value[..], "bar");
 
-        if ctx.protocol == ProtocolVersion::RESP3 {
+        if ctx.protocol.supports_resp3() {
             // Since UNSUBSCRIBE and PUNSUBSCRIBE may give channel names in different orders, there is this weird test.
             let expected_values = vec![
                 (PushKind::Subscribe, "foo".to_string()),
@@ -2471,8 +2471,6 @@ mod basic {
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_zrandmember() {
-        use redis::ProtocolVersion;
-
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
@@ -2504,7 +2502,7 @@ mod basic {
         let results: Vec<String> = con.zrandmember(setname, Some(-5)).unwrap();
         assert_eq!(results.len(), 5);
 
-        if ctx.protocol == ProtocolVersion::RESP2 {
+        if !ctx.protocol.supports_resp3() {
             let results: Vec<String> = con.zrandmember_withscores(setname, 5).unwrap();
             assert_eq!(results.len(), 10);
 
@@ -3698,7 +3696,7 @@ mod basic {
     fn test_raw_pubsub_with_push_manager() {
         // Tests PubSub usage with raw connection.
         let ctx = TestContext::new();
-        if ctx.protocol == ProtocolVersion::RESP2 {
+        if !ctx.protocol.supports_resp3() {
             return;
         }
         let mut con = ctx.connection();

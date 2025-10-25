@@ -929,7 +929,7 @@ mod basic_async {
                 let _: () = publish_conn.publish("phonewave", "banana").await?;
             }
 
-            if ctx.protocol == ProtocolVersion::RESP3 {
+            if ctx.protocol.supports_resp3() {
                 let message: String = sink.ping().await?;
                 assert_eq!(message, "PONG");
             } else {
@@ -937,7 +937,7 @@ mod basic_async {
                 assert_eq!(message, vec!["pong", ""]);
             }
 
-            if ctx.protocol == ProtocolVersion::RESP3 {
+            if ctx.protocol.supports_resp3() {
                 let message: String = sink.ping_message("foobar").await?;
                 assert_eq!(message, "foobar");
             } else {
@@ -1118,7 +1118,7 @@ mod basic_async {
         #[async_test]
         async fn multiplexed_pub_sub_subscribe_on_multiple_channels() -> RedisResult<()> {
             let ctx = TestContext::new();
-            if ctx.protocol == ProtocolVersion::RESP2 {
+            if !ctx.protocol.supports_resp3() {
                 return Ok(());
             }
 
@@ -1238,7 +1238,7 @@ mod basic_async {
 
         #[async_test]
         async fn pub_sub_requires_resp3() -> RedisResult<()> {
-            if use_protocol() != ProtocolVersion::RESP2 {
+            if use_protocol().supports_resp3() {
                 return Ok(());
             }
             let ctx = TestContext::new();
@@ -1283,7 +1283,7 @@ mod basic_async {
         async fn manager_should_resubscribe_to_pubsub_channels_after_disconnect() -> RedisResult<()>
         {
             let ctx = TestContext::new();
-            if ctx.protocol == ProtocolVersion::RESP2 {
+            if !ctx.protocol.supports_resp3() {
                 return Ok(());
             }
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1444,7 +1444,7 @@ mod basic_async {
         let protocol = ctx.protocol;
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        if ctx.protocol != ProtocolVersion::RESP2 {
+        if ctx.protocol.supports_resp3() {
             config = config.set_push_sender(tx);
         }
         let mut manager =
@@ -1456,7 +1456,7 @@ mod basic_async {
         let result: RedisResult<redis::Value> = manager.set("foo", "bar").await;
         // we expect a connection failure error.
         assert!(result.unwrap_err().is_unrecoverable_error());
-        if protocol != ProtocolVersion::RESP2 {
+        if protocol.supports_resp3() {
             assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
         }
 
@@ -1468,7 +1468,7 @@ mod basic_async {
                 continue;
             };
             assert_eq!(result, redis::Value::Okay);
-            if protocol != ProtocolVersion::RESP2 {
+            if protocol.supports_resp3() {
                 assert!(rx.try_recv().is_err());
             }
             return Ok(());
@@ -1480,7 +1480,7 @@ mod basic_async {
     #[async_test]
     async fn manager_should_reconnect_without_actions_if_resp3_is_set() -> RedisResult<()> {
         let ctx = TestContext::new();
-        if ctx.protocol == ProtocolVersion::RESP2 {
+        if !ctx.protocol.supports_resp3() {
             return Ok(());
         }
 
@@ -1543,7 +1543,7 @@ mod basic_async {
     async fn manager_should_reconnect_without_actions_if_push_sender_is_set_even_after_sender_returns_error(
     ) -> RedisResult<()> {
         let ctx = TestContext::new();
-        if ctx.protocol == ProtocolVersion::RESP2 {
+        if !ctx.protocol.supports_resp3() {
             return Ok(());
         }
         println!("running");
@@ -1769,7 +1769,7 @@ mod basic_async {
     async fn multiplexed_connection_send_single_disconnect_on_connection_failure() -> RedisResult<()>
     {
         let mut ctx = TestContext::new();
-        if ctx.protocol == ProtocolVersion::RESP2 {
+        if !ctx.protocol.supports_resp3() {
             return Ok(());
         }
 
