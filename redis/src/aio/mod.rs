@@ -193,6 +193,15 @@ impl AsyncPushSender for ::tokio::sync::mpsc::UnboundedSender<PushInfo> {
     }
 }
 
+impl AsyncPushSender for futures_channel::mpsc::UnboundedSender<PushInfo> {
+    fn send(&self, info: PushInfo) -> Result<(), SendError> {
+        match self.unbounded_send(info) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(SendError),
+        }
+    }
+}
+
 impl AsyncPushSender for ::tokio::sync::broadcast::Sender<PushInfo> {
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         match self.send(info) {

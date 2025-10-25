@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     future::Future,
     pin::Pin,
     sync::Arc,
@@ -219,7 +220,7 @@ fn choose_response<C>(
                 request.cmd.reset_routing();
                 Retry::MoveToPending { request }
             }),
-            PollFlushAction::Reconnect(vec![address]),
+            PollFlushAction::Reconnect(HashSet::from([address])),
         ),
 
         (OperationTarget::FanOut, _) => {

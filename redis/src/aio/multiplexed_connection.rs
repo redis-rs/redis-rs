@@ -173,6 +173,7 @@ where
             self.as_mut().send_result(item);
             if is_unrecoverable {
                 let self_ = self.project();
+                println!("disconnect from poll_read");
                 send_disconnect(self_.push_sender);
                 return Poll::Ready(Err(()));
             }
@@ -404,6 +405,7 @@ impl Pipeline {
             #[cfg(feature = "cache-aio")]
             cache_manager,
         );
+        println!("pipeline");
         let f = stream::poll_fn(move |cx| receiver.poll_recv(cx))
             .map(Ok)
             .forward(sink)
