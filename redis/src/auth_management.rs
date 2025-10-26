@@ -66,11 +66,12 @@ impl Default for RetryConfig {
 }
 
 /// Common logic for credentials management
-pub mod credentials_management_utils {
+pub(crate) mod credentials_management_utils {
     use super::*;
 
     /// Calculate the refresh threshold based on the token's lifetime and the refresh ratio
-    pub fn calculate_refresh_threshold(
+    #[allow(dead_code)] // Reserved for future use with TokenRefreshConfig
+    pub(crate) fn calculate_refresh_threshold(
         received_at: SystemTime,
         expires_at: SystemTime,
         refresh_ratio: f64,
@@ -85,7 +86,8 @@ pub mod credentials_management_utils {
     }
 
     /// Calculate next delay with exponential backoff
-    pub fn calculate_next_delay(
+    #[cfg(all(feature = "token-based-authentication", feature = "entra-id"))]
+    pub(crate) fn calculate_next_delay(
         current_delay: Duration,
         backoff_multiplier: f64,
         max_delay: Duration,
@@ -96,7 +98,7 @@ pub mod credentials_management_utils {
 
     /// Extract the OID claim from a JWT
     #[cfg(all(feature = "token-based-authentication", feature = "entra-id"))]
-    pub fn extract_oid_from_jwt(jwt: &str) -> Result<String, String> {
+    pub(crate) fn extract_oid_from_jwt(jwt: &str) -> Result<String, String> {
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
         let parts: Vec<&str> = jwt.split('.').collect();
@@ -123,5 +125,76 @@ pub mod credentials_management_utils {
         }
 
         Err("OID claim not found".to_string())
+    }
+}
+
+#[cfg(all(feature = "token-based-authentication", test))]
+mod auth_management_tests {
+    use super::{credentials_management_utils, TokenRefreshConfig};
+    use std::sync::LazyLock;
+
+    const TOKEN_HEADER: &str = "header";
+    const TOKEN_PAYLOAD: &str = "eyJvaWQiOiIxMjM0NTY3OC05YWJjLWRlZi0xMjM0LTU2Nzg5YWJjZGVmMCJ9"; // Payload with "oid" claim
+    const TOKEN_PAYLOAD_NO_OID: &str =
+        "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNzM1Njg5NjAwfQ"; // Payload with no "oid" claim
+    const TOKEN_SIGNATURE: &str = "signature";
+
+    const OID_CLAIM_VALUE: &str = "12345678-9abc-def-1234-56789abcdef0";
+
+    static TOKEN: LazyLock<String> =
+        LazyLock::new(|| format!("{TOKEN_HEADER}.{TOKEN_PAYLOAD}.{TOKEN_SIGNATURE}"));
+    static TOKEN_WITH_NO_OID: LazyLock<String> =
+        LazyLock::new(|| format!("{TOKEN_HEADER}.{TOKEN_PAYLOAD_NO_OID}.{TOKEN_SIGNATURE}"));
+    static INVALID_TOKEN: LazyLock<String> =
+        LazyLock::new(|| format!("{TOKEN_HEADER}.{TOKEN_PAYLOAD}"));
+
+    #[test]
+    fn test_token_refresh_config() {
+        let config = TokenRefreshConfig::default();
+        assert_eq!(config.expiration_refresh_ratio, 0.8);
+
+        let custom_config = TokenRefreshConfig::default().set_expiration_refresh_ratio(0.9);
+        assert_eq!(custom_config.expiration_refresh_ratio, 0.9);
+    }
+
+    #[test]
+    fn test_refresh_threshold_calculation() {
+        use std::time::{Duration, SystemTime};
+        let config = TokenRefreshConfig::default(); // Default refresh ratio is 0.8
+
+        let received_at = SystemTime::now();
+        let expires_at = received_at + Duration::from_secs(3600); // 1 hour
+
+        let threshold = credentials_management_utils::calculate_refresh_threshold(
+            received_at,
+            expires_at,
+            config.expiration_refresh_ratio,
+        );
+        assert!(threshold.is_some());
+        assert_eq!(threshold.unwrap(), Duration::from_secs(2880)); // 80% of 3600
+    }
+
+    #[cfg(all(feature = "token-based-authentication", feature = "entra-id"))]
+    #[test]
+    fn test_extract_oid_from_jwt() {
+        let result = credentials_management_utils::extract_oid_from_jwt(TOKEN.as_str());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), OID_CLAIM_VALUE);
+    }
+
+    #[cfg(all(feature = "token-based-authentication", feature = "entra-id"))]
+    #[test]
+    fn test_extract_oid_from_jwt_with_invalid_token() {
+        let result = credentials_management_utils::extract_oid_from_jwt(INVALID_TOKEN.as_str());
+        assert!(result.is_err());
+        assert_eq!(result.err().unwrap(), "Invalid JWT: must have 3 parts");
+    }
+
+    #[cfg(all(feature = "token-based-authentication", feature = "entra-id"))]
+    #[test]
+    fn test_extract_oid_from_jwt_with_no_oid_claim() {
+        let result = credentials_management_utils::extract_oid_from_jwt(TOKEN_WITH_NO_OID.as_str());
+        assert!(result.is_err());
+        assert_eq!(result.err().unwrap(), "OID claim not found");
     }
 }
