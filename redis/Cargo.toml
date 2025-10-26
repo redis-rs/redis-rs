@@ -151,7 +151,7 @@ num-bigint = ["dep:num-bigint"]
 cache-aio = ["aio", "dep:lru"]
 r2d2 = ["dep:r2d2"]
 bb8 = ["dep:bb8"]
-token-based-authentication = ["aio"]
+token-based-authentication = ["dep:futures-util"]
 entra-id = ["dep:azure_identity", "dep:azure_core", "dep:time", "dep:base64", "token-based-authentication", "tokio-comp"]
 
 # Instead of specifying "aio", use either "tokio-comp" or "smol-comp".
