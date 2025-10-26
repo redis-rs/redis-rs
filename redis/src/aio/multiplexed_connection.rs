@@ -501,7 +501,7 @@ pub struct MultiplexedConnection {
     #[cfg(feature = "cache-aio")]
     pub(crate) cache_manager: Option<CacheManager>,
     /// Connection info for re-authentication purposes
-    #[allow(dead_code)]
+    #[cfg(feature = "token-based-authentication")]
     connection_info: RedisConnectionInfo,
     // This handle ensures that once all the clones of the connection will be dropped, the underlying task will stop.
     // It is only set for connections that use a credentials provider for token-based authentication.
@@ -639,7 +639,6 @@ impl MultiplexedConnection {
             _task_handle: None,
             #[cfg(feature = "cache-aio")]
             cache_manager: cache_manager_opt,
-            connection_info: connection_info.clone(),
         };
 
         // Set up streaming credentials subscription if provider is available

@@ -109,18 +109,6 @@ when = "entra-id"
 require = ["tokio-comp"]
 forbid = ["smol-rustls-comp", "OR", "smol-native-tls-comp"]
 
-# Entra ID with any Rustls-based TLS backend requires `tokio-rustls-comp`
-[[rule]]
-when = ["entra-id", "AND", ["tls-rustls", "OR", "tls-rustls-webpki-roots"]]
-require = ["tokio-rustls-comp"]
-forbid = ["NOT", "tokio-rustls-comp"]
-
-# Entra ID with any native-tls backend requires `tokio-native-tls-comp`
-[[rule]]
-when = ["entra-id", "AND", "tls-native-tls"]
-require = ["tokio-native-tls-comp"]
-forbid = ["NOT", "tokio-native-tls-comp"]
-
 # The users are expected to use only one connection pool.
 [[rule]]
 when = "r2d2"
