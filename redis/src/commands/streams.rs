@@ -367,6 +367,9 @@ pub struct StreamReadOptions {
     /// Set the `GROUP <groupname> <consumername>` cmd arg.
     /// This option will toggle the cmd from XREAD to XREADGROUP.
     group: SRGroup,
+    /// Set the `CLAIM <min-idle-time>` cmd arg.
+    /// The `<min-idle-time>` is specified in milliseconds.
+    claim: Option<usize>,
 }
 
 impl StreamReadOptions {
@@ -408,6 +411,12 @@ impl StreamReadOptions {
         ));
         self
     }
+
+    /// Set the minimum idle time for the CLAIM parameter.
+    pub fn claim(mut self, min_idle_time: usize) -> Self {
+        self.claim = Some(min_idle_time);
+        self
+    }
 }
 
 impl ToRedisArgs for StreamReadOptions {
@@ -439,6 +448,11 @@ impl ToRedisArgs for StreamReadOptions {
             // noack is only available w/ xreadgroup
             if self.noack == Some(true) {
                 out.write_arg(b"NOACK");
+            }
+            // claim is only available w/ xreadgroup
+            if let Some(ref min_idle_time) = self.claim {
+                out.write_arg(b"CLAIM");
+                out.write_arg(format!("{min_idle_time}").as_bytes());
             }
         }
     }
@@ -677,12 +691,17 @@ pub struct StreamKey {
 }
 
 /// Represents a stream `id` and its field/values as a `HashMap`
+/// Also contains optional PEL information if the message was fetched with XREADGROUP with a `claim` option
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct StreamId {
     /// The stream `id` (entry ID) of this particular message.
     pub id: String,
     /// All fields in this message, associated with their respective values.
     pub map: HashMap<String, Value>,
+    /// The number of milliseconds that elapsed since the last time this entry was delivered to a consumer.
+    pub milliseconds_elapsed_from_delivery: Option<usize>,
+    /// The number of times this entry was delivered.
+    pub delivered_count: Option<usize>,
 }
 
 impl StreamId {
@@ -784,7 +803,14 @@ impl FromRedisValue for StreamAutoClaimReply {
 
                 let claimed: Vec<_> = rows
                     .into_iter()
-                    .flat_map(|row| row.into_iter().map(|(id, map)| StreamId { id, map }))
+                    .flat_map(|row| {
+                        row.into_iter().map(|(id, map)| StreamId {
+                            id,
+                            map,
+                            milliseconds_elapsed_from_delivery: None,
+                            delivered_count: None,
+                        })
+                    })
                     .collect();
                 // This means that some nil entries were filtered
                 let invalid_entries = claimed.len() < claimed_count;
@@ -803,22 +829,73 @@ impl FromRedisValue for StreamAutoClaimReply {
 }
 
 type SRRows = Vec<HashMap<String, Vec<HashMap<String, HashMap<String, Value>>>>>;
+type SRClaimRows =
+    Vec<HashMap<String, Vec<(String, HashMap<String, Value>, Option<usize>, Option<usize>)>>>;
+
 impl FromRedisValue for StreamReadReply {
     fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
-        let rows: SRRows = from_redis_value(v)?;
+        // Try to parse as the standard format first
+        if let Ok(rows) = from_redis_value::<SRRows>(v.clone()) {
+            return Ok(Self::from_standard_rows(rows));
+        }
+
+        // If that fails, try to parse as XREADGROUP with CLAIM format
+        // Format: [[stream_name, [[id, [field, value, ...], ms_elapsed, delivery_count], ...]]]
+        if let Ok(rows) = from_redis_value::<SRClaimRows>(v.clone()) {
+            return Ok(Self::from_claim_rows(rows));
+        }
+
+        invalid_type_error!("Could not parse StreamReadReply in any known format", v)
+    }
+}
+
+impl StreamReadReply {
+    fn from_standard_rows(rows: SRRows) -> Self {
         let keys = rows
             .into_iter()
             .flat_map(|row| {
-                row.into_iter().map(|(key, entry)| {
-                    let ids = entry
+                row.into_iter().map(|(key, entries)| StreamKey {
+                    key,
+                    ids: entries
                         .into_iter()
-                        .flat_map(|id_row| id_row.into_iter().map(|(id, map)| StreamId { id, map }))
-                        .collect();
-                    StreamKey { key, ids }
+                        .flat_map(|id_row| {
+                            id_row.into_iter().map(|(id, map)| StreamId {
+                                id,
+                                map,
+                                milliseconds_elapsed_from_delivery: None,
+                                delivered_count: None,
+                            })
+                        })
+                        .collect(),
                 })
             })
             .collect();
-        Ok(StreamReadReply { keys })
+        StreamReadReply { keys }
+    }
+
+    fn from_claim_rows(rows: SRClaimRows) -> Self {
+        let keys = rows
+            .into_iter()
+            .flat_map(|row| {
+                row.into_iter().map(|(key, entries)| StreamKey {
+                    key,
+                    ids: entries
+                        .into_iter()
+                        .map(
+                            |(id, map, milliseconds_elapsed_from_delivery, delivered_count)| {
+                                StreamId {
+                                    id,
+                                    map,
+                                    milliseconds_elapsed_from_delivery,
+                                    delivered_count,
+                                }
+                            },
+                        )
+                        .collect(),
+                })
+            })
+            .collect();
+        StreamReadReply { keys }
     }
 }
 
@@ -827,7 +904,14 @@ impl FromRedisValue for StreamRangeReply {
         let rows: Vec<HashMap<String, HashMap<String, Value>>> = from_redis_value(v)?;
         let ids: Vec<StreamId> = rows
             .into_iter()
-            .flat_map(|row| row.into_iter().map(|(id, map)| StreamId { id, map }))
+            .flat_map(|row| {
+                row.into_iter().map(|(id, map)| StreamId {
+                    id,
+                    map,
+                    milliseconds_elapsed_from_delivery: None,
+                    delivered_count: None,
+                })
+            })
             .collect();
         Ok(StreamRangeReply { ids })
     }
@@ -838,7 +922,14 @@ impl FromRedisValue for StreamClaimReply {
         let rows: Vec<HashMap<String, HashMap<String, Value>>> = from_redis_value(v)?;
         let ids: Vec<StreamId> = rows
             .into_iter()
-            .flat_map(|row| row.into_iter().map(|(id, map)| StreamId { id, map }))
+            .flat_map(|row| {
+                row.into_iter().map(|(id, map)| StreamId {
+                    id,
+                    map,
+                    milliseconds_elapsed_from_delivery: None,
+                    delivered_count: None,
+                })
+            })
             .collect();
         Ok(StreamClaimReply { ids })
     }
