@@ -355,9 +355,9 @@ dependencies = [
 
 [[package]]
 name = "bigdecimal"
-version = "0.4.8"
+version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a22f228ab7a1b23027ccc6c350b72868017af7ea8356fbdf19f8d991c690013"
+checksum = "560f42649de9fa436b73517378a147ec21f6c997a546581df4b4b31677828934"
 dependencies = [
  "autocfg",
  "libm",
@@ -1334,7 +1334,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07033963ba89ebaf1584d767badaa2e8fcec21aedea6b8c0346d487d49c28667"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.53.5",
 ]
 
 [[package]]
@@ -2462,7 +2462,7 @@ dependencies = [
  "getrandom 0.3.1",
  "once_cell",
  "rustix 1.0.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
