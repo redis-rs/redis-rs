@@ -1036,7 +1036,7 @@ implement_commands! {
 
     /// Get multiple random members from a set.
     /// [Redis Docs](https://redis.io/commands/SRANDMEMBER)
-    fn srandmember_multiple<K: ToSingleRedisArg>(key: K, count: usize) -> (Vec<String>) {
+    fn srandmember_multiple<K: ToSingleRedisArg>(key: K, count: isize) -> (Vec<String>) {
         cmd("SRANDMEMBER").arg(key).arg(count)
     }
 
