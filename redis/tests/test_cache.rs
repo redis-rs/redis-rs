@@ -641,7 +641,7 @@ async fn cache_async_cluster_reconnect_all_nodes() -> RedisResult<()> {
     // disconnect from all nodes
     let _ = con
         .route_command(
-            &redis::cmd("QUIT"),
+            redis::cmd("QUIT"),
             redis::cluster_routing::RoutingInfo::MultiNode((
                 redis::cluster_routing::MultipleNodeRoutingInfo::AllNodes,
                 None,
@@ -651,7 +651,7 @@ async fn cache_async_cluster_reconnect_all_nodes() -> RedisResult<()> {
     // send ping so connections knows they have been disconnected
     let _ = con
         .route_command(
-            &redis::cmd("PING"),
+            redis::cmd("PING"),
             redis::cluster_routing::RoutingInfo::MultiNode((
                 redis::cluster_routing::MultipleNodeRoutingInfo::AllNodes,
                 None,
@@ -811,7 +811,8 @@ async fn test_cache_async_cluster_slot_change(migrate: bool) -> RedisResult<()> 
             .arg("SETSLOT")
             .arg(key_slot)
             .arg("IMPORTING")
-            .arg(&old_slot_owner.id),
+            .arg(&old_slot_owner.id)
+            .to_owned(),
         new_slot_owner.get_singe_route(),
     )
     .await?;
@@ -821,7 +822,8 @@ async fn test_cache_async_cluster_slot_change(migrate: bool) -> RedisResult<()> 
             .arg("SETSLOT")
             .arg(key_slot)
             .arg("MIGRATING")
-            .arg(&new_slot_owner.id),
+            .arg(&new_slot_owner.id)
+            .to_owned(),
         old_slot_owner.get_singe_route(),
     )
     .await?;
@@ -833,7 +835,8 @@ async fn test_cache_async_cluster_slot_change(migrate: bool) -> RedisResult<()> 
                 .arg(new_slot_owner.port)
                 .arg("key_1")
                 .arg(0)
-                .arg(5000),
+                .arg(5000)
+                .to_owned(),
             old_slot_owner.get_singe_route(),
         )
         .await?;
@@ -851,7 +854,8 @@ async fn test_cache_async_cluster_slot_change(migrate: bool) -> RedisResult<()> 
             .arg("SETSLOT")
             .arg(key_slot)
             .arg("NODE")
-            .arg(&new_slot_owner.id),
+            .arg(&new_slot_owner.id)
+            .take(),
         new_slot_owner.get_singe_route(),
     )
     .await?;
@@ -861,7 +865,8 @@ async fn test_cache_async_cluster_slot_change(migrate: bool) -> RedisResult<()> 
             .arg("SETSLOT")
             .arg(key_slot)
             .arg("NODE")
-            .arg(&new_slot_owner.id),
+            .arg(&new_slot_owner.id)
+            .take(),
         old_slot_owner.get_singe_route(),
     )
     .await?;
