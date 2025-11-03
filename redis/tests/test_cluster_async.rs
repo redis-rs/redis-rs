@@ -194,7 +194,7 @@ mod cluster_async {
     #[async_test]
     async fn async_cluster_route_info_to_nodes() -> RedisResult<()> {
         let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
-            num_nodes: 12,
+            num_nodes: 6,
             num_replicas: 1,
             ..Default::default()
         });
@@ -242,10 +242,10 @@ mod cluster_async {
             .collect();
         cluster_addresses.sort();
 
-        assert_eq!(addresses.len(), 12);
+        assert_eq!(addresses.len(), 6);
         assert_eq!(addresses, cluster_addresses);
-        assert_eq!(infos.len(), 12);
-        for i in 0..12 {
+        assert_eq!(infos.len(), 6);
+        for i in 0..6 {
             let split: Vec<_> = addresses[i].split(':').collect();
             assert!(infos[i].contains(&format!("tcp_port:{}", split[1])));
         }
@@ -257,10 +257,10 @@ mod cluster_async {
             .await
             .unwrap();
         let (addresses, infos) = split_to_addresses_and_info(res);
-        assert_eq!(addresses.len(), 6);
-        assert_eq!(infos.len(), 6);
+        assert_eq!(addresses.len(), 3);
+        assert_eq!(infos.len(), 3);
         // verify that all primaries have the correct port & host, and are marked as primaries.
-        for i in 0..6 {
+        for i in 0..3 {
             assert!(cluster_addresses.contains(&addresses[i]));
             let split: Vec<_> = addresses[i].split(':').collect();
             assert!(infos[i].contains(&format!("tcp_port:{}", split[1])));
