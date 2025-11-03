@@ -544,6 +544,13 @@ impl Cmd {
         self
     }
 
+    /// Takes the command out of the mutable reference and returns it as a value
+    ///
+    /// The referenced command is left empty.
+    pub fn take(&mut self) -> Self {
+        std::mem::take(self)
+    }
+
     /// Works similar to `arg` but adds a cursor argument.
     ///
     /// This is always an integer and also flips the command implementation to support a

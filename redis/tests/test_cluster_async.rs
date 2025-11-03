@@ -142,7 +142,7 @@ mod cluster_async {
         let routing = RoutingInfo::SingleNode(single_node_route);
         assert_eq!(
             connection
-                .route_command(&redis::cmd("FLUSHALL"), routing)
+                .route_command(redis::cmd("FLUSHALL"), routing)
                 .await
                 .unwrap(),
             Value::Okay
@@ -165,7 +165,7 @@ mod cluster_async {
         cmd.arg("Clients");
         let value = connection
             .route_command(
-                &cmd,
+                cmd.clone(),
                 RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
             )
             .await
@@ -180,7 +180,7 @@ mod cluster_async {
 
         let value = connection
             .route_command(
-                &cmd,
+                cmd.clone(),
                 RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress { host, port }),
             )
             .await
@@ -231,7 +231,7 @@ mod cluster_async {
         let route_to_all_nodes = redis::cluster_routing::MultipleNodeRoutingInfo::AllNodes;
         let routing = RoutingInfo::MultiNode((route_to_all_nodes, None));
         let res = connection
-            .route_command(&redis::cmd("INFO"), routing)
+            .route_command(redis::cmd("INFO"), routing)
             .await
             .unwrap();
         let (addresses, infos) = split_to_addresses_and_info(res);
@@ -253,7 +253,7 @@ mod cluster_async {
         let route_to_all_primaries = redis::cluster_routing::MultipleNodeRoutingInfo::AllMasters;
         let routing = RoutingInfo::MultiNode((route_to_all_primaries, None));
         let res = connection
-            .route_command(&redis::cmd("INFO"), routing)
+            .route_command(redis::cmd("INFO"), routing)
             .await
             .unwrap();
         let (addresses, infos) = split_to_addresses_and_info(res);
@@ -953,7 +953,7 @@ mod cluster_async {
         assert_eq!(connection_count_clone.load(Ordering::Relaxed), 4);
 
         let value = runtime.block_on(connection.route_command(
-            &cmd("ECHO"),
+            cmd("ECHO"),
             RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
                 host: name.to_string(),
                 port: 6379,
@@ -967,7 +967,7 @@ mod cluster_async {
         );
 
         let value = runtime.block_on(connection.route_command(
-            &cmd("ECHO"),
+            cmd("ECHO"),
             RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
                 host: name.to_string(),
                 port: 6379,
@@ -1417,7 +1417,7 @@ mod cluster_async {
         let mut cmd = cmd("GET");
         cmd.arg("test");
         let _ = runtime.block_on(connection.route_command(
-            &cmd,
+            cmd.clone(),
             RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllMasters, None)),
         ));
         {
@@ -1428,7 +1428,7 @@ mod cluster_async {
         }
 
         let _ = runtime.block_on(connection.route_command(
-            &cmd,
+            cmd.clone(),
             RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
         ));
         {
@@ -1439,7 +1439,7 @@ mod cluster_async {
         }
 
         let _ = runtime.block_on(connection.route_command(
-            &cmd,
+            cmd,
             RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
                 host: name.to_string(),
                 port: 6382,
@@ -2022,7 +2022,10 @@ mod cluster_async {
         for _ in 0..5 {
             let cmd = cmd("PING");
             let result = connection
-                .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                .route_command(
+                    cmd.clone(),
+                    RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random),
+                )
                 .await;
             // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
             assert!(result.is_err());
@@ -2048,7 +2051,10 @@ mod cluster_async {
         let cmd = cmd("PING");
 
         let result = connection
-            .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+            .route_command(
+                cmd.clone(),
+                RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random),
+            )
             .await;
         // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
         assert!(result.is_err());
@@ -2087,11 +2093,10 @@ mod cluster_async {
             ..Default::default()
         });
 
-        let cmd = cmd("PING");
         // explicitly route to all primaries and request all succeeded
         let result = connection
             .route_command(
-                &cmd,
+                cmd("PING"),
                 RoutingInfo::MultiNode((
                     MultipleNodeRoutingInfo::AllMasters,
                     Some(redis::cluster_routing::ResponsePolicy::AllSucceeded),
@@ -2286,7 +2291,7 @@ mod cluster_async {
         async fn check_if_redis_6(conn: &mut ClusterConnection) -> bool {
             let response = conn
                 .route_command(
-                    cmd("INFO").arg("server"),
+                    cmd("INFO").arg("server").to_owned(),
                     RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random),
                 )
                 .await
@@ -2755,10 +2760,9 @@ mod cluster_async {
             );
 
             // send request to trigger reconnection.
-            let cmd = cmd("PING");
             let _ = pubsub_conn
                 .route_command(
-                    &cmd,
+                    cmd("PING"),
                     RoutingInfo::MultiNode((
                         MultipleNodeRoutingInfo::AllMasters,
                         Some(redis::cluster_routing::ResponsePolicy::AllSucceeded),
@@ -2850,10 +2854,9 @@ mod cluster_async {
             );
 
             // send request to trigger reconnection.
-            let cmd = cmd("PING");
             let _ = pubsub_conn
                 .route_command(
-                    &cmd,
+                    cmd("PING"),
                     RoutingInfo::MultiNode((
                         MultipleNodeRoutingInfo::AllMasters,
                         Some(redis::cluster_routing::ResponsePolicy::AllSucceeded),

@@ -87,7 +87,7 @@
 //!         host: "redis://127.0.0.1".to_string(),
 //!         port: 6378
 //!     });
-//!     connection.route_command(&redis::cmd("PING"), routing_info).await
+//!     connection.route_command(redis::cmd("PING"), routing_info).await
 //! }
 //! ```
 use std::{
@@ -199,14 +199,14 @@ where
     }
 
     /// Send a command to the given `routing`, and aggregate the response according to `response_policy`.
-    pub async fn route_command(&mut self, cmd: &Cmd, routing: RoutingInfo) -> RedisResult<Value> {
+    pub async fn route_command(&mut self, cmd: Cmd, routing: RoutingInfo) -> RedisResult<Value> {
         trace!("send_packed_command");
         let (sender, receiver) = oneshot::channel();
         let request = async {
             self.sender
                 .send(Message {
                     cmd: CmdArg::Cmd {
-                        cmd: Arc::new(cmd.clone()),
+                        cmd: Arc::new(cmd),
                         routing: routing.into(),
                     },
                     sender,
@@ -240,9 +240,9 @@ where
     }
 
     /// Send commands in `pipeline` to the given `route`. If `route` is [None], it will be sent to a random node.
-    pub async fn route_pipeline<'a>(
-        &'a mut self,
-        pipeline: &'a crate::Pipeline,
+    pub async fn route_pipeline(
+        &mut self,
+        pipeline: crate::Pipeline,
         offset: usize,
         count: usize,
         route: SingleNodeRoutingInfo,
@@ -253,7 +253,7 @@ where
             self.sender
                 .send(Message {
                     cmd: CmdArg::Pipeline {
-                        pipeline: Arc::new(pipeline.clone()),
+                        pipeline: Arc::new(pipeline),
                         offset,
                         count,
                         route: route.into(),
@@ -1375,7 +1375,7 @@ where
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
         let routing = RoutingInfo::for_routable(cmd)
             .unwrap_or(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random));
-        self.route_command(cmd, routing).boxed()
+        self.route_command(cmd.clone(), routing).boxed()
     }
 
     fn req_packed_commands<'a>(
@@ -1386,7 +1386,7 @@ where
     ) -> RedisFuture<'a, Vec<Value>> {
         async move {
             let route = route_for_pipeline(pipeline)?;
-            self.route_pipeline(pipeline, offset, count, route.into())
+            self.route_pipeline(pipeline.clone(), offset, count, route.into())
                 .await
         }
         .boxed()
