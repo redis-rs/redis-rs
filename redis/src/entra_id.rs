@@ -1,7 +1,7 @@
 //! Azure Entra ID authentication support for Redis
 //!
 //! This module provides token-based authentication using Azure Entra ID (formerly Azure Active Directory).
-//! It supports multiple credential types including DefaultAzureCredential, service principals,
+//! It supports multiple credential types including DeveloperToolsCredential, service principals,
 //! managed identities, as well as custom `TokenCredential` implementations.
 //!
 //! # Features
@@ -17,8 +17,8 @@
 //! use redis::{Client, EntraIdCredentialsProvider, RetryConfig};
 //!
 //! # async fn example() -> redis::RedisResult<()> {
-//! // Create credentials provider using DefaultAzureCredential
-//! let mut provider = EntraIdCredentialsProvider::new_default()?;
+//! // Create the credentials provider using the DeveloperToolsCredential
+//! let mut provider = EntraIdCredentialsProvider::new_developer_tools()?;
 //! provider.start(RetryConfig::default());
 //!
 //! // Create Redis client with credentials provider
@@ -48,8 +48,8 @@ use crate::types::RedisResult;
 use crate::RetryConfig;
 use azure_core::credentials::{AccessToken, TokenCredential};
 use azure_identity::{
-    ClientCertificateCredential, ClientSecretCredential, DefaultAzureCredential,
-    ManagedIdentityCredential, TokenCredentialOptions, UserAssignedId,
+    ClientCertificateCredential, ClientSecretCredential, DeveloperToolsCredential,
+    ManagedIdentityCredential, UserAssignedId,
 };
 use futures_util::{Stream, StreamExt};
 use std::pin::Pin;
@@ -263,16 +263,17 @@ impl EntraIdCredentialsProvider {
         }
     }
 
-    /// Create a new provider using DefaultAzureCredential
+    /// Create a new provider using the DeveloperToolsCredential
     /// This is recommended for development and will try multiple credential types
-    pub fn new_default() -> RedisResult<Self> {
-        Self::new_default_with_scopes(vec![REDIS_SCOPE_DEFAULT.to_string()])
+    pub fn new_developer_tools() -> RedisResult<Self> {
+        Self::new_developer_tools_with_scopes(vec![REDIS_SCOPE_DEFAULT.to_string()])
     }
 
-    /// Create a new provider using DefaultAzureCredential with custom scopes
-    pub fn new_default_with_scopes(scopes: Vec<String>) -> RedisResult<Self> {
+    /// Create a new provider using the DeveloperToolsCredential with custom scopes
+    pub fn new_developer_tools_with_scopes(scopes: Vec<String>) -> RedisResult<Self> {
         Self::validate_scopes(&scopes)?;
-        let credential_provider = DefaultAzureCredential::new().map_err(Self::convert_error)?;
+        let credential_provider =
+            DeveloperToolsCredential::new(None).map_err(Self::convert_error)?;
         Ok(Self {
             credential_provider: Arc::new(
                 std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
@@ -357,10 +358,7 @@ impl EntraIdCredentialsProvider {
             client_id,
             client_certificate.base64_pkcs12,
             client_certificate.password.unwrap_or_default(),
-            azure_identity::ClientCertificateCredentialOptions::new(
-                TokenCredentialOptions::default(),
-                false,
-            ),
+            None,
         )
         .map_err(Self::convert_error)?;
         Ok(Self {
@@ -410,21 +408,23 @@ impl EntraIdCredentialsProvider {
     }
 
     /// Create a new provider using user-assigned managed identity
-    pub fn new_user_assigned_managed_identity(client_id: String) -> RedisResult<Self> {
+    pub fn new_user_assigned_managed_identity(
+        user_assigned_id: UserAssignedId,
+    ) -> RedisResult<Self> {
         Self::new_user_assigned_managed_identity_with_scopes(
-            client_id,
+            user_assigned_id,
             vec![REDIS_SCOPE_DEFAULT.to_string()],
         )
     }
 
     /// Create a new provider using user-assigned managed identity with custom scopes
     pub fn new_user_assigned_managed_identity_with_scopes(
-        client_id: String,
+        user_assigned_id: UserAssignedId,
         scopes: Vec<String>,
     ) -> RedisResult<Self> {
         Self::validate_scopes(&scopes)?;
         let options = azure_identity::ManagedIdentityCredentialOptions {
-            user_assigned_id: Some(UserAssignedId::ClientId(client_id)),
+            user_assigned_id: Some(user_assigned_id),
             ..Default::default()
         };
         let credential_provider =
@@ -528,22 +528,25 @@ mod tests {
     #[test]
     fn test_entra_id_provider_creation() {
         // Test that credential providers can be created without panicking
-        let _default_provider = EntraIdCredentialsProvider::new_default();
+        let _default_provider = EntraIdCredentialsProvider::new_developer_tools();
+        assert!(_default_provider.is_ok());
 
         let _client_secret_provider = EntraIdCredentialsProvider::new_client_secret(
             "tenant".to_string(),
             "client".to_string(),
             "secret".to_string(),
         );
+        assert!(_client_secret_provider.is_ok());
 
         let _managed_identity_provider =
             EntraIdCredentialsProvider::new_system_assigned_managed_identity();
+        assert!(_managed_identity_provider.is_ok());
     }
 
     #[test]
     fn test_scope_validation() {
         // Test empty scopes
-        let result = EntraIdCredentialsProvider::new_default_with_scopes(vec![]);
+        let result = EntraIdCredentialsProvider::new_developer_tools_with_scopes(vec![]);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -551,7 +554,8 @@ mod tests {
             .contains("Scopes cannot be empty"));
 
         // Test empty string scope
-        let result = EntraIdCredentialsProvider::new_default_with_scopes(vec!["".to_string()]);
+        let result =
+            EntraIdCredentialsProvider::new_developer_tools_with_scopes(vec!["".to_string()]);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -559,7 +563,8 @@ mod tests {
             .contains("Scope cannot be empty"));
 
         // Test whitespace-only scope
-        let result = EntraIdCredentialsProvider::new_default_with_scopes(vec!["   ".to_string()]);
+        let result =
+            EntraIdCredentialsProvider::new_developer_tools_with_scopes(vec!["   ".to_string()]);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -568,12 +573,12 @@ mod tests {
 
         /*
         // Test invalid protocol
-        let result = EntraIdCredentialsProvider::new_default_with_scopes(vec!["http://invalid.scope/.default".to_string()]);
+        let result = EntraIdCredentialsProvider::new_developer_tools_with_scopes(vec!["http://invalid.scope/.default".to_string()]);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("must start with 'https://'"));
 
         // Test invalid suffix
-        let result = EntraIdCredentialsProvider::new_default_with_scopes(vec!["https://valid.scope/invalid".to_string()]);
+        let result = EntraIdCredentialsProvider::new_developer_tools_with_scopes(vec!["https://valid.scope/invalid".to_string()]);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("must end with '/.default'"));
         */
@@ -583,7 +588,8 @@ mod tests {
     fn test_custom_scopes() {
         let custom_scopes = vec!["https://custom.scope/.default".to_string()];
         let provider =
-            EntraIdCredentialsProvider::new_default_with_scopes(custom_scopes.clone()).unwrap();
+            EntraIdCredentialsProvider::new_developer_tools_with_scopes(custom_scopes.clone())
+                .unwrap();
         assert_eq!(provider.scopes, custom_scopes);
     }
 }
@@ -701,7 +707,7 @@ mod entra_id_mock_tests {
         async fn get_token(
             &self,
             _scopes: &[&str],
-            _options: Option<azure_core::credentials::TokenRequestOptions>,
+            _options: Option<azure_core::credentials::TokenRequestOptions<'_>>,
         ) -> azure_core::Result<AccessToken> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
 

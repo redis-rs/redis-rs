@@ -180,8 +180,8 @@ use redis::{Client, Commands, EntraIdCredentialsProvider, RetryConfig};
 
 #[tokio::main]
 async fn main() -> redis::RedisResult<()> {
-    // Create credentials provider using DefaultAzureCredential
-    let mut provider = EntraIdCredentialsProvider::new_default()?;
+    // Create the credentials provider using the DeveloperToolsCredential
+    let mut provider = EntraIdCredentialsProvider::new_developer_tools()?;
     // Start the background refresh service, which will automatically refresh the token
     provider.start(RetryConfig::default());
 
@@ -210,7 +210,11 @@ async fn main() -> redis::RedisResult<()> {
 
 ### Supported Authentication Flows
 
-- **DefaultAzureCredential**: Provides a default `TokenCredential` authentication flow for applications that will be deployed to Azure
+- **DeveloperToolsCredential**: Authenticates through developer tools such as the Azure CLI.
+It tries the following credential types, in this order, stopping when one provides a token:
+* [`AzureCliCredential`]
+* [`AzureDeveloperCliCredential`]
+`DeveloperToolsCredential` uses the first credential that provides a token for all subsequent token requests. It never tries the others again.
 - **Service Principal**: `Client secret` and `certificate-based` authentication
 - **Managed Identity**: `System-assigned` or `user-assigned` managed identities
 - **Custom Credentials**: Support for any `TokenCredential` implementation

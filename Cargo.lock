@@ -309,9 +309,9 @@ dependencies = [
 
 [[package]]
 name = "azure_core"
-version = "0.27.0"
+version = "0.29.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7cd9e026f749ac67e6d736ebcfa1ba36ab60ce3d6c446c67624a538f4e0667fa"
+checksum = "2abacab36defa6d5b0fc985d0394711d3320f0ae96f8f6d86a995f12b7ffbed2"
 dependencies = [
  "async-lock 3.4.0",
  "async-trait",
@@ -329,9 +329,9 @@ dependencies = [
 
 [[package]]
 name = "azure_core_macros"
-version = "0.1.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06bce1a683e1a27013e64a1ff760700c7241275fe38787e578c3526f4ac569e0"
+checksum = "aa7bfabe73737f7a3edea57ab8d3029d71669b513a8e9b603fa6c4baa35d2341"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -342,9 +342,9 @@ dependencies = [
 
 [[package]]
 name = "azure_identity"
-version = "0.27.0"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5b2a19746da00d510787e406f07494a5b6e9b86f69871e3b72ef90d34631c77"
+checksum = "e5c5b86f84a851bc9200d1a9e771dcb3a99ec4bcf09e320f8a199556a9ed3c54"
 dependencies = [
  "async-lock 3.4.0",
  "async-trait",
@@ -355,7 +355,6 @@ dependencies = [
  "serde",
  "time",
  "tracing",
- "typespec_client_core",
  "url",
 ]
 
@@ -2949,11 +2948,13 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "typespec"
-version = "0.7.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2fffbed46125e0931e8f45618c3f6f0ffa2e0dc6d8b10a8de9f100b03138f33"
+checksum = "d514778bfa243e275f2a968d0aafdc40a0d89567bf310e0c64e735837c878372"
 dependencies = [
  "base64",
+ "bytes",
+ "futures",
  "serde",
  "serde_json",
  "url",
@@ -2961,13 +2962,12 @@ dependencies = [
 
 [[package]]
 name = "typespec_client_core"
-version = "0.6.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e96d81a432a1d2eb5cb3e9f813ff3811928e35f549bb5fa0a16abeffc66dec4c"
+checksum = "3ba4b8443d3a1d1a2042ed4b92c0357bb2ab056c1208a6b7627d927fdd616999"
 dependencies = [
  "async-trait",
  "base64",
- "bytes",
  "dyn-clone",
  "futures",
  "getrandom 0.3.1",
@@ -2987,9 +2987,9 @@ dependencies = [
 
 [[package]]
 name = "typespec_macros"
-version = "0.6.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b032d7c2352fd8c2af91f942b914c52e315d3ea2b1bcad21a16cb94f72816bd"
+checksum = "530a5f141b8b7e9fc2ba8eb5c657520f68581daef103b36dfbc049d82c653d39"
 dependencies = [
  "proc-macro2",
  "quote",
