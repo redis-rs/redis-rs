@@ -1,3 +1,18 @@
+### 1.0.0-rc.3 (2025-11-04)
+
+#### Changes & Bug fixes
+
+* Fix `unreachable!` panics ([#1838](https://github.com/redis-rs/redis-rs/pull/1838) by @nihohit)
+* Add docs notes ([#1840](https://github.com/redis-rs/redis-rs/pull/1840) by @Nekidev)
+* Preparation for changes in async cluster reconnection. ([#1841](https://github.com/redis-rs/redis-rs/pull/1841) by @nihohit)
+* srandmember_multiple accepts negative count ([#1855](https://github.com/redis-rs/redis-rs/pull/1855) by @nihohit)
+* Remove clone from route commands ([#1856](https://github.com/redis-rs/redis-rs/pull/1856) by @value by @nihohit)
+
+#### CI improvements
+
+* Updated tested server versions. ([#1839](https://github.com/redis-rs/redis-rs/pull/1839) by @nihohit)
+* Fix timeout in test_async_cluster_route_info_to_nodes ([#1857](https://github.com/redis-rs/redis-rs/pull/1857) by @nihohit)
+
 ### 1.0.0-rc.2 (2025-10-20)
 
 #### Changes
