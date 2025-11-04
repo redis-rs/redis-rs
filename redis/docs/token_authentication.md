@@ -44,15 +44,15 @@ Add the `entra-id` feature to your `Cargo.toml`:
 redis = { version = "0.32.7", features = ["entra-id", "tokio-comp"] }
 ```
 
-### 2. Basic Usage with DefaultAzureCredential
+### 2. Basic Usage with DeveloperToolsCredential
 
 ```rust
 use redis::{Client, EntraIdCredentialsProvider, RetryConfig};
 
 #[tokio::main]
 async fn main() -> redis::RedisResult<()> {
-    // Create credentials provider using DefaultAzureCredential
-    let mut provider = EntraIdCredentialsProvider::new_default()?;
+    // Create the credentials provider using the DeveloperToolsCredential
+    let mut provider = EntraIdCredentialsProvider::new_developer_tools()?;
     provider.start(RetryConfig::default());
     
     // Create Redis client with credentials provider
@@ -77,12 +77,14 @@ async fn main() -> redis::RedisResult<()> {
 
 ## Authentication Flows
 
-### DefaultAzureCredential (Recommended for Development)
+### DeveloperToolsCredential (Recommended for Development)
 
-The `DefaultAzureCredential` tries multiple credential sources in order:
+The `DeveloperToolsCredential` tries the following credential types, in this order, stopping when one provides a token:
+* [`AzureCliCredential`]
+* [`AzureDeveloperCliCredential`]
 
 ```rust
-let provider = EntraIdCredentialsProvider::new_default()?;
+let provider = EntraIdCredentialsProvider::new_developer_tools()?;
 ```
 
 ### Service Principal with Client Secret
@@ -111,7 +113,7 @@ let certificate_base64 = fs::read_to_string("path/to/base64_pkcs12_certificate")
     .trim()
     .to_string();
 
-// Create credentials provider using service principal with client certificate
+// Create the credentials provider using service principal with client certificate
 let provider = EntraIdCredentialsProvider::new_client_certificate(
     "your-tenant-id".to_string(),
     "your-client-id".to_string(),
@@ -161,7 +163,7 @@ The token refresh behavior can be customized by providing a `RetryConfig` when s
 use redis::RetryConfig;
 use std::time::Duration;
 
-let mut provider = EntraIdCredentialsProvider::new_default()?;
+let mut provider = EntraIdCredentialsProvider::new_developer_tools()?;
 
 provider.start(RetryConfig {
     max_attempts: 3,
@@ -182,7 +184,7 @@ Once the maximum number of attempts is reached, the service will stop retrying a
 
 ### 1. Use Appropriate Credential Types
 
-- **Development**: `DefaultAzureCredential`
+- **Development**: `DeveloperToolsCredential`
 - **Production Services**: Service Principal with certificate
 - **Azure-hosted Apps**: Managed Identity
 

@@ -1,6 +1,8 @@
 #[cfg(feature = "entra-id")]
 mod entra_id_tests {
+    use azure_identity::UserAssignedId;
     use redis::{Client, ClientCertificate, EntraIdCredentialsProvider, RetryConfig};
+    use std::sync::OnceLock;
 
     const REDIS_URL: &str = "REDIS_URL";
 
@@ -8,7 +10,8 @@ mod entra_id_tests {
     const AZURE_CLIENT_ID: &str = "AZURE_CLIENT_ID";
     const AZURE_CLIENT_SECRET: &str = "AZURE_CLIENT_SECRET";
     const AZURE_CLIENT_CERTIFICATE_PATH: &str = "AZURE_CLIENT_CERTIFICATE_PATH";
-    const AZURE_USER_ASSIGNED_CLIENT_ID: &str = "AZURE_USER_ASSIGNED_CLIENT_ID";
+    const AZURE_USER_ASSIGNED_MANAGED_ID: &str = "AZURE_USER_ASSIGNED_MANAGED_ID";
+    const AZURE_REDIS_SCOPES: &str = "AZURE_REDIS_SCOPES";
 
     fn get_redis_url() -> String {
         std::env::var(REDIS_URL)
@@ -18,6 +21,17 @@ mod entra_id_tests {
     fn get_env_var(var_name: &str) -> String {
         std::env::var(var_name)
             .unwrap_or_else(|_| panic!("The `{var_name}` environment variable is not set."))
+    }
+
+    static REDIS_SCOPES: OnceLock<Vec<String>> = OnceLock::new();
+
+    fn get_redis_scopes() -> &'static Vec<String> {
+        REDIS_SCOPES.get_or_init(|| {
+            get_env_var(AZURE_REDIS_SCOPES)
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect()
+        })
     }
 
     async fn test_redis_connection(mut provider: EntraIdCredentialsProvider, test_key: &str) {
@@ -47,18 +61,12 @@ mod entra_id_tests {
 
     #[tokio::test]
     #[ignore]
-    async fn test_default_azure_credential() {
-        let provider = EntraIdCredentialsProvider::new_default().unwrap();
-        test_redis_connection(provider, "default_azure_credential").await;
-    }
-
-    #[tokio::test]
-    #[ignore]
     async fn test_service_principal_client_secret() {
-        let provider = EntraIdCredentialsProvider::new_client_secret(
+        let provider = EntraIdCredentialsProvider::new_client_secret_with_scopes(
             get_env_var(AZURE_TENANT_ID),
             get_env_var(AZURE_CLIENT_ID),
             get_env_var(AZURE_CLIENT_SECRET),
+            get_redis_scopes().clone(),
         )
         .unwrap();
         test_redis_connection(provider, "service_principal_client_secret").await;
@@ -78,13 +86,14 @@ mod entra_id_tests {
         let certificate_base64 =
             base64::engine::general_purpose::STANDARD.encode(&certificate_data);
 
-        let provider = EntraIdCredentialsProvider::new_client_certificate(
+        let provider = EntraIdCredentialsProvider::new_client_certificate_with_scopes(
             get_env_var(AZURE_TENANT_ID),
             get_env_var(AZURE_CLIENT_ID),
             ClientCertificate {
                 base64_pkcs12: certificate_base64,
                 password: None,
             },
+            get_redis_scopes().clone(),
         )
         .unwrap();
         test_redis_connection(provider, "service_principal_client_certificate").await;
@@ -93,16 +102,21 @@ mod entra_id_tests {
     #[tokio::test]
     #[ignore]
     async fn test_system_assigned_managed_identity() {
-        let provider = EntraIdCredentialsProvider::new_system_assigned_managed_identity().unwrap();
+        let provider =
+            EntraIdCredentialsProvider::new_system_assigned_managed_identity_with_scopes(
+                get_redis_scopes().clone(),
+            )
+            .unwrap();
         test_redis_connection(provider, "system_assigned_managed_identity").await;
     }
 
     #[tokio::test]
     #[ignore]
     async fn test_user_assigned_managed_identity() {
-        let provider = EntraIdCredentialsProvider::new_user_assigned_managed_identity(get_env_var(
-            AZURE_USER_ASSIGNED_CLIENT_ID,
-        ))
+        let provider = EntraIdCredentialsProvider::new_user_assigned_managed_identity_with_scopes(
+            UserAssignedId::ObjectId(get_env_var(AZURE_USER_ASSIGNED_MANAGED_ID)),
+            get_redis_scopes().clone(),
+        )
         .unwrap();
         test_redis_connection(provider, "user_assigned_managed_identity").await;
     }
