@@ -94,6 +94,51 @@ impl ConnectionManagerConfig {
         Self::default()
     }
 
+    /// Returns a minimum delay between connection attempts.
+    pub fn min_delay(&self) -> Duration {
+        self.min_delay
+    }
+
+    /// Returns a maximum delay between connection attempts.
+    pub fn max_delay(&self) -> Option<Duration> {
+        self.max_delay
+    }
+
+    /// Returns the base used for calculating the exponential backoff between retries.
+    pub fn exponent_base(&self) -> f32 {
+        self.exponent_base
+    }
+
+    /// Returns the maximum number of connection retry attempts.
+    pub fn number_of_retries(&self) -> usize {
+        self.number_of_retries
+    }
+
+    /// Returns the timeout applied to command responses.
+    ///
+    /// If `None`, responses do not time out.
+    pub fn response_timeout(&self) -> Option<Duration> {
+        self.response_timeout
+    }
+
+    /// Returns the timeout applied to establishing a new connection.
+    ///
+    /// If `None`, connection attempts to do not time out.
+    pub fn connection_timeout(&self) -> Option<Duration> {
+        self.connection_timeout
+    }
+
+    /// Returns `true` if automatic resubscription is enabled after reconnecting.
+    pub fn automatic_resubscription(&self) -> bool {
+        self.resubscribe_automatically
+    }
+
+    /// Returns the current cache configuration, if caching is enabled.
+    #[cfg(feature = "cache-aio")]
+    pub fn cache_config(&self) -> Option<&crate::caching::CacheConfig> {
+        self.cache_config.as_ref()
+    }
+
     /// Set the minimal delay for reconnect attempts.
     pub fn set_min_delay(mut self, min_delay: Duration) -> ConnectionManagerConfig {
         self.min_delay = min_delay;
@@ -113,7 +158,7 @@ impl ConnectionManagerConfig {
         self
     }
 
-    /// number_of_retries times, with an exponentially increasing delay
+    /// number_of_retries times, with an exponentially increasing delay.
     pub fn set_number_of_retries(mut self, amount: usize) -> ConnectionManagerConfig {
         self.number_of_retries = amount;
         self

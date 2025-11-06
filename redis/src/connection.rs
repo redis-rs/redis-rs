@@ -247,9 +247,25 @@ pub struct ConnectionInfo {
 }
 
 impl ConnectionInfo {
-    /// Returns the connection address
+    /// Returns the connection address.
     pub fn addr(&self) -> &ConnectionAddr {
         &self.addr
+    }
+
+    /// Returns the settings for the TCP connection.
+    pub fn tcp_settings(&self) -> &TcpSettings {
+        &self.tcp_settings
+    }
+
+    /// Returns a redis connection info for how to handshake with redis.
+    pub fn redis_settings(&self) -> &RedisConnectionInfo {
+        &self.redis
+    }
+
+    /// Sets a connection address for where to connect to.
+    pub fn set_addr(mut self, addr: ConnectionAddr) -> Self {
+        self.addr = addr;
+        self
     }
 
     /// Sets the TCP settings for the connection.
@@ -258,7 +274,7 @@ impl ConnectionInfo {
         self
     }
 
-    /// Set all redis connection info fields at once
+    /// Set all redis connection info fields at once.
     pub fn set_redis_settings(mut self, redis: RedisConnectionInfo) -> Self {
         self.redis = redis;
         self
@@ -281,31 +297,56 @@ pub struct RedisConnectionInfo {
 }
 
 impl RedisConnectionInfo {
-    /// Sets the username for the connection's ACL
+    /// Returns a username that should be used for connection.
+    pub fn username(&self) -> Option<&str> {
+        self.username.as_deref()
+    }
+
+    /// Returns a password that should be used for connection.
+    pub fn password(&self) -> Option<&str> {
+        self.password.as_deref()
+    }
+
+    /// Returns version of the protocol to use.
+    pub fn protocol(&self) -> ProtocolVersion {
+        self.protocol
+    }
+
+    /// Returns `true` if the `CLIENT SETINFO` command should be skipped.
+    pub fn skip_set_lib_name(&self) -> bool {
+        self.skip_set_lib_name
+    }
+
+    /// Returns the database number to use.
+    pub fn db(&self) -> i64 {
+        self.db
+    }
+
+    /// Sets the username for the connection's ACL.
     pub fn set_username(mut self, username: impl AsRef<str>) -> Self {
         self.username = Some(username.as_ref().into());
         self
     }
 
-    /// Sets the password for the connection's ACL
+    /// Sets the password for the connection's ACL.
     pub fn set_password(mut self, password: impl AsRef<str>) -> Self {
         self.password = Some(password.as_ref().into());
         self
     }
 
-    /// Sets the version of the RESP to use
+    /// Sets the version of the RESP to use.
     pub fn set_protocol(mut self, protocol: ProtocolVersion) -> Self {
         self.protocol = protocol;
         self
     }
 
-    /// Removes the pipelined CLIENT SETINFO call from the connection creation.
+    /// Removes the pipelined `CLIENT SETINFO` call from the connection creation.
     pub fn set_skip_set_lib_name(mut self) -> Self {
         self.skip_set_lib_name = true;
         self
     }
 
-    /// Sets the database number to use
+    /// Sets the database number to use.
     pub fn set_db(mut self, db: i64) -> Self {
         self.db = db;
         self
