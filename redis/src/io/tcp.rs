@@ -17,6 +17,23 @@ pub struct TcpSettings {
 }
 
 impl TcpSettings {
+    /// Returns the value of the `TCP_NODELAY` option on this socket.
+    pub fn nodelay(&self) -> bool {
+        self.nodelay
+    }
+
+    /// Returns parameters configuring TCP keepalive probes for this socket.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn keepalive(&self) -> Option<&socket2::TcpKeepalive> {
+        self.keepalive.as_ref()
+    }
+
+    /// Returns the value of the `TCP_USER_TIMEOUT` option on this socket.
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    pub fn user_timeout(&self) -> Option<Duration> {
+        self.user_timeout
+    }
+
     /// Sets the value of the `TCP_NODELAY` option on this socket.
     pub fn set_nodelay(self, nodelay: bool) -> Self {
         Self { nodelay, ..self }
