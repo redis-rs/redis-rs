@@ -94,12 +94,12 @@ impl ConnectionManagerConfig {
         Self::default()
     }
 
-    /// Returns a minimum delay between connection attempts.
+    /// Returns the minimum delay between connection attempts.
     pub fn min_delay(&self) -> Duration {
         self.min_delay
     }
 
-    /// Returns a maximum delay between connection attempts.
+    /// Returns the maximum delay between connection attempts.
     pub fn max_delay(&self) -> Option<Duration> {
         self.max_delay
     }

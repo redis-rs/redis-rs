@@ -257,12 +257,12 @@ impl ConnectionInfo {
         &self.tcp_settings
     }
 
-    /// Returns a redis connection info for how to handshake with redis.
+    /// Returns the redis connection info for how to handshake with redis.
     pub fn redis_settings(&self) -> &RedisConnectionInfo {
         &self.redis
     }
 
-    /// Sets a connection address for where to connect to.
+    /// Sets the connection address for where to connect to.
     pub fn set_addr(mut self, addr: ConnectionAddr) -> Self {
         self.addr = addr;
         self
@@ -297,12 +297,12 @@ pub struct RedisConnectionInfo {
 }
 
 impl RedisConnectionInfo {
-    /// Returns a username that should be used for connection.
+    /// Returns the username that should be used for connection.
     pub fn username(&self) -> Option<&str> {
         self.username.as_deref()
     }
 
-    /// Returns a password that should be used for connection.
+    /// Returns the password that should be used for connection.
     pub fn password(&self) -> Option<&str> {
         self.password.as_deref()
     }
