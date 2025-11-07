@@ -907,6 +907,10 @@ impl MultiplexedConnection {
         &mut self,
         credentials: &crate::auth::BasicAuth,
     ) -> RedisResult<()> {
+        // Update connection info with new credentials
+        self.connection_info.username = Some(ArcStr::from(credentials.username.clone()));
+        self.connection_info.password = Some(ArcStr::from(credentials.password.clone()));
+
         let auth_cmd =
             crate::connection::authenticate_cmd(&self.connection_info, true, &credentials.password);
         self.send_packed_command(&auth_cmd).await?;
