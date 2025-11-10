@@ -154,6 +154,32 @@ pub enum ValueComparison {
     IFDNE(String),
 }
 
+impl ToRedisArgs for ValueComparison {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            ValueComparison::IFEQ(value) => {
+                out.write_arg(b"IFEQ");
+                out.write_arg(value.as_bytes());
+            }
+            ValueComparison::IFNE(value) => {
+                out.write_arg(b"IFNE");
+                out.write_arg(value.as_bytes());
+            }
+            ValueComparison::IFDEQ(digest) => {
+                out.write_arg(b"IFDEQ");
+                out.write_arg(digest.as_bytes());
+            }
+            ValueComparison::IFDNE(digest) => {
+                out.write_arg(b"IFDNE");
+                out.write_arg(digest.as_bytes());
+            }
+        }
+    }
+}
+
 /// `VerbatimString`'s format types defined by spec
 #[derive(PartialEq, Clone, Debug)]
 #[non_exhaustive]

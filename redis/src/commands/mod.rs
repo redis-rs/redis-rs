@@ -372,6 +372,16 @@ implement_commands! {
         cmd("DEL").arg(key)
     }
 
+    /// Conditionally removes the specified key. A key is ignored if it does not exist.
+    /// IFEQ `match-value` - Delete the key only if its value is equal to `match-value`
+    /// IFNE `match-value` - Delete the key only if its value is not equal to `match-value`
+    /// IFDEQ `match-digest` - Delete the key only if the digest of its value is equal to `match-digest`
+    /// IFDNE `match-digest` - Delete the key only if the digest of its value is not equal to `match-digest`
+    /// [Redis Docs](https://redis.io/commands/DELEX)
+    fn del_ex<K: ToRedisArgs>(key: K, value_comparison: ValueComparison) -> (usize) {
+        cmd("DELEX").arg(key).arg(value_comparison)
+    }
+
     /// Get the hex signature of the value stored in the specified key.
     /// For the digest, Redis will use [XXH3](https://xxhash.com)
     /// [Redis Docs](https://redis.io/commands/DIGEST)
@@ -3342,13 +3352,13 @@ impl<Db: ToString> ToSingleRedisArg for CopyOptions<Db> {}
 #[derive(Clone, Default)]
 pub struct SetOptions {
     conditional_set: Option<ExistenceCheck>,
-    /// IFEQ <match-value> - Set the key's value and expiration only if its current value is equal to <match-value>.
+    /// IFEQ `match-value` - Set the key's value and expiration only if its current value is equal to `match-value`.
     /// If the key doesn't exist, it won't be created.
-    /// IFNE <match-value> - Set the key's value and expiration only if its current value is not equal to <match-value>.
+    /// IFNE `match-value` - Set the key's value and expiration only if its current value is not equal to `match-value`.
     /// If the key doesn't exist, it will be created.
-    /// IFDEQ <match-digest> - Set the key's value and expiration only if the digest of its current value is equal to <match-digest>.
+    /// IFDEQ `match-digest` - Set the key's value and expiration only if the digest of its current value is equal to `match-digest`.
     /// If the key doesn't exist, it won't be created.
-    /// IFDNE <match-digest> - Set the key's value and expiration only if the digest of its current value is not equal to <match-digest>.
+    /// IFDNE `match-digest` - Set the key's value and expiration only if the digest of its current value is not equal to `match-digest`.
     /// If the key doesn't exist, it will be created.
     value_comparison: Option<ValueComparison>,
     get: bool,
@@ -3397,24 +3407,7 @@ impl ToRedisArgs for SetOptions {
             }
         }
         if let Some(ref value_comparison) = self.value_comparison {
-            match value_comparison {
-                ValueComparison::IFEQ(value) => {
-                    out.write_arg(b"IFEQ");
-                    out.write_arg(value.as_bytes());
-                }
-                ValueComparison::IFNE(value) => {
-                    out.write_arg(b"IFNE");
-                    out.write_arg(value.as_bytes());
-                }
-                ValueComparison::IFDEQ(digest) => {
-                    out.write_arg(b"IFDEQ");
-                    out.write_arg(digest.as_bytes());
-                }
-                ValueComparison::IFDNE(digest) => {
-                    out.write_arg(b"IFDNE");
-                    out.write_arg(digest.as_bytes());
-                }
-            }
+            value_comparison.write_redis_args(out);
         }
         if self.get {
             out.write_arg(b"GET");
