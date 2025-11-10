@@ -140,6 +140,46 @@ pub enum Value {
     ServerError(ServerError),
 }
 
+/// Helper enum that is used to define comparisons between values and their digests
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub enum ValueComparison {
+    /// Value is equal
+    IFEQ(String),
+    /// Value is not equal
+    IFNE(String),
+    /// Value's digest is equal
+    IFDEQ(String),
+    /// Value's digest is not equal
+    IFDNE(String),
+}
+
+impl ToRedisArgs for ValueComparison {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            ValueComparison::IFEQ(value) => {
+                out.write_arg(b"IFEQ");
+                out.write_arg(value.as_bytes());
+            }
+            ValueComparison::IFNE(value) => {
+                out.write_arg(b"IFNE");
+                out.write_arg(value.as_bytes());
+            }
+            ValueComparison::IFDEQ(digest) => {
+                out.write_arg(b"IFDEQ");
+                out.write_arg(digest.as_bytes());
+            }
+            ValueComparison::IFDNE(digest) => {
+                out.write_arg(b"IFDNE");
+                out.write_arg(digest.as_bytes());
+            }
+        }
+    }
+}
+
 /// `VerbatimString`'s format types defined by spec
 #[derive(PartialEq, Clone, Debug)]
 #[non_exhaustive]
@@ -2271,6 +2311,44 @@ pub fn from_redis_value_ref<T: FromRedisValue>(v: &Value) -> Result<T, ParsingEr
 /// to make the API slightly nicer.
 pub fn from_redis_value<T: FromRedisValue>(v: Value) -> Result<T, ParsingError> {
     FromRedisValue::from_redis_value(v)
+}
+
+/// Calculates a digest/hash of the given value for use with Redis value comparison operations.
+/// This function uses the XXH3 algorithm, which is the same algorithm used by Redis for its DIGEST command.
+/// The resulting digest can be used with `ValueComparison::IFDEQ` and `ValueComparison::IFDNE`.
+///
+/// # Example
+/// ```rust
+/// use redis::{calculate_value_digest, ValueComparison, SetOptions};
+///
+/// let value = "my_value";
+/// let digest = calculate_value_digest(value);
+///
+/// // Use the digest in a value comparison
+/// let opts = SetOptions::default()
+///     .value_comparison(ValueComparison::IFDEQ(digest));
+/// ```
+pub fn calculate_value_digest<T: ToRedisArgs>(value: T) -> String {
+    use xxhash_rust::xxh3::xxh3_64;
+
+    // Convert the value to Redis args format (bytes)
+    let args = value.to_redis_args();
+
+    // For consistency with Redis behavior, hash the concatenated bytes
+    // of all arguments, similar to how Redis would serialize the value
+    let mut combined_bytes = Vec::new();
+    for arg in args {
+        combined_bytes.extend_from_slice(&arg);
+    }
+
+    // Calculate XXH3 hash (64-bit) and format as hexadecimal string
+    let hash = xxh3_64(&combined_bytes);
+    format!("{:016x}", hash)
+}
+
+/// Validates that the given string is a valid 16-byte hex digest.
+pub fn is_valid_16_bytes_hex_digest(s: &str) -> bool {
+    s.len() == 16 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Enum representing the communication protocol with the server.
