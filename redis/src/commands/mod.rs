@@ -372,6 +372,13 @@ implement_commands! {
         cmd("DEL").arg(key)
     }
 
+    /// Get the hex signature of the value stored in the specified key.
+    /// For the digest, Redis will use [XXH3](https://xxhash.com)
+    /// [Redis Docs](https://redis.io/commands/DIGEST)
+    fn digest<K: ToSingleRedisArg>(key: K) -> (Option<String>) {
+        cmd("DIGEST").arg(key)
+    }
+
     /// Determine if a key exists.
     /// [Redis Docs](https://redis.io/commands/EXISTS)
     fn exists<K: ToRedisArgs>(key: K) -> (bool) {
@@ -3332,7 +3339,7 @@ impl<Db: ToString> ToSingleRedisArg for CopyOptions<Db> {}
 ///     con.set_options(key, value, opts)
 /// }
 /// ```
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub struct SetOptions {
     conditional_set: Option<ExistenceCheck>,
     /// IFEQ <match-value> - Set the key's value and expiration only if its current value is equal to <match-value>.
@@ -3393,11 +3400,11 @@ impl ToRedisArgs for SetOptions {
             match value_comparison {
                 ValueComparison::IFEQ(value) => {
                     out.write_arg(b"IFEQ");
-                    out.write_arg(value.to_string().as_bytes());
+                    out.write_arg(value.as_bytes());
                 }
                 ValueComparison::IFNE(value) => {
                     out.write_arg(b"IFNE");
-                    out.write_arg(value.to_string().as_bytes());
+                    out.write_arg(value.as_bytes());
                 }
                 ValueComparison::IFDEQ(digest) => {
                     out.write_arg(b"IFDEQ");
