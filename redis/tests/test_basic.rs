@@ -2773,7 +2773,7 @@ mod basic {
             )
             .unwrap();
         assert_eq!(result, None);
-        assert_eq!(con.exists(non_existent_key).unwrap(), false);
+        assert!(!con.exists(non_existent_key).unwrap());
 
         // IFEQ with non-matching value should not update the value
         let result = con
@@ -2822,7 +2822,7 @@ mod basic {
         assert_eq!(con.get(key).unwrap(), Some(updated_value.to_string()));
 
         // IFNE with non-existent key should create the key
-        assert_eq!(con.exists(non_existent_key).unwrap(), false);
+        assert!(!con.exists(non_existent_key).unwrap());
         let result = con
             .set_options(
                 non_existent_key,
@@ -2944,7 +2944,7 @@ mod basic {
             )
             .unwrap();
         assert_eq!(result, None);
-        assert_eq!(con.exists(non_existent_key).unwrap(), false);
+        assert!(!con.exists(non_existent_key).unwrap());
 
         // IFDEQ with non-matching digest should not update the value
         let non_matching_digest = calculate_value_digest(non_matching_value);
@@ -3030,6 +3030,88 @@ mod basic {
         assert_eq!(result, Some(updated_value.to_string()));
         // Verify that the value was not updated
         assert_eq!(con.get(key).unwrap(), Some(updated_value.to_string()));
+    }
+
+    #[test]
+    fn test_del_ex() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let mut con = ctx.connection();
+
+        let key = "test_del_ex_key";
+        let non_existent_key = "test_del_ex_non_existent_key";
+        let initial_value = "initial_value";
+        let non_matching_value = "non_matching_value";
+        let initial_value_digest = calculate_value_digest(initial_value);
+        let non_matching_digest = calculate_value_digest(non_matching_value);
+
+        let value_comparisons = [
+            IFEQ(initial_value.to_string()),
+            IFNE(initial_value.to_string()),
+            IFDEQ(initial_value_digest.to_string()),
+            IFDNE(initial_value_digest.to_string()),
+        ];
+
+        // IFEQ tests
+        assert_eq!(con.set(key, initial_value), Ok(()));
+        // IFEQ with non-matching value should not delete the key
+        assert_eq!(con.del_ex(key, IFEQ(non_matching_value.to_string())), Ok(0));
+        assert!(con.exists(key).unwrap());
+        // IFEQ with matching value should succeed and delete the key
+        assert_eq!(con.del_ex(key, IFEQ(initial_value.to_string())), Ok(1));
+        assert!(!con.exists(key).unwrap());
+
+        // IFNE tests
+        assert_eq!(con.set(key, initial_value), Ok(()));
+        // IFNE with matching value should not delete the key
+        assert_eq!(con.del_ex(key, IFNE(initial_value.to_string())), Ok(0));
+        assert!(con.exists(key).unwrap());
+        // IFNE with non-matching value should succeed and delete the key
+        assert_eq!(con.del_ex(key, IFNE(non_matching_value.to_string())), Ok(1));
+        assert!(!con.exists(key).unwrap());
+
+        // IFDEQ tests
+        assert_eq!(con.set(key, initial_value), Ok(()));
+        // IFDEQ with non-matching digest should not delete the key
+        assert_eq!(
+            con.del_ex(key, IFDEQ(non_matching_digest.to_string())),
+            Ok(0)
+        );
+        assert!(con.exists(key).unwrap());
+        // IFDEQ with matching digest should succeed and delete the key
+        assert_eq!(
+            con.del_ex(key, IFDEQ(initial_value_digest.to_string())),
+            Ok(1)
+        );
+        assert!(!con.exists(key).unwrap());
+
+        // IFDNE tests
+        assert_eq!(con.set(key, initial_value), Ok(()));
+        // IFDNE with matching digest should not delete the key
+        assert_eq!(
+            con.del_ex(key, IFDNE(initial_value_digest.to_string())),
+            Ok(0)
+        );
+        assert!(con.exists(key).unwrap());
+        // IFDNE with non-matching digest should succeed and delete the key
+        assert_eq!(
+            con.del_ex(key, IFDNE(non_matching_digest.to_string())),
+            Ok(1)
+        );
+        assert!(!con.exists(key).unwrap());
+
+        // Verify that all comparisons work with non-existent keys and return 0
+        for value_comparison in &value_comparisons {
+            assert_eq!(
+                con.del_ex(non_existent_key, value_comparison.clone()),
+                Ok(0)
+            );
+        }
+
+        // Verify that all comparisons return an error when used with a value that is not a string
+        assert_eq!(con.hset_multiple(key, &[("f1", 1), ("f2", 2)]), Ok(()));
+        for value_comparison in &value_comparisons {
+            assert!(con.del_ex(key, value_comparison.clone()).is_err());
+        }
     }
 
     #[test]
