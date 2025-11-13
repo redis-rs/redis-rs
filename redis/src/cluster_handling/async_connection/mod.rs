@@ -92,9 +92,7 @@
 //! ```
 use std::{
     collections::HashMap,
-    fmt,
-    future::Future,
-    io, mem,
+    fmt, io, mem,
     ops::Deref,
     pin::Pin,
     sync::{Arc, Mutex},
@@ -172,30 +170,62 @@ where
         #[cfg(feature = "cache-aio")]
         let cache_manager = cluster_params.cache_manager.clone();
         let runtime = Runtime::locate();
-        ClusterConnInner::new(initial_nodes, cluster_params)
-            .await
-            .map(|inner| {
-                let (sender, mut receiver) = mpsc::channel::<Message<_>>(100);
-                let stream = async move {
-                    let _ = stream::poll_fn(move |cx| receiver.poll_recv(cx))
-                        .map(Ok)
-                        .forward(inner)
-                        .await;
-                };
-                let _task_handle = HandleContainer::new(runtime.spawn(stream));
+        let inner = ClusterConnInner::new(initial_nodes, cluster_params);
+        let inner = inner.wait_for_initial_connection().await?;
 
-                ClusterConnection {
-                    sender,
-                    state: Arc::new(ClientSideState {
-                        protocol,
-                        _task_handle,
-                        response_timeout,
-                        runtime,
-                        #[cfg(feature = "cache-aio")]
-                        cache_manager,
-                    }),
-                }
-            })
+        let (sender, mut receiver) = mpsc::channel::<Message<_>>(100);
+        let stream = async move {
+            let _ = stream::poll_fn(move |cx| receiver.poll_recv(cx))
+                .map(Ok)
+                .forward(inner)
+                .await;
+        };
+        let _task_handle = HandleContainer::new(runtime.spawn(stream));
+
+        Ok(ClusterConnection {
+            sender,
+            state: Arc::new(ClientSideState {
+                protocol,
+                _task_handle,
+                response_timeout,
+                runtime,
+                #[cfg(feature = "cache-aio")]
+                cache_manager,
+            }),
+        })
+    }
+
+    pub(crate) fn new_pending(
+        initial_nodes: &[ConnectionInfo],
+        cluster_params: ClusterParams,
+    ) -> ClusterConnection<C> {
+        let protocol = cluster_params.protocol.unwrap_or_default();
+        let response_timeout = cluster_params.response_timeout;
+        #[cfg(feature = "cache-aio")]
+        let cache_manager = cluster_params.cache_manager.clone();
+        let runtime = Runtime::locate();
+        let inner = ClusterConnInner::new(initial_nodes, cluster_params);
+
+        let (sender, mut receiver) = mpsc::channel::<Message<_>>(100);
+        let stream = async move {
+            let _ = stream::poll_fn(move |cx| receiver.poll_recv(cx))
+                .map(Ok)
+                .forward(inner)
+                .await;
+        };
+        let _task_handle = HandleContainer::new(runtime.spawn(stream));
+
+        ClusterConnection {
+            sender,
+            state: Arc::new(ClientSideState {
+                protocol,
+                _task_handle,
+                response_timeout,
+                runtime,
+                #[cfg(feature = "cache-aio")]
+                cache_manager,
+            }),
+        }
     }
 
     /// Send a command to the given `routing`, and aggregate the response according to `response_policy`.
@@ -920,6 +950,86 @@ where
         });
         self.pending_requests.lock().unwrap().extend(requests);
     }
+
+    async fn reconnect_to_initial_nodes(self) {
+        debug!("Received request to reconnect to initial nodes");
+        let connection_map =
+            match Self::create_initial_connections(&self.initial_nodes, &self.cluster_params).await
+            {
+                Ok(map) => map,
+                Err(err) => {
+                    warn!("Can't reconnect to initial nodes: `{err}`");
+                    return;
+                }
+            };
+        let mut write_lock = self.conn_lock.write().await;
+        *write_lock = (
+            connection_map,
+            SlotMap::new(self.cluster_params.read_from_replicas),
+        );
+        drop(write_lock);
+        if let Err(err) = self.refresh_slots().await {
+            warn!("Can't refresh slots with initial nodes: `{err}`");
+        };
+    }
+
+    async fn refresh_connections(self, addrs: Vec<ArcStr>) {
+        let mut write_guard = self.conn_lock.write().await;
+
+        self.refresh_connections_locked(&mut write_guard.0, addrs)
+            .await;
+    }
+
+    async fn create_initial_connections(
+        initial_nodes: &[ConnectionInfo],
+        params: &ClusterParams,
+    ) -> RedisResult<ConnectionMap<C>> {
+        let (connections, error) = stream::iter(initial_nodes.iter().cloned())
+            .map(async move |info| {
+                let addr = info.addr.to_string();
+                let result = connect_and_check(&addr, params).await;
+                match result {
+                    Ok(conn) => Ok((addr, conn)),
+                    Err(e) => {
+                        debug!("Failed to connect to initial node: {e:?}");
+                        Err(e)
+                    }
+                }
+            })
+            .buffer_unordered(initial_nodes.len())
+            .fold(
+                (ConnectionMap::<C>::with_capacity(initial_nodes.len()), None),
+                |(mut connections, mut error), result| async move {
+                    match result {
+                        Ok((addr, conn)) => {
+                            connections.insert(addr.into(), conn);
+                        }
+                        Err(err) => {
+                            // Store at least one error to use as detail in the connection error if
+                            // all connections fail.
+                            error = Some(err);
+                        }
+                    }
+                    (connections, error)
+                },
+            )
+            .await;
+        if connections.is_empty() {
+            if let Some(err) = error {
+                return Err(RedisError::from((
+                    ErrorKind::Io,
+                    "Failed to create initial connections",
+                    err.to_string(),
+                )));
+            } else {
+                return Err(RedisError::from((
+                    ErrorKind::Io,
+                    "Failed to create initial connections",
+                )));
+            }
+        }
+        Ok(connections)
+    }
 }
 
 /// This is the sink for requests sent by the user.
@@ -995,119 +1105,44 @@ impl<C> ClusterConnInner<C>
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
 {
-    async fn new(
-        initial_nodes: &[ConnectionInfo],
-        cluster_params: ClusterParams,
-    ) -> RedisResult<Self> {
-        let connections = Self::create_initial_connections(initial_nodes, &cluster_params).await?;
+    fn new(initial_nodes: &[ConnectionInfo], cluster_params: ClusterParams) -> Self {
         let subscription_tracker = if cluster_params.async_push_sender.is_some() {
             Some(Mutex::new(SubscriptionTracker::default()))
         } else {
             None
         };
         let inner = Arc::new(InnerCore {
-            conn_lock: RwLock::new((connections, SlotMap::new(cluster_params.read_from_replicas))),
+            conn_lock: RwLock::new((
+                Default::default(),
+                SlotMap::new(cluster_params.read_from_replicas),
+            )),
             cluster_params,
             pending_requests: Mutex::new(Vec::new()),
             initial_nodes: initial_nodes.to_vec(),
             subscription_tracker,
         });
+        let core = Core(inner);
         let connection = ClusterConnInner {
-            inner: Core(inner),
+            inner: core.clone(),
             in_flight_requests: Default::default(),
             refresh_error: None,
-            state: ConnectionState::PollComplete,
+            state: ConnectionState::Recover(RecoverFuture::Reconnect(Box::pin(
+                core.reconnect_to_initial_nodes(),
+            ))),
         };
-        connection.inner.clone().refresh_slots().await?;
-        Ok(connection)
+        connection
     }
 
-    async fn create_initial_connections(
-        initial_nodes: &[ConnectionInfo],
-        params: &ClusterParams,
-    ) -> RedisResult<ConnectionMap<C>> {
-        let (connections, error) = stream::iter(initial_nodes.iter().cloned())
-            .map(async move |info| {
-                let addr = info.addr.to_string();
-                let result = connect_and_check(&addr, params).await;
-                match result {
-                    Ok(conn) => Ok((addr, conn)),
-                    Err(e) => {
-                        debug!("Failed to connect to initial node: {e:?}");
-                        Err(e)
-                    }
-                }
-            })
-            .buffer_unordered(initial_nodes.len())
-            .fold(
-                (ConnectionMap::<C>::with_capacity(initial_nodes.len()), None),
-                |(mut connections, mut error), result| async move {
-                    match result {
-                        Ok((addr, conn)) => {
-                            connections.insert(addr.into(), conn);
-                        }
-                        Err(err) => {
-                            // Store at least one error to use as detail in the connection error if
-                            // all connections fail.
-                            error = Some(err);
-                        }
-                    }
-                    (connections, error)
-                },
-            )
-            .await;
-        if connections.is_empty() {
-            if let Some(err) = error {
-                return Err(RedisError::from((
-                    ErrorKind::Io,
-                    "Failed to create initial connections",
-                    err.to_string(),
-                )));
-            } else {
-                return Err(RedisError::from((
-                    ErrorKind::Io,
-                    "Failed to create initial connections",
-                )));
+    async fn wait_for_initial_connection(mut self) -> RedisResult<Self> {
+        if let ConnectionState::Recover(fut) =
+            std::mem::replace(&mut self.state, ConnectionState::PollComplete)
+        {
+            match fut {
+                RecoverFuture::RecoverSlots(fut) => fut.await?,
+                RecoverFuture::Reconnect(fut) => fut.await,
             }
         }
-        Ok(connections)
-    }
-
-    fn reconnect_to_initial_nodes(&mut self) -> impl Future<Output = ()> {
-        debug!("Received request to reconnect to initial nodes");
-        let inner = self.inner.clone();
-        async move {
-            let connection_map =
-                match Self::create_initial_connections(&inner.initial_nodes, &inner.cluster_params)
-                    .await
-                {
-                    Ok(map) => map,
-                    Err(err) => {
-                        warn!("Can't reconnect to initial nodes: `{err}`");
-                        return;
-                    }
-                };
-            let mut write_lock = inner.conn_lock.write().await;
-            *write_lock = (
-                connection_map,
-                SlotMap::new(inner.cluster_params.read_from_replicas),
-            );
-            drop(write_lock);
-            if let Err(err) = inner.refresh_slots().await {
-                warn!("Can't refresh slots with initial nodes: `{err}`");
-            };
-        }
-    }
-
-    fn refresh_connections(&mut self, addrs: Vec<ArcStr>) -> impl Future<Output = ()> {
-        let inner = self.inner.clone();
-        async move {
-            let mut write_guard = inner.conn_lock.write().await;
-
-            inner
-                .refresh_connections_locked(&mut write_guard.0, addrs)
-                .await;
-        }
+        Ok(self)
     }
 
     fn poll_recover(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), RedisError>> {
@@ -1336,12 +1371,12 @@ where
                 }
                 PollFlushAction::Reconnect(addrs) => {
                     self.state = ConnectionState::Recover(RecoverFuture::Reconnect(Box::pin(
-                        self.refresh_connections(addrs),
+                        self.inner.clone().refresh_connections(addrs),
                     )));
                 }
                 PollFlushAction::ReconnectFromInitialConnections => {
                     self.state = ConnectionState::Recover(RecoverFuture::Reconnect(Box::pin(
-                        self.reconnect_to_initial_nodes(),
+                        self.inner.clone().reconnect_to_initial_nodes(),
                     )));
                 }
             }
