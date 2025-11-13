@@ -172,30 +172,62 @@ where
         #[cfg(feature = "cache-aio")]
         let cache_manager = cluster_params.cache_manager.clone();
         let runtime = Runtime::locate();
-        ClusterConnInner::new(initial_nodes, cluster_params)
-            .await
-            .map(|inner| {
-                let (sender, mut receiver) = mpsc::channel::<Message<_>>(100);
-                let stream = async move {
-                    let _ = stream::poll_fn(move |cx| receiver.poll_recv(cx))
-                        .map(Ok)
-                        .forward(inner)
-                        .await;
-                };
-                let _task_handle = HandleContainer::new(runtime.spawn(stream));
+        let inner = ClusterConnInner::new(initial_nodes, cluster_params);
+        let inner = inner.wait_for_initial_connection().await?;
 
-                ClusterConnection {
-                    sender,
-                    state: Arc::new(ClientSideState {
-                        protocol,
-                        _task_handle,
-                        response_timeout,
-                        runtime,
-                        #[cfg(feature = "cache-aio")]
-                        cache_manager,
-                    }),
-                }
-            })
+        let (sender, mut receiver) = mpsc::channel::<Message<_>>(100);
+        let stream = async move {
+            let _ = stream::poll_fn(move |cx| receiver.poll_recv(cx))
+                .map(Ok)
+                .forward(inner)
+                .await;
+        };
+        let _task_handle = HandleContainer::new(runtime.spawn(stream));
+
+        Ok(ClusterConnection {
+            sender,
+            state: Arc::new(ClientSideState {
+                protocol,
+                _task_handle,
+                response_timeout,
+                runtime,
+                #[cfg(feature = "cache-aio")]
+                cache_manager,
+            }),
+        })
+    }
+
+    pub(crate) fn new_pending(
+        initial_nodes: &[ConnectionInfo],
+        cluster_params: ClusterParams,
+    ) -> ClusterConnection<C> {
+        let protocol = cluster_params.protocol.unwrap_or_default();
+        let response_timeout = cluster_params.response_timeout;
+        #[cfg(feature = "cache-aio")]
+        let cache_manager = cluster_params.cache_manager.clone();
+        let runtime = Runtime::locate();
+        let inner = ClusterConnInner::new(initial_nodes, cluster_params);
+
+        let (sender, mut receiver) = mpsc::channel::<Message<_>>(100);
+        let stream = async move {
+            let _ = stream::poll_fn(move |cx| receiver.poll_recv(cx))
+                .map(Ok)
+                .forward(inner)
+                .await;
+        };
+        let _task_handle = HandleContainer::new(runtime.spawn(stream));
+
+        ClusterConnection {
+            sender,
+            state: Arc::new(ClientSideState {
+                protocol,
+                _task_handle,
+                response_timeout,
+                runtime,
+                #[cfg(feature = "cache-aio")]
+                cache_manager,
+            }),
+        }
     }
 
     /// Send a command to the given `routing`, and aggregate the response according to `response_policy`.
@@ -995,31 +1027,33 @@ impl<C> ClusterConnInner<C>
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
 {
-    async fn new(
-        initial_nodes: &[ConnectionInfo],
-        cluster_params: ClusterParams,
-    ) -> RedisResult<Self> {
-        let connections = Self::create_initial_connections(initial_nodes, &cluster_params).await?;
+    fn new(initial_nodes: &[ConnectionInfo], cluster_params: ClusterParams) -> Self {
         let subscription_tracker = if cluster_params.async_push_sender.is_some() {
             Some(Mutex::new(SubscriptionTracker::default()))
         } else {
             None
         };
         let inner = Arc::new(InnerCore {
-            conn_lock: RwLock::new((connections, SlotMap::new(cluster_params.read_from_replicas))),
+            conn_lock: RwLock::new((
+                Default::default(),
+                SlotMap::new(cluster_params.read_from_replicas),
+            )),
             cluster_params,
             pending_requests: Mutex::new(Vec::new()),
             initial_nodes: initial_nodes.to_vec(),
             subscription_tracker,
         });
-        let connection = ClusterConnInner {
-            inner: Core(inner),
+        let core = Core(inner);
+        let mut inner = ClusterConnInner {
+            inner: core.clone(),
             in_flight_requests: Default::default(),
             refresh_error: None,
             state: ConnectionState::PollComplete,
         };
-        connection.inner.clone().refresh_slots().await?;
-        Ok(connection)
+        inner.state = ConnectionState::Recover(RecoverFuture::Reconnect(Box::pin(
+            inner.reconnect_to_initial_nodes(),
+        )));
+        inner
     }
 
     async fn create_initial_connections(
@@ -1108,6 +1142,18 @@ where
                 .refresh_connections_locked(&mut write_guard.0, addrs)
                 .await;
         }
+    }
+
+    async fn wait_for_initial_connection(mut self) -> RedisResult<Self> {
+        if let ConnectionState::Recover(fut) =
+            std::mem::replace(&mut self.state, ConnectionState::PollComplete)
+        {
+            match fut {
+                RecoverFuture::RecoverSlots(fut) => fut.await?,
+                RecoverFuture::Reconnect(fut) => fut.await,
+            }
+        }
+        Ok(self)
     }
 
     fn poll_recover(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), RedisError>> {

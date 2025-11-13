@@ -2282,6 +2282,18 @@ mod cluster_async {
         assert_eq!(request_counter.load(Ordering::Relaxed), 1);
     }
 
+    #[async_test]
+    async fn async_cluster_connect_lazily() -> RedisResult<()> {
+        let cluster = TestClusterContext::new();
+
+        let connection = cluster
+            .client
+            .get_pending_async_connection_with_config(Default::default());
+        smoke_test_connection(connection).await;
+
+        Ok::<_, RedisError>(())
+    }
+
     mod pubsub {
         use redis::{cluster_async::ClusterConnection, PushInfo, PushKind};
         use tokio::{join, sync::mpsc::UnboundedReceiver};
