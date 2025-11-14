@@ -1122,15 +1122,14 @@ where
             subscription_tracker,
         });
         let core = Core(inner);
-        let connection = ClusterConnInner {
+        ClusterConnInner {
             inner: core.clone(),
             in_flight_requests: Default::default(),
             refresh_error: None,
             state: ConnectionState::Recover(RecoverFuture::Reconnect(Box::pin(
                 core.reconnect_to_initial_nodes(),
             ))),
-        };
-        connection
+        }
     }
 
     async fn wait_for_initial_connection(mut self) -> RedisResult<Self> {
