@@ -32,6 +32,10 @@ pub mod smol;
 #[cfg(feature = "tokio-comp")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
 pub mod tokio;
+/// Enables the monoio compatibility
+#[cfg(feature = "monoio-comp")]
+#[cfg_attr(docsrs, doc(cfg(feature = "monoio-comp")))]
+pub mod monoio;
 
 mod pubsub;
 pub use pubsub::{PubSub, PubSubSink, PubSubStream};
@@ -257,6 +261,16 @@ async fn get_socket_addrs(host: &str, port: u16) -> RedisResult<Vec<SocketAddr>>
         Runtime::Smol => ::smol::net::resolve((host, port))
             .await
             .map_err(RedisError::from),
+
+        #[cfg(feature = "monoio-comp")]
+        Runtime::Monoio => {
+            // Monoio doesn't have built-in DNS resolution, use std::net::ToSocketAddrs
+            use std::net::ToSocketAddrs;
+            (host, port)
+                .to_socket_addrs()
+                .map(|iter| iter.collect::<Vec<_>>())
+                .map_err(RedisError::from)
+        }
     }?;
 
     if socket_addrs.is_empty() {

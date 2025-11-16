@@ -2,13 +2,50 @@ use std::{io, sync::Arc, time::Duration};
 
 use futures_util::Future;
 
-#[cfg(all(feature = "tokio-comp", feature = "smol-comp"))]
+// Helper to make monoio futures Send + Sync safe
+// In monoio's thread-per-core model, futures are never transferred between threads,
+// so it's safe to mark them as Send + Sync even if they contain non-Send types.
+#[cfg(feature = "monoio-comp")]
+mod monoio_future_safety {
+    use super::*;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+    
+    // Wrapper to make monoio futures Send + Sync safe
+    pub struct SendSafeFuture<F>(F);
+    
+    impl<F: Future> Future for SendSafeFuture<F> {
+        type Output = F::Output;
+        
+        fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+            // SAFETY: We're projecting the pin to the inner future
+            unsafe {
+                let this = self.get_unchecked_mut();
+                Pin::new_unchecked(&mut this.0).poll(cx)
+            }
+        }
+    }
+    
+    unsafe impl<F> Send for SendSafeFuture<F> {}
+    unsafe impl<F> Sync for SendSafeFuture<F> {}
+    
+    pub fn make_send_safe<F: Future>(f: F) -> SendSafeFuture<F> {
+        SendSafeFuture(f)
+    }
+}
+
+#[cfg(any(
+    all(feature = "tokio-comp", feature = "smol-comp"),
+    all(feature = "monoio-comp", any(feature = "tokio-comp", feature = "smol-comp"))
+))]
 use std::sync::OnceLock;
 
 #[cfg(feature = "smol-comp")]
 use super::smol as crate_smol;
 #[cfg(feature = "tokio-comp")]
 use super::tokio as crate_tokio;
+#[cfg(feature = "monoio-comp")]
+use super::monoio as crate_monoio;
 use super::RedisRuntime;
 use crate::errors::RedisError;
 #[cfg(feature = "smol-comp")]
@@ -20,6 +57,8 @@ pub(crate) enum Runtime {
     Tokio,
     #[cfg(feature = "smol-comp")]
     Smol,
+    #[cfg(feature = "monoio-comp")]
+    Monoio,
 }
 
 pub(crate) enum TaskHandle {
@@ -27,6 +66,8 @@ pub(crate) enum TaskHandle {
     Tokio(tokio::task::JoinHandle<()>),
     #[cfg(feature = "smol-comp")]
     Smol(smol::Task<()>),
+    #[cfg(feature = "monoio-comp")]
+    Monoio(()), // Monoio uses thread-per-core, tasks are managed by runtime
 }
 
 impl TaskHandle {
@@ -35,6 +76,10 @@ impl TaskHandle {
         match self {
             #[cfg(feature = "smol-comp")]
             TaskHandle::Smol(task) => task.detach(),
+            #[cfg(feature = "monoio-comp")]
+            TaskHandle::Monoio(_) => {
+                // Monoio tasks are automatically managed by the runtime
+            }
             #[cfg(feature = "tokio-comp")]
             _ => {}
         }
@@ -57,6 +102,10 @@ impl Drop for HandleContainer {
             Some(TaskHandle::Tokio(handle)) => handle.abort(),
             #[cfg(feature = "smol-comp")]
             Some(TaskHandle::Smol(task)) => drop(task),
+            #[cfg(feature = "monoio-comp")]
+            Some(TaskHandle::Monoio(_)) => {
+                // Monoio tasks are automatically cleaned up by the runtime
+            }
         }
     }
 }
@@ -72,10 +121,16 @@ impl SharedHandleContainer {
     }
 }
 
-#[cfg(all(feature = "tokio-comp", feature = "smol-comp"))]
+#[cfg(any(
+    all(feature = "tokio-comp", feature = "smol-comp"),
+    all(feature = "monoio-comp", any(feature = "tokio-comp", feature = "smol-comp"))
+))]
 static CHOSEN_RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
-#[cfg(all(feature = "tokio-comp", feature = "smol-comp"))]
+#[cfg(any(
+    all(feature = "tokio-comp", feature = "smol-comp"),
+    all(feature = "monoio-comp", any(feature = "tokio-comp", feature = "smol-comp"))
+))]
 fn set_runtime(runtime: Runtime) -> Result<(), RedisError> {
     const PREFER_RUNTIME_ERROR: &str =
     "Another runtime preference was already set. Please call this function before any other runtime preference is set.";
@@ -90,7 +145,7 @@ fn set_runtime(runtime: Runtime) -> Result<(), RedisError> {
 /// If the function returns `Err`, another runtime preference was already set, and won't be changed.
 /// Call this function if the application doesn't use multiple runtimes,
 /// but the crate is compiled with multiple runtimes enabled, which is a bad pattern that should be avoided.
-#[cfg(all(feature = "smol-comp", feature = "tokio-comp"))]
+#[cfg(all(feature = "smol-comp", any(feature = "tokio-comp", feature = "monoio-comp")))]
 pub fn prefer_smol() -> Result<(), RedisError> {
     set_runtime(Runtime::Smol)
 }
@@ -100,41 +155,62 @@ pub fn prefer_smol() -> Result<(), RedisError> {
 /// If the function returns `Err`, another runtime preference was already set, and won't be changed.
 /// Call this function if the application doesn't use multiple runtimes,
 /// but the crate is compiled with multiple runtimes enabled, which is a bad pattern that should be avoided.
-#[cfg(all(feature = "smol-comp", feature = "tokio-comp"))]
+#[cfg(all(feature = "tokio-comp", any(feature = "smol-comp", feature = "monoio-comp")))]
 pub fn prefer_tokio() -> Result<(), RedisError> {
     set_runtime(Runtime::Tokio)
 }
 
+/// Mark Monoio as the preferred runtime.
+///
+/// If the function returns `Err`, another runtime preference was already set, and won't be changed.
+/// Call this function if the application doesn't use multiple runtimes,
+/// but the crate is compiled with multiple runtimes enabled, which is a bad pattern that should be avoided.
+#[cfg(all(feature = "monoio-comp", any(feature = "tokio-comp", feature = "smol-comp")))]
+pub fn prefer_monoio() -> Result<(), RedisError> {
+    set_runtime(Runtime::Monoio)
+}
+
 impl Runtime {
     pub(crate) fn locate() -> Self {
-        #[cfg(all(feature = "smol-comp", feature = "tokio-comp"))]
+        #[cfg(any(
+            all(feature = "smol-comp", feature = "tokio-comp"),
+            all(feature = "monoio-comp", any(feature = "tokio-comp", feature = "smol-comp"))
+        ))]
         if let Some(runtime) = CHOSEN_RUNTIME.get() {
             return *runtime;
         }
 
-        #[cfg(all(feature = "tokio-comp", not(feature = "smol-comp")))]
+        #[cfg(all(feature = "tokio-comp", not(feature = "smol-comp"), not(feature = "monoio-comp")))]
         {
             Runtime::Tokio
         }
 
-        #[cfg(all(not(feature = "tokio-comp"), feature = "smol-comp",))]
+        #[cfg(all(not(feature = "tokio-comp"), feature = "smol-comp", not(feature = "monoio-comp")))]
         {
             Runtime::Smol
         }
 
+        #[cfg(all(not(feature = "tokio-comp"), not(feature = "smol-comp"), feature = "monoio-comp"))]
+        {
+            Runtime::Monoio
+        }
+
         cfg_if::cfg_if! {
-            if #[cfg(all(feature = "tokio-comp", feature = "smol-comp"))] {
+            if #[cfg(all(feature = "tokio-comp", feature = "smol-comp", not(feature = "monoio-comp")))] {
                 if ::tokio::runtime::Handle::try_current().is_ok() {
                     Runtime::Tokio
                 } else {
                     Runtime::Smol
                 }
+            } else if #[cfg(all(feature = "monoio-comp", any(feature = "tokio-comp", feature = "smol-comp")))] {
+                // Prefer monoio if available
+                Runtime::Monoio
             }
         }
 
-        #[cfg(all(not(feature = "tokio-comp"), not(feature = "smol-comp")))]
+        #[cfg(all(not(feature = "tokio-comp"), not(feature = "smol-comp"), not(feature = "monoio-comp")))]
         {
-            compile_error!("tokio-comp or smol-comp features required for aio feature")
+            compile_error!("tokio-comp, smol-comp, or monoio-comp features required for aio feature")
         }
     }
 
@@ -145,6 +221,8 @@ impl Runtime {
             Runtime::Tokio => crate_tokio::Tokio::spawn(f),
             #[cfg(feature = "smol-comp")]
             Runtime::Smol => crate_smol::Smol::spawn(f),
+            #[cfg(feature = "monoio-comp")]
+            Runtime::Monoio => crate_monoio::Monoio::spawn(f),
         }
     }
 
@@ -160,6 +238,16 @@ impl Runtime {
                 .map_err(|_| Elapsed(())),
             #[cfg(feature = "smol-comp")]
             Runtime::Smol => future.timeout(duration).await.ok_or(Elapsed(())),
+            #[cfg(feature = "monoio-comp")]
+            Runtime::Monoio => {
+                // Monoio's timeout returns a Future that contains non-Send types,
+                // but in thread-per-core model, this is safe because tasks never transfer.
+                // SAFETY: In monoio's thread-per-core model, the timeout future
+                // is only polled on the same thread, so it's safe to treat as Send.
+                monoio_future_safety::make_send_safe(monoio::time::timeout(duration, future))
+                    .await
+                    .map_err(|_| Elapsed(()))
+            }
         }
     }
 
@@ -174,6 +262,15 @@ impl Runtime {
             #[cfg(feature = "smol-comp")]
             Runtime::Smol => {
                 smol::Timer::after(duration).await;
+            }
+
+            #[cfg(feature = "monoio-comp")]
+            Runtime::Monoio => {
+                // Monoio's sleep returns a Future that contains non-Send types,
+                // but in thread-per-core model, this is safe because tasks never transfer.
+                // SAFETY: In monoio's thread-per-core model, the sleep future
+                // is only polled on the same thread, so it's safe to treat as Send.
+                monoio_future_safety::make_send_safe(monoio::time::sleep(duration)).await;
             }
         }
     }

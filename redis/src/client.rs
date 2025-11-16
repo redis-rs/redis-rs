@@ -336,6 +336,14 @@ impl Client {
                 )
                 .await
             }
+
+            #[cfg(feature = "monoio-comp")]
+            rt @ Runtime::Monoio => {
+                self.get_multiplexed_async_connection_inner_with_timeout::<crate::aio::monoio::Monoio>(
+                    config, rt,
+                )
+                .await
+            }
         }
     }
 
@@ -467,6 +475,12 @@ impl Client {
             #[cfg(feature = "smol-comp")]
             Runtime::Smol => {
                 self.get_simple_async_connection::<crate::aio::smol::Smol>(dns_resolver)
+                    .await
+            }
+
+            #[cfg(feature = "monoio-comp")]
+            Runtime::Monoio => {
+                self.get_simple_async_connection::<crate::aio::monoio::Monoio>(dns_resolver)
                     .await
             }
         }
