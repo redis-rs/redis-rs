@@ -76,10 +76,11 @@ type Subscriptions = Vec<Arc<Sender<RedisResult<BasicAuth>>>>;
 type SharedSubscriptions = Arc<Mutex<Subscriptions>>;
 
 /// Entra ID credentials provider that uses Azure Identity for authentication
+#[derive(Clone)]
 pub struct EntraIdCredentialsProvider {
     credential_provider: Arc<dyn TokenCredential + Send + Sync>,
     scopes: Vec<String>,
-    background_handle: Option<tokio::task::JoinHandle<()>>,
+    background_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     subscribers: SharedSubscriptions,
     current_credentials: Arc<RwLock<Option<BasicAuth>>>,
 }
@@ -191,7 +192,12 @@ impl EntraIdCredentialsProvider {
         F: Fn(&AccessToken) -> std::time::Duration + Send + Sync + 'static,
     {
         // Prevent multiple calls to start
-        if self.background_handle.is_some() {
+        if self
+            .background_handle
+            .lock()
+            .expect("mutex poisoned")
+            .is_some()
+        {
             return;
         }
 
@@ -201,7 +207,7 @@ impl EntraIdCredentialsProvider {
         let credential_provider_arc = Arc::clone(&self.credential_provider);
         let scopes = self.scopes.clone();
 
-        self.background_handle = Some(tokio::spawn(async move {
+        *self.background_handle.lock().expect("mutex poisoned") = Some(tokio::spawn(async move {
             let scopes: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
             let mut next_sleep_duration;
             let mut username = "default".to_string();
@@ -258,7 +264,12 @@ impl EntraIdCredentialsProvider {
 
     /// Stop the background refresh service
     fn stop(&mut self) {
-        if let Some(handle) = self.background_handle.take() {
+        if let Some(handle) = self
+            .background_handle
+            .lock()
+            .expect("mutex poisoned")
+            .take()
+        {
             handle.abort();
         }
     }
@@ -284,7 +295,7 @@ impl EntraIdCredentialsProvider {
                 })?,
             ),
             scopes,
-            background_handle: None,
+            background_handle: Default::default(),
             subscribers: Default::default(),
             current_credentials: Default::default(),
         })
@@ -325,7 +336,7 @@ impl EntraIdCredentialsProvider {
                 })?,
             ),
             scopes,
-            background_handle: None,
+            background_handle: Default::default(),
             subscribers: Default::default(),
             current_credentials: Default::default(),
         })
@@ -371,7 +382,7 @@ impl EntraIdCredentialsProvider {
                 })?,
             ),
             scopes,
-            background_handle: None,
+            background_handle: Default::default(),
             subscribers: Default::default(),
             current_credentials: Default::default(),
         })
@@ -401,7 +412,7 @@ impl EntraIdCredentialsProvider {
                 })?,
             ),
             scopes,
-            background_handle: None,
+            background_handle: Default::default(),
             subscribers: Default::default(),
             current_credentials: Default::default(),
         })
@@ -439,7 +450,7 @@ impl EntraIdCredentialsProvider {
                 })?,
             ),
             scopes,
-            background_handle: None,
+            background_handle: Default::default(),
             subscribers: Default::default(),
             current_credentials: Default::default(),
         })
@@ -454,7 +465,7 @@ impl EntraIdCredentialsProvider {
         Ok(Self {
             credential_provider,
             scopes,
-            background_handle: None,
+            background_handle: Default::default(),
             subscribers: Default::default(),
             current_credentials: Default::default(),
         })
