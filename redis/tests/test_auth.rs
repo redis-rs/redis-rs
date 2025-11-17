@@ -1,3 +1,10 @@
+/// Integration tests for Entra ID authentication.
+///
+/// These tests are ignored on local or non-Azure machines because they require a Redis instance with Entra ID authentication enabled
+/// and rely on Azure resources (VMs, App Services, container hosts, etc.) that are accessed through the Azure Instance Metadata Service (IMDS),
+/// which is not available on such machines.
+///
+/// They can only be executed on hosts that provide the required environment variables and Azure-managed identity configuration.
 #[cfg(feature = "entra-id")]
 mod entra_id_tests {
     use azure_identity::UserAssignedId;
