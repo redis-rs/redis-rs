@@ -317,6 +317,7 @@ mod token_based_authentication_acl_tests {
     use redis::aio::ConnectionLike;
     use redis::auth::BasicAuth;
     use redis::auth::StreamingCredentialsProvider;
+    use redis::AsyncTypedCommands;
     use redis::RedisResult;
     use std::pin::Pin;
     use std::sync::{Arc, Mutex, RwLock};
@@ -427,9 +428,10 @@ mod token_based_authentication_acl_tests {
     /// let mut provider = MockStreamingCredentialsProvider::multiple_tokens_with_errors(vec![1, 3]);
     /// provider.start();
     /// ```
+    #[derive(Debug, Clone)]
     pub struct MockStreamingCredentialsProvider {
         config: MockProviderConfig,
-        background_handle: Option<tokio::task::JoinHandle<()>>,
+        background_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
         subscribers: SharedSubscriptions,
         current_credentials: Arc<RwLock<Option<BasicAuth>>>,
         current_position: Arc<Mutex<usize>>,
@@ -445,10 +447,10 @@ mod token_based_authentication_acl_tests {
         pub fn with_config(config: MockProviderConfig) -> Self {
             Self {
                 config,
-                background_handle: None,
-                subscribers: Arc::new(Mutex::new(Vec::new())),
-                current_credentials: Arc::new(RwLock::new(None)),
-                current_position: Arc::new(Mutex::new(0)),
+                background_handle: Default::default(),
+                subscribers: Default::default(),
+                current_credentials: Default::default(),
+                current_position: Default::default(),
             }
         }
 
@@ -467,7 +469,12 @@ mod token_based_authentication_acl_tests {
         /// Start the background token refresh process
         pub fn start(&mut self) {
             // Prevent multiple calls to start
-            if self.background_handle.is_some() {
+            if self
+                .background_handle
+                .lock()
+                .expect("mutex poisoned")
+                .is_some()
+            {
                 return;
             }
 
@@ -476,50 +483,56 @@ mod token_based_authentication_acl_tests {
             let current_credentials_arc = Arc::clone(&self.current_credentials);
             let current_position_arc = Arc::clone(&self.current_position);
 
-            self.background_handle = Some(tokio::spawn(async move {
-                let mut attempt = 0;
+            *self.background_handle.lock().expect("mutex poisoned") =
+                Some(tokio::spawn(async move {
+                    let mut attempt = 0;
 
-                loop {
-                    let position = {
-                        let mut pos = current_position_arc
-                            .lock()
-                            .expect("could not acquire lock for current_position");
-                        let current_pos = *pos;
-                        *pos = (*pos + 1) % config.credentials_sequence.len();
-                        current_pos
-                    };
+                    loop {
+                        let position = {
+                            let mut pos = current_position_arc
+                                .lock()
+                                .expect("could not acquire lock for current_position");
+                            let current_pos = *pos;
+                            *pos = (*pos + 1) % config.credentials_sequence.len();
+                            current_pos
+                        };
 
-                    println!("Mock provider: Refreshing credentials. Attempt {attempt}");
+                        println!("Mock provider: Refreshing credentials. Attempt {attempt}");
 
-                    let result = if config.error_positions.contains(&position) {
-                        Err(redis::RedisError::from((
-                            redis::ErrorKind::AuthenticationFailed,
-                            "Mock authentication failed",
-                        )))
-                    } else {
-                        // Use the credential at the current position
-                        let credentials = config.credentials_sequence[position].clone();
-                        {
-                            let mut current =
-                                current_credentials_arc.write().expect("rwlock poisoned");
-                            *current = Some(credentials.clone());
-                        }
+                        let result = if config.error_positions.contains(&position) {
+                            Err(redis::RedisError::from((
+                                redis::ErrorKind::AuthenticationFailed,
+                                "Mock authentication failed",
+                            )))
+                        } else {
+                            // Use the credential at the current position
+                            let credentials = config.credentials_sequence[position].clone();
+                            {
+                                let mut current =
+                                    current_credentials_arc.write().expect("rwlock poisoned");
+                                *current = Some(credentials.clone());
+                            }
 
-                        println!("Mock provider: Providing credentials: {:?}", credentials);
-                        Ok(credentials)
-                    };
+                            println!("Mock provider: Providing credentials: {:?}", credentials);
+                            Ok(credentials)
+                        };
 
-                    Self::notify_subscribers(&subscribers_arc, result.clone()).await;
+                        Self::notify_subscribers(&subscribers_arc, result.clone()).await;
 
-                    attempt += 1;
-                    tokio::time::sleep(config.refresh_interval).await;
-                }
-            }));
+                        attempt += 1;
+                        tokio::time::sleep(config.refresh_interval).await;
+                    }
+                }));
         }
 
         /// Stop the background refresh process
         pub fn stop(&mut self) {
-            if let Some(handle) = self.background_handle.take() {
+            if let Some(handle) = self
+                .background_handle
+                .lock()
+                .expect("mutex poisoned")
+                .take()
+            {
                 handle.abort();
             }
         }
@@ -644,16 +657,9 @@ mod token_based_authentication_acl_tests {
         println!("JWT authentication and ACL operations completed successfully!");
     }
 
-    #[tokio::test]
-    async fn test_token_rotation_with_mock_streaming_credentials_provider() {
-        let mut ctx = TestContext::new();
-        // Set up Redis users for each token in the rotation sequence
+    /// Sets up Redis users for each token in the rotation sequence.
+    async fn add_users_with_jwt_tokens(ctx: &TestContext) {
         let mut admin_con = ctx.async_connection().await.unwrap();
-        let users_cmd = redis::cmd("ACL").arg("USERS").clone();
-        let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
-
-        // Create a user with the JWT token as password and full permissions for each token
-        println!("Setting up Redis users for token rotation test...");
         for (username, token_payload) in CREDENTIALS.iter() {
             let result = admin_con.req_packed_command(redis::cmd("ACL")
             .arg("SETUSER")
@@ -665,6 +671,17 @@ mod token_based_authentication_acl_tests {
             .await;
             assert_eq!(result, Ok(redis::Value::Okay));
         }
+    }
+
+    #[tokio::test]
+    async fn test_token_rotation_with_mock_streaming_credentials_provider() {
+        let mut ctx = TestContext::new();
+        let users_cmd = redis::cmd("ACL").arg("USERS").clone();
+        let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
+
+        // Create a user with the JWT token as password and full permissions for each token
+        println!("Setting up Redis users for token rotation test...");
+        add_users_with_jwt_tokens(&ctx).await;
 
         // Set up the mock streaming credentials provider with multiple tokens and attach it to the client
         println!("Setting up mock provider with multiple tokens...");
@@ -714,26 +731,11 @@ mod token_based_authentication_acl_tests {
     #[tokio::test]
     async fn test_authentication_error_handling_with_mock_streaming_credentials_provider() {
         let mut ctx = TestContext::new();
-        // Set up Redis users for each token in the rotation sequence
-        let mut admin_con = ctx.async_connection().await.unwrap();
         let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
 
         // Create a user with the JWT token as password and full permissions for each token
         println!("Setting up Redis users for authentication error test...");
-        for (username, token_payload) in CREDENTIALS.iter() {
-            let result = admin_con
-                .req_packed_command(
-                    redis::cmd("ACL")
-                        .arg("SETUSER")
-                        .arg(username)
-                        .arg("on")
-                        .arg(format!(">{token_payload}"))
-                        .arg("~*")
-                        .arg("+@all"),
-                )
-                .await;
-            assert_eq!(result, Ok(redis::Value::Okay));
-        }
+        add_users_with_jwt_tokens(&ctx).await;
 
         // Set up mock provider with error at position 1 (second attempt)
         println!("Setting up mock provider with authentication error at position 1...");
@@ -778,5 +780,106 @@ mod token_based_authentication_acl_tests {
         assert_eq!(current_user, ALICE_OID_CLAIM);
 
         println!("Authentication error handling test completed successfully!");
+    }
+
+    #[tokio::test]
+    async fn test_multiple_connections_from_one_client_sharing_a_single_credentials_provider() {
+        let mut ctx = TestContext::new();
+        let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
+
+        // Create a user with the JWT token as password and full permissions for each token
+        println!("Setting up Redis users for token rotation test in which a single client establishes multiple connections that share a single credentials provider...");
+        add_users_with_jwt_tokens(&ctx).await;
+
+        // Set up the mock streaming credentials provider with multiple tokens and attach it to the client
+        println!("Setting up mock provider with multiple tokens...");
+        let mut mock_provider = MockStreamingCredentialsProvider::multiple_tokens();
+        mock_provider.start();
+        ctx.client = ctx.client.with_credentials_provider(mock_provider);
+
+        // Create multiple connections from the same client
+        println!("Establishing multiplexed connections with JWT authentication...");
+        let mut con1 = ctx.multiplexed_async_connection_tokio().await.unwrap();
+        let mut con2 = ctx.multiplexed_async_connection_tokio().await.unwrap();
+        let mut con3 = ctx.multiplexed_async_connection_tokio().await.unwrap();
+
+        // Verify that all connections are initially authenticated as Alice and can set keys
+        for (i, con) in [&mut con1, &mut con2, &mut con3].into_iter().enumerate() {
+            let i = i + 1;
+            let current_user: String = whoami_cmd.query_async(con).await.unwrap();
+            assert_eq!(current_user, ALICE_OID_CLAIM);
+            assert_eq!(con.set(format!("test_key_{i}"), i).await, Ok(()));
+        }
+
+        println!("Waiting for token rotation...");
+        tokio::time::sleep(Duration::from_millis(600)).await;
+
+        // Verify that after the rotation, all connections:
+        // 1. Are authenticated as Bob (position 1 in the rotation sequence)
+        // 2. Can still retrieve the keys that were set before the rotation
+        for (i, con) in [&mut con1, &mut con2, &mut con3].into_iter().enumerate() {
+            let i = i + 1;
+            let current_user: String = whoami_cmd.query_async(con).await.unwrap();
+            assert_eq!(current_user, BOB_OID_CLAIM);
+            assert_eq!(
+                con.get(format!("test_key_{i}")).await,
+                Ok(Some(i.to_string()))
+            );
+        }
+
+        println!("Multiple connections sharing a single credentials provider test completed successfully!");
+    }
+
+    #[tokio::test]
+    async fn test_multiple_clients_sharing_a_single_credentials_provider() {
+        let mut ctx1 = TestContext::new();
+        let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
+
+        // Create a user with the JWT token as password and full permissions for each token
+        println!("Setting up Redis users for token rotation test with multiple clients that share a single credentials provider...");
+        add_users_with_jwt_tokens(&ctx1).await;
+
+        // Create a second client, with the same server connection info as the first client
+        let mut client2 = redis::Client::open(ctx1.server.connection_info()).unwrap();
+
+        // Set up the mock streaming credentials provider with multiple tokens and attach it to both clients
+        println!("Setting up mock provider with multiple tokens...");
+        let mut mock_provider = MockStreamingCredentialsProvider::multiple_tokens();
+        mock_provider.start();
+        ctx1.client = ctx1.client.with_credentials_provider(mock_provider.clone());
+        client2 = client2.with_credentials_provider(mock_provider);
+
+        // Establish connections from both clients
+        println!("Establishing multiplexed connections with JWT authentication...");
+        let mut con1 = ctx1.multiplexed_async_connection_tokio().await.unwrap();
+        let mut con2 = client2.get_multiplexed_async_connection().await.unwrap();
+
+        // Verify that all connections are initially authenticated as Alice and can set keys
+        for (i, con) in [&mut con1, &mut con2].into_iter().enumerate() {
+            let i = i + 1;
+            let current_user: String = whoami_cmd.query_async(con).await.unwrap();
+            assert_eq!(current_user, ALICE_OID_CLAIM);
+            assert_eq!(con.set(format!("test_key_{i}"), i).await, Ok(()));
+        }
+
+        println!("Waiting for token rotation...");
+        tokio::time::sleep(Duration::from_millis(600)).await;
+
+        // Verify that after the rotation, all connections:
+        // 1. Are authenticated as Bob (position 1 in the rotation sequence)
+        // 2. Can still retrieve the keys that were set before the rotation
+        for (i, con) in [&mut con1, &mut con2].into_iter().enumerate() {
+            let i = i + 1;
+            let current_user: String = whoami_cmd.query_async(con).await.unwrap();
+            assert_eq!(current_user, BOB_OID_CLAIM);
+            assert_eq!(
+                con.get(format!("test_key_{i}")).await,
+                Ok(Some(i.to_string()))
+            );
+        }
+
+        println!(
+            "Multiple clients sharing a single credentials provider test completed successfully!"
+        );
     }
 }
