@@ -13,6 +13,7 @@ pub struct Pipeline {
     pub(crate) commands: Vec<Cmd>,
     pub(crate) transaction_mode: bool,
     pub(crate) ignored_commands: HashSet<usize>,
+    pub(crate) ignore_errors: bool,
 }
 
 /// A pipeline allows you to send multiple commands in one go to the
@@ -49,6 +50,7 @@ impl Pipeline {
             commands: Vec::with_capacity(capacity),
             transaction_mode: false,
             ignored_commands: HashSet::new(),
+            ignore_errors: false,
         }
     }
 
@@ -68,6 +70,56 @@ impl Pipeline {
     #[inline]
     pub fn atomic(&mut self) -> &mut Pipeline {
         self.transaction_mode = true;
+        self
+    }
+
+    /// Configures the pipeline to return partial results even if some commands fail.
+    ///
+    /// By default, if any command within the pipeline returns an error from the Redis server,
+    /// the `query()` will only return errors, and not the results of the successful calls.
+    ///
+    /// When set:
+    /// 1. The pipeline executes all commands.
+    /// 2. `query()` returns `Ok` (unless there is a connection/IO error).
+    /// 3. The results of individual commands are returned in the collection. If a command failed,
+    ///    its corresponding element in the collection will be an `Err`.
+    ///
+    /// This allows handling partial successes where some commands succeed and others fail.
+    ///
+    /// **Note on ignored commands:** If you use `.ignore()` on a command, its result is discarded
+    /// regardless of success or failure. If `ignore_errors()` is set, errors from ignored
+    /// commands are also silently discarded and do not affect the returned result.
+    ///
+    /// **Note on Transactions (`atomic()`):** When used with `atomic()`, this method allows you to inspect
+    /// the results of individual commands within the transaction. Redis transactions do not rollback on
+    /// response errors (like `Path .path not exists`), so some commands may succeed while others fail. Using `ignore_errors()`
+    /// enables you to see which commands in the transaction succeeded and which failed, rather than receiving
+    /// a single aggregate error for the entire transaction.
+    ///
+    /// **Return Type:** When enabling this, you must use a collection of `RedisResult<T>`
+    /// (e.g., `Vec<RedisResult<T>>`) or `Value` to capture both successes and failures.
+    ///
+    /// ```rust,no_run
+    /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    /// # let mut con = client.get_connection().unwrap();
+    /// let mut pipe = redis::pipe();
+    /// pipe.set("key_a", 1)
+    ///     .hset("key_a", "field", "val") // This will fail (WRONGTYPE)
+    ///     .get("key_a");
+    ///
+    /// // Note the return type: Vec<RedisResult<i32>>
+    /// let results: Vec<redis::RedisResult<i32>> = pipe
+    ///     .ignore_errors()
+    ///     .query(&mut con)
+    ///     .unwrap(); // The query itself succeeds
+    ///
+    /// assert!(results[0].is_ok()); // set succeeded
+    /// assert!(results[1].is_err()); // hset failed
+    /// assert!(results[2].is_ok()); // get succeeded
+    /// ```
+    #[inline]
+    pub fn ignore_errors(&mut self) -> &mut Pipeline {
+        self.ignore_errors = true;
         self
     }
 
@@ -319,6 +371,12 @@ macro_rules! implement_pipeline_commands {
             }
 
             fn compose_response<T: FromRedisValue>(&self, response: Vec<Value>) -> RedisResult<T> {
+                if self.ignore_errors {
+                    return Ok(from_redis_value(Value::Array(
+                        self.filter_ignored_results(response),
+                    ))?);
+                }
+
                 let server_errors: Vec<_> = response
                     .iter()
                     .enumerate()
@@ -327,6 +385,7 @@ macro_rules! implement_pipeline_commands {
                         _ => None,
                     })
                     .collect();
+
                 if server_errors.is_empty() {
                     Ok(from_redis_value(
                         Value::Array(self.filter_ignored_results(response)).extract_error()?,
@@ -367,7 +426,7 @@ impl Pipeline {
 #[cfg(test)]
 mod tests {
     use crate::{
-        errors::{Repr, ServerError},
+        errors::{RedisError, Repr, ServerError},
         pipe, ServerErrorKind,
     };
 
@@ -411,5 +470,20 @@ mod tests {
 
         assert!(error_message.contains("Index 1"), "{error_message}");
         assert!(error_message.contains("Index 3"), "{error_message}");
+    }
+
+    #[test]
+    fn test_pipeline_passes_response_from_each_commands_despite_errors() {
+        let mut pipeline = test_pipe();
+        let inputs = vec![Value::Okay, server_error(), Value::Okay, server_error()];
+        let result = pipeline
+            .ignore_errors()
+            .compose_response::<Vec<RedisResult<Value>>>(inputs)
+            .unwrap();
+
+        assert_eq!(result[0], Ok::<Value, RedisError>(Value::Okay));
+        assert!(result[1]
+            .clone()
+            .is_err_and(|e| e.to_string().contains("CrossSlot")))
     }
 }
