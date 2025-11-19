@@ -4,19 +4,22 @@ mod support;
 mod basic_async {
     use std::{collections::HashMap, time::Duration};
 
+    use crate::support::*;
     use futures::{prelude::*, StreamExt};
     use futures_time::{future::FutureExt, task::sleep};
+    #[cfg(feature = "json")]
+    use redis::JsonAsyncCommands;
     use redis::{
         aio::ConnectionLike, cmd, pipe, AsyncCommands, ErrorKind, IntoConnectionInfo, ParsingError,
         ProtocolVersion, PushKind, RedisConnectionInfo, RedisError, RedisResult, ScanOptions,
         ServerErrorKind, Value,
     };
+    #[cfg(feature = "json")]
+    use redis_test::server::Module;
     use redis_test::server::{redis_settings, use_protocol};
     use rstest::rstest;
     use test_macros::async_test;
     use tokio::sync::mpsc::error::TryRecvError;
-
-    use crate::support::*;
 
     #[rstest::rstest]
     #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
@@ -353,6 +356,85 @@ mod basic_async {
 
         let x: i32 = con.get("x").await.unwrap();
         assert_eq!(x, 42);
+
+        Ok(())
+    }
+
+    #[async_test]
+    #[cfg(feature = "json")]
+    async fn module_json_and_pipeline_transaction_with_ignore_errors() -> RedisResult<()> {
+        let ctx = TestContext::with_modules(&[Module::Json], false);
+        let mut con = ctx.async_connection().await?;
+        con.set::<_, _, ()>("x", 42).await?;
+        con.json_set::<_, _, _, ()>("y", "$", &serde_json::json!({"path": "value"}))
+            .await?;
+
+        let mut pipeline = redis::pipe();
+        pipeline
+            .atomic()
+            .ping()
+            .set("x", 142)
+            .ignore()
+            .json_get("x", ".path")?
+            .ignore()
+            .json_get("x", ".path")?
+            .json_get("y", ".path")?
+            .json_get("y", ".other")?
+            .get("x");
+
+        type IgnoreErrorsResult = (
+            RedisResult<Value>,
+            RedisResult<Value>,
+            RedisResult<Value>,
+            RedisResult<Value>,
+            RedisResult<Value>,
+        );
+
+        let result: IgnoreErrorsResult = pipeline.ignore_errors().query_async(&mut con).await?;
+
+        assert_eq!(result.0?, Value::SimpleString("PONG".to_string()));
+        assert_eq!(
+            result.2?,
+            Value::BulkString("\"value\"".as_bytes().to_vec())
+        );
+        assert_eq!(result.4?, Value::BulkString("142".as_bytes().to_vec()));
+
+        assert_eq!(result.1.unwrap_err().code(), Some("Existing"));
+        assert_eq!(
+            result.3.unwrap_err().kind(),
+            ServerErrorKind::ResponseError.into()
+        );
+
+        Ok(())
+    }
+
+    #[async_test]
+    async fn pipeline_with_ignore_errors(mut con: impl AsyncCommands) -> RedisResult<()> {
+        con.set::<_, _, ()>("x", 42).await?;
+
+        let mut pipeline = redis::pipe();
+        pipeline
+            .ping()
+            .set("x", 142)
+            .ignore()
+            .cmd("JSON.GET")
+            .arg("x")
+            .arg(".path")
+            .get("x");
+
+        let result: Vec<RedisResult<Value>> =
+            pipeline.ignore_errors().query_async(&mut con).await?;
+
+        assert_eq!(result[0].clone()?, Value::SimpleString("PONG".to_string()));
+        assert_eq!(
+            result[2].clone()?,
+            Value::BulkString("142".as_bytes().to_vec())
+        );
+
+        assert_eq!(
+            result[1].clone().unwrap_err().kind(),
+            ServerErrorKind::ResponseError.into()
+        );
 
         Ok(())
     }
