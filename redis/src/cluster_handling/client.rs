@@ -571,6 +571,20 @@ impl ClusterClient {
         .await
     }
 
+    /// Creates new connections to Redis Cluster nodes with a custom config and returns a
+    /// [`cluster_async::ClusterConnection`]. The connections to the cluster nodes are done in the
+    /// background so the caller won't know if the cluster is available until the first command is sent.
+    #[cfg(feature = "cluster-async")]
+    pub fn get_pending_async_connection_with_config(
+        &self,
+        config: cluster::ClusterConfig,
+    ) -> cluster_async::ClusterConnection {
+        cluster_async::ClusterConnection::new_pending(
+            &self.initial_nodes,
+            self.cluster_params.clone().with_config(config),
+        )
+    }
+
     #[doc(hidden)]
     pub fn get_generic_connection<C>(&self) -> RedisResult<cluster::ClusterConnection<C>>
     where
