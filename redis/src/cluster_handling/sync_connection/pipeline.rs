@@ -45,6 +45,7 @@ fn is_illegal_cmd(cmd: &str) -> bool {
 pub struct ClusterPipeline {
     commands: Vec<Cmd>,
     ignored_commands: HashSet<usize>,
+    ignore_errors: bool,
 }
 
 /// A cluster pipeline is almost identical to a normal [Pipeline](crate::pipeline::Pipeline), with two exceptions:
@@ -80,6 +81,7 @@ impl ClusterPipeline {
         ClusterPipeline {
             commands: Vec::with_capacity(capacity),
             ignored_commands: HashSet::new(),
+            ignore_errors: false,
         }
     }
 
