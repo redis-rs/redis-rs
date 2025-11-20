@@ -680,6 +680,7 @@ pub use crate::types::{
     RedisWrite,
     ToRedisArgs,
     ToSingleRedisArg,
+    ValueComparison,
 
     // low level values
     Value,
@@ -688,6 +689,9 @@ pub use crate::types::{
     ProtocolVersion,
     PushInfo,
 };
+
+pub use crate::types::{calculate_value_digest, is_valid_16_bytes_hex_digest};
+
 pub use crate::errors::{
     make_extension_error, ErrorKind, ParsingError, RedisError, RetryMethod, ServerError,
     ServerErrorKind,

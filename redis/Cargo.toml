@@ -104,6 +104,9 @@ uuid = { version = "1.18.1", optional = true }
 # Optional hashbrown support
 hashbrown = { version = "0.16", optional = true }
 
+# xxhash support for digest utilities
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
 lru = { version = "0.16", optional = true }
 arcstr = "1.2.0"
 
@@ -196,6 +199,9 @@ name = "test_bignum"
 [[test]]
 name = "test_script"
 required-features = ["script"]
+
+[[test]]
+name = "test_digest_utils"
 
 [[bench]]
 name = "bench_basic"
