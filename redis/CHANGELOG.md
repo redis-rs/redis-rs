@@ -1,3 +1,11 @@
+### 1.0.0-rc.4 (2025-11-23)
+
+#### Changes & Bug fixes
+
+* Add getters to `aio::ConnectionManagerConfig`, `ConnectionInfo`, `RedisConnectionInfo` and `io::tcp::TcpSettings` types ([#1859](https://github.com/redis-rs/redis-rs/pull/1859) by @LazyMechanic)
+* Allow the async cluster to be created without waiting for connections ([#1863](https://github.com/redis-rs/redis-rs/pull/1863) by @Marwes)
+* Add ignore_errors mode to Pipeline for partial results ([#1865](https://github.com/redis-rs/redis-rs/pull/1865) by @kudlatyamroth)
+
 ### 1.0.0-rc.3 (2025-11-04)
 
 #### Changes & Bug fixes
