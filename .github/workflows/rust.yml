@@ -23,12 +23,12 @@ jobs:
       matrix:
         config: [
             # Different DB cases:
-            {  db-org: redis, db-name: redis, db-version: 6.2.13 },
-            {  db-org: redis, db-name: redis, db-version: 7.2.4 },
-            {  db-org: redis, db-name: redis, db-version: 8.0.2 },
-            {  db-org: redis, db-name: redis, db-version: 8.2.0 },
-            {  db-org: valkey-io, db-name: valkey, db-version: 7.2.6, },
-            {  db-org: valkey-io, db-name: valkey, db-version: 8.0.1, },
+            {  db-org: redis, db-name: redis, db-version: 6.2.13, json-module-version: v2.4.17 },
+            {  db-org: redis, db-name: redis, db-version: 7.2.4, json-module-version: v2.6.22 },
+            {  db-org: redis, db-name: redis, db-version: 8.0.2, json-module-version: v2.8.16 },
+            {  db-org: redis, db-name: redis, db-version: 8.2.0, json-module-version: v2.8.16 },
+            {  db-org: valkey-io, db-name: valkey, db-version: 7.2.6, json-module-version: v2.6.22 },
+            {  db-org: valkey-io, db-name: valkey, db-version: 8.0.1, json-module-version: v2.6.22 },
           ]
 
     steps:
@@ -40,7 +40,7 @@ jobs:
         with:
           path: |
             /tmp/librejson.so
-          key: ${{ runner.os }}-redisjson
+          key: ${{ runner.os }}-redisjson-${{ matrix.config.json-module-version }}
 
       - name: Install DB
         uses: ./.github/actions/install-db
@@ -66,11 +66,12 @@ jobs:
         run: make test
 
       - name: Checkout RedisJSON
-        if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
+        if: steps.cache-redisjson.outputs.cache-hit != 'true'
         uses: actions/checkout@v5
         with:
           repository: "RedisJSON/RedisJSON"
           path: "./__ci/redis-json"
+          ref: ${{ matrix.config.json-module-version }}
           set-safe-directory: false
 
         # When cargo is invoked, it'll go up many directories to see if it can find a workspace
@@ -87,17 +88,16 @@ jobs:
         # This shouldn't cause issues in the future so long as no profiles or patches
         # are applied to the workspace Cargo.toml file
       - name: Compile RedisJSON
-        if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
+        if: steps.cache-redisjson.outputs.cache-hit != 'true'
         run: |
-          cp ./Cargo.toml ./Cargo.toml.actual
-          echo $'\nexclude = [\"./__ci/redis-json\"]' >> Cargo.toml
+            cp ./Cargo.toml ./Cargo.toml.actual
+            echo $'\nexclude = [\"./__ci/redis-json\"]' >> Cargo.toml
           cargo +stable build --release --manifest-path ./__ci/redis-json/Cargo.toml
           mv ./__ci/redis-json/target/release/librejson.so ${{ env.REDIS_RS_REDIS_JSON_PATH }}
-          rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
+            rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
           rm -rf ./__ci/redis-json
 
       - name: Verify RedisJSON module
-        if: matrix.config.db-version != '6.2.13'
         run: |
           if [ ! -f "${{ env.REDIS_RS_REDIS_JSON_PATH }}" ]; then
             echo "ERROR: RedisJSON module not found at ${{ env.REDIS_RS_REDIS_JSON_PATH }}"
@@ -135,7 +135,6 @@ jobs:
           fi
 
       - name: Run module-specific tests
-        if: matrix.config.db-version != '6.2.13'
         run: make test-module
         env:
           REDIS_VERSION: ${{ matrix.config.db-version }}
@@ -145,7 +144,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.REDIS_RS_REDIS_JSON_PATH }}
-          key: ${{ runner.os }}-redisjson          
+          key: ${{ runner.os }}-redisjson-${{ matrix.config.json-module-version }}          
 
   examples:
     needs: [lint, build-and-test]
