@@ -72,6 +72,7 @@ jobs:
           repository: "RedisJSON/RedisJSON"
           path: "./__ci/redis-json"
           set-safe-directory: false
+          tag: v2.8.9
 
         # When cargo is invoked, it'll go up many directories to see if it can find a workspace
         # This will avoid this issue in what is admittedly a bit of a janky but still fully functional way
