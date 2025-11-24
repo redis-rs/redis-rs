@@ -96,6 +96,44 @@ jobs:
           rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
           rm -rf ./__ci/redis-json
 
+      - name: Verify RedisJSON module
+        if: matrix.config.db-version != '6.2.13'
+        run: |
+          if [ ! -f "${{ env.REDIS_RS_REDIS_JSON_PATH }}" ]; then
+            echo "ERROR: RedisJSON module not found at ${{ env.REDIS_RS_REDIS_JSON_PATH }}"
+            exit 1
+          fi
+          ls -lh "${{ env.REDIS_RS_REDIS_JSON_PATH }}"
+          
+          # Test that Redis can load the module
+          echo "Testing Redis server with module..."
+          TEST_PORT=16379
+          TEST_LOG="/tmp/redis-module-test.log"
+          redis-server --port $TEST_PORT --loadmodule "${{ env.REDIS_RS_REDIS_JSON_PATH }}" \
+            --logfile "$TEST_LOG" --daemonize yes || {
+            echo "ERROR: Failed to start Redis with module"
+            cat "$TEST_LOG"
+            exit 1
+          }
+          
+          sleep 2
+          
+          if redis-cli -p $TEST_PORT PING; then
+            echo "Redis server started successfully"
+            redis-cli -p $TEST_PORT JSON.SET test \$ '{"test":1}' || {
+              echo "ERROR: JSON commands not working"
+              cat "$TEST_LOG"
+              redis-cli -p $TEST_PORT SHUTDOWN NOSAVE
+              exit 1
+            }
+            echo "JSON commands working"
+            redis-cli -p $TEST_PORT SHUTDOWN NOSAVE
+          else
+            echo "ERROR: Redis server not responding"
+            cat "$TEST_LOG"
+            exit 1
+          fi
+
       - name: Run module-specific tests
         if: matrix.config.db-version != '6.2.13'
         run: make test-module
