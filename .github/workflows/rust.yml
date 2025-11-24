@@ -90,11 +90,22 @@ jobs:
       - name: Compile RedisJSON
         if: steps.cache-redisjson.outputs.cache-hit != 'true'
         run: |
-          cp ./Cargo.toml ./Cargo.toml.actual
-          echo $'\nexclude = [\"./__ci/redis-json\"]' >> Cargo.toml
+          # Add workspace exclusion to prevent cargo from treating RedisJSON as part of workspace
+          if [[ "${{ matrix.config.json-module-version }}" == v2.4* ]]; then
+            # v2.4 uses older Cargo.toml format - add empty workspace to RedisJSON's Cargo.toml
+            echo -e '\n[workspace]' >> ./__ci/redis-json/Cargo.toml
+          else
+            # v2.6+ - exclude from parent workspace
+            cp ./Cargo.toml ./Cargo.toml.actual
+            echo $'\nexclude = [\"./__ci/redis-json\"]' >> Cargo.toml
+          fi
+          
           cargo +stable build --release --manifest-path ./__ci/redis-json/Cargo.toml
           mv ./__ci/redis-json/target/release/librejson.so ${{ env.REDIS_RS_REDIS_JSON_PATH }}
-          rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
+          
+          if [ -f ./Cargo.toml.actual ]; then
+            rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
+          fi
           rm -rf ./__ci/redis-json
 
       - name: Verify RedisJSON module
