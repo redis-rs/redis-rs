@@ -141,6 +141,17 @@ pub enum Value {
 }
 
 /// Helper enum that is used to define comparisons between values and their digests
+///
+/// # Example
+/// ```rust
+/// use redis::ValueComparison;
+///
+/// // Create comparisons using constructor methods
+/// let eq_comparison = ValueComparison::ifeq("my_value");
+/// let ne_comparison = ValueComparison::ifne("other_value");
+/// let deq_comparison = ValueComparison::ifdeq("digest_hash");
+/// let dne_comparison = ValueComparison::ifdne("other_digest");
+/// ```
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum ValueComparison {
@@ -152,6 +163,57 @@ pub enum ValueComparison {
     IFDEQ(String),
     /// Value's digest is not equal
     IFDNE(String),
+}
+
+impl ValueComparison {
+    /// Create a new IFEQ (if equal) comparison
+    ///
+    /// Performs the operation only if the key's current value is equal to the provided value.
+    ///
+    /// For SET: Sets the key only if its current value matches. Non-existent keys are not created.
+    /// For DEL_EX: Deletes the key only if its current value matches. Non-existent keys are ignored.
+    pub fn ifeq(value: impl ToSingleRedisArg) -> Self {
+        ValueComparison::IFEQ(Self::arg_to_string(value))
+    }
+
+    /// Create a new IFNE (if not equal) comparison
+    ///
+    /// Performs the operation only if the key's current value is not equal to the provided value.
+    ///
+    /// For SET: Sets the key only if its current value doesn't match. Non-existent keys are created.
+    /// For DEL_EX: Deletes the key only if its current value doesn't match. Non-existent keys are ignored.
+    pub fn ifne(value: impl ToSingleRedisArg) -> Self {
+        ValueComparison::IFNE(Self::arg_to_string(value))
+    }
+
+    /// Create a new IFDEQ (if digest equal) comparison
+    ///
+    /// Performs the operation only if the digest of the key's current value is equal to the provided digest.
+    ///
+    /// For SET: Sets the key only if its current value's digest matches. Non-existent keys are not created.
+    /// For DEL_EX: Deletes the key only if its current value's digest matches. Non-existent keys are ignored.
+    ///
+    /// Use [`calculate_value_digest`] to compute the digest of a value.
+    pub fn ifdeq(digest: impl ToSingleRedisArg) -> Self {
+        ValueComparison::IFDEQ(Self::arg_to_string(digest))
+    }
+
+    /// Create a new IFDNE (if digest not equal) comparison
+    ///
+    /// Performs the operation only if the digest of the key's current value is not equal to the provided digest.
+    ///
+    /// For SET: Sets the key only if its current value's digest doesn't match. Non-existent keys are created.
+    /// For DEL_EX: Deletes the key only if its current value's digest doesn't match. Non-existent keys are ignored.
+    ///
+    /// Use [`calculate_value_digest`] to compute the digest of a value.
+    pub fn ifdne(digest: impl ToSingleRedisArg) -> Self {
+        ValueComparison::IFDNE(Self::arg_to_string(digest))
+    }
+
+    fn arg_to_string(value: impl ToSingleRedisArg) -> String {
+        let args = value.to_redis_args();
+        String::from_utf8_lossy(&args[0]).into_owned()
+    }
 }
 
 impl ToRedisArgs for ValueComparison {
@@ -2326,7 +2388,7 @@ pub fn from_redis_value<T: FromRedisValue>(v: Value) -> Result<T, ParsingError> 
 ///
 /// // Use the digest in a value comparison
 /// let opts = SetOptions::default()
-///     .value_comparison(ValueComparison::IFDEQ(digest));
+///     .value_comparison(ValueComparison::ifdeq(&digest));
 /// ```
 pub fn calculate_value_digest<T: ToRedisArgs>(value: T) -> String {
     use xxhash_rust::xxh3::xxh3_64;

@@ -20,9 +20,7 @@ mod basic {
         IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply},
         ProtocolVersion, PubSubCommands, PushInfo, PushKind, RedisConnectionInfo, RedisResult,
         Role, ScanOptions, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs, TypedCommands,
-        UpdateCheck, Value,
-        ValueComparison::*,
-        ValueType,
+        UpdateCheck, Value, ValueComparison, ValueType,
     };
 
     #[cfg(feature = "vector-sets")]
@@ -2696,37 +2694,37 @@ mod basic {
         const DIGEST: &str = "digest";
 
         // Test all value comparison options
-        let opts = SetOptions::default().value_comparison(IFEQ(OLD_VALUE.to_string()));
+        let opts = SetOptions::default().value_comparison(ValueComparison::ifeq(OLD_VALUE));
         assert_args!(&opts, "IFEQ", OLD_VALUE);
-        let opts = SetOptions::default().value_comparison(IFNE(OLD_VALUE.to_string()));
+        let opts = SetOptions::default().value_comparison(ValueComparison::ifne(OLD_VALUE));
         assert_args!(&opts, "IFNE", OLD_VALUE);
-        let opts = SetOptions::default().value_comparison(IFDEQ(DIGEST.to_string()));
+        let opts = SetOptions::default().value_comparison(ValueComparison::ifdeq(DIGEST));
         assert_args!(&opts, "IFDEQ", DIGEST);
-        let opts = SetOptions::default().value_comparison(IFDNE(DIGEST.to_string()));
+        let opts = SetOptions::default().value_comparison(ValueComparison::ifdne(DIGEST));
         assert_args!(&opts, "IFDNE", DIGEST);
 
         // Test combinations with other parameters
         let opts = SetOptions::default()
             .conditional_set(ExistenceCheck::NX)
-            .value_comparison(IFEQ(OLD_VALUE.to_string()))
+            .value_comparison(ValueComparison::ifeq(OLD_VALUE))
             .get(true)
             .with_expiration(SetExpiry::PX(1000));
         assert_args!(&opts, "NX", "IFEQ", OLD_VALUE, "GET", "PX", "1000");
         let opts = SetOptions::default()
             .conditional_set(ExistenceCheck::XX)
-            .value_comparison(IFNE(OLD_VALUE.to_string()))
+            .value_comparison(ValueComparison::ifne(OLD_VALUE))
             .get(true)
             .with_expiration(SetExpiry::EX(1000));
         assert_args!(&opts, "XX", "IFNE", OLD_VALUE, "GET", "EX", "1000");
         let opts = SetOptions::default()
             .conditional_set(ExistenceCheck::NX)
-            .value_comparison(IFDEQ(DIGEST.to_string()))
+            .value_comparison(ValueComparison::ifdeq(DIGEST))
             .get(true)
             .with_expiration(SetExpiry::PX(1000));
         assert_args!(&opts, "NX", "IFDEQ", DIGEST, "GET", "PX", "1000");
         let opts = SetOptions::default()
             .conditional_set(ExistenceCheck::XX)
-            .value_comparison(IFDNE(DIGEST.to_string()))
+            .value_comparison(ValueComparison::ifdne(DIGEST))
             .get(true)
             .with_expiration(SetExpiry::EX(1000));
         assert_args!(&opts, "XX", "IFDNE", DIGEST, "GET", "EX", "1000");
@@ -2753,7 +2751,7 @@ mod basic {
                 key,
                 updated_value,
                 SetOptions::default()
-                    .value_comparison(IFEQ(initial_value.to_string()))
+                    .value_comparison(ValueComparison::ifeq(initial_value))
                     .get(true),
             )
             .unwrap();
@@ -2768,7 +2766,7 @@ mod basic {
                 non_existent_key,
                 updated_value,
                 SetOptions::default()
-                    .value_comparison(IFEQ(initial_value.to_string()))
+                    .value_comparison(ValueComparison::ifeq(initial_value))
                     .get(true),
             )
             .unwrap();
@@ -2781,7 +2779,7 @@ mod basic {
                 key,
                 initial_value,
                 SetOptions::default()
-                    .value_comparison(IFEQ(non_matching_value.to_string()))
+                    .value_comparison(ValueComparison::ifeq(non_matching_value))
                     .get(true),
             )
             .unwrap();
@@ -2812,7 +2810,7 @@ mod basic {
                 key,
                 updated_value,
                 SetOptions::default()
-                    .value_comparison(IFNE(non_matching_value.to_string()))
+                    .value_comparison(ValueComparison::ifne(non_matching_value))
                     .get(true),
             )
             .unwrap();
@@ -2828,7 +2826,7 @@ mod basic {
                 non_existent_key,
                 initial_value,
                 SetOptions::default()
-                    .value_comparison(IFNE(non_matching_value.to_string()))
+                    .value_comparison(ValueComparison::ifne(non_matching_value))
                     .get(true),
             )
             .unwrap();
@@ -2846,7 +2844,7 @@ mod basic {
                 key,
                 initial_value,
                 SetOptions::default()
-                    .value_comparison(IFNE(updated_value.to_string()))
+                    .value_comparison(ValueComparison::ifne(updated_value))
                     .get(true),
             )
             .unwrap();
@@ -2924,7 +2922,7 @@ mod basic {
                 key,
                 updated_value,
                 SetOptions::default()
-                    .value_comparison(IFDEQ(initial_value_digest.clone()))
+                    .value_comparison(ValueComparison::ifdeq(&initial_value_digest))
                     .get(true),
             )
             .unwrap();
@@ -2939,7 +2937,7 @@ mod basic {
                 non_existent_key,
                 updated_value,
                 SetOptions::default()
-                    .value_comparison(IFDEQ(initial_value_digest))
+                    .value_comparison(ValueComparison::ifdeq(&initial_value_digest))
                     .get(true),
             )
             .unwrap();
@@ -2953,7 +2951,7 @@ mod basic {
                 key,
                 initial_value,
                 SetOptions::default()
-                    .value_comparison(IFDEQ(non_matching_digest))
+                    .value_comparison(ValueComparison::ifdeq(&non_matching_digest))
                     .get(true),
             )
             .unwrap();
@@ -2985,7 +2983,7 @@ mod basic {
                 key,
                 updated_value,
                 SetOptions::default()
-                    .value_comparison(IFDNE(non_matching_digest.clone()))
+                    .value_comparison(ValueComparison::ifdne(&non_matching_digest))
                     .get(true),
             )
             .unwrap();
@@ -3000,7 +2998,7 @@ mod basic {
                 non_existent_key,
                 initial_value,
                 SetOptions::default()
-                    .value_comparison(IFDNE(non_matching_digest))
+                    .value_comparison(ValueComparison::ifdne(&non_matching_digest))
                     .get(true),
             )
             .unwrap();
@@ -3022,7 +3020,7 @@ mod basic {
                 key,
                 non_matching_value,
                 SetOptions::default()
-                    .value_comparison(IFDNE(updated_value_digest))
+                    .value_comparison(ValueComparison::ifdne(&updated_value_digest))
                     .get(true),
             )
             .unwrap();
@@ -3045,41 +3043,47 @@ mod basic {
         let non_matching_digest = calculate_value_digest(non_matching_value);
 
         let value_comparisons = [
-            IFEQ(initial_value.to_string()),
-            IFNE(initial_value.to_string()),
-            IFDEQ(initial_value_digest.to_string()),
-            IFDNE(initial_value_digest.to_string()),
+            ValueComparison::ifeq(initial_value),
+            ValueComparison::ifne(initial_value),
+            ValueComparison::ifdeq(&initial_value_digest),
+            ValueComparison::ifdne(&initial_value_digest),
         ];
 
         // IFEQ tests
         assert_eq!(con.set(key, initial_value), Ok(()));
         // IFEQ with non-matching value should not delete the key
-        assert_eq!(con.del_ex(key, IFEQ(non_matching_value.to_string())), Ok(0));
+        assert_eq!(
+            con.del_ex(key, ValueComparison::ifeq(non_matching_value)),
+            Ok(0)
+        );
         assert!(con.exists(key).unwrap());
         // IFEQ with matching value should succeed and delete the key
-        assert_eq!(con.del_ex(key, IFEQ(initial_value.to_string())), Ok(1));
+        assert_eq!(con.del_ex(key, ValueComparison::ifeq(initial_value)), Ok(1));
         assert!(!con.exists(key).unwrap());
 
         // IFNE tests
         assert_eq!(con.set(key, initial_value), Ok(()));
         // IFNE with matching value should not delete the key
-        assert_eq!(con.del_ex(key, IFNE(initial_value.to_string())), Ok(0));
+        assert_eq!(con.del_ex(key, ValueComparison::ifne(initial_value)), Ok(0));
         assert!(con.exists(key).unwrap());
         // IFNE with non-matching value should succeed and delete the key
-        assert_eq!(con.del_ex(key, IFNE(non_matching_value.to_string())), Ok(1));
+        assert_eq!(
+            con.del_ex(key, ValueComparison::ifne(non_matching_value)),
+            Ok(1)
+        );
         assert!(!con.exists(key).unwrap());
 
         // IFDEQ tests
         assert_eq!(con.set(key, initial_value), Ok(()));
         // IFDEQ with non-matching digest should not delete the key
         assert_eq!(
-            con.del_ex(key, IFDEQ(non_matching_digest.to_string())),
+            con.del_ex(key, ValueComparison::ifdeq(&non_matching_digest)),
             Ok(0)
         );
         assert!(con.exists(key).unwrap());
         // IFDEQ with matching digest should succeed and delete the key
         assert_eq!(
-            con.del_ex(key, IFDEQ(initial_value_digest.to_string())),
+            con.del_ex(key, ValueComparison::ifdeq(&initial_value_digest)),
             Ok(1)
         );
         assert!(!con.exists(key).unwrap());
@@ -3088,13 +3092,13 @@ mod basic {
         assert_eq!(con.set(key, initial_value), Ok(()));
         // IFDNE with matching digest should not delete the key
         assert_eq!(
-            con.del_ex(key, IFDNE(initial_value_digest.to_string())),
+            con.del_ex(key, ValueComparison::ifdne(&initial_value_digest)),
             Ok(0)
         );
         assert!(con.exists(key).unwrap());
         // IFDNE with non-matching digest should succeed and delete the key
         assert_eq!(
-            con.del_ex(key, IFDNE(non_matching_digest.to_string())),
+            con.del_ex(key, ValueComparison::ifdne(&non_matching_digest)),
             Ok(1)
         );
         assert!(!con.exists(key).unwrap());

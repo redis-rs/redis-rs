@@ -378,7 +378,7 @@ implement_commands! {
     /// IFDEQ `match-digest` - Delete the key only if the digest of its value is equal to `match-digest`
     /// IFDNE `match-digest` - Delete the key only if the digest of its value is not equal to `match-digest`
     /// [Redis Docs](https://redis.io/commands/DELEX)
-    fn del_ex<K: ToRedisArgs>(key: K, value_comparison: ValueComparison) -> (usize) {
+    fn del_ex<K: ToSingleRedisArg>(key: K, value_comparison: ValueComparison) -> (usize) {
         cmd("DELEX").arg(key).arg(value_comparison)
     }
 
@@ -3343,7 +3343,7 @@ impl<Db: ToString> ToSingleRedisArg for CopyOptions<Db> {}
 /// ) -> RedisResult<Vec<usize>> {
 ///     let opts = SetOptions::default()
 ///         .conditional_set(ExistenceCheck::NX)
-///         .value_comparison(ValueComparison::IFEQ("old_value".to_string()))
+///         .value_comparison(ValueComparison::ifeq("old_value"))
 ///         .get(true)
 ///         .with_expiration(SetExpiry::EX(60));
 ///     con.set_options(key, value, opts)
