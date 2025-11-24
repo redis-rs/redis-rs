@@ -6,6 +6,7 @@ use crate::pipeline::Pipeline;
 use crate::types::{
     ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, IntegerReplyOrNoOp,
     NumericBehavior, RedisResult, RedisWrite, SetExpiry, ToRedisArgs, ToSingleRedisArg,
+    ValueComparison,
 };
 
 #[cfg(feature = "vector-sets")]
@@ -369,6 +370,23 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/DEL)
     fn del<K: ToRedisArgs>(key: K) -> (usize) {
         cmd("DEL").arg(key)
+    }
+
+    /// Conditionally removes the specified key. A key is ignored if it does not exist.
+    /// IFEQ `match-value` - Delete the key only if its value is equal to `match-value`
+    /// IFNE `match-value` - Delete the key only if its value is not equal to `match-value`
+    /// IFDEQ `match-digest` - Delete the key only if the digest of its value is equal to `match-digest`
+    /// IFDNE `match-digest` - Delete the key only if the digest of its value is not equal to `match-digest`
+    /// [Redis Docs](https://redis.io/commands/DELEX)
+    fn del_ex<K: ToSingleRedisArg>(key: K, value_comparison: ValueComparison) -> (usize) {
+        cmd("DELEX").arg(key).arg(value_comparison)
+    }
+
+    /// Get the hex signature of the value stored in the specified key.
+    /// For the digest, Redis will use [XXH3](https://xxhash.com)
+    /// [Redis Docs](https://redis.io/commands/DIGEST)
+    fn digest<K: ToSingleRedisArg>(key: K) -> (Option<String>) {
+        cmd("DIGEST").arg(key)
     }
 
     /// Determine if a key exists.
@@ -3317,7 +3335,7 @@ impl<Db: ToString> ToSingleRedisArg for CopyOptions<Db> {}
 ///
 /// # Example
 /// ```rust,no_run
-/// use redis::{Commands, RedisResult, SetOptions, SetExpiry, ExistenceCheck};
+/// use redis::{Commands, RedisResult, SetOptions, SetExpiry, ExistenceCheck, ValueComparison};
 /// fn set_key_value(
 ///     con: &mut redis::Connection,
 ///     key: &str,
@@ -3325,14 +3343,24 @@ impl<Db: ToString> ToSingleRedisArg for CopyOptions<Db> {}
 /// ) -> RedisResult<Vec<usize>> {
 ///     let opts = SetOptions::default()
 ///         .conditional_set(ExistenceCheck::NX)
+///         .value_comparison(ValueComparison::ifeq("old_value"))
 ///         .get(true)
 ///         .with_expiration(SetExpiry::EX(60));
 ///     con.set_options(key, value, opts)
 /// }
 /// ```
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub struct SetOptions {
     conditional_set: Option<ExistenceCheck>,
+    /// IFEQ `match-value` - Set the key's value and expiration only if its current value is equal to `match-value`.
+    /// If the key doesn't exist, it won't be created.
+    /// IFNE `match-value` - Set the key's value and expiration only if its current value is not equal to `match-value`.
+    /// If the key doesn't exist, it will be created.
+    /// IFDEQ `match-digest` - Set the key's value and expiration only if the digest of its current value is equal to `match-digest`.
+    /// If the key doesn't exist, it won't be created.
+    /// IFDNE `match-digest` - Set the key's value and expiration only if the digest of its current value is not equal to `match-digest`.
+    /// If the key doesn't exist, it will be created.
+    value_comparison: Option<ValueComparison>,
     get: bool,
     expiration: Option<SetExpiry>,
 }
@@ -3341,6 +3369,12 @@ impl SetOptions {
     /// Set the existence check for the SET command
     pub fn conditional_set(mut self, existence_check: ExistenceCheck) -> Self {
         self.conditional_set = Some(existence_check);
+        self
+    }
+
+    /// Set the value comparison for the SET command
+    pub fn value_comparison(mut self, value_comparison: ValueComparison) -> Self {
+        self.value_comparison = Some(value_comparison);
         self
     }
 
@@ -3371,6 +3405,9 @@ impl ToRedisArgs for SetOptions {
                     out.write_arg(b"XX");
                 }
             }
+        }
+        if let Some(ref value_comparison) = self.value_comparison {
+            value_comparison.write_redis_args(out);
         }
         if self.get {
             out.write_arg(b"GET");

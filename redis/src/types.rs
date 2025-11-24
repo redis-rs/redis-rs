@@ -140,6 +140,108 @@ pub enum Value {
     ServerError(ServerError),
 }
 
+/// Helper enum that is used to define comparisons between values and their digests
+///
+/// # Example
+/// ```rust
+/// use redis::ValueComparison;
+///
+/// // Create comparisons using constructor methods
+/// let eq_comparison = ValueComparison::ifeq("my_value");
+/// let ne_comparison = ValueComparison::ifne("other_value");
+/// let deq_comparison = ValueComparison::ifdeq("digest_hash");
+/// let dne_comparison = ValueComparison::ifdne("other_digest");
+/// ```
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub enum ValueComparison {
+    /// Value is equal
+    IFEQ(String),
+    /// Value is not equal
+    IFNE(String),
+    /// Value's digest is equal
+    IFDEQ(String),
+    /// Value's digest is not equal
+    IFDNE(String),
+}
+
+impl ValueComparison {
+    /// Create a new IFEQ (if equal) comparison
+    ///
+    /// Performs the operation only if the key's current value is equal to the provided value.
+    ///
+    /// For SET: Sets the key only if its current value matches. Non-existent keys are not created.
+    /// For DEL_EX: Deletes the key only if its current value matches. Non-existent keys are ignored.
+    pub fn ifeq(value: impl ToSingleRedisArg) -> Self {
+        ValueComparison::IFEQ(Self::arg_to_string(value))
+    }
+
+    /// Create a new IFNE (if not equal) comparison
+    ///
+    /// Performs the operation only if the key's current value is not equal to the provided value.
+    ///
+    /// For SET: Sets the key only if its current value doesn't match. Non-existent keys are created.
+    /// For DEL_EX: Deletes the key only if its current value doesn't match. Non-existent keys are ignored.
+    pub fn ifne(value: impl ToSingleRedisArg) -> Self {
+        ValueComparison::IFNE(Self::arg_to_string(value))
+    }
+
+    /// Create a new IFDEQ (if digest equal) comparison
+    ///
+    /// Performs the operation only if the digest of the key's current value is equal to the provided digest.
+    ///
+    /// For SET: Sets the key only if its current value's digest matches. Non-existent keys are not created.
+    /// For DEL_EX: Deletes the key only if its current value's digest matches. Non-existent keys are ignored.
+    ///
+    /// Use [`calculate_value_digest`] to compute the digest of a value.
+    pub fn ifdeq(digest: impl ToSingleRedisArg) -> Self {
+        ValueComparison::IFDEQ(Self::arg_to_string(digest))
+    }
+
+    /// Create a new IFDNE (if digest not equal) comparison
+    ///
+    /// Performs the operation only if the digest of the key's current value is not equal to the provided digest.
+    ///
+    /// For SET: Sets the key only if its current value's digest doesn't match. Non-existent keys are created.
+    /// For DEL_EX: Deletes the key only if its current value's digest doesn't match. Non-existent keys are ignored.
+    ///
+    /// Use [`calculate_value_digest`] to compute the digest of a value.
+    pub fn ifdne(digest: impl ToSingleRedisArg) -> Self {
+        ValueComparison::IFDNE(Self::arg_to_string(digest))
+    }
+
+    fn arg_to_string(value: impl ToSingleRedisArg) -> String {
+        let args = value.to_redis_args();
+        String::from_utf8_lossy(&args[0]).into_owned()
+    }
+}
+
+impl ToRedisArgs for ValueComparison {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            ValueComparison::IFEQ(value) => {
+                out.write_arg(b"IFEQ");
+                out.write_arg(value.as_bytes());
+            }
+            ValueComparison::IFNE(value) => {
+                out.write_arg(b"IFNE");
+                out.write_arg(value.as_bytes());
+            }
+            ValueComparison::IFDEQ(digest) => {
+                out.write_arg(b"IFDEQ");
+                out.write_arg(digest.as_bytes());
+            }
+            ValueComparison::IFDNE(digest) => {
+                out.write_arg(b"IFDNE");
+                out.write_arg(digest.as_bytes());
+            }
+        }
+    }
+}
+
 /// `VerbatimString`'s format types defined by spec
 #[derive(PartialEq, Clone, Debug)]
 #[non_exhaustive]
@@ -2271,6 +2373,44 @@ pub fn from_redis_value_ref<T: FromRedisValue>(v: &Value) -> Result<T, ParsingEr
 /// to make the API slightly nicer.
 pub fn from_redis_value<T: FromRedisValue>(v: Value) -> Result<T, ParsingError> {
     FromRedisValue::from_redis_value(v)
+}
+
+/// Calculates a digest/hash of the given value for use with Redis value comparison operations.
+/// This function uses the XXH3 algorithm, which is the same algorithm used by Redis for its DIGEST command.
+/// The resulting digest can be used with `ValueComparison::IFDEQ` and `ValueComparison::IFDNE`.
+///
+/// # Example
+/// ```rust
+/// use redis::{calculate_value_digest, ValueComparison, SetOptions};
+///
+/// let value = "my_value";
+/// let digest = calculate_value_digest(value);
+///
+/// // Use the digest in a value comparison
+/// let opts = SetOptions::default()
+///     .value_comparison(ValueComparison::ifdeq(&digest));
+/// ```
+pub fn calculate_value_digest<T: ToRedisArgs>(value: T) -> String {
+    use xxhash_rust::xxh3::xxh3_64;
+
+    // Convert the value to Redis args format (bytes)
+    let args = value.to_redis_args();
+
+    // For consistency with Redis behavior, hash the concatenated bytes
+    // of all arguments, similar to how Redis would serialize the value
+    let mut combined_bytes = Vec::new();
+    for arg in args {
+        combined_bytes.extend_from_slice(&arg);
+    }
+
+    // Calculate XXH3 hash (64-bit) and format as hexadecimal string
+    let hash = xxh3_64(&combined_bytes);
+    format!("{:016x}", hash)
+}
+
+/// Validates that the given string is a valid 16-byte hex digest.
+pub fn is_valid_16_bytes_hex_digest(s: &str) -> bool {
+    s.len() == 16 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Enum representing the communication protocol with the server.
