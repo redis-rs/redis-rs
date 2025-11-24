@@ -792,6 +792,310 @@ fn test_xclaim_last_id() {
 }
 
 #[test]
+fn test_xreadgroup_with_claim_option() {
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+    let mut con = ctx.connection();
+
+    let stream_name = "test_stream";
+    let group_name = "test_group";
+    let consumer1 = "consumer1";
+    let consumer2 = "consumer2";
+
+    // Create a consumer group and add 10 messages to the stream
+    assert!(con
+        .xgroup_create_mkstream(stream_name, group_name, "$")
+        .is_ok());
+    xadd_keyrange(&mut con, stream_name, 0, 10);
+
+    // Consumer1 reads all messages without acking them
+    let reply = con
+        .xread_options(
+            &[stream_name],
+            &[">"],
+            &StreamReadOptions::default()
+                .group(group_name, consumer1)
+                .count(10),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(reply.keys[0].ids.len(), 10);
+    let message_identifiers: Vec<String> =
+        reply.keys[0].ids.iter().map(|msg| msg.id.clone()).collect();
+
+    // Verify that consumer1 has 10 pending messages
+    let pending = con.xpending(stream_name, group_name).unwrap();
+    assert_eq!(pending.count(), 10);
+    if let StreamPendingReply::Data(data) = pending {
+        assert_eq!(data.consumers.len(), 1);
+        assert_eq!(data.consumers[0].name, consumer1);
+        assert_eq!(data.consumers[0].pending, 10);
+    }
+
+    // Sleep to make messages idle
+    sleep(Duration::from_millis(10));
+
+    // Consumer2 uses XREADGROUP with CLAIM option to claim idle messages
+    let claim_reply: Option<StreamReadReply> = con
+        .xread_options(
+            &[stream_name],
+            &[">"],
+            &StreamReadOptions::default()
+                .group(group_name, consumer2)
+                .claim(5) // Claim messages idle for at least 5ms
+                .count(5),
+        )
+        .unwrap();
+    let claim_reply = claim_reply.unwrap();
+
+    // Verify that consumer2 claimed up to 5 messages from consumer1
+    assert_eq!(claim_reply.keys.len(), 1);
+    assert_eq!(claim_reply.keys[0].key, stream_name);
+    assert!(!claim_reply.keys[0].ids.is_empty());
+    assert!(claim_reply.keys[0].ids.len() <= 5);
+
+    // Verify that the claimed messages have additional PEL information
+    for stream_id in &claim_reply.keys[0].ids {
+        assert!(stream_id.milliseconds_elapsed_from_delivery.unwrap() > 0);
+        assert!(stream_id.delivered_count.unwrap() > 0);
+    }
+
+    // Verify that the claimed messages are the ones that were pending for consumer1
+    let claimed_ids: Vec<String> = claim_reply.keys[0]
+        .ids
+        .iter()
+        .map(|id| id.id.clone())
+        .collect();
+    for claimed_id in &claimed_ids {
+        assert!(message_identifiers.contains(claimed_id));
+    }
+
+    // Check the PEL to verify ownership transfer
+    let pending_info = con
+        .xpending_count(stream_name, group_name, "-", "+", 10)
+        .unwrap();
+    let mut consumer1_count = 0;
+    let mut consumer2_count = 0;
+    for pending_id in &pending_info.ids {
+        if pending_id.consumer == consumer1 {
+            consumer1_count += 1;
+        } else {
+            consumer2_count += 1;
+        }
+    }
+
+    // Consumer1 should have fewer messages than before
+    assert!(consumer1_count < 10);
+    // Consumer2 should now own the claimed messages
+    assert!(consumer2_count > 0);
+    // The total number of messages should still be 10 as no messages were acked
+    assert_eq!(consumer1_count + consumer2_count, 10);
+}
+
+#[test]
+fn test_xreadgroup_claim_with_idle_and_incoming_messages() {
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+    let mut con = ctx.connection();
+
+    let stream_name = "test_stream_claim_with_idle_and_incoming_messages";
+    let group_name = "test_group";
+    let consumer1 = "consumer1";
+    let consumer2 = "consumer2";
+
+    // Create a consumer group and add 2 messages to the stream
+    assert!(con
+        .xgroup_create_mkstream(stream_name, group_name, "$")
+        .is_ok());
+    xadd_keyrange(&mut con, stream_name, 0, 2);
+
+    // Consumer1 reads the 2 messages without acking them (these will become idle pending messages)
+    let initial_reply = con
+        .xread_options(
+            &[stream_name],
+            &[">"],
+            &StreamReadOptions::default()
+                .group(group_name, consumer1)
+                .count(2),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(initial_reply.keys[0].ids.len(), 2);
+    let idle_pending_ids: Vec<String> = initial_reply.keys[0]
+        .ids
+        .iter()
+        .map(|id| id.id.clone())
+        .collect();
+
+    // Sleep to make the first 2 messages idle
+    sleep(Duration::from_millis(20));
+
+    // Add 20 new incoming messages to the stream
+    xadd_keyrange(&mut con, stream_name, 2, 22);
+
+    // Consumer2 uses XREADGROUP with CLAIM and COUNT 10 and should receive 10 messages (2 idle + 8 incoming)
+    let claim_reply: Option<StreamReadReply> = con
+        .xread_options(
+            &[stream_name],
+            &[">"],
+            &StreamReadOptions::default()
+                .group(group_name, consumer2)
+                .claim(5)  // Claim messages idle for at least 5ms
+                .count(10),
+        )
+        .unwrap();
+    let claim_reply = claim_reply.unwrap();
+
+    // Verify that consumer2 got exactly 10 messages
+    assert_eq!(claim_reply.keys.len(), 1);
+    assert_eq!(claim_reply.keys[0].key, stream_name);
+    assert_eq!(claim_reply.keys[0].ids.len(), 10);
+
+    // Verify the ordering: idle pending messages are first, followed by the incoming ones
+    // First 2 messages should be the idle pending messages and they should have additional PEL information:
+    //  - milliseconds_elapsed_from_delivery > 0
+    //  - delivered_count > 0
+    assert_eq!(idle_pending_ids[0], claim_reply.keys[0].ids[0].id);
+    assert_eq!(idle_pending_ids[1], claim_reply.keys[0].ids[1].id);
+    for i in 0..2 {
+        let stream_id = &claim_reply.keys[0].ids[i];
+        assert!(stream_id.milliseconds_elapsed_from_delivery.unwrap() > 0);
+        assert!(stream_id.delivered_count.unwrap() > 0);
+    }
+    // Verify that the remaining 8 messages are new, incoming messages (not previously delivered)
+    for i in 2..10 {
+        let stream_id = &claim_reply.keys[0].ids[i];
+        assert_eq!(stream_id.milliseconds_elapsed_from_delivery.unwrap(), 0);
+        assert_eq!(stream_id.delivered_count.unwrap(), 0);
+        // These messages should NOT be in the idle pending list
+        assert!(!idle_pending_ids.contains(&stream_id.id));
+    }
+
+    // Verify ownership in PEL
+    let pending_info = con
+        .xpending_count(stream_name, group_name, "-", "+", 30)
+        .unwrap();
+    let mut consumer1_count = 0;
+    let mut consumer2_count = 0;
+    for pending_id in &pending_info.ids {
+        if pending_id.consumer == consumer1 {
+            consumer1_count += 1;
+        } else {
+            consumer2_count += 1;
+        }
+    }
+
+    // Consumer1 should have 0 messages (they were claimed by consumer2)
+    assert_eq!(consumer1_count, 0);
+    // Consumer2 should have 10 messages (2 claimed + 8 new)
+    assert_eq!(consumer2_count, 10);
+
+    // Sleep to make all messages idle
+    sleep(Duration::from_millis(10));
+
+    // Test without COUNT to verify that all messages are returned
+    let claim_all_reply: Option<StreamReadReply> = con
+        .xread_options(
+            &[stream_name],
+            &[">"],
+            &StreamReadOptions::default()
+                .group(group_name, consumer1)
+                .claim(5), // No COUNT specified
+        )
+        .unwrap();
+    let claim_all_reply = claim_all_reply.unwrap();
+    // Should get: 10 idle pending (from consumer2) + 12 remaining incoming = 22 total
+    assert_eq!(claim_all_reply.keys.len(), 1);
+    assert_eq!(claim_all_reply.keys[0].ids.len(), 22);
+
+    // Verify that the first 10 are the idle pending messages
+    for i in 0..10 {
+        let stream_id = &claim_all_reply.keys[0].ids[i];
+        assert!(stream_id.milliseconds_elapsed_from_delivery.unwrap() > 0);
+        assert!(stream_id.delivered_count.unwrap() > 0);
+    }
+
+    // Verify that the rest are new, incoming messages
+    for i in 10..22 {
+        let stream_id = &claim_all_reply.keys[0].ids[i];
+        assert_eq!(stream_id.milliseconds_elapsed_from_delivery.unwrap(), 0);
+        assert_eq!(stream_id.delivered_count.unwrap(), 0);
+    }
+}
+
+#[test]
+fn test_xreadgroup_claim_multiple_streams() {
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+    let mut con = ctx.connection();
+
+    let stream1 = "test_stream_claim_multi_1";
+    let stream2 = "test_stream_claim_multi_2";
+    let stream3 = "test_stream_claim_multi_3";
+    let group_name = "test_group";
+    let consumer1 = "consumer1";
+    let consumer2 = "consumer2";
+
+    // Create consumer groups for all three streams with 5 messages in each stream
+    for stream_name in [stream1, stream2, stream3] {
+        assert!(con
+            .xgroup_create_mkstream(stream_name, group_name, "$")
+            .is_ok());
+
+        xadd_keyrange(&mut con, stream_name, 0, 5);
+    }
+
+    // Consumer1 reads from all streams without acking (these will become idle pending)
+    let initial_reply: Option<StreamReadReply> = con
+        .xread_options(
+            &[stream1, stream2, stream3],
+            &[">", ">", ">"],
+            &StreamReadOptions::default()
+                .group(group_name, consumer1)
+                .count(15),
+        )
+        .unwrap();
+    let initial_reply = initial_reply.unwrap();
+    assert_eq!(initial_reply.keys.len(), 3);
+
+    // Sleep to make messages idle
+    sleep(Duration::from_millis(20));
+
+    // Consumer2 claims from all streams
+    let claim_reply: Option<StreamReadReply> = con
+        .xread_options(
+            &[stream1, stream2, stream3],
+            &[">", ">", ">"],
+            &StreamReadOptions::default()
+                .group(group_name, consumer2)
+                .claim(5), // Claim messages idle for at least 5ms
+        )
+        .unwrap();
+    let claim_reply = claim_reply.unwrap();
+    // Verify that the results are from all three streams
+    assert_eq!(claim_reply.keys.len(), 3);
+
+    // Verify that each stream has the expected number of messages
+    for stream_key in &claim_reply.keys {
+        assert_eq!(stream_key.ids.len(), 5);
+        for stream_id in &stream_key.ids {
+            assert!(stream_id.milliseconds_elapsed_from_delivery.unwrap() > 0);
+            assert!(stream_id.delivered_count.unwrap() > 0);
+        }
+    }
+
+    // Verify ownership transfer in PEL
+    // Consumer1 should have no pending messages
+    let consumer1_pending: StreamPendingCountReply = con
+        .xpending_consumer_count(stream1, group_name, "-", "+", 10, consumer1)
+        .unwrap();
+    assert_eq!(consumer1_pending.ids.len(), 0);
+
+    // Consumer2 should have all messages from stream1
+    let consumer2_pending: StreamPendingCountReply = con
+        .xpending_consumer_count(stream1, group_name, "-", "+", 10, consumer2)
+        .unwrap();
+    assert_eq!(consumer2_pending.ids.len(), 5);
+}
+
+#[test]
 fn test_xdel() {
     // Tests the following commands....
     // xdel
@@ -2049,6 +2353,8 @@ fn test_xautoclaim_invalid_pel_entries_claiming_just_ids() {
             StreamId {
                 id: claim.id.clone(),
                 map: Default::default(),
+                milliseconds_elapsed_from_delivery: None,
+                delivered_count: None,
             },
         );
         claimed_entries.insert(
@@ -2056,6 +2362,8 @@ fn test_xautoclaim_invalid_pel_entries_claiming_just_ids() {
             StreamId {
                 id: claim_1.id.clone(),
                 map: Default::default(),
+                milliseconds_elapsed_from_delivery: None,
+                delivered_count: None,
             },
         );
         assert_eq!(reply.claimed, claimed_entries);
