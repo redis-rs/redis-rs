@@ -37,6 +37,15 @@ runs:
         popd;
         echo $PATH
 
+    - name: Save DB to cache
+      if: steps.cache-redis.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          ~/redis-cli
+          ~/redis-server
+        key: ${{ runner.os }}-${{ inputs.db-name }}-${{ inputs.db-version }}
+
     - name: set PATH
       shell: bash
       run: |

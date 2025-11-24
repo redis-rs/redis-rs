@@ -24,23 +24,24 @@ jobs:
         config: [
             # Different DB cases:
             {  db-org: redis, db-name: redis, db-version: 6.2.13 },
-            {  db-org: redis, db-name: redis, db-version: 7.2.4 },
-            {  db-org: redis, db-name: redis, db-version: 8.0.2 },
-            {  db-org: redis, db-name: redis, db-version: 8.2.0 },
-            {  db-org: valkey-io, db-name: valkey, db-version: 7.2.6, },
-            {  db-org: valkey-io, db-name: valkey, db-version: 8.0.1, },
+            {  db-org: redis, db-name: redis, db-version: 7.2.4, json-module-version: v2.6.22 },
+            {  db-org: redis, db-name: redis, db-version: 8.0.2, json-module-version: v2.8.16 },
+            {  db-org: redis, db-name: redis, db-version: 8.2.0, json-module-version: v2.8.16 },
+            {  db-org: valkey-io, db-name: valkey, db-version: 7.2.6, json-module-version: v2.6.22 },
+            {  db-org: valkey-io, db-name: valkey, db-version: 8.0.1, json-module-version: v2.6.22 },
           ]
 
     steps:
       - uses: actions/checkout@v5
 
       - name: Cache RedisJSON
+        if: matrix.config.json-module-version != ''
         id: cache-redisjson
         uses: actions/cache/restore@v4
         with:
           path: |
             /tmp/librejson.so
-          key: ${{ runner.os }}-redisjson
+          key: ${{ runner.os }}-redisjson-${{ matrix.config.json-module-version }}
 
       - name: Install DB
         uses: ./.github/actions/install-db
@@ -66,28 +67,16 @@ jobs:
         run: make test
 
       - name: Checkout RedisJSON
-        if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
+        if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.json-module-version != ''
         uses: actions/checkout@v5
         with:
           repository: "RedisJSON/RedisJSON"
           path: "./__ci/redis-json"
+          ref: ${{ matrix.config.json-module-version }}
           set-safe-directory: false
 
-        # When cargo is invoked, it'll go up many directories to see if it can find a workspace
-        # This will avoid this issue in what is admittedly a bit of a janky but still fully functional way
-        #
-        #   1. Copy the untouched file (into Cargo.toml.actual)
-        #   2. Exclude ./__ci/redis-json from the workspace
-        #      (preventing it from being compiled as a workspace module)
-        #   3. Build RedisJSON
-        #   4. Move the built RedisJSON Module (librejson.so) to /tmp
-        #   5. Restore Cargo.toml to its untouched state
-        #   6. Remove the RedisJSON Source code so it doesn't interfere with tests
-        #
-        # This shouldn't cause issues in the future so long as no profiles or patches
-        # are applied to the workspace Cargo.toml file
       - name: Compile RedisJSON
-        if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.db-version != '6.2.13'
+        if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.json-module-version != ''
         run: |
           cp ./Cargo.toml ./Cargo.toml.actual
           echo $'\nexclude = [\"./__ci/redis-json\"]' >> Cargo.toml
@@ -96,18 +85,57 @@ jobs:
           rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
           rm -rf ./__ci/redis-json
 
+      - name: Verify RedisJSON module
+        if: matrix.config.json-module-version != ''
+        run: |
+          if [ ! -f "${{ env.REDIS_RS_REDIS_JSON_PATH }}" ]; then
+            echo "ERROR: RedisJSON module not found at ${{ env.REDIS_RS_REDIS_JSON_PATH }}"
+            exit 1
+          fi
+          ls -lh "${{ env.REDIS_RS_REDIS_JSON_PATH }}"
+          
+          # Test that Redis can load the module
+          echo "Testing Redis server with module..."
+          TEST_PORT=16379
+          TEST_LOG="/tmp/redis-module-test.log"
+          redis-server --port $TEST_PORT --loadmodule "${{ env.REDIS_RS_REDIS_JSON_PATH }}" \
+            --logfile "$TEST_LOG" --daemonize yes || {
+            echo "ERROR: Failed to start Redis with module"
+            cat "$TEST_LOG"
+            exit 1
+          }
+          
+          sleep 2
+          
+          if redis-cli -p $TEST_PORT PING; then
+            echo "Redis server started successfully"
+            redis-cli -p $TEST_PORT JSON.SET test \$ '{"test":1}' || {
+              echo "ERROR: JSON commands not working"
+              cat "$TEST_LOG"
+              redis-cli -p $TEST_PORT SHUTDOWN NOSAVE
+              exit 1
+            }
+            echo "JSON commands working"
+            redis-cli -p $TEST_PORT SHUTDOWN NOSAVE
+          else
+            echo "ERROR: Redis server not responding"
+            cat "$TEST_LOG"
+            exit 1
+          fi
+
       - name: Run module-specific tests
-        if: matrix.config.db-version != '6.2.13'
+        if: matrix.config.json-module-version != ''
         run: make test-module
         env:
           REDIS_VERSION: ${{ matrix.config.db-version }}
 
       - name: Cache RedisJSON
+        if: matrix.config.json-module-version != ''
         id: cache-redisjson-save
         uses: actions/cache/save@v4
         with:
           path: ${{ env.REDIS_RS_REDIS_JSON_PATH }}
-          key: ${{ runner.os }}-redisjson          
+          key: ${{ runner.os }}-redisjson-${{ matrix.config.json-module-version }}          
 
   examples:
     needs: [lint, build-and-test]
