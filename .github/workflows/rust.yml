@@ -90,11 +90,11 @@ jobs:
       - name: Compile RedisJSON
         if: steps.cache-redisjson.outputs.cache-hit != 'true'
         run: |
-            cp ./Cargo.toml ./Cargo.toml.actual
-            echo $'\nexclude = [\"./__ci/redis-json\"]' >> Cargo.toml
+          cp ./Cargo.toml ./Cargo.toml.actual
+          echo $'\nexclude = [\"./__ci/redis-json\"]' >> Cargo.toml
           cargo +stable build --release --manifest-path ./__ci/redis-json/Cargo.toml
           mv ./__ci/redis-json/target/release/librejson.so ${{ env.REDIS_RS_REDIS_JSON_PATH }}
-            rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
+          rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
           rm -rf ./__ci/redis-json
 
       - name: Verify RedisJSON module
