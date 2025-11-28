@@ -640,7 +640,7 @@ pub use crate::cmd::CommandCacheConfig;
 pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter};
 pub use crate::commands::{
     Commands, ControlFlow, CopyOptions, Direction, FlushAllOptions, FlushDbOptions,
-    HashFieldExpirationOptions, LposOptions, PubSubCommands, ScanOptions, SetOptions,
+    HashFieldExpirationOptions, LposOptions, MSetOptions, PubSubCommands, ScanOptions, SetOptions,
     SortedSetAddOptions, TypedCommands, UpdateCheck,
 };
 pub use crate::connection::{
