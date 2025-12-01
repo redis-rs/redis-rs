@@ -32,7 +32,7 @@ jobs:
           ]
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Cache RedisJSON
         if: matrix.config.json-module-version != ''
@@ -68,7 +68,7 @@ jobs:
 
       - name: Checkout RedisJSON
         if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.json-module-version != ''
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           repository: "RedisJSON/RedisJSON"
           path: "./__ci/redis-json"
@@ -154,7 +154,7 @@ jobs:
           ]
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Install DB
         uses: ./.github/actions/install-db
@@ -209,7 +209,7 @@ jobs:
           {toolchain: 1.85.0},
         ]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: lint
         uses: ./.github/actions/lint-and-check
         with:
@@ -240,7 +240,7 @@ jobs:
     env:
       rust_ver: stable
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Install DB
         uses: ./.github/actions/install-db
@@ -266,13 +266,13 @@ jobs:
           critcmp base changes
 
       # We check out again, because we switched branches in the last step.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
   flag-frenzy:
     needs: [lint, build-and-test]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain/@master
         with:
           toolchain: stable
@@ -287,7 +287,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: lint
         uses: ./.github/actions/lint-and-check
