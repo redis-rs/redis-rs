@@ -18,9 +18,9 @@ mod basic {
         ErrorKind, ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck,
         HashFieldExpirationOptions,
         IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply},
-        ProtocolVersion, PubSubCommands, PushInfo, PushKind, RedisConnectionInfo, RedisResult,
-        Role, ScanOptions, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs, TypedCommands,
-        UpdateCheck, Value, ValueComparison, ValueType,
+        MSetOptions, ProtocolVersion, PubSubCommands, PushInfo, PushKind, RedisConnectionInfo,
+        RedisResult, Role, ScanOptions, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs,
+        TypedCommands, UpdateCheck, Value, ValueComparison, ValueType,
     };
 
     #[cfg(feature = "vector-sets")]
@@ -3115,6 +3115,209 @@ mod basic {
         assert_eq!(con.hset_multiple(key, &[("f1", 1), ("f2", 2)]), Ok(()));
         for value_comparison in &value_comparisons {
             assert!(con.del_ex(key, value_comparison.clone()).is_err());
+        }
+    }
+
+    /// Test MSetOptions serialization to Redis arguments
+    #[test]
+    fn test_mset_options() {
+        assert_eq!(ToRedisArgs::to_redis_args(&MSetOptions::default()).len(), 0);
+
+        // Test with NX & XX options
+        let opts = MSetOptions::default().conditional_set(ExistenceCheck::NX);
+        assert_args!(&opts, "NX");
+        let opts = MSetOptions::default().conditional_set(ExistenceCheck::XX);
+        assert_args!(&opts, "XX");
+
+        // Test with expiration options
+        let opts = MSetOptions::default().with_expiration(SetExpiry::EX(60));
+        assert_args!(&opts, "EX", "60");
+        let opts = MSetOptions::default().with_expiration(SetExpiry::PX(1000));
+        assert_args!(&opts, "PX", "1000");
+        let opts = MSetOptions::default().with_expiration(SetExpiry::EXAT(1234567890));
+        assert_args!(&opts, "EXAT", "1234567890");
+        let opts = MSetOptions::default().with_expiration(SetExpiry::PXAT(1234567890000));
+        assert_args!(&opts, "PXAT", "1234567890000");
+        let opts = MSetOptions::default().with_expiration(SetExpiry::KEEPTTL);
+        assert_args!(&opts, "KEEPTTL");
+
+        // Test combinations
+        let opts = MSetOptions::default()
+            .conditional_set(ExistenceCheck::NX)
+            .with_expiration(SetExpiry::EX(60));
+        assert_args!(&opts, "NX", "EX", "60");
+
+        let opts = MSetOptions::default()
+            .conditional_set(ExistenceCheck::XX)
+            .with_expiration(SetExpiry::PX(1000));
+        assert_args!(&opts, "XX", "PX", "1000");
+
+        let opts = MSetOptions::default()
+            .conditional_set(ExistenceCheck::NX)
+            .with_expiration(SetExpiry::KEEPTTL);
+        assert_args!(&opts, "NX", "KEEPTTL");
+    }
+
+    /// Test the MSETEX command with the NX existence option
+    #[test]
+    fn test_mset_ex_nx() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let mut con = ctx.connection();
+
+        let key1 = "mset_ex_nx_key1";
+        let key2 = "mset_ex_nx_key2";
+        let key3 = "mset_ex_nx_key3";
+
+        let initial_value1 = "initial_value1";
+        let initial_value2 = "initial_value2";
+        let initial_value3 = "initial_value3";
+
+        let updated_value1 = "updated_value1";
+        let updated_value2 = "updated_value2";
+
+        let opts = MSetOptions::default().conditional_set(ExistenceCheck::NX);
+
+        // Test 1: Setting multiple keys with NX should succeed when none of them exists
+        assert!(con
+            .mset_ex(&[(key1, initial_value1), (key2, initial_value2)], opts)
+            .unwrap());
+        // Verify that the keys were set
+        assert_eq!(con.get(key1), Ok(Some(initial_value1.to_string())));
+        assert_eq!(con.get(key2), Ok(Some(initial_value2.to_string())));
+
+        // Test 2: Setting the same keys with NX should fail
+        assert!(!con
+            .mset_ex(&[(key1, updated_value1), (key2, updated_value2)], opts)
+            .unwrap());
+        // Verify that the values were not changed
+        assert_eq!(con.get(key1), Ok(Some(initial_value1.to_string())));
+        assert_eq!(con.get(key2), Ok(Some(initial_value2.to_string())));
+
+        // Test 3: Setting keys with NX should fail when there is an existing one among them
+        assert!(!con
+            .mset_ex(&[(key1, updated_value1), (key3, initial_value3)], opts)
+            .unwrap());
+        // Verify that key3 was not created
+        assert!(!con.exists(key3).unwrap());
+    }
+
+    /// Test the MSETEX command with the XX existence option
+    #[test]
+    fn test_mset_ex_xx() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let mut con = ctx.connection();
+
+        let key1 = "mset_ex_xx_key1";
+        let key2 = "mset_ex_xx_key2";
+        let key3 = "mset_ex_xx_key3";
+
+        let initial_value1 = "initial_value1";
+        let initial_value2 = "initial_value2";
+        let initial_value3 = "initial_value3";
+
+        let updated_value1 = "updated_value1";
+        let updated_value2 = "updated_value2";
+
+        // Test 1: Setting keys with XX should fail when they don't exist
+        let opts = MSetOptions::default().conditional_set(ExistenceCheck::XX);
+        assert!(!con
+            .mset_ex(&[(key1, initial_value1), (key2, initial_value2)], opts)
+            .unwrap());
+        assert!(!con.exists(key1).unwrap());
+        assert!(!con.exists(key2).unwrap());
+
+        // Create the keys with their initial values
+        let opts = opts.conditional_set(ExistenceCheck::NX);
+        assert!(con
+            .mset_ex(&[(key1, initial_value1), (key2, initial_value2)], opts)
+            .unwrap());
+
+        let opts = opts.conditional_set(ExistenceCheck::XX);
+        // Test 2: Updating existing keys with XX should succeed
+        assert!(con
+            .mset_ex(&[(key1, updated_value1), (key2, updated_value2)], opts)
+            .unwrap());
+        // Verify that the values were updated
+        assert_eq!(con.get(key1), Ok(Some(updated_value1.to_string())));
+        assert_eq!(con.get(key2), Ok(Some(updated_value2.to_string())));
+
+        // Test 3: Setting keys with XX should fail when there is a non-existing one among them
+        assert!(!con
+            .mset_ex(&[(key1, updated_value1), (key3, initial_value3)], opts)
+            .unwrap());
+
+        // Verify key1 was not changed and key3 was not created
+        assert_eq!(con.get(key1), Ok(Some(updated_value1.to_string())));
+        assert!(!con.exists(key3).unwrap());
+    }
+
+    /// Test the MSETEX command with all supported expiration options
+    #[test]
+    fn test_mset_ex_expiration_options() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let mut con = ctx.connection();
+
+        let current_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+
+        // Create a list of key-value pairs and their corresponding expiration options
+        // Note that the last two key-value pairs are used to test the KEEPTTL option
+        let key_values = [
+            ("mset_ex_exp_key1", "initial_value1"),
+            ("mset_ex_exp_key2", "initial_value2"),
+            ("mset_ex_exp_key3", "initial_value3"),
+            ("mset_ex_exp_key4", "initial_value4"),
+            ("mset_ex_exp_key5", "initial_value5"),
+            ("mset_ex_exp_key6", "initial_value6"),
+            ("mset_ex_exp_key7", "initial_value7"),
+            ("mset_ex_exp_key8", "initial_value8"),
+            ("mset_ex_exp_key9", "initial_value9"),
+            ("mset_ex_exp_key10", "initial_value10"),
+            ("mset_ex_exp_key9", "updated_value9"),
+            ("mset_ex_exp_key10", "updated_value10"),
+        ];
+
+        let existence_checks_and_expirations = [
+            (ExistenceCheck::NX, SetExpiry::EX(1)),
+            (ExistenceCheck::NX, SetExpiry::PX(1000)),
+            (
+                ExistenceCheck::NX,
+                SetExpiry::EXAT(current_timestamp.as_secs() + 1),
+            ),
+            (
+                ExistenceCheck::NX,
+                SetExpiry::PXAT(current_timestamp.as_millis() as u64 + 1000),
+            ),
+            (ExistenceCheck::NX, SetExpiry::EX(1)),
+            (ExistenceCheck::XX, SetExpiry::KEEPTTL),
+        ];
+        assert!(key_values.len() % 2 == 0);
+        assert!(key_values.len() == existence_checks_and_expirations.len() * 2);
+
+        let opts = MSetOptions::default();
+        for (j, (existence_check, expiry)) in existence_checks_and_expirations.iter().enumerate() {
+            let i = 2 * j;
+
+            let opts = opts
+                .conditional_set(*existence_check)
+                .with_expiration(*expiry);
+            assert!(con
+                .mset_ex(&[key_values[i], key_values[i + 1]], opts)
+                .unwrap());
+            assert_eq!(
+                con.mget((key_values[i].0, key_values[i + 1].0)),
+                Ok(vec![
+                    Some(key_values[i].1.to_string()),
+                    Some(key_values[i + 1].1.to_string())
+                ])
+            );
+        }
+
+        // Wait for the keys to expire
+        sleep(Duration::from_millis(1100));
+
+        // Verify that the keys have expired
+        for key_value in &key_values {
+            assert_eq!(con.exists(key_value.0), Ok(false));
         }
     }
 

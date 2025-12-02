@@ -47,6 +47,35 @@ pub enum SetExpiry {
     KEEPTTL,
 }
 
+impl ToRedisArgs for SetExpiry {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            SetExpiry::EX(secs) => {
+                out.write_arg(b"EX");
+                out.write_arg(format!("{secs}").as_bytes());
+            }
+            SetExpiry::PX(millis) => {
+                out.write_arg(b"PX");
+                out.write_arg(format!("{millis}").as_bytes());
+            }
+            SetExpiry::EXAT(unix_time) => {
+                out.write_arg(b"EXAT");
+                out.write_arg(format!("{unix_time}").as_bytes());
+            }
+            SetExpiry::PXAT(unix_time) => {
+                out.write_arg(b"PXAT");
+                out.write_arg(format!("{unix_time}").as_bytes());
+            }
+            SetExpiry::KEEPTTL => {
+                out.write_arg(b"KEEPTTL");
+            }
+        }
+    }
+}
+
 /// Helper enum that is used to define existence checks
 #[derive(Clone, Copy)]
 #[non_exhaustive]
@@ -57,6 +86,22 @@ pub enum ExistenceCheck {
     XX,
 }
 
+impl ToRedisArgs for ExistenceCheck {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            ExistenceCheck::NX => {
+                out.write_arg(b"NX");
+            }
+            ExistenceCheck::XX => {
+                out.write_arg(b"XX");
+            }
+        }
+    }
+}
+
 /// Helper enum that is used to define field existence checks
 #[derive(Clone, Copy)]
 #[non_exhaustive]
@@ -65,6 +110,18 @@ pub enum FieldExistenceCheck {
     FNX,
     /// FXX -- Only set the fields if all already exist.
     FXX,
+}
+
+impl ToRedisArgs for FieldExistenceCheck {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            FieldExistenceCheck::FNX => out.write_arg(b"FNX"),
+            FieldExistenceCheck::FXX => out.write_arg(b"FXX"),
+        }
+    }
 }
 
 /// Helper enum that is used in some situations to describe

@@ -346,6 +346,13 @@ implement_commands! {
         cmd("MSETNX").arg(items)
     }
 
+    /// Sets the given keys to their respective values.
+    /// This command is an extension of the MSETNX that adds expiration and XX options.
+    /// [Redis Docs](https://redis.io/commands/MSETEX)
+    fn mset_ex<K: ToRedisArgs, V: ToRedisArgs>(items: &'a [(K, V)], options: MSetOptions) -> (bool) {
+        cmd("MSETEX").arg(items.len()).arg(items).arg(options)
+    }
+
     /// Set the string value of a key and return its old value.
     /// [Redis Docs](https://redis.io/commands/GETSET)
     fn getset<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, value: V) -> (Option<String>) {
@@ -3397,14 +3404,7 @@ impl ToRedisArgs for SetOptions {
         W: ?Sized + RedisWrite,
     {
         if let Some(ref conditional_set) = self.conditional_set {
-            match conditional_set {
-                ExistenceCheck::NX => {
-                    out.write_arg(b"NX");
-                }
-                ExistenceCheck::XX => {
-                    out.write_arg(b"XX");
-                }
-            }
+            conditional_set.write_redis_args(out);
         }
         if let Some(ref value_comparison) = self.value_comparison {
             value_comparison.write_redis_args(out);
@@ -3413,27 +3413,55 @@ impl ToRedisArgs for SetOptions {
             out.write_arg(b"GET");
         }
         if let Some(ref expiration) = self.expiration {
-            match expiration {
-                SetExpiry::EX(secs) => {
-                    out.write_arg(b"EX");
-                    out.write_arg(format!("{secs}").as_bytes());
-                }
-                SetExpiry::PX(millis) => {
-                    out.write_arg(b"PX");
-                    out.write_arg(format!("{millis}").as_bytes());
-                }
-                SetExpiry::EXAT(unix_time) => {
-                    out.write_arg(b"EXAT");
-                    out.write_arg(format!("{unix_time}").as_bytes());
-                }
-                SetExpiry::PXAT(unix_time) => {
-                    out.write_arg(b"PXAT");
-                    out.write_arg(format!("{unix_time}").as_bytes());
-                }
-                SetExpiry::KEEPTTL => {
-                    out.write_arg(b"KEEPTTL");
-                }
-            }
+            expiration.write_redis_args(out);
+        }
+    }
+}
+
+/// Options for the [MSETEX](https://redis.io/commands/msetex) command
+///
+/// # Example
+/// ```rust,no_run
+/// use redis::{Commands, RedisResult, MSetOptions, SetExpiry, ExistenceCheck};
+/// fn set_multiple_key_values(
+///     con: &mut redis::Connection,
+/// ) -> RedisResult<bool> {
+///     let opts = MSetOptions::default()
+///         .conditional_set(ExistenceCheck::NX)
+///         .with_expiration(SetExpiry::EX(60));
+///     con.mset_ex(&[("key1", "value1"), ("key2", "value2")], opts)
+/// }
+/// ```
+#[derive(Clone, Copy, Default)]
+pub struct MSetOptions {
+    conditional_set: Option<ExistenceCheck>,
+    expiration: Option<SetExpiry>,
+}
+
+impl MSetOptions {
+    /// Set the existence check for the MSETEX command
+    pub fn conditional_set(mut self, existence_check: ExistenceCheck) -> Self {
+        self.conditional_set = Some(existence_check);
+        self
+    }
+
+    /// Set the expiration for the MSETEX command
+    pub fn with_expiration(mut self, expiration: SetExpiry) -> Self {
+        self.expiration = Some(expiration);
+        self
+    }
+}
+
+impl ToRedisArgs for MSetOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if let Some(ref conditional_set) = self.conditional_set {
+            conditional_set.write_redis_args(out);
+        }
+        if let Some(ref expiration) = self.expiration {
+            expiration.write_redis_args(out);
         }
     }
 }
@@ -3508,34 +3536,11 @@ impl ToRedisArgs for HashFieldExpirationOptions {
         W: ?Sized + RedisWrite,
     {
         if let Some(ref existence_check) = self.existence_check {
-            match existence_check {
-                FieldExistenceCheck::FNX => out.write_arg(b"FNX"),
-                FieldExistenceCheck::FXX => out.write_arg(b"FXX"),
-            }
+            existence_check.write_redis_args(out);
         }
 
         if let Some(ref expiration) = self.expiration {
-            match expiration {
-                SetExpiry::EX(secs) => {
-                    out.write_arg(b"EX");
-                    out.write_arg(format!("{secs}").as_bytes());
-                }
-                SetExpiry::PX(millis) => {
-                    out.write_arg(b"PX");
-                    out.write_arg(format!("{millis}").as_bytes());
-                }
-                SetExpiry::EXAT(unix_time) => {
-                    out.write_arg(b"EXAT");
-                    out.write_arg(format!("{unix_time}").as_bytes());
-                }
-                SetExpiry::PXAT(unix_time) => {
-                    out.write_arg(b"PXAT");
-                    out.write_arg(format!("{unix_time}").as_bytes());
-                }
-                SetExpiry::KEEPTTL => {
-                    out.write_arg(b"KEEPTTL");
-                }
-            }
+            expiration.write_redis_args(out);
         }
     }
 }
@@ -3577,6 +3582,22 @@ pub enum UpdateCheck {
     LT,
     /// GT -- Only update if the new score is greater than the current.
     GT,
+}
+
+impl ToRedisArgs for UpdateCheck {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            UpdateCheck::LT => {
+                out.write_arg(b"LT");
+            }
+            UpdateCheck::GT => {
+                out.write_arg(b"GT");
+            }
+        }
+    }
 }
 
 /// Options for the [ZADD](https://redis.io/commands/zadd) command
@@ -3638,25 +3659,11 @@ impl ToRedisArgs for SortedSetAddOptions {
         W: ?Sized + RedisWrite,
     {
         if let Some(ref conditional_set) = self.conditional_set {
-            match conditional_set {
-                ExistenceCheck::NX => {
-                    out.write_arg(b"NX");
-                }
-                ExistenceCheck::XX => {
-                    out.write_arg(b"XX");
-                }
-            }
+            conditional_set.write_redis_args(out);
         }
 
         if let Some(ref conditional_update) = self.conditional_update {
-            match conditional_update {
-                UpdateCheck::LT => {
-                    out.write_arg(b"LT");
-                }
-                UpdateCheck::GT => {
-                    out.write_arg(b"GT");
-                }
-            }
+            conditional_update.write_redis_args(out);
         }
         if self.include_changed {
             out.write_arg(b"CH")

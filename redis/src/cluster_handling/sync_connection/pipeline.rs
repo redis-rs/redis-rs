@@ -22,7 +22,7 @@ fn is_illegal_cmd(cmd: &str) -> bool {
         "INFO" |
         "KEYS" |
         "LASTSAVE" |
-        "MGET" | "MOVE" | "MSET" | "MSETNX" |
+        "MGET" | "MOVE" | "MSET" | "MSETNX" | "MSETEX" |
         "PING" | "PUBLISH" |
         "RANDOMKEY" | "RENAME" | "RENAMENX" | "RPOPLPUSH" |
         "SAVE" | "SCAN" |
@@ -61,7 +61,7 @@ pub struct ClusterPipeline {
 /// INFO
 /// KEYS
 /// LASTSAVE
-/// MGET, MOVE, MSET, MSETNX
+/// MGET, MOVE, MSET, MSETNX, MSETEX
 /// PING, PUBLISH
 /// RANDOMKEY, RENAME, RENAMENX, RPOPLPUSH
 /// SAVE, SCAN, SCRIPT EXISTS, SCRIPT FLUSH, SCRIPT KILL, SCRIPT LOAD, SDIFF, SDIFFSTORE,
