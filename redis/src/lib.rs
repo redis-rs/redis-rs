@@ -750,6 +750,13 @@ pub use crate::commands::JsonAsyncCommands;
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 pub use crate::commands::AsyncHotkeysCommands;
 
+#[cfg(feature = "search")]
+#[cfg_attr(docsrs, doc(cfg(feature = "search")))]
+pub use crate::commands::search;
+#[cfg(feature = "search")]
+#[cfg_attr(docsrs, doc(cfg(feature = "search")))]
+pub use crate::commands::search::create;
+
 #[cfg(feature = "vector-sets")]
 #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
 pub use crate::commands::vector_sets;
