@@ -1871,4 +1871,26 @@ mod basic_async {
 
         Ok(())
     }
+
+    #[async_test]
+    async fn fail_on_empty_command() -> RedisResult<()> {
+        let ctx = TestContext::new();
+        let mut connection = ctx.async_connection().await.unwrap();
+
+        let error: RedisError = redis::Pipeline::new()
+            .query_async::<String>(&mut connection)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Client);
+        assert_eq!(error.to_string(), "empty command - Client");
+
+        let error: RedisError = redis::Cmd::new()
+            .query_async::<String>(&mut connection)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Client);
+        assert_eq!(error.to_string(), "empty command - Client");
+
+        Ok(())
+    }
 }

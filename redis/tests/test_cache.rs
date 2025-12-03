@@ -970,3 +970,25 @@ async fn test_bitcount_is_handled_correctly() -> RedisResult<()> {
 
     Ok::<_, RedisError>(())
 }
+
+#[async_test]
+async fn test_that_a_pipeline_with_all_commands_cached_does_not_hang() -> RedisResult<()> {
+    let ctx = TestContext::new();
+    if !ctx.protocol.supports_resp3() {
+        return Ok(());
+    }
+    let mut con = ctx
+        .async_connection_with_cache_config(CacheConfig::new())
+        .await?;
+
+    let mut pipeline = redis::pipe();
+    pipeline.get("foobar");
+    let _: Vec<Option<String>> = pipeline.query_async(&mut con).await?;
+    // because the pipeline runs twice without any change, the second run should be fully cached, and nothing should be sent to the server
+    let _: Vec<Option<String>> = pipeline.query_async(&mut con).await?;
+
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 1);
+
+    Ok(())
+}

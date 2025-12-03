@@ -583,6 +583,9 @@ impl Cmd {
     #[inline]
     pub fn get_packed_command(&self) -> Vec<u8> {
         let mut cmd = Vec::new();
+        if self.is_empty() {
+            return cmd;
+        }
         self.write_packed_command(&mut cmd);
         cmd
     }
@@ -801,6 +804,10 @@ impl Cmd {
     pub(crate) fn get_cache_config(&self) -> &Option<CommandCacheConfig> {
         &self.cache
     }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.args.is_empty()
+    }
 }
 
 /// Shortcut function to creating a command with a single argument.
@@ -931,7 +938,7 @@ mod tests {
         // Everything should be reset, but the capacity should still be there
         assert!(cmd.data.is_empty());
         assert!(cmd.data.capacity() > 0);
-        assert!(cmd.args.is_empty());
+        assert!(cmd.is_empty());
         assert!(cmd.args.capacity() > 0);
         assert_eq!(cmd.cursor, None);
         assert!(!cmd.no_response);
@@ -951,7 +958,7 @@ mod tests {
         // Everything should be reset, but the capacity should still be there
         assert!(cmd.data.is_empty());
         assert!(cmd.data.capacity() > 0);
-        assert!(cmd.args.is_empty());
+        assert!(cmd.is_empty());
         assert!(cmd.args.capacity() > 0);
         assert_eq!(cmd.cursor, None);
         assert!(!cmd.no_response);
