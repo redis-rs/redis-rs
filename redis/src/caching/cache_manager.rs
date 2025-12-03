@@ -2,7 +2,6 @@ use super::cmd::{CacheableCommand, CacheablePipeline, MultipleCachedCommandPart}
 use super::sharded_lru::*;
 use super::{CacheConfig, CacheMode, CacheStatistics};
 use crate::cmd::{cmd_len, Cmd};
-use crate::commands::is_readonly_cmd;
 use crate::{FromRedisValue, Pipeline, PushKind, Value};
 use std::cmp::min;
 use std::ops::Add;
@@ -265,7 +264,7 @@ impl CacheManager {
             );
         }
 
-        if is_readonly_cmd(command_name) {
+        if crate::commands::is_cachable_cmd(command_name) {
             return self.handle_single_key_command(cmd, client_side_expire);
         }
 

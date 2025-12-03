@@ -895,3 +895,78 @@ fn get_cmd(name: &str, enable_opt_in: bool) -> redis::Cmd {
     }
     cmd
 }
+
+#[async_test]
+async fn test_readonly_commands_with_patterns_are_not_cached() -> RedisResult<()> {
+    let ctx = TestContext::new();
+    if !ctx.protocol.supports_resp3() {
+        return Ok(());
+    }
+
+    let mut con = ctx
+        .async_connection_with_cache_config(CacheConfig::new())
+        .await?;
+    let cmd = redis::cmd("KEYS").arg("foo*").take();
+    let _: () = cmd.query_async(&mut con).await.unwrap();
+    let _: () = cmd.query_async(&mut con).await.unwrap();
+
+    assert_hit!(&con, 0);
+    assert_miss!(&con, 0);
+
+    Ok::<_, RedisError>(())
+}
+
+#[async_test]
+async fn test_bitcount_is_handled_correctly() -> RedisResult<()> {
+    let ctx = TestContext::new();
+    if !ctx.protocol.supports_resp3() {
+        return Ok(());
+    }
+
+    let mut con = ctx
+        .async_connection_with_cache_config(CacheConfig::new())
+        .await?;
+    () = redis::cmd("set")
+        .arg("foo")
+        .arg("bar")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    let val: u32 = redis::cmd("BITCOUNT")
+        .arg("foo")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, 10);
+    let val: u32 = redis::cmd("BITCOUNT")
+        .arg("foo")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, 10);
+
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 1);
+    assert_invalidate!(&con, 0);
+
+    () = redis::cmd("set")
+        .arg("foo")
+        .arg("brrrrR")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    sleep(Duration::from_millis(10).into()).await; // Give time for push message to be received after invalidating key_1.
+
+    let val: u32 = redis::cmd("BITCOUNT")
+        .arg("foo")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, 22);
+
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 2);
+    assert_invalidate!(&con, 1);
+
+    Ok::<_, RedisError>(())
+}
