@@ -21,7 +21,7 @@ pub struct BasicAuth {
 pub trait CredentialsProvider: Send + Sync {
     /// Get the current authentication credentials
     ///
-    /// This method should return valid credentials that can be used for
+    /// This function should return valid credentials that can be used for
     /// Redis authentication. If the credentials are expired or invalid,
     /// the implementation should refresh them before returning.
     fn get_credentials(&self) -> RedisResult<BasicAuth>;

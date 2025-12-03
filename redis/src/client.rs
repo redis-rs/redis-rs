@@ -56,6 +56,40 @@ impl Client {
         })
     }
 
+    /// Connects to a redis server using the provided credentials provider and returns a client.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # #[cfg(feature = "entra-id")]
+    /// # {
+    /// use redis::{Client, EntraIdCredentialsProvider, RetryConfig};
+    ///
+    /// # async fn example() -> redis::RedisResult<()> {
+    /// let mut provider = EntraIdCredentialsProvider::new_developer_tools()?;
+    /// provider.start(RetryConfig::default());
+    ///
+    /// let client = Client::open_with_credentials_provider(
+    ///     "redis://your-redis-instance.com:6380",
+    ///     provider
+    /// )?;
+    ///
+    /// let mut con = client.get_multiplexed_async_connection().await?;
+    /// # Ok(())
+    /// # }
+    /// # }
+    /// ```
+    #[cfg(feature = "token-based-authentication")]
+    pub fn open_with_credentials_provider<T, P>(params: T, provider: P) -> RedisResult<Client>
+    where
+        T: IntoConnectionInfo,
+        P: StreamingCredentialsProvider + 'static,
+    {
+        let mut connection_info = params.into_connection_info()?;
+        connection_info.redis.credentials_provider = Some(std::sync::Arc::new(provider));
+        Ok(Client { connection_info })
+    }
+
     /// Instructs the client to actually connect to redis and returns a
     /// connection object.  The connection object can be used to send
     /// commands to the server.  This can fail with a variety of errors

@@ -44,9 +44,7 @@ mod entra_id_tests {
     async fn test_redis_connection(mut provider: EntraIdCredentialsProvider, test_key: &str) {
         provider.start(RetryConfig::default());
 
-        let client = Client::open(get_redis_url())
-            .unwrap()
-            .with_credentials_provider(provider);
+        let client = Client::open_with_credentials_provider(get_redis_url(), provider).unwrap();
 
         let mut con = client.get_multiplexed_async_connection().await.unwrap();
 
