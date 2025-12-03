@@ -22,8 +22,10 @@
 //! provider.start(RetryConfig::default());
 //!
 //! // Create Redis client with credentials provider
-//! let client = Client::open("redis://your-redis-instance.com:6380")?
-//!     .with_credentials_provider(provider);
+//! let client = Client::open_with_credentials_provider(
+//!     "redis://your-redis-instance.com:6380",
+//!     provider
+//! )?;
 //!
 //! // Use the client to get a multiplexed connection
 //! let mut con = client.get_multiplexed_async_connection().await?;
@@ -85,7 +87,6 @@ pub struct EntraIdCredentialsProvider {
     current_credentials: Arc<RwLock<Option<BasicAuth>>>,
 }
 
-/// General methods for all authentication flows
 impl EntraIdCredentialsProvider {
     /// Validate that scopes are not empty
     fn validate_scopes(scopes: &[String]) -> RedisResult<()> {

@@ -28,7 +28,7 @@ Token-based authentication allows you to authenticate to Redis using Azure Entra
 2. An `EntraIdCredentialsProvider` can be created with one of the public constructors. Each of them creates a specific `TokenCredential` implementation from the `azure_identity` crate.
 3. The `EntraIdCredentialsProvider` starts a background task for token refresh.
 4. The `Client` holds a `StreamingCredentialsProvider` and uses it to authenticate connections.
-5. When a `Client` is created, the provider is attached to it with the `with_credentials_provider` function.
+5. A `Client` can be instantiated with a credentials provider via the `Client::open_with_credentials_provider()` constructor. A credentials provider can also be added to an existing client using the client's `with_credentials_provider()` function.
 6. The `EntraIdCredentialsProvider` keeps the current token and provides it to a `Client` when it establishes a new `multiplexed_connection`. Before the connection gets established, it creates a background task, which subscribes for credential updates.
 7. When the token is refreshed, the `EntraIdCredentialsProvider` notifies all subscribers with the new credentials.
 8. When a subscriber receives the new credentials, it uses them to re-authenticate itself.
@@ -54,11 +54,13 @@ async fn main() -> redis::RedisResult<()> {
     // Create the credentials provider using the DeveloperToolsCredential
     let mut provider = EntraIdCredentialsProvider::new_developer_tools()?;
     provider.start(RetryConfig::default());
-    
+
     // Create Redis client with credentials provider
-    let client = Client::open("redis://your-redis-instance.com:6380")?
-        .with_credentials_provider(provider);
-    
+    let client = Client::open_with_credentials_provider(
+        "redis://your-redis-instance.com:6380",
+        provider
+    )?;
+
     // Use the client to get a multiplexed connection
     let mut con = client.get_multiplexed_async_connection().await?;
     redis::cmd("SET")

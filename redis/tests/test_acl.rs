@@ -839,15 +839,18 @@ mod token_based_authentication_acl_tests {
         println!("Setting up Redis users for token rotation test with multiple clients that share a single credentials provider...");
         add_users_with_jwt_tokens(&ctx1).await;
 
-        // Create a second client, with the same server connection info as the first client
-        let mut client2 = redis::Client::open(ctx1.server.connection_info()).unwrap();
-
         // Set up the mock streaming credentials provider with multiple tokens and attach it to both clients
         println!("Setting up mock provider with multiple tokens...");
         let mut mock_provider = MockStreamingCredentialsProvider::multiple_tokens();
         mock_provider.start();
         ctx1.client = ctx1.client.with_credentials_provider(mock_provider.clone());
-        client2 = client2.with_credentials_provider(mock_provider);
+
+        // Create a second client, with the same server connection info as the first client
+        let client2 = redis::Client::open_with_credentials_provider(
+            ctx1.server.connection_info(),
+            mock_provider.clone(),
+        )
+        .unwrap();
 
         // Establish connections from both clients
         println!("Establishing multiplexed connections with JWT authentication...");

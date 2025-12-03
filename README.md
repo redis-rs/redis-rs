@@ -173,41 +173,6 @@ To enable Entra ID authentication, add the `entra-id` feature to your Cargo.toml
 redis = { version = "0.32.7", features = ["entra-id", "tokio-comp"] }
 ```
 
-### Basic Usage
-
-```rust
-use redis::{Client, Commands, EntraIdCredentialsProvider, RetryConfig};
-
-#[tokio::main]
-async fn main() -> redis::RedisResult<()> {
-    // Create the credentials provider using the DeveloperToolsCredential
-    let mut provider = EntraIdCredentialsProvider::new_developer_tools()?;
-    // Start the background refresh service, which will automatically refresh the token
-    provider.start(RetryConfig::default());
-
-    // Create Redis client with credentials provider
-    let client = Client::open("redis://your-redis-instance.com:6380")?
-        .with_credentials_provider(provider);
-
-    // Use the client to get a multiplexed connection.
-    // Since the client has an attached credentials provider, it will create a background task, which will subscribe for token updates.
-    // The client automatically re-authenticates itself once it receives new credentials from the stream.
-    let mut con = client.get_multiplexed_async_connection().await?;
-    redis::cmd("SET")
-        .arg("my_key")
-        .arg(42i32)
-        .exec_async(&mut con)
-        .await?;
-    let result: Option<String> = redis::cmd("GET")
-        .arg("my_key")
-        .query_async(&mut con)
-        .await?;
-    println!("Value: {:?}", result);
-
-    Ok(())
-}
-```
-
 ### Supported Authentication Flows
 
 - **DeveloperToolsCredential**: Authenticates through developer tools such as the Azure CLI.
