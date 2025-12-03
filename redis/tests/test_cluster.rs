@@ -12,7 +12,8 @@ mod cluster {
     use redis::{
         cluster::{cluster_pipe, ClusterClient, ClusterConnection},
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
-        cmd, parse_redis_value, Commands, ConnectionLike, RedisError, ServerErrorKind, Value,
+        cmd, parse_redis_value, Commands, ConnectionLike, ErrorKind, RedisError, ServerErrorKind,
+        Value,
     };
     use redis_test::{
         cluster::{RedisCluster, RedisClusterConfiguration},
@@ -1102,6 +1103,22 @@ mod cluster {
             )
             .unwrap();
         assert_eq!(result, Value::SimpleString("PONG".to_string()));
+    }
+
+    #[test]
+    fn fail_on_empty_command() {
+        let ctx = TestClusterContext::new();
+        let mut connection = ctx.connection();
+
+        let error: RedisError = cluster_pipe().query::<String>(&mut connection).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Client);
+        assert_eq!(error.to_string(), "empty command - Client");
+
+        let error: RedisError = redis::Cmd::new()
+            .query::<String>(&mut connection)
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Client);
+        assert_eq!(error.to_string(), "empty command - Client");
     }
 
     #[cfg(feature = "tls-rustls")]

@@ -20,7 +20,7 @@ mod cluster_async {
         cluster::ClusterClient,
         cluster_async::Connect,
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
-        cmd, from_redis_value, parse_redis_value, pipe, AsyncCommands, Cmd, InfoDict,
+        cmd, from_redis_value, parse_redis_value, pipe, AsyncCommands, Cmd, ErrorKind, InfoDict,
         IntoConnectionInfo, ProtocolVersion, RedisError, RedisFuture, RedisResult, Script,
         ServerErrorKind, Value,
     };
@@ -2292,6 +2292,28 @@ mod cluster_async {
         smoke_test_connection(connection).await;
 
         Ok::<_, RedisError>(())
+    }
+
+    #[async_test]
+    async fn fail_on_empty_command() -> RedisResult<()> {
+        let cluster = TestClusterContext::new();
+        let mut connection = cluster.async_connection().await;
+
+        let error: RedisError = redis::Pipeline::new()
+            .query_async::<String>(&mut connection)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Client);
+        assert_eq!(error.to_string(), "empty command - Client");
+
+        let error: RedisError = redis::Cmd::new()
+            .query_async::<String>(&mut connection)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Client);
+        assert_eq!(error.to_string(), "empty command - Client");
+
+        Ok(())
     }
 
     mod pubsub {

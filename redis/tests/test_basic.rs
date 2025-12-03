@@ -11,7 +11,6 @@ mod basic {
     use rand::prelude::IndexedRandom;
     use rand::{rng, Rng};
 
-    use redis::ServerErrorKind;
     use redis::{calculate_value_digest, is_valid_16_bytes_hex_digest};
     use redis::{
         cmd, Client, Connection, ConnectionInfo, ConnectionLike, ControlFlow, CopyOptions,
@@ -22,6 +21,7 @@ mod basic {
         RedisResult, Role, ScanOptions, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs,
         TypedCommands, UpdateCheck, Value, ValueComparison, ValueType,
     };
+    use redis::{RedisError, ServerErrorKind};
 
     #[cfg(feature = "vector-sets")]
     use redis::vector_sets::{
@@ -1372,8 +1372,6 @@ mod basic {
         let mut con = ctx.connection();
 
         redis::pipe().cmd("PING").ignore().exec(&mut con).unwrap();
-
-        redis::pipe().exec(&mut con).unwrap();
     }
 
     #[test]
@@ -4504,5 +4502,23 @@ mod basic {
         assert!(try_connect.is_err_and(|err| { err.is_timeout() }));
 
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn fail_on_empty_command() {
+        let ctx = TestContext::new();
+        let mut connection = ctx.connection();
+
+        let error: RedisError = redis::Pipeline::new()
+            .query::<String>(&mut connection)
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Client);
+        assert_eq!(error.to_string(), "empty command - Client");
+
+        let error: RedisError = redis::Cmd::new()
+            .query::<String>(&mut connection)
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Client);
+        assert_eq!(error.to_string(), "empty command - Client");
     }
 }

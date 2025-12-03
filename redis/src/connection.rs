@@ -1833,6 +1833,9 @@ impl Connection {
     }
 
     fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
+        if bytes.is_empty() {
+            return Err(RedisError::make_empty_command());
+        }
         let result = self.con.send_bytes(bytes);
         if self.protocol.supports_resp3() {
             if let Err(e) = &result {

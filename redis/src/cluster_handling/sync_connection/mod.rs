@@ -1010,11 +1010,17 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
     }
 
     fn req_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+        if cmd.is_empty() {
+            return Err(RedisError::make_empty_command());
+        }
         let routing = RoutingInfo::for_routable(cmd);
         self.request(Input::Cmd(cmd), routing).map(|res| res.into())
     }
 
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
+        if cmd.is_empty() {
+            return Err(RedisError::make_empty_command());
+        }
         let actual_cmd = if cmd.starts_with(MULTI) {
             &cmd[MULTI.len()..]
         } else {
@@ -1038,6 +1044,9 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
+        if cmd.is_empty() {
+            return Err(RedisError::make_empty_command());
+        }
         let actual_cmd = if cmd.starts_with(MULTI) {
             &cmd[MULTI.len()..]
         } else {

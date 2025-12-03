@@ -182,9 +182,7 @@ impl Pipeline {
             ));
         }
 
-        let response = if self.commands.is_empty() {
-            vec![]
-        } else if self.transaction_mode {
+        let response = if self.transaction_mode {
             con.req_packed_commands(
                 &encode_pipeline(&self.commands, true),
                 self.commands.len() + 1,
@@ -208,9 +206,7 @@ impl Pipeline {
         &self,
         con: &mut impl crate::aio::ConnectionLike,
     ) -> RedisResult<T> {
-        let response = if self.commands.is_empty() {
-            vec![]
-        } else if self.transaction_mode {
+        let response = if self.transaction_mode {
             con.req_packed_commands(self, self.commands.len() + 1, 1)
                 .await?
         } else {

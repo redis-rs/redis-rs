@@ -477,6 +477,12 @@ impl RedisError {
             repr: ErrorRepr::TransactionAborted(Arc::from(errs)),
         }
     }
+
+    pub(crate) fn make_empty_command() -> Self {
+        Self {
+            repr: ErrorRepr::General(ErrorKind::Client, "empty command", None),
+        }
+    }
 }
 
 /// Creates a new Redis error with the `Extension` kind.

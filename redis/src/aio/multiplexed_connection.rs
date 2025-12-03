@@ -420,6 +420,10 @@ impl Pipeline {
         timeout: Option<Duration>,
         skip_response: bool,
     ) -> Result<Value, RedisError> {
+        if input.is_empty() {
+            return Err(RedisError::make_empty_command());
+        }
+
         let request = async {
             if skip_response {
                 self.sender
@@ -651,6 +655,9 @@ impl MultiplexedConnection {
         if let Some(cache_manager) = &self.cache_manager {
             let (cacheable_pipeline, pipeline, (skipped_response_count, expected_response_count)) =
                 cache_manager.get_cached_pipeline(cmd);
+            if pipeline.is_empty() {
+                return cacheable_pipeline.resolve(cache_manager, Value::Array(Vec::new()));
+            }
             let result = self
                 .pipeline
                 .send_recv(
