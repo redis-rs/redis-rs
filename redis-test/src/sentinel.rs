@@ -5,7 +5,7 @@ use tempfile::TempDir;
 
 use crate::{
     server::{Module, RedisServer},
-    utils::{build_keys_and_certs_for_tls, get_random_available_port, TlsFilePaths},
+    utils::{TlsFilePaths, build_keys_and_certs_for_tls, get_random_available_port},
 };
 
 pub struct RedisSentinelCluster {

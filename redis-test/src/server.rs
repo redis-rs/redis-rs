@@ -4,7 +4,7 @@ use std::{env, fs, path::PathBuf, process};
 
 use tempfile::TempDir;
 
-use crate::utils::{build_keys_and_certs_for_tls, get_random_available_port, TlsFilePaths};
+use crate::utils::{TlsFilePaths, build_keys_and_certs_for_tls, get_random_available_port};
 
 pub fn use_protocol() -> ProtocolVersion {
     if env::var("PROTOCOL").unwrap_or_default() == "RESP3" {
