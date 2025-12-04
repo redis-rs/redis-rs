@@ -1,3 +1,15 @@
+### 1.0.0-rc.5 (2025-12-03)
+
+#### Changes & Bug fixes
+
+* Various CI fixes ([#1869](https://github.com/redis-rs/redis-rs/pull/1869) @nihohit)
+* Streams - Simplify the process of claiming pending entries by adding the CLAIM argument to the XREADGROUP command ([#1867](https://github.com/redis-rs/redis-rs/pull/1867) @StefanPalashev)
+* Support Compare and set [CAS] and Compare and delete [CAD] ([#1862](https://github.com/redis-rs/redis-rs/pull/1862) @StefanPalashev)
+* Fix new lints ([#1883](https://github.com/redis-rs/redis-rs/pull/1883) @nihohit)
+* Add support for the MSETEX command ([#1871](https://github.com/redis-rs/redis-rs/pull/1871) @StefanPalashev)
+* Don't try to cache server statistics or patterns. ([#1885](https://github.com/redis-rs/redis-rs/pull/1885) @nihohit)
+* Return an error when receiving an empty command/pipeline. ([#1888](https://github.com/redis-rs/redis-rs/pull/1888) @nihohit)
+
 ### 1.0.0-rc.4 (2025-11-23)
 
 #### Changes & Bug fixes
@@ -89,8 +101,8 @@
 
 #### Changes
 
-* Remove unnecessary dependency by @nihohit in ([#1760](https://github.com/redis-rs/redis-rs/pull/1760) by @nihohit)
-* docs: fix `hexpire_at` command measurement unit by ([#1793](https://github.com/redis-rs/redis-rs/pull/1793) by @chrxn1c)
+* Remove unnecessary dependency ([#1760](https://github.com/redis-rs/redis-rs/pull/1760) @nihohit)
+* docs: fix `hexpire_at` command measurement unit ([#1793](https://github.com/redis-rs/redis-rs/pull/1793) @chrxn1c)
 
 ### 0.32.5 (2025-08-10)
 
@@ -113,13 +125,13 @@
 
 #### Changes & Bug fixes
 
-* Fix BITOP cluster routing. ([#1709](https://github.com/redis-rs/redis-rs/pull/1709)  by @nihohit)
-* Fix some command links ([#1708](https://github.com/redis-rs/redis-rs/pull/1708)  by @nihohit)
-* Update to socket2 v0.6 ([#1712](https://github.com/redis-rs/redis-rs/pull/1712)  by @Thomasdezeeuw)
-* Add new operators to the BITOP command ([#1710](https://github.com/redis-rs/redis-rs/pull/1710)  by @StefanPalashev)
-* Fix flaky test. ([#1716](https://github.com/redis-rs/redis-rs/pull/1716)  by @nihohit)
-* Clarify sentinel docs about separate authentication for sentinel nodes. ([#1715](https://github.com/redis-rs/redis-rs/pull/1715)  by @nihohit)
-* add method hget_multiple to explicitly call HMGET ([#1721](https://github.com/redis-rs/redis-rs/pull/1721)  by @bentheiii)
+* Fix BITOP cluster routing. ([#1709](https://github.com/redis-rs/redis-rs/pull/1709) @nihohit)
+* Fix some command links ([#1708](https://github.com/redis-rs/redis-rs/pull/1708) @nihohit)
+* Update to socket2 v0.6 ([#1712](https://github.com/redis-rs/redis-rs/pull/1712) @Thomasdezeeuw)
+* Add new operators to the BITOP command ([#1710](https://github.com/redis-rs/redis-rs/pull/1710) @StefanPalashev)
+* Fix flaky test. ([#1716](https://github.com/redis-rs/redis-rs/pull/1716) @nihohit)
+* Clarify sentinel docs about separate authentication for sentinel nodes. ([#1715](https://github.com/redis-rs/redis-rs/pull/1715) @nihohit)
+* add method hget_multiple to explicitly call HMGET ([#1721](https://github.com/redis-rs/redis-rs/pull/1721) @bentheiii)
 
 
 ### 0.32.3 (2025-06-30)
