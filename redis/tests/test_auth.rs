@@ -7,8 +7,10 @@
 /// They can only be executed on hosts that provide the required environment variables and Azure-managed identity configuration.
 #[cfg(feature = "entra-id")]
 mod entra_id_tests {
-    use azure_identity::UserAssignedId;
-    use redis::{Client, ClientCertificate, EntraIdCredentialsProvider, RetryConfig};
+    use redis::{
+        Client, ClientCertificate, EntraIdCredentialsProvider, ManagedIdentityCredentialOptions,
+        RetryConfig, UserAssignedId,
+    };
     use std::sync::OnceLock;
 
     const REDIS_URL: &str = "REDIS_URL";
@@ -72,6 +74,7 @@ mod entra_id_tests {
             get_env_var(AZURE_CLIENT_ID),
             get_env_var(AZURE_CLIENT_SECRET),
             get_redis_scopes().clone(),
+            None,
         )
         .unwrap();
         test_redis_connection(provider, "service_principal_client_secret").await;
@@ -99,6 +102,7 @@ mod entra_id_tests {
                 password: None,
             },
             get_redis_scopes().clone(),
+            None,
         )
         .unwrap();
         test_redis_connection(provider, "service_principal_client_certificate").await;
@@ -110,6 +114,7 @@ mod entra_id_tests {
         let provider =
             EntraIdCredentialsProvider::new_system_assigned_managed_identity_with_scopes(
                 get_redis_scopes().clone(),
+                None,
             )
             .unwrap();
         test_redis_connection(provider, "system_assigned_managed_identity").await;
@@ -119,8 +124,13 @@ mod entra_id_tests {
     #[ignore]
     async fn test_user_assigned_managed_identity() {
         let provider = EntraIdCredentialsProvider::new_user_assigned_managed_identity_with_scopes(
-            UserAssignedId::ObjectId(get_env_var(AZURE_USER_ASSIGNED_MANAGED_ID)),
             get_redis_scopes().clone(),
+            Some(ManagedIdentityCredentialOptions {
+                user_assigned_id: Some(UserAssignedId::ObjectId(get_env_var(
+                    AZURE_USER_ASSIGNED_MANAGED_ID,
+                ))),
+                ..Default::default()
+            }),
         )
         .unwrap();
         test_redis_connection(provider, "user_assigned_managed_identity").await;
