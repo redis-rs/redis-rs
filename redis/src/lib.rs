@@ -658,6 +658,11 @@ pub use crate::connection::{
 pub use crate::entra_id::{ClientCertificate, EntraIdCredentialsProvider, REDIS_SCOPE_DEFAULT};
 pub use crate::parser::{parse_redis_value, Parser};
 pub use crate::pipeline::Pipeline;
+#[cfg(feature = "entra-id")]
+pub use azure_identity::{
+    ClientCertificateCredentialOptions, ClientSecretCredentialOptions,
+    DeveloperToolsCredentialOptions, ManagedIdentityCredentialOptions, UserAssignedId,
+};
 
 #[cfg(feature = "script")]
 #[cfg_attr(docsrs, doc(cfg(feature = "script")))]

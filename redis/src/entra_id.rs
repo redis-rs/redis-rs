@@ -48,10 +48,11 @@ use crate::auth_management::credentials_management_utils;
 use crate::errors::{ErrorKind, RedisError};
 use crate::types::RedisResult;
 use crate::RetryConfig;
-use azure_core::credentials::{AccessToken, TokenCredential};
+use azure_core::credentials::{AccessToken, Secret, TokenCredential};
 use azure_identity::{
-    ClientCertificateCredential, ClientSecretCredential, DeveloperToolsCredential,
-    ManagedIdentityCredential, UserAssignedId,
+    ClientCertificateCredential, ClientCertificateCredentialOptions, ClientSecretCredential,
+    ClientSecretCredentialOptions, DeveloperToolsCredential, DeveloperToolsCredentialOptions,
+    ManagedIdentityCredential, ManagedIdentityCredentialOptions,
 };
 use futures_util::{Stream, StreamExt};
 use std::pin::Pin;
@@ -278,14 +279,17 @@ impl EntraIdCredentialsProvider {
     /// Create a new provider using the DeveloperToolsCredential
     /// This is recommended for development and will try multiple credential types
     pub fn new_developer_tools() -> RedisResult<Self> {
-        Self::new_developer_tools_with_scopes(vec![REDIS_SCOPE_DEFAULT.to_string()])
+        Self::new_developer_tools_with_scopes(vec![REDIS_SCOPE_DEFAULT.to_string()], None)
     }
 
     /// Create a new provider using the DeveloperToolsCredential with custom scopes
-    pub fn new_developer_tools_with_scopes(scopes: Vec<String>) -> RedisResult<Self> {
+    pub fn new_developer_tools_with_scopes(
+        scopes: Vec<String>,
+        options: Option<DeveloperToolsCredentialOptions>,
+    ) -> RedisResult<Self> {
         Self::validate_scopes(&scopes)?;
         let credential_provider =
-            DeveloperToolsCredential::new(None).map_err(Self::convert_error)?;
+            DeveloperToolsCredential::new(options).map_err(Self::convert_error)?;
         Ok(Self {
             credential_provider: Arc::new(
                 std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
@@ -313,6 +317,7 @@ impl EntraIdCredentialsProvider {
             client_id,
             client_secret,
             vec![REDIS_SCOPE_DEFAULT.to_string()],
+            None,
         )
     }
 
@@ -322,10 +327,11 @@ impl EntraIdCredentialsProvider {
         client_id: String,
         client_secret: String,
         scopes: Vec<String>,
+        options: Option<ClientSecretCredentialOptions>,
     ) -> RedisResult<Self> {
         Self::validate_scopes(&scopes)?;
         let credential_provider =
-            ClientSecretCredential::new(&tenant_id, client_id, client_secret.into(), None)
+            ClientSecretCredential::new(&tenant_id, client_id, client_secret.into(), options)
                 .map_err(Self::convert_error)?;
         Ok(Self {
             credential_provider: Arc::new(
@@ -354,6 +360,7 @@ impl EntraIdCredentialsProvider {
             client_id,
             client_certificate,
             vec![REDIS_SCOPE_DEFAULT.to_string()],
+            None,
         )
     }
 
@@ -363,14 +370,24 @@ impl EntraIdCredentialsProvider {
         client_id: String,
         client_certificate: ClientCertificate,
         scopes: Vec<String>,
+        mut options: Option<ClientCertificateCredentialOptions>,
     ) -> RedisResult<Self> {
         Self::validate_scopes(&scopes)?;
+        if let Some(password) = client_certificate.password {
+            if let Some(ref mut opts) = options {
+                opts.password = Some(Secret::new(password));
+            } else {
+                options = Some(ClientCertificateCredentialOptions {
+                    password: Some(Secret::new(password)),
+                    ..Default::default()
+                });
+            }
+        }
         let credential_provider = ClientCertificateCredential::new(
             tenant_id,
             client_id,
             client_certificate.base64_pkcs12,
-            client_certificate.password.unwrap_or_default(),
-            None,
+            options,
         )
         .map_err(Self::convert_error)?;
         Ok(Self {
@@ -393,16 +410,18 @@ impl EntraIdCredentialsProvider {
     pub fn new_system_assigned_managed_identity() -> RedisResult<Self> {
         Self::new_system_assigned_managed_identity_with_scopes(
             vec![REDIS_SCOPE_DEFAULT.to_string()],
+            None,
         )
     }
 
     /// Create a new provider using system-assigned managed identity with custom scopes
     pub fn new_system_assigned_managed_identity_with_scopes(
         scopes: Vec<String>,
+        options: Option<ManagedIdentityCredentialOptions>,
     ) -> RedisResult<Self> {
         Self::validate_scopes(&scopes)?;
         let credential_provider =
-            ManagedIdentityCredential::new(None).map_err(Self::convert_error)?;
+            ManagedIdentityCredential::new(options).map_err(Self::convert_error)?;
         Ok(Self {
             credential_provider: Arc::new(
                 std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
@@ -420,27 +439,21 @@ impl EntraIdCredentialsProvider {
     }
 
     /// Create a new provider using user-assigned managed identity
-    pub fn new_user_assigned_managed_identity(
-        user_assigned_id: UserAssignedId,
-    ) -> RedisResult<Self> {
+    pub fn new_user_assigned_managed_identity() -> RedisResult<Self> {
         Self::new_user_assigned_managed_identity_with_scopes(
-            user_assigned_id,
             vec![REDIS_SCOPE_DEFAULT.to_string()],
+            None,
         )
     }
 
     /// Create a new provider using user-assigned managed identity with custom scopes
     pub fn new_user_assigned_managed_identity_with_scopes(
-        user_assigned_id: UserAssignedId,
         scopes: Vec<String>,
+        options: Option<ManagedIdentityCredentialOptions>,
     ) -> RedisResult<Self> {
         Self::validate_scopes(&scopes)?;
-        let options = azure_identity::ManagedIdentityCredentialOptions {
-            user_assigned_id: Some(user_assigned_id),
-            ..Default::default()
-        };
         let credential_provider =
-            ManagedIdentityCredential::new(Some(options)).map_err(Self::convert_error)?;
+            ManagedIdentityCredential::new(options).map_err(Self::convert_error)?;
         Ok(Self {
             credential_provider: Arc::new(
                 std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
@@ -558,7 +571,7 @@ mod tests {
     #[test]
     fn test_scope_validation() {
         // Test empty scopes
-        let result = EntraIdCredentialsProvider::new_developer_tools_with_scopes(vec![]);
+        let result = EntraIdCredentialsProvider::new_developer_tools_with_scopes(vec![], None);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -567,7 +580,7 @@ mod tests {
 
         // Test empty string scope
         let result =
-            EntraIdCredentialsProvider::new_developer_tools_with_scopes(vec!["".to_string()]);
+            EntraIdCredentialsProvider::new_developer_tools_with_scopes(vec!["".to_string()], None);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -575,8 +588,10 @@ mod tests {
             .contains("Scope cannot be empty"));
 
         // Test whitespace-only scope
-        let result =
-            EntraIdCredentialsProvider::new_developer_tools_with_scopes(vec!["   ".to_string()]);
+        let result = EntraIdCredentialsProvider::new_developer_tools_with_scopes(
+            vec!["   ".to_string()],
+            None,
+        );
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -585,12 +600,12 @@ mod tests {
 
         /*
         // Test invalid protocol
-        let result = EntraIdCredentialsProvider::new_developer_tools_with_scopes(vec!["http://invalid.scope/.default".to_string()]);
+        let result = EntraIdCredentialsProvider::new_developer_tools_with_scopes(vec!["http://invalid.scope/.default".to_string()], None);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("must start with 'https://'"));
 
         // Test invalid suffix
-        let result = EntraIdCredentialsProvider::new_developer_tools_with_scopes(vec!["https://valid.scope/invalid".to_string()]);
+        let result = EntraIdCredentialsProvider::new_developer_tools_with_scopes(vec!["https://valid.scope/invalid".to_string()], None);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("must end with '/.default'"));
         */
@@ -599,9 +614,11 @@ mod tests {
     #[test]
     fn test_custom_scopes() {
         let custom_scopes = vec!["https://custom.scope/.default".to_string()];
-        let provider =
-            EntraIdCredentialsProvider::new_developer_tools_with_scopes(custom_scopes.clone())
-                .unwrap();
+        let provider = EntraIdCredentialsProvider::new_developer_tools_with_scopes(
+            custom_scopes.clone(),
+            None,
+        )
+        .unwrap();
         assert_eq!(provider.scopes, custom_scopes);
     }
 }

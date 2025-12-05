@@ -131,12 +131,23 @@ let provider = EntraIdCredentialsProvider::new_client_certificate(
 For Azure-hosted applications:
 
 ```rust
+use redis::{ManagedIdentityCredentialOptions, UserAssignedId};
+
 // System-assigned managed identity
 let provider = EntraIdCredentialsProvider::new_system_assigned_managed_identity()?;
 
 // User-assigned managed identity
-let provider = EntraIdCredentialsProvider::new_user_assigned_managed_identity(
-    "your-user-assigned-client-id".to_string()
+let provider = EntraIdCredentialsProvider::new_user_assigned_managed_identity()?;
+// or with custom scopes and identity specification
+let provider = EntraIdCredentialsProvider::new_user_assigned_managed_identity_with_scopes(
+    vec!["your-scope".to_string()],
+    Some(ManagedIdentityCredentialOptions {
+        // Specify the user-assigned identity using one of:
+        user_assigned_id: Some(UserAssignedId::ClientId("your-client-id".to_string())),
+        // or: user_assigned_id: Some(UserAssignedId::ObjectId("your-object-id".to_string())),
+        // or: user_assigned_id: Some(UserAssignedId::ResourceId("your-resource-id".to_string())),
+        ..Default::default()
+    }),
 )?;
 ```
 
