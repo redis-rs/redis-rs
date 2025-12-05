@@ -34,10 +34,10 @@ use std::sync::{Arc, Mutex};
 use redis::{Cmd, ConnectionLike, ErrorKind, Pipeline, RedisError, RedisResult, Value};
 
 #[cfg(feature = "aio")]
-use futures::{future, FutureExt};
+use futures::{FutureExt, future};
 
 #[cfg(feature = "aio")]
-use redis::{aio::ConnectionLike as AioConnectionLike, RedisFuture};
+use redis::{RedisFuture, aio::ConnectionLike as AioConnectionLike};
 
 /// Helper trait for converting test values into a `redis::Value` returned from a
 /// `MockRedisConnection`. This is necessary because neither `redis::types::ToRedisArgs`
@@ -290,7 +290,7 @@ impl AioConnectionLike for MockRedisConnection {
 #[cfg(test)]
 mod tests {
     use super::{MockCmd, MockRedisConnection};
-    use redis::{cmd, pipe, ErrorKind, Value};
+    use redis::{ErrorKind, Value, cmd, pipe};
 
     #[test]
     fn sync_basic_test() {

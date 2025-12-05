@@ -4,7 +4,7 @@ use tempfile::TempDir;
 
 use crate::{
     server::{Module, RedisServer},
-    utils::{build_keys_and_certs_for_tls_ext, get_random_available_port, TlsFilePaths},
+    utils::{TlsFilePaths, build_keys_and_certs_for_tls_ext, get_random_available_port},
 };
 
 pub struct RedisClusterConfiguration {
@@ -190,8 +190,9 @@ impl RedisCluster {
             match process.try_wait() {
                 Ok(Some(status)) => {
                     let log_file_contents = server.log_file_contents();
-                    let err =
-                                    format!("redis server creation failed with status {status:?}.\nlog file: {log_file_contents:?}");
+                    let err = format!(
+                        "redis server creation failed with status {status:?}.\nlog file: {log_file_contents:?}"
+                    );
                     Err(err)
                 }
                 Ok(None) => {
@@ -201,7 +202,10 @@ impl RedisCluster {
                     loop {
                         if cur_attempts == max_attempts {
                             let log_file_contents = server.log_file_contents();
-                            break Err(format!("redis server creation failed: Address {} closed. {log_file_contents:?}", server.addr));
+                            break Err(format!(
+                                "redis server creation failed: Address {} closed. {log_file_contents:?}",
+                                server.addr
+                            ));
                         } else if port_in_use(&server.addr.to_string()) {
                             break Ok(());
                         }

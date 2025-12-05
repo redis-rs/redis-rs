@@ -1,14 +1,16 @@
-# Announcing redis-rs 1.0.0 release candidate
+# Announcing redis-rs & redis-test 1.0.0
 
-The first commit to redis-rs was uploaded almost 12 years ago, and now we're pleased to announce that the crate will soon hit version 1!
+The first commit to redis-rs was uploaded almost 12 years ago, and now we're pleased to announce that the crate ~will soon~ has hit version 1, with redis-test tracking it with the same version.
 
-The basic design has held up well over the years. We've improved significant parts of the underlying code while preserving backward compatibility for most common use cases. 
+The basic design has held up well over the years. We've improved significant parts of the underlying code while preserving backward compatibility for most common use cases. After 3 months of alpha releases and 2 more months of release-candidate releases, the version is now officially ready for production use.
 
-This document highlights the breaking changes and new features in version 1.0.0. For a complete list of changes, see CHANGELOG.md. We appreciate feedback and bug reports. Please open an issue for anything you encounter during migration. in order to get the RC version, please specify in your Cargo.toml file 
+This document highlights the breaking changes and new features in version 1.0.0. For a complete list of changes, see CHANGELOG.md. We appreciate feedback and bug reports. Please open an issue for anything you encounter during migration. in order to get the newest version, please specify in your Cargo.toml file 
 ```toml
-redis = "1.0.0-rc"
+redis = "1.0.0"
 ```
 
+I'd like to thank everyone who contributed to the release of V1, with code contributions, testing and feedback! 
+@kudlatyamroth, @LazyMechanic, @Totodore, @peterwalkley, @StefanPalashev, @Marwes, @Nekidev, @FalkWoldmann, @QuarticCat, @tottoto, @kamulos, thanks :)
 
 **Most users can upgrade to 1.0.0 with minimal code changes.** The primary adjustments needed are:
 - Handling `Result` types when iterating
@@ -118,6 +120,22 @@ redis::cmd("SET")
     .set_no_response(true)
     .exec_async(&mut con)
     .await?;
+```
+
+This is a new feature with no migration required.
+
+## Partial failures in pipeline (New Feature)
+
+Version 1.0.0 adds support for allowing pipelined requests to interleaved failures and successes ([#1865](https://github.com/redis-rs/redis-rs/pull/1865)), allowing users to use values from successful calls and retrying the failed calls.
+
+```rust
+let results: Vec<redis::RedisResult<i32>> = redis::pipe()
+    .set("key_a", 1)
+    .hset("key_a", "field", "val") // This will fail (WRONGTYPE)
+    .get("key_a")
+    .ignore_errors()
+    .query_async(&mut con)
+    .await?; // the `?` operator will only trigger on connection errors, not on error responses returned from the server
 ```
 
 This is a new feature with no migration required.
