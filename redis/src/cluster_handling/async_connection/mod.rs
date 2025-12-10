@@ -168,7 +168,7 @@ where
         cluster_params: ClusterParams,
     ) -> RedisResult<ClusterConnection<C>> {
         let (connection, connect_receiver) = Self::new_inner(initial_nodes, cluster_params);
-        dbg!(connect_receiver.await).map_err(|_| {
+        connect_receiver.await.map_err(|_| {
             RedisError::from((ErrorKind::Io, "Cluster connection task were dropped"))
         })??;
         Ok(connection)
@@ -1130,10 +1130,9 @@ where
         if let ConnectionState::Recover(fut) =
             std::mem::replace(&mut self.state, ConnectionState::PollComplete)
         {
-            dbg!(1);
             match fut {
-                RecoverFuture::RecoverSlots(fut) => dbg!(fut.await)?,
-                RecoverFuture::Reconnect(fut) => dbg!(fut.await)?,
+                RecoverFuture::RecoverSlots(fut) => fut.await?,
+                RecoverFuture::Reconnect(fut) => fut.await?,
             }
         }
         Ok(())
