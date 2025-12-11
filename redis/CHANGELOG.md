@@ -1,3 +1,11 @@
+
+### 1.0.1 (2025-12-11)
+
+#### Changes & Bug fixes
+
+* Remove unnecessary debug prints ([#1892](https://github.com/redis-rs/redis-rs/pull/1892) by @nihohit)
+* Fix docs ([#1894](https://github.com/redis-rs/redis-rs/pull/1894) by @nihohit)
+
 ### 1.0.0 (2025-12-05)
 
 #### Changes & Bug fixes
