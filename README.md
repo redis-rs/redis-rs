@@ -188,7 +188,7 @@ fn fetch_an_integer() -> String {
 Async Redis Cluster support can be enabled by enabling the `cluster-async` feature, along
 with your preferred async runtime, e.g.:
 
-`redis = { version = "1.0.0", features = [ "cluster-async", "tokio-std-comp" ] }`
+`redis = { version = "1.0.0", features = [ "cluster-async", "tokio-comp" ] }`
 
 ```rust
 use redis::cluster::ClusterClient;
