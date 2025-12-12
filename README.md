@@ -4,12 +4,12 @@
 [![crates.io](https://img.shields.io/crates/v/redis.svg)](https://crates.io/crates/redis)
 [![Chat](https://img.shields.io/discord/976380008299917365?logo=discord)](https://discord.gg/WHKcJK9AKP)
 
-Redis-rs is a high level Rust library for Redis, Valkey and any other RESP 
-(Redis Serialization Protocol) compliant DB. It provides convenient access
-to all Redis functionality through a very flexible but low-level API. It
-uses a customizable type conversion trait so that any operation can return
-results in just the type you are expecting. This makes for a very pleasant
-development experience.
+Redis-rs is a Rust library implementing a high-level client for Redis, Valkey
+and any other RESP (Redis Serialization Protocol) compliant DB server. It
+provides convenient access to all Redis functionality through a very flexible
+but low-level API. It uses a customizable type conversion trait so that any
+operation can return results in just the type you are expecting. This makes for
+a very pleasant development experience.
 
 The crate is called `redis` and you can depend on it via cargo:
 
