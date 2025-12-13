@@ -34,7 +34,7 @@ implements the `FromRedisValue` trait.
 ```rust
 use redis::TypedCommands;
 
-fn fetch_an_integer() -> redis::RedisResult<isize> {
+fn fetch_an_integer() -> Option<isize> {
 	// connect to redis
 	let client = redis::Client::open("redis://127.0.0.1/")?;
 	let mut con = client.get_connection()?;
