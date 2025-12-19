@@ -166,6 +166,7 @@ impl MockCmd {
 #[derive(Clone)]
 pub struct MockRedisConnection {
     commands: Arc<Mutex<VecDeque<MockCmd>>>,
+    assert_is_empty_on_drop: bool,
 }
 
 impl MockRedisConnection {
@@ -176,13 +177,16 @@ impl MockRedisConnection {
     {
         MockRedisConnection {
             commands: Arc::new(Mutex::new(VecDeque::from_iter(commands))),
+            assert_is_empty_on_drop: true,
         }
     }
 }
 
 impl Drop for MockRedisConnection {
     fn drop(&mut self) {
-        assert!(self.commands.lock().unwrap().back().is_none());
+        if self.assert_is_empty_on_drop {
+            assert!(self.commands.lock().unwrap().back().is_none());
+        }
     }
 }
 
@@ -196,10 +200,12 @@ impl ConnectionLike for MockRedisConnection {
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
         let mut commands = self.commands.lock().unwrap();
         let next_cmd = commands.pop_front().ok_or_else(|| {
+            self.assert_is_empty_on_drop = false;
             RedisError::from((ErrorKind::Client, "TEST", "unexpected command".to_owned()))
         })?;
 
         if cmd != next_cmd.cmd_bytes {
+            self.assert_is_empty_on_drop = false;
             return Err(RedisError::from((
                 ErrorKind::Client,
                 "TEST",
@@ -216,14 +222,18 @@ impl ConnectionLike for MockRedisConnection {
             .responses
             .and_then(|values| match values.as_slice() {
                 [value] => Ok(value.clone()),
-                [] => Err(RedisError::from((
+                [] => {
+                    self.assert_is_empty_on_drop = false;
+                    Err(RedisError::from((
                     ErrorKind::Client,
                     "no value configured as response",
-                ))),
-                _ => Err(RedisError::from((
+                )))},
+                _ => {
+                    self.assert_is_empty_on_drop = false;
+                    Err(RedisError::from((
                     ErrorKind::Client,
                     "multiple values configured as response for command expecting a single value",
-                ))),
+                )))},
             })
     }
 
