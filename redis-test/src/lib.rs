@@ -180,6 +180,18 @@ impl MockRedisConnection {
     }
 }
 
+impl Drop for MockRedisConnection {
+    fn drop(&mut self) {
+        assert!(self.commands.lock().unwrap().back().is_none());
+    }
+}
+
+impl MockRedisConnection {
+    pub fn is_empty(&self) -> bool {
+        self.commands.lock().unwrap().is_empty()
+    }
+}
+
 impl ConnectionLike for MockRedisConnection {
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
         let mut commands = self.commands.lock().unwrap();
