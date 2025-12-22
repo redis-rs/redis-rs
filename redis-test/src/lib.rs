@@ -166,6 +166,7 @@ impl MockCmd {
 #[derive(Clone)]
 pub struct MockRedisConnection {
     commands: Arc<Mutex<VecDeque<MockCmd>>>,
+    assert_is_empty_on_drop: bool,
 }
 
 impl MockRedisConnection {
@@ -176,7 +177,28 @@ impl MockRedisConnection {
     {
         MockRedisConnection {
             commands: Arc::new(Mutex::new(VecDeque::from_iter(commands))),
+            assert_is_empty_on_drop: false,
         }
+    }
+
+    /// Enable assertion to ensure all commands have been consumed
+    pub fn assert_all_commands_consumed(mut self) -> Self {
+        self.assert_is_empty_on_drop = true;
+        self
+    }
+}
+
+impl Drop for MockRedisConnection {
+    fn drop(&mut self) {
+        if self.assert_is_empty_on_drop {
+            assert!(self.commands.lock().unwrap().back().is_none());
+        }
+    }
+}
+
+impl MockRedisConnection {
+    pub fn is_empty(&self) -> bool {
+        self.commands.lock().unwrap().is_empty()
     }
 }
 
@@ -184,10 +206,12 @@ impl ConnectionLike for MockRedisConnection {
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
         let mut commands = self.commands.lock().unwrap();
         let next_cmd = commands.pop_front().ok_or_else(|| {
+            self.assert_is_empty_on_drop = false;
             RedisError::from((ErrorKind::Client, "TEST", "unexpected command".to_owned()))
         })?;
 
         if cmd != next_cmd.cmd_bytes {
+            self.assert_is_empty_on_drop = false;
             return Err(RedisError::from((
                 ErrorKind::Client,
                 "TEST",
@@ -204,14 +228,18 @@ impl ConnectionLike for MockRedisConnection {
             .responses
             .and_then(|values| match values.as_slice() {
                 [value] => Ok(value.clone()),
-                [] => Err(RedisError::from((
+                [] => {
+                    self.assert_is_empty_on_drop = false;
+                    Err(RedisError::from((
                     ErrorKind::Client,
                     "no value configured as response",
-                ))),
-                _ => Err(RedisError::from((
+                )))},
+                _ => {
+                    self.assert_is_empty_on_drop = false;
+                    Err(RedisError::from((
                     ErrorKind::Client,
                     "multiple values configured as response for command expecting a single value",
-                ))),
+                )))},
             })
     }
 
@@ -299,7 +327,8 @@ mod tests {
             MockCmd::new(cmd("GET").arg("foo"), Ok(42)),
             MockCmd::new(cmd("SET").arg("bar").arg("foo"), Ok("")),
             MockCmd::new(cmd("GET").arg("bar"), Ok("foo")),
-        ]);
+        ])
+        .assert_all_commands_consumed();
 
         cmd("SET").arg("foo").arg(42).exec(&mut conn).unwrap();
         assert_eq!(cmd("GET").arg("foo").query(&mut conn), Ok(42));
@@ -319,7 +348,8 @@ mod tests {
             MockCmd::new(cmd("GET").arg("foo"), Ok(42)),
             MockCmd::new(cmd("SET").arg("bar").arg("foo"), Ok("")),
             MockCmd::new(cmd("GET").arg("bar"), Ok("foo")),
-        ]);
+        ])
+        .assert_all_commands_consumed();
 
         cmd("SET")
             .arg("foo")
@@ -345,7 +375,8 @@ mod tests {
         let mut conn = MockRedisConnection::new(vec![
             MockCmd::new(cmd("SET").arg("foo").arg(42), Ok("")),
             MockCmd::new(cmd("GET").arg("foo"), Ok(42)),
-        ]);
+        ])
+        .assert_all_commands_consumed();
 
         cmd("SET").arg("foo").arg(42).exec(&mut conn).unwrap();
         assert_eq!(cmd("GET").arg("foo").query(&mut conn), Ok(42));
@@ -365,7 +396,8 @@ mod tests {
             MockCmd::new(cmd("SET").arg("foo").arg(42), Ok("")),
             MockCmd::new(cmd("GET").arg("foo"), Ok(42)),
             MockCmd::new(cmd("SET").arg("bar").arg("foo"), Ok("")),
-        ]);
+        ])
+        .assert_all_commands_consumed();
 
         cmd("SET").arg("foo").arg(42).exec(&mut conn).unwrap();
         let err = cmd("SET")
@@ -382,7 +414,8 @@ mod tests {
         let mut conn = MockRedisConnection::new(vec![MockCmd::with_values(
             pipe().cmd("GET").arg("foo").cmd("GET").arg("bar"),
             Ok(vec!["hello", "world"]),
-        )]);
+        )])
+        .assert_all_commands_consumed();
 
         let results: Vec<String> = pipe()
             .cmd("GET")
@@ -404,7 +437,8 @@ mod tests {
                     .map(|x| Value::BulkString(x.as_bytes().into()))
                     .collect(),
             )]),
-        )]);
+        )])
+        .assert_all_commands_consumed();
 
         let results: Vec<String> = pipe()
             .atomic()
