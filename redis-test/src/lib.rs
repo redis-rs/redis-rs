@@ -177,8 +177,14 @@ impl MockRedisConnection {
     {
         MockRedisConnection {
             commands: Arc::new(Mutex::new(VecDeque::from_iter(commands))),
-            assert_is_empty_on_drop: true,
+            assert_is_empty_on_drop: false,
         }
+    }
+
+    /// Enable assertion to ensure all commands have been consumed
+    pub fn assert_all_commands_consumed(mut self) -> Self {
+        self.assert_is_empty_on_drop = true;
+        self
     }
 }
 
@@ -321,7 +327,8 @@ mod tests {
             MockCmd::new(cmd("GET").arg("foo"), Ok(42)),
             MockCmd::new(cmd("SET").arg("bar").arg("foo"), Ok("")),
             MockCmd::new(cmd("GET").arg("bar"), Ok("foo")),
-        ]);
+        ])
+        .assert_all_commands_consumed();
 
         cmd("SET").arg("foo").arg(42).exec(&mut conn).unwrap();
         assert_eq!(cmd("GET").arg("foo").query(&mut conn), Ok(42));
@@ -341,7 +348,8 @@ mod tests {
             MockCmd::new(cmd("GET").arg("foo"), Ok(42)),
             MockCmd::new(cmd("SET").arg("bar").arg("foo"), Ok("")),
             MockCmd::new(cmd("GET").arg("bar"), Ok("foo")),
-        ]);
+        ])
+        .assert_all_commands_consumed();
 
         cmd("SET")
             .arg("foo")
@@ -367,7 +375,8 @@ mod tests {
         let mut conn = MockRedisConnection::new(vec![
             MockCmd::new(cmd("SET").arg("foo").arg(42), Ok("")),
             MockCmd::new(cmd("GET").arg("foo"), Ok(42)),
-        ]);
+        ])
+        .assert_all_commands_consumed();
 
         cmd("SET").arg("foo").arg(42).exec(&mut conn).unwrap();
         assert_eq!(cmd("GET").arg("foo").query(&mut conn), Ok(42));
@@ -387,7 +396,8 @@ mod tests {
             MockCmd::new(cmd("SET").arg("foo").arg(42), Ok("")),
             MockCmd::new(cmd("GET").arg("foo"), Ok(42)),
             MockCmd::new(cmd("SET").arg("bar").arg("foo"), Ok("")),
-        ]);
+        ])
+        .assert_all_commands_consumed();
 
         cmd("SET").arg("foo").arg(42).exec(&mut conn).unwrap();
         let err = cmd("SET")
@@ -404,7 +414,8 @@ mod tests {
         let mut conn = MockRedisConnection::new(vec![MockCmd::with_values(
             pipe().cmd("GET").arg("foo").cmd("GET").arg("bar"),
             Ok(vec!["hello", "world"]),
-        )]);
+        )])
+        .assert_all_commands_consumed();
 
         let results: Vec<String> = pipe()
             .cmd("GET")
@@ -426,7 +437,8 @@ mod tests {
                     .map(|x| Value::BulkString(x.as_bytes().into()))
                     .collect(),
             )]),
-        )]);
+        )])
+        .assert_all_commands_consumed();
 
         let results: Vec<String> = pipe()
             .atomic()
