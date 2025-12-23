@@ -191,7 +191,10 @@ impl MockRedisConnection {
 impl Drop for MockRedisConnection {
     fn drop(&mut self) {
         if self.assert_is_empty_on_drop {
-            assert!(self.commands.lock().unwrap().back().is_none());
+            let commands = self.commands.lock().unwrap();
+            if Arc::strong_count(&self.commands) == 1 {
+                assert!(commands.back().is_none());
+            }
         }
     }
 }
