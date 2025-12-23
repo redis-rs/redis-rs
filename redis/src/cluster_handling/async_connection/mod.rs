@@ -725,12 +725,22 @@ where
                 conn.req_packed_commands(&pipeline, offset, count)
                     .await
                     .inspect(|res| {
+                        let Some(tracker) = &self.subscription_tracker else {
+                            return;
+                        };
+                        let res = if pipeline.is_transaction() {
+                            debug_assert_eq!(res.len(), 1);
+                            match res[0] {
+                                Value::Array(ref arr) => arr,
+                                _ => res,
+                            }
+                        } else {
+                            res
+                        };
                         for (index, cmd) in pipeline.cmd_iter().enumerate() {
+                            let mut tracker = tracker.lock().unwrap();
                             if !matches!(res[index], Value::ServerError(_)) {
-                                if let Some(tracker) = &self.subscription_tracker {
-                                    let mut tracker = tracker.lock().unwrap();
-                                    tracker.update_with_cmd(cmd);
-                                }
+                                tracker.update_with_cmd(cmd);
                             }
                         }
                     })

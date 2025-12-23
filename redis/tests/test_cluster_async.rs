@@ -366,6 +366,25 @@ mod cluster_async {
         assert_eq!(res, "OK");
         let res: Vec<String> = connection.mget(&["baz", "foo", "bar"]).await?;
         assert_eq!(res, vec!["bazz", "bar", "foo"]);
+
+        Ok::<_, RedisError>(())
+    }
+
+    #[async_test]
+    async fn async_cluster_can_run_a_transaction() -> RedisResult<()> {
+        let cluster = TestClusterContext::new();
+
+        let mut connection = cluster.async_connection().await;
+
+        let result: Vec<Value> = redis::pipe()
+            .atomic()
+            .set("foo", b"bar")
+            .expire("foo", 10)
+            .query_async(&mut connection)
+            .await?;
+
+        assert_eq!(result, vec![Value::Okay, Value::Int(1)]);
+
         Ok::<_, RedisError>(())
     }
 
