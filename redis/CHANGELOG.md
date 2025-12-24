@@ -1,4 +1,10 @@
 
+### 1.0.2 (2025-12-24)
+
+#### Changes & Bug fixes
+
+* Fix handling transactions in async cluster ([#1901](https://github.com/redis-rs/redis-rs/pull/1901) by @nihohit)
+
 ### 1.0.1 (2025-12-11)
 
 #### Changes & Bug fixes

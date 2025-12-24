@@ -1,3 +1,10 @@
+### 1.0.1 (2025-12-24)
+
+* MockRedisConnection with cosumation assert ([#1898](https://github.com/redis-rs/redis-rs/pull/1898) by @meierfra-ergon)
+
+### 1.0.0 (2025-12-05)
+* Track redis 1.0.0 release
+
 ### 0.13.0 (2025-10-06)
 * Track redis 1.0.0-rc release
 
