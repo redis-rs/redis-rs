@@ -5,14 +5,14 @@ use std::{
 };
 
 use redis::{
-    cluster::{self, ClusterClient, ClusterClientBuilder},
     FromRedisValue, ServerErrorKind,
+    cluster::{self, ClusterClient, ClusterClientBuilder},
 };
 
 use redis::{IntoConnectionInfo, RedisResult, Value};
 
 #[cfg(feature = "cluster-async")]
-use redis::{aio, cluster_async, RedisFuture};
+use redis::{RedisFuture, aio, cluster_async};
 
 #[cfg(feature = "cluster-async")]
 use futures::future;

@@ -1,12 +1,12 @@
 //! Adds async IO support to redis.
 use crate::cmd::Cmd;
 use crate::connection::{
-    check_connection_setup, connection_setup_pipeline, AuthResult, ConnectionSetupComponents,
-    RedisConnectionInfo,
+    AuthResult, ConnectionSetupComponents, RedisConnectionInfo, check_connection_setup,
+    connection_setup_pipeline,
 };
 use crate::io::AsyncDNSResolver;
 use crate::types::{RedisFuture, RedisResult, Value};
-use crate::{errors::closed_connection_error, ErrorKind, PushInfo, RedisError};
+use crate::{ErrorKind, PushInfo, RedisError, errors::closed_connection_error};
 use ::tokio::io::{AsyncRead, AsyncWrite};
 use futures_util::{
     future::{Future, FutureExt},

@@ -1,4 +1,4 @@
-use redis::{from_redis_value, AsyncTypedCommands};
+use redis::{AsyncTypedCommands, from_redis_value};
 
 #[tokio::main]
 async fn main() -> redis::RedisResult<()> {

@@ -919,7 +919,7 @@ impl Routable for Value {
     fn arg_idx(&self, idx: usize) -> Option<&[u8]> {
         match self {
             Value::Array(args) => match args.get(idx) {
-                Some(Value::BulkString(ref data)) => Some(&data[..]),
+                Some(Value::BulkString(data)) => Some(&data[..]),
                 _ => None,
             },
             _ => None,
@@ -1016,11 +1016,11 @@ fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
 #[cfg(test)]
 mod tests_routing {
     use super::{
-        command_for_multi_slot_indices, AggregateOp, MultiSlotArgPattern, MultipleNodeRoutingInfo,
-        ResponsePolicy, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr,
+        AggregateOp, MultiSlotArgPattern, MultipleNodeRoutingInfo, ResponsePolicy, Route,
+        RoutingInfo, SingleNodeRoutingInfo, SlotAddr, command_for_multi_slot_indices,
     };
     use crate::cluster_routing::slot;
-    use crate::{cmd, parser::parse_redis_value, Value};
+    use crate::{Value, cmd, parser::parse_redis_value};
     use core::panic;
 
     #[test]

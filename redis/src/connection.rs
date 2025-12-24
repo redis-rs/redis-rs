@@ -5,19 +5,19 @@ use std::io::{self, Write};
 use std::net::{self, SocketAddr, TcpStream, ToSocketAddrs};
 use std::ops::DerefMut;
 use std::path::PathBuf;
-use std::str::{from_utf8, FromStr};
+use std::str::{FromStr, from_utf8};
 use std::time::{Duration, Instant};
 
-use crate::cmd::{cmd, pipe, Cmd};
+use crate::cmd::{Cmd, cmd, pipe};
 use crate::errors::{ErrorKind, RedisError, ServerError, ServerErrorKind};
-use crate::io::tcp::{stream_with_settings, TcpSettings};
+use crate::io::tcp::{TcpSettings, stream_with_settings};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
 use crate::types::{
-    from_redis_value_ref, FromRedisValue, HashMap, PushKind, RedisResult, SyncPushSender,
-    ToRedisArgs, Value,
+    FromRedisValue, HashMap, PushKind, RedisResult, SyncPushSender, ToRedisArgs, Value,
+    from_redis_value_ref,
 };
-use crate::{check_resp3, from_redis_value, ProtocolVersion};
+use crate::{ProtocolVersion, check_resp3, from_redis_value};
 
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
@@ -194,7 +194,7 @@ impl ConnectionAddr {
     #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
     pub fn set_danger_accept_invalid_hostnames(&mut self, insecure: bool) {
         if let ConnectionAddr::TcpTls { tls_params, .. } = self {
-            if let Some(ref mut params) = tls_params {
+            if let Some(params) = tls_params {
                 params.danger_accept_invalid_hostnames = insecure;
             } else if insecure {
                 *tls_params = Some(TlsConnParams {
@@ -1722,7 +1722,7 @@ impl Connection {
                         "Unexpected unsubscribe response",
                         format!("{resp:?}"),
                     )
-                        .into())
+                        .into());
                 }
             }
         }

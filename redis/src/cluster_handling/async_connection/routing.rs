@@ -1,12 +1,12 @@
 use arcstr::ArcStr;
 
 use crate::{
+    Cmd, RedisResult,
     cluster_routing::{
         MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, RoutingInfo,
         SingleNodeRoutingInfo, SlotAddr,
     },
     errors::ServerErrorKind,
-    Cmd, RedisResult,
 };
 
 #[derive(Clone)]

@@ -7,8 +7,8 @@ use std::time::Duration;
 use crate::support::*;
 use redis::sentinel::SentinelClientBuilder;
 use redis::{
-    sentinel::{Sentinel, SentinelClient, SentinelNodeConnectionInfo},
     Client, Connection, ConnectionAddr, ConnectionInfo, ErrorKind, RedisError, Role,
+    sentinel::{Sentinel, SentinelClient, SentinelNodeConnectionInfo},
 };
 use redis_test::server::use_protocol;
 
@@ -572,7 +572,7 @@ fn test_sentinel_client_builder() {
 #[cfg(feature = "aio")]
 pub mod async_tests {
     use super::*;
-    use redis::{aio::MultiplexedConnection, AsyncConnectionConfig, RedisResult};
+    use redis::{AsyncConnectionConfig, RedisResult, aio::MultiplexedConnection};
     use rstest::rstest;
     use test_macros::async_test;
 

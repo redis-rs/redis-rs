@@ -3,7 +3,7 @@
 use arcstr::ArcStr;
 
 use super::slot_map::Slot;
-use crate::{connection::is_wildcard_address, RedisResult, Value};
+use crate::{RedisResult, Value, connection::is_wildcard_address};
 
 // Parse slot data from raw redis value.
 pub(crate) fn parse_slots(

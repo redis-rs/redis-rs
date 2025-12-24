@@ -189,7 +189,7 @@ impl FromRedisValue for AclInfo {
                         return Err(not_convertible_error!(
                             commands,
                             "Expect a valid UTF8 string"
-                        ))
+                        ));
                     }
                 }
                 .split_terminator(' ')
@@ -218,7 +218,7 @@ impl FromRedisValue for AclInfo {
                 return Err(not_convertible_error!(
                     v,
                     "Expect a response from `ACL GETUSER`"
-                ))
+                ));
             }
         };
 

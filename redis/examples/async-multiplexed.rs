@@ -1,5 +1,5 @@
 use futures::prelude::*;
-use redis::{aio::MultiplexedConnection, RedisResult};
+use redis::{RedisResult, aio::MultiplexedConnection};
 
 async fn test_cmd(con: &MultiplexedConnection, i: i32) -> RedisResult<()> {
     let mut con = con.clone();

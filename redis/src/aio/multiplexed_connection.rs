@@ -2,14 +2,14 @@ use super::{AsyncPushSender, ConnectionLike, Runtime, SharedHandleContainer, Tas
 #[cfg(feature = "cache-aio")]
 use crate::caching::{CacheManager, CacheStatistics, PrepareCacheResult};
 use crate::{
+    AsyncConnectionConfig, ProtocolVersion, PushInfo, RedisConnectionInfo, ServerError,
+    ToRedisArgs,
     aio::setup_connection,
     check_resp3, cmd,
     cmd::Cmd,
-    errors::{closed_connection_error, RedisError},
+    errors::{RedisError, closed_connection_error},
     parser::ValueCodec,
     types::{RedisFuture, RedisResult, Value},
-    AsyncConnectionConfig, ProtocolVersion, PushInfo, RedisConnectionInfo, ServerError,
-    ToRedisArgs,
 };
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -357,14 +357,15 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut task::Context,
     ) -> Poll<Result<(), Self::Error>> {
-        ready!(self
-            .as_mut()
-            .project()
-            .sink_stream
-            .poll_flush(cx)
-            .map_err(|err| {
-                self.as_mut().send_result(Err(err));
-            }))?;
+        ready!(
+            self.as_mut()
+                .project()
+                .sink_stream
+                .poll_flush(cx)
+                .map_err(|err| {
+                    self.as_mut().send_result(Err(err));
+                })
+        )?;
         self.poll_read(cx)
     }
 
@@ -521,7 +522,7 @@ impl MultiplexedConnection {
         connection_info: &RedisConnectionInfo,
         stream: C,
         config: AsyncConnectionConfig,
-    ) -> RedisResult<(Self, impl Future<Output = ()>)>
+    ) -> RedisResult<(Self, impl Future<Output = ()> + 'static)>
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {

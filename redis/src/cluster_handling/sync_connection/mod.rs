@@ -74,24 +74,24 @@ use super::topology::parse_slots;
 use super::{
     client::ClusterParams,
     routing::{Redirect, Route, RoutingInfo},
-    slot_map::{SlotMap, SLOT_SIZE},
+    slot_map::{SLOT_SIZE, SlotMap},
 };
+use crate::IntoConnectionInfo;
+pub use crate::TlsMode; // Pub for backwards compatibility
 use crate::cluster_handling::{get_connection_info, slot_cmd, split_node_address};
 use crate::cluster_routing::{
     MultipleNodeRoutingInfo, ResponsePolicy, Routable, SingleNodeRoutingInfo, SlotAddr,
 };
-use crate::cmd::{cmd, Cmd};
-use crate::connection::{connect, Connection, ConnectionInfo, ConnectionLike};
+use crate::cmd::{Cmd, cmd};
+use crate::connection::{Connection, ConnectionInfo, ConnectionLike, connect};
 use crate::errors::{ErrorKind, RedisError, RetryMethod};
 use crate::parser::parse_redis_value;
 use crate::types::{HashMap, RedisResult, Value};
-use crate::IntoConnectionInfo;
-pub use crate::TlsMode; // Pub for backwards compatibility
 use arcstr::ArcStr;
 use pipeline::UNROUTABLE_ERROR;
-use rand::{rng, seq::IteratorRandom, Rng};
+use rand::{Rng, rng, seq::IteratorRandom};
 
-pub use pipeline::{cluster_pipe, ClusterPipeline};
+pub use pipeline::{ClusterPipeline, cluster_pipe};
 
 #[derive(Clone)]
 enum Input<'a> {

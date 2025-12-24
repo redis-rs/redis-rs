@@ -252,9 +252,11 @@ mod tests {
                 .slot_addr_for_route(&Route::new(2000, SlotAddr::Master))
                 .unwrap()
         );
-        assert!(slot_map
-            .slot_addr_for_route(&Route::new(2001, SlotAddr::Master))
-            .is_none());
+        assert!(
+            slot_map
+                .slot_addr_for_route(&Route::new(2001, SlotAddr::Master))
+                .is_none()
+        );
     }
 
     #[test]

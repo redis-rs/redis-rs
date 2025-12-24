@@ -5,11 +5,11 @@ use futures_util::Future;
 #[cfg(all(feature = "tokio-comp", feature = "smol-comp"))]
 use std::sync::OnceLock;
 
+use super::RedisRuntime;
 #[cfg(feature = "smol-comp")]
 use super::smol as crate_smol;
 #[cfg(feature = "tokio-comp")]
 use super::tokio as crate_tokio;
-use super::RedisRuntime;
 use crate::errors::RedisError;
 #[cfg(feature = "smol-comp")]
 use smol_timeout::TimeoutExt;
@@ -77,8 +77,7 @@ static CHOSEN_RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
 #[cfg(all(feature = "tokio-comp", feature = "smol-comp"))]
 fn set_runtime(runtime: Runtime) -> Result<(), RedisError> {
-    const PREFER_RUNTIME_ERROR: &str =
-    "Another runtime preference was already set. Please call this function before any other runtime preference is set.";
+    const PREFER_RUNTIME_ERROR: &str = "Another runtime preference was already set. Please call this function before any other runtime preference is set.";
 
     CHOSEN_RUNTIME
         .set(runtime)

@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Bencher, Criterion, Throughput};
+use criterion::{Bencher, Criterion, Throughput, criterion_group, criterion_main};
 use redis::Cmd;
 
 use support::*;
@@ -7,8 +7,8 @@ use support::*;
 mod support;
 
 use rand::{
-    distr::{Bernoulli, Distribution},
     Rng,
+    distr::{Bernoulli, Distribution},
 };
 use redis::caching::CacheConfig;
 use std::env;

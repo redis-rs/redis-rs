@@ -1,11 +1,11 @@
-use crate::caching::statistics::Statistics;
 use crate::Value;
+use crate::caching::statistics::Statistics;
 use lru::LruCache;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 type RedisCmd = Vec<u8>;

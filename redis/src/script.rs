@@ -2,10 +2,10 @@
 use sha1_smol::Sha1;
 
 use crate::{
+    Cmd, ErrorKind,
     cmd::cmd,
     connection::ConnectionLike,
     types::{FromRedisValue, RedisResult, ToRedisArgs},
-    Cmd, ErrorKind,
 };
 
 /// Represents a lua script.

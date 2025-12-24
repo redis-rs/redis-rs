@@ -3,13 +3,13 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures_util::{ready, SinkExt, Stream, StreamExt};
+use futures_util::{SinkExt, Stream, StreamExt, ready};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::Decoder;
 
 use crate::{
-    cmd, errors::closed_connection_error, parser::ValueCodec, FromRedisValue, RedisConnectionInfo,
-    RedisResult, Value,
+    FromRedisValue, RedisConnectionInfo, RedisResult, Value, cmd, errors::closed_connection_error,
+    parser::ValueCodec,
 };
 
 use super::setup_connection;

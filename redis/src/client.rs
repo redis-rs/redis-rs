@@ -5,14 +5,14 @@ use crate::aio::{AsyncPushSender, DefaultAsyncDNSResolver};
 #[cfg(feature = "aio")]
 use crate::io::AsyncDNSResolver;
 use crate::{
-    connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
+    connection::{Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo, connect},
     types::{RedisResult, Value},
 };
 #[cfg(feature = "aio")]
 use std::pin::Pin;
 
 #[cfg(feature = "tls-rustls")]
-use crate::tls::{inner_build_with_tls, TlsCertificates};
+use crate::tls::{TlsCertificates, inner_build_with_tls};
 
 #[cfg(feature = "cache-aio")]
 use crate::caching::CacheConfig;
@@ -435,7 +435,7 @@ impl Client {
         config: &AsyncConnectionConfig,
     ) -> RedisResult<(
         crate::aio::MultiplexedConnection,
-        impl std::future::Future<Output = ()>,
+        impl std::future::Future<Output = ()> + 'static,
     )>
     where
         T: crate::aio::RedisRuntime,

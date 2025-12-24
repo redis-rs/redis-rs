@@ -4,16 +4,16 @@ mod support;
 #[cfg(test)]
 mod cluster {
     use std::sync::{
-        atomic::{self, AtomicI32, Ordering},
         Arc,
+        atomic::{self, AtomicI32, Ordering},
     };
 
     use crate::support::*;
     use redis::{
-        cluster::{cluster_pipe, ClusterClient, ClusterConnection},
+        Commands, ConnectionLike, ErrorKind, RedisError, ServerErrorKind, Value,
+        cluster::{ClusterClient, ClusterConnection, cluster_pipe},
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
-        cmd, parse_redis_value, Commands, ConnectionLike, ErrorKind, RedisError, ServerErrorKind,
-        Value,
+        cmd, parse_redis_value,
     };
     use redis_test::{
         cluster::{RedisCluster, RedisClusterConfiguration},
@@ -285,16 +285,16 @@ mod cluster {
             .unwrap_err();
 
         assert_eq!(
-        err.to_string(),
-        "This command cannot be safely routed in cluster mode - Client: Command 'SCRIPT KILL' can't be executed in a cluster pipeline."
-    );
+            err.to_string(),
+            "This command cannot be safely routed in cluster mode - Client: Command 'SCRIPT KILL' can't be executed in a cluster pipeline."
+        );
 
         let err = cluster_pipe().keys("*").exec(&mut con).unwrap_err();
 
         assert_eq!(
-        err.to_string(),
-        "This command cannot be safely routed in cluster mode - Client: Command 'KEYS' can't be executed in a cluster pipeline."
-    );
+            err.to_string(),
+            "This command cannot be safely routed in cluster mode - Client: Command 'KEYS' can't be executed in a cluster pipeline."
+        );
     }
 
     #[test]
@@ -381,8 +381,8 @@ mod cluster {
     }
 
     #[test]
-    fn test_cluster_can_connect_to_server_that_sends_cluster_slots_with_partial_nodes_with_unknown_host_name(
-    ) {
+    fn test_cluster_can_connect_to_server_that_sends_cluster_slots_with_partial_nodes_with_unknown_host_name()
+     {
         let name = "test_cluster_can_connect_to_server_that_sends_cluster_slots_with_partial_nodes_with_unknown_host_name";
 
         let MockEnv { mut connection, .. } = MockEnv::new(name, move |cmd: &[u8], _| {
@@ -1168,12 +1168,16 @@ mod cluster {
             {
                 redis::ConnectionAddr::TcpTls { .. } => {
                     if connection.is_ok() {
-                        panic!("Must NOT be able to connect without client credentials if server accepts TLS");
+                        panic!(
+                            "Must NOT be able to connect without client credentials if server accepts TLS"
+                        );
                     }
                 }
                 _ => {
                     if let Err(e) = connection {
-                        panic!("Must be able to connect without client credentials if server does NOT accept TLS: {e:?}");
+                        panic!(
+                            "Must be able to connect without client credentials if server does NOT accept TLS: {e:?}"
+                        );
                     }
                 }
             }

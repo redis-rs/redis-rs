@@ -4,7 +4,7 @@ use crate::support::*;
 use futures_time::task::sleep;
 #[cfg(feature = "cluster-async")]
 use redis::cluster_routing::*;
-use redis::{caching::CacheConfig, AsyncCommands, RedisError};
+use redis::{AsyncCommands, RedisError, caching::CacheConfig};
 use redis::{CommandCacheConfig, RedisResult};
 #[cfg(feature = "json")]
 use redis_test::server::Module;

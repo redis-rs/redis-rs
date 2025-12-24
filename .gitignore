@@ -4,3 +4,4 @@ target
 .rust
 .vscode
 .idea
+redis/dump.rdb

@@ -35,7 +35,9 @@ fn main() {
 }
 
 fn demo_group_reads(client: &redis::Client) {
-    println!("\n\nDemonstrating a longer stream of data flowing\nin over time, consumed by multiple threads using XREADGROUP\n");
+    println!(
+        "\n\nDemonstrating a longer stream of data flowing\nin over time, consumed by multiple threads using XREADGROUP\n"
+    );
 
     let mut handles = vec![];
 

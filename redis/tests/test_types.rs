@@ -328,11 +328,11 @@ mod types {
             assert_eq!(v, Ok(vec![1_u16].into_boxed_slice()));
 
             assert_eq!(
-        Box::<[i32]>::from_redis_value_ref(
-            &Value::BulkString("just a string".into())
-        ).unwrap_err().to_string(),
-        "Incompatible type - \"Conversion to alloc::boxed::Box<[i32]> failed.\" (value was bulk-string('\"just a string\"'))",
-    );
+                Box::<[i32]>::from_redis_value_ref(&Value::BulkString("just a string".into()))
+                    .unwrap_err()
+                    .to_string(),
+                "Incompatible type - \"Conversion to alloc::boxed::Box<[i32]> failed.\" (value was bulk-string('\"just a string\"'))",
+            );
         }
     }
 
@@ -361,11 +361,11 @@ mod types {
             assert_eq!(v, Ok(Arc::from(vec![1_u16])));
 
             assert_eq!(
-            Arc::<[i32]>::from_redis_value_ref(
-                &Value::BulkString("just a string".into())
-            ).unwrap_err().to_string(),
-            "Incompatible type - \"Conversion to alloc::sync::Arc<[i32]> failed.\" (value was bulk-string('\"just a string\"'))",
-        );
+                Arc::<[i32]>::from_redis_value_ref(&Value::BulkString("just a string".into()))
+                    .unwrap_err()
+                    .to_string(),
+                "Incompatible type - \"Conversion to alloc::sync::Arc<[i32]> failed.\" (value was bulk-string('\"just a string\"'))",
+            );
         }
     }
 
@@ -702,35 +702,43 @@ mod types {
         assert!(!"abc".to_redis_args().is_empty());
         assert!(!String::from("x").to_redis_args().is_empty());
 
-        assert!(![5, 4]
-            .iter()
-            .cloned()
-            .collect::<HashSet<_>>()
-            .to_redis_args()
-            .is_empty());
+        assert!(
+            ![5, 4]
+                .iter()
+                .cloned()
+                .collect::<HashSet<_>>()
+                .to_redis_args()
+                .is_empty()
+        );
 
-        assert!(![5, 4]
-            .iter()
-            .cloned()
-            .collect::<BTreeSet<_>>()
-            .to_redis_args()
-            .is_empty());
+        assert!(
+            ![5, 4]
+                .iter()
+                .cloned()
+                .collect::<BTreeSet<_>>()
+                .to_redis_args()
+                .is_empty()
+        );
 
         // this can be used on something HMSET
-        assert!(![("a", 5), ("b", 6), ("C", 7)]
-            .iter()
-            .cloned()
-            .collect::<BTreeMap<_, _>>()
-            .to_redis_args()
-            .is_empty());
+        assert!(
+            ![("a", 5), ("b", 6), ("C", 7)]
+                .iter()
+                .cloned()
+                .collect::<BTreeMap<_, _>>()
+                .to_redis_args()
+                .is_empty()
+        );
 
         // this can also be used on something HMSET
-        assert!(![("d", 8), ("e", 9), ("f", 10)]
-            .iter()
-            .cloned()
-            .collect::<HashMap<_, _>>()
-            .to_redis_args()
-            .is_empty());
+        assert!(
+            ![("d", 8), ("e", 9), ("f", 10)]
+                .iter()
+                .cloned()
+                .collect::<HashMap<_, _>>()
+                .to_redis_args()
+                .is_empty()
+        );
     }
 
     #[test]

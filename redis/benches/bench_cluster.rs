@@ -1,7 +1,7 @@
 #![cfg(feature = "cluster")]
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use redis::cluster::cluster_pipe;
 use redis_test::cluster::RedisClusterConfiguration;
 

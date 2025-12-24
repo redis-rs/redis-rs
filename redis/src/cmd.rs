@@ -1,8 +1,8 @@
 #[cfg(feature = "aio")]
 use futures_util::{
+    Stream, StreamExt,
     future::BoxFuture,
     task::{Context, Poll},
-    Stream, StreamExt,
 };
 #[cfg(feature = "aio")]
 use std::pin::Pin;
@@ -11,8 +11,8 @@ use std::time::Duration;
 use std::{fmt, io, io::Write};
 
 use crate::pipeline::Pipeline;
-use crate::types::{from_redis_value, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs};
-use crate::{connection::ConnectionLike, ParsingError};
+use crate::types::{FromRedisValue, RedisResult, RedisWrite, ToRedisArgs, from_redis_value};
+use crate::{ParsingError, connection::ConnectionLike};
 
 /// An argument to a redis command
 #[derive(Clone, PartialEq, Debug)]
@@ -403,7 +403,9 @@ impl RedisWrite for Cmd {
             }
 
             unsafe fn advance_mut(&mut self, cnt: usize) {
-                self.0.data.advance_mut(cnt);
+                unsafe {
+                    self.0.data.advance_mut(cnt);
+                }
             }
 
             fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {

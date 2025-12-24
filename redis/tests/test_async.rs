@@ -5,14 +5,14 @@ mod basic_async {
     use std::{collections::HashMap, time::Duration};
 
     use crate::support::*;
-    use futures::{prelude::*, StreamExt};
+    use futures::{StreamExt, prelude::*};
     use futures_time::{future::FutureExt, task::sleep};
     #[cfg(feature = "json")]
     use redis::JsonAsyncCommands;
     use redis::{
-        aio::ConnectionLike, cmd, pipe, AsyncCommands, ErrorKind, IntoConnectionInfo, ParsingError,
-        ProtocolVersion, PushKind, RedisConnectionInfo, RedisError, RedisResult, ScanOptions,
-        ServerErrorKind, Value,
+        AsyncCommands, ErrorKind, IntoConnectionInfo, ParsingError, ProtocolVersion, PushKind,
+        RedisConnectionInfo, RedisError, RedisResult, ScanOptions, ServerErrorKind, Value,
+        aio::ConnectionLike, cmd, pipe,
     };
     #[cfg(feature = "json")]
     use redis_test::server::Module;
@@ -43,7 +43,7 @@ mod basic_async {
             }
         }
 
-        use std::sync::{atomic::AtomicBool, Arc};
+        use std::sync::{Arc, atomic::AtomicBool};
 
         let slept = Arc::new(AtomicBool::new(false));
         let slept_clone = slept.clone();
@@ -450,7 +450,10 @@ mod basic_async {
 
         let res = pipe.exec_async(&mut con).await;
         let error_message = res.unwrap_err().to_string();
-        assert_eq!(&error_message, "Pipeline failure: [(Index 1, error: \"WRONGTYPE\": Operation against a key holding the wrong kind of value)]");
+        assert_eq!(
+            &error_message,
+            "Pipeline failure: [(Index 1, error: \"WRONGTYPE\": Operation against a key holding the wrong kind of value)]"
+        );
         Ok(())
     }
 
@@ -1622,8 +1625,8 @@ mod basic_async {
 
     #[cfg(feature = "connection-manager")]
     #[async_test]
-    async fn manager_should_reconnect_without_actions_if_push_sender_is_set_even_after_sender_returns_error(
-    ) -> RedisResult<()> {
+    async fn manager_should_reconnect_without_actions_if_push_sender_is_set_even_after_sender_returns_error()
+    -> RedisResult<()> {
         let ctx = TestContext::new();
         if !ctx.protocol.supports_resp3() {
             return Ok(());
@@ -1782,12 +1785,16 @@ mod basic_async {
             match ctx.server.connection_info().addr() {
                 redis::ConnectionAddr::TcpTls { .. } => {
                     if result.is_ok() {
-                        panic!("Must NOT be able to connect without client credentials if server accepts TLS");
+                        panic!(
+                            "Must NOT be able to connect without client credentials if server accepts TLS"
+                        );
                     }
                 }
                 _ => {
                     if result.is_err() {
-                        panic!("Must be able to connect without client credentials if server does NOT accept TLS");
+                        panic!(
+                            "Must be able to connect without client credentials if server does NOT accept TLS"
+                        );
                     }
                 }
             }

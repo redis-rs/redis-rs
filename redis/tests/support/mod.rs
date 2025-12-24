@@ -2,11 +2,11 @@
 
 #[cfg(feature = "aio")]
 use futures::Future;
+use redis::{Commands, ConnectionAddr, InfoDict, Pipeline, ProtocolVersion, RedisResult, Value};
 #[cfg(feature = "aio")]
 use redis::{aio, cmd};
-use redis::{Commands, ConnectionAddr, InfoDict, Pipeline, ProtocolVersion, RedisResult, Value};
-use redis_test::server::{use_protocol, Module, RedisServer};
-use redis_test::utils::{get_random_available_port, TlsFilePaths};
+use redis_test::server::{Module, RedisServer, use_protocol};
+use redis_test::utils::{TlsFilePaths, get_random_available_port};
 #[cfg(feature = "tls-rustls")]
 use std::{
     fs::File,
@@ -492,10 +492,10 @@ pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
 #[cfg(feature = "tls-rustls")]
 pub(crate) mod mtls_test {
     use super::*;
-    use redis::{cluster::ClusterClient, ConnectionInfo, IntoConnectionInfo, RedisError};
+    use redis::{ConnectionInfo, IntoConnectionInfo, RedisError, cluster::ClusterClient};
 
     fn clean_node_info(nodes: &[ConnectionInfo]) -> Vec<ConnectionInfo> {
-        let nodes = nodes
+        nodes
             .iter()
             .map(|node| match node.addr() {
                 redis::ConnectionAddr::TcpTls { host, port, .. } => redis::ConnectionAddr::TcpTls {
@@ -508,8 +508,7 @@ pub(crate) mod mtls_test {
                 .unwrap(),
                 _ => node.clone(),
             })
-            .collect();
-        nodes
+            .collect()
     }
 
     pub(crate) fn create_cluster_client_from_cluster(

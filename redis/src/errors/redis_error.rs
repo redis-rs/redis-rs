@@ -3,8 +3,8 @@ use std::{error, fmt, io, sync::Arc};
 use arcstr::ArcStr;
 
 use crate::{
-    errors::server_error::{ServerError, ServerErrorKind},
     ParsingError,
+    errors::server_error::{ServerError, ServerErrorKind},
 };
 
 /// An enum of all error kinds.

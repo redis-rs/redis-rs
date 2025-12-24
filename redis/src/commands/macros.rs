@@ -16,7 +16,7 @@ macro_rules! implement_command_async {
 			$(, $argname: $argty)*
 		) -> crate::types::RedisFuture<$lifetime, RV>
 		{
-			Box::pin(async move { ($body).query_async(self).await })
+			Box::pin(async move { $body.query_async(self).await })
 		}
 	};
 
@@ -36,7 +36,7 @@ macro_rules! implement_command_async {
 		) -> crate::types::RedisFuture<$lifetime, $rettype>
 
 		{
-			Box::pin(async move { ($body).query_async(self).await })
+			Box::pin(async move { $body.query_async(self).await })
 		}
 	};
 }
@@ -231,7 +231,7 @@ macro_rules! implement_commands {
                 $(#[$attr])*
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
                 pub fn $name<$lifetime, $($tyargs: $ty),*>($($argname: $argty),*) -> Self {
-                    ::std::mem::take($body)
+                    $body
                 }
             )*
         }
@@ -366,7 +366,7 @@ macro_rules! implement_commands {
                 pub fn $name<$lifetime, $($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
                 ) -> &mut Self {
-                    self.add_command(::std::mem::take($body))
+                    self.add_command($body)
                 }
             )*
         }
@@ -383,7 +383,7 @@ macro_rules! implement_commands {
                 pub fn $name<$lifetime, $($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
                 ) -> &mut Self {
-                    self.add_command(::std::mem::take($body))
+                    self.add_command($body)
                 }
             )*
         }
