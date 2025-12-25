@@ -1,8 +1,8 @@
-use crate::cmd::{cmd, Cmd};
+use crate::RedisError;
+use crate::cmd::{Cmd, cmd};
 use crate::connection::ConnectionLike;
 use crate::pipeline::Pipeline;
 use crate::types::{FromRedisValue, RedisResult, ToRedisArgs, ToSingleRedisArg};
-use crate::RedisError;
 
 #[cfg(feature = "cluster")]
 use crate::commands::ClusterPipeline;

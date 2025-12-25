@@ -7,19 +7,19 @@ use crate::errors::{ParsingError, RedisError, Repr, ServerError, ServerErrorKind
 use crate::types::{PushKind, RedisResult, Value, VerbatimFormat};
 
 use combine::{
-    any,
+    ParseError, Parser as _, any,
     error::StreamError,
     opaque,
     parser::{
         byte::{crlf, take_until_bytes},
-        combinator::{any_send_sync_partial_state, AnySendSyncPartialState},
+        combinator::{AnySendSyncPartialState, any_send_sync_partial_state},
         range::{recognize, take},
     },
     stream::{
-        decoder::{self, Decoder},
         PointerOffset, RangeStream, StreamErrorFor,
+        decoder::{self, Decoder},
     },
-    unexpected_any, ParseError, Parser as _,
+    unexpected_any,
 };
 
 const MAX_RECURSE_DEPTH: usize = 100;
@@ -45,7 +45,7 @@ fn err_parser(line: &str) -> ServerError {
             return ServerError(Repr::Extension {
                 code: code.into(),
                 detail: pieces.next().map(|str| str.into()),
-            })
+            });
         }
     };
     let detail = pieces.next().map(|str| str.into());

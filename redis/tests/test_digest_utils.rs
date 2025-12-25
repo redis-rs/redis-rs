@@ -4,8 +4,7 @@ mod digest_utils {
     use redis::{calculate_value_digest, is_valid_16_bytes_hex_digest};
 
     const TEST_VALUE: &str = "test_value";
-    const VALUE_WITH_LEADING_ZEROES_DIGEST: &str =
-        "v8lf0c11xh8ymlqztfd3eeq16kfn4sspw7fqmnuuq3k3t75em5wdizgcdw7uc26nnf961u2jkfzkjytls2kwlj7626sd";
+    const VALUE_WITH_LEADING_ZEROES_DIGEST: &str = "v8lf0c11xh8ymlqztfd3eeq16kfn4sspw7fqmnuuq3k3t75em5wdizgcdw7uc26nnf961u2jkfzkjytls2kwlj7626sd";
 
     #[test]
     fn test_calculate_value_digest_basic() {

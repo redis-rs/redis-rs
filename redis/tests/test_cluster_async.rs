@@ -6,8 +6,8 @@ mod cluster_async {
     use std::{
         collections::HashMap,
         sync::{
-            atomic::{self, AtomicBool, AtomicI32, AtomicU16, AtomicU32, Ordering},
             Arc, LazyLock,
+            atomic::{self, AtomicBool, AtomicI32, AtomicU16, AtomicU32, Ordering},
         },
         time::Duration,
     };
@@ -16,13 +16,13 @@ mod cluster_async {
     use futures_time::{future::FutureExt, task::sleep};
 
     use redis::{
+        AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo, ProtocolVersion, RedisError,
+        RedisFuture, RedisResult, Script, ServerErrorKind, Value,
         aio::{ConnectionLike, MultiplexedConnection},
         cluster::ClusterClient,
         cluster_async::Connect,
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
-        cmd, from_redis_value, parse_redis_value, pipe, AsyncCommands, Cmd, ErrorKind, InfoDict,
-        IntoConnectionInfo, ProtocolVersion, RedisError, RedisFuture, RedisResult, Script,
-        ServerErrorKind, Value,
+        cmd, from_redis_value, parse_redis_value, pipe,
     };
     use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
     use redis_test::server::use_protocol;
@@ -664,8 +664,8 @@ mod cluster_async {
     }
 
     #[test]
-    fn test_cluster_async_can_connect_to_server_that_sends_cluster_slots_with_partial_nodes_with_unknown_host_name(
-    ) {
+    fn test_cluster_async_can_connect_to_server_that_sends_cluster_slots_with_partial_nodes_with_unknown_host_name()
+     {
         let name = "test_cluster_async_can_connect_to_server_that_sends_cluster_slots_with_partial_nodes_with_unknown_host_name";
 
         let MockEnv {
@@ -2095,8 +2095,8 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn async_cluster_reconnect_after_complete_server_disconnect_route_to_many(
-    ) -> RedisResult<()> {
+    async fn async_cluster_reconnect_after_complete_server_disconnect_route_to_many()
+    -> RedisResult<()> {
         let cluster = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
             builder.retries(3)
         });
@@ -2336,7 +2336,7 @@ mod cluster_async {
     }
 
     mod pubsub {
-        use redis::{cluster_async::ClusterConnection, PushInfo, PushKind};
+        use redis::{PushInfo, PushKind, cluster_async::ClusterConnection};
         use tokio::{join, sync::mpsc::UnboundedReceiver};
 
         use super::*;
@@ -2969,12 +2969,16 @@ mod cluster_async {
             {
                 redis::ConnectionAddr::TcpTls { .. } => {
                     if connection.is_ok() {
-                        panic!("Must NOT be able to connect without client credentials if server accepts TLS");
+                        panic!(
+                            "Must NOT be able to connect without client credentials if server accepts TLS"
+                        );
                     }
                 }
                 _ => {
                     if let Err(e) = connection {
-                        panic!("Must be able to connect without client credentials if server does NOT accept TLS: {e:?}");
+                        panic!(
+                            "Must be able to connect without client credentials if server does NOT accept TLS: {e:?}"
+                        );
                     }
                 }
             }

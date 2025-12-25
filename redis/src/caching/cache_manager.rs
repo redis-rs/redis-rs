@@ -1,7 +1,7 @@
 use super::cmd::{CacheableCommand, CacheablePipeline, MultipleCachedCommandPart};
 use super::sharded_lru::*;
 use super::{CacheConfig, CacheMode, CacheStatistics};
-use crate::cmd::{cmd_len, Cmd};
+use crate::cmd::{Cmd, cmd_len};
 use crate::{FromRedisValue, Pipeline, PushKind, Value};
 use std::cmp::min;
 use std::ops::Add;

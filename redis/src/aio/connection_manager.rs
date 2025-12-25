@@ -2,6 +2,7 @@ use super::{AsyncPushSender, HandleContainer, RedisFuture};
 #[cfg(feature = "cache-aio")]
 use crate::caching::CacheManager;
 use crate::{
+    AsyncConnectionConfig, Client, Cmd, Pipeline, PushInfo, PushKind, ToRedisArgs,
     aio::{ConnectionLike, MultiplexedConnection, Runtime},
     check_resp3,
     client::{DEFAULT_CONNECTION_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT},
@@ -9,7 +10,6 @@ use crate::{
     errors::RedisError,
     subscription_tracker::{SubscriptionAction, SubscriptionTracker},
     types::{RedisResult, Value},
-    AsyncConnectionConfig, Client, Cmd, Pipeline, PushInfo, PushKind, ToRedisArgs,
 };
 use arc_swap::ArcSwap;
 use backon::{ExponentialBuilder, Retryable};
@@ -17,8 +17,8 @@ use futures_channel::oneshot;
 use futures_util::future::{self, BoxFuture, FutureExt, Shared};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::Mutex;
+use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 type OptionalPushSender = Option<Arc<dyn AsyncPushSender>>;
 
@@ -307,7 +307,7 @@ type SharedRedisFuture<T> = Shared<BoxFuture<'static, RedisResult<T>>>;
 /// Handle a command result. If the connection was dropped, reconnect.
 macro_rules! reconnect_if_dropped {
     ($self:expr, $result:expr, $current:expr) => {
-        if let Err(ref e) = $result {
+        if let Err(e) = $result {
             if e.is_unrecoverable_error() {
                 Self::reconnect(Arc::downgrade(&$self.0), $current);
             }

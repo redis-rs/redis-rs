@@ -1,6 +1,6 @@
 use crate::{
-    cluster_handling::client::ClusterParams, connection::TlsConnParams, Cmd, ConnectionAddr,
-    ConnectionInfo, ErrorKind, RedisConnectionInfo, RedisError, RedisResult, TlsMode,
+    Cmd, ConnectionAddr, ConnectionInfo, ErrorKind, RedisConnectionInfo, RedisError, RedisResult,
+    TlsMode, cluster_handling::client::ClusterParams, connection::TlsConnParams,
 };
 
 use std::str::FromStr;

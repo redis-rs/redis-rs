@@ -21,6 +21,7 @@ redis = "1.0"
 Documentation on the library can be found at
 [docs.rs/redis](https://docs.rs/redis).
 
+
 ## Basic Operation
 
 To open a connection you need to create a client and then to fetch a
@@ -276,7 +277,7 @@ We encourage you to run `clippy` prior to seeking a merge for your work. The lin
 
     $ cargo clippy --all-features --all --tests --examples -- -D clippy::all -D warnings
 
-To run fuzz tests with afl, first install cargo-afl (`cargo install -f afl`),
+To run fuzz tests with afl, first install cargo-afl (`cargo install cargo-afl`),
 then run:
 
     $ make fuzz

@@ -1,8 +1,8 @@
-use redis::sentinel::SentinelNodeConnectionInfo;
 use redis::ConnectionAddr;
 use redis::ConnectionInfo;
 use redis::TlsMode;
-use redis_test::sentinel::{wait_for_master_server, wait_for_replica, RedisSentinelCluster};
+use redis::sentinel::SentinelNodeConnectionInfo;
+use redis_test::sentinel::{RedisSentinelCluster, wait_for_master_server, wait_for_replica};
 use redis_test::server::RedisServer;
 
 use crate::support::start_tls_crypto_provider;

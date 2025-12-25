@@ -8,8 +8,8 @@ use std::{
 
 use crate::errors::RetryMethod;
 use crate::{
-    cluster_async::OperationTarget, cluster_handling::client::RetryParams,
-    cluster_routing::Redirect, Cmd, RedisResult,
+    Cmd, RedisResult, cluster_async::OperationTarget, cluster_handling::client::RetryParams,
+    cluster_routing::Redirect,
 };
 
 use futures_util::{future::BoxFuture, ready};
@@ -18,8 +18,8 @@ use pin_project_lite::pin_project;
 use tokio::sync::oneshot;
 
 use super::{
-    routing::{InternalRoutingInfo, InternalSingleNodeRouting},
     OperationResult, PollFlushAction, Response,
+    routing::{InternalRoutingInfo, InternalSingleNodeRouting},
 };
 
 #[derive(Clone)]
@@ -332,9 +332,10 @@ mod tests {
     use tokio::sync::oneshot;
 
     use crate::{
-        cluster_async::{routing, PollFlushAction},
+        RedisError, RedisResult,
+        cluster_async::{PollFlushAction, routing},
         cluster_handling::client::RetryParams,
-        parse_redis_value, RedisError, RedisResult,
+        parse_redis_value,
     };
 
     use super::*;

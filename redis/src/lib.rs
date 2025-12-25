@@ -637,17 +637,17 @@ pub use crate::client::AsyncConnectionConfig;
 pub use crate::client::Client;
 #[cfg(feature = "cache-aio")]
 pub use crate::cmd::CommandCacheConfig;
-pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter};
+pub use crate::cmd::{Arg, Cmd, Iter, cmd, pack_command, pipe};
 pub use crate::commands::{
     Commands, ControlFlow, CopyOptions, Direction, FlushAllOptions, FlushDbOptions,
     HashFieldExpirationOptions, LposOptions, MSetOptions, PubSubCommands, ScanOptions, SetOptions,
     SortedSetAddOptions, TypedCommands, UpdateCheck,
 };
 pub use crate::connection::{
-    parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
-    IntoConnectionInfo, Msg, PubSub, RedisConnectionInfo, TlsMode,
+    Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, IntoConnectionInfo, Msg, PubSub,
+    RedisConnectionInfo, TlsMode, parse_redis_url, transaction,
 };
-pub use crate::parser::{parse_redis_value, Parser};
+pub use crate::parser::{Parser, parse_redis_value};
 pub use crate::pipeline::Pipeline;
 
 #[cfg(feature = "script")]
@@ -693,8 +693,8 @@ pub use crate::types::{
 pub use crate::types::{calculate_value_digest, is_valid_16_bytes_hex_digest};
 
 pub use crate::errors::{
-    make_extension_error, ErrorKind, ParsingError, RedisError, RetryMethod, ServerError,
-    ServerErrorKind,
+    ErrorKind, ParsingError, RedisError, RetryMethod, ServerError, ServerErrorKind,
+    make_extension_error,
 };
 
 #[cfg(feature = "aio")]

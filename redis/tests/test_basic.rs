@@ -9,19 +9,18 @@ mod basic {
     use assert_approx_eq::assert_approx_eq;
     use rand::distr::Alphanumeric;
     use rand::prelude::IndexedRandom;
-    use rand::{rng, Rng};
+    use rand::{Rng, rng};
 
-    use redis::{calculate_value_digest, is_valid_16_bytes_hex_digest};
     use redis::{
-        cmd, Client, Connection, ConnectionInfo, ConnectionLike, ControlFlow, CopyOptions,
-        ErrorKind, ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck,
-        HashFieldExpirationOptions,
+        Client, Connection, ConnectionInfo, ConnectionLike, ControlFlow, CopyOptions, ErrorKind,
+        ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, HashFieldExpirationOptions,
         IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply},
         MSetOptions, ProtocolVersion, PubSubCommands, PushInfo, PushKind, RedisConnectionInfo,
         RedisResult, Role, ScanOptions, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs,
-        TypedCommands, UpdateCheck, Value, ValueComparison, ValueType,
+        TypedCommands, UpdateCheck, Value, ValueComparison, ValueType, cmd,
     };
     use redis::{RedisError, ServerErrorKind};
+    use redis::{calculate_value_digest, is_valid_16_bytes_hex_digest};
 
     #[cfg(feature = "vector-sets")]
     use redis::vector_sets::{
@@ -1363,7 +1362,10 @@ mod basic {
 
         let res = pipe.exec(&mut con);
         let error_message = res.unwrap_err().to_string();
-        assert_eq!(&error_message, "Pipeline failure: [(Index 1, error: \"WRONGTYPE\": Operation against a key holding the wrong kind of value)]");
+        assert_eq!(
+            &error_message,
+            "Pipeline failure: [(Index 1, error: \"WRONGTYPE\": Operation against a key holding the wrong kind of value)]"
+        );
     }
 
     #[test]
@@ -3176,25 +3178,28 @@ mod basic {
         let opts = MSetOptions::default().conditional_set(ExistenceCheck::NX);
 
         // Test 1: Setting multiple keys with NX should succeed when none of them exists
-        assert!(con
-            .mset_ex(&[(key1, initial_value1), (key2, initial_value2)], opts)
-            .unwrap());
+        assert!(
+            con.mset_ex(&[(key1, initial_value1), (key2, initial_value2)], opts)
+                .unwrap()
+        );
         // Verify that the keys were set
         assert_eq!(con.get(key1), Ok(Some(initial_value1.to_string())));
         assert_eq!(con.get(key2), Ok(Some(initial_value2.to_string())));
 
         // Test 2: Setting the same keys with NX should fail
-        assert!(!con
-            .mset_ex(&[(key1, updated_value1), (key2, updated_value2)], opts)
-            .unwrap());
+        assert!(
+            !con.mset_ex(&[(key1, updated_value1), (key2, updated_value2)], opts)
+                .unwrap()
+        );
         // Verify that the values were not changed
         assert_eq!(con.get(key1), Ok(Some(initial_value1.to_string())));
         assert_eq!(con.get(key2), Ok(Some(initial_value2.to_string())));
 
         // Test 3: Setting keys with NX should fail when there is an existing one among them
-        assert!(!con
-            .mset_ex(&[(key1, updated_value1), (key3, initial_value3)], opts)
-            .unwrap());
+        assert!(
+            !con.mset_ex(&[(key1, updated_value1), (key3, initial_value3)], opts)
+                .unwrap()
+        );
         // Verify that key3 was not created
         assert!(!con.exists(key3).unwrap());
     }
@@ -3218,31 +3223,35 @@ mod basic {
 
         // Test 1: Setting keys with XX should fail when they don't exist
         let opts = MSetOptions::default().conditional_set(ExistenceCheck::XX);
-        assert!(!con
-            .mset_ex(&[(key1, initial_value1), (key2, initial_value2)], opts)
-            .unwrap());
+        assert!(
+            !con.mset_ex(&[(key1, initial_value1), (key2, initial_value2)], opts)
+                .unwrap()
+        );
         assert!(!con.exists(key1).unwrap());
         assert!(!con.exists(key2).unwrap());
 
         // Create the keys with their initial values
         let opts = opts.conditional_set(ExistenceCheck::NX);
-        assert!(con
-            .mset_ex(&[(key1, initial_value1), (key2, initial_value2)], opts)
-            .unwrap());
+        assert!(
+            con.mset_ex(&[(key1, initial_value1), (key2, initial_value2)], opts)
+                .unwrap()
+        );
 
         let opts = opts.conditional_set(ExistenceCheck::XX);
         // Test 2: Updating existing keys with XX should succeed
-        assert!(con
-            .mset_ex(&[(key1, updated_value1), (key2, updated_value2)], opts)
-            .unwrap());
+        assert!(
+            con.mset_ex(&[(key1, updated_value1), (key2, updated_value2)], opts)
+                .unwrap()
+        );
         // Verify that the values were updated
         assert_eq!(con.get(key1), Ok(Some(updated_value1.to_string())));
         assert_eq!(con.get(key2), Ok(Some(updated_value2.to_string())));
 
         // Test 3: Setting keys with XX should fail when there is a non-existing one among them
-        assert!(!con
-            .mset_ex(&[(key1, updated_value1), (key3, initial_value3)], opts)
-            .unwrap());
+        assert!(
+            !con.mset_ex(&[(key1, updated_value1), (key3, initial_value3)], opts)
+                .unwrap()
+        );
 
         // Verify key1 was not changed and key3 was not created
         assert_eq!(con.get(key1), Ok(Some(updated_value1.to_string())));
@@ -3298,9 +3307,10 @@ mod basic {
             let opts = opts
                 .conditional_set(*existence_check)
                 .with_expiration(*expiry);
-            assert!(con
-                .mset_ex(&[key_values[i], key_values[i + 1]], opts)
-                .unwrap());
+            assert!(
+                con.mset_ex(&[key_values[i], key_values[i + 1]], opts)
+                    .unwrap()
+            );
             assert_eq!(
                 con.mget((key_values[i].0, key_values[i + 1].0)),
                 Ok(vec![
@@ -3821,10 +3831,9 @@ mod basic {
                 assert_eq!(results_map.len(), elements_count);
                 // Find the point of interest.
                 let point_key = Value::BulkString(point_of_interest.as_bytes().to_vec());
-                let score =
-                    results_map
-                        .iter()
-                        .find_map(|(k, v)| if k == &point_key { Some(v) } else { None });
+                let score = results_map
+                    .iter()
+                    .find_map(|(k, v)| if k == &point_key { Some(v) } else { None });
 
                 assert!(
                     score.is_some(),
@@ -4011,8 +4020,10 @@ mod basic {
 
             for (i, layer) in layers.iter().enumerate() {
                 println!("Layer {i}: {layer:?}");
-                assert!(matches!(layer, Value::Array(_)),
-                    "[VLINKS] Expected an array result representing the links in layer {i}, got {layer:?}");
+                assert!(
+                    matches!(layer, Value::Array(_)),
+                    "[VLINKS] Expected an array result representing the links in layer {i}, got {layer:?}"
+                );
             }
         } else {
             panic!("[VLINKS] Expected an array result representing the layers, got {links:?}");
@@ -4038,8 +4049,10 @@ mod basic {
                     .zip(layers_without_scores.iter())
                     .enumerate()
                 {
-                    assert!(matches!(layer_with_scores, Value::Array(_) | Value::Map(_)),
-                        "[VLINKS WITH SCORES] Expected an array or map result representing the links in layer {i} along with their scores, got {layer_with_scores:?}");
+                    assert!(
+                        matches!(layer_with_scores, Value::Array(_) | Value::Map(_)),
+                        "[VLINKS WITH SCORES] Expected an array or map result representing the links in layer {i} along with their scores, got {layer_with_scores:?}"
+                    );
 
                     println!("Layer {i} without scores: {layer_without_scores:?}");
                     println!("Layer {i} with scores: {layer_with_scores:?}");
@@ -4067,13 +4080,17 @@ mod basic {
                             );
                         }
                         _ => {
-                            panic!("[VLINKS WITH SCORES] Unexpected format combination for layer {i}: {layer_with_scores:?} and {layer_without_scores:?}");
+                            panic!(
+                                "[VLINKS WITH SCORES] Unexpected format combination for layer {i}: {layer_with_scores:?} and {layer_without_scores:?}"
+                            );
                         }
                     }
                 }
             }
         } else {
-            panic!("[VLINKS WITH SCORES] Expected an array result representing the layers, got {links_with_scores:?}");
+            panic!(
+                "[VLINKS WITH SCORES] Expected an array result representing the layers, got {links_with_scores:?}"
+            );
         }
 
         // VRANDMEMBER testing section

@@ -132,18 +132,18 @@ use rand::Rng;
 use std::sync::Mutex;
 use std::{collections::HashMap, num::NonZeroUsize};
 
+#[cfg(feature = "tls-rustls")]
+use crate::TlsCertificates;
 #[cfg(feature = "aio")]
 use crate::aio::MultiplexedConnection;
 #[cfg(feature = "aio")]
 use crate::client::AsyncConnectionConfig;
 #[cfg(feature = "tls-rustls")]
 use crate::tls::retrieve_tls_certificates;
-#[cfg(feature = "tls-rustls")]
-use crate::TlsCertificates;
 use crate::{
-    cmd, connection::ConnectionInfo, errors::ServerErrorKind, types::RedisResult, Client, Cmd,
-    Connection, ConnectionAddr, ErrorKind, FromRedisValue, IntoConnectionInfo, ProtocolVersion,
-    RedisConnectionInfo, RedisError, Role, TlsMode,
+    Client, Cmd, Connection, ConnectionAddr, ErrorKind, FromRedisValue, IntoConnectionInfo,
+    ProtocolVersion, RedisConnectionInfo, RedisError, Role, TlsMode, cmd,
+    connection::ConnectionInfo, errors::ServerErrorKind, types::RedisResult,
 };
 
 /// The Sentinel type, serves as a special purpose client which builds other clients on
@@ -1401,9 +1401,9 @@ impl SentinelClientBuilder {
                 ConnectionAddr::TcpTls {
                     host: _,
                     port: _,
-                    ref mut insecure,
+                    insecure,
                     #[cfg(feature = "tls-rustls")]
-                    ref mut tls_params,
+                    tls_params,
                     #[cfg(not(feature = "tls-rustls"))]
                         tls_params: _,
                 } => {

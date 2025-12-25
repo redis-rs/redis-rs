@@ -5,11 +5,11 @@ use crate::caching::{CacheConfig, CacheManager};
 use crate::client::DEFAULT_CONNECTION_TIMEOUT;
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::errors::{ErrorKind, RedisError};
-use crate::io::tcp::TcpSettings;
 #[cfg(feature = "cluster-async")]
 use crate::io::AsyncDNSResolver;
+use crate::io::tcp::TcpSettings;
 use crate::types::{ProtocolVersion, RedisResult};
-use crate::{cluster, TlsMode};
+use crate::{TlsMode, cluster};
 use arcstr::ArcStr;
 use rand::Rng;
 #[cfg(feature = "cluster-async")]
@@ -22,7 +22,7 @@ use crate::connection::TlsConnParams;
 use crate::cluster_async;
 
 #[cfg(feature = "tls-rustls")]
-use crate::tls::{retrieve_tls_certificates, TlsCertificates};
+use crate::tls::{TlsCertificates, retrieve_tls_certificates};
 
 /// Parameters specific to builder, so that
 /// builder parameters may have different types
@@ -229,7 +229,7 @@ impl ClusterClientBuilder {
                 return Err(RedisError::from((
                     ErrorKind::InvalidClientConfig,
                     "Initial nodes can't be empty.",
-                )))
+                )));
             }
         };
 
@@ -266,8 +266,10 @@ impl ClusterClientBuilder {
         // Verify that the initial nodes match the cluster client's configuration.
         for node in &initial_nodes {
             if let ConnectionAddr::Unix(_) = node.addr {
-                return Err(RedisError::from((ErrorKind::InvalidClientConfig,
-                                             "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
+                return Err(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.",
+                )));
             }
 
             if password.is_some() && node.redis.password.as_deref() != password.as_deref() {

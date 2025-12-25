@@ -2,10 +2,10 @@
 
 #[cfg(feature = "cache-aio")]
 use crate::cmd::CommandCacheConfig;
-use crate::cmd::{cmd, cmd_len, Cmd};
+use crate::cmd::{Cmd, cmd, cmd_len};
 use crate::connection::ConnectionLike;
 use crate::errors::ErrorKind;
-use crate::types::{from_redis_value, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value};
+use crate::types::{FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value, from_redis_value};
 
 /// Represents a redis command pipeline.
 #[derive(Clone)]
@@ -422,8 +422,9 @@ impl Pipeline {
 #[cfg(test)]
 mod tests {
     use crate::{
+        ServerErrorKind,
         errors::{RedisError, Repr, ServerError},
-        pipe, ServerErrorKind,
+        pipe,
     };
 
     use super::*;
@@ -478,8 +479,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(result[0], Ok::<Value, RedisError>(Value::Okay));
-        assert!(result[1]
-            .clone()
-            .is_err_and(|e| e.to_string().contains("CrossSlot")))
+        assert!(
+            result[1]
+                .clone()
+                .is_err_and(|e| e.to_string().contains("CrossSlot"))
+        )
     }
 }

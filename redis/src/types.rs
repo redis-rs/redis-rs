@@ -952,7 +952,9 @@ pub trait RedisWrite {
             }
 
             unsafe fn advance_mut(&mut self, cnt: usize) {
-                self.buf.advance_mut(cnt);
+                unsafe {
+                    self.buf.advance_mut(cnt);
+                }
             }
 
             fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {
@@ -1951,8 +1953,8 @@ macro_rules! from_vec_from_redis_value {
                         ),
                     },
                     Value::Array(items) => FromRedisValue::from_redis_value_refs(items).map($convert),
-                    Value::Set(ref items) => FromRedisValue::from_redis_value_refs(items).map($convert),
-                    Value::Map(ref items) => {
+                    Value::Set(items) => FromRedisValue::from_redis_value_refs(items).map($convert),
+                    Value::Map(items) => {
                         let mut n: Vec<T> = vec![];
                         for item in items {
                             match FromRedisValue::from_redis_value_ref(&Value::Map(vec![item.clone()])) {

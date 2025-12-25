@@ -2,8 +2,8 @@
 
 use std::collections::HashSet;
 
-use redis::acl::{AclInfo, Rule};
 use redis::TypedCommands;
+use redis::acl::{AclInfo, Rule};
 
 mod support;
 use crate::support::*;

@@ -105,6 +105,8 @@ use std::{
 mod request;
 mod routing;
 use crate::{
+    AsyncConnectionConfig, Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError,
+    RedisFuture, RedisResult, ToRedisArgs, Value,
     aio::{ConnectionLike, HandleContainer, MultiplexedConnection, Runtime},
     check_resp3,
     cluster_handling::{
@@ -120,13 +122,11 @@ use crate::{
     cmd,
     errors::closed_connection_error,
     subscription_tracker::SubscriptionTracker,
-    AsyncConnectionConfig, Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError,
-    RedisFuture, RedisResult, ToRedisArgs, Value,
 };
 
+use crate::ProtocolVersion;
 #[cfg(feature = "cache-aio")]
 use crate::caching::{CacheManager, CacheStatistics};
-use crate::ProtocolVersion;
 use arcstr::ArcStr;
 use futures_util::{
     future::{self, BoxFuture, FutureExt},
@@ -137,8 +137,8 @@ use futures_util::{
 use log::{debug, trace, warn};
 use rand::{rng, seq::IteratorRandom};
 use request::{CmdArg, PendingRequest, Request, RequestState, Retry};
-use routing::{route_for_pipeline, InternalRoutingInfo, InternalSingleNodeRouting};
-use tokio::sync::{mpsc, oneshot, RwLock};
+use routing::{InternalRoutingInfo, InternalSingleNodeRouting, route_for_pipeline};
+use tokio::sync::{RwLock, mpsc, oneshot};
 
 struct ClientSideState {
     protocol: ProtocolVersion,
@@ -1109,7 +1109,7 @@ where
         Ok(connections)
     }
 
-    fn reconnect_to_initial_nodes(&mut self) -> impl Future<Output = RedisResult<()>> {
+    fn reconnect_to_initial_nodes(&mut self) -> impl Future<Output = RedisResult<()>> + use<C> {
         debug!("Received request to reconnect to initial nodes");
         let inner = self.inner.clone();
         async move {
@@ -1125,7 +1125,7 @@ where
         }
     }
 
-    fn refresh_connections(&mut self, addrs: Vec<ArcStr>) -> impl Future<Output = ()> {
+    fn refresh_connections(&mut self, addrs: Vec<ArcStr>) -> impl Future<Output = ()> + use<C> {
         let inner = self.inner.clone();
         async move {
             let mut write_guard = inner.conn_lock.write().await;
@@ -1154,7 +1154,7 @@ where
             ConnectionState::Recover(future) => future,
         };
         let res = match recover_future {
-            RecoverFuture::RecoverSlots(ref mut future) => match ready!(future.as_mut().poll(cx)) {
+            RecoverFuture::RecoverSlots(future) => match ready!(future.as_mut().poll(cx)) {
                 Ok(_) => {
                     trace!("Recovered!");
                     self.state = ConnectionState::PollComplete;
@@ -1166,7 +1166,7 @@ where
                     Err(err)
                 }
             },
-            RecoverFuture::Reconnect(ref mut future) => {
+            RecoverFuture::Reconnect(future) => {
                 match ready!(future.as_mut().poll(cx)) {
                     Err(err) => warn!("Can't reconnect to initial nodes: `{err}`"),
                     Ok(()) => trace!("Reconnected connections"),
