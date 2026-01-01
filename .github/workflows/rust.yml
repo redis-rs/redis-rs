@@ -37,7 +37,7 @@ jobs:
       - name: Cache RedisJSON
         if: matrix.config.json-module-version != ''
         id: cache-redisjson
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             /tmp/librejson.so
@@ -132,7 +132,7 @@ jobs:
       - name: Cache RedisJSON
         if: matrix.config.json-module-version != ''
         id: cache-redisjson-save
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: ${{ env.REDIS_RS_REDIS_JSON_PATH }}
           key: ${{ runner.os }}-redisjson-${{ matrix.config.json-module-version }}          
