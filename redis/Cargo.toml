@@ -166,7 +166,7 @@ criterion = "0.7"
 partial-io = { version = "0.5", features = ["tokio", "quickcheck1"] }
 quickcheck = "1.0.3"
 tokio = { workspace = true }
-tempfile = "3.23.0"
+tempfile = "3.24.0"
 anyhow = "1"
 redis-test = { path = "../redis-test" }
 rstest = "0.26"
