@@ -8,6 +8,8 @@ use std::path::PathBuf;
 use std::str::{FromStr, from_utf8};
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "token-based-authentication")]
+use crate::StreamingCredentialsProvider;
 use crate::cmd::{Cmd, cmd, pipe};
 use crate::errors::{ErrorKind, RedisError, ServerError, ServerErrorKind};
 use crate::io::tcp::{TcpSettings, stream_with_settings};
@@ -17,8 +19,6 @@ use crate::types::{
     FromRedisValue, HashMap, PushKind, RedisResult, SyncPushSender, ToRedisArgs, Value,
     from_redis_value_ref,
 };
-#[cfg(feature = "token-based-authentication")]
-use crate::StreamingCredentialsProvider;
 use crate::{ProtocolVersion, check_resp3, from_redis_value};
 
 #[cfg(unix)]

@@ -1,6 +1,6 @@
 #![allow(unused_parens)]
 
-use crate::cmd::{cmd, Cmd, Iter};
+use crate::cmd::{Cmd, Iter, cmd};
 use crate::connection::{Connection, ConnectionLike, Msg, RedisConnectionInfo};
 use crate::pipeline::Pipeline;
 use crate::types::{

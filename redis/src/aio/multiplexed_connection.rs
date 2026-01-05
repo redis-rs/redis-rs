@@ -579,9 +579,9 @@ impl MultiplexedConnection {
         let connection_info = connection_info.clone();
 
         #[cfg(feature = "token-based-authentication")]
-        if let Some(ref cp) = connection_info.credentials_provider {
+        if let Some(ref credentials_provider) = connection_info.credentials_provider {
             // Retrieve the initial credentials from the provider and apply them to the connection info
-            match cp.subscribe().next().await {
+            match credentials_provider.subscribe().next().await {
                 Some(Ok(credentials)) => {
                     connection_info.username = Some(ArcStr::from(credentials.username));
                     connection_info.password = Some(ArcStr::from(credentials.password));
@@ -591,7 +591,7 @@ impl MultiplexedConnection {
                     return Err(err);
                 }
                 None => {
-                    println!("Credential stream closed");
+                    unreachable!("Credential stream closed");
                 }
             }
         }
@@ -668,7 +668,8 @@ impl MultiplexedConnection {
                 }
                 println!("Re-authentication stream ended");
             });
-            con.set_credentials_subscription_task_handle(subscription_task_handle);
+            con._credentials_subscription_task_handle =
+                Some(SharedHandleContainer::new(subscription_task_handle));
         }
 
         Ok((con, driver))
@@ -678,12 +679,6 @@ impl MultiplexedConnection {
     /// Otherwise some clones will be able to kill the backing task, while other clones are still alive.
     pub(crate) fn set_task_handle(&mut self, handle: TaskHandle) {
         self._task_handle = Some(SharedHandleContainer::new(handle));
-    }
-
-    /// This function sets the handle for the credentials subscription task when a credentials provider is used.
-    #[cfg(feature = "token-based-authentication")]
-    fn set_credentials_subscription_task_handle(&mut self, handle: TaskHandle) {
-        self._credentials_subscription_task_handle = Some(SharedHandleContainer::new(handle));
     }
 
     /// Sets the time that the multiplexer will wait for responses on operations before failing.

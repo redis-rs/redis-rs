@@ -1,17 +1,51 @@
 //! Azure Entra ID authentication support for Redis
 //!
-//! This module provides token-based authentication using Azure Entra ID (formerly Azure Active Directory).
-//! It supports multiple credential types including DeveloperToolsCredential, service principals,
-//! managed identities, as well as custom `TokenCredential` implementations.
+//! This module provides token-based authentication using Azure Entra ID (formerly Azure Active Directory),
+//! enabling secure, dynamic authentication for Redis connections with automatic token refresh and
+//! streaming credentials support.
+//!
+//! # Overview
+//!
+//! Token-based authentication allows you to authenticate to Redis using Azure Entra ID tokens instead
+//! of static passwords. This provides several benefits:
+//!
+//! - **Enhanced Security**: Tokens have limited lifetimes and can be automatically refreshed
+//! - **Centralized Identity Management**: Leverage Azure Entra ID for user and service authentication
+//! - **Audit and Compliance**: Better tracking and auditing of authentication events
+//! - **Zero-Trust Architecture**: Support for modern security models
 //!
 //! # Features
 //!
+//! - **Automatic Token Refresh & Streaming of Credentials**: Seamlessly handle token expiration and stream updated credentials to prevent connection errors due to token expiration
 //! - **Multiple Authentication Flows**: Service principals, managed identities, and custom `TokenCredential` implementations
-//! - **Automatic Token Refresh**: Background token refresh with configurable policies
-//! - **Retry Logic**: Robust error handling with exponential backoff
-//! - **Async Support**: Full async/await support for non-blocking operations
+//! - **Configurable Refresh Policies**: Customizable refresh thresholds and retry behavior via [`RetryConfig`]
+//! - **Async-First Design**: Full async/await support for non-blocking operations with seamless integration for multiplexed connections
 //!
-//! # Example
+//! # Architecture
+//!
+//! ## Streaming Credentials Pattern
+//!
+//! 1. The [`EntraIdCredentialsProvider`] implements the [`StreamingCredentialsProvider`] trait, which allows clients to subscribe to a stream of credentials.
+//! 2. An [`EntraIdCredentialsProvider`] can be created with one of the public constructors. Each of them creates a specific `TokenCredential` implementation from the `azure_identity` crate.
+//! 3. The [`EntraIdCredentialsProvider`] must be started by calling its `start()` method, which begins a background task for token refresh.
+//! 4. The [`Client`] holds a [`StreamingCredentialsProvider`] and uses it to authenticate connections.
+//! 5. A [`Client`] can be instantiated with a credentials provider via the [`Client::open_with_credentials_provider()`] constructor. A credentials provider can also be added to an existing client using the client's `with_credentials_provider()` function.
+//! 6. The [`EntraIdCredentialsProvider`] keeps the current token and provides it to a [`Client`] when it establishes a new multiplexed connection. Before the connection gets established, it creates a background task, which subscribes for credential updates.
+//! 7. When the token is refreshed, the [`EntraIdCredentialsProvider`] notifies all subscribers with the new credentials.
+//! 8. When a subscriber receives the new credentials, it uses them to re-authenticate itself.
+//!
+//! # Quick Start
+//!
+//! ## Enable the Feature
+//!
+//! Add the `entra-id` feature to your `Cargo.toml`:
+//!
+//! ```toml
+//! [dependencies]
+//! redis = { version = "0.32.7", features = ["entra-id", "tokio-comp"] }
+//! ```
+//!
+//! ## Basic Usage with DeveloperToolsCredential
 //!
 //! ```rust,no_run
 //! use redis::{Client, EntraIdCredentialsProvider, RetryConfig};
@@ -41,13 +75,174 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! # Authentication Flows
+//!
+//! ## DeveloperToolsCredential (Recommended for Development)
+//!
+//! The `DeveloperToolsCredential` (from `azure_identity`) tries the following credential types, in this order, stopping when one provides a token:
+//! * `AzureCliCredential`
+//! * `AzureDeveloperCliCredential`
+//!
+//! ```rust,no_run
+//! # use redis::{EntraIdCredentialsProvider, RetryConfig, RedisResult};
+//! # fn example() -> RedisResult<()> {
+//! let mut provider = EntraIdCredentialsProvider::new_developer_tools()?;
+//! provider.start(RetryConfig::default());
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Service Principal with Client Secret
+//!
+//! For production applications:
+//!
+//! ```rust,no_run
+//! # use redis::{EntraIdCredentialsProvider, RetryConfig, RedisResult};
+//! # fn example() -> RedisResult<()> {
+//! let mut provider = EntraIdCredentialsProvider::new_client_secret(
+//!     "your-tenant-id".to_string(),
+//!     "your-client-id".to_string(),
+//!     "your-client-secret".to_string(),
+//! )?;
+//! provider.start(RetryConfig::default());
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Service Principal with Certificate
+//!
+//! For enhanced security:
+//!
+//! ```rust,no_run
+//! # use redis::{ClientCertificate, EntraIdCredentialsProvider, RetryConfig, RedisResult};
+//! # use std::fs;
+//! # fn example() -> RedisResult<()> {
+//! // Load certificate from file
+//! let certificate_base64 = fs::read_to_string("path/to/base64_pkcs12_certificate")
+//!     .expect("Base64 PKCS12 certificate not found.")
+//!     .trim()
+//!     .to_string();
+//!
+//! // Create the credentials provider using service principal with client certificate
+//! let mut provider = EntraIdCredentialsProvider::new_client_certificate(
+//!     "your-tenant-id".to_string(),
+//!     "your-client-id".to_string(),
+//!     ClientCertificate {
+//!         base64_pkcs12: certificate_base64, // Base64 encoded PKCS12 data
+//!         password: None,
+//!     },
+//! )?;
+//! provider.start(RetryConfig::default());
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Managed Identity
+//!
+//! For Azure-hosted applications:
+//!
+//! ```rust,no_run
+//! # use redis::{EntraIdCredentialsProvider, RetryConfig, RedisResult};
+//! # fn example() -> RedisResult<()> {
+//! // System-assigned managed identity
+//! let mut provider = EntraIdCredentialsProvider::new_system_assigned_managed_identity()?;
+//! provider.start(RetryConfig::default());
+//!
+//! // User-assigned managed identity
+//! let mut provider = EntraIdCredentialsProvider::new_user_assigned_managed_identity()?;
+//! provider.start(RetryConfig::default());
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! For user-assigned managed identity with custom scopes and identity specification:
+//!
+//! ```rust,no_run
+//! # use redis::{EntraIdCredentialsProvider, RetryConfig, RedisResult};
+//! # use azure_identity::{ManagedIdentityCredentialOptions, UserAssignedId};
+//! # fn example() -> RedisResult<()> {
+//! let mut provider = EntraIdCredentialsProvider::new_user_assigned_managed_identity_with_scopes(
+//!     vec!["your-scope".to_string()],
+//!     Some(ManagedIdentityCredentialOptions {
+//!         // Specify the user-assigned identity using one of:
+//!         user_assigned_id: Some(UserAssignedId::ClientId("your-client-id".to_string())),
+//!         // or: user_assigned_id: Some(UserAssignedId::ObjectId("your-object-id".to_string())),
+//!         // or: user_assigned_id: Some(UserAssignedId::ResourceId("your-resource-id".to_string())),
+//!         ..Default::default()
+//!     }),
+//! )?;
+//! provider.start(RetryConfig::default());
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Advanced Configuration
+//!
+//! ## Token Refresh with Custom Configuration
+//!
+//! The token refresh behavior can be customized by providing a [`RetryConfig`] when starting the provider:
+//!
+//! ```rust,no_run
+//! # use redis::{EntraIdCredentialsProvider, RetryConfig, RedisResult};
+//! # use std::time::Duration;
+//! # fn example() -> RedisResult<()> {
+//! let mut provider = EntraIdCredentialsProvider::new_developer_tools()?;
+//!
+//! let retry_config = RetryConfig::default()
+//!     .set_max_attempts(3)
+//!     .set_initial_delay(Duration::from_millis(100))
+//!     .set_max_delay(Duration::from_secs(30))
+//!     .set_backoff_multiplier(2.0)
+//!     .set_jitter_percentage(0.1);
+//!
+//! provider.start(retry_config);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Error Handling
+//!
+//! The library provides comprehensive error handling for authentication and token refresh failures.
+//! The background token refresh service will automatically retry failed token refreshes according to the retry configuration.
+//! Once the maximum number of attempts is reached, the service will stop retrying and the underlying error will be propagated to the subscribers.
+//!
+//! # Best Practices
+//!
+//! ## Use Appropriate Credential Types
+//!
+//! - **Development**: `DeveloperToolsCredential` (from `azure_identity`)
+//! - **Production Services**: Service Principal with certificate
+//! - **Azure-hosted Apps**: Managed Identity
+//!
+//! ## Security Considerations
+//!
+//! - Store client secrets securely (Azure Key Vault, environment variables)
+//! - Use certificates instead of secrets when possible
+//!
+//! # Compatibility
+//!
+//! - **Redis Versions**: Compatible with Redis 6.0+ (ACL support required)
+//! - **Azure Redis**: Fully compatible with Azure Cache for Redis
+//!
+//! # Troubleshooting
+//!
+//! ## Common Issues
+//!
+//! 1. **"Authentication failed"**: Check your credentials and permissions
+//! 2. **"Token expired"**: Ensure automatic refresh is properly configured
+//! 3. **"Connection timeout"**: Check network connectivity and Redis endpoint
+//!
+//! [`Client`]: crate::Client
+//! [`Client::open_with_credentials_provider()`]: crate::Client::open_with_credentials_provider
+//! [`StreamingCredentialsProvider`]: crate::auth::StreamingCredentialsProvider
 
+use crate::RetryConfig;
 use crate::auth::BasicAuth;
 use crate::auth::StreamingCredentialsProvider;
 use crate::auth_management::credentials_management_utils;
 use crate::errors::{ErrorKind, RedisError};
 use crate::types::RedisResult;
-use crate::RetryConfig;
 use azure_core::credentials::{AccessToken, Secret, TokenCredential};
 use azure_identity::{
     ClientCertificateCredential, ClientCertificateCredentialOptions, ClientSecretCredential,
@@ -75,7 +270,7 @@ pub struct ClientCertificate {
     pub password: Option<String>,
 }
 
-type Subscriptions = Vec<Arc<Sender<RedisResult<BasicAuth>>>>;
+type Subscriptions = Vec<Sender<RedisResult<BasicAuth>>>;
 type SharedSubscriptions = Arc<Mutex<Subscriptions>>;
 
 /// Entra ID credentials provider that uses Azure Identity for authentication
@@ -105,26 +300,6 @@ impl EntraIdCredentialsProvider {
                     "Scope cannot be empty or whitespace-only",
                 )));
             }
-
-            // Basic URL validation - should start with https:// and end with /.default
-            // Note: This should be verified because there could possibly be scopes without these properties.
-            // For example custom scopes or OIDC like scopes... Commenting it out for now
-
-            // if !scope.starts_with("https://") {
-            //     return Err(RedisError::from((
-            //         ErrorKind::InvalidClientConfig,
-            //         "Invalid scope: must start with 'https://'",
-            //         format!("Scope: '{scope}'"),
-            //     )));
-            // }
-
-            // if !scope.ends_with("/.default") {
-            //     return Err(RedisError::from((
-            //         ErrorKind::InvalidClientConfig,
-            //         "Invalid scope: must end with '/.default'",
-            //         format!("Scope: '{scope}'"),
-            //     )));
-            // }
         }
 
         Ok(())
@@ -161,10 +336,13 @@ impl EntraIdCredentialsProvider {
         username: &str,
         token_response: Result<AccessToken, azure_core::Error>,
     ) {
-        let subscribers = subscribers_arc
-            .lock()
-            .expect("could not acquire lock for subscribers")
-            .clone();
+        let subscribers = {
+            let mut guard = subscribers_arc
+                .lock()
+                .expect("could not acquire lock for subscribers");
+            guard.retain(|sender| !sender.is_closed());
+            guard.clone()
+        };
 
         futures_util::future::join_all(subscribers.iter().map(|sender| {
             let token_response = token_response.as_ref();
@@ -178,11 +356,6 @@ impl EntraIdCredentialsProvider {
             sender.send(response)
         }))
         .await;
-
-        subscribers_arc
-            .lock()
-            .expect("could not acquire lock for subscribers")
-            .retain(|sender| !sender.is_closed());
     }
 
     /// Start the background refresh service
@@ -194,12 +367,7 @@ impl EntraIdCredentialsProvider {
         F: Fn(&AccessToken) -> std::time::Duration + Send + Sync + 'static,
     {
         // Prevent multiple calls to start
-        if self
-            .background_handle
-            .lock()
-            .expect("mutex poisoned")
-            .is_some()
-        {
+        if self.background_handle.lock().unwrap().is_some() {
             return;
         }
 
@@ -209,7 +377,7 @@ impl EntraIdCredentialsProvider {
         let credential_provider_arc = Arc::clone(&self.credential_provider);
         let scopes = self.scopes.clone();
 
-        *self.background_handle.lock().expect("mutex poisoned") = Some(tokio::spawn(async move {
+        *self.background_handle.lock().unwrap() = Some(tokio::spawn(async move {
             let scopes: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
             let mut next_sleep_duration;
             let mut username = "default".to_string();
@@ -233,7 +401,7 @@ impl EntraIdCredentialsProvider {
                         }
                     };
 
-                    *current_credentials_arc.write().expect("rwlock poisoned") =
+                    *current_credentials_arc.write().unwrap() =
                         Some(Self::convert_credentials(username.clone(), access_token));
 
                     next_sleep_duration = compute_sleep_duration_on_success(access_token);
@@ -245,7 +413,10 @@ impl EntraIdCredentialsProvider {
                             retry_config.backoff_multiplier,
                             retry_config.max_delay,
                         );
-                        println!("An error occurred while refreshing the token. Attempt {attempt}. Sleeping for {:?}", error_delay);
+                        println!(
+                            "An error occurred while refreshing the token. Attempt {attempt}. Sleeping for {:?}",
+                            error_delay
+                        );
                         tokio::time::sleep(error_delay).await;
                         continue;
                     }
@@ -266,12 +437,7 @@ impl EntraIdCredentialsProvider {
 
     /// Stop the background refresh service
     fn stop(&mut self) {
-        if let Some(handle) = self
-            .background_handle
-            .lock()
-            .expect("mutex poisoned")
-            .take()
-        {
+        if let Some(handle) = self.background_handle.lock().unwrap().take() {
             handle.abort();
         }
     }
@@ -509,19 +675,14 @@ impl StreamingCredentialsProvider for EntraIdCredentialsProvider {
 
         self.subscribers
             .lock()
-            .expect("could not acquire guard for subscribers")
-            .push(Arc::new(tx));
+            .expect("could not acquire lock for subscribers")
+            .push(tx);
 
         let stream = futures_util::stream::unfold(rx, |mut rx| async move {
             rx.recv().await.map(|item| (item, rx))
         });
 
-        if let Some(creds) = self
-            .current_credentials
-            .read()
-            .expect("rwlock poisoned")
-            .clone()
-        {
+        if let Some(creds) = self.current_credentials.read().unwrap().clone() {
             futures_util::stream::once(async move { Ok(creds) })
                 .chain(stream)
                 .boxed()
@@ -573,19 +734,23 @@ mod tests {
         // Test empty scopes
         let result = EntraIdCredentialsProvider::new_developer_tools_with_scopes(vec![], None);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Scopes cannot be empty"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Scopes cannot be empty")
+        );
 
         // Test empty string scope
         let result =
             EntraIdCredentialsProvider::new_developer_tools_with_scopes(vec!["".to_string()], None);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Scope cannot be empty"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Scope cannot be empty")
+        );
 
         // Test whitespace-only scope
         let result = EntraIdCredentialsProvider::new_developer_tools_with_scopes(
@@ -593,22 +758,12 @@ mod tests {
             None,
         );
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Scope cannot be empty"));
-
-        /*
-        // Test invalid protocol
-        let result = EntraIdCredentialsProvider::new_developer_tools_with_scopes(vec!["http://invalid.scope/.default".to_string()], None);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("must start with 'https://'"));
-
-        // Test invalid suffix
-        let result = EntraIdCredentialsProvider::new_developer_tools_with_scopes(vec!["https://valid.scope/invalid".to_string()], None);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("must end with '/.default'"));
-        */
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Scope cannot be empty")
+        );
     }
 
     #[test]
@@ -626,10 +781,10 @@ mod tests {
 #[cfg(all(feature = "entra-id", test))]
 mod entra_id_mock_tests {
     use crate::{
-        EntraIdCredentialsProvider, RetryConfig, StreamingCredentialsProvider, REDIS_SCOPE_DEFAULT,
+        EntraIdCredentialsProvider, REDIS_SCOPE_DEFAULT, RetryConfig, StreamingCredentialsProvider,
     };
-    use azure_core::credentials::{AccessToken, Secret, TokenCredential};
     use azure_core::Error as AzureError;
+    use azure_core::credentials::{AccessToken, Secret, TokenCredential};
     use futures_util::StreamExt;
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -806,23 +961,26 @@ mod entra_id_mock_tests {
             mock_credential,
             vec![REDIS_SCOPE_DEFAULT.to_string()],
         );
-        provider.start(RetryConfig {
-            max_attempts: 1, // It's really important to set the max_attempt to one, otherwise the refresh loop will cycle through the error.
-            initial_delay: std::time::Duration::from_millis(10),
-            max_delay: std::time::Duration::from_millis(100),
-            backoff_multiplier: 2.0,
-            jitter_percentage: 0.0,
-        });
+        provider.start(
+            RetryConfig::default()
+                .set_max_attempts(1) // It's really important to set the max_attempt to one, otherwise the refresh loop will cycle through the error.
+                .set_initial_delay(std::time::Duration::from_millis(10))
+                .set_max_delay(std::time::Duration::from_millis(100))
+                .set_backoff_multiplier(2.0)
+                .set_jitter_percentage(0.0),
+        );
 
         // Test that the stream returns an error once the maximum number of retries is reached
         let mut stream = provider.subscribe();
         if let Some(result) = stream.next().await {
             assert!(call_count_ref.load(Ordering::SeqCst) > 0);
             assert!(result.is_err());
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("authentication failed"));
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("authentication failed")
+            );
         }
     }
 
@@ -924,11 +1082,66 @@ mod entra_id_mock_tests {
             result.is_err(),
             "Expected `create_mock_entra_id_credentials_provider` to panic, but it did not."
         );
-        assert!(result
-            .unwrap_err()
-            .downcast_ref::<String>()
-            .unwrap()
-            .contains("Scopes cannot be empty"));
+        assert!(
+            result
+                .unwrap_err()
+                .downcast_ref::<String>()
+                .unwrap()
+                .contains("Scopes cannot be empty")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mock_subscriber_cleanup() {
+        let mock_credential = MockTokenCredential::multiple_tokens();
+
+        let mut provider = create_mock_entra_id_credentials_provider(
+            mock_credential,
+            vec![REDIS_SCOPE_DEFAULT.to_string()],
+        );
+        provider.start(RetryConfig::default());
+
+        let mut stream1 = provider.subscribe();
+        let mut stream2 = provider.subscribe();
+        let mut stream3 = provider.subscribe();
+
+        assert_eq!(provider.subscribers.lock().unwrap().len(), 3);
+
+        let credentials1 = stream1.next().await.unwrap().unwrap();
+        let credentials2 = stream2.next().await.unwrap().unwrap();
+        let credentials3 = stream3.next().await.unwrap().unwrap();
+
+        assert_eq!(credentials1.password, MOCKED_TOKEN_1.as_str());
+        assert_eq!(credentials1.password, credentials2.password);
+        assert_eq!(credentials2.password, credentials3.password);
+
+        // Drop one subscriber (this closes the receiver, which should close the sender)
+        drop(stream3);
+
+        let credentials1 = stream1.next().await.unwrap().unwrap();
+        let credentials2 = stream2.next().await.unwrap().unwrap();
+
+        assert_eq!(credentials1.password, MOCKED_TOKEN_2.as_str());
+        assert_eq!(credentials1.password, credentials2.password);
+
+        assert_eq!(
+            provider.subscribers.lock().unwrap().len(),
+            2,
+            "Dropped subscriber should be removed"
+        );
+
+        drop(stream2);
+
+        assert_eq!(
+            stream1.next().await.unwrap().unwrap().password,
+            MOCKED_TOKEN_3.as_str()
+        );
+
+        assert_eq!(
+            provider.subscribers.lock().unwrap().len(),
+            1,
+            "Only one subscriber should remain"
+        );
     }
 
     #[tokio::test]

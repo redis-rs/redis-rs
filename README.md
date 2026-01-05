@@ -193,8 +193,6 @@ It tries the following credential types, in this order, stopping when one provid
 - Full async/await support for non-blocking operations
 - Seamless integration with multiplexed connections
 
-For detailed documentation and examples, see [redis/docs/token_authentication.md](redis/docs/token_authentication.md).
-
 ## Cluster Support
 
 Support for Redis Cluster can be enabled by enabling the `cluster` feature in your Cargo.toml:

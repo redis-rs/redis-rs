@@ -314,11 +314,11 @@ fn test_acl_sample_info() {
 mod token_based_authentication_acl_tests {
     use crate::support::*;
     use futures_util::{Stream, StreamExt};
+    use redis::AsyncTypedCommands;
+    use redis::RedisResult;
     use redis::aio::ConnectionLike;
     use redis::auth::BasicAuth;
     use redis::auth::StreamingCredentialsProvider;
-    use redis::AsyncTypedCommands;
-    use redis::RedisResult;
     use std::pin::Pin;
     use std::sync::{Arc, Mutex, RwLock};
     use std::time::Duration;
@@ -336,7 +336,7 @@ mod token_based_authentication_acl_tests {
     const TEST_USER: &str = "test";
 
     const ALICE_OID_CLAIM: &str = "a11ce000-7a1c-4a1c-9e11-ace000000001";
-    const ALICE_TOKEN: &str ="alice_mock_jwt_token.eyJvaWQiOiJhMTFjZTAwMC03YTFjLTRhMWMtOWUxMS1hY2UwMDAwMDAwMDEifQ.signature";
+    const ALICE_TOKEN: &str = "alice_mock_jwt_token.eyJvaWQiOiJhMTFjZTAwMC03YTFjLTRhMWMtOWUxMS1hY2UwMDAwMDAwMDEifQ.signature";
     const BOB_OID_CLAIM: &str = "b0b00000-0b01-4b0b-9b0b-0b0000000002";
     const BOB_TOKEN: &str = "bob_mock_jwt_token.eyJvaWQiOiJiMGIwMDAwMC0wYjAxLTRiMGItOWIwYi0wYjAwMDAwMDAwMDIifQ.signature";
     const CHARLIE_OID_CLAIM: &str = "c0a11e00-7c1a-4a1e-9c11-0ca11e000003";
@@ -402,7 +402,7 @@ mod token_based_authentication_acl_tests {
         }
     }
 
-    type Subscriptions = Vec<Arc<Sender<RedisResult<BasicAuth>>>>;
+    type Subscriptions = Vec<Sender<RedisResult<BasicAuth>>>;
     type SharedSubscriptions = Arc<Mutex<Subscriptions>>;
     /// Mock streaming credentials provider that simulates token-based authentication.
     ///
@@ -469,12 +469,7 @@ mod token_based_authentication_acl_tests {
         /// Start the background token refresh process
         pub fn start(&mut self) {
             // Prevent multiple calls to start
-            if self
-                .background_handle
-                .lock()
-                .expect("mutex poisoned")
-                .is_some()
-            {
+            if self.background_handle.lock().unwrap().is_some() {
                 return;
             }
 
@@ -483,56 +478,49 @@ mod token_based_authentication_acl_tests {
             let current_credentials_arc = Arc::clone(&self.current_credentials);
             let current_position_arc = Arc::clone(&self.current_position);
 
-            *self.background_handle.lock().expect("mutex poisoned") =
-                Some(tokio::spawn(async move {
-                    let mut attempt = 0;
+            *self.background_handle.lock().unwrap() = Some(tokio::spawn(async move {
+                let mut attempt = 0;
 
-                    loop {
-                        let position = {
-                            let mut pos = current_position_arc
-                                .lock()
-                                .expect("could not acquire lock for current_position");
-                            let current_pos = *pos;
-                            *pos = (*pos + 1) % config.credentials_sequence.len();
-                            current_pos
-                        };
+                loop {
+                    let position = {
+                        let mut pos = current_position_arc
+                            .lock()
+                            .expect("could not acquire lock for current_position");
+                        let current_pos = *pos;
+                        *pos = (*pos + 1) % config.credentials_sequence.len();
+                        current_pos
+                    };
 
-                        println!("Mock provider: Refreshing credentials. Attempt {attempt}");
+                    println!("Mock provider: Refreshing credentials. Attempt {attempt}");
 
-                        let result = if config.error_positions.contains(&position) {
-                            Err(redis::RedisError::from((
-                                redis::ErrorKind::AuthenticationFailed,
-                                "Mock authentication failed",
-                            )))
-                        } else {
-                            // Use the credential at the current position
-                            let credentials = config.credentials_sequence[position].clone();
-                            {
-                                let mut current =
-                                    current_credentials_arc.write().expect("rwlock poisoned");
-                                *current = Some(credentials.clone());
-                            }
+                    let result = if config.error_positions.contains(&position) {
+                        Err(redis::RedisError::from((
+                            redis::ErrorKind::AuthenticationFailed,
+                            "Mock authentication failed",
+                        )))
+                    } else {
+                        // Use the credential at the current position
+                        let credentials = config.credentials_sequence[position].clone();
+                        {
+                            let mut current = current_credentials_arc.write().unwrap();
+                            *current = Some(credentials.clone());
+                        }
 
-                            println!("Mock provider: Providing credentials: {:?}", credentials);
-                            Ok(credentials)
-                        };
+                        println!("Mock provider: Providing credentials: {:?}", credentials);
+                        Ok(credentials)
+                    };
 
-                        Self::notify_subscribers(&subscribers_arc, result.clone()).await;
+                    Self::notify_subscribers(&subscribers_arc, result.clone()).await;
 
-                        attempt += 1;
-                        tokio::time::sleep(config.refresh_interval).await;
-                    }
-                }));
+                    attempt += 1;
+                    tokio::time::sleep(config.refresh_interval).await;
+                }
+            }));
         }
 
         /// Stop the background refresh process
         pub fn stop(&mut self) {
-            if let Some(handle) = self
-                .background_handle
-                .lock()
-                .expect("mutex poisoned")
-                .take()
-            {
+            if let Some(handle) = self.background_handle.lock().unwrap().take() {
                 handle.abort();
             }
         }
@@ -542,10 +530,13 @@ mod token_based_authentication_acl_tests {
             subscribers_arc: &SharedSubscriptions,
             result: RedisResult<BasicAuth>,
         ) {
-            let subscribers_list = subscribers_arc
-                .lock()
-                .expect("could not acquire lock for subscribers")
-                .clone();
+            let subscribers_list = {
+                let mut guard = subscribers_arc
+                    .lock()
+                    .expect("could not acquire lock for subscribers");
+                guard.retain(|sender| !sender.is_closed());
+                guard.clone()
+            };
 
             futures_util::future::join_all(
                 subscribers_list
@@ -553,12 +544,6 @@ mod token_based_authentication_acl_tests {
                     .map(|sender| sender.send(result.clone())),
             )
             .await;
-
-            // Clean up closed channels
-            subscribers_arc
-                .lock()
-                .expect("could not acquire lock for subscribers")
-                .retain(|sender| !sender.is_closed());
         }
     }
 
@@ -570,19 +555,14 @@ mod token_based_authentication_acl_tests {
 
             self.subscribers
                 .lock()
-                .expect("could not acquire guard for subscribers")
-                .push(Arc::new(tx));
+                .expect("could not acquire lock for subscribers")
+                .push(tx);
 
             let stream = futures_util::stream::unfold(rx, |mut rx| async move {
                 rx.recv().await.map(|item| (item, rx))
             });
 
-            if let Some(credentials) = self
-                .current_credentials
-                .read()
-                .expect("rwlock poisoned")
-                .clone()
-            {
+            if let Some(credentials) = self.current_credentials.read().unwrap().clone() {
                 futures_util::stream::once(async move { Ok(credentials) })
                     .chain(stream)
                     .boxed()
@@ -788,7 +768,9 @@ mod token_based_authentication_acl_tests {
         let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
 
         // Create a user with the JWT token as password and full permissions for each token
-        println!("Setting up Redis users for token rotation test in which a single client establishes multiple connections that share a single credentials provider...");
+        println!(
+            "Setting up Redis users for token rotation test in which a single client establishes multiple connections that share a single credentials provider..."
+        );
         add_users_with_jwt_tokens(&ctx).await;
 
         // Set up the mock streaming credentials provider with multiple tokens and attach it to the client
@@ -827,7 +809,9 @@ mod token_based_authentication_acl_tests {
             );
         }
 
-        println!("Multiple connections sharing a single credentials provider test completed successfully!");
+        println!(
+            "Multiple connections sharing a single credentials provider test completed successfully!"
+        );
     }
 
     #[tokio::test]
@@ -836,7 +820,9 @@ mod token_based_authentication_acl_tests {
         let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
 
         // Create a user with the JWT token as password and full permissions for each token
-        println!("Setting up Redis users for token rotation test with multiple clients that share a single credentials provider...");
+        println!(
+            "Setting up Redis users for token rotation test with multiple clients that share a single credentials provider..."
+        );
         add_users_with_jwt_tokens(&ctx1).await;
 
         // Set up the mock streaming credentials provider with multiple tokens and attach it to both clients

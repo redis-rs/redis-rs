@@ -3,6 +3,7 @@ use std::time::{Duration, SystemTime};
 
 /// Configuration for token refresh behavior
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct TokenRefreshConfig {
     /// Fraction of token lifetime after which refresh should be triggered (0.0 to 1.0).
     /// For example, 0.8 means refresh when 80% of the token's lifetime has elapsed.
@@ -36,6 +37,7 @@ impl Default for TokenRefreshConfig {
 
 /// Configuration for handling failed token refresh attempts
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RetryConfig {
     /// Maximum number of retry attempts for token refresh.
     pub max_attempts: u32,
@@ -62,6 +64,38 @@ impl Default for RetryConfig {
             backoff_multiplier: 2.0,
             jitter_percentage: 0.5,
         }
+    }
+}
+
+impl RetryConfig {
+    /// Sets the maximum number of retry attempts for token refresh
+    pub fn set_max_attempts(mut self, max_attempts: u32) -> Self {
+        self.max_attempts = max_attempts;
+        self
+    }
+
+    /// Sets the initial delay before attempting to refresh the token after a failure
+    pub fn set_initial_delay(mut self, initial_delay: Duration) -> Self {
+        self.initial_delay = initial_delay;
+        self
+    }
+
+    /// Sets the upper bound for retry delays
+    pub fn set_max_delay(mut self, max_delay: Duration) -> Self {
+        self.max_delay = max_delay;
+        self
+    }
+
+    /// Sets the growth factor for exponential backoff
+    pub fn set_backoff_multiplier(mut self, backoff_multiplier: f64) -> Self {
+        self.backoff_multiplier = backoff_multiplier;
+        self
+    }
+
+    /// Sets the random variation added to delays as a fraction of the calculated delay
+    pub fn set_jitter_percentage(mut self, jitter_percentage: f64) -> Self {
+        self.jitter_percentage = jitter_percentage;
+        self
     }
 }
 
@@ -99,7 +133,7 @@ pub(crate) mod credentials_management_utils {
     /// Extract the OID claim from a JWT
     #[cfg(all(feature = "token-based-authentication", feature = "entra-id"))]
     pub(crate) fn extract_oid_from_jwt(jwt: &str) -> Result<String, String> {
-        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 
         let parts: Vec<&str> = jwt.split('.').collect();
         if parts.len() != 3 {
@@ -130,7 +164,7 @@ pub(crate) mod credentials_management_utils {
 
 #[cfg(all(feature = "token-based-authentication", test))]
 mod auth_management_tests {
-    use super::{credentials_management_utils, TokenRefreshConfig};
+    use super::{TokenRefreshConfig, credentials_management_utils};
     use std::sync::LazyLock;
 
     const TOKEN_HEADER: &str = "header";
