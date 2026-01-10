@@ -8,7 +8,7 @@ use crate::errors::ErrorKind;
 use crate::types::{FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value, from_redis_value};
 
 /// Represents a redis command pipeline.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Pipeline {
     pub(crate) commands: Vec<Cmd>,
     pub(crate) transaction_mode: bool,

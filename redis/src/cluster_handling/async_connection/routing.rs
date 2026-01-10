@@ -15,6 +15,15 @@ pub(super) enum InternalRoutingInfo<C> {
     MultiNode((MultipleNodeRoutingInfo, Option<ResponsePolicy>)),
 }
 
+impl<C> std::fmt::Debug for InternalRoutingInfo<C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SingleNode(arg0) => f.debug_tuple("SingleNode").field(arg0).finish(),
+            Self::MultiNode(arg0) => f.debug_tuple("MultiNode").field(arg0).finish(),
+        }
+    }
+}
+
 impl<C> From<RoutingInfo> for InternalRoutingInfo<C> {
     fn from(value: RoutingInfo) -> Self {
         match value {
@@ -44,6 +53,31 @@ pub(super) enum InternalSingleNodeRouting<C> {
         redirect: Redirect,
         previous_routing: Box<InternalSingleNodeRouting<C>>,
     },
+}
+
+impl<C> std::fmt::Debug for InternalSingleNodeRouting<C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Random => write!(f, "Random"),
+            Self::SpecificNode(arg0) => f.debug_tuple("SpecificNode").field(arg0).finish(),
+            Self::ByAddress(arg0) => f.debug_tuple("ByAddress").field(arg0).finish(),
+            Self::Connection {
+                identifier,
+                conn: _conn,
+            } => f
+                .debug_struct("Connection")
+                .field("identifier", identifier)
+                .finish(),
+            Self::Redirect {
+                redirect,
+                previous_routing,
+            } => f
+                .debug_struct("Redirect")
+                .field("redirect", redirect)
+                .field("previous_routing", previous_routing)
+                .finish(),
+        }
+    }
 }
 
 impl<C> From<SingleNodeRoutingInfo> for InternalSingleNodeRouting<C> {
