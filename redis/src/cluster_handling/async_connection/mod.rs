@@ -905,26 +905,25 @@ where
     ) {
         let nodes_len = nodes.len();
 
-        let addresses_and_connections_iter = nodes.into_iter().map(|addr| {
-            let value = connections.remove(&addr);
-            (addr, value)
-        });
-
-        *connections = stream::iter(addresses_and_connections_iter)
-            .map(|(addr, connection)| async move {
-                let res = get_or_create_conn(&addr, connection, &self.cluster_params).await;
-                (addr, res)
+        let addresses_and_connections_iter = nodes
+            .into_iter()
+            .map(|addr| {
+                let connection = connections.remove(&addr);
+                async move {
+                    let res = get_or_create_conn(&addr, connection, &self.cluster_params).await;
+                    (addr, res)
+                }
             })
+            .collect::<Vec<_>>();
+
+        stream::iter(addresses_and_connections_iter)
             .buffer_unordered(nodes_len.max(8))
-            .fold(
-                HashMap::with_capacity(nodes_len),
-                |mut connections, (addr, result)| async move {
-                    if let Ok(conn) = result {
-                        connections.insert(addr, conn);
-                    }
-                    connections
-                },
-            )
+            .fold(connections, |connections, (addr, result)| async move {
+                if let Ok(conn) = result {
+                    connections.insert(addr, conn);
+                }
+                connections
+            })
             .await;
     }
 
