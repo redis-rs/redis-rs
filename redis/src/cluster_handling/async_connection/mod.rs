@@ -91,7 +91,7 @@
 //! }
 //! ```
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt,
     future::Future,
     io, mem,
@@ -890,9 +890,7 @@ where
         }
         result?;
 
-        let mut nodes = slots.values().flatten().cloned().collect::<Vec<_>>();
-        nodes.sort_unstable();
-        nodes.dedup();
+        let nodes = slots.values().flatten().cloned().collect::<HashSet<_>>();
         self.refresh_connections_locked(connections, nodes).await;
 
         Ok(())
@@ -901,7 +899,7 @@ where
     async fn refresh_connections_locked(
         &self,
         connections: &mut ConnectionMap<C>,
-        nodes: Vec<ArcStr>,
+        nodes: HashSet<ArcStr>,
     ) {
         let nodes_len = nodes.len();
 
@@ -1124,7 +1122,7 @@ where
         }
     }
 
-    fn refresh_connections(&mut self, addrs: Vec<ArcStr>) -> impl Future<Output = ()> + use<C> {
+    fn refresh_connections(&mut self, addrs: HashSet<ArcStr>) -> impl Future<Output = ()> + use<C> {
         let inner = self.inner.clone();
         async move {
             let mut write_guard = inner.conn_lock.write().await;
@@ -1293,7 +1291,7 @@ where
 enum PollFlushAction {
     None,
     RebuildSlots,
-    Reconnect(Vec<ArcStr>),
+    Reconnect(HashSet<ArcStr>),
     ReconnectFromInitialConnections,
 }
 
