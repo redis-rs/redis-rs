@@ -21,7 +21,10 @@ mod cluster_async {
         aio::{ConnectionLike, MultiplexedConnection},
         cluster::ClusterClient,
         cluster_async::Connect,
-        cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
+        cluster_routing::{
+            MultipleNodeRoutingInfo, ResponsePolicy, Route, RoutingInfo, SingleNodeRoutingInfo,
+            SlotAddr,
+        },
         cmd, from_redis_value, parse_redis_value, pipe,
     };
     use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
@@ -93,6 +96,54 @@ mod cluster_async {
     }
 
     #[async_test]
+    async fn reconnect_only_the_disconnected_node_leave_other_connections_intact() -> RedisResult<()>
+    {
+        // we remove retries in order to know that a request will fail immediately when discovering that a connection disconnected, instead of reconnecting and succeeding
+        let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(0));
+
+        let first_node = ctx.cluster.servers[0]
+            .host_and_port()
+            .map(|(host, port)| {
+                RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+                    host: host.into(),
+                    port,
+                })
+            })
+            .unwrap();
+        let second_node = ctx.cluster.servers[1]
+            .host_and_port()
+            .map(|(host, port)| {
+                RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+                    host: host.into(),
+                    port,
+                })
+            })
+            .unwrap();
+
+        let mut connection = ctx.async_connection().await;
+        connection
+            .route_command(redis::cmd("quit"), first_node.clone())
+            .await?;
+
+        // expect the second node to work ok
+        connection
+            .route_command(redis::cmd("ping"), second_node.clone())
+            .await?;
+
+        // expect the first node to be disconnected
+        let result = connection
+            .route_command(redis::cmd("ping"), first_node)
+            .await;
+
+        // expect the second node to still work ok
+        connection
+            .route_command(redis::cmd("ping"), second_node)
+            .await?;
+        assert!(result.is_err_and(|err| err.is_unrecoverable_error()));
+        Ok(())
+    }
+
+    #[async_test]
     async fn async_cluster_basic_eval() -> RedisResult<()> {
         let cluster = TestClusterContext::new();
 
@@ -137,8 +188,8 @@ mod cluster_async {
         let res2: Option<String> = connection.get("bar").await.unwrap();
         assert_eq!(res2, Some("foo".to_string()));
 
-        let route = redis::cluster_routing::Route::new(1, redis::cluster_routing::SlotAddr::Master);
-        let single_node_route = redis::cluster_routing::SingleNodeRoutingInfo::SpecificNode(route);
+        let route = Route::new(1, SlotAddr::Master);
+        let single_node_route = SingleNodeRoutingInfo::SpecificNode(route);
         let routing = RoutingInfo::SingleNode(single_node_route);
         assert_eq!(
             connection
@@ -228,7 +279,7 @@ mod cluster_async {
             .build()?;
         let mut connection = client.get_async_connection().await?;
 
-        let route_to_all_nodes = redis::cluster_routing::MultipleNodeRoutingInfo::AllNodes;
+        let route_to_all_nodes = MultipleNodeRoutingInfo::AllNodes;
         let routing = RoutingInfo::MultiNode((route_to_all_nodes, None));
         let res = connection
             .route_command(redis::cmd("INFO"), routing)
@@ -250,7 +301,7 @@ mod cluster_async {
             assert!(infos[i].contains(&format!("tcp_port:{}", split[1])));
         }
 
-        let route_to_all_primaries = redis::cluster_routing::MultipleNodeRoutingInfo::AllMasters;
+        let route_to_all_primaries = MultipleNodeRoutingInfo::AllMasters;
         let routing = RoutingInfo::MultiNode((route_to_all_primaries, None));
         let res = connection
             .route_command(redis::cmd("INFO"), routing)
@@ -2118,7 +2169,7 @@ mod cluster_async {
                 cmd("PING"),
                 RoutingInfo::MultiNode((
                     MultipleNodeRoutingInfo::AllMasters,
-                    Some(redis::cluster_routing::ResponsePolicy::AllSucceeded),
+                    Some(ResponsePolicy::AllSucceeded),
                 )),
             )
             .await
@@ -2818,7 +2869,7 @@ mod cluster_async {
                     cmd("PING"),
                     RoutingInfo::MultiNode((
                         MultipleNodeRoutingInfo::AllMasters,
-                        Some(redis::cluster_routing::ResponsePolicy::AllSucceeded),
+                        Some(ResponsePolicy::AllSucceeded),
                     )),
                 )
                 .await?;
@@ -2912,7 +2963,7 @@ mod cluster_async {
                     cmd("PING"),
                     RoutingInfo::MultiNode((
                         MultipleNodeRoutingInfo::AllMasters,
-                        Some(redis::cluster_routing::ResponsePolicy::AllSucceeded),
+                        Some(ResponsePolicy::AllSucceeded),
                     )),
                 )
                 .await?;

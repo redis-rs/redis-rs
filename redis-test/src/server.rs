@@ -259,6 +259,14 @@ impl RedisServer {
         &self.addr
     }
 
+    pub fn host_and_port(&self) -> Option<(&str, u16)> {
+        match &self.addr {
+            ConnectionAddr::Tcp(host, port) => Some((host, *port)),
+            ConnectionAddr::TcpTls { host, port, .. } => Some((host, *port)),
+            _ => None,
+        }
+    }
+
     pub fn connection_info(&self) -> redis::ConnectionInfo {
         self.client_addr()
             .clone()
