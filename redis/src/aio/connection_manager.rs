@@ -42,6 +42,8 @@ pub struct ConnectionManagerConfig {
     push_sender: Option<Arc<dyn AsyncPushSender>>,
     /// if true, the manager should resubscribe automatically to all pubsub channels after reconnect.
     resubscribe_automatically: bool,
+    /// pipeline to be executed after reconnect. (example: set client name)
+    init_pipeline: Option<Pipeline>,
     #[cfg(feature = "cache-aio")]
     pub(crate) cache_config: Option<crate::caching::CacheConfig>,
 }
@@ -57,6 +59,7 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             connection_timeout,
             push_sender,
             resubscribe_automatically,
+            init_pipeline,
             #[cfg(feature = "cache-aio")]
             cache_config,
         } = &self;
@@ -68,6 +71,13 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             .field("response_timeout", &response_timeout)
             .field("connection_timeout", &connection_timeout)
             .field("resubscribe_automatically", &resubscribe_automatically)
+            .field("init_pipeline",
+                   if init_pipeline.is_some() {
+                       &"set"
+                   } else {
+                       &"not set"
+                   }
+            )
             .field(
                 "push_sender",
                 if push_sender.is_some() {
@@ -216,6 +226,12 @@ impl ConnectionManagerConfig {
         self
     }
 
+    /// Set the init_pipeline execute after get a connection
+    pub fn set_init_pipeline(mut self, pipeline: Option<Pipeline>) -> Self {
+        self.init_pipeline = pipeline;
+        self
+    }
+
     /// Set the cache behavior.
     #[cfg(feature = "cache-aio")]
     pub fn set_cache_config(self, cache_config: crate::caching::CacheConfig) -> Self {
@@ -237,6 +253,7 @@ impl Default for ConnectionManagerConfig {
             connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
             push_sender: None,
             resubscribe_automatically: false,
+            init_pipeline: None,
             #[cfg(feature = "cache-aio")]
             cache_config: None,
         }
@@ -372,7 +389,8 @@ impl ConnectionManager {
 
         let mut connection_config = AsyncConnectionConfig::new()
             .set_connection_timeout(config.connection_timeout)
-            .set_response_timeout(config.response_timeout);
+            .set_response_timeout(config.response_timeout)
+            .set_init_pipeline(config.init_pipeline.clone());
 
         #[cfg(feature = "cache-aio")]
         let cache_manager = config
@@ -410,7 +428,7 @@ impl ConnectionManager {
         }
 
         let connection =
-            Self::new_connection(&client, retry_strategy, &connection_config, None).await?;
+            Self::new_connection(&client, retry_strategy, &connection_config, config.init_pipeline.clone(), None).await?;
         let subscription_tracker = if config.resubscribe_automatically {
             Some(Mutex::new(SubscriptionTracker::default()))
         } else {
@@ -451,6 +469,7 @@ impl ConnectionManager {
         client: &Client,
         exponential_backoff: ExponentialBuilder,
         connection_config: &AsyncConnectionConfig,
+        init_pipeline: Option<Pipeline>,
         additional_commands: Option<Pipeline>,
     ) -> RedisResult<MultiplexedConnection> {
         let connection_config = connection_config.clone();
@@ -463,6 +482,10 @@ impl ConnectionManager {
             .retry(exponential_backoff)
             .sleep(|duration| async move { Runtime::locate().sleep(duration).await })
             .await?;
+        if let Some(pipeline) = init_pipeline {
+            // TODO - should we ignore these failures?
+            let _ = pipeline.exec_async(&mut conn).await;
+        }
         if let Some(pipeline) = additional_commands {
             // TODO - should we ignore these failures?
             let _ = pipeline.exec_async(&mut conn).await;
@@ -492,6 +515,7 @@ impl ConnectionManager {
             connection_config = connection_config.set_cache_manager(new_cache_manager);
         }
         let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
+            let init_pipeline = internals_clone.connection_config.init_pipeline.clone();
             let additional_commands = match &internals_clone.subscription_tracker {
                 Some(subscription_tracker) => Some(
                     subscription_tracker
@@ -506,6 +530,7 @@ impl ConnectionManager {
                 &internals_clone.client,
                 internals_clone.retry_strategy,
                 &connection_config,
+                init_pipeline,
                 additional_commands,
             )
             .await?;

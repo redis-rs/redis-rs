@@ -4,15 +4,12 @@ use std::time::Duration;
 use crate::aio::{AsyncPushSender, DefaultAsyncDNSResolver};
 #[cfg(feature = "aio")]
 use crate::io::AsyncDNSResolver;
-use crate::{
-    connection::{Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo, connect},
-    types::{RedisResult, Value},
-};
+use crate::{connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo}, types::{RedisResult, Value}, Pipeline};
 #[cfg(feature = "aio")]
 use std::pin::Pin;
 
 #[cfg(feature = "tls-rustls")]
-use crate::tls::{TlsCertificates, inner_build_with_tls};
+use crate::tls::{inner_build_with_tls, TlsCertificates};
 
 #[cfg(feature = "cache-aio")]
 use crate::caching::CacheConfig;
@@ -188,6 +185,7 @@ pub struct AsyncConnectionConfig {
     /// Maximum time to wait for a connection to be established
     pub(crate) connection_timeout: Option<Duration>,
     pub(crate) push_sender: Option<std::sync::Arc<dyn AsyncPushSender>>,
+    pub(crate) init_pipeline: Option<Pipeline>,
     #[cfg(feature = "cache-aio")]
     pub(crate) cache: Option<Cache>,
     pub(crate) dns_resolver: Option<std::sync::Arc<dyn AsyncDNSResolver>>,
@@ -200,6 +198,7 @@ impl Default for AsyncConnectionConfig {
             response_timeout: DEFAULT_RESPONSE_TIMEOUT,
             connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
             push_sender: Default::default(),
+            init_pipeline: None,
             #[cfg(feature = "cache-aio")]
             cache: Default::default(),
             dns_resolver: Default::default(),
@@ -257,6 +256,12 @@ impl AsyncConnectionConfig {
     /// ```
     pub fn set_push_sender(self, sender: impl AsyncPushSender) -> Self {
         self.set_push_sender_internal(std::sync::Arc::new(sender))
+    }
+
+    /// Sets pipeline to be executed on connection creation (when use connection_manager)
+    pub fn set_init_pipeline(mut self, pipeline: Option<Pipeline>) -> Self {
+        self.init_pipeline = pipeline;
+        self
     }
 
     pub(crate) fn set_push_sender_internal(
