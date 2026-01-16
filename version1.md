@@ -50,6 +50,19 @@ impl ToSingleRedisArg for MyType {}
 
 Most built-in types already implement this trait.
 
+## Default connection and response timeouts (Breaking Change)
+
+Async connections now have default timeouts set to prevent indefinite hangs. Connection timeout defaults to 5 seconds and response timeout defaults to 10 seconds ([#1686](https://github.com/redis-rs/redis-rs/pull/1686)).
+
+**Migration:** If you need to disable timeouts or adjust them, configure via `AsyncConnectionConfig` or `ConnectionManagerConfig`:
+```rust
+let config = redis::AsyncConnectionConfig::new()
+    .set_connection_timeout(None)
+    .set_response_timeout(None);
+
+let mut con = client.get_multiplexed_async_connection_with_config(&config).await?;
+```
+
 ## Better visibility of typed traits (Recommended)
 
 Recent Rust compiler changes caused confusing error messages like `the trait FromRedisValue is not implemented for !` when using commands with `()` return types ([#1730](https://github.com/redis-rs/redis-rs/issues/1730)).
