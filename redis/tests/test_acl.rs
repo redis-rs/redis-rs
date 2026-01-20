@@ -69,6 +69,8 @@ fn test_acl_getsetdel_users() {
                 Rule::AddCommand("set".to_owned())
             ],
             keys: vec![Rule::Pattern("redis:*".to_owned())],
+            channels: vec![],
+            selectors: vec![],
         }
     );
     assert_eq!(
