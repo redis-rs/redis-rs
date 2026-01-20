@@ -25,6 +25,7 @@ fn run() -> RedisResult<()> {
     conn.acl_setuser_rules("sample", &sample_rule)?;
     let sample_user = conn.acl_getuser("sample");
     println!("{:?}", sample_user);
+    conn.acl_deluser(&["asynq", "sample"])?;
     Ok(())
 }
 

@@ -416,3 +416,81 @@ impl FromRedisValue for AclInfo {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    macro_rules! assert_args {
+        ($rule:expr, $arg:expr) => {
+            assert_eq!($rule.to_redis_args(), vec![$arg.to_vec()]);
+        };
+    }
+
+    #[test]
+    fn test_rule_to_arg() {
+        use self::Rule::*;
+
+        assert_args!(On, b"on");
+        assert_args!(Off, b"off");
+        assert_args!(AddCommand("set".to_owned()), b"+set");
+        assert_args!(RemoveCommand("set".to_owned()), b"-set");
+        assert_args!(AddCategory("hyperloglog".to_owned()), b"+@hyperloglog");
+        assert_args!(RemoveCategory("hyperloglog".to_owned()), b"-@hyperloglog");
+        assert_args!(AllCommands, b"allcommands");
+        assert_args!(NoCommands, b"nocommands");
+        assert_args!(AddPass("mypass".to_owned()), b">mypass");
+        assert_args!(RemovePass("mypass".to_owned()), b"<mypass");
+        assert_args!(
+            AddHashedPass(
+                "c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2".to_owned()
+            ),
+            b"#c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2"
+        );
+        assert_args!(
+            RemoveHashedPass(
+                "c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2".to_owned()
+            ),
+            b"!c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2"
+        );
+        assert_args!(NoPass, b"nopass");
+        assert_args!(Pattern("pat:*".to_owned()), b"~pat:*");
+        assert_args!(AllKeys, b"allkeys");
+        assert_args!(ResetKeys, b"resetkeys");
+        assert_args!(Reset, b"reset");
+        assert_args!(Other("resetchannels".to_owned()), b"resetchannels");
+    }
+
+    #[test]
+    fn test_from_redis_value() {
+        let redis_value = Value::Array(vec![
+            Value::BulkString("flags".into()),
+            Value::Array(vec![
+                Value::BulkString("on".into()),
+                Value::BulkString("allchannels".into()),
+            ]),
+            Value::BulkString("passwords".into()),
+            Value::Array(vec![]),
+            Value::BulkString("commands".into()),
+            Value::BulkString("-@all +get".into()),
+            Value::BulkString("keys".into()),
+            Value::Array(vec![Value::BulkString("pat:*".into())]),
+        ]);
+        let acl_info = AclInfo::from_redis_value_ref(&redis_value).expect("Parse successfully");
+
+        assert_eq!(
+            acl_info,
+            AclInfo {
+                flags: vec![Rule::On, Rule::Other("allchannels".into())],
+                passwords: vec![],
+                commands: vec![
+                    Rule::RemoveCategory("all".to_owned()),
+                    Rule::AddCommand("get".to_owned()),
+                ],
+                keys: vec![Rule::Pattern("pat:*".to_owned())],
+                channels: vec![],
+                selectors: vec![],
+            }
+        );
+    }
+}
