@@ -256,7 +256,10 @@ impl FromRedisValue for AclInfo {
                             .iter()
                             .map(|pat| {
                                 let s = String::from_redis_value_ref(pat)?;
-                                Ok(Rule::Pattern(s))
+                                match s.as_str() {
+                                    "*" => Ok(Rule::AllKeys),
+                                    _ => Ok(Rule::Pattern(s)),
+                                }
                             })
                             .collect::<Result<_, ParsingError>>()?,
                         Value::BulkString(bs) => {
@@ -272,7 +275,10 @@ impl FromRedisValue for AclInfo {
                                     } else {
                                         tok
                                     };
-                                    Ok(Rule::Pattern(tok.to_owned()))
+                                    match tok {
+                                        "*" => Ok(Rule::AllKeys),
+                                        _ => Ok(Rule::Pattern(tok.to_owned())),
+                                    }
                                 })
                                 .collect::<Result<_, ParsingError>>()?
                         }
@@ -330,7 +336,7 @@ impl FromRedisValue for AclInfo {
                         // selectors can be returned as an array of bulk-strings, or as
                         // an array of arrays where each inner array contains alternating
                         // key/value bulk-strings describing the selector. Accept both.
-                        Value::Array(arr) => arr
+                        Value::Array(arr) | Value::Set(arr) => arr
                             .iter()
                             .map(|pat| {
                                 match pat {
@@ -349,13 +355,13 @@ impl FromRedisValue for AclInfo {
                                                 t.to_owned()
                                             }
                                         };
-                                        Ok(Rule::Selector(
+                                        Ok(vec![Rule::Selector(
                                             s.split(' ').map(|x| x.to_owned()).collect(),
-                                        ))
+                                        )])
                                     }
                                     Value::Array(inner) => {
                                         // Join inner bulk-strings into a single selector string
-                                        let mut parts: Vec<String> = Vec::new();
+                                        let mut parts: Vec<Rule> = Vec::new();
                                         for item in inner.iter() {
                                             let s = String::from_redis_value_ref(item)?;
                                             let t = s.trim();
@@ -367,30 +373,22 @@ impl FromRedisValue for AclInfo {
                                             } else {
                                                 t
                                             };
-                                            parts.push(t.to_owned());
+                                            parts.push(Rule::Selector(
+                                                t.split(' ').map(|x| x.to_owned()).collect(),
+                                            ));
                                         }
-                                        Ok(Rule::Selector(parts))
+                                        Ok(parts)
                                     }
                                     other => {
                                         // Unexpected shape for a selector entry
                                         let s = String::from_redis_value_ref(other)?;
-                                        Ok(Rule::Selector(
+                                        Ok(vec![Rule::Selector(
                                             s.split(' ').map(|x| x.to_owned()).collect(),
-                                        ))
+                                        )])
                                     }
                                 }
                             })
-                            .collect::<Result<_, ParsingError>>()?,
-                        Value::BulkString(bs) => {
-                            let mut s = std::str::from_utf8(bs)?;
-                            s = s.trim();
-                            if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
-                                s = &s[1..s.len() - 1];
-                            }
-                            s.split_whitespace()
-                                .map(|tok| Ok(Rule::Selector(vec![tok.to_owned()])))
-                                .collect::<Result<_, ParsingError>>()?
-                        }
+                            .collect::<Result<Vec<Vec<Rule>>, ParsingError>>()?,
                         other => {
                             return Err(not_convertible_error!(
                                 other,
@@ -398,7 +396,7 @@ impl FromRedisValue for AclInfo {
                             ));
                         }
                     };
-                    selectors = parsed;
+                    selectors = parsed.into_iter().flatten().collect();
                 }
                 _ => {}
             }
@@ -459,6 +457,11 @@ mod tests {
         assert_args!(ResetKeys, b"resetkeys");
         assert_args!(Reset, b"reset");
         assert_args!(Other("resetchannels".to_owned()), b"resetchannels");
+        assert_args!(Channel("asynq:cancel".to_owned()), b"&asynq:cancel");
+        assert_args!(
+            Selector(vec!["+SET".to_owned(), "~key2".to_owned()]),
+            b"(+SET ~key2)"
+        );
     }
 
     #[test]
@@ -475,6 +478,17 @@ mod tests {
             Value::BulkString("-@all +get".into()),
             Value::BulkString("keys".into()),
             Value::Array(vec![Value::BulkString("pat:*".into())]),
+            Value::BulkString("channels".into()),
+            Value::Array(vec![Value::BulkString("&asynq:cancel".into())]),
+            Value::BulkString("selectors".into()),
+            Value::Array(vec![Value::Array(vec![
+                Value::BulkString("commands".into()),
+                Value::BulkString("-@all +get".into()),
+                Value::BulkString("keys".into()),
+                Value::BulkString("~key2".into()),
+                Value::BulkString("channels".into()),
+                Value::BulkString("".into()),
+            ])]),
         ]);
         let acl_info = AclInfo::from_redis_value_ref(&redis_value).expect("Parse successfully");
 
@@ -488,8 +502,15 @@ mod tests {
                     Rule::AddCommand("get".to_owned()),
                 ],
                 keys: vec![Rule::Pattern("pat:*".to_owned())],
-                channels: vec![],
-                selectors: vec![],
+                channels: vec![Rule::Channel("asynq:cancel".to_owned())],
+                selectors: vec![
+                    Rule::Selector(vec!["commands".to_owned()]),
+                    Rule::Selector(vec!["-@all".to_owned(), "+get".to_owned()]),
+                    Rule::Selector(vec!["keys".to_owned()]),
+                    Rule::Selector(vec!["~key2".to_owned()]),
+                    Rule::Selector(vec!["channels".to_owned()]),
+                    Rule::Selector(vec!["".to_owned()]),
+                ],
             }
         );
     }

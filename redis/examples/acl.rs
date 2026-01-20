@@ -55,7 +55,7 @@ fn build_acl_rules(username: &str, password: &str) -> Vec<Rule> {
         Rule::Pattern("asynq:workers:*".to_string()),
         Rule::Pattern("asynq:schedulers".to_string()),
         Rule::Pattern("asynq:schedulers:*".to_string()),
-        Rule::Other("&asynq:cancel".to_string()),
+        Rule::Channel("asynq:cancel".to_string()),
     ];
     for pattern in default_key_patterns {
         rules.push(pattern);

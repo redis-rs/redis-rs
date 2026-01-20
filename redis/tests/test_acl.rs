@@ -1,9 +1,8 @@
 #![cfg(feature = "acl")]
 
-use std::collections::HashSet;
-
 use redis::TypedCommands;
 use redis::acl::{AclInfo, Rule};
+use std::collections::HashSet;
 
 mod support;
 use crate::support::*;
@@ -183,5 +182,136 @@ fn test_acl_dryrun() {
     assert_eq!(
         res,
         "User VIRGINIA has no permissions to run the 'get' command"
+    );
+}
+#[test]
+fn test_acl_info() {
+    fn build_acl_rules(username: &str, password: &str) -> Vec<Rule> {
+        let mut rules = Vec::new();
+        // Basic permissions: on, +@all, -@dangerous, +keys, -info
+        rules.push(Rule::On);
+        rules.push(Rule::AllCommands);
+        rules.push(Rule::RemoveCategory("dangerous".to_string()));
+        rules.push(Rule::AddCommand("keys".to_string()));
+        rules.push(Rule::RemoveCommand("info".to_string()));
+        // Database restrictions: -select
+        rules.push(Rule::RemoveCommand("select".to_string()));
+        // Password
+        rules.push(Rule::AddPass(password.to_string()));
+        // Add default queue pattern - uses hashtag {DEFAULT_QUEUE_NAME} for Redis cluster routing
+        rules.push(Rule::Pattern(format!("asynq:{{{}}}:*", "default")));
+        // Add tenant-specific key patterns
+        rules.push(Rule::Pattern(format!("asynq:{{{}:*", username)));
+        // Add default key patterns
+        let default_key_patterns = vec![
+            Rule::Pattern("asynq:queues".to_string()),
+            Rule::Pattern("asynq:servers:*".to_string()),
+            Rule::Pattern("asynq:servers".to_string()),
+            Rule::Pattern("asynq:workers".to_string()),
+            Rule::Pattern("asynq:workers:*".to_string()),
+            Rule::Pattern("asynq:schedulers".to_string()),
+            Rule::Pattern("asynq:schedulers:*".to_string()),
+            Rule::Channel("asynq:cancel".to_string()),
+        ];
+        for pattern in default_key_patterns {
+            rules.push(pattern);
+        }
+        rules
+    }
+    let ctx = TestContext::new();
+    let mut conn = ctx.connection();
+    let username = "tenant";
+    let password = "securepassword123";
+    assert_eq!(
+        conn.acl_setuser_rules(username, &build_acl_rules(username, password)),
+        Ok(())
+    );
+    let asynq_info = conn.acl_getuser(username).expect("Got user");
+    assert!(asynq_info.is_some());
+    let asynq_info = asynq_info.expect("Got asynq");
+    assert_eq!(
+        asynq_info.flags,
+        vec![Rule::On, Rule::Other("sanitize-payload".to_string())]
+    );
+    assert_eq!(
+        asynq_info.passwords,
+        vec![Rule::AddHashedPass(
+            "dda69783f28fdf6f1c5a83e8400f2472e9300887d1dffffe12a07b92a3d0aa25".to_string()
+        )]
+    );
+    assert_eq!(
+        asynq_info.commands,
+        vec![
+            Rule::AddCategory("all".to_string()),
+            Rule::RemoveCategory("dangerous".to_string()),
+            Rule::AddCommand("keys".to_string()),
+            Rule::RemoveCommand("info".to_string()),
+            Rule::RemoveCommand("select".to_string()),
+        ]
+    );
+    assert_eq!(
+        asynq_info.keys,
+        vec![
+            Rule::Pattern("asynq:{default}:*".to_string()),
+            Rule::Pattern("asynq:{tenant:*".to_string()),
+            Rule::Pattern("asynq:queues".to_string()),
+            Rule::Pattern("asynq:servers:*".to_string()),
+            Rule::Pattern("asynq:servers".to_string()),
+            Rule::Pattern("asynq:workers".to_string()),
+            Rule::Pattern("asynq:workers:*".to_string()),
+            Rule::Pattern("asynq:schedulers".to_string()),
+            Rule::Pattern("asynq:schedulers:*".to_string()),
+        ]
+    );
+    assert_eq!(
+        asynq_info.channels,
+        vec![Rule::Channel("asynq:cancel".to_string())]
+    );
+    assert_eq!(asynq_info.selectors, vec![]);
+}
+#[test]
+fn test_acl_sample_info() {
+    let ctx = TestContext::new();
+    let mut conn = ctx.connection();
+    let sample_rule = vec![
+        Rule::On,
+        Rule::NoPass,
+        Rule::AddCommand("GET".to_string()),
+        Rule::AllKeys,
+        Rule::Channel("*".to_string()),
+        Rule::Selector(vec!["+SET".to_string(), "~key2".to_string()]),
+    ];
+    conn.acl_setuser_rules("sample", &sample_rule)
+        .expect("Set sample user");
+    let sample_user = conn.acl_getuser("sample").expect("Got user");
+    let sample_user = sample_user.expect("Got sample user");
+    assert_eq!(
+        sample_user.flags,
+        vec![
+            Rule::On,
+            Rule::NoPass,
+            Rule::Other("sanitize-payload".to_string())
+        ]
+    );
+    assert_eq!(sample_user.passwords, vec![]);
+    assert_eq!(
+        sample_user.commands,
+        vec![
+            Rule::RemoveCategory("all".to_string()),
+            Rule::AddCommand("get".to_string()),
+        ]
+    );
+    assert_eq!(sample_user.keys, vec![Rule::AllKeys]);
+    assert_eq!(sample_user.channels, vec![Rule::Channel("*".to_string())]);
+    assert_eq!(
+        sample_user.selectors,
+        vec![
+            Rule::Selector(vec!["commands".to_string()]),
+            Rule::Selector(vec!["-@all".to_string(), "+set".to_string()]),
+            Rule::Selector(vec!["keys".to_string()]),
+            Rule::Selector(vec!["~key2".to_string()]),
+            Rule::Selector(vec!["channels".to_string()]),
+            Rule::Selector(vec!["".to_string()])
+        ]
     );
 }
