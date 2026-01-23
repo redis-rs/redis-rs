@@ -28,6 +28,7 @@
 //! schema.insert("condition", SchemaTagField::new().separator(','));
 //! ```
 use crate::{RedisWrite, ToRedisArgs};
+use log::warn;
 
 /// Data type for indexing
 #[derive(Clone, Copy, Debug)]
@@ -88,6 +89,7 @@ impl ToRedisArgs for SearchLanguage {
 }
 
 /// [Optional arguments](https://redis.io/docs/latest/commands/ft.create/#optional-arguments) for the FT.CREATE command
+#[must_use = "Options have no effect unless passed to a command"]
 #[derive(Default, Clone)]
 #[non_exhaustive]
 pub struct CreateOptions {
@@ -503,6 +505,7 @@ impl ToRedisArgs for SchemaCommonField {
 }
 
 /// Represents a text field in the schema.
+#[must_use = "Text field has no effect unless inserted into a schema"]
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SchemaTextField {
@@ -623,6 +626,7 @@ impl Default for SchemaTextField {
 }
 
 /// Represents a tag field in the schema.
+#[must_use = "Tag field has no effect unless inserted into a schema"]
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SchemaTagField {
@@ -729,6 +733,7 @@ impl Default for SchemaTagField {
 }
 
 /// Represents a numeric field in the schema.
+#[must_use = "Numeric field has no effect unless inserted into a schema"]
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SchemaNumericField {
@@ -785,6 +790,7 @@ impl Default for SchemaNumericField {
 }
 
 /// Represents a geo field in the schema.
+#[must_use = "Geo field has no effect unless inserted into a schema"]
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SchemaGeoField {
@@ -1199,6 +1205,7 @@ impl ToRedisArgs for VamanaVectorOptions {
 ///     .graph_max_degree(64)
 ///     .build();
 /// ```
+#[must_use = "Vector field has no effect unless inserted into a schema"]
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum VectorField {
@@ -1371,6 +1378,7 @@ impl VectorField {
 }
 
 /// Builder for FLAT vector fields
+#[must_use = "The builder has no effect until .build() is called"]
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct FlatVectorFieldBuilder {
@@ -1413,6 +1421,7 @@ impl FlatVectorFieldBuilder {
 }
 
 /// Builder for HNSW vector fields
+#[must_use = "The builder has no effect until .build() is called"]
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct HnswVectorFieldBuilder {
@@ -1482,7 +1491,12 @@ impl HnswVectorFieldBuilder {
     }
 }
 
+const DEFAULT_BLOCK_SIZE: u32 = 1024;
+/// Maximum value for `training_threshold` parameter (102,400)
+pub const MAX_TRAINING_THRESHOLD: u32 = 100 * DEFAULT_BLOCK_SIZE;
+
 /// Builder for VAMANA vector fields
+#[must_use = "The builder has no effect until .build() is called"]
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct VamanaVectorFieldBuilder {
@@ -1545,9 +1559,16 @@ impl VamanaVectorFieldBuilder {
     /// The default is 10 * DEFAULT_BLOCK_SIZE.
     pub fn training_threshold(mut self, training_threshold: u32) -> Self {
         if self.compression.is_some() {
-            // Override the value if it is too high.
-            let training_threshold = std::cmp::min(training_threshold, 100 * 1024);
-            self.training_threshold = Some(training_threshold);
+            let clamped = std::cmp::min(training_threshold, MAX_TRAINING_THRESHOLD);
+            if clamped != training_threshold {
+                warn!(
+                    "training_threshold exceeded the maximum allowed value; clamped from {} to {}.",
+                    training_threshold, clamped
+                );
+            }
+            self.training_threshold = Some(clamped);
+        } else {
+            warn!("training_threshold ignored: applies only when compression is enabled.");
         }
         self
     }
@@ -1560,9 +1581,17 @@ impl VamanaVectorFieldBuilder {
             .compression
             .is_some_and(|c| matches!(c, CompressionType::LeanVec4x8 | CompressionType::LeanVec8x8))
         {
-            // Override the value if it is too high and make sure it is not 0
-            let reduce = std::cmp::min(reduce, self.base.dim - 1).max(1);
-            self.reduce = Some(reduce);
+            let max_reduce = self.base.dim.saturating_sub(1).max(1);
+            let clamped = std::cmp::min(reduce, max_reduce).max(1);
+            if clamped != reduce {
+                warn!(
+                    "reduce value {} out of valid range 1..={}; clamped to {}.",
+                    reduce, max_reduce, clamped
+                );
+            }
+            self.reduce = Some(clamped);
+        } else {
+            warn!("reduce ignored: applies only to LeanVec4x8 and LeanVec8x8 compression types.");
         }
         self
     }
@@ -1619,6 +1648,7 @@ impl ToRedisArgs for CoordSystem {
 }
 
 /// Represents a geo shape field in the schema.
+#[must_use = "Geo shape field has no effect unless inserted into a schema"]
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SchemaGeoShapeField {
@@ -1772,6 +1802,7 @@ impl From<FieldType> for FieldDefinition {
 }
 
 /// The RediSearch schema declaring which fields to index.
+#[must_use = "Schema has no effect unless passed to a command"]
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct RediSearchSchema(Vec<(String, FieldDefinition)>);
