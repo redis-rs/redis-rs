@@ -31,8 +31,9 @@ mod create_tests {
     use crate::create::*;
     use crate::schema;
     use crate::search::{
-        CompressionType, DistanceMetric, RediSearchSchema, SchemaNumericField, SchemaTagField,
-        SchemaTextField, VamanaVectorType, VectorField, VectorType,
+        CompressionType, DistanceMetric, MAX_TRAINING_THRESHOLD, RediSearchSchema,
+        SchemaNumericField, SchemaTagField, SchemaTextField, VamanaVectorType, VectorField,
+        VectorType,
     };
 
     static INDEX_NAME: &str = "index";
@@ -796,19 +797,19 @@ mod create_tests {
     #[test]
     #[should_panic(expected = "Vector dimension must be positive (greater than 0)")]
     fn test_flat_vector_zero_dimension_panics() {
-        VectorField::flat(VectorType::Float32, 0, DistanceMetric::Cosine);
+        let _ = VectorField::flat(VectorType::Float32, 0, DistanceMetric::Cosine);
     }
 
     #[test]
     #[should_panic(expected = "Vector dimension must be positive (greater than 0)")]
     fn test_hnsw_vector_zero_dimension_panics() {
-        VectorField::hnsw(VectorType::Float32, 0, DistanceMetric::L2);
+        let _ = VectorField::hnsw(VectorType::Float32, 0, DistanceMetric::L2);
     }
 
     #[test]
     #[should_panic(expected = "Vector dimension must be positive (greater than 0)")]
     fn test_vamana_vector_zero_dimension_panics() {
-        VectorField::vamana(VamanaVectorType::Float32, 0, DistanceMetric::IP);
+        let _ = VectorField::vamana(VamanaVectorType::Float32, 0, DistanceMetric::IP);
     }
 
     #[test]
@@ -897,12 +898,12 @@ mod create_tests {
         let ft_create = FtCreateCommand::new(INDEX_NAME).schema(schema! {
             VECTOR_FIELD_NAME => vamana_field_builder.clone().build(),
         });
-        // Note: REDUCE should not be included because it only applies to LeanVec4x8 and LeanVec8x8 compression types
+        // Note: REDUCE should not be included because it only applies to LeanVec4x8 and LeanVec8x8 compression types.
         assert_eq!(
             ft_create.into_args(),
             "FT.CREATE index SCHEMA embedding VECTOR SVS-VAMANA 18 TYPE FLOAT32 DIM 1024 DISTANCE_METRIC COSINE COMPRESSION LVQ8 CONSTRUCTION_WINDOW_SIZE 300 GRAPH_MAX_DEGREE 128 SEARCH_WINDOW_SIZE 20 EPSILON 0.02 TRAINING_THRESHOLD 2048"
         );
-        // Test with LeanVec4x8 compression which should include REDUCE
+        // Test that LeanVec4x8 compression includes REDUCE.
         let vamana_field_builder = vamana_field_builder
             .compression(CompressionType::LeanVec4x8)
             .reduce(reduce);
@@ -913,7 +914,7 @@ mod create_tests {
             ft_create.into_args(),
             "FT.CREATE index SCHEMA embedding VECTOR SVS-VAMANA 20 TYPE FLOAT32 DIM 1024 DISTANCE_METRIC COSINE COMPRESSION LeanVec4x8 CONSTRUCTION_WINDOW_SIZE 300 GRAPH_MAX_DEGREE 128 SEARCH_WINDOW_SIZE 20 EPSILON 0.02 TRAINING_THRESHOLD 2048 REDUCE 512"
         );
-        // Test that bigger reduce parameters are clamped to dim - 1
+        // Test that bigger reduce parameters are clamped to dim - 1.
         let vamana_field_builder = vamana_field_builder.reduce(1024);
         let ft_create = FtCreateCommand::new(INDEX_NAME).schema(schema! {
             VECTOR_FIELD_NAME => vamana_field_builder.clone().build(),
@@ -922,7 +923,7 @@ mod create_tests {
             ft_create.into_args(),
             "FT.CREATE index SCHEMA embedding VECTOR SVS-VAMANA 20 TYPE FLOAT32 DIM 1024 DISTANCE_METRIC COSINE COMPRESSION LeanVec4x8 CONSTRUCTION_WINDOW_SIZE 300 GRAPH_MAX_DEGREE 128 SEARCH_WINDOW_SIZE 20 EPSILON 0.02 TRAINING_THRESHOLD 2048 REDUCE 1023"
         );
-        // Test that the minimal reduction is 1
+        // Test that the minimal reduction is 1.
         let vamana_field_builder = vamana_field_builder.reduce(0);
         let ft_create = FtCreateCommand::new(INDEX_NAME).schema(schema! {
             VECTOR_FIELD_NAME => vamana_field_builder.clone().build(),
@@ -931,8 +932,9 @@ mod create_tests {
             ft_create.into_args(),
             "FT.CREATE index SCHEMA embedding VECTOR SVS-VAMANA 20 TYPE FLOAT32 DIM 1024 DISTANCE_METRIC COSINE COMPRESSION LeanVec4x8 CONSTRUCTION_WINDOW_SIZE 300 GRAPH_MAX_DEGREE 128 SEARCH_WINDOW_SIZE 20 EPSILON 0.02 TRAINING_THRESHOLD 2048 REDUCE 1"
         );
-        // Test that training threshold is clamped to 100 * DEFAULT_BLOCK_SIZE, where DEFAULT_BLOCK_SIZE is 1024
-        let vamana_field_builder = vamana_field_builder.training_threshold(100 * 1024 + 1);
+        // Test that training threshold is clamped to 100 * DEFAULT_BLOCK_SIZE, where DEFAULT_BLOCK_SIZE is 1024.
+        let vamana_field_builder =
+            vamana_field_builder.training_threshold(MAX_TRAINING_THRESHOLD + 1);
         let ft_create = FtCreateCommand::new(INDEX_NAME).schema(schema! {
             VECTOR_FIELD_NAME => vamana_field_builder.clone().build(),
         });
@@ -940,7 +942,7 @@ mod create_tests {
             ft_create.into_args(),
             "FT.CREATE index SCHEMA embedding VECTOR SVS-VAMANA 20 TYPE FLOAT32 DIM 1024 DISTANCE_METRIC COSINE COMPRESSION LeanVec4x8 CONSTRUCTION_WINDOW_SIZE 300 GRAPH_MAX_DEGREE 128 SEARCH_WINDOW_SIZE 20 EPSILON 0.02 TRAINING_THRESHOLD 102400 REDUCE 1"
         );
-        // Test that training threshold is only applicable when there is a compression type
+        // Test that training threshold is only applicable when there is a compression type.
         let vamana_field_builder =
             VectorField::vamana(VamanaVectorType::Float32, 1024, DistanceMetric::Cosine)
                 .training_threshold(2048);
