@@ -165,12 +165,12 @@ impl FromRedisValue for AclInfo {
         let mut channels: Vec<Rule> = Vec::new();
         let mut selectors: Vec<Rule> = Vec::new();
 
-        let mut i = 0usize;
-        while i < seq.len() {
-            let name = &seq[i];
-            let value = seq
-                .get(i + 1)
+        for chunk in seq.chunks(2) {
+            let name = &chunk[0];
+            let value = chunk
+                .get(1)
                 .ok_or_else(|| not_convertible_error!(v, "Malformed ACL GETUSER response"))?;
+
             // Expect name to be a bulk string
             let key = match name {
                 Value::BulkString(bs) => std::str::from_utf8(bs)?,
@@ -400,8 +400,6 @@ impl FromRedisValue for AclInfo {
                 }
                 _ => {}
             }
-
-            i += 2;
         }
 
         Ok(Self {

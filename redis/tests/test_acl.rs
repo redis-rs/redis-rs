@@ -186,61 +186,52 @@ fn test_acl_dryrun() {
 }
 #[test]
 fn test_acl_info() {
-    fn build_acl_rules(username: &str, password: &str) -> Vec<Rule> {
-        let mut rules = Vec::new();
-        // Basic permissions: on, +@all, -@dangerous, +keys, -info
-        rules.push(Rule::On);
-        rules.push(Rule::AllCommands);
-        rules.push(Rule::RemoveCategory("dangerous".to_string()));
-        rules.push(Rule::AddCommand("keys".to_string()));
-        rules.push(Rule::RemoveCommand("info".to_string()));
-        // Database restrictions: -select
-        rules.push(Rule::RemoveCommand("select".to_string()));
-        // Password
-        rules.push(Rule::AddPass(password.to_string()));
-        // Add default queue pattern - uses hashtag {DEFAULT_QUEUE_NAME} for Redis cluster routing
-        rules.push(Rule::Pattern(format!("asynq:{{{}}}:*", "default")));
-        // Add tenant-specific key patterns
-        rules.push(Rule::Pattern(format!("asynq:{{{}:*", username)));
-        // Add default key patterns
-        let default_key_patterns = vec![
-            Rule::Pattern("asynq:queues".to_string()),
-            Rule::Pattern("asynq:servers:*".to_string()),
-            Rule::Pattern("asynq:servers".to_string()),
-            Rule::Pattern("asynq:workers".to_string()),
-            Rule::Pattern("asynq:workers:*".to_string()),
-            Rule::Pattern("asynq:schedulers".to_string()),
-            Rule::Pattern("asynq:schedulers:*".to_string()),
-            Rule::Channel("asynq:cancel".to_string()),
-        ];
-        for pattern in default_key_patterns {
-            rules.push(pattern);
-        }
-        rules
-    }
     let ctx = TestContext::new();
     let mut conn = ctx.connection();
     let username = "tenant";
     let password = "securepassword123";
+    const DEFAULT_QUEUE_NAME: &str = "default";
+    let rules = vec![
+        // Basic permissions: on, +@all, -@dangerous, +keys, -info
+        Rule::On,
+        Rule::AllCommands,
+        Rule::RemoveCategory("dangerous".to_string()),
+        Rule::AddCommand("keys".to_string()),
+        Rule::RemoveCommand("info".to_string()),
+        // Database restrictions: -select
+        Rule::RemoveCommand("select".to_string()),
+        // Password
+        Rule::AddPass(password.to_string()),
+        // Add default queue pattern - uses hashtag {DEFAULT_QUEUE_NAME} for Redis cluster routing
+        Rule::Pattern(format!("asynq:{{{}}}:*", DEFAULT_QUEUE_NAME)),
+        // Add tenant-specific key patterns
+        Rule::Pattern(format!("asynq:{{{}:*", username)),
+        // Add default key patterns
+        Rule::Pattern("asynq:queues".to_string()),
+        Rule::Pattern("asynq:servers:*".to_string()),
+        Rule::Pattern("asynq:servers".to_string()),
+        Rule::Pattern("asynq:workers".to_string()),
+        Rule::Pattern("asynq:workers:*".to_string()),
+        Rule::Pattern("asynq:schedulers".to_string()),
+        Rule::Pattern("asynq:schedulers:*".to_string()),
+        Rule::Channel("asynq:cancel".to_string()),
+    ];
+    assert_eq!(conn.acl_setuser_rules(username, &rules), Ok(()));
+    let info = conn.acl_getuser(username).expect("Got user");
+    assert!(info.is_some());
+    let info = info.expect("Got asynq");
     assert_eq!(
-        conn.acl_setuser_rules(username, &build_acl_rules(username, password)),
-        Ok(())
-    );
-    let asynq_info = conn.acl_getuser(username).expect("Got user");
-    assert!(asynq_info.is_some());
-    let asynq_info = asynq_info.expect("Got asynq");
-    assert_eq!(
-        asynq_info.flags,
+        info.flags,
         vec![Rule::On, Rule::Other("sanitize-payload".to_string())]
     );
     assert_eq!(
-        asynq_info.passwords,
+        info.passwords,
         vec![Rule::AddHashedPass(
             "dda69783f28fdf6f1c5a83e8400f2472e9300887d1dffffe12a07b92a3d0aa25".to_string()
         )]
     );
     assert_eq!(
-        asynq_info.commands,
+        info.commands,
         vec![
             Rule::AddCategory("all".to_string()),
             Rule::RemoveCategory("dangerous".to_string()),
@@ -250,7 +241,7 @@ fn test_acl_info() {
         ]
     );
     assert_eq!(
-        asynq_info.keys,
+        info.keys,
         vec![
             Rule::Pattern("asynq:{default}:*".to_string()),
             Rule::Pattern("asynq:{tenant:*".to_string()),
@@ -264,10 +255,10 @@ fn test_acl_info() {
         ]
     );
     assert_eq!(
-        asynq_info.channels,
+        info.channels,
         vec![Rule::Channel("asynq:cancel".to_string())]
     );
-    assert_eq!(asynq_info.selectors, vec![]);
+    assert_eq!(info.selectors, vec![]);
 }
 #[test]
 fn test_acl_sample_info() {
