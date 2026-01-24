@@ -52,7 +52,7 @@ Most built-in types already implement this trait.
 
 ## Default connection and response timeouts (Breaking Change)
 
-Async connections now have default timeouts set to prevent indefinite hangs. Connection timeout defaults to 5 seconds and response timeout defaults to 10 seconds ([#1686](https://github.com/redis-rs/redis-rs/pull/1686)).
+Async connections now have default timeouts set to prevent indefinite hangs. Connection timeout defaults to 1 second and response timeout defaults to 500 milliseconds ([#1686](https://github.com/redis-rs/redis-rs/pull/1686)).
 
 **Migration:** If you need to disable timeouts or adjust them, configure via `AsyncConnectionConfig` or `ConnectionManagerConfig`:
 ```rust
