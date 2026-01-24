@@ -58,7 +58,10 @@ pub enum Rule {
 
     /// Pattern for pub/sub channels (returned prefixed with `&` by Redis)
     Channel(String),
+    /// Rest Channels
+    RestChannels,
     /// Selector entries (returned by Redis under `(selectors)`).
+    /// Only supported in Redis 7.2 and later
     Selector(Vec<String>),
 
     /// Performs the following actions: `resetpass`, `resetkeys`, `off`, `-@all`.
@@ -100,6 +103,7 @@ impl ToRedisArgs for Rule {
             AllKeys => out.write_arg(b"allkeys"),
             ResetKeys => out.write_arg(b"resetkeys"),
             Channel(pat) => out.write_arg_fmt(format_args!("&{pat}")),
+            RestChannels => out.write_arg(b"resetchannels"),
             Selector(sel) => out.write_arg_fmt(format_args!("({})", sel.join(" "))),
 
             Reset => out.write_arg(b"reset"),

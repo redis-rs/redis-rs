@@ -77,6 +77,7 @@ fn run() -> RedisResult<()> {
     let rules = vec![
         // Basic permissions: on, +@all, -@dangerous, +keys, -info
         Rule::On,
+        Rule::RestChannels,
         Rule::AllCommands,
         Rule::RemoveCategory("dangerous".to_string()),
         Rule::AddCommand("keys".to_string()),
@@ -107,11 +108,12 @@ fn run() -> RedisResult<()> {
     println!("{:?}", tenant_user);
     let sample_rule = vec![
         Rule::On,
+        Rule::RestChannels,
         Rule::NoPass,
         Rule::AddCommand("GET".to_string()),
         Rule::AllKeys,
         Rule::Channel("*".to_string()),
-        Rule::Selector(vec!["+SET".to_string(), "~key2".to_string()]),
+        // Rule::Selector(vec!["+SET".to_string(), "~key2".to_string()]),
     ];
     conn.acl_setuser_rules("sample", &sample_rule)?;
     let sample_user = conn.acl_getuser("sample");
