@@ -3,6 +3,7 @@ Architecture Overview:
 Notes:
 - redis-rs can use FtCreateCommand::into_cmd() to send the command to a Redis server
 - The schema! macro uses the builder pattern for Vector fields and into() for other field types
+- Typestate pattern enforces at compile time that schemas are non-empty and set before building
 
 Builder
 │
@@ -12,9 +13,9 @@ Builder
 |   └── For Vector fields produced by VectorBuilders' build()
 |   └── Other types rely on into()
 │
-    │ inserted by schema! macro or manual insert
+    │ inserted by schema! macro or chained insert()
     ▼
-RediSearchSchema = Vec<(String, FieldDefinition)>
+RediSearchSchema<Empty> ──insert()──> RediSearchSchema<NonEmpty>
       │
       │ Each FieldDefinition implements ToRedisArgs
       ▼
@@ -25,6 +26,8 @@ ToRedisArgs::write_redis_args() serializes to Redis protocol
       └── Other fields: writes field type, then modifiers
       ▼
 FtCreateCommand collects all args and offers conversion to redis::Cmd
+      └── FtCreateCommand<WithoutSchema> ──>[options()]──>schema()──> FtCreateCommand<WithSchema>
+      └── FtCreateCommand<WithSchema> ──>[options()]──>into_cmd()──> Cmd
 */
 
 mod create_tests {
@@ -44,26 +47,6 @@ mod create_tests {
     static VECTOR_FIELD_NAME: &str = "embedding";
     static GEOSHAPE_FIELD_NAME: &str = "area";
     static CUSTOM_ALIAS: &str = "custom_alias";
-
-    #[test]
-    #[should_panic(expected = "FT.CREATE command requires at least one field in the schema")]
-    fn test_empty_schema_panics() {
-        let ft_create = FtCreateCommand::new(INDEX_NAME).schema(RediSearchSchema::new());
-
-        // This should panic because the schema is empty
-        ft_create.into_cmd();
-    }
-
-    #[test]
-    #[should_panic(expected = "FT.CREATE command requires a non-empty index name")]
-    fn test_empty_index_name_panics() {
-        let ft_create = FtCreateCommand::new("").schema(schema! {
-            TEXT_FIELD_NAME => SchemaTextField::new()
-        });
-
-        // This should panic because the index name is empty
-        ft_create.into_cmd();
-    }
 
     // ============================================================================
     // CreateOptions Tests
@@ -1022,11 +1005,20 @@ mod create_tests {
     // Other Tests
     // ============================================================================
     #[test]
+    fn test_empty_index_name() {
+        // Empty index names are valid in Redis
+        let ft_create = FtCreateCommand::new("").schema(schema! {
+            TEXT_FIELD_NAME => SchemaTextField::new()
+        });
+        assert_eq!(ft_create.into_args(), "FT.CREATE  SCHEMA title TEXT");
+    }
+
+    #[test]
     fn test_multiple_fields() {
-        let mut schema = RediSearchSchema::new();
-        schema.insert(TEXT_FIELD_NAME, SchemaTextField::new().weight(2.0));
-        schema.insert(NUMERIC_FIELD_NAME, SchemaNumericField::new());
-        schema.insert(TAG_FIELD_NAME, SchemaTagField::new().separator(','));
+        let schema = RediSearchSchema::new()
+            .insert(TEXT_FIELD_NAME, SchemaTextField::new().weight(2.0))
+            .insert(NUMERIC_FIELD_NAME, SchemaNumericField::new())
+            .insert(TAG_FIELD_NAME, SchemaTagField::new().separator(','));
 
         let ft_create = FtCreateCommand::new(INDEX_NAME).schema(schema);
         assert_eq!(

@@ -22,10 +22,10 @@
 //! ```rust
 //! use redis::search::*;
 //!
-//! let mut schema = RediSearchSchema::new();
-//! schema.insert("title", SchemaTextField::new().weight(2.0));
-//! schema.insert("price", SchemaNumericField::new());
-//! schema.insert("condition", SchemaTagField::new().separator(','));
+//! let schema = RediSearchSchema::new()
+//!     .insert("title", SchemaTextField::new().weight(2.0))
+//!     .insert("price", SchemaNumericField::new())
+//!     .insert("condition", SchemaTagField::new().separator(','));
 //! ```
 use crate::{RedisWrite, ToRedisArgs};
 use log::warn;
@@ -1801,55 +1801,121 @@ impl From<FieldType> for FieldDefinition {
     }
 }
 
+use std::marker::PhantomData;
+
+/// Marker type indicating an empty schema (no fields added yet).
+pub struct Empty;
+
+/// Marker type indicating a non-empty schema (at least one field added).
+pub struct NonEmpty;
+
 /// The RediSearch schema declaring which fields to index.
+///
+/// Uses the typestate pattern to enforce at compile time that a schema
+/// has at least one field before it can be used with a command.
+///
+/// # Type States
+/// - `RediSearchSchema<Empty>` - No fields added yet, cannot be used with commands
+/// - `RediSearchSchema<NonEmpty>` - At least one field added, can be used with commands
+///
+/// # Example
+/// ```rust
+/// use redis::{schema, search::*};
+///
+/// // Using the macro (recommended)
+/// let schema = schema! {
+///     "title" => SchemaTextField::new(),
+///     "price" => SchemaNumericField::new()
+/// };
+///
+/// // Using the builder pattern
+/// let schema = RediSearchSchema::new()
+///     .insert("title", SchemaTextField::new())
+///     .insert("price", SchemaNumericField::new());
+/// ```
 #[must_use = "Schema has no effect unless passed to a command"]
 #[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct RediSearchSchema(Vec<(String, FieldDefinition)>);
+pub struct RediSearchSchema<State = Empty> {
+    fields: Vec<(String, FieldDefinition)>,
+    _state: PhantomData<State>,
+}
 
-impl RediSearchSchema {
-    /// Create a new schema.
+impl RediSearchSchema<Empty> {
+    /// Create a new empty schema.
     pub fn new() -> Self {
-        RediSearchSchema(Vec::new())
+        RediSearchSchema {
+            fields: Vec::new(),
+            _state: PhantomData,
+        }
     }
 
-    /// Insert a new field into the schema.
-    pub fn insert<K: Into<String>, V: Into<FieldDefinition>>(&mut self, key: K, value: V) {
-        self.0.push((key.into(), value.into()));
-    }
-
-    /// Returns whether the schema is empty.
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+    /// Insert the first field into the schema.
+    ///
+    /// This transitions the schema from `Empty` to `NonEmpty` state.
+    pub fn insert<K: Into<String>, V: Into<FieldDefinition>>(
+        mut self,
+        key: K,
+        value: V,
+    ) -> RediSearchSchema<NonEmpty> {
+        self.fields.push((key.into(), value.into()));
+        RediSearchSchema {
+            fields: self.fields,
+            _state: PhantomData,
+        }
     }
 }
 
-impl ToRedisArgs for RediSearchSchema {
+impl Default for RediSearchSchema<Empty> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RediSearchSchema<NonEmpty> {
+    /// Insert an additional field into the schema.
+    pub fn insert<K: Into<String>, V: Into<FieldDefinition>>(mut self, key: K, value: V) -> Self {
+        self.fields.push((key.into(), value.into()));
+        self
+    }
+}
+
+impl ToRedisArgs for RediSearchSchema<NonEmpty> {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
     {
-        for (key, field) in &self.0 {
+        for (key, field) in &self.fields {
             key.write_redis_args(out);
             field.write_redis_args(out);
         }
     }
 }
 
-impl Default for RediSearchSchema {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Allows schemas to be created in a more concise way.
+/// Creates a non-empty [`RediSearchSchema`].
+///
+/// This macro offers a concise syntax for defining schemas and guarantees
+/// at compile time that at least one field is specified. Empty schemas are
+/// not allowed, and invoking the macro with no fields (`schema! {}`) will
+/// result in a compile-time error.
+///
+/// # Example
+/// ```rust
+/// use redis::{schema, search::*};
+///
+/// let schema = schema! {
+///     "title" => SchemaTextField::new().weight(2.0),
+///     "price" => SchemaNumericField::new(),
+///     "tags" => SchemaTagField::new().separator(','),
+/// };
+/// ```
 #[macro_export]
 macro_rules! schema {
-    ($($key:expr => $value:expr),* $(,)?) => {{
-        let mut schema = $crate::search::RediSearchSchema::new();
-        $(
-            schema.insert($key, $value);
-        )*
-        schema
+    // Requires at least one field - empty invocation won't match
+    ($first_key:expr => $first_value:expr $(, $key:expr => $value:expr)* $(,)?) => {{
+        $crate::search::RediSearchSchema::new()
+            .insert($first_key, $first_value)
+            $(
+                .insert($key, $value)
+            )*
     }};
 }
