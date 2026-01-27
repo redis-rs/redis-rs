@@ -15,11 +15,16 @@ static VECTOR_FIELD_NAME: &str = "embedding";
 static GEOSHAPE_FIELD_NAME: &str = "area";
 
 #[test]
-#[should_panic(expected = "FT.CREATE command requires at least one field in the schema")]
-fn test_ft_create_with_an_empty_schema_panics() {
-    let ctx = TestContext::new();
+fn test_ft_create_with_an_empty_index_name() {
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
     let mut con = ctx.connection();
-    let _ = con.ft_create::<_, String>("", &CreateOptions::new(), &RediSearchSchema::new());
+    let schema = schema! {
+        TEXT_FIELD_NAME => SchemaTextField::new()
+    };
+    assert_eq!(
+        con.ft_create("", &CreateOptions::new(), &schema),
+        Ok("OK".to_string())
+    );
 }
 
 #[test]
