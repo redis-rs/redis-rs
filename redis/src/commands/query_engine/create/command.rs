@@ -21,23 +21,50 @@
 //!     )
 //!     .schema(schema);
 //! ```
+use std::marker::PhantomData;
+
 use crate::Cmd;
 use crate::search::*;
 
+/// Marker type indicating no schema has been set yet.
+pub struct WithoutSchema;
+
+/// Marker type indicating a schema has been set.
+pub struct WithSchema;
+
 /// FT.CREATE command builder.
-pub struct FtCreateCommand {
+///
+/// Uses the typestate pattern to enforce at compile time that a schema
+/// is set before the command can be built.
+///
+/// # Type States
+/// - `FtCreateCommand<WithoutSchema>` - No schema set yet, `into_cmd()` not available
+/// - `FtCreateCommand<WithSchema>` - Schema set, `into_cmd()` available
+///
+/// # Example
+/// ```rust
+/// use redis::{schema, search::*};
+///
+/// let cmd = FtCreateCommand::new("my_index")
+///     .options(CreateOptions::new().on(IndexDataType::Hash))
+///     .schema(schema! { "title" => SchemaTextField::new() })
+///     .into_cmd();
+/// ```
+pub struct FtCreateCommand<State = WithoutSchema> {
     index: String,
     options: CreateOptions,
-    schema: RediSearchSchema,
+    schema: Option<RediSearchSchema<NonEmpty>>,
+    _state: PhantomData<State>,
 }
 
-impl FtCreateCommand {
+impl FtCreateCommand<WithoutSchema> {
     /// Create a new FT.CREATE command for the given index
     pub fn new<S: Into<String>>(index: S) -> Self {
         Self {
             index: index.into(),
             options: CreateOptions::default(),
-            schema: RediSearchSchema::new(),
+            schema: None,
+            _state: PhantomData,
         }
     }
 
@@ -47,28 +74,38 @@ impl FtCreateCommand {
         self
     }
 
-    /// Set the schema for the command
-    pub fn schema(mut self, schema: RediSearchSchema) -> Self {
-        self.schema = schema;
+    /// Set the schema for the command.
+    ///
+    /// The schema must be non-empty (contain at least one field).
+    /// This is enforced at compile time by the type system.
+    ///
+    /// This transitions the builder from `WithoutSchema` to `WithSchema` state,
+    /// making `into_cmd()` available.
+    pub fn schema(self, schema: RediSearchSchema<NonEmpty>) -> FtCreateCommand<WithSchema> {
+        FtCreateCommand {
+            index: self.index,
+            options: self.options,
+            schema: Some(schema),
+            _state: PhantomData,
+        }
+    }
+}
+
+impl FtCreateCommand<WithSchema> {
+    /// Set the options for the command
+    pub fn options(mut self, options: CreateOptions) -> Self {
+        self.options = options;
         self
     }
 
     /// Consume the builder and convert it into a `redis::Cmd`.
     pub fn into_cmd(self) -> Cmd {
-        assert!(
-            !self.index.is_empty(),
-            "FT.CREATE command requires a non-empty index name"
-        );
-        assert!(
-            !self.schema.is_empty(),
-            "FT.CREATE command requires at least one field in the schema"
-        );
-
         let mut cmd = crate::cmd("FT.CREATE");
         cmd.arg(&self.index);
         cmd.arg(&self.options);
         cmd.arg("SCHEMA");
-        cmd.arg(&self.schema);
+        // Schema is guaranteed to be Some in this state (WithSchema).
+        cmd.arg(self.schema.unwrap());
 
         cmd
     }
