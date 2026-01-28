@@ -386,18 +386,24 @@ where
 }
 
 impl Pipeline {
+    const DEFAULT_BUFFER_SIZE: usize = 50;
+
+    fn resolve_buffer_size(size: Option<usize>) -> usize {
+        size.unwrap_or(Self::DEFAULT_BUFFER_SIZE)
+    }
+
     fn new<T>(
         sink_stream: T,
         push_sender: Option<Arc<dyn AsyncPushSender>>,
         #[cfg(feature = "cache-aio")] cache_manager: Option<CacheManager>,
+        buffer_size: usize,
     ) -> (Self, impl Future<Output = ()>)
     where
         T: Sink<Vec<u8>, Error = RedisError>,
         T: Stream<Item = RedisResult<Value>>,
         T: Unpin + Send + 'static,
     {
-        const BUFFER_SIZE: usize = 50;
-        let (sender, mut receiver) = mpsc::channel(BUFFER_SIZE);
+        let (sender, mut receiver) = mpsc::channel(buffer_size);
 
         let sink = PipelineSink::new(
             sink_stream,
@@ -577,6 +583,7 @@ impl MultiplexedConnection {
             config.push_sender,
             #[cfg(feature = "cache-aio")]
             cache_manager_opt.clone(),
+            Pipeline::resolve_buffer_size(config.pipeline_buffer_size),
         );
         let con = MultiplexedConnection {
             pipeline,
@@ -805,5 +812,20 @@ impl MultiplexedConnection {
         cmd.arg(channel_pattern);
         cmd.exec_async(self).await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pipeline_resolve_buffer_size_default() {
+        assert_eq!(Pipeline::resolve_buffer_size(None), 50);
+    }
+
+    #[test]
+    fn test_pipeline_resolve_buffer_size_custom() {
+        assert_eq!(Pipeline::resolve_buffer_size(Some(100)), 100);
     }
 }
