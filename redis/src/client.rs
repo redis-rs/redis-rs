@@ -191,6 +191,7 @@ pub struct AsyncConnectionConfig {
     #[cfg(feature = "cache-aio")]
     pub(crate) cache: Option<Cache>,
     pub(crate) dns_resolver: Option<std::sync::Arc<dyn AsyncDNSResolver>>,
+    pub(crate) pipeline_buffer_size: Option<usize>,
 }
 
 #[cfg(feature = "aio")]
@@ -203,6 +204,7 @@ impl Default for AsyncConnectionConfig {
             #[cfg(feature = "cache-aio")]
             cache: Default::default(),
             dns_resolver: Default::default(),
+            pipeline_buffer_size: None,
         }
     }
 }
@@ -295,6 +297,25 @@ impl AsyncConnectionConfig {
         dns_resolver: std::sync::Arc<dyn AsyncDNSResolver>,
     ) -> Self {
         self.dns_resolver = Some(dns_resolver);
+        self
+    }
+
+    /// Sets the buffer size for the internal pipeline channel.
+    ///
+    /// The multiplexed connection uses an internal channel to queue Redis commands
+    /// before sending them to the server. This setting controls how many commands
+    /// can be buffered in that channel.
+    ///
+    /// When the buffer is full, callers will asynchronously wait until space becomes
+    /// available. A larger buffer allows more commands to be queued during bursts of
+    /// activity, reducing wait time for callers. However, this comes at the cost of
+    /// increased memory usage.
+    ///
+    /// The default value is 50. Consider increasing this value for high-concurrency
+    /// scenarios (e.g., web servers handling many simultaneous requests) where
+    /// buffer contention may increase overall latency and cause upstream timeouts.
+    pub fn set_pipeline_buffer_size(mut self, size: usize) -> Self {
+        self.pipeline_buffer_size = Some(size);
         self
     }
 }
@@ -558,5 +579,19 @@ mod test {
     #[test]
     fn regression_293_parse_ipv6_with_interface() {
         assert!(Client::open(("fe80::cafe:beef%eno1", 6379)).is_ok());
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn test_async_connection_config_pipeline_buffer_size_default() {
+        let config = AsyncConnectionConfig::new();
+        assert_eq!(config.pipeline_buffer_size, None);
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn test_async_connection_config_pipeline_buffer_size_custom() {
+        let config = AsyncConnectionConfig::new().set_pipeline_buffer_size(100);
+        assert_eq!(config.pipeline_buffer_size, Some(100));
     }
 }

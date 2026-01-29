@@ -44,6 +44,7 @@ pub struct ConnectionManagerConfig {
     resubscribe_automatically: bool,
     #[cfg(feature = "cache-aio")]
     pub(crate) cache_config: Option<crate::caching::CacheConfig>,
+    pipeline_buffer_size: Option<usize>,
 }
 
 impl std::fmt::Debug for ConnectionManagerConfig {
@@ -59,6 +60,7 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             resubscribe_automatically,
             #[cfg(feature = "cache-aio")]
             cache_config,
+            pipeline_buffer_size,
         } = &self;
         let mut str = f.debug_struct("ConnectionManagerConfig");
         str.field("exponent_base", &exponent_base)
@@ -68,6 +70,7 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             .field("response_timeout", &response_timeout)
             .field("connection_timeout", &connection_timeout)
             .field("resubscribe_automatically", &resubscribe_automatically)
+            .field("pipeline_buffer_size", &pipeline_buffer_size)
             .field(
                 "push_sender",
                 if push_sender.is_some() {
@@ -224,6 +227,25 @@ impl ConnectionManagerConfig {
             ..self
         }
     }
+
+    /// Sets the buffer size for the internal pipeline channel.
+    ///
+    /// The multiplexed connection uses an internal channel to queue Redis commands
+    /// before sending them to the server. This setting controls how many commands
+    /// can be buffered in that channel.
+    ///
+    /// When the buffer is full, callers will asynchronously wait until space becomes
+    /// available. A larger buffer allows more commands to be queued during bursts of
+    /// activity, reducing wait time for callers. However, this comes at the cost of
+    /// increased memory usage.
+    ///
+    /// The default value is 50. Consider increasing this value for high-concurrency
+    /// scenarios (e.g., web servers handling many simultaneous requests) where
+    /// buffer contention may increase overall latency and cause upstream timeouts.
+    pub fn set_pipeline_buffer_size(mut self, size: usize) -> Self {
+        self.pipeline_buffer_size = Some(size);
+        self
+    }
 }
 
 impl Default for ConnectionManagerConfig {
@@ -239,6 +261,7 @@ impl Default for ConnectionManagerConfig {
             resubscribe_automatically: false,
             #[cfg(feature = "cache-aio")]
             cache_config: None,
+            pipeline_buffer_size: None,
         }
     }
 }
@@ -373,6 +396,7 @@ impl ConnectionManager {
         let mut connection_config = AsyncConnectionConfig::new()
             .set_connection_timeout(config.connection_timeout)
             .set_response_timeout(config.response_timeout);
+        connection_config.pipeline_buffer_size = config.pipeline_buffer_size;
 
         #[cfg(feature = "cache-aio")]
         let cache_manager = config
@@ -708,5 +732,22 @@ impl ConnectionLike for ConnectionManager {
 
     fn get_db(&self) -> i64 {
         self.0.client.connection_info().redis.db
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_connection_manager_config_pipeline_buffer_size_default() {
+        let config = ConnectionManagerConfig::new();
+        assert_eq!(config.pipeline_buffer_size, None);
+    }
+
+    #[test]
+    fn test_connection_manager_config_pipeline_buffer_size_custom() {
+        let config = ConnectionManagerConfig::new().set_pipeline_buffer_size(100);
+        assert_eq!(config.pipeline_buffer_size, Some(100));
     }
 }
