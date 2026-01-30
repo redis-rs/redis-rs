@@ -113,7 +113,7 @@ fn run() -> RedisResult<()> {
         Rule::AddCommand("GET".to_string()),
         Rule::AllKeys,
         Rule::Channel("*".to_string()),
-        // Rule::Selector(vec!["+SET".to_string(), "~key2".to_string()]),
+        // Rule::Selector(vec![Rule::AddCommand("SET".to_string()), Rule::Pattern("key2".to_string())]),
     ];
     conn.acl_setuser_rules("sample", &sample_rule)?;
     let sample_user = conn.acl_getuser("sample");
