@@ -1,3 +1,14 @@
+### 1.0.3 (2026-01-30)
+
+#### Changes & Bug fixes
+
+* Update editions for crate ([#1903](https://github.com/redis-rs/redis-rs/pull/1903) by @nihohit)
+* Fix reconnect removes all other connections ([#1919](https://github.com/redis-rs/redis-rs/pull/1919) by @nihohit)
+* Mention added timeouts in migration doc ([#1925](https://github.com/redis-rs/redis-rs/pull/1925) by @nihohit)
+* Fix the reference to how to avoid setting client info ([#1930](https://github.com/redis-rs/redis-rs/pull/1930) by @nihohit)
+* Fix timeout details in docs ([#1934](https://github.com/redis-rs/redis-rs/pull/1934) by @nihohit)
+* Make MultiplexedConnection buffer size configurable ([#1935](https://github.com/redis-rs/redis-rs/pull/1935) by @paz-raon)
+* Fix acl info and add rule ([#1928](https://github.com/redis-rs/redis-rs/pull/1928) by @cn-kali-team)
 
 ### 1.0.2 (2025-12-24)
 
