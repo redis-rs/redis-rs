@@ -331,8 +331,7 @@ impl AclInfo {
                     Value::Array(arr) | Value::Set(arr) => arr
                         .iter()
                         .map(|pat| {
-                            let acl: AclInfo =
-                                FromRedisValue::from_redis_value_ref(pat).unwrap_or_default();
+                            let acl: AclInfo = FromRedisValue::from_redis_value_ref(pat)?;
                             let selector = acl
                                 .flags
                                 .into_iter()
