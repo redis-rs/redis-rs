@@ -195,7 +195,7 @@ fn test_acl_info() {
     let rules = vec![
         // Basic permissions: on, +@all, -@dangerous, +keys, -info
         Rule::On,
-        Rule::RestChannels,
+        Rule::ResetChannels,
         Rule::AllCommands,
         Rule::RemoveCategory("dangerous".to_string()),
         Rule::AddCommand("keys".to_string()),

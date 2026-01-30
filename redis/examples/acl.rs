@@ -77,7 +77,7 @@ fn run() -> RedisResult<()> {
     let rules = vec![
         // Basic permissions: on, +@all, -@dangerous, +keys, -info
         Rule::On,
-        Rule::RestChannels,
+        Rule::ResetChannels,
         Rule::AllCommands,
         Rule::RemoveCategory("dangerous".to_string()),
         Rule::AddCommand("keys".to_string()),
@@ -108,7 +108,7 @@ fn run() -> RedisResult<()> {
     println!("{:?}", tenant_user);
     let sample_rule = vec![
         Rule::On,
-        Rule::RestChannels,
+        Rule::ResetChannels,
         Rule::NoPass,
         Rule::AddCommand("GET".to_string()),
         Rule::AllKeys,
