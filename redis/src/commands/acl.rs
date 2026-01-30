@@ -372,7 +372,7 @@ impl FromRedisValue for AclInfo {
         } else if let Some(seq) = v.as_sequence() {
             // Sequence (array or set) case: must be alternating key/value entries.
             if seq.len() % 2 != 0 {
-                return Err(not_convertible_error!(v.clone(), ""));
+                return Err(not_convertible_error!(v, ""));
             }
             for chunk in seq.chunks(2) {
                 let name = &chunk[0];
@@ -380,7 +380,7 @@ impl FromRedisValue for AclInfo {
                 acl.handle_pair(name, value)?;
             }
         } else {
-            return Err(not_convertible_error!(v.clone(), ""));
+            return Err(not_convertible_error!(v, ""));
         }
         Ok(acl)
     }
