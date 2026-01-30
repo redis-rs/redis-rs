@@ -331,13 +331,15 @@ impl AclInfo {
                     Value::Array(arr) | Value::Set(arr) => arr
                         .iter()
                         .map(|pat| {
-                            let mut selector = vec![];
                             let acl: AclInfo =
                                 FromRedisValue::from_redis_value_ref(pat).unwrap_or_default();
-                            selector.extend(acl.flags);
-                            selector.extend(acl.commands);
-                            selector.extend(acl.channels);
-                            selector.extend(acl.keys);
+                            let selector = acl
+                                .flags
+                                .into_iter()
+                                .chain(acl.commands)
+                                .chain(acl.channels)
+                                .chain(acl.keys)
+                                .collect();
                             Ok(selector)
                         })
                         .collect::<Result<Vec<Vec<Rule>>, ParsingError>>()?,
