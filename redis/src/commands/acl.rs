@@ -56,6 +56,14 @@ pub enum Rule {
     /// Flush the list of allowed keys patterns.
     ResetKeys,
 
+    /// Pattern for pub/sub channels (returned prefixed with `&` by Redis)
+    Channel(String),
+    /// Reset Channels
+    ResetChannels,
+    /// Selector entries (returned by Redis under `(selectors)`).
+    /// Only supported in Redis 7.2 and later
+    Selector(Vec<Rule>),
+
     /// Performs the following actions: `resetpass`, `resetkeys`, `off`, `-@all`.
     /// The user returns to the same state it has immediately after its creation.
     Reset,
@@ -94,7 +102,18 @@ impl ToRedisArgs for Rule {
             Pattern(pat) => out.write_arg_fmt(format_args!("~{pat}")),
             AllKeys => out.write_arg(b"allkeys"),
             ResetKeys => out.write_arg(b"resetkeys"),
-
+            Channel(pat) => out.write_arg_fmt(format_args!("&{pat}")),
+            ResetChannels => out.write_arg(b"resetchannels"),
+            Selector(sel) => out.write_arg_fmt(format_args!(
+                "({})",
+                sel.iter()
+                    .flat_map(|r| r
+                        .to_redis_args()
+                        .into_iter()
+                        .map(|x| String::from_utf8_lossy(&x).to_string()))
+                    .collect::<Vec<String>>()
+                    .join(" ")
+            )),
             Reset => out.write_arg(b"reset"),
 
             Other(rule) => out.write_arg(rule.as_bytes()),
@@ -106,7 +125,7 @@ impl ToRedisArgs for Rule {
 /// This type collects key/value data returned by the [`ACL GETUSER`][1] command.
 ///
 /// [1]: https://redis.io/commands/acl-getuser
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Default, Eq, PartialEq)]
 pub struct AclInfo {
     /// Describes flag rules for the user. Represented by [`Rule::On`][1],
     /// [`Rule::Off`][2], [`Rule::AllKeys`][3], [`Rule::AllCommands`][4] and
@@ -136,26 +155,40 @@ pub struct AclInfo {
     ///
     /// [1]: ./enum.Rule.html#variant.Pattern
     pub keys: Vec<Rule>,
+    /// Describes pub/sub channel patterns. Represented by [`Rule::Channel`][1].
+    ///
+    /// [1]: ./enum.Rule.html#variant.Channel
+    pub channels: Vec<Rule>,
+    /// Describes selectors. Represented by [`Rule::Selector`][1].
+    ///
+    /// [1]: ./enum.Rule.html#variant.Selector
+    pub selectors: Vec<Rule>,
 }
-
-impl FromRedisValue for AclInfo {
-    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
-        let mut it = v
-            .as_sequence()
-            .ok_or_else(|| not_convertible_error!(v, ""))?
-            .iter()
-            .skip(1)
-            .step_by(2);
-
-        let (flags, passwords, commands, keys) = match (it.next(), it.next(), it.next(), it.next())
-        {
-            (Some(flags), Some(passwords), Some(commands), Some(keys)) => {
-                // Parse flags
-                // Ref: https://github.com/redis/redis/blob/0cabe0cfa7290d9b14596ec38e0d0a22df65d1df/src/acl.c#L83-L90
-                let flags = flags
+impl AclInfo {
+    fn handle_pair(&mut self, name: &Value, value: &Value) -> Result<(), ParsingError> {
+        // Expect name to be a bulk string
+        let key = match name {
+            Value::BulkString(bs) => {
+                // convert to owned String and trim optional surrounding quotes
+                let mut s = std::str::from_utf8(bs)?.trim().to_owned();
+                if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+                    s = s[1..s.len() - 1].to_owned();
+                }
+                s
+            }
+            _ => {
+                return Err(not_convertible_error!(
+                    name,
+                    "Expect a bulk string key name"
+                ));
+            }
+        };
+        match key.as_str() {
+            "flags" => {
+                let f = value
                     .as_sequence()
                     .ok_or_else(|| {
-                        not_convertible_error!(flags, "Expect an array response of ACL flags")
+                        not_convertible_error!(value, "Expect an array response of ACL flags")
                     })?
                     .iter()
                     .map(|flag| match flag {
@@ -173,22 +206,29 @@ impl FromRedisValue for AclInfo {
                         )),
                     })
                     .collect::<Result<_, _>>()?;
-
-                let passwords = passwords
+                self.flags = f;
+            }
+            "passwords" => {
+                let p = value
                     .as_sequence()
                     .ok_or_else(|| {
-                        not_convertible_error!(flags, "Expect an array response of ACL flags")
+                        not_convertible_error!(value, "Expect an array response of ACL passwords")
                     })?
                     .iter()
-                    .map(|pass| Ok(Rule::AddHashedPass(String::from_redis_value_ref(pass)?)))
+                    .map(|pass| {
+                        let s = String::from_redis_value_ref(pass)?;
+                        Ok(Rule::AddHashedPass(s))
+                    })
                     .collect::<Result<_, ParsingError>>()?;
-
-                let commands = match commands {
+                self.passwords = p;
+            }
+            "commands" => {
+                let cmds = match value {
                     Value::BulkString(cmd) => std::str::from_utf8(cmd)?,
                     _ => {
                         return Err(not_convertible_error!(
-                            commands,
-                            "Expect a valid UTF8 string"
+                            value,
+                            "Expect a valid UTF8 string for commands"
                         ));
                     }
                 }
@@ -204,33 +244,147 @@ impl FromRedisValue for AclInfo {
                     )),
                 })
                 .collect::<Result<_, _>>()?;
-
-                let keys = keys
-                    .as_sequence()
-                    .ok_or_else(|| not_convertible_error!(keys, ""))?
-                    .iter()
-                    .map(|pat| Ok(Rule::Pattern(String::from_redis_value_ref(pat)?)))
-                    .collect::<Result<_, ParsingError>>()?;
-
-                (flags, passwords, commands, keys)
+                self.commands = cmds;
             }
-            _ => {
-                return Err(not_convertible_error!(
-                    v,
-                    "Expect a response from `ACL GETUSER`"
-                ));
+            "keys" => {
+                let parsed = match value {
+                    Value::Array(arr) => arr
+                        .iter()
+                        .map(|pat| {
+                            let s = String::from_redis_value_ref(pat)?;
+                            match s.as_str() {
+                                "*" => Ok(Rule::AllKeys),
+                                _ => Ok(Rule::Pattern(s)),
+                            }
+                        })
+                        .collect::<Result<_, ParsingError>>()?,
+                    Value::BulkString(bs) => {
+                        let mut s = std::str::from_utf8(bs)?;
+                        s = s.trim();
+                        if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+                            s = &s[1..s.len() - 1];
+                        }
+                        s.split_whitespace()
+                            .map(|tok| {
+                                let tok = if let Some(tok) = tok.strip_prefix('~') {
+                                    tok
+                                } else {
+                                    tok
+                                };
+                                match tok {
+                                    "*" => Ok(Rule::AllKeys),
+                                    _ => Ok(Rule::Pattern(tok.to_owned())),
+                                }
+                            })
+                            .collect::<Result<_, ParsingError>>()?
+                    }
+                    other => {
+                        return Err(not_convertible_error!(
+                            other,
+                            "Expect an array or bulk-string of keys"
+                        ));
+                    }
+                };
+                self.keys = parsed;
             }
-        };
-
-        Ok(Self {
-            flags,
-            passwords,
-            commands,
-            keys,
-        })
+            "channels" => {
+                let parsed = match value {
+                    Value::Array(arr) | Value::Set(arr) => arr
+                        .iter()
+                        .map(|pat| {
+                            let s = String::from_redis_value_ref(pat)?;
+                            let s = if let Some(s) = s.strip_prefix('&') {
+                                s.to_owned()
+                            } else {
+                                s
+                            };
+                            Ok(Rule::Channel(s))
+                        })
+                        .collect::<Result<_, ParsingError>>()?,
+                    Value::BulkString(bs) => {
+                        let mut s = std::str::from_utf8(bs)?;
+                        s = s.trim();
+                        if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+                            s = &s[1..s.len() - 1];
+                        }
+                        s.split_whitespace()
+                            .map(|tok| {
+                                let tok = if let Some(tok) = tok.strip_prefix('&') {
+                                    tok
+                                } else {
+                                    tok
+                                };
+                                Ok(Rule::Channel(tok.to_owned()))
+                            })
+                            .collect::<Result<_, ParsingError>>()?
+                    }
+                    other => {
+                        return Err(not_convertible_error!(
+                            other,
+                            "Expect an array or bulk-string of channels"
+                        ));
+                    }
+                };
+                self.channels = parsed;
+            }
+            "selectors" => {
+                let parsed = match value {
+                    // selectors can be returned as an array or a set of bulk-strings,
+                    // or as an array of arrays where each inner array contains alternating
+                    // key/value bulk-strings describing the selector. Accept both.
+                    Value::Array(arr) | Value::Set(arr) => arr
+                        .iter()
+                        .map(|pat| {
+                            let acl: AclInfo = FromRedisValue::from_redis_value_ref(pat)?;
+                            let selector = acl
+                                .flags
+                                .into_iter()
+                                .chain(acl.commands)
+                                .chain(acl.channels)
+                                .chain(acl.keys)
+                                .collect();
+                            Ok(selector)
+                        })
+                        .collect::<Result<Vec<Vec<Rule>>, ParsingError>>()?,
+                    other => {
+                        return Err(not_convertible_error!(
+                            other,
+                            "Expect an array or bulk-string of selectors"
+                        ));
+                    }
+                };
+                self.selectors = parsed.into_iter().flatten().collect();
+            }
+            _ => {}
+        }
+        Ok(())
     }
 }
-
+impl FromRedisValue for AclInfo {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        let mut acl = AclInfo::default();
+        // handle a single key/value pair (borrowed)
+        // First, try RESP3 map/attribute forms using as_map_iter (borrowed iterator)
+        if let Some(map_iter) = v.as_map_iter() {
+            for (name, value) in map_iter {
+                acl.handle_pair(name, value)?;
+            }
+        } else if let Some(seq) = v.as_sequence() {
+            // Sequence (array or set) case: must be alternating key/value entries.
+            if seq.len() % 2 != 0 {
+                return Err(not_convertible_error!(v, ""));
+            }
+            for chunk in seq.chunks(2) {
+                let name = &chunk[0];
+                let value = &chunk[1];
+                acl.handle_pair(name, value)?;
+            }
+        } else {
+            return Err(not_convertible_error!(v, ""));
+        }
+        Ok(acl)
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,6 +427,14 @@ mod tests {
         assert_args!(ResetKeys, b"resetkeys");
         assert_args!(Reset, b"reset");
         assert_args!(Other("resetchannels".to_owned()), b"resetchannels");
+        assert_args!(Channel("asynq:cancel".to_owned()), b"&asynq:cancel");
+        assert_args!(
+            Selector(vec![
+                AddCommand("SET".to_string()),
+                Pattern("key2".to_string())
+            ]),
+            b"(+SET ~key2)"
+        );
     }
 
     #[test]
@@ -289,6 +451,17 @@ mod tests {
             Value::BulkString("-@all +get".into()),
             Value::BulkString("keys".into()),
             Value::Array(vec![Value::BulkString("pat:*".into())]),
+            Value::BulkString("channels".into()),
+            Value::Array(vec![Value::BulkString("&asynq:cancel".into())]),
+            Value::BulkString("selectors".into()),
+            Value::Array(vec![Value::Array(vec![
+                Value::BulkString("commands".into()),
+                Value::BulkString("-@all +get".into()),
+                Value::BulkString("keys".into()),
+                Value::BulkString("~key2".into()),
+                Value::BulkString("channels".into()),
+                Value::BulkString("".into()),
+            ])]),
         ]);
         let acl_info = AclInfo::from_redis_value_ref(&redis_value).expect("Parse successfully");
 
@@ -302,6 +475,12 @@ mod tests {
                     Rule::AddCommand("get".to_owned()),
                 ],
                 keys: vec![Rule::Pattern("pat:*".to_owned())],
+                channels: vec![Rule::Channel("asynq:cancel".to_owned())],
+                selectors: vec![
+                    Rule::RemoveCategory("all".to_owned()),
+                    Rule::AddCommand("get".to_owned()),
+                    Rule::Pattern("key2".to_owned()),
+                ],
             }
         );
     }

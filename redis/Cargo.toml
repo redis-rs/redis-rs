@@ -228,6 +228,10 @@ name = "async-multiplexed"
 required-features = ["tokio-comp"]
 
 [[example]]
+name = "acl"
+required-features = ["acl"]
+
+[[example]]
 name = "async-await"
 required-features = ["aio"]
 
