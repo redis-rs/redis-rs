@@ -58,7 +58,7 @@ pub enum Rule {
 
     /// Pattern for pub/sub channels (returned prefixed with `&` by Redis)
     Channel(String),
-    /// Rest Channels
+    /// Reset Channels
     RestChannels,
     /// Selector entries (returned by Redis under `(selectors)`).
     /// Only supported in Redis 7.2 and later
