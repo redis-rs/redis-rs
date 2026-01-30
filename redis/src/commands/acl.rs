@@ -111,8 +111,6 @@ impl ToRedisArgs for Rule {
                         .to_redis_args()
                         .into_iter()
                         .map(|x| String::from_utf8_lossy(&x).to_string()))
-                    .collect::<Vec<_>>()
-                    .into_iter()
                     .collect::<Vec<String>>()
                     .join(" ")
             )),
