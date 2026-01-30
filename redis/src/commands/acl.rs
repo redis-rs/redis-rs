@@ -155,9 +155,13 @@ pub struct AclInfo {
     ///
     /// [1]: ./enum.Rule.html#variant.Pattern
     pub keys: Vec<Rule>,
-    /// Describes pub/sub channel patterns. Represented by [`Rule::Channel`].
+    /// Describes pub/sub channel patterns. Represented by [`Rule::Channel`][1].
+    ///
+    /// [1]: ./enum.Rule.html#variant.Channel
     pub channels: Vec<Rule>,
-    /// Describes selectors. Represented by [`Rule::Selector`].
+    /// Describes selectors. Represented by [`Rule::Selector`][1].
+    ///
+    /// [1]: ./enum.Rule.html#variant.Selector
     pub selectors: Vec<Rule>,
 }
 impl AclInfo {
