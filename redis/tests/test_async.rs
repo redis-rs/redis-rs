@@ -5,6 +5,7 @@ mod basic_async {
     use std::{collections::HashMap, time::Duration};
 
     use crate::support::*;
+    use assert_matches::assert_matches;
     use futures::{StreamExt, prelude::*};
     use futures_time::{future::FutureExt, task::sleep};
     #[cfg(feature = "json")]
@@ -664,7 +665,7 @@ mod basic_async {
         let mut cmd = redis::Cmd::new();
         cmd.arg("BLPOP").arg("foo").arg(0); // 0 timeout blocks indefinitely
         let result = connection.req_packed_command(&cmd).await;
-        assert!(result.is_err());
+        assert_matches!(result, Err(_));
         assert!(result.unwrap_err().is_timeout());
         Ok(())
     }
@@ -1101,7 +1102,7 @@ mod basic_async {
             let (mut sink, stream) = ctx.async_pubsub().await?.split();
             drop(stream);
 
-            assert!(sink.subscribe("phonewave").await.is_err());
+            assert_matches!(sink.subscribe("phonewave").await, Err(_));
 
             Ok(())
         }
@@ -1249,7 +1250,7 @@ mod basic_async {
                 .unwrap();
 
             assert_eq!(results.pop().unwrap(), Value::Int(1));
-            assert!(results.pop().unwrap().extract_error().is_err());
+            assert_matches!(results.pop().unwrap().extract_error(), Err(_));
 
             Ok::<_, RedisError>(())
         }
@@ -1291,7 +1292,7 @@ mod basic_async {
                     ]
                 );
             }
-            assert!(rx.try_recv().is_err());
+            assert_matches!(rx.try_recv(), Err(_));
 
             //Lets test if unsubscribing from individual channel subscription works
             let _: () = publish_conn
@@ -1316,7 +1317,7 @@ mod basic_async {
                 .await?;
             //Let's wait for 100ms to make sure there is nothing in channel.
             sleep(Duration::from_millis(100).into()).await;
-            assert!(rx.try_recv().is_err());
+            assert_matches!(rx.try_recv(), Err(_));
 
             Ok::<_, RedisError>(())
         }
@@ -1474,7 +1475,7 @@ mod basic_async {
             );
 
             // no more messages should be sent.
-            assert!(rx.try_recv().is_err());
+            assert_matches!(rx.try_recv(), Err(_));
 
             Ok::<_, RedisError>(())
         }
@@ -1554,7 +1555,7 @@ mod basic_async {
             };
             assert_eq!(result, redis::Value::Okay);
             if protocol.supports_resp3() {
-                assert!(rx.try_recv().is_err());
+                assert_matches!(rx.try_recv(), Err(_));
             }
             return Ok(());
         }
@@ -1585,7 +1586,7 @@ mod basic_async {
 
         sleep(Duration::from_secs_f32(0.01).into()).await;
 
-        assert!(cmd("PING").exec_async(&mut conn).await.is_ok());
+        assert_matches!(cmd("PING").exec_async(&mut conn).await, Ok(_));
 
         Ok::<_, RedisError>(())
     }
@@ -1652,8 +1653,8 @@ mod basic_async {
         assert_eq!(push.kind, PushKind::Disconnection);
         let _ctx = TestContext::new_with_addr(addr.clone());
 
-        assert!(cmd("PING").exec_async(&mut conn).await.is_ok());
-        assert!(rx.try_recv().is_err());
+        assert_matches!(cmd("PING").exec_async(&mut conn).await, Ok(_));
+        assert_matches!(rx.try_recv(), Err(_));
 
         // drop again, to verify that the mechanism works even after the sender returned an error.
         drop(_ctx);
@@ -1662,8 +1663,8 @@ mod basic_async {
         let _ctx = TestContext::new_with_addr(addr);
 
         sleep(Duration::from_secs_f32(0.01).into()).await;
-        assert!(cmd("PING").exec_async(&mut conn).await.is_ok());
-        assert!(rx.try_recv().is_err());
+        assert_matches!(cmd("PING").exec_async(&mut conn).await, Ok(_));
+        assert_matches!(rx.try_recv(), Err(_));
 
         Ok::<_, RedisError>(())
     }
@@ -1873,7 +1874,7 @@ mod basic_async {
 
         assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
         sleep(Duration::from_millis(1).into()).await;
-        assert!(rx.try_recv().is_err());
+        assert_matches!(rx.try_recv(), Err(_));
         assert!(rx.is_closed());
 
         Ok(())

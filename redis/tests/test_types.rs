@@ -8,6 +8,7 @@ mod types {
         sync::Arc,
     };
 
+    use assert_matches::assert_matches;
     use redis::{ErrorKind, FromRedisValue, RedisError, ToRedisArgs, Value};
 
     #[test]
@@ -226,11 +227,11 @@ mod types {
 
             let bad_i: Result<i32, _> =
                 parse_mode.parse_redis_value(Value::SimpleString(everything_str_x.into()));
-            assert!(bad_i.is_err());
+            assert_matches!(bad_i, Err(_));
 
             let bad_i_deref: Result<Box<i32>, _> =
                 parse_mode.parse_redis_value(Value::SimpleString(everything_str_x.into()));
-            assert!(bad_i_deref.is_err());
+            assert_matches!(bad_i_deref, Err(_));
         }
     }
 
@@ -242,7 +243,7 @@ mod types {
 
             let bad_i: Result<u32, _> =
                 parse_mode.parse_redis_value(Value::SimpleString("-1".into()));
-            assert!(bad_i.is_err());
+            assert_matches!(bad_i, Err(_));
         }
     }
 
@@ -474,7 +475,7 @@ mod types {
 
             let v: Result<Hm, _> =
                 parse_mode.parse_redis_value(Value::Array(vec![Value::BulkString("a".into())]));
-            assert!(v.is_err());
+            assert_matches!(v, Err(_));
         }
     }
 
@@ -517,7 +518,7 @@ mod types {
 
             let v: Result<Hm, _> =
                 parse_mode.parse_redis_value(Value::Array(vec![Value::BulkString("a".into())]));
-            assert!(v.is_err());
+            assert_matches!(v, Err(_));
         }
     }
 
@@ -541,7 +542,7 @@ mod types {
             assert_eq!(v, Ok(expected));
 
             let v: Result<HashSet<i32>, _> = parse_mode.parse_redis_value(Value::Int(42));
-            assert!(v.is_err());
+            assert_matches!(v, Err(_));
 
             let mut set = HashSet::new();
             set.insert("x".to_string());
@@ -569,7 +570,7 @@ mod types {
 
             let v: Result<bool, _> =
                 parse_mode.parse_redis_value(Value::BulkString("garbage".into()));
-            assert!(v.is_err());
+            assert_matches!(v, Err(_));
 
             let v = parse_mode.parse_redis_value(Value::SimpleString("1".into()));
             assert_eq!(v, Ok(true));
@@ -579,7 +580,7 @@ mod types {
 
             let v: Result<bool, _> =
                 parse_mode.parse_redis_value(Value::SimpleString("garbage".into()));
-            assert!(v.is_err());
+            assert_matches!(v, Err(_));
 
             let v = parse_mode.parse_redis_value(Value::Okay);
             assert_eq!(v, Ok(true));
@@ -610,19 +611,19 @@ mod types {
 
             let v: Result<Bytes, _> =
                 parse_mode.parse_redis_value(Value::SimpleString("garbage".into()));
-            assert!(v.is_err());
+            assert_matches!(v, Err(_));
 
             let v: Result<Bytes, _> = parse_mode.parse_redis_value(Value::Okay);
-            assert!(v.is_err());
+            assert_matches!(v, Err(_));
 
             let v: Result<Bytes, _> = parse_mode.parse_redis_value(Value::Nil);
-            assert!(v.is_err());
+            assert_matches!(v, Err(_));
 
             let v: Result<Bytes, _> = parse_mode.parse_redis_value(Value::Int(0));
-            assert!(v.is_err());
+            assert_matches!(v, Err(_));
 
             let v: Result<Bytes, _> = parse_mode.parse_redis_value(Value::Int(42));
-            assert!(v.is_err());
+            assert_matches!(v, Err(_));
         }
     }
 
@@ -641,19 +642,19 @@ mod types {
 
         let v: Result<Uuid, _> =
             FromRedisValue::from_redis_value_ref(&Value::SimpleString("garbage".into()));
-        assert!(v.is_err());
+        assert_matches!(v, Err(_));
 
         let v: Result<Uuid, _> = FromRedisValue::from_redis_value_ref(&Value::Okay);
-        assert!(v.is_err());
+        assert_matches!(v, Err(_));
 
         let v: Result<Uuid, _> = FromRedisValue::from_redis_value_ref(&Value::Nil);
-        assert!(v.is_err());
+        assert_matches!(v, Err(_));
 
         let v: Result<Uuid, _> = FromRedisValue::from_redis_value_ref(&Value::Int(0));
-        assert!(v.is_err());
+        assert_matches!(v, Err(_));
 
         let v: Result<Uuid, _> = FromRedisValue::from_redis_value_ref(&Value::Int(42));
-        assert!(v.is_err());
+        assert_matches!(v, Err(_));
     }
 
     #[test]
@@ -677,16 +678,16 @@ mod types {
 
             let v: Result<CString, _> =
                 parse_mode.parse_redis_value(Value::SimpleString("gar\0bage".into()));
-            assert!(v.is_err());
+            assert_matches!(v, Err(_));
 
             let v: Result<CString, _> = parse_mode.parse_redis_value(Value::Nil);
-            assert!(v.is_err());
+            assert_matches!(v, Err(_));
 
             let v: Result<CString, _> = parse_mode.parse_redis_value(Value::Int(0));
-            assert!(v.is_err());
+            assert_matches!(v, Err(_));
 
             let v: Result<CString, _> = parse_mode.parse_redis_value(Value::Int(42));
-            assert!(v.is_err());
+            assert_matches!(v, Err(_));
         }
     }
 

@@ -327,6 +327,7 @@ impl<C> Request<C> {
 
 #[cfg(test)]
 mod tests {
+    use assert_matches::assert_matches;
     use std::sync::Arc;
 
     use tokio::sync::oneshot;
@@ -403,7 +404,7 @@ mod tests {
         let retry_params = RetryParams::default();
         let (retry, next) = choose_response(result, request, &retry_params);
 
-        assert!(receiver.try_recv().is_err());
+        assert_matches!(receiver.try_recv(), Err(_));
         if let Some(super::Retry::Immediately { request, .. }) = retry {
             assert_eq!(get_redirect(&request), Some(Redirect::Ask(ADDRESS.into())));
         } else {
@@ -448,8 +449,8 @@ mod tests {
         } else {
             panic!("Expected retry");
         };
-        assert!(receiver.try_recv().is_err());
         assert_eq!(next, PollFlushAction::RebuildSlots);
+        assert_matches!(receiver.try_recv(), Err(_));
 
         // try the same, without remaining retries
         let (request, mut receiver) = request_and_receiver(retry_params.number_of_retries);
@@ -489,7 +490,7 @@ mod tests {
         let retry_params = RetryParams::default();
         let (retry, next) = choose_response(result, request, &retry_params);
 
-        assert!(receiver.try_recv().is_err());
+        assert_matches!(receiver.try_recv(), Err(_));
         if let Some(super::Retry::AfterSleep { request, .. }) = retry {
             assert!(get_redirect(&request).is_none());
         } else {
@@ -521,7 +522,7 @@ mod tests {
         let retry_params = RetryParams::default();
         let (retry, next) = choose_response(result, request, &retry_params);
 
-        assert!(receiver.try_recv().is_err());
+        assert_matches!(receiver.try_recv(), Err(_));
         if let Some(super::Retry::MoveToPending { request, .. }) = retry {
             assert!(get_redirect(&request).is_none());
         } else {
@@ -539,7 +540,7 @@ mod tests {
         );
         let (retry, next) = choose_response(result, request, &retry_params);
 
-        assert!(receiver.try_recv().is_err());
+        assert_matches!(receiver.try_recv(), Err(_));
         if let Some(super::Retry::MoveToPending { request, .. }) = retry {
             assert!(get_redirect(&request).is_none());
         } else {
@@ -552,7 +553,7 @@ mod tests {
         let result = (OperationTarget::FanOut, Err(err()));
         let (retry, next) = choose_response(result, request, &retry_params);
 
-        assert!(receiver.try_recv().is_err());
+        assert_matches!(receiver.try_recv(), Err(_));
         if let Some(super::Retry::MoveToPending { request, .. }) = retry {
             assert!(get_redirect(&request).is_none());
         } else {

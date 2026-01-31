@@ -480,6 +480,7 @@ pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
 mod tests {
     use super::*;
     use crate::errors::ErrorKind;
+    use assert_matches::assert_matches;
 
     #[cfg(feature = "aio")]
     #[test]
@@ -605,9 +606,9 @@ mod tests {
         let val = parse_redis_value(b"#f\r\n").unwrap();
         assert_eq!(val, Value::Boolean(false));
         let val = parse_redis_value(b"#x\r\n");
-        assert!(val.is_err());
+        assert_matches!(val, Err(_));
         let val = parse_redis_value(b"#\r\n");
-        assert!(val.is_err());
+        assert_matches!(val, Err(_));
     }
 
     #[test]

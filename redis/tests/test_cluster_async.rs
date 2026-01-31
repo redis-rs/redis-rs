@@ -15,6 +15,7 @@ mod cluster_async {
     use futures::prelude::*;
     use futures_time::{future::FutureExt, task::sleep};
 
+    use assert_matches::assert_matches;
     use redis::{
         AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo, ProtocolVersion, RedisError,
         RedisFuture, RedisResult, Script, ServerErrorKind, Value,
@@ -2078,7 +2079,7 @@ mod cluster_async {
         );
 
         let res = runtime.block_on(connection.req_packed_command(&redis::cmd("PING")));
-        assert!(res.is_ok());
+        assert_matches!(res, Ok(_));
     }
 
     #[async_test]
@@ -2098,11 +2099,11 @@ mod cluster_async {
                 )
                 .await;
             // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-            assert!(result.is_err());
+            assert_matches!(result, Err(_));
             // This will route to all nodes - different path through the code.
             let result = connection.req_packed_command(&cmd).await;
             // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-            assert!(result.is_err());
+            assert_matches!(result, Err(_));
         }
         Ok::<_, RedisError>(())
     }
@@ -2127,12 +2128,12 @@ mod cluster_async {
             )
             .await;
         // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-        assert!(result.is_err());
+        assert_matches!(result, Err(_));
 
         // This will route to all nodes - different path through the code.
         let result = connection.req_packed_command(&cmd).await;
         // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-        assert!(result.is_err());
+        assert_matches!(result, Err(_));
 
         let _cluster = RedisCluster::new(RedisClusterConfiguration {
             ports: ports.clone(),
@@ -2882,7 +2883,7 @@ mod cluster_async {
                 pushes.push(get_push(&mut rx).await);
             }
             // we expect only 3 resubscriptions.
-            assert!(rx.try_recv().is_err());
+            assert_matches!(rx.try_recv(), Err(_));
             assert!(pushes.contains(&PushInfo {
                 kind: PushKind::Subscribe,
                 data: vec![
