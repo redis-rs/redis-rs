@@ -3,6 +3,7 @@
     feature = "bigdecimal",
     feature = "num-bigint"
 ))]
+use assert_matches::assert_matches;
 use redis::{FromRedisValue, ToRedisArgs, Value};
 use std::str::FromStr;
 
@@ -29,10 +30,10 @@ where
     assert_eq!(v.unwrap(), T::from(42u32));
 
     let v = T::from_redis_value_ref(&Value::Okay);
-    assert!(v.is_err());
+    assert_matches!(v, Err(_));
 
     let v = T::from_redis_value_ref(&Value::Nil);
-    assert!(v.is_err());
+    assert_matches!(v, Err(_));
 }
 
 #[test]

@@ -6,6 +6,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use crate::support::{build_single_client, start_tls_crypto_provider};
+use assert_matches::assert_matches;
 use redis::ConnectionInfo;
 use redis::ProtocolVersion;
 #[cfg(feature = "cluster-async")]
@@ -187,7 +188,7 @@ impl TestClusterContext {
 
             // subsequent unauthenticated command should fail:
             if let Ok(mut con) = client.get_connection() {
-                assert!(redis::cmd("PING").exec(&mut con).is_err());
+                assert_matches!(redis::cmd("PING").exec(&mut con), Err(_));
             }
         }
     }

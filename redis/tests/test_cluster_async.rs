@@ -15,6 +15,7 @@ mod cluster_async {
     use futures::prelude::*;
     use futures_time::{future::FutureExt, task::sleep};
 
+    use assert_matches::assert_matches;
     use redis::{
         AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo, ProtocolVersion, RedisError,
         RedisFuture, RedisResult, Script, ServerErrorKind, Value,
@@ -58,16 +59,15 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn async_cluster_basic_cmd() -> RedisResult<()> {
+    async fn async_cluster_basic_cmd() {
         let cluster = TestClusterContext::new();
 
         let connection = cluster.async_connection().await;
         smoke_test_connection(connection).await;
-        Ok::<_, RedisError>(())
     }
 
     #[async_test]
-    async fn no_response_skips_response_even_on_error() -> RedisResult<()> {
+    async fn no_response_skips_response_even_on_error() {
         let cluster = TestClusterContext::new();
 
         let mut connection = cluster.async_connection().await;
@@ -76,7 +76,8 @@ mod cluster_async {
             .arg(b"foo")
             .set_no_response(true)
             .exec_async(&mut connection)
-            .await?;
+            .await
+            .unwrap();
 
         // this should error, since we hset a string value, but we shouldn't receive the error, because we ignore the response
         redis::cmd("HSET")
@@ -85,19 +86,18 @@ mod cluster_async {
             .arg("bar")
             .set_no_response(true)
             .exec_async(&mut connection)
-            .await?;
+            .await
+            .unwrap();
 
         let result = redis::cmd("GET")
             .arg("key")
             .query_async(&mut connection)
             .await;
         assert_eq!(result, Ok("foo".to_string()));
-        Ok(())
     }
 
     #[async_test]
-    async fn reconnect_only_the_disconnected_node_leave_other_connections_intact() -> RedisResult<()>
-    {
+    async fn reconnect_only_the_disconnected_node_leave_other_connections_intact() {
         // we remove retries in order to know that a request will fail immediately when discovering that a connection disconnected, instead of reconnecting and succeeding
         let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(0));
 
@@ -123,12 +123,14 @@ mod cluster_async {
         let mut connection = ctx.async_connection().await;
         connection
             .route_command(redis::cmd("quit"), first_node.clone())
-            .await?;
+            .await
+            .unwrap();
 
         // expect the second node to work ok
         connection
             .route_command(redis::cmd("ping"), second_node.clone())
-            .await?;
+            .await
+            .unwrap();
 
         // expect the first node to be disconnected
         let result = connection
@@ -138,13 +140,13 @@ mod cluster_async {
         // expect the second node to still work ok
         connection
             .route_command(redis::cmd("ping"), second_node)
-            .await?;
+            .await
+            .unwrap();
         assert!(result.is_err_and(|err| err.is_unrecoverable_error()));
-        Ok(())
     }
 
     #[async_test]
-    async fn async_cluster_basic_eval() -> RedisResult<()> {
+    async fn async_cluster_basic_eval() {
         let cluster = TestClusterContext::new();
 
         let mut connection = cluster.async_connection().await;
@@ -154,13 +156,13 @@ mod cluster_async {
             .arg("key")
             .arg("test")
             .query_async(&mut connection)
-            .await?;
+            .await
+            .unwrap();
         assert_eq!(res, "test");
-        Ok::<_, RedisError>(())
     }
 
     #[async_test]
-    async fn async_cluster_basic_script() -> RedisResult<()> {
+    async fn async_cluster_basic_script() {
         let cluster = TestClusterContext::new();
 
         let mut connection = cluster.async_connection().await;
@@ -170,13 +172,13 @@ mod cluster_async {
         .key("key")
         .arg("test")
         .invoke_async(&mut connection)
-        .await?;
+        .await
+        .unwrap();
         assert_eq!(res, "test");
-        Ok::<_, RedisError>(())
     }
 
     #[async_test]
-    async fn async_cluster_route_flush_to_specific_node() -> RedisResult<()> {
+    async fn async_cluster_route_flush_to_specific_node() {
         let cluster = TestClusterContext::new();
 
         let mut connection = cluster.async_connection().await;
@@ -202,11 +204,10 @@ mod cluster_async {
         assert_eq!(res, "bar".to_string());
         let res2: Option<String> = connection.get("bar").await.unwrap();
         assert_eq!(res2, None);
-        Ok::<_, RedisError>(())
     }
 
     #[async_test]
-    async fn async_cluster_route_flush_to_node_by_address() -> RedisResult<()> {
+    async fn async_cluster_route_flush_to_node_by_address() {
         let cluster = TestClusterContext::new();
 
         let mut connection = cluster.async_connection().await;
@@ -239,11 +240,10 @@ mod cluster_async {
         let new_info = from_redis_value::<String>(value).unwrap();
 
         assert_eq!(new_info, info);
-        Ok::<_, RedisError>(())
     }
 
     #[async_test]
-    async fn async_cluster_route_info_to_nodes() -> RedisResult<()> {
+    async fn async_cluster_route_info_to_nodes() {
         let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
             num_nodes: 6,
             num_replicas: 1,
@@ -276,8 +276,9 @@ mod cluster_async {
             .collect();
         let client = ClusterClient::builder(cluster_addresses.clone())
             .read_from_replicas()
-            .build()?;
-        let mut connection = client.get_async_connection().await?;
+            .build()
+            .unwrap();
+        let mut connection = client.get_async_connection().await.unwrap();
 
         let route_to_all_nodes = MultipleNodeRoutingInfo::AllNodes;
         let routing = RoutingInfo::MultiNode((route_to_all_nodes, None));
@@ -317,14 +318,12 @@ mod cluster_async {
             assert!(infos[i].contains(&format!("tcp_port:{}", split[1])));
             assert!(infos[i].contains("role:primary") || infos[i].contains("role:master"));
         }
-
-        Ok::<_, RedisError>(())
     }
 
     #[async_test]
-    async fn cluster_resp3() -> RedisResult<()> {
+    async fn cluster_resp3() {
         if !use_protocol().supports_resp3() {
-            return Ok(());
+            return;
         }
 
         let cluster = TestClusterContext::new();
@@ -348,24 +347,21 @@ mod cluster_async {
                 )
             ])
         );
-
-        Ok(())
     }
 
     #[async_test]
-    async fn async_cluster_basic_pipe() -> RedisResult<()> {
+    async fn async_cluster_basic_pipe() {
         let cluster = TestClusterContext::new();
 
         let mut connection = cluster.async_connection().await;
         let mut pipe = redis::pipe();
         pipe.add_command(cmd("SET").arg("test").arg("test_data").clone());
         pipe.add_command(cmd("SET").arg("{test}3").arg("test_data3").clone());
-        pipe.exec_async(&mut connection).await?;
-        let res: String = connection.get("test").await?;
+        pipe.exec_async(&mut connection).await.unwrap();
+        let res: String = connection.get("test").await.unwrap();
         assert_eq!(res, "test_data");
-        let res: String = connection.get("{test}3").await?;
+        let res: String = connection.get("{test}3").await.unwrap();
         assert_eq!(res, "test_data3");
-        Ok::<_, RedisError>(())
     }
 
     #[test]
@@ -406,23 +402,22 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn async_cluster_multi_shard_commands() -> RedisResult<()> {
+    async fn async_cluster_multi_shard_commands() {
         let cluster = TestClusterContext::new();
 
         let mut connection = cluster.async_connection().await;
 
         let res: String = connection
             .mset(&[("foo", "bar"), ("bar", "foo"), ("baz", "bazz")])
-            .await?;
+            .await
+            .unwrap();
         assert_eq!(res, "OK");
-        let res: Vec<String> = connection.mget(&["baz", "foo", "bar"]).await?;
+        let res: Vec<String> = connection.mget(&["baz", "foo", "bar"]).await.unwrap();
         assert_eq!(res, vec!["bazz", "bar", "foo"]);
-
-        Ok::<_, RedisError>(())
     }
 
     #[async_test]
-    async fn async_cluster_can_run_a_transaction() -> RedisResult<()> {
+    async fn async_cluster_can_run_a_transaction() {
         let cluster = TestClusterContext::new();
 
         let mut connection = cluster.async_connection().await;
@@ -432,21 +427,20 @@ mod cluster_async {
             .set("foo", b"bar")
             .expire("foo", 10)
             .query_async(&mut connection)
-            .await?;
+            .await
+            .unwrap();
 
         assert_eq!(result, vec![Value::Okay, Value::Int(1)]);
-
-        Ok::<_, RedisError>(())
     }
 
     #[cfg(feature = "tls-rustls")]
     #[async_test]
-    async fn async_cluster_default_reject_invalid_hostnames() -> RedisResult<()> {
+    async fn async_cluster_default_reject_invalid_hostnames() {
         use redis_test::cluster::ClusterType;
 
         if ClusterType::get_intended() != ClusterType::TcpTls {
             // Only TLS causes invalid certificates to be rejected as desired.
-            return Ok(());
+            return;
         }
 
         let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
@@ -456,17 +450,16 @@ mod cluster_async {
         });
 
         assert!(cluster.client.get_async_connection().await.is_err());
-        Ok(())
     }
 
     #[cfg(feature = "tls-rustls-insecure")]
     #[async_test]
-    async fn async_cluster_danger_accept_invalid_hostnames() -> RedisResult<()> {
+    async fn async_cluster_danger_accept_invalid_hostnames() {
         use redis_test::cluster::ClusterType;
 
         if ClusterType::get_intended() != ClusterType::TcpTls {
             // No point testing this TLS-specific mode in non-TLS configurations.
-            return Ok(());
+            return;
         }
 
         let cluster = TestClusterContext::new_with_config_and_builder(
@@ -480,11 +473,10 @@ mod cluster_async {
 
         let connection = cluster.async_connection().await;
         smoke_test_connection(connection).await;
-        Ok(())
     }
 
     #[async_test]
-    async fn async_cluster_basic_failover() -> RedisResult<()> {
+    async fn async_cluster_basic_failover() {
         test_failover(
                     &TestClusterContext::new_with_config(
                         RedisClusterConfiguration::single_replica_config(),
@@ -494,14 +486,12 @@ mod cluster_async {
                     false,
                 )
                 .await;
-        Ok::<_, RedisError>(())
     }
 
     async fn do_failover(
         redis: &mut redis::aio::MultiplexedConnection,
     ) -> Result<(), anyhow::Error> {
-        cmd("CLUSTER").arg("FAILOVER").exec_async(redis).await?;
-        Ok(())
+        Ok(cmd("CLUSTER").arg("FAILOVER").exec_async(redis).await?)
     }
 
     // parameter `_mtls_enabled` can only be used if `feature = tls-rustls` is active
@@ -545,7 +535,8 @@ mod cluster_async {
                         async { Ok(conn.flushall::<()>().await?) }
                             .timeout(futures_time::time::Duration::from_secs(3))
                             .await
-                            .unwrap_or_else(|err| Err(anyhow::Error::from(err)))?;
+                            .unwrap_or_else(|err| Err(anyhow::Error::from(err)))
+                            .unwrap();
                     }
 
                     node_conns.push(conn);
@@ -588,12 +579,14 @@ mod cluster_async {
                             .arg(i)
                             .clone()
                             .exec_async(&mut connection)
-                            .await?;
+                            .await
+                            .unwrap();
                         let res: i32 = cmd("GET")
                             .arg(key)
                             .clone()
                             .query_async(&mut connection)
-                            .await?;
+                            .await
+                            .unwrap();
                         assert_eq!(res, i);
                         completed.fetch_add(1, Ordering::SeqCst);
                         Ok::<_, anyhow::Error>(())
@@ -628,7 +621,9 @@ mod cluster_async {
             T: IntoConnectionInfo + Send + 'a,
         {
             Box::pin(async move {
-                let inner = MultiplexedConnection::connect_with_config(info, config).await?;
+                let inner = MultiplexedConnection::connect_with_config(info, config)
+                    .await
+                    .unwrap();
                 Ok(ErrorConnection { inner })
             })
         }
@@ -663,13 +658,13 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn async_cluster_error_in_inner_connection() -> RedisResult<()> {
+    async fn async_cluster_error_in_inner_connection() {
         let cluster = TestClusterContext::new();
 
         let mut con = cluster.async_generic_connection::<ErrorConnection>().await;
 
         ERROR.store(false, Ordering::SeqCst);
-        let r: Option<i32> = con.get("test").await?;
+        let r: Option<i32> = con.get("test").await.unwrap();
         assert_eq!(r, None::<i32>);
 
         ERROR.store(true, Ordering::SeqCst);
@@ -682,8 +677,6 @@ mod cluster_async {
                 "ERROR"
             )))
         );
-
-        Ok::<_, RedisError>(())
     }
 
     #[test]
@@ -1947,7 +1940,7 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn async_cluster_with_username_and_password() -> RedisResult<()> {
+    async fn async_cluster_with_username_and_password() {
         let cluster = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
             builder
                 .username(RedisCluster::username())
@@ -1960,14 +1953,15 @@ mod cluster_async {
             .arg("test")
             .arg("test_data")
             .exec_async(&mut connection)
-            .await?;
+            .await
+            .unwrap();
         let res: String = cmd("GET")
             .arg("test")
             .clone()
             .query_async(&mut connection)
-            .await?;
+            .await
+            .unwrap();
         assert_eq!(res, "test_data");
-        Ok::<_, RedisError>(())
     }
 
     #[test]
@@ -2034,10 +2028,7 @@ mod cluster_async {
                 .query_async::<Option<i32>>(&mut connection),
         );
 
-        assert!(
-            matches!(&result, Err(err) if err.kind() == ServerErrorKind::ReadOnly.into()),
-            "{result:?}",
-        );
+        assert_matches!(&result, Err(err) if err.kind() == ServerErrorKind::ReadOnly.into());
         assert_eq!(completed.load(Ordering::SeqCst), 1);
     }
 
@@ -2078,12 +2069,11 @@ mod cluster_async {
         );
 
         let res = runtime.block_on(connection.req_packed_command(&redis::cmd("PING")));
-        assert!(res.is_ok());
+        assert_matches!(res, Ok(_));
     }
 
     #[async_test]
-    async fn async_cluster_handle_complete_server_disconnect_without_panicking() -> RedisResult<()>
-    {
+    async fn async_cluster_handle_complete_server_disconnect_without_panicking() {
         let cluster =
             TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(2));
 
@@ -2098,17 +2088,16 @@ mod cluster_async {
                 )
                 .await;
             // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-            assert!(result.is_err());
+            assert_matches!(result, Err(_));
             // This will route to all nodes - different path through the code.
             let result = connection.req_packed_command(&cmd).await;
             // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-            assert!(result.is_err());
+            assert_matches!(result, Err(_));
         }
-        Ok::<_, RedisError>(())
     }
 
     #[async_test]
-    async fn async_cluster_reconnect_after_complete_server_disconnect() -> RedisResult<()> {
+    async fn async_cluster_reconnect_after_complete_server_disconnect() {
         let cluster = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
             builder.retries(2)
         });
@@ -2127,12 +2116,12 @@ mod cluster_async {
             )
             .await;
         // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-        assert!(result.is_err());
+        assert_matches!(result, Err(_));
 
         // This will route to all nodes - different path through the code.
         let result = connection.req_packed_command(&cmd).await;
         // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-        assert!(result.is_err());
+        assert_matches!(result, Err(_));
 
         let _cluster = RedisCluster::new(RedisClusterConfiguration {
             ports: ports.clone(),
@@ -2141,13 +2130,10 @@ mod cluster_async {
 
         let result = connection.req_packed_command(&cmd).await.unwrap();
         assert_eq!(result, Value::SimpleString("PONG".to_string()));
-
-        Ok::<_, RedisError>(())
     }
 
     #[async_test]
-    async fn async_cluster_reconnect_after_complete_server_disconnect_route_to_many()
-    -> RedisResult<()> {
+    async fn async_cluster_reconnect_after_complete_server_disconnect_route_to_many() {
         let cluster = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
             builder.retries(3)
         });
@@ -2175,8 +2161,6 @@ mod cluster_async {
             .await
             .unwrap();
         assert_eq!(result, Value::SimpleString("PONG".to_string()));
-
-        Ok::<_, RedisError>(())
     }
 
     #[test]
@@ -2249,7 +2233,7 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn kill_connection_on_drop_even_when_blocking() -> RedisResult<()> {
+    async fn kill_connection_on_drop_even_when_blocking() {
         let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(3));
 
         async fn count_ids(conn: &mut impl redis::aio::ConnectionLike) -> RedisResult<usize> {
@@ -2261,7 +2245,8 @@ mod cluster_async {
                 .cmd("CLIENT")
                 .arg("LIST")
                 .query_async::<Vec<Option<String>>>(conn)
-                .await?
+                .await
+                .unwrap()
                 .pop()
                 .unwrap()
                 .unwrap();
@@ -2298,8 +2283,6 @@ mod cluster_async {
         futures_time::task::sleep(futures_time::time::Duration::from_millis(100)).await;
 
         assert_eq!(count_ids(&mut conn).await.unwrap(), 1);
-
-        Ok(())
     }
 
     #[test]
@@ -2353,19 +2336,17 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn async_cluster_connect_lazily() -> RedisResult<()> {
+    async fn async_cluster_connect_lazily() {
         let cluster = TestClusterContext::new();
 
         let connection = cluster
             .client
             .get_pending_async_connection_with_config(Default::default());
         smoke_test_connection(connection).await;
-
-        Ok::<_, RedisError>(())
     }
 
     #[async_test]
-    async fn fail_on_empty_command() -> RedisResult<()> {
+    async fn fail_on_empty_command() {
         let cluster = TestClusterContext::new();
         let mut connection = cluster.async_connection().await;
 
@@ -2382,8 +2363,6 @@ mod cluster_async {
             .unwrap_err();
         assert_eq!(error.kind(), ErrorKind::Client);
         assert_eq!(error.to_string(), "empty command - Client");
-
-        Ok(())
     }
 
     mod pubsub {
@@ -2408,8 +2387,8 @@ mod cluster_async {
             pubsub_conn: &mut ClusterConnection,
             rx: &mut UnboundedReceiver<PushInfo>,
             is_redis_6: bool,
-        ) -> RedisResult<()> {
-            let _: () = pubsub_conn.subscribe("regular-phonewave").await?;
+        ) {
+            let _: () = pubsub_conn.subscribe("regular-phonewave").await.unwrap();
             let push: PushInfo = get_push(rx).await;
             assert_eq!(
                 push,
@@ -2422,7 +2401,7 @@ mod cluster_async {
                 }
             );
 
-            let _: () = pubsub_conn.psubscribe("phonewave*").await?;
+            let _: () = pubsub_conn.psubscribe("phonewave*").await.unwrap();
             let push = get_push(rx).await;
             assert_eq!(
                 push,
@@ -2433,7 +2412,7 @@ mod cluster_async {
             );
 
             if !is_redis_6 {
-                let _: () = pubsub_conn.ssubscribe("sphonewave").await?;
+                let _: () = pubsub_conn.ssubscribe("sphonewave").await.unwrap();
                 let push = get_push(rx).await;
                 assert_eq!(
                     push,
@@ -2443,8 +2422,6 @@ mod cluster_async {
                     }
                 );
             }
-
-            Ok(())
         }
 
         async fn get_push(rx: &mut UnboundedReceiver<PushInfo>) -> PushInfo {
@@ -2459,8 +2436,11 @@ mod cluster_async {
             publish_conn: &mut ClusterConnection,
             rx: &mut UnboundedReceiver<PushInfo>,
             is_redis_6: bool,
-        ) -> RedisResult<()> {
-            let _: () = publish_conn.publish("regular-phonewave", "banana").await?;
+        ) {
+            let _: () = publish_conn
+                .publish("regular-phonewave", "banana")
+                .await
+                .unwrap();
             let push = get_push(rx).await;
             assert_eq!(
                 push,
@@ -2473,7 +2453,10 @@ mod cluster_async {
                 }
             );
 
-            let _: () = publish_conn.publish("phonewave-pattern", "banana").await?;
+            let _: () = publish_conn
+                .publish("phonewave-pattern", "banana")
+                .await
+                .unwrap();
             let push = get_push(rx).await;
             assert_eq!(
                 push,
@@ -2488,7 +2471,7 @@ mod cluster_async {
             );
 
             if !is_redis_6 {
-                let _: () = publish_conn.spublish("sphonewave", "banana").await?;
+                let _: () = publish_conn.spublish("sphonewave", "banana").await.unwrap();
                 let push = get_push(rx).await;
                 assert_eq!(
                     push,
@@ -2501,11 +2484,10 @@ mod cluster_async {
                     }
                 );
             }
-            Ok(())
         }
 
         #[async_test]
-        async fn pub_sub_subscription() -> RedisResult<()> {
+        async fn pub_sub_subscription() {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
                 builder
@@ -2517,15 +2499,13 @@ mod cluster_async {
                 join!(ctx.async_connection(), ctx.async_connection());
             let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
 
-            subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await?;
+            subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await;
 
-            check_publishing(&mut publish_conn, &mut rx, is_redis_6).await?;
-
-            Ok::<_, RedisError>(())
+            check_publishing(&mut publish_conn, &mut rx, is_redis_6).await;
         }
 
         #[async_test]
-        async fn pub_sub_subscription_with_config() -> RedisResult<()> {
+        async fn pub_sub_subscription_with_config() {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
                 builder.use_protocol(ProtocolVersion::RESP3)
@@ -2538,25 +2518,23 @@ mod cluster_async {
             );
             let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
 
-            subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await?;
+            subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await;
 
-            check_publishing(&mut publish_conn, &mut rx, is_redis_6).await?;
-
-            Ok::<_, RedisError>(())
+            check_publishing(&mut publish_conn, &mut rx, is_redis_6).await;
         }
 
         #[async_test]
-        async fn pub_sub_shardnumsub() -> RedisResult<()> {
+        async fn pub_sub_shardnumsub() {
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
                 builder.use_protocol(ProtocolVersion::RESP3)
             });
 
             let mut pubsub_conn = ctx.async_connection().await;
             if check_if_redis_6(&mut pubsub_conn).await {
-                return Ok(());
+                return;
             }
 
-            let _: () = pubsub_conn.ssubscribe("foo").await?;
+            let _: () = pubsub_conn.ssubscribe("foo").await.unwrap();
 
             let res = cmd("pubsub")
                 .arg("SHARDNUMSUB")
@@ -2565,12 +2543,10 @@ mod cluster_async {
                 .await
                 .unwrap();
             assert_eq!(res, ("foo".to_string(), 1));
-
-            Ok::<_, RedisError>(())
         }
 
         #[async_test]
-        async fn pub_sub_unsubscription() -> RedisResult<()> {
+        async fn pub_sub_unsubscription() {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
                 builder
@@ -2582,7 +2558,7 @@ mod cluster_async {
                 join!(ctx.async_connection(), ctx.async_connection());
             let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
 
-            let _: () = pubsub_conn.subscribe("regular-phonewave").await?;
+            let _: () = pubsub_conn.subscribe("regular-phonewave").await.unwrap();
             let push = get_push(&mut rx).await;
             assert_eq!(
                 push,
@@ -2594,7 +2570,7 @@ mod cluster_async {
                     ]
                 }
             );
-            let _: () = pubsub_conn.unsubscribe("regular-phonewave").await?;
+            let _: () = pubsub_conn.unsubscribe("regular-phonewave").await.unwrap();
             let push = get_push(&mut rx).await;
             assert_eq!(
                 push,
@@ -2607,7 +2583,7 @@ mod cluster_async {
                 }
             );
 
-            let _: () = pubsub_conn.psubscribe("phonewave*").await?;
+            let _: () = pubsub_conn.psubscribe("phonewave*").await.unwrap();
             let push = get_push(&mut rx).await;
             assert_eq!(
                 push,
@@ -2616,7 +2592,7 @@ mod cluster_async {
                     data: vec![Value::BulkString(b"phonewave*".to_vec()), Value::Int(1)]
                 }
             );
-            let _: () = pubsub_conn.punsubscribe("phonewave*").await?;
+            let _: () = pubsub_conn.punsubscribe("phonewave*").await.unwrap();
             let push = get_push(&mut rx).await;
             assert_eq!(
                 push,
@@ -2627,7 +2603,7 @@ mod cluster_async {
             );
 
             if !is_redis_6 {
-                let _: () = pubsub_conn.ssubscribe("sphonewave").await?;
+                let _: () = pubsub_conn.ssubscribe("sphonewave").await.unwrap();
                 let push = get_push(&mut rx).await;
                 assert_eq!(
                     push,
@@ -2636,7 +2612,7 @@ mod cluster_async {
                         data: vec![Value::BulkString(b"sphonewave".to_vec()), Value::Int(1)]
                     }
                 );
-                let _: () = pubsub_conn.sunsubscribe("sphonewave").await?;
+                let _: () = pubsub_conn.sunsubscribe("sphonewave").await.unwrap();
                 let push = get_push(&mut rx).await;
                 assert_eq!(
                     push,
@@ -2647,22 +2623,26 @@ mod cluster_async {
                 );
             }
 
-            let _: () = publish_conn.publish("regular-phonewave", "banana").await?;
-            let _: () = publish_conn.publish("phonewave-pattern", "banana").await?;
+            let _: () = publish_conn
+                .publish("regular-phonewave", "banana")
+                .await
+                .unwrap();
+            let _: () = publish_conn
+                .publish("phonewave-pattern", "banana")
+                .await
+                .unwrap();
             if !is_redis_6 {
-                let _: () = publish_conn.spublish("sphonewave", "banana").await?;
+                let _: () = publish_conn.spublish("sphonewave", "banana").await.unwrap();
             }
 
             assert_eq!(
                 rx.try_recv(),
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty)
             );
-
-            Ok::<_, RedisError>(())
         }
 
         #[async_test]
-        async fn connection_is_still_usable_if_pubsub_receiver_is_dropped() -> RedisResult<()> {
+        async fn connection_is_still_usable_if_pubsub_receiver_is_dropped() {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
                 builder
@@ -2673,7 +2653,7 @@ mod cluster_async {
             let mut pubsub_conn = ctx.async_connection().await;
             let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
 
-            subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await?;
+            subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await;
 
             drop(rx);
 
@@ -2684,12 +2664,10 @@ mod cluster_async {
                     .unwrap(),
                 "PONG".to_string()
             );
-
-            Ok::<_, RedisError>(())
         }
 
         #[async_test]
-        async fn multiple_subscribes_and_unsubscribes_work() -> RedisResult<()> {
+        async fn multiple_subscribes_and_unsubscribes_work() {
             // In this test we subscribe on all subscription variations to 3 channels in a single call, then unsubscribe from 2 channels.
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
@@ -2707,7 +2685,8 @@ mod cluster_async {
                     "regular-phonewave2",
                     "regular-phonewave3",
                 ])
-                .await?;
+                .await
+                .unwrap();
             for i in 1..4 {
                 let push = get_push(&mut rx).await;
                 assert_eq!(
@@ -2723,7 +2702,8 @@ mod cluster_async {
             }
             let _: () = pubsub_conn
                 .unsubscribe(&["regular-phonewave1", "regular-phonewave2"])
-                .await?;
+                .await
+                .unwrap();
             for i in 1..3 {
                 let push = get_push(&mut rx).await;
                 assert_eq!(
@@ -2740,7 +2720,8 @@ mod cluster_async {
 
             let _: () = pubsub_conn
                 .psubscribe(&["phonewave*1", "phonewave*2", "phonewave*3"])
-                .await?;
+                .await
+                .unwrap();
             for i in 1..4 {
                 let push = get_push(&mut rx).await;
                 assert_eq!(
@@ -2757,7 +2738,8 @@ mod cluster_async {
 
             let _: () = pubsub_conn
                 .punsubscribe(&["phonewave*1", "phonewave*2"])
-                .await?;
+                .await
+                .unwrap();
             for i in 1..3 {
                 let push = get_push(&mut rx).await;
                 assert_eq!(
@@ -2775,7 +2757,8 @@ mod cluster_async {
                 // we use the curly braces in order to avoid cross slots errors.
                 let _: () = pubsub_conn
                     .ssubscribe(&["{sphonewave}1", "{sphonewave}2", "{sphonewave}3"])
-                    .await?;
+                    .await
+                    .unwrap();
                 for i in 1..4 {
                     let push = get_push(&mut rx).await;
                     assert_eq!(
@@ -2792,7 +2775,8 @@ mod cluster_async {
 
                 let _: () = pubsub_conn
                     .sunsubscribe(&["{sphonewave}1", "{sphonewave}2"])
-                    .await?;
+                    .await
+                    .unwrap();
                 for i in 1..3 {
                     let push = get_push(&mut rx).await;
                     assert_eq!(
@@ -2812,12 +2796,10 @@ mod cluster_async {
                 rx.try_recv(),
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty)
             );
-
-            Ok::<_, RedisError>(())
         }
 
         #[async_test]
-        async fn pub_sub_reconnect_after_disconnect() -> RedisResult<()> {
+        async fn pub_sub_reconnect_after_disconnect() {
             // in this test we will subscribe to channels, then restart the server, and check that the connection
             // doesn't send disconnect message, but instead resubscribes automatically.
 
@@ -2834,7 +2816,7 @@ mod cluster_async {
                 join!(ctx.async_connection(), ctx.async_connection());
             let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
 
-            subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await?;
+            subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await;
 
             println!("dropped");
             drop(ctx);
@@ -2872,7 +2854,8 @@ mod cluster_async {
                         Some(ResponsePolicy::AllSucceeded),
                     )),
                 )
-                .await?;
+                .await
+                .unwrap();
 
             // the resubsriptions can be received in any order, so we assert without assuming order.
             let mut pushes = Vec::new();
@@ -2882,7 +2865,7 @@ mod cluster_async {
                 pushes.push(get_push(&mut rx).await);
             }
             // we expect only 3 resubscriptions.
-            assert!(rx.try_recv().is_err());
+            assert_matches!(rx.try_recv(), Err(_));
             assert!(pushes.contains(&PushInfo {
                 kind: PushKind::Subscribe,
                 data: vec![
@@ -2902,13 +2885,11 @@ mod cluster_async {
                 }));
             }
 
-            check_publishing(&mut publish_conn, &mut rx, is_redis_6).await?;
-
-            Ok::<_, RedisError>(())
+            check_publishing(&mut publish_conn, &mut rx, is_redis_6).await;
         }
 
         #[async_test]
-        async fn pub_sub_should_not_reconnect_if_subscription_failed() -> RedisResult<()> {
+        async fn pub_sub_should_not_reconnect_if_subscription_failed() {
             // in this test we will try to subscribe to a disconnected cluster, fail, and check that once the connection reconnects it won't try and resubscribe.
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let ctx = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
@@ -2966,15 +2947,14 @@ mod cluster_async {
                         Some(ResponsePolicy::AllSucceeded),
                     )),
                 )
-                .await?;
+                .await
+                .unwrap();
 
             // verify that we didn't get any subscription notices.
             assert_eq!(
                 rx.try_recv(),
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty)
             );
-
-            Ok::<_, RedisError>(())
         }
     }
 
@@ -2985,7 +2965,7 @@ mod cluster_async {
         use super::*;
 
         #[async_test]
-        async fn async_cluster_basic_cmd_with_mtls() -> RedisResult<()> {
+        async fn async_cluster_basic_cmd_with_mtls() {
             let cluster = TestClusterContext::new_with_mtls();
 
             let client = create_cluster_client_from_cluster(&cluster, true).unwrap();
@@ -2994,18 +2974,19 @@ mod cluster_async {
                 .arg("test")
                 .arg("test_data")
                 .exec_async(&mut connection)
-                .await?;
+                .await
+                .unwrap();
             let res: String = cmd("GET")
                 .arg("test")
                 .clone()
                 .query_async(&mut connection)
-                .await?;
+                .await
+                .unwrap();
             assert_eq!(res, "test_data");
-            Ok::<_, RedisError>(())
         }
 
         #[async_test]
-        async fn async_cluster_should_not_connect_without_mtls_enabled() -> RedisResult<()> {
+        async fn async_cluster_should_not_connect_without_mtls_enabled() {
             let cluster = TestClusterContext::new_with_mtls();
 
             let client = create_cluster_client_from_cluster(&cluster, false).unwrap();
@@ -3033,7 +3014,6 @@ mod cluster_async {
                     }
                 }
             }
-            Ok::<_, RedisError>(())
         }
     }
 }

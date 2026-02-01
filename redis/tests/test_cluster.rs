@@ -9,6 +9,7 @@ mod cluster {
     };
 
     use crate::support::*;
+    use assert_matches::assert_matches;
     use redis::{
         Commands, ConnectionLike, ErrorKind, RedisError, ServerErrorKind, Value,
         cluster::{ClusterClient, ClusterConnection, cluster_pipe},
@@ -1017,7 +1018,7 @@ mod cluster {
         );
 
         let res = connection.req_command(&redis::cmd("PING"));
-        assert!(res.is_ok());
+        assert_matches!(res, Ok(_));
     }
 
     #[test]
@@ -1032,11 +1033,11 @@ mod cluster {
             let result = connection
                 .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random));
             // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-            assert!(result.is_err());
+            assert_matches!(result, Err(_));
             // This will route to all nodes - different path through the code.
             let result = connection.req_packed_command(&cmd.get_packed_command());
             // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-            assert!(result.is_err());
+            assert_matches!(result, Err(_));
         }
     }
 
@@ -1056,12 +1057,12 @@ mod cluster {
         let result =
             connection.route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random));
         // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-        assert!(result.is_err());
+        assert_matches!(result, Err(_));
 
         // This will route to all nodes - different path through the code.
         let result = connection.req_packed_command(&cmd.get_packed_command());
         // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-        assert!(result.is_err());
+        assert_matches!(result, Err(_));
 
         let _cluster = RedisCluster::new(RedisClusterConfiguration {
             ports,

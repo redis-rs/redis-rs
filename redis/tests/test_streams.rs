@@ -7,6 +7,7 @@ use redis::{Connection, ToRedisArgs, TypedCommands};
 mod support;
 use crate::support::*;
 
+use assert_matches::assert_matches;
 use std::collections::BTreeMap;
 use std::slice;
 use std::str;
@@ -194,11 +195,11 @@ fn test_xgroup_create() {
 
     // xgroup create (existing stream)
     let result = con.xgroup_create("k1", "g1", "$");
-    assert!(result.is_ok());
+    assert_matches!(result, Ok(_));
 
     // xinfo groups (existing stream)
     let result = con.xinfo_groups("k1");
-    assert!(result.is_ok());
+    assert_matches!(result, Ok(_));
     let reply = result.unwrap();
     assert_eq!(&reply.groups.len(), &1);
     assert_eq!(&reply.groups[0].name, &"g1");
@@ -222,18 +223,18 @@ fn test_xgroup_createconsumer() {
 
     // xgroup create (existing stream)
     let result = con.xgroup_create("k1", "g1", "$");
-    assert!(result.is_ok());
+    assert_matches!(result, Ok(_));
 
     // xinfo groups (existing stream)
     let result = con.xinfo_groups("k1");
-    assert!(result.is_ok());
+    assert_matches!(result, Ok(_));
     let reply = result.unwrap();
     assert_eq!(&reply.groups.len(), &1);
     assert_eq!(&reply.groups[0].name, &"g1");
 
     // xinfo consumers (consumer does not exist)
     let result = con.xinfo_consumers("k1", "g1");
-    assert!(result.is_ok());
+    assert_matches!(result, Ok(_));
     let reply = result.unwrap();
     assert_eq!(&reply.consumers.len(), &0);
 
@@ -243,7 +244,7 @@ fn test_xgroup_createconsumer() {
 
     // xinfo consumers (consumer was created)
     let result = con.xinfo_consumers("k1", "g1");
-    assert!(result.is_ok());
+    assert_matches!(result, Ok(_));
     let reply = result.unwrap();
     assert_eq!(&reply.consumers.len(), &1);
     assert_eq!(&reply.consumers[0].name, &"c1");
@@ -254,7 +255,7 @@ fn test_xgroup_createconsumer() {
 
     // xinfo consumers (consumer still exists)
     let result = con.xinfo_consumers("k1", "g1");
-    assert!(result.is_ok());
+    assert_matches!(result, Ok(_));
     let reply = result.unwrap();
     assert_eq!(&reply.consumers.len(), &1);
     assert_eq!(&reply.consumers[0].name, &"c1");
@@ -281,12 +282,12 @@ fn test_assorted_2() {
 
     // test xgroup create w/ mkstream @ 0
     let result = con.xgroup_create_mkstream("k99", "g99", "0");
-    assert!(result.is_ok());
+    assert_matches!(result, Ok(_));
 
     // Since nothing exists on this stream yet,
     // it should have the defaults returned by the client
     let result = con.xinfo_groups("k99");
-    assert!(result.is_ok());
+    assert_matches!(result, Ok(_));
     let reply = result.unwrap();
     assert_eq!(&reply.groups.len(), &1);
     assert_eq!(&reply.groups[0].name, &"g99");
@@ -303,7 +304,7 @@ fn test_assorted_2() {
     // Two messages have been added but not acked:
     // this should give us a `lag` of 2 (if the server supports it)
     let result = con.xinfo_groups("k99");
-    assert!(result.is_ok());
+    assert_matches!(result, Ok(_));
     let reply = result.unwrap();
     assert_eq!(&reply.groups.len(), &1);
     assert_eq!(&reply.groups[0].name, &"g99");
@@ -513,7 +514,7 @@ fn test_xread_options_deleted_pel_entry() {
     let ctx = TestContext::new();
     let mut con = ctx.connection();
     let result = con.xgroup_create_mkstream("k1", "g1", "$");
-    assert!(result.is_ok());
+    assert_matches!(result, Ok(_));
     let _ = con.xadd_maxlen("k1", StreamMaxlen::Equals(1), "*", &[("h1", "w1")]);
     // read the pending items for this key & group
     let result = con
@@ -547,7 +548,7 @@ fn test_xread_options_deleted_pel_entry() {
 fn create_group_add_and_read(con: &mut Connection) -> StreamReadReply {
     con.flushall().unwrap();
     let result = con.xgroup_create_mkstream("k1", "g1", "$");
-    assert!(result.is_ok());
+    assert_matches!(result, Ok(_));
 
     xadd_keyrange(con, "k1", 0, 10);
 
@@ -722,7 +723,7 @@ fn test_xclaim_last_id() {
     let mut con = ctx.connection();
 
     let result = con.xgroup_create_mkstream("k1", "g1", "$");
-    assert!(result.is_ok());
+    assert_matches!(result, Ok(_));
 
     // add some keys
     xadd_keyrange(&mut con, "k1", 0, 10);
@@ -2164,7 +2165,7 @@ fn test_xgroup() {
 
     // test xgroup create w/ mkstream @ 0
     let result = con.xgroup_create_mkstream("k1", "g1", "0");
-    assert!(result.is_ok());
+    assert_matches!(result, Ok(_));
 
     // destroy this new stream group
     let result = con.xgroup_destroy("k1", "g1");
@@ -2175,7 +2176,7 @@ fn test_xgroup() {
 
     // create the group again using an existing stream
     let result = con.xgroup_create("k1", "g1", "0");
-    assert!(result.is_ok());
+    assert_matches!(result, Ok(_));
 
     // read from the group so we can register the consumer
     let reply = con

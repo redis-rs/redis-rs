@@ -1021,6 +1021,7 @@ mod tests_routing {
     };
     use crate::cluster_routing::slot;
     use crate::{Value, cmd, parser::parse_redis_value};
+    use assert_matches::assert_matches;
     use core::panic;
 
     #[test]
@@ -1570,6 +1571,6 @@ mod tests_routing {
 
         let input = vec![Value::Int(5)];
         let result = super::combine_map_results(input);
-        assert!(result.is_err());
+        assert_matches!(result, Err(_));
     }
 }

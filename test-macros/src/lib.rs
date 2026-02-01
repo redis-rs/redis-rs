@@ -45,7 +45,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
                     block_on_all(async move {
                         let conn = ctx.async_connection().await.unwrap();
                         #function_name (conn).await
-                    }, runtime).unwrap();
+                    }, runtime);
                 }
 
                 #[rstest]
@@ -57,7 +57,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
                     block_on_all(async move {
                         let conn = ctx.client.get_connection_manager().await.unwrap();
                         #function_name (conn).await
-                    }, runtime).unwrap();
+                    }, runtime);
                 }
             }
         } else if is_bool {
@@ -68,7 +68,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
                 #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
                 #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
                 fn #test_function_name (#[case]runtime: RuntimeType, #[values(true, false)] arg: bool) {
-                    block_on_all(#function_name (arg), runtime).unwrap();
+                    block_on_all(#function_name (arg), runtime);
                 }
             }
         } else {
@@ -87,7 +87,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
             #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
             #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
             fn #test_function_name (#[case]runtime: RuntimeType) {
-                block_on_all(#function_name (), runtime).unwrap();
+                block_on_all(#function_name (), runtime);
             }
         }
     } else {

@@ -575,10 +575,11 @@ impl ConnectionLike for Client {
 #[cfg(test)]
 mod test {
     use super::*;
+    use assert_matches::assert_matches;
 
     #[test]
     fn regression_293_parse_ipv6_with_interface() {
-        assert!(Client::open(("fe80::cafe:beef%eno1", 6379)).is_ok());
+        assert_matches!(Client::open(("fe80::cafe:beef%eno1", 6379)), Ok(_));
     }
 
     #[cfg(feature = "aio")]

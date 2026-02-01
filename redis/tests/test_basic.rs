@@ -30,6 +30,7 @@ mod basic {
     use redis_test::server::redis_settings;
     use redis_test::utils::get_listener_on_free_port;
 
+    use assert_matches::assert_matches;
     #[cfg(feature = "vector-sets")]
     use serde_json::json;
     use std::collections::{BTreeMap, BTreeSet};
@@ -1573,7 +1574,7 @@ mod basic {
         redis::cmd("SET").arg(key).arg(42).exec(&mut con).unwrap();
 
         let response: (isize,) = redis::transaction(&mut con, &[key], |con, pipe| {
-            let val: isize = redis::cmd("GET").arg(key).query(con)?;
+            let val: isize = redis::cmd("GET").arg(key).query(con).unwrap();
             pipe.cmd("SET")
                 .arg(key)
                 .arg(val + 1)
@@ -2013,7 +2014,7 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        assert!(con.set("my_key", 42).is_ok());
+        assert_matches!(con.set("my_key", 42), Ok(_));
         assert_eq!(con.get_int("my_key"), Ok(Some(42)));
 
         let (k1, k2): (i32, i32) = redis::pipe()
@@ -2036,7 +2037,7 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        assert!(con.mset(&[("key1", 1), ("key2", 2)]).is_ok());
+        assert_matches!(con.mset(&[("key1", 1), ("key2", 2)]), Ok(_));
         assert_eq!(con.mget_ints(&["key1", "key2"]), Ok(vec!(Some(1), Some(2))));
         assert_eq!(
             con.mget_ints(vec!["key1", "key2"]),
@@ -2094,7 +2095,7 @@ mod basic {
         assert_eq!(con.hincr("my_hash", "f1", 1), Ok(2.0));
         assert_eq!(con.hincr("my_hash", "f2", 1.5), Ok(3.5));
         assert_eq!(con.hexists("my_hash", "f2"), Ok(true));
-        assert!(con.hdel("my_hash", &["f1", "f2"]).is_ok());
+        assert_matches!(con.hdel("my_hash", &["f1", "f2"]), Ok(_));
         assert_eq!(con.hexists("my_hash", "f2"), Ok(false));
 
         let iter: redis::Iter<'_, (String, isize)> = con.hscan("my_hash").unwrap();
@@ -2128,7 +2129,7 @@ mod basic {
             Ok((2, 3, 4))
         );
 
-        assert!(con.lset("my_list", 0, 4).is_ok());
+        assert_matches!(con.lset("my_list", 0, 4), Ok(_));
         assert_eq!(
             redis::Commands::lrange(&mut con, "my_list", 0, 2),
             Ok((4, 3, 4))
@@ -2151,7 +2152,7 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        assert!(con.del("my_zset").is_ok());
+        assert_matches!(con.del("my_zset"), Ok(_));
         assert_eq!(con.zadd("my_zset", "one", 1), Ok(1));
         assert_eq!(con.zadd("my_zset", "two", 2), Ok(1));
 
@@ -2173,7 +2174,7 @@ mod basic {
         let map = HashMap::from([("one", 1), ("two", 2), ("three", 3)]);
 
         // Insert all pairs as entries of the hash `KEY`
-        assert!(con.del(KEY).is_ok());
+        assert_matches!(con.del(KEY), Ok(_));
         for kv in map.iter() {
             assert_eq!(con.hset(KEY, kv.0, kv.1), Ok(1));
         }
@@ -2289,21 +2290,21 @@ mod basic {
         assert_eq!(con.bit_diff(result, &keys), Ok(1));
         let diff_result: Vec<u8> = redis::Commands::get(&mut con, result).unwrap();
         assert_eq!(diff_result, vec![0x00]); // 00000000
-        assert!(con.bit_diff(result, keys[0]).is_err());
+        assert_matches!(con.bit_diff(result, keys[0]), Err(_));
 
         // BITOP DIFF1
         // DIFF1(K1, K2, K3) = ¬K1 ∧ (K2 ∨ K3) = Members of one or more of K2, K3, that are not members of K1
         assert_eq!(con.bit_diff1(result, &keys), Ok(1));
         let diff1_result: Vec<u8> = redis::Commands::get(&mut con, result).unwrap();
         assert_eq!(diff1_result, vec![0xF0]); // 11110000
-        assert!(con.bit_diff1(result, keys[0]).is_err());
+        assert_matches!(con.bit_diff1(result, keys[0]), Err(_));
 
         // BITOP ANDOR
         // ANDOR(K1, K2, K3) = K1 ∧ (K2 ∨ K3) = Members of K1 that are also members of one or more of K2, K3
         assert_eq!(con.bit_and_or(result, &keys), Ok(1));
         let and_or_result: Vec<u8> = redis::Commands::get(&mut con, result).unwrap();
         assert_eq!(and_or_result, vec![0x0F]); // 00001111
-        assert!(con.bit_and_or(result, keys[0]).is_err());
+        assert_matches!(con.bit_and_or(result, keys[0]), Err(_));
 
         // BITOP ONE
         // ONE(K1, K2, K3) =  { e | COUNT(e in K1, K2, K3) == 1 } = Members of exactly one of K1, K2, K3
@@ -2324,7 +2325,7 @@ mod basic {
 
         let ping = redis::cmd("PING").query::<String>(&mut con);
 
-        assert!(ping.is_err());
+        assert_matches!(ping, Err(_));
         eprintln!("{}", ping.unwrap_err());
         assert!(!con.is_open());
     }
@@ -2895,7 +2896,7 @@ mod basic {
         assert_eq!(con.digest(key).unwrap(), Some(random_bytes_digest));
 
         // Validate that the DIGEST command fails when the key is not a string
-        assert!(con.hset_multiple(key, &[("f1", 1), ("f2", 2)]).is_err());
+        assert_matches!(con.hset_multiple(key, &[("f1", 1), ("f2", 2)]), Err(_));
     }
 
     /// The test validates the IFDEQ value comparison option for the SET command
@@ -3114,7 +3115,7 @@ mod basic {
         // Verify that all comparisons return an error when used with a value that is not a string
         assert_eq!(con.hset_multiple(key, &[("f1", 1), ("f2", 2)]), Ok(()));
         for value_comparison in &value_comparisons {
-            assert!(con.del_ex(key, value_comparison.clone()).is_err());
+            assert_matches!(con.del_ex(key, value_comparison.clone()), Err(_));
         }
     }
 
@@ -3513,14 +3514,14 @@ mod basic {
         let redis_version = ctx.get_version();
         assert!(redis_version.0 >= 5);
 
-        assert!(con.zadd("a", "1a", 1).is_ok());
-        assert!(con.zadd("b", "2b", 2).is_ok());
-        assert!(con.zadd("c", "3c", 3).is_ok());
-        assert!(con.zadd("d", "4d", 4).is_ok());
-        assert!(con.zadd("a", "5a", 5).is_ok());
-        assert!(con.zadd("b", "6b", 6).is_ok());
-        assert!(con.zadd("c", "7c", 7).is_ok());
-        assert!(con.zadd("d", "8d", 8).is_ok());
+        assert_matches!(con.zadd("a", "1a", 1), Ok(_));
+        assert_matches!(con.zadd("b", "2b", 2), Ok(_));
+        assert_matches!(con.zadd("c", "3c", 3), Ok(_));
+        assert_matches!(con.zadd("d", "4d", 4), Ok(_));
+        assert_matches!(con.zadd("a", "5a", 5), Ok(_));
+        assert_matches!(con.zadd("b", "6b", 6), Ok(_));
+        assert_matches!(con.zadd("c", "7c", 7), Ok(_));
+        assert_matches!(con.zadd("d", "8d", 8), Ok(_));
 
         let min = con.bzpopmin("b", 0.0);
         let max = con.bzpopmax("b", 0.0);
@@ -4339,7 +4340,7 @@ mod basic {
         );
         drop(ctx);
         let x: RedisResult<()> = con.set("A", "1");
-        assert!(x.is_err());
+        assert_matches!(x, Err(_));
         assert_eq!(rx.try_recv().unwrap().kind, PushKind::Disconnection);
     }
 

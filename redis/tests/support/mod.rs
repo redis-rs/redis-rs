@@ -43,7 +43,7 @@ pub enum RuntimeType {
 #[cfg(feature = "aio")]
 pub fn block_on_all<F, V>(f: F, runtime: RuntimeType) -> F::Output
 where
-    F: Future<Output = RedisResult<V>>,
+    F: Future<Output = V>,
 {
     use std::panic;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -62,7 +62,7 @@ where
     let check_future = futures_util::FutureExt::fuse(async {
         loop {
             if CHECK.load(Ordering::Relaxed) {
-                return Err((redis::ErrorKind::Io, "panic was caught").into());
+                return;
             }
             futures_time::task::sleep(futures_time::time::Duration::from_millis(1)).await;
         }
@@ -71,7 +71,7 @@ where
     futures::pin_mut!(f, check_future);
 
     let f = async move {
-        futures::select! {res = f => res, err = check_future => err}
+        futures::select! {res = f => Ok(res), err = check_future => Err(err)}
     };
 
     let res = match runtime {
@@ -86,7 +86,7 @@ where
         panic!("Internal thread panicked");
     }
 
-    res
+    res.unwrap()
 }
 
 #[cfg(feature = "tokio-comp")]
@@ -297,9 +297,9 @@ fn encode_iter<W>(values: &[Value], writer: &mut W, prefix: &str) -> io::Result<
 where
     W: io::Write,
 {
-    write!(writer, "{}{}\r\n", prefix, values.len())?;
+    write!(writer, "{}{}\r\n", prefix, values.len()).unwrap();
     for val in values.iter() {
-        encode_value(val, writer)?;
+        encode_value(val, writer).unwrap();
     }
     Ok(())
 }
@@ -307,10 +307,10 @@ fn encode_map<W>(values: &[(Value, Value)], writer: &mut W, prefix: &str) -> io:
 where
     W: io::Write,
 {
-    write!(writer, "{}{}\r\n", prefix, values.len())?;
+    write!(writer, "{}{}\r\n", prefix, values.len()).unwrap();
     for (k, v) in values.iter() {
-        encode_value(k, writer)?;
-        encode_value(v, writer)?;
+        encode_value(k, writer).unwrap();
+        encode_value(v, writer).unwrap();
     }
     Ok(())
 }
@@ -323,8 +323,8 @@ where
         Value::Nil => write!(writer, "$-1\r\n"),
         Value::Int(val) => write!(writer, ":{val}\r\n"),
         Value::BulkString(ref val) => {
-            write!(writer, "${}\r\n", val.len())?;
-            writer.write_all(val)?;
+            write!(writer, "${}\r\n", val.len()).unwrap();
+            writer.write_all(val).unwrap();
             writer.write_all(b"\r\n")
         }
         Value::Array(ref values) => encode_iter(values, writer, "*"),
@@ -335,8 +335,8 @@ where
             ref data,
             ref attributes,
         } => {
-            encode_map(attributes, writer, "|")?;
-            encode_value(data, writer)?;
+            encode_map(attributes, writer, "|").unwrap();
+            encode_value(data, writer).unwrap();
             Ok(())
         }
         Value::Set(ref values) => encode_iter(values, writer, "~"),
@@ -360,17 +360,17 @@ where
             return write!(writer, "({val}\r\n");
             #[cfg(not(feature = "num-bigint"))]
             {
-                write!(writer, "(")?;
+                write!(writer, "(").unwrap();
                 for byte in val {
-                    write!(writer, "{byte}")?;
+                    write!(writer, "{byte}").unwrap();
                 }
                 write!(writer, "\r\n")
             }
         }
         Value::Push { ref kind, ref data } => {
-            write!(writer, ">{}\r\n+{kind}\r\n", data.len() + 1)?;
+            write!(writer, ">{}\r\n+{kind}\r\n", data.len() + 1).unwrap();
             for val in data.iter() {
-                encode_value(val, writer)?;
+                encode_value(val, writer).unwrap();
             }
             Ok(())
         }
@@ -555,7 +555,11 @@ pub async fn kill_client_async(
     conn_to_kill: &mut impl aio::ConnectionLike,
     client: &redis::Client,
 ) -> RedisResult<()> {
-    let info: String = cmd("CLIENT").arg("INFO").query_async(conn_to_kill).await?;
+    let info: String = cmd("CLIENT")
+        .arg("INFO")
+        .query_async(conn_to_kill)
+        .await
+        .unwrap();
     let id = info.split_once(' ').unwrap().0;
     assert!(id.contains("id="));
     let client_to_kill_id = id.split_once("id=").unwrap().1;
