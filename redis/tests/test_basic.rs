@@ -1574,7 +1574,7 @@ mod basic {
         redis::cmd("SET").arg(key).arg(42).exec(&mut con).unwrap();
 
         let response: (isize,) = redis::transaction(&mut con, &[key], |con, pipe| {
-            let val: isize = redis::cmd("GET").arg(key).query(con)?;
+            let val: isize = redis::cmd("GET").arg(key).query(con).unwrap();
             pipe.cmd("SET")
                 .arg(key)
                 .arg(val + 1)

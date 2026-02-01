@@ -572,7 +572,7 @@ fn test_sentinel_client_builder() {
 #[cfg(feature = "aio")]
 pub mod async_tests {
     use super::*;
-    use redis::{AsyncConnectionConfig, RedisResult, aio::MultiplexedConnection};
+    use redis::{AsyncConnectionConfig, aio::MultiplexedConnection};
     use rstest::rstest;
     use test_macros::async_test;
 
@@ -662,7 +662,7 @@ pub mod async_tests {
     }
 
     #[async_test]
-    async fn sentinel_connect_to_random_replica_async() -> RedisResult<()> {
+    async fn sentinel_connect_to_random_replica_async() {
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);
         let node_conn_info = context.sentinel_node_connection_info();
@@ -670,24 +670,28 @@ pub mod async_tests {
 
         let master_client = sentinel
             .async_master_for(master_name, Some(&node_conn_info))
-            .await?;
-        let mut master_con = master_client.get_multiplexed_async_connection().await?;
+            .await
+            .unwrap();
+        let mut master_con = master_client
+            .get_multiplexed_async_connection()
+            .await
+            .unwrap();
 
         let mut replica_con = sentinel
             .async_replica_for(master_name, Some(&node_conn_info))
-            .await?
+            .await
+            .unwrap()
             .get_multiplexed_async_connection()
-            .await?;
+            .await
+            .unwrap();
 
         async_assert_is_connection_to_master(&mut master_con).await;
         async_assert_connection_is_replica_of_correct_master(&mut replica_con, &master_client)
             .await;
-
-        Ok::<(), RedisError>(())
     }
 
     #[async_test]
-    async fn sentinel_connect_to_multiple_replicas_async() -> RedisResult<()> {
+    async fn sentinel_connect_to_multiple_replicas_async() {
         let number_of_replicas = 3;
         let master_name = "master1";
         let mut cluster = TestSentinelContext::new(2, number_of_replicas, 3);
@@ -696,8 +700,12 @@ pub mod async_tests {
 
         let master_client = sentinel
             .async_master_for(master_name, Some(&node_conn_info))
-            .await?;
-        let mut master_con = master_client.get_multiplexed_async_connection().await?;
+            .await
+            .unwrap();
+        let mut master_con = master_client
+            .get_multiplexed_async_connection()
+            .await
+            .unwrap();
 
         async_assert_is_connection_to_master(&mut master_con).await;
 
@@ -719,12 +727,10 @@ pub mod async_tests {
             10,
         )
         .await;
-
-        Ok::<(), RedisError>(())
     }
 
     #[async_test]
-    async fn sentinel_server_down_async() -> RedisResult<()> {
+    async fn sentinel_server_down_async() {
         let number_of_replicas = 3;
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, number_of_replicas, 3);
@@ -734,8 +740,12 @@ pub mod async_tests {
 
         let master_client = sentinel
             .async_master_for(master_name, Some(&node_conn_info))
-            .await?;
-        let mut master_con = master_client.get_multiplexed_async_connection().await?;
+            .await
+            .unwrap();
+        let mut master_con = master_client
+            .get_multiplexed_async_connection()
+            .await
+            .unwrap();
 
         async_assert_is_connection_to_master(&mut master_con).await;
 
@@ -762,12 +772,10 @@ pub mod async_tests {
             10,
         )
         .await;
-
-        Ok::<(), RedisError>(())
     }
 
     #[async_test]
-    async fn sentinel_redis_client_async() -> RedisResult<()> {
+    async fn sentinel_redis_client_async() {
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);
         let mut master_client = SentinelClient::build(
@@ -786,7 +794,7 @@ pub mod async_tests {
         )
         .unwrap();
 
-        let mut master_con = master_client.get_async_connection().await?;
+        let mut master_con = master_client.get_async_connection().await.unwrap();
 
         async_assert_is_connection_to_master(&mut master_con).await;
 
@@ -794,21 +802,20 @@ pub mod async_tests {
         let sentinel = context.sentinel_mut();
         let master_client = sentinel
             .async_master_for(master_name, Some(&node_conn_info))
-            .await?;
+            .await
+            .unwrap();
 
         // Read commands to the replica node
         for _ in 0..20 {
-            let mut replica_con = replica_client.get_async_connection().await?;
+            let mut replica_con = replica_client.get_async_connection().await.unwrap();
 
             async_assert_connection_is_replica_of_correct_master(&mut replica_con, &master_client)
                 .await;
         }
-
-        Ok::<(), RedisError>(())
     }
 
     #[async_test]
-    async fn sentinel_client_async() -> RedisResult<()> {
+    async fn sentinel_client_async() {
         let master_name = "master1";
         let context = TestSentinelContext::new(2, 3, 3);
         let mut master_client = SentinelClient::build(
@@ -827,8 +834,8 @@ pub mod async_tests {
         )
         .unwrap();
 
-        let sentinel_client_1 = master_client.async_get_sentinel_client().await?;
-        let sentinel_client_2 = replica_client.async_get_sentinel_client().await?;
+        let sentinel_client_1 = master_client.async_get_sentinel_client().await.unwrap();
+        let sentinel_client_2 = replica_client.async_get_sentinel_client().await.unwrap();
         let first_configured_sentinel = context.sentinels_connection_info.first().unwrap();
 
         assert_eq!(
@@ -840,12 +847,10 @@ pub mod async_tests {
             first_configured_sentinel.addr(),
             sentinel_client_2.get_connection_info().addr()
         );
-
-        Ok::<(), RedisError>(())
     }
 
     #[async_test]
-    async fn sentinel_client_async_not_sentinel_error() -> RedisResult<()> {
+    async fn sentinel_client_async_not_sentinel_error() {
         let master_name = "master1";
 
         let mut context = TestSentinelContext::new(2, 3, 3);
@@ -873,11 +878,10 @@ pub mod async_tests {
                 "Couldn't open connection to a sentinel node."
             ))
         );
-        Ok::<(), RedisError>(())
     }
 
     #[async_test]
-    async fn sentinel_client_async_io_error() -> RedisResult<()> {
+    async fn sentinel_client_async_io_error() {
         let master_name = "master1";
 
         let mut master_client = SentinelClient::build(
@@ -891,11 +895,10 @@ pub mod async_tests {
         let sentinel_client = master_client.async_get_sentinel_client().await;
         let err = sentinel_client.expect_err("Expected an error");
         assert!(err.is_io_error());
-        Ok::<(), RedisError>(())
     }
 
     #[async_test]
-    async fn sentinel_client_async_with_connection_timeout() -> RedisResult<()> {
+    async fn sentinel_client_async_with_connection_timeout() {
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);
         let mut master_client = SentinelClient::build(
@@ -919,7 +922,8 @@ pub mod async_tests {
 
         let mut master_con = master_client
             .get_async_connection_with_config(&connection_options)
-            .await?;
+            .await
+            .unwrap();
 
         async_assert_is_connection_to_master(&mut master_con).await;
 
@@ -927,23 +931,23 @@ pub mod async_tests {
         let sentinel = context.sentinel_mut();
         let master_client = sentinel
             .async_master_for(master_name, Some(&node_conn_info))
-            .await?;
+            .await
+            .unwrap();
 
         // Read commands to the replica node
         for _ in 0..20 {
             let mut replica_con = replica_client
                 .get_async_connection_with_config(&connection_options)
-                .await?;
+                .await
+                .unwrap();
 
             async_assert_connection_is_replica_of_correct_master(&mut replica_con, &master_client)
                 .await;
         }
-
-        Ok::<(), RedisError>(())
     }
 
     #[async_test]
-    async fn sentinel_client_async_with_response_timeout() -> RedisResult<()> {
+    async fn sentinel_client_async_with_response_timeout() {
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);
         let mut master_client = SentinelClient::build(
@@ -966,7 +970,8 @@ pub mod async_tests {
 
         let mut master_con = master_client
             .get_async_connection_with_config(&connection_options)
-            .await?;
+            .await
+            .unwrap();
 
         async_assert_is_connection_to_master(&mut master_con).await;
 
@@ -974,23 +979,23 @@ pub mod async_tests {
         let sentinel = context.sentinel_mut();
         let master_client = sentinel
             .async_master_for(master_name, Some(&node_conn_info))
-            .await?;
+            .await
+            .unwrap();
 
         // Read commands to the replica node
         for _ in 0..20 {
             let mut replica_con = replica_client
                 .get_async_connection_with_config(&connection_options)
-                .await?;
+                .await
+                .unwrap();
 
             async_assert_connection_is_replica_of_correct_master(&mut replica_con, &master_client)
                 .await;
         }
-
-        Ok::<(), RedisError>(())
     }
 
     #[async_test]
-    async fn sentinel_client_async_with_timeouts() -> RedisResult<()> {
+    async fn sentinel_client_async_with_timeouts() {
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);
         let mut master_client = SentinelClient::build(
@@ -1013,7 +1018,8 @@ pub mod async_tests {
 
         let mut master_con = master_client
             .get_async_connection_with_config(&connection_options)
-            .await?;
+            .await
+            .unwrap();
 
         async_assert_is_connection_to_master(&mut master_con).await;
 
@@ -1021,23 +1027,23 @@ pub mod async_tests {
         let sentinel = context.sentinel_mut();
         let master_client = sentinel
             .async_master_for(master_name, Some(&node_conn_info))
-            .await?;
+            .await
+            .unwrap();
 
         // Read commands to the replica node
         for _ in 0..20 {
             let mut replica_con = replica_client
                 .get_async_connection_with_config(&connection_options)
-                .await?;
+                .await
+                .unwrap();
 
             async_assert_connection_is_replica_of_correct_master(&mut replica_con, &master_client)
                 .await;
         }
-
-        Ok::<(), RedisError>(())
     }
 
     #[async_test]
-    async fn get_replica_clients_success_async() -> RedisResult<()> {
+    async fn get_replica_clients_success_async() {
         let number_of_replicas = 3;
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, number_of_replicas, 3);
@@ -1046,13 +1052,13 @@ pub mod async_tests {
 
         let replicas = sentinel
             .async_get_replica_clients(master_name, Some(&node_conn_info))
-            .await?;
+            .await
+            .unwrap();
         assert_eq!(replicas.len(), number_of_replicas as usize);
-        Ok::<(), RedisError>(())
     }
 
     #[async_test]
-    async fn get_replica_clients_invalid_master_name_async() -> RedisResult<()> {
+    async fn get_replica_clients_invalid_master_name_async() {
         let mut context = TestSentinelContext::new(2, 2, 3);
         let node_conn_info = context.sentinel_node_connection_info();
         let sentinel = context.sentinel_mut();
@@ -1069,12 +1075,10 @@ pub mod async_tests {
             ),
             "{err}"
         );
-
-        Ok::<(), RedisError>(())
     }
 
     #[async_test]
-    async fn get_replica_clients_report_correct_master_async() -> RedisResult<()> {
+    async fn get_replica_clients_report_correct_master_async() {
         let number_of_replicas = 3;
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, number_of_replicas, 3);
@@ -1083,21 +1087,24 @@ pub mod async_tests {
 
         let master_client = sentinel
             .async_master_for(master_name, Some(&node_conn_info))
-            .await?;
+            .await
+            .unwrap();
         let replicas = sentinel
             .async_get_replica_clients(master_name, Some(&node_conn_info))
-            .await?;
+            .await
+            .unwrap();
 
         for replica_client in replicas {
-            let mut con = replica_client.get_multiplexed_async_connection().await?;
+            let mut con = replica_client
+                .get_multiplexed_async_connection()
+                .await
+                .unwrap();
             async_assert_connection_is_replica_of_correct_master(&mut con, &master_client).await;
         }
-
-        Ok::<(), RedisError>(())
     }
 
     #[async_test]
-    async fn get_replica_clients_with_one_replica_down_async() -> RedisResult<()> {
+    async fn get_replica_clients_with_one_replica_down_async() {
         let number_of_replicas = 3;
         let master_name = "master0";
         let mut context = TestSentinelContext::new(2, number_of_replicas, 3);
@@ -1107,7 +1114,8 @@ pub mod async_tests {
         let mut conn = Client::open(sentinel_conn_info)
             .unwrap()
             .get_multiplexed_async_connection()
-            .await?;
+            .await
+            .unwrap();
 
         redis::cmd("SENTINEL")
             .arg("set")
@@ -1115,7 +1123,8 @@ pub mod async_tests {
             .arg("down-after-milliseconds")
             .arg("500")
             .query_async::<()>(&mut conn)
-            .await?;
+            .await
+            .unwrap();
 
         context.cluster.servers[1].stop();
         std::thread::sleep(std::time::Duration::from_millis(800));
@@ -1131,8 +1140,6 @@ pub mod async_tests {
             (number_of_replicas - 1) as usize,
             "Unexpected num of replicas total"
         );
-
-        Ok::<(), RedisError>(())
     }
 }
 
