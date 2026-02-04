@@ -314,15 +314,32 @@ fn test_acl_sample_info() {
 mod token_based_authentication_acl_tests {
     use crate::support::*;
     use futures_util::{Stream, StreamExt};
-    use redis::AsyncTypedCommands;
-    use redis::RedisResult;
-    use redis::aio::ConnectionLike;
-    use redis::auth::BasicAuth;
-    use redis::auth::StreamingCredentialsProvider;
-    use std::pin::Pin;
-    use std::sync::{Arc, Mutex, RwLock};
-    use std::time::Duration;
+    use redis::{
+        AsyncTypedCommands, ErrorKind, RedisResult,
+        aio::ConnectionLike,
+        auth::{BasicAuth, StreamingCredentialsProvider},
+    };
+    use std::{
+        pin::Pin,
+        sync::{Arc, Mutex, Once, RwLock},
+        time::Duration,
+    };
     use tokio::sync::mpsc::Sender;
+
+    static INIT_LOGGER: Once = Once::new();
+
+    /// Initialize the logger for tests. Only initializes once even if called multiple times.
+    /// Respects RUST_LOG environment variable if set, otherwise defaults to Debug level.
+    fn init_logger() {
+        INIT_LOGGER.call_once(|| {
+            let mut builder = env_logger::builder();
+            builder.is_test(true);
+            if std::env::var("RUST_LOG").is_err() {
+                builder.filter_level(log::LevelFilter::Debug);
+            }
+            builder.init();
+        });
+    }
 
     const TOKEN_PAYLOAD: &str = "eyJvaWQiOiIxMjM0NTY3OC05YWJjLWRlZi0xMjM0LTU2Nzg5YWJjZGVmMCJ9"; // Payload with "oid" claim
     const OID_CLAIM_VALUE: &str = "12345678-9abc-def-1234-56789abcdef0";
@@ -347,6 +364,10 @@ mod token_based_authentication_acl_tests {
         (BOB_OID_CLAIM, BOB_TOKEN),
         (CHARLIE_OID_CLAIM, CHARLIE_TOKEN),
     ];
+
+    // Invalid credentials - user that doesn't exist in Redis
+    const INVALID_USER: &str = "nonexistent_user";
+    const INVALID_TOKEN: &str = "invalid_token";
     /// Configuration for the mock streaming credentials provider
     ///
     /// This struct allows customization of the mock provider's behavior for testing
@@ -399,6 +420,27 @@ mod token_based_authentication_acl_tests {
             let mut config = Self::multiple_tokens();
             config.error_positions = error_positions;
             config
+        }
+
+        /// Create config with valid credentials initially, then invalid credentials that the Redis server will reject.
+        /// This simulates a scenario where the provider yields credentials, but the Redis server rejects the AUTH command.
+        pub fn valid_then_invalid_credentials() -> Self {
+            Self {
+                credentials_sequence: vec![
+                    // Valid credentials (Alice is supposed to exist)
+                    BasicAuth {
+                        username: ALICE_OID_CLAIM.to_string(),
+                        password: ALICE_TOKEN.to_string(),
+                    },
+                    // Invalid credentials (user is supposed to not exist)
+                    BasicAuth {
+                        username: INVALID_USER.to_string(),
+                        password: INVALID_TOKEN.to_string(),
+                    },
+                ],
+                refresh_interval: Duration::from_millis(500),
+                error_positions: vec![],
+            }
         }
     }
 
@@ -499,7 +541,7 @@ mod token_based_authentication_acl_tests {
                             "Mock authentication failed",
                         )))
                     } else {
-                        // Use the credential at the current position
+                        // Use the credentials at the current position
                         let credentials = config.credentials_sequence[position].clone();
                         {
                             let mut current = current_credentials_arc.write().unwrap();
@@ -580,6 +622,7 @@ mod token_based_authentication_acl_tests {
 
     #[tokio::test]
     async fn test_authentication_with_mock_streaming_credentials_provider() {
+        init_logger();
         let mut ctx = TestContext::new();
         // Set up a Redis user that expects a JWT token as password
         let mut admin_con = ctx.async_connection().await.unwrap();
@@ -655,6 +698,7 @@ mod token_based_authentication_acl_tests {
 
     #[tokio::test]
     async fn test_token_rotation_with_mock_streaming_credentials_provider() {
+        init_logger();
         let mut ctx = TestContext::new();
         let users_cmd = redis::cmd("ACL").arg("USERS").clone();
         let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
@@ -710,6 +754,7 @@ mod token_based_authentication_acl_tests {
 
     #[tokio::test]
     async fn test_authentication_error_handling_with_mock_streaming_credentials_provider() {
+        init_logger();
         let mut ctx = TestContext::new();
         let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
 
@@ -764,6 +809,7 @@ mod token_based_authentication_acl_tests {
 
     #[tokio::test]
     async fn test_multiple_connections_from_one_client_sharing_a_single_credentials_provider() {
+        init_logger();
         let mut ctx = TestContext::new();
         let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
 
@@ -816,6 +862,7 @@ mod token_based_authentication_acl_tests {
 
     #[tokio::test]
     async fn test_multiple_clients_sharing_a_single_credentials_provider() {
+        init_logger();
         let mut ctx1 = TestContext::new();
         let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
 
@@ -870,5 +917,59 @@ mod token_based_authentication_acl_tests {
         println!(
             "Multiple clients sharing a single credentials provider test completed successfully!"
         );
+    }
+
+    /// Tests that the connection gets rendered unusable when Redis rejects credentials during re-authentication.
+    ///
+    /// The scenario:
+    /// 1. Provider yields valid credentials (Alice) - connection succeeds
+    /// 2. Provider yields credentials for a non-existent user - the Redis server rejects the AUTH command
+    /// 3. Connection should be rendered unusable
+    /// 4. Subsequent commands should fail with `AuthenticationFailed`
+    #[tokio::test]
+    async fn test_connection_rendered_unusable_when_reauthentication_fails() {
+        init_logger();
+        let mut ctx = TestContext::new();
+
+        // Create a user with the JWT token as password and full permissions for each token
+        println!("Setting up Redis users for re-authentication failure test...");
+        add_users_with_jwt_tokens(&ctx).await;
+
+        // Set up mock provider that yields valid credentials initially, then invalid credentials
+        println!("Setting up mock provider that yields valid then invalid credentials...");
+        let mut mock_provider = MockStreamingCredentialsProvider::with_config(
+            MockProviderConfig::valid_then_invalid_credentials(),
+        );
+        mock_provider.start();
+        ctx.client = ctx.client.with_credentials_provider(mock_provider);
+
+        println!("Establishing multiplexed connection with JWT authentication...");
+        let mut con = ctx.multiplexed_async_connection_tokio().await.unwrap();
+
+        // Verify initial authentication succeeded
+        let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
+        let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
+        assert_eq!(current_user, ALICE_OID_CLAIM);
+        println!("Initial authentication successful as user: {current_user}.");
+
+        // Wait for token rotation to occur and yield invalid credentials
+        println!("Waiting for token rotation to yield invalid credentials...");
+        tokio::time::sleep(Duration::from_millis(600)).await;
+
+        // The connection should now be rendered unusable because the Redis server rejected the AUTH command.
+        // Subsequent commands should fail with AuthenticationFailed.
+        println!("Attempting to execute a command on an unusable connection...");
+        let result: redis::RedisResult<String> = whoami_cmd.query_async(&mut con).await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::AuthenticationFailed);
+        assert!(
+            error.to_string().contains("re-authentication failure"),
+            "Error message should mention re-authentication failure: {error}"
+        );
+        println!("Command correctly failed with AuthenticationFailed: {error}");
+
+        println!("Connection rendered unusable test completed successfully!");
     }
 }

@@ -38,12 +38,7 @@
 //!
 //! ## Enable the Feature
 //!
-//! Add the `entra-id` feature to your `Cargo.toml`:
-//!
-//! ```toml
-//! [dependencies]
-//! redis = { version = "0.32.7", features = ["entra-id", "tokio-comp"] }
-//! ```
+//! Add the `entra-id` feature to your `Cargo.toml`.
 //!
 //! ## Basic Usage with DeveloperToolsCredential
 //!
@@ -244,19 +239,24 @@ use crate::auth_management::credentials_management_utils;
 use crate::errors::{ErrorKind, RedisError};
 use crate::types::RedisResult;
 use azure_core::credentials::{AccessToken, Secret, TokenCredential};
+use azure_core::time::OffsetDateTime;
 use azure_identity::{
     ClientCertificateCredential, ClientCertificateCredentialOptions, ClientSecretCredential,
     ClientSecretCredentialOptions, DeveloperToolsCredential, DeveloperToolsCredentialOptions,
     ManagedIdentityCredential, ManagedIdentityCredentialOptions,
 };
 use futures_util::{Stream, StreamExt};
+use log::{debug, error, warn};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, RwLock};
-use time::OffsetDateTime;
 use tokio::sync::mpsc::Sender;
 
 /// The default Redis scope for Azure Managed Redis
 pub const REDIS_SCOPE_DEFAULT: &str = "https://redis.azure.com/.default";
+
+/// The number of seconds before token expiration to trigger a refresh.
+/// This buffer ensures the token is refreshed before it actually expires.
+const TOKEN_REFRESH_BUFFER_SECS: u64 = 240;
 
 /// A client certificate in PKCS12 (PFX) that can be used for client certificate authentication.
 ///
@@ -331,6 +331,19 @@ impl EntraIdCredentialsProvider {
         ))
     }
 
+    /// Unwrap a credentials provider from its `Arc` wrapper.
+    ///
+    /// The azure_identity crate returns credentials wrapped in an `Arc`, while sole ownership is expected at construction time.
+    /// Failure to unwrap indicates unexpected shared ownership within the azure_identity crate internals.
+    fn unwrap_credential<T: TokenCredential>(credential: std::sync::Arc<T>) -> RedisResult<T> {
+        std::sync::Arc::try_unwrap(credential).map_err(|_| {
+            RedisError::from((
+                ErrorKind::AuthenticationFailed,
+                "[azure_identity]: Unexpected shared ownership of credentials provider.",
+            ))
+        })
+    }
+
     async fn notify_subscribers(
         subscribers_arc: &SharedSubscriptions,
         username: &str,
@@ -385,7 +398,7 @@ impl EntraIdCredentialsProvider {
             let mut error_delay = retry_config.initial_delay;
 
             loop {
-                println!("Refreshing token. Attempt {attempt}");
+                debug!("Refreshing token. Attempt {attempt}");
                 let token_response = credential_provider_arc.get_token(&scopes, None).await;
 
                 if let Ok(ref access_token) = token_response {
@@ -396,7 +409,7 @@ impl EntraIdCredentialsProvider {
                     ) {
                         Ok(object_id) => object_id,
                         Err(error) => {
-                            eprintln!("Failed to extract OID: {error}");
+                            warn!("Failed to extract OID: {error}");
                             "default".to_string()
                         }
                     };
@@ -413,14 +426,14 @@ impl EntraIdCredentialsProvider {
                             retry_config.backoff_multiplier,
                             retry_config.max_delay,
                         );
-                        println!(
+                        warn!(
                             "An error occurred while refreshing the token. Attempt {attempt}. Sleeping for {:?}",
                             error_delay
                         );
                         tokio::time::sleep(error_delay).await;
                         continue;
                     }
-                    println!("Max attempts reached. Stopping token refresh.");
+                    error!("Maximum token refresh attempts reached. Stopping token refresh.");
                     Self::notify_subscribers(&subscribers_arc, &username, token_response).await;
                     break;
                 }
@@ -457,14 +470,7 @@ impl EntraIdCredentialsProvider {
         let credential_provider =
             DeveloperToolsCredential::new(options).map_err(Self::convert_error)?;
         Ok(Self {
-            credential_provider: Arc::new(
-                std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
-                    RedisError::from((
-                        ErrorKind::AuthenticationFailed,
-                        "Failed to unwrap credential",
-                    ))
-                })?,
-            ),
+            credential_provider: Arc::new(Self::unwrap_credential(credential_provider)?),
             scopes,
             background_handle: Default::default(),
             subscribers: Default::default(),
@@ -500,14 +506,7 @@ impl EntraIdCredentialsProvider {
             ClientSecretCredential::new(&tenant_id, client_id, client_secret.into(), options)
                 .map_err(Self::convert_error)?;
         Ok(Self {
-            credential_provider: Arc::new(
-                std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
-                    RedisError::from((
-                        ErrorKind::AuthenticationFailed,
-                        "Failed to unwrap credential",
-                    ))
-                })?,
-            ),
+            credential_provider: Arc::new(Self::unwrap_credential(credential_provider)?),
             scopes,
             background_handle: Default::default(),
             subscribers: Default::default(),
@@ -557,14 +556,7 @@ impl EntraIdCredentialsProvider {
         )
         .map_err(Self::convert_error)?;
         Ok(Self {
-            credential_provider: Arc::new(
-                std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
-                    RedisError::from((
-                        ErrorKind::AuthenticationFailed,
-                        "Failed to unwrap credential",
-                    ))
-                })?,
-            ),
+            credential_provider: Arc::new(Self::unwrap_credential(credential_provider)?),
             scopes,
             background_handle: Default::default(),
             subscribers: Default::default(),
@@ -589,14 +581,7 @@ impl EntraIdCredentialsProvider {
         let credential_provider =
             ManagedIdentityCredential::new(options).map_err(Self::convert_error)?;
         Ok(Self {
-            credential_provider: Arc::new(
-                std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
-                    RedisError::from((
-                        ErrorKind::AuthenticationFailed,
-                        "Failed to unwrap credential",
-                    ))
-                })?,
-            ),
+            credential_provider: Arc::new(Self::unwrap_credential(credential_provider)?),
             scopes,
             background_handle: Default::default(),
             subscribers: Default::default(),
@@ -621,14 +606,7 @@ impl EntraIdCredentialsProvider {
         let credential_provider =
             ManagedIdentityCredential::new(options).map_err(Self::convert_error)?;
         Ok(Self {
-            credential_provider: Arc::new(
-                std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
-                    RedisError::from((
-                        ErrorKind::AuthenticationFailed,
-                        "Failed to unwrap credential",
-                    ))
-                })?,
-            ),
+            credential_provider: Arc::new(Self::unwrap_credential(credential_provider)?),
             scopes,
             background_handle: Default::default(),
             subscribers: Default::default(),
@@ -660,9 +638,9 @@ impl EntraIdCredentialsProvider {
                 Err(_) => std::time::Duration::from_secs(0),
             };
             remaining_duration
-                .checked_sub(std::time::Duration::from_secs(240))
+                .checked_sub(std::time::Duration::from_secs(TOKEN_REFRESH_BUFFER_SECS))
                 .unwrap_or_else(|| {
-                    eprintln!("Token expires soon; refreshing immediately");
+                    warn!("The token is about to expire! Refreshing...");
                     std::time::Duration::from_secs(0)
                 })
         });
@@ -713,7 +691,7 @@ mod tests {
 
     #[test]
     fn test_entra_id_provider_creation() {
-        // Test that credential providers can be created without panicking
+        // Test that credentials providers can be created without panicking
         let _default_provider = EntraIdCredentialsProvider::new_developer_tools();
         assert!(_default_provider.is_ok());
 
@@ -785,12 +763,27 @@ mod entra_id_mock_tests {
     };
     use azure_core::Error as AzureError;
     use azure_core::credentials::{AccessToken, Secret, TokenCredential};
+    use azure_core::time::{Duration, OffsetDateTime};
     use futures_util::StreamExt;
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, LazyLock};
-    use time::OffsetDateTime;
+    use std::sync::{Arc, LazyLock, Once};
     use tokio::sync::Mutex;
+
+    static INIT_LOGGER: Once = Once::new();
+
+    /// Initialize the logger for tests. Only initializes once even if called multiple times.
+    /// Respects RUST_LOG environment variable if set, otherwise defaults to Debug level.
+    fn init_logger() {
+        INIT_LOGGER.call_once(|| {
+            let mut builder = env_logger::builder();
+            builder.is_test(true);
+            if std::env::var("RUST_LOG").is_err() {
+                builder.filter_level(log::LevelFilter::Debug);
+            }
+            builder.init();
+        });
+    }
 
     const TOKEN_PAYLOAD: &str = "eyJvaWQiOiIxMjM0NTY3OC05YWJjLWRlZi0xMjM0LTU2Nzg5YWJjZGVmMCJ9"; // Payload with "oid" claim
     const TOKEN_SIGNATURE: &str = "signature";
@@ -821,7 +814,7 @@ mod entra_id_mock_tests {
         fn success() -> Self {
             let token = AccessToken {
                 token: Secret::new(MOCKED_TOKEN.as_str()),
-                expires_on: OffsetDateTime::now_utc() + time::Duration::hours(1),
+                expires_on: OffsetDateTime::now_utc() + Duration::hours(1),
             };
 
             Self {
@@ -852,7 +845,7 @@ mod entra_id_mock_tests {
 
             let token = AccessToken {
                 token: Secret::new(MOCKED_TOKEN.as_str()),
-                expires_on: OffsetDateTime::now_utc() + time::Duration::hours(1),
+                expires_on: OffsetDateTime::now_utc() + Duration::hours(1),
             };
 
             Self {
@@ -867,15 +860,15 @@ mod entra_id_mock_tests {
             let tokens = vec![
                 Ok(AccessToken {
                     token: Secret::new(MOCKED_TOKEN_1.as_str()),
-                    expires_on: time_now + time::Duration::seconds(1),
+                    expires_on: time_now + Duration::seconds(1),
                 }),
                 Ok(AccessToken {
                     token: Secret::new(MOCKED_TOKEN_2.as_str()),
-                    expires_on: time_now + time::Duration::seconds(2),
+                    expires_on: time_now + Duration::seconds(2),
                 }),
                 Ok(AccessToken {
                     token: Secret::new(MOCKED_TOKEN_3.as_str()),
-                    expires_on: time_now + time::Duration::seconds(3),
+                    expires_on: time_now + Duration::seconds(3),
                 }),
             ];
 
@@ -927,6 +920,7 @@ mod entra_id_mock_tests {
 
     #[tokio::test]
     async fn test_mock_successful_authentication() {
+        init_logger();
         let mock_credential = MockTokenCredential::success();
         let call_count_ref = mock_credential.call_count.clone();
 
@@ -954,6 +948,7 @@ mod entra_id_mock_tests {
 
     #[tokio::test]
     async fn test_mock_authentication_failure() {
+        init_logger();
         let mock_credential = MockTokenCredential::failure();
         let call_count_ref = mock_credential.call_count.clone();
 
@@ -986,6 +981,7 @@ mod entra_id_mock_tests {
 
     #[tokio::test]
     async fn test_mock_retry_mechanism() {
+        init_logger();
         let mock_credential = MockTokenCredential::alternating_fail_success();
         let call_count_ref = mock_credential.call_count.clone();
 
@@ -1010,6 +1006,7 @@ mod entra_id_mock_tests {
 
     #[tokio::test]
     async fn test_mock_multiple_subscribers() {
+        init_logger();
         let mock_credential = MockTokenCredential::multiple_tokens();
         let call_count_ref = mock_credential.call_count.clone();
 
@@ -1040,6 +1037,7 @@ mod entra_id_mock_tests {
 
     #[tokio::test]
     async fn test_mock_multiple_tokens_over_time() {
+        init_logger();
         let mock_credential = MockTokenCredential::multiple_tokens();
         let call_count_ref = mock_credential.call_count.clone();
         let mut provider = create_mock_entra_id_credentials_provider(
@@ -1093,6 +1091,7 @@ mod entra_id_mock_tests {
 
     #[tokio::test]
     async fn test_mock_subscriber_cleanup() {
+        init_logger();
         let mock_credential = MockTokenCredential::multiple_tokens();
 
         let mut provider = create_mock_entra_id_credentials_provider(
@@ -1146,6 +1145,7 @@ mod entra_id_mock_tests {
 
     #[tokio::test]
     async fn test_mock_provider_cleanup() {
+        init_logger();
         let mock_credential = MockTokenCredential::success();
 
         let mut provider = create_mock_entra_id_credentials_provider(

@@ -170,7 +170,7 @@ Redis-rs supports token-based authentication using Azure Entra ID, providing sec
 To enable Entra ID authentication, add the `entra-id` feature to your Cargo.toml:
 
 ```toml
-redis = { version = "0.32.7", features = ["entra-id", "tokio-comp"] }
+redis = { version = "1.0", features = ["entra-id", "tokio-comp"] }
 ```
 
 ### Supported Authentication Flows

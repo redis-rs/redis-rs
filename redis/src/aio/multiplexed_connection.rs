@@ -16,7 +16,13 @@ use ::tokio::{
     sync::{mpsc, oneshot},
 };
 #[cfg(feature = "token-based-authentication")]
-use arcstr::ArcStr;
+use {
+    crate::errors::ErrorKind,
+    arcstr::ArcStr,
+    log::{debug, error},
+    std::sync::atomic::{AtomicBool, Ordering},
+};
+
 use futures_util::{
     future::{Future, FutureExt},
     ready,
@@ -507,6 +513,10 @@ pub struct MultiplexedConnection {
     // It is only set for connections that use a credentials provider for token-based authentication.
     #[cfg(feature = "token-based-authentication")]
     _credentials_subscription_task_handle: Option<SharedHandleContainer>,
+    /// Flag indicating that re-authentication has failed and the connection is no longer usable.
+    /// When set, all subsequent commands will fail immediately with an authentication error.
+    #[cfg(feature = "token-based-authentication")]
+    re_authentication_failed: Arc<AtomicBool>,
 }
 
 impl Debug for MultiplexedConnection {
@@ -587,11 +597,16 @@ impl MultiplexedConnection {
                     connection_info.password = Some(ArcStr::from(credentials.password));
                 }
                 Some(Err(err)) => {
-                    eprintln!("Error while receiving credentials from stream: {err}");
+                    error!("Error while receiving credentials from stream: {err}");
                     return Err(err);
                 }
                 None => {
-                    unreachable!("Credential stream closed");
+                    let err = RedisError::from((
+                        ErrorKind::AuthenticationFailed,
+                        "Credentials stream closed unexpectedly before yielding credentials!",
+                    ));
+                    error!("{err}");
+                    return Err(err);
                 }
             }
         }
@@ -629,6 +644,7 @@ impl MultiplexedConnection {
             cache_manager: cache_manager_opt,
             connection_info: connection_info.clone(),
             _credentials_subscription_task_handle: None,
+            re_authentication_failed: Arc::new(AtomicBool::new(false)),
         };
         #[cfg(not(feature = "token-based-authentication"))]
         let con = MultiplexedConnection {
@@ -645,10 +661,11 @@ impl MultiplexedConnection {
         #[cfg(feature = "token-based-authentication")]
         if let Some(streaming_provider) = connection_info.credentials_provider {
             let mut inner_connection = con.clone();
-
+            let re_authentication_failed_arc = Arc::clone(&con.re_authentication_failed);
             let mut stream = streaming_provider.subscribe();
 
             let subscription_task_handle = Runtime::locate().spawn(async move {
+                let mut error_cause_logged = false;
                 while let Some(result) = stream.next().await {
                     match result {
                         Ok(credentials) => {
@@ -656,17 +673,26 @@ impl MultiplexedConnection {
                                 .re_authenticate_with_credentials(&credentials)
                                 .await
                             {
-                                eprintln!("Failed to re-authenticate async connection: {err}");
+                                error!("Failed to re-authenticate async connection: {err}.");
+                                error_cause_logged = true;
+                                re_authentication_failed_arc.store(true, Ordering::Relaxed);
+                                break;
                             } else {
-                                println!("Re-authenticated async connection");
+                                debug!("Re-authenticated async connection");
                             }
                         }
                         Err(err) => {
-                            eprintln!("Credential stream error for async connection: {err}");
+                            error!("Credentials stream error for async connection: {err}.");
+                            error_cause_logged = true;
                         }
                     }
                 }
-                println!("Re-authentication stream ended");
+                if !re_authentication_failed_arc.load(Ordering::Relaxed) {
+                    if !error_cause_logged {
+                        error!("Re-authentication stream ended unexpectedly.");
+                    }
+                    re_authentication_failed_arc.store(true, Ordering::Relaxed);
+                }
             });
             con._credentials_subscription_task_handle =
                 Some(SharedHandleContainer::new(subscription_task_handle));
@@ -689,6 +715,13 @@ impl MultiplexedConnection {
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+        #[cfg(feature = "token-based-authentication")]
+        if self.re_authentication_failed.load(Ordering::Relaxed) {
+            return Err(RedisError::from((
+                ErrorKind::AuthenticationFailed,
+                "Connection is no longer usable due to re-authentication failure",
+            )));
+        }
         #[cfg(feature = "cache-aio")]
         if let Some(cache_manager) = &self.cache_manager {
             match cache_manager.get_cached_cmd(cmd) {
@@ -736,6 +769,13 @@ impl MultiplexedConnection {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
+        #[cfg(feature = "token-based-authentication")]
+        if self.re_authentication_failed.load(Ordering::Relaxed) {
+            return Err(RedisError::from((
+                ErrorKind::AuthenticationFailed,
+                "Connection is no longer usable due to re-authentication failure",
+            )));
+        }
         #[cfg(feature = "cache-aio")]
         if let Some(cache_manager) = &self.cache_manager {
             let (cacheable_pipeline, pipeline, (skipped_response_count, expected_response_count)) =
@@ -908,8 +948,11 @@ impl MultiplexedConnection {
 
         let auth_cmd =
             crate::connection::authenticate_cmd(&self.connection_info, true, &credentials.password);
-        self.send_packed_command(&auth_cmd).await?;
-        Ok(())
+        // Send the AUTH command and convert any Redis error response to an Err
+        self.send_packed_command(&auth_cmd)
+            .await?
+            .extract_error()
+            .map(|_| ())
     }
 }
 

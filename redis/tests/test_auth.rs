@@ -11,7 +11,22 @@ mod entra_id_tests {
         Client, ClientCertificate, EntraIdCredentialsProvider, ManagedIdentityCredentialOptions,
         RetryConfig, UserAssignedId,
     };
-    use std::sync::OnceLock;
+    use std::sync::{Once, OnceLock};
+
+    static INIT_LOGGER: Once = Once::new();
+
+    /// Initialize the logger for tests. Only initializes once even if called multiple times.
+    /// Respects RUST_LOG environment variable if set, otherwise defaults to Debug level.
+    fn init_logger() {
+        INIT_LOGGER.call_once(|| {
+            let mut builder = env_logger::builder();
+            builder.is_test(true);
+            if std::env::var("RUST_LOG").is_err() {
+                builder.filter_level(log::LevelFilter::Debug);
+            }
+            builder.init();
+        });
+    }
 
     const REDIS_URL: &str = "REDIS_URL";
 
@@ -44,6 +59,7 @@ mod entra_id_tests {
     }
 
     async fn test_redis_connection(mut provider: EntraIdCredentialsProvider, test_key: &str) {
+        init_logger();
         provider.start(RetryConfig::default());
 
         let client = Client::open_with_credentials_provider(get_redis_url(), provider).unwrap();

@@ -633,10 +633,6 @@ let primary = sentinel.get_async_connection().await.unwrap();
 )]
 
 // public api
-#[cfg(feature = "token-based-authentication")]
-pub use crate::auth::{BasicAuth, StreamingCredentialsProvider};
-#[cfg(feature = "token-based-authentication")]
-pub use crate::auth_management::{RetryConfig, TokenRefreshConfig};
 #[cfg(feature = "aio")]
 pub use crate::client::AsyncConnectionConfig;
 pub use crate::client::Client;
@@ -652,19 +648,24 @@ pub use crate::connection::{
     Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, IntoConnectionInfo, Msg, PubSub,
     RedisConnectionInfo, TlsMode, parse_redis_url, transaction,
 };
-#[cfg(feature = "entra-id")]
-pub use crate::entra_id::{ClientCertificate, EntraIdCredentialsProvider, REDIS_SCOPE_DEFAULT};
 pub use crate::parser::{Parser, parse_redis_value};
 pub use crate::pipeline::Pipeline;
-#[cfg(feature = "entra-id")]
-pub use azure_identity::{
-    ClientCertificateCredentialOptions, ClientSecretCredentialOptions,
-    DeveloperToolsCredentialOptions, ManagedIdentityCredentialOptions, UserAssignedId,
-};
-
 #[cfg(feature = "script")]
 #[cfg_attr(docsrs, doc(cfg(feature = "script")))]
 pub use crate::script::{Script, ScriptInvocation};
+#[cfg(feature = "token-based-authentication")]
+pub use crate::{
+    auth::{BasicAuth, StreamingCredentialsProvider},
+    auth_management::{RetryConfig, TokenRefreshConfig},
+};
+#[cfg(feature = "entra-id")]
+pub use {
+    crate::entra_id::{ClientCertificate, EntraIdCredentialsProvider, REDIS_SCOPE_DEFAULT},
+    azure_identity::{
+        ClientCertificateCredentialOptions, ClientSecretCredentialOptions,
+        DeveloperToolsCredentialOptions, ManagedIdentityCredentialOptions, UserAssignedId,
+    },
+};
 
 // preserve grouping and order
 #[rustfmt::skip]
