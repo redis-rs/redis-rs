@@ -551,7 +551,7 @@ impl EntraIdCredentialsProvider {
         let credential_provider = ClientCertificateCredential::new(
             tenant_id,
             client_id,
-            client_certificate.base64_pkcs12,
+            client_certificate.base64_pkcs12.into(),
             options,
         )
         .map_err(Self::convert_error)?;
