@@ -160,7 +160,7 @@ pin_project! {
     }
 }
 
-fn choose_response<C>(
+pub(crate) fn choose_response<C>(
     result: OperationResult,
     mut request: PendingRequest<C>,
     retry_params: &RetryParams,
@@ -310,18 +310,6 @@ impl<C> Future for Request<C> {
         // can unwrap, because we tested for `is_none`` earlier in the function
         let request = this.request.take().unwrap();
         Poll::Ready(choose_response(result, request, this.retry_params))
-    }
-}
-
-impl<C> Request<C> {
-    pub(super) fn respond(self: Pin<&mut Self>, msg: RedisResult<Response>) {
-        // If `send` errors the receiver has dropped and thus does not care about the message
-        self.project()
-            .request
-            .take()
-            .expect("Result should only be sent once")
-            .sender
-            .send(msg);
     }
 }
 
