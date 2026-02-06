@@ -218,6 +218,7 @@ impl fmt::Display for RedisError {
 }
 
 /// What method should be used if retrying this request.
+#[derive(Debug, Copy, Clone)]
 #[non_exhaustive]
 pub enum RetryMethod {
     /// Create a fresh connection, since the current connection is no longer usable.
@@ -367,19 +368,29 @@ impl RedisError {
 
     /// Returns true if error was caused by a dropped connection.
     pub fn is_connection_dropped(&self) -> bool {
-        self.as_io_error().is_some_and(|err| {
-            matches!(
-                err.kind(),
-                io::ErrorKind::BrokenPipe
-                    | io::ErrorKind::ConnectionReset
-                    | io::ErrorKind::UnexpectedEof
-            )
-        })
+        match self.repr {
+            ErrorRepr::General(kind, _, _) => kind == ErrorKind::Io,
+            ErrorRepr::Internal { .. } => self.as_io_error().is_some_and(|err| {
+                matches!(
+                    err.kind(),
+                    io::ErrorKind::BrokenPipe
+                        | io::ErrorKind::ConnectionReset
+                        | io::ErrorKind::ConnectionRefused
+                        | io::ErrorKind::ConnectionAborted
+                        | io::ErrorKind::UnexpectedEof
+                        | io::ErrorKind::NotConnected
+                        | io::ErrorKind::NotFound
+                )
+            }),
+
+            _ => false,
+        }
     }
 
     /// Returns true if the error is likely to not be recoverable, and the connection must be replaced.
     pub fn is_unrecoverable_error(&self) -> bool {
-        match self.retry_method() {
+        let retry_method = self.retry_method();
+        match retry_method {
             RetryMethod::Reconnect => true,
             RetryMethod::ReconnectFromInitialConnections => true,
 
@@ -433,23 +444,20 @@ impl RedisError {
             ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
             ErrorKind::ClusterConnectionNotFound => RetryMethod::ReconnectFromInitialConnections,
 
-            ErrorKind::Io => self
-                .as_io_error()
-                .map(|err| match err.kind() {
-                    io::ErrorKind::ConnectionRefused => RetryMethod::Reconnect,
-                    io::ErrorKind::NotFound => RetryMethod::Reconnect,
-                    io::ErrorKind::ConnectionReset => RetryMethod::Reconnect,
-                    io::ErrorKind::ConnectionAborted => RetryMethod::Reconnect,
-                    io::ErrorKind::NotConnected => RetryMethod::Reconnect,
-                    io::ErrorKind::BrokenPipe => RetryMethod::Reconnect,
-                    io::ErrorKind::UnexpectedEof => RetryMethod::Reconnect,
+            ErrorKind::Io => {
+                if self.is_connection_dropped() {
+                    RetryMethod::Reconnect
+                } else {
+                    self.as_io_error()
+                        .map(|err| match err.kind() {
+                            io::ErrorKind::PermissionDenied => RetryMethod::NoRetry,
+                            io::ErrorKind::Unsupported => RetryMethod::NoRetry,
 
-                    io::ErrorKind::PermissionDenied => RetryMethod::NoRetry,
-                    io::ErrorKind::Unsupported => RetryMethod::NoRetry,
-
-                    _ => RetryMethod::RetryImmediately,
-                })
-                .unwrap_or(RetryMethod::NoRetry),
+                            _ => RetryMethod::RetryImmediately,
+                        })
+                        .unwrap_or(RetryMethod::NoRetry)
+                }
+            }
         }
     }
 

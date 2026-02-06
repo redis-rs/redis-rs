@@ -38,7 +38,7 @@ pub enum Arg<D> {
 /// ```
 #[cfg(feature = "cache-aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CommandCacheConfig {
     pub(crate) enable_cache: bool,
     pub(crate) client_side_ttl: Option<Duration>,
@@ -85,6 +85,22 @@ pub struct Cmd {
     no_response: bool,
     #[cfg(feature = "cache-aio")]
     cache: Option<CommandCacheConfig>,
+}
+
+impl std::fmt::Debug for Cmd {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut debug_struct = f.debug_struct("Cmd");
+        debug_struct
+            .field("data", &String::from_utf8_lossy(&self.data).as_ref())
+            .field("args", &self.args)
+            .field("cursor", &self.cursor)
+            .field("no_response", &self.no_response);
+
+        #[cfg(feature = "cache-aio")]
+        debug_struct.field("cache", &self.cache);
+
+        debug_struct.finish()
+    }
 }
 
 /// Represents a redis iterator.
