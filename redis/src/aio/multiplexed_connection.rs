@@ -15,6 +15,14 @@ use ::tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, oneshot},
 };
+#[cfg(feature = "token-based-authentication")]
+use {
+    crate::errors::ErrorKind,
+    arcstr::ArcStr,
+    log::{debug, error},
+    std::sync::atomic::{AtomicBool, Ordering},
+};
+
 use futures_util::{
     future::{Future, FutureExt},
     ready,
@@ -498,6 +506,17 @@ pub struct MultiplexedConnection {
     _task_handle: Option<SharedHandleContainer>,
     #[cfg(feature = "cache-aio")]
     pub(crate) cache_manager: Option<CacheManager>,
+    /// Connection info for re-authentication purposes
+    #[cfg(feature = "token-based-authentication")]
+    connection_info: RedisConnectionInfo,
+    // This handle ensures that once all the clones of the connection will be dropped, the underlying task will stop.
+    // It is only set for connections that use a credentials provider for token-based authentication.
+    #[cfg(feature = "token-based-authentication")]
+    _credentials_subscription_task_handle: Option<SharedHandleContainer>,
+    /// Flag indicating that re-authentication has failed and the connection is no longer usable.
+    /// When set, all subsequent commands will fail immediately with an authentication error.
+    #[cfg(feature = "token-based-authentication")]
+    re_authentication_failed: Arc<AtomicBool>,
 }
 
 impl Debug for MultiplexedConnection {
@@ -564,9 +583,37 @@ impl MultiplexedConnection {
             })
             .transpose()?;
 
+        #[cfg(feature = "token-based-authentication")]
+        let mut connection_info = connection_info.clone();
+        #[cfg(not(feature = "token-based-authentication"))]
+        let connection_info = connection_info.clone();
+
+        #[cfg(feature = "token-based-authentication")]
+        if let Some(ref credentials_provider) = connection_info.credentials_provider {
+            // Retrieve the initial credentials from the provider and apply them to the connection info
+            match credentials_provider.subscribe().next().await {
+                Some(Ok(credentials)) => {
+                    connection_info.username = Some(ArcStr::from(credentials.username));
+                    connection_info.password = Some(ArcStr::from(credentials.password));
+                }
+                Some(Err(err)) => {
+                    error!("Error while receiving credentials from stream: {err}");
+                    return Err(err);
+                }
+                None => {
+                    let err = RedisError::from((
+                        ErrorKind::AuthenticationFailed,
+                        "Credentials stream closed unexpectedly before yielding credentials!",
+                    ));
+                    error!("{err}");
+                    return Err(err);
+                }
+            }
+        }
+
         setup_connection(
             &mut codec,
-            connection_info,
+            &connection_info,
             #[cfg(feature = "cache-aio")]
             cache_config,
         )
@@ -585,6 +632,21 @@ impl MultiplexedConnection {
             cache_manager_opt.clone(),
             Pipeline::resolve_buffer_size(config.pipeline_buffer_size),
         );
+
+        #[cfg(feature = "token-based-authentication")]
+        let mut con = MultiplexedConnection {
+            pipeline,
+            db: connection_info.db,
+            response_timeout: config.response_timeout,
+            protocol: connection_info.protocol,
+            _task_handle: None,
+            #[cfg(feature = "cache-aio")]
+            cache_manager: cache_manager_opt,
+            connection_info: connection_info.clone(),
+            _credentials_subscription_task_handle: None,
+            re_authentication_failed: Arc::new(AtomicBool::new(false)),
+        };
+        #[cfg(not(feature = "token-based-authentication"))]
         let con = MultiplexedConnection {
             pipeline,
             db: connection_info.db,
@@ -594,6 +656,47 @@ impl MultiplexedConnection {
             #[cfg(feature = "cache-aio")]
             cache_manager: cache_manager_opt,
         };
+
+        // Set up streaming credentials subscription if provider is available
+        #[cfg(feature = "token-based-authentication")]
+        if let Some(streaming_provider) = connection_info.credentials_provider {
+            let mut inner_connection = con.clone();
+            let re_authentication_failed_arc = Arc::clone(&con.re_authentication_failed);
+            let mut stream = streaming_provider.subscribe();
+
+            let subscription_task_handle = Runtime::locate().spawn(async move {
+                let mut error_cause_logged = false;
+                while let Some(result) = stream.next().await {
+                    match result {
+                        Ok(credentials) => {
+                            if let Err(err) = inner_connection
+                                .re_authenticate_with_credentials(&credentials)
+                                .await
+                            {
+                                error!("Failed to re-authenticate async connection: {err}.");
+                                error_cause_logged = true;
+                                re_authentication_failed_arc.store(true, Ordering::Relaxed);
+                                break;
+                            } else {
+                                debug!("Re-authenticated async connection");
+                            }
+                        }
+                        Err(err) => {
+                            error!("Credentials stream error for async connection: {err}.");
+                            error_cause_logged = true;
+                        }
+                    }
+                }
+                if !re_authentication_failed_arc.load(Ordering::Relaxed) {
+                    if !error_cause_logged {
+                        error!("Re-authentication stream ended unexpectedly.");
+                    }
+                    re_authentication_failed_arc.store(true, Ordering::Relaxed);
+                }
+            });
+            con._credentials_subscription_task_handle =
+                Some(SharedHandleContainer::new(subscription_task_handle));
+        }
 
         Ok((con, driver))
     }
@@ -612,6 +715,13 @@ impl MultiplexedConnection {
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+        #[cfg(feature = "token-based-authentication")]
+        if self.re_authentication_failed.load(Ordering::Relaxed) {
+            return Err(RedisError::from((
+                ErrorKind::AuthenticationFailed,
+                "Connection is no longer usable due to re-authentication failure",
+            )));
+        }
         #[cfg(feature = "cache-aio")]
         if let Some(cache_manager) = &self.cache_manager {
             match cache_manager.get_cached_cmd(cmd) {
@@ -659,6 +769,13 @@ impl MultiplexedConnection {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
+        #[cfg(feature = "token-based-authentication")]
+        if self.re_authentication_failed.load(Ordering::Relaxed) {
+            return Err(RedisError::from((
+                ErrorKind::AuthenticationFailed,
+                "Connection is no longer usable due to re-authentication failure",
+            )));
+        }
         #[cfg(feature = "cache-aio")]
         if let Some(cache_manager) = &self.cache_manager {
             let (cacheable_pipeline, pipeline, (skipped_response_count, expected_response_count)) =
@@ -812,6 +929,30 @@ impl MultiplexedConnection {
         cmd.arg(channel_pattern);
         cmd.exec_async(self).await?;
         Ok(())
+    }
+}
+
+#[cfg(feature = "token-based-authentication")]
+impl MultiplexedConnection {
+    /// Re-authenticate the connection with new credentials
+    ///
+    /// This method allows existing async connections to update their authentication
+    /// when tokens are refreshed, enabling streaming credential updates.
+    pub async fn re_authenticate_with_credentials(
+        &mut self,
+        credentials: &crate::auth::BasicAuth,
+    ) -> RedisResult<()> {
+        // Update connection info with new credentials
+        self.connection_info.username = Some(ArcStr::from(credentials.username.clone()));
+        self.connection_info.password = Some(ArcStr::from(credentials.password.clone()));
+
+        let auth_cmd =
+            crate::connection::authenticate_cmd(&self.connection_info, true, &credentials.password);
+        // Send the AUTH command and convert any Redis error response to an Err
+        self.send_packed_command(&auth_cmd)
+            .await?
+            .extract_error()
+            .map(|_| ())
     }
 }
 

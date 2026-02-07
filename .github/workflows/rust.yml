@@ -289,7 +289,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Install OpenSSL
+        shell: powershell
+        run: |
+          vcpkg install openssl:x64-windows
+          echo "OPENSSL_DIR=C:\vcpkg\packages\openssl_x64-windows" >> $env:GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=C:\vcpkg\packages\openssl_x64-windows\include" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=C:\vcpkg\packages\openssl_x64-windows\lib" >> $env:GITHUB_ENV
+
       - name: lint
         uses: ./.github/actions/lint-and-check
         with:
-          rust-toolchain: stable    
+          rust-toolchain: stable

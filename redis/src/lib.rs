@@ -650,10 +650,22 @@ pub use crate::connection::{
 };
 pub use crate::parser::{Parser, parse_redis_value};
 pub use crate::pipeline::Pipeline;
-
 #[cfg(feature = "script")]
 #[cfg_attr(docsrs, doc(cfg(feature = "script")))]
 pub use crate::script::{Script, ScriptInvocation};
+#[cfg(feature = "token-based-authentication")]
+pub use crate::{
+    auth::{BasicAuth, StreamingCredentialsProvider},
+    auth_management::{RetryConfig, TokenRefreshConfig},
+};
+#[cfg(feature = "entra-id")]
+pub use {
+    crate::entra_id::{ClientCertificate, EntraIdCredentialsProvider, REDIS_SCOPE_DEFAULT},
+    azure_identity::{
+        ClientCertificateCredentialOptions, ClientSecretCredentialOptions,
+        DeveloperToolsCredentialOptions, ManagedIdentityCredentialOptions, UserAssignedId,
+    },
+};
 
 // preserve grouping and order
 #[rustfmt::skip]
@@ -777,6 +789,17 @@ pub use crate::tls::{ClientTlsConfig, TlsCertificates};
 #[cfg(feature = "cache-aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
 pub mod caching;
+
+#[cfg(feature = "entra-id")]
+#[cfg_attr(docsrs, doc(cfg(feature = "entra-id")))]
+pub mod entra_id;
+
+#[cfg(feature = "token-based-authentication")]
+#[cfg_attr(docsrs, doc(cfg(feature = "token-based-authentication")))]
+pub mod auth;
+#[cfg(feature = "token-based-authentication")]
+#[cfg_attr(docsrs, doc(cfg(feature = "token-based-authentication")))]
+pub mod auth_management;
 
 mod client;
 mod cmd;

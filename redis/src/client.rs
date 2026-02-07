@@ -2,6 +2,8 @@ use std::time::Duration;
 
 #[cfg(feature = "aio")]
 use crate::aio::{AsyncPushSender, DefaultAsyncDNSResolver};
+#[cfg(feature = "token-based-authentication")]
+use crate::auth::StreamingCredentialsProvider;
 #[cfg(feature = "aio")]
 use crate::io::AsyncDNSResolver;
 use crate::{
@@ -54,6 +56,40 @@ impl Client {
         })
     }
 
+    /// Connects to a redis server using the provided credentials provider and returns a client.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # #[cfg(feature = "entra-id")]
+    /// # {
+    /// use redis::{Client, EntraIdCredentialsProvider, RetryConfig};
+    ///
+    /// # async fn example() -> redis::RedisResult<()> {
+    /// let mut provider = EntraIdCredentialsProvider::new_developer_tools()?;
+    /// provider.start(RetryConfig::default());
+    ///
+    /// let client = Client::open_with_credentials_provider(
+    ///     "redis://your-redis-instance.com:6380",
+    ///     provider
+    /// )?;
+    ///
+    /// let mut con = client.get_multiplexed_async_connection().await?;
+    /// # Ok(())
+    /// # }
+    /// # }
+    /// ```
+    #[cfg(feature = "token-based-authentication")]
+    pub fn open_with_credentials_provider<T, P>(params: T, provider: P) -> RedisResult<Client>
+    where
+        T: IntoConnectionInfo,
+        P: StreamingCredentialsProvider + 'static,
+    {
+        let mut connection_info = params.into_connection_info()?;
+        connection_info.redis.credentials_provider = Some(std::sync::Arc::new(provider));
+        Ok(Client { connection_info })
+    }
+
     /// Instructs the client to actually connect to redis and returns a
     /// connection object.  The connection object can be used to send
     /// commands to the server.  This can fail with a variety of errors
@@ -75,6 +111,20 @@ impl Client {
     /// Returns a reference of client connection info object.
     pub fn get_connection_info(&self) -> &ConnectionInfo {
         &self.connection_info
+    }
+
+    /// Creates a new client with a credentials provider for authentication.
+    /// This is useful for token-based authentication like Microsoft Entra ID.
+    #[cfg(feature = "token-based-authentication")]
+    pub fn with_credentials_provider<P>(mut self, provider: P) -> Self
+    where
+        P: StreamingCredentialsProvider + 'static,
+    {
+        self.connection_info.redis = self
+            .connection_info
+            .redis
+            .with_credentials_provider(provider);
+        self
     }
 
     /// Constructs a new `Client` with parameters necessary to create a TLS connection.
