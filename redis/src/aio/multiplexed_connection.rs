@@ -506,12 +506,9 @@ pub struct MultiplexedConnection {
     _task_handle: Option<SharedHandleContainer>,
     #[cfg(feature = "cache-aio")]
     pub(crate) cache_manager: Option<CacheManager>,
-    /// Connection info for re-authentication purposes
     #[cfg(feature = "token-based-authentication")]
-    connection_info: RedisConnectionInfo,
     // This handle ensures that once all the clones of the connection will be dropped, the underlying task will stop.
     // It is only set for connections that use a credentials provider for token-based authentication.
-    #[cfg(feature = "token-based-authentication")]
     _credentials_subscription_task_handle: Option<SharedHandleContainer>,
     /// Flag indicating that re-authentication has failed and the connection is no longer usable.
     /// When set, all subsequent commands will fail immediately with an authentication error.
@@ -521,9 +518,25 @@ pub struct MultiplexedConnection {
 
 impl Debug for MultiplexedConnection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let MultiplexedConnection {
+            pipeline,
+            db,
+            response_timeout,
+            protocol,
+            _task_handle,
+            #[cfg(feature = "cache-aio")]
+                cache_manager: _,
+            #[cfg(feature = "token-based-authentication")]
+                _credentials_subscription_task_handle: _,
+            #[cfg(feature = "token-based-authentication")]
+                re_authentication_failed: _,
+        } = self;
+
         f.debug_struct("MultiplexedConnection")
-            .field("pipeline", &self.pipeline)
-            .field("db", &self.db)
+            .field("pipeline", &pipeline)
+            .field("db", &db)
+            .field("response_timeout", &response_timeout)
+            .field("protocol", &protocol)
             .finish()
     }
 }
@@ -633,20 +646,6 @@ impl MultiplexedConnection {
             Pipeline::resolve_buffer_size(config.pipeline_buffer_size),
         );
 
-        #[cfg(feature = "token-based-authentication")]
-        let mut con = MultiplexedConnection {
-            pipeline,
-            db: connection_info.db,
-            response_timeout: config.response_timeout,
-            protocol: connection_info.protocol,
-            _task_handle: None,
-            #[cfg(feature = "cache-aio")]
-            cache_manager: cache_manager_opt,
-            connection_info: connection_info.clone(),
-            _credentials_subscription_task_handle: None,
-            re_authentication_failed: Arc::new(AtomicBool::new(false)),
-        };
-        #[cfg(not(feature = "token-based-authentication"))]
         let con = MultiplexedConnection {
             pipeline,
             db: connection_info.db,
@@ -655,6 +654,10 @@ impl MultiplexedConnection {
             _task_handle: None,
             #[cfg(feature = "cache-aio")]
             cache_manager: cache_manager_opt,
+            #[cfg(feature = "token-based-authentication")]
+            _credentials_subscription_task_handle: None,
+            #[cfg(feature = "token-based-authentication")]
+            re_authentication_failed: Arc::new(AtomicBool::new(false)),
         };
 
         // Set up streaming credentials subscription if provider is available
@@ -694,8 +697,15 @@ impl MultiplexedConnection {
                     re_authentication_failed_arc.store(true, Ordering::Relaxed);
                 }
             });
-            con._credentials_subscription_task_handle =
-                Some(SharedHandleContainer::new(subscription_task_handle));
+            return Ok((
+                Self {
+                    _credentials_subscription_task_handle: Some(SharedHandleContainer::new(
+                        subscription_task_handle,
+                    )),
+                    ..con
+                },
+                driver,
+            ));
         }
 
         Ok((con, driver))
@@ -938,16 +948,12 @@ impl MultiplexedConnection {
     ///
     /// This method allows existing async connections to update their authentication
     /// when tokens are refreshed, enabling streaming credential updates.
-    pub async fn re_authenticate_with_credentials(
+    async fn re_authenticate_with_credentials(
         &mut self,
         credentials: &crate::auth::BasicAuth,
     ) -> RedisResult<()> {
-        // Update connection info with new credentials
-        self.connection_info.username = Some(ArcStr::from(credentials.username.clone()));
-        self.connection_info.password = Some(ArcStr::from(credentials.password.clone()));
-
         let auth_cmd =
-            crate::connection::authenticate_cmd(&self.connection_info, true, &credentials.password);
+            crate::connection::authenticate_cmd(Some(&credentials.username), &credentials.password);
         // Send the AUTH command and convert any Redis error response to an Err
         self.send_packed_command(&auth_cmd)
             .await?

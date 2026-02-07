@@ -39,62 +39,50 @@ impl Default for TokenRefreshConfig {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct RetryConfig {
-    /// Maximum number of retry attempts for token refresh.
-    pub max_attempts: u32,
-    /// Initial delay before attempting to refresh the token after a failure.
-    /// Subsequent retries use exponential backoff based on this value.
-    pub initial_delay: Duration,
-    /// Upper bound for retry delays to prevent excessively long waits.
-    /// Delays will never exceed this value, even with exponential backoff.
-    pub max_delay: Duration,
-    /// Growth factor for exponential backoff (typically 2.0 for doubling).
-    /// Each retry delay is multiplied by this value: `delay = delay * backoff_multiplier`.
-    pub backoff_multiplier: f64,
-    /// Random variation added to delays as a fraction of the calculated delay (0.0 to 1.0).
-    /// For example, 0.5 means up to ±50% variation to prevent synchronized retries.
-    pub jitter_percentage: f64,
+    /// The resulting duration is calculated by taking the base to the `n`-th power,
+    /// where `n` denotes the number of past attempts.
+    pub(crate) exponent_base: f32,
+    /// The minimal delay for reconnection attempts
+    pub(crate) min_delay: Duration,
+    /// Apply a maximum delay between connection attempts. The delay between attempts won't be longer than max_delay milliseconds.
+    pub(crate) max_delay: Option<Duration>,
+    /// number_of_retries times, with an exponentially increasing delay
+    pub(crate) number_of_retries: usize,
 }
 
 impl Default for RetryConfig {
     fn default() -> Self {
         Self {
-            max_attempts: 3,
-            initial_delay: Duration::from_millis(100),
-            max_delay: Duration::from_secs(30),
-            backoff_multiplier: 2.0,
-            jitter_percentage: 0.5,
+            number_of_retries: 3,
+            min_delay: Duration::from_millis(100),
+            max_delay: Some(Duration::from_secs(30)),
+            exponent_base: 2.0,
         }
     }
 }
 
 impl RetryConfig {
     /// Sets the maximum number of retry attempts for token refresh
-    pub fn set_max_attempts(mut self, max_attempts: u32) -> Self {
-        self.max_attempts = max_attempts;
+    pub fn set_number_of_retries(mut self, number_of_retries: usize) -> Self {
+        self.number_of_retries = number_of_retries;
         self
     }
 
-    /// Sets the initial delay before attempting to refresh the token after a failure
-    pub fn set_initial_delay(mut self, initial_delay: Duration) -> Self {
-        self.initial_delay = initial_delay;
+    /// Sets the minimal delay before attempting to refresh the token after a failure
+    pub fn set_min_delay(mut self, min_delay: Duration) -> Self {
+        self.min_delay = min_delay;
         self
     }
 
     /// Sets the upper bound for retry delays
     pub fn set_max_delay(mut self, max_delay: Duration) -> Self {
-        self.max_delay = max_delay;
+        self.max_delay = Some(max_delay);
         self
     }
 
-    /// Sets the growth factor for exponential backoff
-    pub fn set_backoff_multiplier(mut self, backoff_multiplier: f64) -> Self {
-        self.backoff_multiplier = backoff_multiplier;
-        self
-    }
-
-    /// Sets the random variation added to delays as a fraction of the calculated delay
-    pub fn set_jitter_percentage(mut self, jitter_percentage: f64) -> Self {
-        self.jitter_percentage = jitter_percentage;
+    /// Sets the base for exponential backoff
+    pub fn set_exponent_base(mut self, exponent_base: f32) -> Self {
+        self.exponent_base = exponent_base;
         self
     }
 }
@@ -117,17 +105,6 @@ pub(crate) mod credentials_management_utils {
         } else {
             None
         }
-    }
-
-    /// Calculate next delay with exponential backoff
-    #[cfg(all(feature = "token-based-authentication", feature = "entra-id"))]
-    pub(crate) fn calculate_next_delay(
-        current_delay: Duration,
-        backoff_multiplier: f64,
-        max_delay: Duration,
-    ) -> Duration {
-        Duration::from_millis((current_delay.as_millis() as f64 * backoff_multiplier) as u64)
-            .min(max_delay)
     }
 
     /// Extract the OID claim from a JWT

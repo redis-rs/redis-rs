@@ -72,10 +72,7 @@ impl StreamingCredentialsProvider for OneTimeCredentialsProvider {
     fn subscribe(&self) -> Pin<Box<dyn Stream<Item = RedisResult<BasicAuth>> + Send + 'static>> {
         // Yield one valid credentials (default user, no password for test Redis) then close the stream
         futures_util::stream::once(async move {
-            Ok(BasicAuth {
-                username: "default".to_string(),
-                password: "".to_string(),
-            })
+            Ok(BasicAuth::new("default".to_string(), "".to_string()))
         })
         .boxed()
     }
@@ -91,10 +88,7 @@ impl StreamingCredentialsProvider for DelayedFailureCredentialsProvider {
     fn subscribe(&self) -> Pin<Box<dyn Stream<Item = RedisResult<BasicAuth>> + Send + 'static>> {
         futures_util::stream::iter(vec![
             // Valid credentials for initial connection
-            Ok(BasicAuth {
-                username: "default".to_string(),
-                password: "".to_string(),
-            }),
+            Ok(BasicAuth::new("default".to_string(), "".to_string())),
             // Error simulating provider exhausted retries
             Err(RedisError::from((
                 ErrorKind::AuthenticationFailed,

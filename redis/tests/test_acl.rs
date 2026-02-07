@@ -386,10 +386,10 @@ mod token_based_authentication_acl_tests {
         /// Create a default config with a single token
         fn default() -> Self {
             Self {
-                credentials_sequence: vec![BasicAuth {
-                    username: OID_CLAIM_VALUE.to_string(),
-                    password: MOCKED_TOKEN.clone(),
-                }],
+                credentials_sequence: vec![BasicAuth::new(
+                    OID_CLAIM_VALUE.to_string(),
+                    MOCKED_TOKEN.clone(),
+                )],
                 refresh_interval: Duration::from_millis(100),
                 error_positions: vec![],
             }
@@ -402,10 +402,10 @@ mod token_based_authentication_acl_tests {
             let mut credentials_sequence = Vec::new();
 
             for (username, token_payload) in CREDENTIALS.iter() {
-                credentials_sequence.push(BasicAuth {
-                    username: username.to_string(),
-                    password: token_payload.to_string(),
-                });
+                credentials_sequence.push(BasicAuth::new(
+                    username.to_string(),
+                    token_payload.to_string(),
+                ));
             }
 
             Self {
@@ -428,15 +428,9 @@ mod token_based_authentication_acl_tests {
             Self {
                 credentials_sequence: vec![
                     // Valid credentials (Alice is supposed to exist)
-                    BasicAuth {
-                        username: ALICE_OID_CLAIM.to_string(),
-                        password: ALICE_TOKEN.to_string(),
-                    },
+                    BasicAuth::new(ALICE_OID_CLAIM.to_string(), ALICE_TOKEN.to_string()),
                     // Invalid credentials (user is supposed to not exist)
-                    BasicAuth {
-                        username: INVALID_USER.to_string(),
-                        password: INVALID_TOKEN.to_string(),
-                    },
+                    BasicAuth::new(INVALID_USER.to_string(), INVALID_TOKEN.to_string()),
                 ],
                 refresh_interval: Duration::from_millis(500),
                 error_positions: vec![],

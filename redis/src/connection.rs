@@ -360,18 +360,27 @@ impl RedisConnectionInfo {
 
 impl std::fmt::Debug for RedisConnectionInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let RedisConnectionInfo {
+            db,
+            username,
+            password,
+            protocol,
+            skip_set_lib_name,
+            #[cfg(feature = "token-based-authentication")]
+            credentials_provider,
+        } = self;
         let mut debug_info = f.debug_struct("RedisConnectionInfo");
 
-        debug_info.field("db", &self.db);
-        debug_info.field("username", &self.username);
-        debug_info.field("password", &self.password.as_ref().map(|_| "<redacted>"));
-        debug_info.field("protocol", &self.protocol);
-        debug_info.field("skip_set_lib_name", &self.skip_set_lib_name);
+        debug_info.field("db", &db);
+        debug_info.field("username", &username);
+        debug_info.field("password", &password.as_ref().map(|_| "<redacted>"));
+        debug_info.field("protocol", &protocol);
+        debug_info.field("skip_set_lib_name", &skip_set_lib_name);
 
         #[cfg(feature = "token-based-authentication")]
         debug_info.field(
             "credentials_provider",
-            &self.credentials_provider.as_ref().map(|_| "<provider>"),
+            &credentials_provider.as_ref().map(|_| "<provider>"),
         );
 
         debug_info.finish()
@@ -1261,17 +1270,13 @@ pub(crate) fn create_rustls_config(
     }
 }
 
-pub(crate) fn authenticate_cmd(
-    connection_info: &RedisConnectionInfo,
-    check_username: bool,
-    password: &str,
-) -> Cmd {
+pub(crate) fn authenticate_cmd(username: Option<&str>, password: &str) -> Cmd {
     let mut command = cmd("AUTH");
-    if check_username {
-        if let Some(username) = &connection_info.username {
-            command.arg(username.as_str());
-        }
+
+    if let Some(username) = &username {
+        command.arg(username);
     }
+
     command.arg(password);
     command
 }
@@ -1331,11 +1336,10 @@ pub(crate) fn connection_setup_pipeline(
         if connection_info.protocol.supports_resp3() {
             pipeline.add_command(resp3_hello(connection_info));
             (Some(0), None)
-        } else if connection_info.password.is_some() {
+        } else if let Some(password) = connection_info.password.as_ref() {
             pipeline.add_command(authenticate_cmd(
-                connection_info,
-                check_username,
-                connection_info.password.as_ref().unwrap(),
+                check_username.then(|| connection_info.username()).flatten(),
+                password,
             ));
             (None, Some(0))
         } else {

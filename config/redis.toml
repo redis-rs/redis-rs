@@ -124,10 +124,10 @@ forbid = "hashbrown"
 when = "rust_decimal"
 forbid = "bigdecimal"
 
-# This feature can't run by itself
+# These features can't run by themselves
 [[rule]]
 when = true
-forbid = "aio"
+forbid = ["aio", "OR", "token-based-authentication"]
 
 # If you're using the library with sentinel or targeting connection manager, you probably don't want cluster connections
 [[rule]]

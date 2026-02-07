@@ -114,7 +114,9 @@ arcstr = "1.2.0"
 socket2 = { version = "0.6", features = ["all"] }
 
 # Only needed for Entra ID authentication
-azure_identity = { version = "0.31", optional = true, features = ["client_certificate"] }
+azure_identity = { version = "0.31", optional = true, features = [
+  "client_certificate",
+] }
 azure_core = { version = "0.31", optional = true }
 base64 = { version = "0.22.1", optional = true }
 
@@ -149,8 +151,14 @@ num-bigint = ["dep:num-bigint"]
 cache-aio = ["aio", "dep:lru"]
 r2d2 = ["dep:r2d2"]
 bb8 = ["dep:bb8"]
-token-based-authentication = ["dep:futures-util", "dep:log"]
-entra-id = ["dep:azure_identity", "dep:azure_core", "dep:base64", "token-based-authentication", "tokio-comp"]
+token-based-authentication = ["dep:futures-util", "dep:log", "dep:backon"]
+entra-id = [
+  "dep:azure_identity",
+  "dep:azure_core",
+  "dep:base64",
+  "token-based-authentication",
+  "tokio-comp",
+]
 
 # Instead of specifying "aio", use either "tokio-comp" or "smol-comp".
 aio = [

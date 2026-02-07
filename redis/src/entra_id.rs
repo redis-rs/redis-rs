@@ -185,11 +185,10 @@
 //! let mut provider = EntraIdCredentialsProvider::new_developer_tools()?;
 //!
 //! let retry_config = RetryConfig::default()
-//!     .set_max_attempts(3)
-//!     .set_initial_delay(Duration::from_millis(100))
+//!     .set_number_of_retries(3)
+//!     .set_min_delay(Duration::from_millis(100))
 //!     .set_max_delay(Duration::from_secs(30))
-//!     .set_backoff_multiplier(2.0)
-//!     .set_jitter_percentage(0.1);
+//!     .set_exponent_base(2.0);
 //!
 //! provider.start(retry_config);
 //! # Ok(())
@@ -233,6 +232,7 @@
 //! [`StreamingCredentialsProvider`]: crate::auth::StreamingCredentialsProvider
 
 use crate::RetryConfig;
+use crate::aio::Runtime;
 use crate::auth::BasicAuth;
 use crate::auth::StreamingCredentialsProvider;
 use crate::auth_management::credentials_management_utils;
@@ -245,6 +245,7 @@ use azure_identity::{
     ClientSecretCredentialOptions, DeveloperToolsCredential, DeveloperToolsCredentialOptions,
     ManagedIdentityCredential, ManagedIdentityCredentialOptions,
 };
+use backon::{ExponentialBuilder, Retryable};
 use futures_util::{Stream, StreamExt};
 use log::{debug, error, warn};
 use std::pin::Pin;
@@ -394,16 +395,33 @@ impl EntraIdCredentialsProvider {
             let scopes: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
             let mut next_sleep_duration;
             let mut username = "default".to_string();
-            let mut attempt = 0;
-            let mut error_delay = retry_config.initial_delay;
+            let RetryConfig {
+                exponent_base,
+                min_delay,
+                max_delay,
+                number_of_retries,
+            } = retry_config;
+            let mut strategy = ExponentialBuilder::default()
+                .with_factor(exponent_base)
+                .with_min_delay(min_delay)
+                .with_max_times(number_of_retries)
+                .with_jitter();
+
+            if let Some(mex_delay) = max_delay {
+                strategy = strategy.with_max_delay(mex_delay);
+            }
 
             loop {
-                debug!("Refreshing token. Attempt {attempt}");
-                let token_response = credential_provider_arc.get_token(&scopes, None).await;
+                debug!("Refreshing token.");
+                let get_auth = || async { credential_provider_arc.get_token(&scopes, None).await };
+
+                let token_response = get_auth
+                    .retry(strategy)
+                    .sleep(|duration| async move { Runtime::locate().sleep(duration).await })
+                    .notify(|err, duration| warn!("An error `{err}` occurred while refreshing the token. Sleeping for {duration:?}"))
+                    .await;
 
                 if let Ok(ref access_token) = token_response {
-                    attempt = 0;
-
                     username = match credentials_management_utils::extract_oid_from_jwt(
                         access_token.token.secret(),
                     ) {
@@ -419,20 +437,6 @@ impl EntraIdCredentialsProvider {
 
                     next_sleep_duration = compute_sleep_duration_on_success(access_token);
                 } else {
-                    attempt += 1;
-                    if attempt < retry_config.max_attempts {
-                        error_delay = credentials_management_utils::calculate_next_delay(
-                            error_delay,
-                            retry_config.backoff_multiplier,
-                            retry_config.max_delay,
-                        );
-                        warn!(
-                            "An error occurred while refreshing the token. Attempt {attempt}. Sleeping for {:?}",
-                            error_delay
-                        );
-                        tokio::time::sleep(error_delay).await;
-                        continue;
-                    }
                     error!("Maximum token refresh attempts reached. Stopping token refresh.");
                     Self::notify_subscribers(&subscribers_arc, &username, token_response).await;
                     break;
@@ -958,11 +962,10 @@ mod entra_id_mock_tests {
         );
         provider.start(
             RetryConfig::default()
-                .set_max_attempts(1) // It's really important to set the max_attempt to one, otherwise the refresh loop will cycle through the error.
-                .set_initial_delay(std::time::Duration::from_millis(10))
+                .set_number_of_retries(1) // It's really important to set the max_attempt to one, otherwise the refresh loop will cycle through the error.
+                .set_min_delay(std::time::Duration::from_millis(10))
                 .set_max_delay(std::time::Duration::from_millis(100))
-                .set_backoff_multiplier(2.0)
-                .set_jitter_percentage(0.0),
+                .set_exponent_base(2.0),
         );
 
         // Test that the stream returns an error once the maximum number of retries is reached
