@@ -1178,6 +1178,38 @@ where
         Poll::Ready(res)
     }
 
+    fn handle_retries(&mut self, request_handling: Option<Retry<C>>) {
+        match request_handling {
+            Some(Retry::MoveToPending { request }) => {
+                self.inner.pending_requests.lock().unwrap().push(request);
+            }
+            Some(Retry::Immediately { request }) => {
+                let future = self.inner.clone().try_request(request.cmd.clone());
+                self.in_flight_requests.push(Box::pin(Request {
+                    retry_params: self.inner.cluster_params.retry_params.clone(),
+                    request: Some(request),
+                    future: RequestState::Future {
+                        future: Box::pin(future),
+                    },
+                }));
+            }
+            Some(Retry::AfterSleep {
+                request,
+                sleep_duration,
+            }) => {
+                let future = RequestState::Sleep {
+                    sleep: boxed_sleep(sleep_duration),
+                };
+                self.in_flight_requests.push(Box::pin(Request {
+                    retry_params: self.inner.cluster_params.retry_params.clone(),
+                    request: Some(request),
+                    future,
+                }));
+            }
+            None => {}
+        }
+    }
+
     fn poll_complete(&mut self, cx: &mut task::Context<'_>) -> Poll<PollFlushAction> {
         let mut poll_flush_action = PollFlushAction::None;
 
@@ -1185,7 +1217,7 @@ where
         if !pending_requests_guard.is_empty() {
             let mut pending_requests = mem::take(&mut *pending_requests_guard);
             for request in pending_requests.drain(..) {
-                // Drop the request if noone is waiting for a response to free up resources for
+                // Drop the request if no-one is waiting for a response to free up resources for
                 // requests callers care about (load shedding). It will be ambiguous whether the
                 // request actually goes through regardless.
                 if request.sender.is_closed() {
@@ -1209,35 +1241,8 @@ where
                     Poll::Ready(Some(result)) => result,
                     Poll::Ready(None) | Poll::Pending => break,
                 };
-            match request_handling {
-                Some(Retry::MoveToPending { request }) => {
-                    self.inner.pending_requests.lock().unwrap().push(request);
-                }
-                Some(Retry::Immediately { request }) => {
-                    let future = self.inner.clone().try_request(request.cmd.clone());
-                    self.in_flight_requests.push(Box::pin(Request {
-                        retry_params: self.inner.cluster_params.retry_params.clone(),
-                        request: Some(request),
-                        future: RequestState::Future {
-                            future: Box::pin(future),
-                        },
-                    }));
-                }
-                Some(Retry::AfterSleep {
-                    request,
-                    sleep_duration,
-                }) => {
-                    let future = RequestState::Sleep {
-                        sleep: boxed_sleep(sleep_duration),
-                    };
-                    self.in_flight_requests.push(Box::pin(Request {
-                        retry_params: self.inner.cluster_params.retry_params.clone(),
-                        request: Some(request),
-                        future,
-                    }));
-                }
-                None => {}
-            };
+
+            self.handle_retries(request_handling);
             poll_flush_action = poll_flush_action.change_state(next);
         }
 
@@ -1250,21 +1255,35 @@ where
     }
 
     fn send_refresh_error(&mut self) {
-        if self.refresh_error.is_some() {
-            if let Some(mut request) = Pin::new(&mut self.in_flight_requests)
-                .iter_pin_mut()
-                .find(|request| request.request.is_some())
-            {
-                (*request)
-                    .as_mut()
-                    .respond(Err(self.refresh_error.take().unwrap()));
-            } else {
-                // Use a separate binding for this to release the lock guard before calling send.
-                let maybe_request = self.inner.pending_requests.lock().unwrap().pop();
-                if let Some(request) = maybe_request {
-                    request.sender.send(Err(self.refresh_error.take().unwrap()));
-                }
+        let Some(refresh_error) = self.refresh_error.take() else {
+            return;
+        };
+
+        let mut inflight_requests = Vec::new();
+        for mut request in Pin::new(&mut self.in_flight_requests).iter_pin_mut() {
+            let mut request = request.as_mut();
+            let Some(pending_request) = request.request.take() else {
+                continue;
+            };
+
+            inflight_requests.push((pending_request, std::mem::take(&mut request.retry_params)));
+        }
+        if inflight_requests.is_empty() {
+            // Use a separate binding for this to release the lock guard before calling send.
+            let maybe_request = self.inner.pending_requests.lock().unwrap().pop();
+            if let Some(request) = maybe_request {
+                inflight_requests.push((request, self.inner.cluster_params.retry_params.clone()));
             }
+        }
+        for (pending_request, retry_params) in inflight_requests {
+            self.handle_retries(
+                request::choose_response(
+                    (OperationTarget::NotFound, Err(refresh_error.clone())),
+                    pending_request,
+                    &retry_params,
+                )
+                .0,
+            );
         }
     }
 }
