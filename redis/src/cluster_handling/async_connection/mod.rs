@@ -891,7 +891,21 @@ where
         result?;
 
         let nodes = slots.values().flatten().cloned().collect::<HashSet<_>>();
-        self.refresh_connections_locked(connections, nodes).await;
+        let result = self.refresh_connections_locked(connections, nodes).await;
+
+        if let Err(err) = result {
+            // we only wait for primary connections to complete. We don't have to wait for replicas.
+            let primaries = slots.addresses_for_all_primaries();
+            let all_primaries_connected =
+                primaries.iter().all(|addr| connections.contains_key(*addr));
+            if all_primaries_connected {
+                return Ok(());
+            }
+
+            drop(write_guard);
+            Runtime::locate_and_sleep(Duration::from_millis(100)).await;
+            return Err(err);
+        }
 
         Ok(())
     }
@@ -900,7 +914,7 @@ where
         &self,
         connections: &mut ConnectionMap<C>,
         nodes: HashSet<ArcStr>,
-    ) {
+    ) -> Result<(), RedisError> {
         let nodes_len = nodes.len();
 
         let addresses_and_connections_iter = nodes
@@ -914,15 +928,27 @@ where
             })
             .collect::<Vec<_>>();
 
-        stream::iter(addresses_and_connections_iter)
+        let (latest_error, _) = stream::iter(addresses_and_connections_iter)
             .buffer_unordered(nodes_len.max(8))
-            .fold(connections, |connections, (addr, result)| async move {
-                if let Ok(conn) = result {
-                    connections.insert(addr, conn);
-                }
-                connections
-            })
+            .fold(
+                (None, connections),
+                |(latest_error, connections), (addr, result)| async move {
+                    let latest_error = match result {
+                        Ok(conn) => {
+                            connections.insert(addr, conn);
+                            latest_error
+                        }
+                        Err(err) => Some(err),
+                    };
+                    (latest_error, connections)
+                },
+            )
             .await;
+
+        match latest_error {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
     }
 
     fn resubscribe(&self) {
@@ -935,6 +961,10 @@ where
             .unwrap()
             .get_subscription_pipeline();
 
+        if subscription_pipe.is_empty() {
+            return;
+        }
+
         // we send request per cmd, instead of sending the pipe together, in order to send each command to the relevant node, instead of all together to a single node.
         let requests = subscription_pipe.into_cmd_iter().map(|cmd| {
             let routing = RoutingInfo::for_routable(&cmd)
@@ -942,7 +972,7 @@ where
                 .into();
             PendingRequest {
                 retry: 0,
-                sender: request::ResultExpectation::Internal,
+                sender: request::ResultExpectation::InternalDoNotRecover,
                 cmd: CmdArg::Cmd {
                     cmd: Arc::new(cmd),
                     routing,
@@ -974,6 +1004,7 @@ pub(crate) enum Response {
     Multiple(Vec<Value>),
 }
 
+#[derive(Debug)]
 enum OperationTarget {
     Node { address: ArcStr },
     NotFound,
@@ -995,6 +1026,7 @@ struct Message<C> {
 enum RecoverFuture {
     RecoverSlots(BoxFuture<'static, RedisResult<()>>),
     Reconnect(BoxFuture<'static, RedisResult<()>>),
+    ReconnectInitialNodes(BoxFuture<'static, RedisResult<()>>),
 }
 
 enum ConnectionState {
@@ -1049,7 +1081,8 @@ where
             refresh_error: None,
             state: ConnectionState::PollComplete,
         };
-        inner.state = ConnectionState::Recover(RecoverFuture::Reconnect(Box::pin(
+
+        inner.state = ConnectionState::Recover(RecoverFuture::ReconnectInitialNodes(Box::pin(
             inner.reconnect_to_initial_nodes(),
         )));
         inner
@@ -1060,10 +1093,9 @@ where
         params: &ClusterParams,
     ) -> RedisResult<ConnectionMap<C>> {
         let (connections, error) = stream::iter(initial_nodes.iter().cloned())
-            .map(async move |info| {
+            .map(|info| async move {
                 let addr = info.addr.to_string();
-                let result = connect_and_check(&addr, params).await;
-                match result {
+                match connect_and_check(&addr, params).await {
                     Ok(conn) => Ok((addr, conn)),
                     Err(e) => {
                         debug!("Failed to connect to initial node: {e:?}");
@@ -1110,26 +1142,38 @@ where
         debug!("Received request to reconnect to initial nodes");
         let inner = self.inner.clone();
         async move {
-            let connection_map =
-                Self::create_initial_connections(&inner.initial_nodes, &inner.cluster_params)
-                    .await?;
-            *inner.conn_lock.write().await = (
-                connection_map,
-                SlotMap::new(inner.cluster_params.read_from_replicas),
-            );
-            inner.refresh_slots().await?;
-            Ok(())
+            let result = async {
+                let connection_map =
+                    Self::create_initial_connections(&inner.initial_nodes, &inner.cluster_params)
+                        .await?;
+                *inner.conn_lock.write().await = (
+                    connection_map,
+                    SlotMap::new(inner.cluster_params.read_from_replicas),
+                );
+                inner.clone().refresh_slots().await?;
+                Ok::<_, RedisError>(())
+            }
+            .await;
+            if result.is_err() {
+                // sleeping to prevent immediate retry
+                Runtime::locate_and_sleep(Duration::from_millis(100)).await;
+            };
+
+            result
         }
     }
 
-    fn refresh_connections(&mut self, addrs: HashSet<ArcStr>) -> impl Future<Output = ()> + use<C> {
+    fn refresh_connections(
+        &mut self,
+        addrs: HashSet<ArcStr>,
+    ) -> impl Future<Output = RedisResult<()>> + use<C> {
         let inner = self.inner.clone();
         async move {
             let mut write_guard = inner.conn_lock.write().await;
 
             inner
                 .refresh_connections_locked(&mut write_guard.0, addrs)
-                .await;
+                .await
         }
     }
 
@@ -1140,6 +1184,7 @@ where
             match fut {
                 RecoverFuture::RecoverSlots(fut) => fut.await?,
                 RecoverFuture::Reconnect(fut) => fut.await?,
+                RecoverFuture::ReconnectInitialNodes(fut) => fut.await?,
             }
         }
         Ok(())
@@ -1164,12 +1209,30 @@ where
                 }
             },
             RecoverFuture::Reconnect(future) => {
-                match ready!(future.as_mut().poll(cx)) {
-                    Err(err) => warn!("Can't reconnect to initial nodes: `{err}`"),
+                let result = ready!(future.as_mut().poll(cx));
+                self.state = ConnectionState::PollComplete;
+
+                match &result {
+                    Err(err) => warn!("Can't reconnect to nodes: `{err}`"),
                     Ok(()) => trace!("Reconnected connections"),
                 }
-                self.state = ConnectionState::PollComplete;
-                Ok(())
+                result
+            }
+            RecoverFuture::ReconnectInitialNodes(future) => {
+                match ready!(future.as_mut().poll(cx)) {
+                    Ok(()) => {
+                        debug!("Reconnected to initial nodes successfully");
+                        self.state = ConnectionState::PollComplete;
+                        Ok(())
+                    }
+                    Err(err) => {
+                        self.state =
+                            ConnectionState::Recover(RecoverFuture::ReconnectInitialNodes(
+                                Box::pin(self.reconnect_to_initial_nodes()),
+                            ));
+                        Err(err)
+                    }
+                }
             }
         };
         if res.is_ok() {
@@ -1368,9 +1431,8 @@ where
     ) -> Poll<Result<(), Self::Error>> {
         trace!("poll_flush: {:?}", self.state);
         loop {
-            self.send_refresh_error();
-
             if let Err(err) = ready!(self.as_mut().poll_recover(cx)) {
+                self.send_refresh_error();
                 // We failed to reconnect, while we will try again we will report the
                 // error if we can to avoid getting trapped in an infinite loop of
                 // trying to reconnect
@@ -1380,7 +1442,10 @@ where
                 // again. Since the future may not have registered a wake up we do so
                 // now so the task is not forgotten
                 cx.waker().wake_by_ref();
+
                 return Poll::Pending;
+            } else {
+                self.refresh_error = None;
             }
 
             match ready!(self.poll_complete(cx)) {
@@ -1392,13 +1457,13 @@ where
                 }
                 PollFlushAction::Reconnect(addrs) => {
                     self.state = ConnectionState::Recover(RecoverFuture::Reconnect(Box::pin(
-                        self.refresh_connections(addrs).map(Ok),
+                        self.refresh_connections(addrs),
                     )));
                 }
                 PollFlushAction::ReconnectFromInitialConnections => {
-                    self.state = ConnectionState::Recover(RecoverFuture::Reconnect(Box::pin(
-                        self.reconnect_to_initial_nodes(),
-                    )));
+                    self.state = ConnectionState::Recover(RecoverFuture::ReconnectInitialNodes(
+                        Box::pin(self.reconnect_to_initial_nodes()),
+                    ));
                 }
             }
         }
