@@ -38,7 +38,7 @@
 //! assert_eq!(rv, "test_data");
 //! ```
 //!
-//! If the sentinel's servers are using TLS or require authentication, a full
+//! If the sentinel's servers are using TLS, require authentication or using a non-zero DB, a full
 //! SentinelNodeConnectionInfo struct may be used instead of just the master's name.
 //! It's important to note that the sentinel nodes may have different usernames or passwords,
 //! so the authentication info for them must be entered separately.
