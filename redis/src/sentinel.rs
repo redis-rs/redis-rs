@@ -127,6 +127,8 @@ use crate::aio::MultiplexedConnection as AsyncConnection;
 use arcstr::ArcStr;
 #[cfg(feature = "aio")]
 use futures_util::StreamExt;
+#[cfg(feature = "log")]
+use log::warn;
 use rand::Rng;
 #[cfg(feature = "r2d2")]
 use std::sync::Mutex;
@@ -699,6 +701,11 @@ impl Sentinel {
             .into_iter()
             .map(|p| p.into_connection_info())
             .collect::<RedisResult<Vec<ConnectionInfo>>>()?;
+
+        #[cfg(feature = "log")]
+        if sentinels_connection_info.iter().any(|connection_info| connection_info.redis_settings().db != 0) {            
+            warn!("Non-zero DB set for sentinel, will cause \"Unknown command 'SELECT'\". Use set_client_to_redis_db on SentinelClientBuilder");
+        }
 
         let mut connections_cache = vec![];
         connections_cache.resize_with(sentinels_connection_info.len(), Default::default);
