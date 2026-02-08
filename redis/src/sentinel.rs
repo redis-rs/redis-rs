@@ -703,8 +703,13 @@ impl Sentinel {
             .collect::<RedisResult<Vec<ConnectionInfo>>>()?;
 
         #[cfg(feature = "log")]
-        if sentinels_connection_info.iter().any(|connection_info| connection_info.redis_settings().db != 0) {            
-            warn!("Non-zero DB set for sentinel, will cause \"Unknown command 'SELECT'\". Use set_client_to_redis_db on SentinelClientBuilder");
+        if sentinels_connection_info
+            .iter()
+            .any(|connection_info| connection_info.redis_settings().db != 0)
+        {
+            warn!(
+                "Non-zero DB set for sentinel, will cause \"Unknown command 'SELECT'\". Use set_client_to_redis_db on SentinelClientBuilder"
+            );
         }
 
         let mut connections_cache = vec![];
