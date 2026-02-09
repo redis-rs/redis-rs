@@ -733,6 +733,10 @@ impl ConnectionLike for ConnectionManager {
     fn get_db(&self) -> i64 {
         self.0.client.connection_info().redis.db
     }
+
+    fn id(&self) -> usize {
+        todo!()
+    }
 }
 
 #[cfg(test)]

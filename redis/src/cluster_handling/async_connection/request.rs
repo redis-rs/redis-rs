@@ -307,10 +307,22 @@ pub(crate) fn choose_response<C>(
     retry_params: &RetryParams,
 ) -> (Option<Retry<C>>, PollFlushAction) {
     let should_recover = request.sender.should_recover();
+    let is_internal = matches!(request.sender, ResultExpectation::InternalDoNotRecover);
     let (retry, action) = choose_response_internal(result, request, retry_params);
+
+    if is_internal && retry.is_some() {
+        eprintln!("[REQUEST] InternalDoNotRecover request is being retried");
+    }
+
     let action = if should_recover {
         action
     } else {
+        if is_internal && action != PollFlushAction::None {
+            eprintln!(
+                "[REQUEST] InternalDoNotRecover request had action {:?}, suppressing to None",
+                action
+            );
+        }
         PollFlushAction::None
     };
     (retry, action)

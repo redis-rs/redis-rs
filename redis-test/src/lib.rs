@@ -316,6 +316,10 @@ impl AioConnectionLike for MockRedisConnection {
     fn get_db(&self) -> i64 {
         0
     }
+
+    fn id(&self) -> usize {
+        todo!()
+    }
 }
 
 #[cfg(test)]

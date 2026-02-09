@@ -235,6 +235,10 @@ impl aio::ConnectionLike for MockConnection {
     fn get_db(&self) -> i64 {
         0
     }
+
+    fn id(&self) -> usize {
+        0
+    }
 }
 
 impl redis::ConnectionLike for MockConnection {
