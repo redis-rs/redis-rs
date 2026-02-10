@@ -1,7 +1,7 @@
 #![allow(unused_parens)]
 
 use crate::cmd::{Cmd, Iter, cmd};
-use crate::connection::{Connection, ConnectionLike, Msg};
+use crate::connection::{Connection, ConnectionLike, Msg, RedisConnectionInfo};
 use crate::pipeline::Pipeline;
 use crate::types::{
     ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, IntegerReplyOrNoOp,
@@ -40,7 +40,6 @@ pub mod streams;
 
 #[cfg(feature = "acl")]
 pub mod acl;
-use crate::RedisConnectionInfo;
 
 #[cfg(feature = "vector-sets")]
 #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
