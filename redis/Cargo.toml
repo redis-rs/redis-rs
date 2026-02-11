@@ -139,12 +139,11 @@ connection-manager = [
 ]
 streams = []
 cluster-async = ["aio", "cluster", "dep:log"]
-sentinel = ["dep:rand"]
+sentinel = ["dep:log", "dep:rand"]
 num-bigint = ["dep:num-bigint"]
 cache-aio = ["aio", "dep:lru"]
 r2d2 = ["dep:r2d2"]
 bb8 = ["dep:bb8"]
-log = ["dep:log"]
 
 # Instead of specifying "aio", use either "tokio-comp" or "smol-comp".
 aio = [

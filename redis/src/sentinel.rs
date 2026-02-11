@@ -127,7 +127,6 @@ use crate::aio::MultiplexedConnection as AsyncConnection;
 use arcstr::ArcStr;
 #[cfg(feature = "aio")]
 use futures_util::StreamExt;
-#[cfg(feature = "log")]
 use log::warn;
 use rand::Rng;
 #[cfg(feature = "r2d2")]
@@ -702,7 +701,6 @@ impl Sentinel {
             .map(|p| p.into_connection_info())
             .collect::<RedisResult<Vec<ConnectionInfo>>>()?;
 
-        #[cfg(feature = "log")]
         if sentinels_connection_info
             .iter()
             .any(|connection_info| connection_info.redis_settings().db != 0)
