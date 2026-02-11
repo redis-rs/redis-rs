@@ -163,6 +163,36 @@ To enable insecure mode, append `#insecure` at the end of the URL:
 let client = redis::Client::open("rediss://127.0.0.1/#insecure")?;
 ```
 
+## Token-Based Authentication with Azure Entra ID
+
+Redis-rs supports token-based authentication using Azure Entra ID, providing secure, dynamic authentication for Redis connections. This feature is particularly useful for Azure-hosted applications and enterprise environments.
+
+To enable Entra ID authentication, add the `entra-id` feature to your Cargo.toml:
+
+```toml
+redis = { version = "1.0", features = ["entra-id", "tokio-comp"] }
+```
+
+### Supported Authentication Flows
+
+- **DeveloperToolsCredential**: Authenticates through developer tools such as the Azure CLI.
+It tries the following credential types, in this order, stopping when one provides a token:
+* [`AzureCliCredential`]
+* [`AzureDeveloperCliCredential`]
+`DeveloperToolsCredential` uses the first credential that provides a token for all subsequent token requests. It never tries the others again.
+- **Service Principal**: `Client secret` and `certificate-based` authentication
+- **Managed Identity**: `System-assigned` or `user-assigned` managed identities
+- **Custom Credentials**: Support for any `TokenCredential` implementation
+
+### Features
+
+- **Automatic Token Refresh & Streaming of Credentials**: Seamlessly handle token expiration and stream updated credentials to prevent connection errors due to token expiration
+- **Configurable Refresh Policies**: Customizable refresh thresholds and retry behavior
+
+### Async-First Design
+- Full async/await support for non-blocking operations
+- Seamless integration with multiplexed connections
+
 ## Cluster Support
 
 Support for Redis Cluster can be enabled by enabling the `cluster` feature in your Cargo.toml:
