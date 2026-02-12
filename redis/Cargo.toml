@@ -146,7 +146,7 @@ connection-manager = [
 ]
 streams = []
 cluster-async = ["aio", "cluster", "dep:log"]
-sentinel = ["dep:rand"]
+sentinel = ["dep:log", "dep:rand"]
 num-bigint = ["dep:num-bigint"]
 cache-aio = ["aio", "dep:lru"]
 r2d2 = ["dep:r2d2"]
