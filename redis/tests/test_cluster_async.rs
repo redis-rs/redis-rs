@@ -2904,7 +2904,8 @@ mod cluster_async {
 
                 // the re-subscriptions can be received in any order, so we assert without assuming order.
                 let mut pushes = Vec::new();
-                // the first wait is longer, because the cluster still needs to reconnect
+                // the waits are longer, because the cluster still needs to reconnect, and some
+                // resubscribe calls might fail and retry - not necessarily the first.
                 log::info!("[TEST] Waiting for first resubscription message (10s timeout)");
                 pushes.push(
                     get_push_with_timeout(&mut rx, Duration::from_secs(10).into())
@@ -2913,11 +2914,19 @@ mod cluster_async {
                 );
                 log::info!("[TEST] First resubscription received: {:?}", pushes[0]);
                 log::info!("[TEST] Waiting for second resubscription message");
-                pushes.push(get_push(&mut rx).await.unwrap());
+                pushes.push(
+                    get_push_with_timeout(&mut rx, Duration::from_secs(10).into())
+                        .await
+                        .unwrap(),
+                );
                 log::info!("[TEST] Second resubscription received: {:?}", pushes[1]);
                 if !is_redis_6 {
                     log::info!("[TEST] Waiting for third resubscription message (not Redis 6)");
-                    pushes.push(get_push(&mut rx).await.unwrap());
+                    pushes.push(
+                        get_push_with_timeout(&mut rx, Duration::from_secs(10).into())
+                            .await
+                            .unwrap(),
+                    );
                     log::info!("[TEST] Third resubscription received: {:?}", pushes[2]);
                 }
                 // we expect only 3 re-subscriptions.

@@ -881,44 +881,50 @@ where
 
     // Query a node to discover slot-> master mappings.
     async fn refresh_slots(self) -> RedisResult<()> {
-        let mut write_guard = self.conn_lock.write().await;
-        let (connections, slots) = &mut *write_guard;
+        let result = async {
+            let mut write_guard = self.conn_lock.write().await;
+            let (connections, slots) = &mut *write_guard;
 
-        let mut result = Ok(());
-        for (addr, conn) in &mut *connections {
-            result = async {
-                let value = conn
-                    .req_packed_command(&slot_cmd())
-                    .await
-                    .and_then(|value| value.extract_error())?;
-                let v: Vec<Slot> = parse_slots(value, addr.rsplit_once(':').unwrap().0)?;
-                build_slot_map(slots, v)
+            let mut result = Ok(());
+            for (addr, conn) in &mut *connections {
+                result = async {
+                    let value = conn
+                        .req_packed_command(&slot_cmd())
+                        .await
+                        .and_then(|value| value.extract_error())?;
+                    let v: Vec<Slot> = parse_slots(value, addr.rsplit_once(':').unwrap().0)?;
+                    build_slot_map(slots, v)
+                }
+                .await;
+                if result.is_ok() {
+                    break;
+                }
             }
-            .await;
-            if result.is_ok() {
-                break;
+            result?;
+
+            let nodes = slots.values().flatten().cloned().collect::<HashSet<_>>();
+            let result = self.refresh_connections_locked(connections, nodes).await;
+
+            if let Err(err) = result {
+                // we only wait for primary connections to complete. We don't have to wait for replicas.
+                let primaries = slots.addresses_for_all_primaries();
+                let all_primaries_connected =
+                    primaries.iter().all(|addr| connections.contains_key(*addr));
+                if all_primaries_connected {
+                    return Ok(());
+                }
+
+                return Err(err);
             }
+
+            Ok(())
         }
-        result?;
-
-        let nodes = slots.values().flatten().cloned().collect::<HashSet<_>>();
-        let result = self.refresh_connections_locked(connections, nodes).await;
-
-        if let Err(err) = result {
-            // we only wait for primary connections to complete. We don't have to wait for replicas.
-            let primaries = slots.addresses_for_all_primaries();
-            let all_primaries_connected =
-                primaries.iter().all(|addr| connections.contains_key(*addr));
-            if all_primaries_connected {
-                return Ok(());
-            }
-
-            drop(write_guard);
+        .await;
+        if result.is_err() {
             Runtime::locate_and_sleep(Duration::from_millis(100)).await;
-            return Err(err);
         }
 
-        Ok(())
+        result
     }
 
     async fn refresh_connections_locked(
