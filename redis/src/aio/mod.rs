@@ -95,9 +95,6 @@ pub trait ConnectionLike {
     /// also might be incorrect if the connection like object is not
     /// actually connected.
     fn get_db(&self) -> i64;
-
-    /// as
-    fn id(&self) -> usize;
 }
 
 async fn execute_connection_pipeline<T>(

@@ -27,12 +27,10 @@ use std::fmt;
 use std::fmt::Debug;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+
 use std::task::{self, Poll};
 use std::time::Duration;
 use tokio_util::codec::Decoder;
-
-static MULTIPLEXED_CONN_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 // Senders which the result of a single request are sent through
 type PipelineOutput = oneshot::Sender<RedisResult<Value>>;
@@ -116,7 +114,6 @@ pin_project! {
         error: Option<RedisError>,
         push_sender: Option<Arc<dyn AsyncPushSender>>,
         cache_manager: Option<CacheManager>,
-        conn_id: u64,
     }
 }
 
@@ -128,25 +125,17 @@ pin_project! {
         in_flight: VecDeque<InFlight>,
         error: Option<RedisError>,
         push_sender: Option<Arc<dyn AsyncPushSender>>,
-        conn_id: u64,
     }
 }
 
-fn send_push(push_sender: &Option<Arc<dyn AsyncPushSender>>, info: PushInfo, conn_id: u64) {
-    eprintln!(
-        "[MUXCONN-{}][SEND_PUSH] Attempting to send push: {:?}",
-        conn_id, info
-    );
+fn send_push(push_sender: &Option<Arc<dyn AsyncPushSender>>, info: PushInfo) {
     if let Some(sender) = push_sender {
-        let _ = sender.send(info.clone());
-        eprintln!("[MUXCONN-{}][SEND_PUSH] Sent push: {:?}", conn_id, info);
-    } else {
-        eprintln!("[MUXCONN-{}][SEND_PUSH] No push sender available", conn_id);
-    };
+        let _ = sender.send(info);
+    }
 }
 
-pub(crate) fn send_disconnect(push_sender: &Option<Arc<dyn AsyncPushSender>>, conn_id: u64) {
-    send_push(push_sender, PushInfo::disconnect(), conn_id);
+pub(crate) fn send_disconnect(push_sender: &Option<Arc<dyn AsyncPushSender>>) {
+    send_push(push_sender, PushInfo::disconnect());
 }
 
 impl<T> PipelineSink<T>
@@ -157,12 +146,10 @@ where
         sink_stream: T,
         push_sender: Option<Arc<dyn AsyncPushSender>>,
         #[cfg(feature = "cache-aio")] cache_manager: Option<CacheManager>,
-        conn_id: u64,
     ) -> Self
     where
         T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
     {
-        eprintln!("[MUXCONN-{}] Creating new multiplexed connection", conn_id);
         PipelineSink {
             sink_stream,
             in_flight: VecDeque::new(),
@@ -170,7 +157,6 @@ where
             push_sender,
             #[cfg(feature = "cache-aio")]
             cache_manager,
-            conn_id,
         }
     }
 
@@ -188,7 +174,7 @@ where
             self.as_mut().send_result(item);
             if is_unrecoverable {
                 let self_ = self.project();
-                send_disconnect(self_.push_sender, *self_.conn_id);
+                send_disconnect(self_.push_sender);
                 return Poll::Ready(Err(()));
             }
         }
@@ -196,7 +182,6 @@ where
 
     fn send_result(self: Pin<&mut Self>, result: RedisResult<Value>) {
         let self_ = self.project();
-        let conn_id = *self_.conn_id;
         let result = match result {
             // If this push message isn't a reply, we'll pass it as-is to the push manager and stop iterating
             Ok(Value::Push { kind, data }) if !kind.has_reply() => {
@@ -204,7 +189,7 @@ where
                 if let Some(cache_manager) = &self_.cache_manager {
                     cache_manager.handle_push_value(&kind, &data);
                 }
-                send_push(self_.push_sender, PushInfo { kind, data }, conn_id);
+                send_push(self_.push_sender, PushInfo { kind, data });
 
                 return;
             }
@@ -216,7 +201,6 @@ where
                         kind: kind.clone(),
                         data: data.clone(),
                     },
-                    conn_id,
                 );
                 Ok(Value::Push { kind, data })
             }
@@ -414,7 +398,6 @@ impl Pipeline {
         push_sender: Option<Arc<dyn AsyncPushSender>>,
         #[cfg(feature = "cache-aio")] cache_manager: Option<CacheManager>,
         buffer_size: usize,
-        conn_id: u64,
     ) -> (Self, impl Future<Output = ()>)
     where
         T: Sink<Vec<u8>, Error = RedisError>,
@@ -428,7 +411,6 @@ impl Pipeline {
             push_sender,
             #[cfg(feature = "cache-aio")]
             cache_manager,
-            conn_id,
         );
         let f = stream::poll_fn(move |cx| receiver.poll_recv(cx))
             .map(Ok)
@@ -517,7 +499,6 @@ pub struct MultiplexedConnection {
     _task_handle: Option<SharedHandleContainer>,
     #[cfg(feature = "cache-aio")]
     pub(crate) cache_manager: Option<CacheManager>,
-    id: usize,
 }
 
 impl Debug for MultiplexedConnection {
@@ -598,14 +579,12 @@ impl MultiplexedConnection {
             );
         }
 
-        let id = MULTIPLEXED_CONN_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
         let (pipeline, driver) = Pipeline::new(
             codec,
             config.push_sender,
             #[cfg(feature = "cache-aio")]
             cache_manager_opt.clone(),
             Pipeline::resolve_buffer_size(config.pipeline_buffer_size),
-            id,
         );
         let con = MultiplexedConnection {
             pipeline,
@@ -615,7 +594,6 @@ impl MultiplexedConnection {
             _task_handle: None,
             #[cfg(feature = "cache-aio")]
             cache_manager: cache_manager_opt,
-            id: id as usize,
         };
 
         Ok((con, driver))
@@ -750,10 +728,6 @@ impl ConnectionLike for MultiplexedConnection {
 
     fn get_db(&self) -> i64 {
         self.db
-    }
-
-    fn id(&self) -> usize {
-        self.id
     }
 }
 

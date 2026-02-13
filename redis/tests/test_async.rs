@@ -1591,7 +1591,7 @@ mod basic_async {
         if !ctx.protocol.supports_resp3() {
             return;
         }
-        println!("running");
+
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
         let max_delay_between_attempts = Duration::from_millis(2);
