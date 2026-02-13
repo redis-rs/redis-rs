@@ -8,8 +8,6 @@ use std::path::PathBuf;
 use std::str::{FromStr, from_utf8};
 use std::time::{Duration, Instant};
 
-#[cfg(feature = "token-based-authentication")]
-use crate::StreamingCredentialsProvider;
 use crate::cmd::{Cmd, cmd, pipe};
 use crate::errors::{ErrorKind, RedisError, ServerError, ServerErrorKind};
 use crate::io::tcp::{TcpSettings, stream_with_settings};
@@ -31,7 +29,7 @@ use native_tls::{TlsConnector, TlsStream};
 
 #[cfg(feature = "tls-rustls")]
 use rustls::{RootCertStore, StreamOwned};
-#[cfg(any(feature = "tls-rustls", feature = "token-based-authentication"))]
+#[cfg(feature = "tls-rustls")]
 use std::sync::Arc;
 
 use crate::PushInfo;
@@ -284,7 +282,7 @@ impl ConnectionInfo {
 }
 
 /// Redis specific/connection independent information used to establish a connection to redis.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct RedisConnectionInfo {
     /// The database number to use.  This is usually `0`.
     pub(crate) db: i64,
@@ -296,9 +294,6 @@ pub struct RedisConnectionInfo {
     pub(crate) protocol: ProtocolVersion,
     /// If set, the connection shouldn't send the library name to the server.
     pub(crate) skip_set_lib_name: bool,
-    /// Optional credentials provider for dynamic authentication (e.g., token-based authentication)
-    #[cfg(feature = "token-based-authentication")]
-    pub credentials_provider: Option<Arc<dyn StreamingCredentialsProvider>>,
 }
 
 impl RedisConnectionInfo {
@@ -354,47 +349,6 @@ impl RedisConnectionInfo {
     /// Sets the database number to use.
     pub fn set_db(mut self, db: i64) -> Self {
         self.db = db;
-        self
-    }
-}
-
-impl std::fmt::Debug for RedisConnectionInfo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let RedisConnectionInfo {
-            db,
-            username,
-            password,
-            protocol,
-            skip_set_lib_name,
-            #[cfg(feature = "token-based-authentication")]
-            credentials_provider,
-        } = self;
-        let mut debug_info = f.debug_struct("RedisConnectionInfo");
-
-        debug_info.field("db", &db);
-        debug_info.field("username", &username);
-        debug_info.field("password", &password.as_ref().map(|_| "<redacted>"));
-        debug_info.field("protocol", &protocol);
-        debug_info.field("skip_set_lib_name", &skip_set_lib_name);
-
-        #[cfg(feature = "token-based-authentication")]
-        debug_info.field(
-            "credentials_provider",
-            &credentials_provider.as_ref().map(|_| "<provider>"),
-        );
-
-        debug_info.finish()
-    }
-}
-
-#[cfg(feature = "token-based-authentication")]
-impl RedisConnectionInfo {
-    /// Set a credentials provider for this connection
-    pub fn with_credentials_provider<P>(mut self, provider: P) -> Self
-    where
-        P: StreamingCredentialsProvider + 'static,
-    {
-        self.credentials_provider = Some(Arc::new(provider));
         self
     }
 }
@@ -599,8 +553,6 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             },
             protocol: parse_protocol(&query)?,
             skip_set_lib_name: false,
-            #[cfg(feature = "token-based-authentication")]
-            credentials_provider: None,
         },
         tcp_settings: TcpSettings::default(),
     })
@@ -624,8 +576,6 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             username: query.get("user").map(|username| username.as_ref().into()),
             password: query.get("pass").map(|password| password.as_ref().into()),
             protocol: parse_protocol(&query)?,
-            #[cfg(feature = "token-based-authentication")]
-            credentials_provider: None,
             ..Default::default()
         },
         tcp_settings: TcpSettings::default(),
@@ -1270,13 +1220,17 @@ pub(crate) fn create_rustls_config(
     }
 }
 
-pub(crate) fn authenticate_cmd(username: Option<&str>, password: &str) -> Cmd {
+fn authenticate_cmd(
+    connection_info: &RedisConnectionInfo,
+    check_username: bool,
+    password: &str,
+) -> Cmd {
     let mut command = cmd("AUTH");
-
-    if let Some(username) = &username {
-        command.arg(username);
+    if check_username {
+        if let Some(username) = &connection_info.username {
+            command.arg(username.as_str());
+        }
     }
-
     command.arg(password);
     command
 }
@@ -1336,10 +1290,11 @@ pub(crate) fn connection_setup_pipeline(
         if connection_info.protocol.supports_resp3() {
             pipeline.add_command(resp3_hello(connection_info));
             (Some(0), None)
-        } else if let Some(password) = connection_info.password.as_ref() {
+        } else if connection_info.password.is_some() {
             pipeline.add_command(authenticate_cmd(
-                check_username.then(|| connection_info.username()).flatten(),
-                password,
+                connection_info,
+                check_username,
+                connection_info.password.as_ref().unwrap(),
             ));
             (None, Some(0))
         } else {
@@ -2596,8 +2551,6 @@ mod tests {
                         password: None,
                         protocol: ProtocolVersion::RESP2,
                         skip_set_lib_name: false,
-                        #[cfg(feature = "token-based-authentication")]
-                        credentials_provider: None,
                     },
                     tcp_settings: Default::default(),
                 },
