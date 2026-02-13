@@ -4,7 +4,6 @@
 
 * General improvements ([#1948](https://github.com/redis-rs/redis-rs/pull/1948) by @nihohit)
 * retry all requests on refresh error. ([#1949](https://github.com/redis-rs/redis-rs/pull/1949) by @nihohit)
-* Add token-based authentication ([#1831](https://github.com/redis-rs/redis-rs/pull/1831) by @StefanPalashev)
 * Warn if someone tries to set DB on a sentinel connection ([#1952](https://github.com/redis-rs/redis-rs/pull/1952) by @palfrey)
 
 #### Internal changes

@@ -113,13 +113,6 @@ arcstr = "1.2.0"
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 socket2 = { version = "0.6", features = ["all"] }
 
-# Only needed for Entra ID authentication
-azure_identity = { version = "0.31", optional = true, features = [
-  "client_certificate",
-] }
-azure_core = { version = "0.31", optional = true }
-base64 = { version = "0.22.1", optional = true }
-
 [features]
 default = ["acl", "streams", "geospatial", "script", "num-bigint"]
 acl = []
@@ -151,14 +144,6 @@ num-bigint = ["dep:num-bigint"]
 cache-aio = ["aio", "dep:lru"]
 r2d2 = ["dep:r2d2"]
 bb8 = ["dep:bb8"]
-token-based-authentication = ["dep:futures-util", "dep:log", "dep:backon"]
-entra-id = [
-  "dep:azure_identity",
-  "dep:azure_core",
-  "dep:base64",
-  "token-based-authentication",
-  "tokio-comp",
-]
 
 # Instead of specifying "aio", use either "tokio-comp" or "smol-comp".
 aio = [
@@ -173,7 +158,6 @@ aio = [
 ]
 
 [dev-dependencies]
-async-trait = "0.1"
 assert_approx_eq = "1.0"
 fnv = "1.0.5"
 futures = "0.3"
@@ -181,7 +165,7 @@ futures-time = "3"
 criterion = "0.7"
 partial-io = { version = "0.5", features = ["tokio", "quickcheck1"] }
 quickcheck = "1.0.3"
-tokio = { workspace = true, features = ["macros"] }
+tokio = { workspace = true }
 tempfile = "3.24.0"
 anyhow = "1"
 redis-test = { path = "../redis-test" }
@@ -190,7 +174,6 @@ rand = "0.9"
 rustls = { version = "0.23", features = ["ring"] }
 test-macros = { path = "../test-macros" }
 assert_matches = "1.5.0"
-env_logger = "0.11.8"
 
 [[test]]
 name = "test_async"
