@@ -35,6 +35,7 @@ use std::fmt;
 use std::fmt::Debug;
 use std::pin::Pin;
 use std::sync::Arc;
+
 use std::task::{self, Poll};
 use std::time::Duration;
 use tokio_util::codec::Decoder;
@@ -138,7 +139,7 @@ pin_project! {
 fn send_push(push_sender: &Option<Arc<dyn AsyncPushSender>>, info: PushInfo) {
     if let Some(sender) = push_sender {
         let _ = sender.send(info);
-    };
+    }
 }
 
 pub(crate) fn send_disconnect(push_sender: &Option<Arc<dyn AsyncPushSender>>) {
