@@ -231,7 +231,13 @@ jobs:
       - name: webassembly build
         run: cargo build --target wasm32-unknown-unknown -p redis
         env:
-          RUSTDOCFLAGS: -Dwarnings                
+          RUSTDOCFLAGS: -Dwarnings
+
+      - name: Check semver
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          package: redis
+          feature-groups: only-explicit-feature
 
   benchmark:
     needs: lint
