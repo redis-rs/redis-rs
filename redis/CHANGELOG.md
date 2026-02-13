@@ -1,3 +1,17 @@
+### 1.0.4 (2026-02-13)
+
+#### Changes & Bug fixes
+
+* General improvements ([#1948](https://github.com/redis-rs/redis-rs/pull/1948) by @nihohit)
+* retry all requests on refresh error. ([#1949](https://github.com/redis-rs/redis-rs/pull/1949) by @nihohit)
+* Add token-based authentication ([#1831](https://github.com/redis-rs/redis-rs/pull/1831) by @StefanPalashev)
+* Warn if someone tries to set DB on a sentinel connection ([#1952](https://github.com/redis-rs/redis-rs/pull/1952) by @palfrey)
+
+#### Internal changes
+
+* Improve test error quality. ([#1937](https://github.com/redis-rs/redis-rs/pull/1937) by @nihohit)
+* test-macros needs syn full ([#1951](https://github.com/redis-rs/redis-rs/pull/1951) by @palfrey)
+
 ### 1.0.3 (2026-01-30)
 
 #### Changes & Bug fixes
