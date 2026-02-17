@@ -218,7 +218,7 @@ impl fmt::Display for RedisError {
 }
 
 /// What method should be used if retrying this request.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum RetryMethod {
     /// Create a fresh connection, since the current connection is no longer usable.

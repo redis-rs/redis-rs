@@ -109,9 +109,12 @@ mod credentials_provider_failures_tests {
         let ctx = TestContext::new();
 
         let provider = ImmediatelyFailingCredentialsProvider;
-        let client = ctx.client.with_credentials_provider(provider);
+        let config = redis::AsyncConnectionConfig::new().set_credentials_provider(provider);
 
-        let result = client.get_multiplexed_async_connection().await;
+        let result = ctx
+            .client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await;
 
         assert!(
             result.is_err(),
@@ -128,9 +131,12 @@ mod credentials_provider_failures_tests {
         let ctx = TestContext::new();
 
         let provider = EmptyStreamCredentialsProvider;
-        let client = ctx.client.with_credentials_provider(provider);
+        let config = redis::AsyncConnectionConfig::new().set_credentials_provider(provider);
 
-        let result = client.get_multiplexed_async_connection().await;
+        let result = ctx
+            .client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await;
 
         assert!(
             result.is_err(),
@@ -147,10 +153,11 @@ mod credentials_provider_failures_tests {
         let ctx = TestContext::new();
 
         let provider = OneTimeCredentialsProvider;
-        let client = ctx.client.with_credentials_provider(provider);
+        let config = redis::AsyncConnectionConfig::new().set_credentials_provider(provider);
 
-        let mut con = client
-            .get_multiplexed_async_connection()
+        let mut con = ctx
+            .client
+            .get_multiplexed_async_connection_with_config(&config)
             .await
             .expect("Initial connection should succeed.");
 
@@ -181,10 +188,11 @@ mod credentials_provider_failures_tests {
         let ctx = TestContext::new();
 
         let provider = DelayedFailureCredentialsProvider;
-        let client = ctx.client.with_credentials_provider(provider);
+        let config = redis::AsyncConnectionConfig::new().set_credentials_provider(provider);
 
-        let mut con = client
-            .get_multiplexed_async_connection()
+        let mut con = ctx
+            .client
+            .get_multiplexed_async_connection_with_config(&config)
             .await
             .expect("Initial connection should succeed.");
 
