@@ -617,7 +617,7 @@ mod token_based_authentication_acl_tests {
     #[tokio::test]
     async fn test_authentication_with_mock_streaming_credentials_provider() {
         init_logger();
-        let mut ctx = TestContext::new();
+        let ctx = TestContext::new();
         // Set up a Redis user that expects a JWT token as password
         let mut admin_con = ctx.async_connection().await.unwrap();
         let expected_username = OID_CLAIM_VALUE;
@@ -639,10 +639,14 @@ mod token_based_authentication_acl_tests {
         println!("Setting up mock streaming credentials provider with default token...");
         let mut mock_provider = MockStreamingCredentialsProvider::new();
         mock_provider.start();
-        ctx.client = ctx.client.with_credentials_provider(mock_provider);
+        let config = redis::AsyncConnectionConfig::new().set_credentials_provider(mock_provider);
 
         println!("Establishing multiplexed connection with JWT authentication...");
-        let mut con = ctx.multiplexed_async_connection_tokio().await.unwrap();
+        let mut con = ctx
+            .client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await
+            .unwrap();
 
         // Verify that the currently authenticated user is the expected one
         let current_user: String = redis::cmd("ACL")
@@ -693,7 +697,7 @@ mod token_based_authentication_acl_tests {
     #[tokio::test]
     async fn test_token_rotation_with_mock_streaming_credentials_provider() {
         init_logger();
-        let mut ctx = TestContext::new();
+        let ctx = TestContext::new();
         let users_cmd = redis::cmd("ACL").arg("USERS").clone();
         let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
 
@@ -705,10 +709,14 @@ mod token_based_authentication_acl_tests {
         println!("Setting up mock provider with multiple tokens...");
         let mut mock_provider = MockStreamingCredentialsProvider::multiple_tokens();
         mock_provider.start();
-        ctx.client = ctx.client.with_credentials_provider(mock_provider);
+        let config = redis::AsyncConnectionConfig::new().set_credentials_provider(mock_provider);
 
         println!("Establishing multiplexed connection with JWT authentication...");
-        let mut con = ctx.multiplexed_async_connection_tokio().await.unwrap();
+        let mut con = ctx
+            .client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await
+            .unwrap();
 
         // Verify that the currently authenticated user is the first in the sequence
         let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
@@ -749,7 +757,7 @@ mod token_based_authentication_acl_tests {
     #[tokio::test]
     async fn test_authentication_error_handling_with_mock_streaming_credentials_provider() {
         init_logger();
-        let mut ctx = TestContext::new();
+        let ctx = TestContext::new();
         let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
 
         // Create a user with the JWT token as password and full permissions for each token
@@ -761,10 +769,14 @@ mod token_based_authentication_acl_tests {
         let mut mock_provider =
             MockStreamingCredentialsProvider::multiple_tokens_with_errors(vec![1]);
         mock_provider.start();
-        ctx.client = ctx.client.with_credentials_provider(mock_provider);
+        let config = redis::AsyncConnectionConfig::new().set_credentials_provider(mock_provider);
 
         println!("Establishing multiplexed connection with JWT authentication...");
-        let mut con = ctx.multiplexed_async_connection_tokio().await.unwrap();
+        let mut con = ctx
+            .client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await
+            .unwrap();
 
         // Verify initial authentication (position 0 - should succeed)
         let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
@@ -804,7 +816,7 @@ mod token_based_authentication_acl_tests {
     #[tokio::test]
     async fn test_multiple_connections_from_one_client_sharing_a_single_credentials_provider() {
         init_logger();
-        let mut ctx = TestContext::new();
+        let ctx = TestContext::new();
         let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
 
         // Create a user with the JWT token as password and full permissions for each token
@@ -813,17 +825,31 @@ mod token_based_authentication_acl_tests {
         );
         add_users_with_jwt_tokens(&ctx).await;
 
-        // Set up the mock streaming credentials provider with multiple tokens and attach it to the client
+        // Set up the mock streaming credentials provider with multiple tokens
         println!("Setting up mock provider with multiple tokens...");
         let mut mock_provider = MockStreamingCredentialsProvider::multiple_tokens();
         mock_provider.start();
-        ctx.client = ctx.client.with_credentials_provider(mock_provider);
+
+        // Create a configuration with credentials provider
+        let config = redis::AsyncConnectionConfig::new().set_credentials_provider(mock_provider);
 
         // Create multiple connections from the same client
         println!("Establishing multiplexed connections with JWT authentication...");
-        let mut con1 = ctx.multiplexed_async_connection_tokio().await.unwrap();
-        let mut con2 = ctx.multiplexed_async_connection_tokio().await.unwrap();
-        let mut con3 = ctx.multiplexed_async_connection_tokio().await.unwrap();
+        let mut con1 = ctx
+            .client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await
+            .unwrap();
+        let mut con2 = ctx
+            .client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await
+            .unwrap();
+        let mut con3 = ctx
+            .client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await
+            .unwrap();
 
         // Verify that all connections are initially authenticated as Alice and can set keys
         for (i, con) in [&mut con1, &mut con2, &mut con3].into_iter().enumerate() {
@@ -857,7 +883,7 @@ mod token_based_authentication_acl_tests {
     #[tokio::test]
     async fn test_multiple_clients_sharing_a_single_credentials_provider() {
         init_logger();
-        let mut ctx1 = TestContext::new();
+        let ctx1 = TestContext::new();
         let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
 
         // Create a user with the JWT token as password and full permissions for each token
@@ -866,23 +892,28 @@ mod token_based_authentication_acl_tests {
         );
         add_users_with_jwt_tokens(&ctx1).await;
 
-        // Set up the mock streaming credentials provider with multiple tokens and attach it to both clients
+        // Set up the mock streaming credentials provider with multiple tokens
         println!("Setting up mock provider with multiple tokens...");
         let mut mock_provider = MockStreamingCredentialsProvider::multiple_tokens();
         mock_provider.start();
-        ctx1.client = ctx1.client.with_credentials_provider(mock_provider.clone());
+
+        // Create a configuration with credentials provider
+        let config = redis::AsyncConnectionConfig::new().set_credentials_provider(mock_provider);
 
         // Create a second client, with the same server connection info as the first client
-        let client2 = redis::Client::open_with_credentials_provider(
-            ctx1.server.connection_info(),
-            mock_provider.clone(),
-        )
-        .unwrap();
+        let client2 = redis::Client::open(ctx1.server.connection_info()).unwrap();
 
         // Establish connections from both clients
         println!("Establishing multiplexed connections with JWT authentication...");
-        let mut con1 = ctx1.multiplexed_async_connection_tokio().await.unwrap();
-        let mut con2 = client2.get_multiplexed_async_connection().await.unwrap();
+        let mut con1 = ctx1
+            .client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await
+            .unwrap();
+        let mut con2 = client2
+            .get_multiplexed_async_connection_with_config(&config)
+            .await
+            .unwrap();
 
         // Verify that all connections are initially authenticated as Alice and can set keys
         for (i, con) in [&mut con1, &mut con2].into_iter().enumerate() {
@@ -923,7 +954,7 @@ mod token_based_authentication_acl_tests {
     #[tokio::test]
     async fn test_connection_rendered_unusable_when_reauthentication_fails() {
         init_logger();
-        let mut ctx = TestContext::new();
+        let ctx = TestContext::new();
 
         // Create a user with the JWT token as password and full permissions for each token
         println!("Setting up Redis users for re-authentication failure test...");
@@ -935,10 +966,16 @@ mod token_based_authentication_acl_tests {
             MockProviderConfig::valid_then_invalid_credentials(),
         );
         mock_provider.start();
-        ctx.client = ctx.client.with_credentials_provider(mock_provider);
+
+        // Create a configuration with credentials provider
+        let config = redis::AsyncConnectionConfig::new().set_credentials_provider(mock_provider);
 
         println!("Establishing multiplexed connection with JWT authentication...");
-        let mut con = ctx.multiplexed_async_connection_tokio().await.unwrap();
+        let mut con = ctx
+            .client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await
+            .unwrap();
 
         // Verify initial authentication succeeded
         let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();

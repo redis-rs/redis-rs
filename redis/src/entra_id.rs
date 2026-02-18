@@ -28,9 +28,9 @@
 //! 1. The [`EntraIdCredentialsProvider`] implements the [`StreamingCredentialsProvider`] trait, which allows clients to subscribe to a stream of credentials.
 //! 2. An [`EntraIdCredentialsProvider`] can be created with one of the public constructors. Each of them creates a specific `TokenCredential` implementation from the `azure_identity` crate.
 //! 3. The [`EntraIdCredentialsProvider`] must be started by calling its `start()` method, which begins a background task for token refresh.
-//! 4. The [`Client`] holds a [`StreamingCredentialsProvider`] and uses it to authenticate connections.
-//! 5. A [`Client`] can be instantiated with a credentials provider via the [`Client::open_with_credentials_provider()`] constructor. A credentials provider can also be added to an existing client using the client's `with_credentials_provider()` function.
-//! 6. The [`EntraIdCredentialsProvider`] keeps the current token and provides it to a [`Client`] when it establishes a new multiplexed connection. Before the connection gets established, it creates a background task, which subscribes for credential updates.
+//! 4. A [`MultiplexedConnection`] can leverage a [`StreamingCredentialsProvider`] both for its initial authentication and for subsequent re-authentications when the provider yields new credentials.
+//! 5. A credentials provider is attached to an [`AsyncConnectionConfig`] or [`ConnectionManagerConfig`] via their `set_credentials_provider()` methods. This configuration is then passed when establishing a connection using methods like [`Client::get_multiplexed_async_connection_with_config()`].
+//! 6. The [`EntraIdCredentialsProvider`] keeps the current token and provides it to a connection when it gets established. Before the connection is fully established, it creates a background task which subscribes for credential updates.
 //! 7. When the token is refreshed, the [`EntraIdCredentialsProvider`] notifies all subscribers with the new credentials.
 //! 8. When a subscriber receives the new credentials, it uses them to re-authenticate itself.
 //!
@@ -43,21 +43,21 @@
 //! ## Basic Usage with DeveloperToolsCredential
 //!
 //! ```rust,no_run
-//! use redis::{Client, EntraIdCredentialsProvider, RetryConfig};
+//! use redis::{Client, EntraIdCredentialsProvider, RetryConfig, AsyncConnectionConfig};
 //!
 //! # async fn example() -> redis::RedisResult<()> {
 //! // Create the credentials provider using the DeveloperToolsCredential
 //! let mut provider = EntraIdCredentialsProvider::new_developer_tools()?;
 //! provider.start(RetryConfig::default());
 //!
-//! // Create Redis client with credentials provider
-//! let client = Client::open_with_credentials_provider(
-//!     "redis://your-redis-instance.com:6380",
-//!     provider
-//! )?;
+//! // Create Redis client
+//! let client = Client::open("redis://your-redis-instance.com:6380")?;
 //!
-//! // Use the client to get a multiplexed connection
-//! let mut con = client.get_multiplexed_async_connection().await?;
+//! // Create a connection configuration with credentials provider
+//! let config = AsyncConnectionConfig::new().set_credentials_provider(provider);
+//!
+//! // Get a multiplexed connection with the configuration
+//! let mut con = client.get_multiplexed_async_connection_with_config(&config).await?;
 //! redis::cmd("SET")
 //!     .arg("my_key")
 //!     .arg(42i32)
@@ -228,11 +228,13 @@
 //! 3. **"Connection timeout"**: Check network connectivity and Redis endpoint
 //!
 //! [`Client`]: crate::Client
-//! [`Client::open_with_credentials_provider()`]: crate::Client::open_with_credentials_provider
+//! [`Client::get_multiplexed_async_connection_with_config()`]: crate::Client::get_multiplexed_async_connection_with_config
 //! [`StreamingCredentialsProvider`]: crate::auth::StreamingCredentialsProvider
+//! [`MultiplexedConnection`]: crate::aio::MultiplexedConnection
+//! [`AsyncConnectionConfig`]: crate::AsyncConnectionConfig
+//! [`ConnectionManagerConfig`]: crate::aio::ConnectionManagerConfig
 
 use crate::RetryConfig;
-use crate::aio::Runtime;
 use crate::auth::BasicAuth;
 use crate::auth::StreamingCredentialsProvider;
 use crate::auth_management::credentials_management_utils;
@@ -417,7 +419,7 @@ impl EntraIdCredentialsProvider {
 
                 let token_response = get_auth
                     .retry(strategy)
-                    .sleep(|duration| async move { Runtime::locate().sleep(duration).await })
+                    .sleep(|duration| async move { tokio::time::sleep(duration).await })
                     .notify(|err, duration| warn!("An error `{err}` occurred while refreshing the token. Sleeping for {duration:?}"))
                     .await;
 

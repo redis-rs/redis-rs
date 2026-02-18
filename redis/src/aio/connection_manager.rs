@@ -45,6 +45,9 @@ pub struct ConnectionManagerConfig {
     #[cfg(feature = "cache-aio")]
     pub(crate) cache_config: Option<crate::caching::CacheConfig>,
     pipeline_buffer_size: Option<usize>,
+    /// Optional credentials provider for dynamic authentication (e.g., token-based authentication)
+    #[cfg(feature = "token-based-authentication")]
+    credentials_provider: Option<std::sync::Arc<dyn crate::auth::StreamingCredentialsProvider>>,
 }
 
 impl std::fmt::Debug for ConnectionManagerConfig {
@@ -61,6 +64,8 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             #[cfg(feature = "cache-aio")]
             cache_config,
             pipeline_buffer_size,
+            #[cfg(feature = "token-based-authentication")]
+            credentials_provider,
         } = &self;
         let mut str = f.debug_struct("ConnectionManagerConfig");
         str.field("exponent_base", &exponent_base)
@@ -82,6 +87,16 @@ impl std::fmt::Debug for ConnectionManagerConfig {
 
         #[cfg(feature = "cache-aio")]
         str.field("cache_config", &cache_config);
+
+        #[cfg(feature = "token-based-authentication")]
+        str.field(
+            "credentials_provider",
+            if credentials_provider.is_some() {
+                &"set"
+            } else {
+                &"not set"
+            },
+        );
 
         str.finish()
     }
@@ -246,6 +261,36 @@ impl ConnectionManagerConfig {
         self.pipeline_buffer_size = Some(size);
         self
     }
+
+    /// Sets a credentials provider for dynamic authentication.
+    ///
+    /// This is useful for token-based authentication where credentials need to be
+    /// refreshed periodically (e.g., Azure Entra ID tokens).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # #[cfg(feature = "entra-id")]
+    /// # async fn example() -> redis::RedisResult<()> {
+    /// use redis::aio::ConnectionManagerConfig;
+    /// use redis::{EntraIdCredentialsProvider, RetryConfig};
+    ///
+    /// let mut provider = EntraIdCredentialsProvider::new_developer_tools()?;
+    /// provider.start(RetryConfig::default());
+    ///
+    /// let config = ConnectionManagerConfig::new()
+    ///     .set_credentials_provider(provider);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "token-based-authentication")]
+    pub fn set_credentials_provider<P>(mut self, provider: P) -> Self
+    where
+        P: crate::auth::StreamingCredentialsProvider + 'static,
+    {
+        self.credentials_provider = Some(std::sync::Arc::new(provider));
+        self
+    }
 }
 
 impl Default for ConnectionManagerConfig {
@@ -262,6 +307,8 @@ impl Default for ConnectionManagerConfig {
             #[cfg(feature = "cache-aio")]
             cache_config: None,
             pipeline_buffer_size: None,
+            #[cfg(feature = "token-based-authentication")]
+            credentials_provider: None,
         }
     }
 }
@@ -406,6 +453,11 @@ impl ConnectionManager {
         #[cfg(feature = "cache-aio")]
         if let Some(cache_manager) = cache_manager.as_ref() {
             connection_config = connection_config.set_cache_manager(cache_manager.clone());
+        }
+
+        #[cfg(feature = "token-based-authentication")]
+        if let Some(credentials_provider) = config.credentials_provider {
+            connection_config.credentials_provider = Some(credentials_provider);
         }
 
         let (oneshot_sender, oneshot_receiver) = oneshot::channel();

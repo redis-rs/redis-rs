@@ -602,7 +602,7 @@ impl MultiplexedConnection {
         let connection_info = connection_info.clone();
 
         #[cfg(feature = "token-based-authentication")]
-        if let Some(ref credentials_provider) = connection_info.credentials_provider {
+        if let Some(ref credentials_provider) = config.credentials_provider {
             // Retrieve the initial credentials from the provider and apply them to the connection info
             match credentials_provider.subscribe().next().await {
                 Some(Ok(credentials)) => {
@@ -662,7 +662,7 @@ impl MultiplexedConnection {
 
         // Set up streaming credentials subscription if provider is available
         #[cfg(feature = "token-based-authentication")]
-        if let Some(streaming_provider) = connection_info.credentials_provider {
+        if let Some(streaming_provider) = config.credentials_provider {
             let mut inner_connection = con.clone();
             let re_authentication_failed_arc = Arc::clone(&con.re_authentication_failed);
             let mut stream = streaming_provider.subscribe();

@@ -62,9 +62,13 @@ mod entra_id_tests {
         init_logger();
         provider.start(RetryConfig::default());
 
-        let client = Client::open_with_credentials_provider(get_redis_url(), provider).unwrap();
+        let client = Client::open(get_redis_url()).unwrap();
+        let config = redis::AsyncConnectionConfig::new().set_credentials_provider(provider);
 
-        let mut con = client.get_multiplexed_async_connection().await.unwrap();
+        let mut con = client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await
+            .unwrap();
 
         redis::cmd("SET")
             .arg(test_key)
