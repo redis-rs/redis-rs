@@ -318,7 +318,7 @@ where
     ) -> RedisResult<Self> {
         let connection = Self {
             connections: RefCell::new(HashMap::new()),
-            slots: RefCell::new(SlotMap::new(cluster_params.read_from_replicas)),
+            slots: RefCell::new(SlotMap::new()),
             auto_reconnect: RefCell::new(true),
             read_timeout: RefCell::new(cluster_params.response_timeout),
             write_timeout: RefCell::new(None),
@@ -497,10 +497,7 @@ where
         for (addr, conn) in connections.iter_mut() {
             let value = conn.req_command(&slot_cmd())?;
             if let Ok(slots_data) = parse_slots(value, addr.rsplit_once(':').unwrap().0) {
-                new_slots = Some(SlotMap::from_slots(
-                    slots_data,
-                    self.cluster_params.read_from_replicas,
-                ));
+                new_slots = Some(SlotMap::from_slots(slots_data));
                 break;
             }
         }
@@ -518,7 +515,7 @@ where
         let info = get_connection_info(node, &self.cluster_params)?;
 
         let mut conn = C::connect(info, Some(self.cluster_params.connection_timeout))?;
-        if self.cluster_params.read_from_replicas {
+        if self.cluster_params.read_routing_strategy.is_some() {
             // If READONLY is sent to primary nodes, it will have no effect
             cmd("READONLY").exec(&mut conn)?;
         }
@@ -533,7 +530,8 @@ where
         route: &Route,
     ) -> (ArcStr, RedisResult<&'a mut C>) {
         let slots = self.slots.borrow();
-        if let Some(addr) = slots.slot_addr_for_route(route) {
+        let strategy = self.cluster_params.read_routing_strategy.as_deref();
+        if let Some(addr) = slots.slot_addr_for_route(route, strategy) {
             (addr.clone(), self.get_connection_by_addr(connections, addr))
         } else {
             // try a random node next.  This is safe if slots are involved
@@ -562,10 +560,11 @@ where
 
     fn get_addr_for_cmd(&self, cmd: &Cmd) -> RedisResult<ArcStr> {
         let slots = self.slots.borrow();
+        let strategy = self.cluster_params.read_routing_strategy.as_deref();
 
         let addr_for_slot = |route: Route| -> RedisResult<ArcStr> {
             let slot_addr = slots
-                .slot_addr_for_route(&route)
+                .slot_addr_for_route(&route, strategy)
                 .ok_or((ErrorKind::Client, "Missing slot coverage"))?;
             Ok(slot_addr.clone())
         };
@@ -655,8 +654,9 @@ where
     where
         'b: 'a,
     {
+        let strategy = self.cluster_params.read_routing_strategy.as_deref();
         slots
-            .addresses_for_multi_slot(routes)
+            .addresses_for_multi_slot(routes, strategy)
             .enumerate()
             .map(|(index, addr)| {
                 let addr = addr.ok_or(RedisError::from((

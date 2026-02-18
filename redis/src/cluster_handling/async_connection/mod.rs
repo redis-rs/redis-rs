@@ -516,7 +516,10 @@ where
                     .filter_map(|addr| to_request((addr, cmd.clone())))
                     .unzip(),
                 MultipleNodeRoutingInfo::MultiSlot((routes, _)) => slot_map
-                    .addresses_for_multi_slot(routes)
+                    .addresses_for_multi_slot(
+                        routes,
+                        self.cluster_params.read_routing_strategy.as_deref(),
+                    )
                     .enumerate()
                     .filter_map(|(index, addr_opt)| {
                         addr_opt.and_then(|addr| {
@@ -773,9 +776,10 @@ where
 
         let conn = match route {
             InternalSingleNodeRouting::Random => None,
-            InternalSingleNodeRouting::SpecificNode(route) => {
-                read_guard.1.slot_addr_for_route(&route).cloned()
-            }
+            InternalSingleNodeRouting::SpecificNode(route) => read_guard
+                .1
+                .slot_addr_for_route(&route, self.cluster_params.read_routing_strategy.as_deref())
+                .cloned(),
             InternalSingleNodeRouting::Connection { identifier, conn } => {
                 return Ok((identifier, conn));
             }
@@ -1033,10 +1037,7 @@ where
             None
         };
         let inner = Arc::new(InnerCore {
-            conn_lock: RwLock::new((
-                Default::default(),
-                SlotMap::new(cluster_params.read_from_replicas),
-            )),
+            conn_lock: RwLock::new((Default::default(), SlotMap::new())),
             cluster_params,
             pending_requests: Mutex::new(Vec::new()),
             initial_nodes: initial_nodes.to_vec(),
@@ -1113,10 +1114,7 @@ where
             let connection_map =
                 Self::create_initial_connections(&inner.initial_nodes, &inner.cluster_params)
                     .await?;
-            *inner.conn_lock.write().await = (
-                connection_map,
-                SlotMap::new(inner.cluster_params.read_from_replicas),
-            );
+            *inner.conn_lock.write().await = (connection_map, SlotMap::new());
             inner.refresh_slots().await?;
             Ok(())
         }
@@ -1504,7 +1502,7 @@ where
         }
     };
 
-    let check = if params.read_from_replicas {
+    let check = if params.read_routing_strategy.is_some() {
         // If READONLY is sent to primary nodes, it will have no effect
         cmd("READONLY")
     } else {

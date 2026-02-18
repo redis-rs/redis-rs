@@ -1,5 +1,6 @@
 use arcstr::ArcStr;
 use rand::Rng;
+use rand::seq::IndexedRandom;
 
 use crate::cluster_handling::slot_map::SLOT_SIZE;
 use crate::cmd::{Arg, Cmd};
@@ -9,6 +10,7 @@ use crate::{ErrorKind, RedisError, RedisResult};
 use std::borrow::Cow;
 use std::cmp::min;
 use std::collections::HashMap;
+use std::fmt;
 
 fn slot(key: &[u8]) -> u16 {
     crc16::State::<crc16::XMODEM>::calculate(key) % SLOT_SIZE
@@ -954,6 +956,228 @@ impl Slot {
     #[allow(dead_code)] // used in tests
     pub(crate) fn replicas(&self) -> Vec<String> {
         self.replicas.clone()
+    }
+}
+
+/// The address of a node in a Redis Cluster.
+///
+/// A node address is a `host:port` pair where the host may be an IPv4 address
+/// (e.g. `127.0.0.1`), an IPv6 address (e.g. `dead::cafe:beef`), or a hostname
+/// (e.g. `redis-node-1.example.com`). Use [`address`](NodeAddress::address) to get
+/// the full string, or [`host`](NodeAddress::host) and [`port`](NodeAddress::port)
+/// for the individual components.
+///
+/// This type is used in [`AnyNodeRoutingInfo`] and [`ReadRoutingStrategy`] to identify
+/// cluster nodes.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct NodeAddress {
+    pub(crate) addr: ArcStr,
+}
+
+impl NodeAddress {
+    /// Returns the full node address as a `host:port` string
+    /// (e.g. `"127.0.0.1:6379"` or `"redis-node-1.example.com:6379"`).
+    pub fn address(&self) -> &str {
+        &self.addr
+    }
+
+    /// Returns the host component of the address.
+    ///
+    /// This may be an IPv4 address, an IPv6 address, or a hostname.
+    pub fn host(&self) -> &str {
+        self.addr
+            .rsplit_once(':')
+            .map(|(host, _)| host)
+            .unwrap_or(&self.addr)
+    }
+
+    /// Returns the port number of the address, if present and valid.
+    pub fn port(&self) -> Option<u16> {
+        self.addr
+            .rsplit_once(':')
+            .and_then(|(_, port)| port.parse().ok())
+    }
+}
+
+impl fmt::Display for NodeAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.addr.fmt(f)
+    }
+}
+
+impl From<&crate::ConnectionAddr> for NodeAddress {
+    fn from(addr: &crate::ConnectionAddr) -> Self {
+        NodeAddress {
+            addr: format!("{addr}").into(),
+        }
+    }
+}
+
+/// A non-empty set of replica [`NodeAddress`] values for a hash slot.
+///
+/// This type guarantees at least one replica is present. It is only constructed internally
+/// when replicas are known to exist, so strategy authors can safely access elements
+/// without worrying about emptiness.
+///
+/// Use [`iter`](Replicas::iter) to iterate all replicas, [`first`](Replicas::first) to get
+/// the first, or [`choose_random`](Replicas::choose_random) to pick one at random.
+pub struct Replicas<'a> {
+    inner: &'a [NodeAddress],
+}
+
+impl<'a> Replicas<'a> {
+    /// Creates a new `Replicas` from a non-empty slice.
+    ///
+    /// Returns `None` if the slice is empty.
+    pub(crate) fn new(slice: &'a [NodeAddress]) -> Option<Self> {
+        if slice.is_empty() {
+            None
+        } else {
+            Some(Self { inner: slice })
+        }
+    }
+
+    /// Returns the number of replicas. Always at least 1.
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Returns the first replica.
+    pub fn first(&self) -> &'a NodeAddress {
+        &self.inner[0]
+    }
+
+    /// Returns the replica at the given index, or `None` if out of bounds.
+    pub fn get(&self, index: usize) -> Option<&'a NodeAddress> {
+        self.inner.get(index)
+    }
+
+    /// Returns a random replica.
+    pub fn choose_random(&self) -> &'a NodeAddress {
+        self.inner.choose(&mut rand::rng()).unwrap()
+    }
+
+    /// Returns an iterator over all replicas.
+    pub fn iter(&self) -> impl Iterator<Item = &'a NodeAddress> {
+        self.inner.iter()
+    }
+}
+
+/// Routing information for a read command that may be sent to any node (primary or replica).
+///
+/// This struct is passed to [`ReadRoutingStrategy::choose_any`] when the command can be
+/// served by either the primary or a replica. The strategy may return a reference to
+/// `primary` or any entry in `replicas`.
+pub struct AnyNodeRoutingInfo<'a> {
+    /// The hash slot number (0–16383) that the command targets.
+    pub slot: u16,
+    /// The first slot owned by this node group (inclusive).
+    pub slot_range_start: u16,
+    /// The last slot owned by this node group (inclusive).
+    pub slot_range_end: u16,
+    /// The primary node for this hash slot.
+    pub primary: &'a NodeAddress,
+    /// The replica nodes for this hash slot, if any are available.
+    pub replicas: Option<Replicas<'a>>,
+}
+
+/// Routing information for a read command that must be sent to a replica.
+///
+/// This struct is passed to [`ReadRoutingStrategy::choose_replica`] when the command
+/// must be routed to a replica node. The primary is intentionally not provided;
+/// the strategy must return a reference to one of the entries in `replicas`.
+pub struct ReplicaRoutingInfo<'a> {
+    /// The hash slot number (0–16383) that the command targets.
+    pub slot: u16,
+    /// The first slot owned by this node group (inclusive).
+    pub slot_range_start: u16,
+    /// The last slot owned by this node group (inclusive).
+    pub slot_range_end: u16,
+    /// The available replicas for this hash slot. Guaranteed non-empty.
+    pub replicas: Replicas<'a>,
+}
+
+/// A strategy for choosing which node to route read commands to in a Redis Cluster.
+///
+/// This trait provides two methods for the two routing contexts:
+///
+/// - [`choose_any`](ReadRoutingStrategy::choose_any) is called when a read command may be
+///   served by either the primary or a replica (e.g. a `GET` routed with
+///   [`SlotAddr::ReplicaOptional`]).
+/// - [`choose_replica`](ReadRoutingStrategy::choose_replica) is called when a read command
+///   must be served by a replica (e.g. a user-specified [`SlotAddr::ReplicaRequired`] route).
+///   The primary is not provided in this case, and replicas are guaranteed non-empty.
+///
+/// Set the strategy via [`ClusterClientBuilder::read_routing_strategy`] or use the
+/// convenience method [`ClusterClientBuilder::read_from_replicas`] which installs a
+/// [`RandomReplica`] strategy.
+///
+/// [`ClusterClientBuilder::read_routing_strategy`]: crate::cluster::ClusterClientBuilder::read_routing_strategy
+/// [`ClusterClientBuilder::read_from_replicas`]: crate::cluster::ClusterClientBuilder::read_from_replicas
+///
+/// # Examples
+///
+/// Route reads to the first replica:
+///
+/// ```rust,no_run
+/// use redis::cluster_routing::{
+///     AnyNodeRoutingInfo, ReplicaRoutingInfo, ReadRoutingStrategy, NodeAddress,
+/// };
+///
+/// #[derive(Debug)]
+/// struct FirstReplica;
+///
+/// impl ReadRoutingStrategy for FirstReplica {
+///     fn choose_any<'a>(&self, info: &AnyNodeRoutingInfo<'a>) -> &'a NodeAddress {
+///         info.replicas
+///             .as_ref()
+///             .map(|r| r.first())
+///             .unwrap_or(info.primary)
+///     }
+///
+///     fn choose_replica<'a>(&self, info: &ReplicaRoutingInfo<'a>) -> &'a NodeAddress {
+///         info.replicas.first()
+///     }
+/// }
+/// ```
+pub trait ReadRoutingStrategy: Send + Sync {
+    /// Choose which node to route a read command to, when any node is acceptable.
+    ///
+    /// The returned reference must point to either `info.primary` or one of the entries
+    /// in `info.replicas`, if present.
+    fn choose_any<'a>(&self, info: &AnyNodeRoutingInfo<'a>) -> &'a NodeAddress;
+
+    /// Choose which replica to route a read command to, when a replica is required.
+    ///
+    /// The returned reference must point to one of the entries in `info.replicas`.
+    /// Replicas are guaranteed non-empty. If no replicas are available, the primary will be used,
+    /// and this method will not be called.
+    fn choose_replica<'a>(&self, info: &ReplicaRoutingInfo<'a>) -> &'a NodeAddress;
+}
+
+/// A [`ReadRoutingStrategy`] that routes reads to a random replica.
+///
+/// For [`choose_any`](ReadRoutingStrategy::choose_any), a random replica is selected,
+/// falling back to the primary if no replicas are available.
+/// For [`choose_replica`](ReadRoutingStrategy::choose_replica), a random replica is selected.
+///
+/// This is the strategy installed by [`ClusterClientBuilder::read_from_replicas`].
+///
+/// [`ClusterClientBuilder::read_from_replicas`]: crate::cluster::ClusterClientBuilder::read_from_replicas
+#[derive(Debug, Clone, Default)]
+pub struct RandomReplica;
+
+impl ReadRoutingStrategy for RandomReplica {
+    fn choose_any<'a>(&self, info: &AnyNodeRoutingInfo<'a>) -> &'a NodeAddress {
+        info.replicas
+            .as_ref()
+            .map(|r| r.choose_random())
+            .unwrap_or(info.primary)
+    }
+
+    fn choose_replica<'a>(&self, info: &ReplicaRoutingInfo<'a>) -> &'a NodeAddress {
+        info.replicas.choose_random()
     }
 }
 
