@@ -140,7 +140,7 @@ rustls = { version = "0.23" }
 And then, before creating a connection, ensure that you install a crypto provider. For example:
 
 ```rust
-    rustls::crypto::ring::default_provider()
+    rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .expect("Failed to install rustls crypto provider");
 ```
