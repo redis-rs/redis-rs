@@ -1098,6 +1098,24 @@ pub struct ReplicaRoutingInfo<'a> {
     pub replicas: Replicas<'a>,
 }
 
+/// A snapshot of one slot range in the cluster topology.
+///
+/// Each `SlotTopology` describes a contiguous range of hash slots owned by a single
+/// primary node, along with its replicas. This type is passed to
+/// [`ReadRoutingStrategy::on_topology_changed`] so that strategies can react to
+/// cluster topology changes (e.g. to update latency tables or locality maps).
+#[derive(Debug, Clone)]
+pub struct SlotTopology {
+    /// The first slot in the range (inclusive).
+    pub slot_range_start: u16,
+    /// The last slot in the range (inclusive).
+    pub slot_range_end: u16,
+    /// The primary node for this slot range.
+    pub primary: NodeAddress,
+    /// The replica nodes for this slot range.
+    pub replicas: Vec<NodeAddress>,
+}
+
 /// A strategy for choosing which node to route read commands to in a Redis Cluster.
 ///
 /// This trait provides two methods for the two routing contexts:
@@ -1108,6 +1126,9 @@ pub struct ReplicaRoutingInfo<'a> {
 /// - [`choose_replica`](ReadRoutingStrategy::choose_replica) is called when a read command
 ///   must be served by a replica (e.g. a user-specified [`SlotAddr::ReplicaRequired`] route).
 ///   The primary is not provided in this case, and replicas are guaranteed non-empty.
+///
+/// Optionally, implement [`on_topology_changed`](ReadRoutingStrategy::on_topology_changed)
+/// to receive notifications when the cluster topology is discovered or refreshed.
 ///
 /// Set the strategy via [`ClusterClientBuilder::read_routing_strategy`] or use the
 /// convenience method [`ClusterClientBuilder::read_from_replicas`] which installs a
@@ -1142,6 +1163,12 @@ pub struct ReplicaRoutingInfo<'a> {
 /// }
 /// ```
 pub trait ReadRoutingStrategy: Send + Sync {
+    /// Called when the connection discovers or refreshes the cluster topology.
+    ///
+    /// This is called on every slot map refresh, including the initial topology
+    /// discovery when a connection is first created.
+    fn on_topology_changed(&self, _topology: &[SlotTopology]) {}
+
     /// Choose which node to route a read command to, when any node is acceptable.
     ///
     /// The returned reference must point to either `info.primary` or one of the entries
@@ -1154,6 +1181,59 @@ pub trait ReadRoutingStrategy: Send + Sync {
     /// Replicas are guaranteed non-empty. If no replicas are available, the primary will be used,
     /// and this method will not be called.
     fn choose_replica<'a>(&self, info: &ReplicaRoutingInfo<'a>) -> &'a NodeAddress;
+}
+
+/// A factory for creating per-connection [`ReadRoutingStrategy`] instances.
+///
+/// This trait is stored in the cluster client and used to create a fresh strategy
+/// instance for each connection. This gives each connection its own strategy state,
+/// which is important for strategies that track per-connection data like latency
+/// measurements.
+///
+/// A blanket implementation is provided for any `T: ReadRoutingStrategy + Clone + 'static`,
+/// so simple stateless strategies (like [`RandomReplica`]) work automatically without
+/// implementing this trait explicitly.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use redis::cluster_routing::{
+///     ReadRoutingStrategy, ReadRoutingStrategyFactory, AnyNodeRoutingInfo,
+///     ReplicaRoutingInfo, NodeAddress,
+/// };
+///
+/// struct MyStrategyFactory;
+///
+/// impl ReadRoutingStrategyFactory for MyStrategyFactory {
+///     fn create_strategy(&self) -> Box<dyn ReadRoutingStrategy> {
+///         Box::new(MyStrategy::new())
+///     }
+/// }
+///
+/// struct MyStrategy;
+///
+/// impl MyStrategy {
+///     fn new() -> Self { MyStrategy }
+/// }
+///
+/// impl ReadRoutingStrategy for MyStrategy {
+///     fn choose_any<'a>(&self, info: &AnyNodeRoutingInfo<'a>) -> &'a NodeAddress {
+///         info.primary
+///     }
+///     fn choose_replica<'a>(&self, info: &ReplicaRoutingInfo<'a>) -> &'a NodeAddress {
+///         info.replicas.first()
+///     }
+/// }
+/// ```
+pub trait ReadRoutingStrategyFactory: Send + Sync {
+    /// Create a new strategy instance for a connection.
+    fn create_strategy(&self) -> Box<dyn ReadRoutingStrategy>;
+}
+
+impl<T: ReadRoutingStrategy + Clone + 'static> ReadRoutingStrategyFactory for T {
+    fn create_strategy(&self) -> Box<dyn ReadRoutingStrategy> {
+        Box::new(self.clone())
+    }
 }
 
 /// A [`ReadRoutingStrategy`] that routes reads to a random replica.

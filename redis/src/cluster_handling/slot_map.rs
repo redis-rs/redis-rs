@@ -4,7 +4,7 @@ use arcstr::ArcStr;
 
 use crate::cluster_routing::{
     AnyNodeRoutingInfo, NodeAddress, ReadRoutingStrategy, ReplicaRoutingInfo, Replicas, Route,
-    SlotAddr,
+    SlotAddr, SlotTopology,
 };
 
 pub(crate) const SLOT_SIZE: u16 = 16384;
@@ -104,6 +104,18 @@ impl SlotMap {
         self.all_unique_addresses(false)
     }
 
+    pub(crate) fn topology(&self) -> Vec<SlotTopology> {
+        self.slots
+            .iter()
+            .map(|(&end, value)| SlotTopology {
+                slot_range_start: value.start,
+                slot_range_end: end,
+                primary: value.addrs.primary.clone(),
+                replicas: value.addrs.replicas.clone(),
+            })
+            .collect()
+    }
+
     pub fn addresses_for_multi_slot<'a, 'b>(
         &'a self,
         routes: &'b [(Route, Vec<usize>)],
@@ -194,8 +206,11 @@ impl<'a> IntoIterator for &'a SlotAddrs {
         fn addr(node: &NodeAddress) -> &ArcStr {
             &node.addr
         }
-        std::iter::once(&self.primary.addr)
-            .chain(self.replicas.iter().map(addr as fn(&NodeAddress) -> &ArcStr))
+        std::iter::once(&self.primary.addr).chain(
+            self.replicas
+                .iter()
+                .map(addr as fn(&NodeAddress) -> &ArcStr),
+        )
     }
 }
 

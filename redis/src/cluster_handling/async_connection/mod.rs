@@ -113,7 +113,8 @@ use crate::{
         client::ClusterParams,
         get_connection_info,
         routing::{
-            MultipleNodeRoutingInfo, Redirect, ResponsePolicy, RoutingInfo, SingleNodeRoutingInfo,
+            MultipleNodeRoutingInfo, ReadRoutingStrategy, Redirect, ResponsePolicy, RoutingInfo,
+            SingleNodeRoutingInfo,
         },
         slot_cmd,
         slot_map::{Slot, SlotMap},
@@ -441,6 +442,7 @@ struct InnerCore<C> {
     pending_requests: Mutex<Vec<PendingRequest<C>>>,
     initial_nodes: Vec<ConnectionInfo>,
     subscription_tracker: Option<Mutex<SubscriptionTracker>>,
+    routing_strategy: Option<Box<dyn ReadRoutingStrategy>>,
 }
 
 /// This is a clonable wrapper.
@@ -516,10 +518,7 @@ where
                     .filter_map(|addr| to_request((addr, cmd.clone())))
                     .unzip(),
                 MultipleNodeRoutingInfo::MultiSlot((routes, _)) => slot_map
-                    .addresses_for_multi_slot(
-                        routes,
-                        self.cluster_params.read_routing_strategy.as_deref(),
-                    )
+                    .addresses_for_multi_slot(routes, self.routing_strategy.as_deref())
                     .enumerate()
                     .filter_map(|(index, addr_opt)| {
                         addr_opt.and_then(|addr| {
@@ -778,7 +777,7 @@ where
             InternalSingleNodeRouting::Random => None,
             InternalSingleNodeRouting::SpecificNode(route) => read_guard
                 .1
-                .slot_addr_for_route(&route, self.cluster_params.read_routing_strategy.as_deref())
+                .slot_addr_for_route(&route, self.routing_strategy.as_deref())
                 .cloned(),
             InternalSingleNodeRouting::Connection { identifier, conn } => {
                 return Ok((identifier, conn));
@@ -893,6 +892,10 @@ where
             }
         }
         result?;
+
+        if let Some(ref strategy) = self.routing_strategy {
+            strategy.on_topology_changed(&slots.topology());
+        }
 
         let nodes = slots.values().flatten().cloned().collect::<HashSet<_>>();
         self.refresh_connections_locked(connections, nodes).await;
@@ -1036,12 +1039,17 @@ where
         } else {
             None
         };
+        let routing_strategy = cluster_params
+            .read_routing_factory
+            .as_ref()
+            .map(|f| f.create_strategy());
         let inner = Arc::new(InnerCore {
             conn_lock: RwLock::new((Default::default(), SlotMap::new())),
             cluster_params,
             pending_requests: Mutex::new(Vec::new()),
             initial_nodes: initial_nodes.to_vec(),
             subscription_tracker,
+            routing_strategy,
         });
         let core = Core(inner);
         let mut inner = ClusterConnInner {
@@ -1502,7 +1510,7 @@ where
         }
     };
 
-    let check = if params.read_routing_strategy.is_some() {
+    let check = if params.read_routing_factory.is_some() {
         // If READONLY is sent to primary nodes, it will have no effect
         cmd("READONLY")
     } else {

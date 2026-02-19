@@ -80,7 +80,8 @@ use crate::IntoConnectionInfo;
 pub use crate::TlsMode; // Pub for backwards compatibility
 use crate::cluster_handling::{get_connection_info, slot_cmd, split_node_address};
 use crate::cluster_routing::{
-    MultipleNodeRoutingInfo, ResponsePolicy, Routable, SingleNodeRoutingInfo, SlotAddr,
+    MultipleNodeRoutingInfo, ReadRoutingStrategy, ResponsePolicy, Routable, SingleNodeRoutingInfo,
+    SlotAddr,
 };
 use crate::cmd::{Cmd, cmd};
 use crate::connection::{Connection, ConnectionInfo, ConnectionLike, connect};
@@ -306,6 +307,7 @@ pub struct ClusterConnection<C = Connection> {
     read_timeout: RefCell<Option<Duration>>,
     write_timeout: RefCell<Option<Duration>>,
     cluster_params: ClusterParams,
+    routing_strategy: Option<Box<dyn ReadRoutingStrategy>>,
 }
 
 impl<C> ClusterConnection<C>
@@ -316,6 +318,10 @@ where
         cluster_params: ClusterParams,
         initial_nodes: Vec<ConnectionInfo>,
     ) -> RedisResult<Self> {
+        let routing_strategy = cluster_params
+            .read_routing_factory
+            .as_ref()
+            .map(|f| f.create_strategy());
         let connection = Self {
             connections: RefCell::new(HashMap::new()),
             slots: RefCell::new(SlotMap::new()),
@@ -324,6 +330,7 @@ where
             write_timeout: RefCell::new(None),
             initial_nodes: initial_nodes.to_vec(),
             cluster_params,
+            routing_strategy,
         };
         connection.create_initial_connections()?;
 
@@ -463,6 +470,10 @@ where
         let mut slots = self.slots.borrow_mut();
         *slots = self.create_new_slots()?;
 
+        if let Some(ref strategy) = self.routing_strategy {
+            strategy.on_topology_changed(&slots.topology());
+        }
+
         let mut nodes = slots.values().flatten().collect::<Vec<_>>();
         nodes.sort_unstable();
         nodes.dedup();
@@ -515,7 +526,7 @@ where
         let info = get_connection_info(node, &self.cluster_params)?;
 
         let mut conn = C::connect(info, Some(self.cluster_params.connection_timeout))?;
-        if self.cluster_params.read_routing_strategy.is_some() {
+        if self.routing_strategy.is_some() {
             // If READONLY is sent to primary nodes, it will have no effect
             cmd("READONLY").exec(&mut conn)?;
         }
@@ -530,7 +541,7 @@ where
         route: &Route,
     ) -> (ArcStr, RedisResult<&'a mut C>) {
         let slots = self.slots.borrow();
-        let strategy = self.cluster_params.read_routing_strategy.as_deref();
+        let strategy = self.routing_strategy.as_deref();
         if let Some(addr) = slots.slot_addr_for_route(route, strategy) {
             (addr.clone(), self.get_connection_by_addr(connections, addr))
         } else {
@@ -560,7 +571,7 @@ where
 
     fn get_addr_for_cmd(&self, cmd: &Cmd) -> RedisResult<ArcStr> {
         let slots = self.slots.borrow();
-        let strategy = self.cluster_params.read_routing_strategy.as_deref();
+        let strategy = self.routing_strategy.as_deref();
 
         let addr_for_slot = |route: Route| -> RedisResult<ArcStr> {
             let slot_addr = slots
@@ -654,7 +665,7 @@ where
     where
         'b: 'a,
     {
-        let strategy = self.cluster_params.read_routing_strategy.as_deref();
+        let strategy = self.routing_strategy.as_deref();
         slots
             .addresses_for_multi_slot(routes, strategy)
             .enumerate()

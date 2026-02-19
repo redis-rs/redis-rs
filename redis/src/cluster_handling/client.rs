@@ -3,7 +3,7 @@ use crate::aio::AsyncPushSender;
 #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
 use crate::caching::{CacheConfig, CacheManager};
 use crate::client::DEFAULT_CONNECTION_TIMEOUT;
-use crate::cluster_routing::{RandomReplica, ReadRoutingStrategy};
+use crate::cluster_routing::{RandomReplica, ReadRoutingStrategyFactory};
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::errors::{ErrorKind, RedisError};
 #[cfg(feature = "cluster-async")]
@@ -31,7 +31,7 @@ use crate::tls::{TlsCertificates, retrieve_tls_certificates};
 struct BuilderParams {
     password: Option<ArcStr>,
     username: Option<ArcStr>,
-    read_routing_strategy: Option<Arc<dyn ReadRoutingStrategy>>,
+    read_routing_factory: Option<Arc<dyn ReadRoutingStrategyFactory>>,
     tls: Option<TlsMode>,
     #[cfg(feature = "tls-rustls")]
     certs: Option<TlsCertificates>,
@@ -92,7 +92,7 @@ impl RetryParams {
 pub(crate) struct ClusterParams {
     pub(crate) password: Option<ArcStr>,
     pub(crate) username: Option<ArcStr>,
-    pub(crate) read_routing_strategy: Option<Arc<dyn ReadRoutingStrategy>>,
+    pub(crate) read_routing_factory: Option<Arc<dyn ReadRoutingStrategyFactory>>,
     /// tls indicates tls behavior of connections.
     /// When Some(TlsMode), connections use tls and verify certification depends on TlsMode.
     /// When None, connections do not use tls.
@@ -147,7 +147,7 @@ impl ClusterParams {
         Ok(Self {
             password: value.password,
             username: value.username,
-            read_routing_strategy: value.read_routing_strategy,
+            read_routing_factory: value.read_routing_factory,
             tls: value.tls,
             retry_params: value.retries_configuration,
             tls_params,
@@ -408,20 +408,27 @@ impl ClusterClientBuilder {
     ///
     /// [`RandomReplica`]: crate::cluster_routing::RandomReplica
     pub fn read_from_replicas(mut self) -> ClusterClientBuilder {
-        self.builder_params.read_routing_strategy = Some(Arc::new(RandomReplica));
+        self.builder_params.read_routing_factory = Some(Arc::new(RandomReplica));
         self
     }
 
-    /// Sets a custom [`ReadRoutingStrategy`] for routing read commands to cluster nodes.
+    /// Sets a custom [`ReadRoutingStrategy`] or [`ReadRoutingStrategyFactory`] for routing
+    /// read commands to cluster nodes.
     ///
     /// When set, the strategy controls which node (primary or replica) handles each read
     /// command. Write commands always go to the primary node regardless of the strategy.
+    ///
+    /// A blanket implementation of [`ReadRoutingStrategyFactory`] is provided for any
+    /// `T: ReadRoutingStrategy + Clone + 'static`, so simple strategies can be passed
+    /// directly. For strategies that need per-connection state (e.g. latency tracking),
+    /// implement [`ReadRoutingStrategyFactory`] explicitly.
     ///
     /// Use [`read_from_replicas`](Self::read_from_replicas) for simple random replica routing,
     /// or implement [`ReadRoutingStrategy`] for custom logic such as latency-based or
     /// geography-aware routing.
     ///
     /// [`ReadRoutingStrategy`]: crate::cluster_routing::ReadRoutingStrategy
+    /// [`ReadRoutingStrategyFactory`]: crate::cluster_routing::ReadRoutingStrategyFactory
     ///
     /// # Examples
     ///
@@ -432,6 +439,7 @@ impl ClusterClientBuilder {
     /// };
     ///
     /// /// Routes reads to the first replica.
+    /// #[derive(Clone)]
     /// struct FirstReplica;
     ///
     /// impl ReadRoutingStrategy for FirstReplica {
@@ -454,9 +462,9 @@ impl ClusterClientBuilder {
     /// ```
     pub fn read_routing_strategy(
         mut self,
-        strategy: impl ReadRoutingStrategy + 'static,
+        strategy: impl ReadRoutingStrategyFactory + 'static,
     ) -> ClusterClientBuilder {
-        self.builder_params.read_routing_strategy = Some(Arc::new(strategy));
+        self.builder_params.read_routing_factory = Some(Arc::new(strategy));
         self
     }
 
