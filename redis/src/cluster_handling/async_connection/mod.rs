@@ -1510,14 +1510,10 @@ where
         }
     };
 
-    let check = if params.read_routing_factory.is_some() {
-        // If READONLY is sent to primary nodes, it will have no effect
-        cmd("READONLY")
-    } else {
-        cmd("PING")
-    };
-
-    conn.req_packed_command(&check).await?;
+    // Always send READONLY so that replicas can serve reads when commands
+    // are routed via ReplicaRequired, even without a routing strategy.
+    // READONLY has no effect on primary nodes.
+    conn.req_packed_command(&cmd("READONLY")).await?;
     Ok(conn)
 }
 
