@@ -1522,15 +1522,10 @@ where
             return Err(err);
         }
     };
-
-    let check = if params.read_from_replicas {
-        // If READONLY is sent to primary nodes, it will have no effect
-        cmd("READONLY")
-    } else {
-        cmd("PING")
-    };
-
-    conn.req_packed_command(&check).await?;
+    // If READONLY is sent to primary nodes, it will have no effect.
+    // We set this unconditionally, because we don't know whether we'll be making read calls
+    // to replicas. (We allow overriding routing per-call)
+    conn.req_packed_command(&cmd("READONLY")).await?;
     Ok(conn)
 }
 
