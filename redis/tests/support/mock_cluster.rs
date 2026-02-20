@@ -105,8 +105,12 @@ pub fn contains_slice(xs: &[u8], ys: &[u8]) -> bool {
     false
 }
 
+pub fn is_connection_check(cmd: &[u8]) -> bool {
+    contains_slice(cmd, b"READONLY") || contains_slice(cmd, b"PING")
+}
+
 pub fn respond_startup(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>> {
-    if contains_slice(cmd, b"PING") {
+    if is_connection_check(cmd) {
         Err(Ok(Value::SimpleString("OK".into())))
     } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
         Err(Ok(Value::Array(vec![Value::Array(vec![
@@ -117,8 +121,6 @@ pub fn respond_startup(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>>
                 Value::Int(6379),
             ]),
         ])])))
-    } else if contains_slice(cmd, b"READONLY") {
-        Err(Ok(Value::SimpleString("OK".into())))
     } else {
         Ok(())
     }
@@ -171,7 +173,7 @@ pub fn respond_startup_with_replica_using_config(
             slot_range: (8192..16383),
         },
     ]);
-    if contains_slice(cmd, b"PING") {
+    if is_connection_check(cmd) {
         Err(Ok(Value::SimpleString("OK".into())))
     } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
         let slots = slots_config
@@ -199,8 +201,6 @@ pub fn respond_startup_with_replica_using_config(
             })
             .collect();
         Err(Ok(Value::Array(slots)))
-    } else if contains_slice(cmd, b"READONLY") {
-        Err(Ok(Value::SimpleString("OK".into())))
     } else {
         Ok(())
     }

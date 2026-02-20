@@ -363,7 +363,7 @@ mod cluster {
             "test_cluster_can_connect_to_server_that_sends_cluster_slots_with_null_host_name";
 
         let MockEnv { mut connection, .. } = MockEnv::new(name, move |cmd: &[u8], _| {
-            if contains_slice(cmd, b"PING") {
+            if is_connection_check(cmd) {
                 Err(Ok(Value::SimpleString("OK".into())))
             } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
                 Err(Ok(Value::Array(vec![Value::Array(vec![
@@ -387,7 +387,7 @@ mod cluster {
         let name = "test_cluster_can_connect_to_server_that_sends_cluster_slots_with_partial_nodes_with_unknown_host_name";
 
         let MockEnv { mut connection, .. } = MockEnv::new(name, move |cmd: &[u8], _| {
-            if contains_slice(cmd, b"PING") {
+            if is_connection_check(cmd) {
                 Err(Ok(Value::SimpleString("OK".into())))
             } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
                 Err(Ok(Value::Array(vec![
@@ -492,7 +492,7 @@ mod cluster {
             }
             started.store(true, atomic::Ordering::SeqCst);
 
-            if contains_slice(cmd, b"PING") {
+            if is_connection_check(cmd) {
                 return Err(Ok(Value::SimpleString("OK".into())));
             }
 
@@ -596,7 +596,7 @@ mod cluster {
             }
             started.store(true, atomic::Ordering::SeqCst);
 
-            if contains_slice(cmd, b"PING") {
+            if is_connection_check(cmd) {
                 return Err(Ok(Value::SimpleString("OK".into())));
             }
 
