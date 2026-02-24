@@ -47,6 +47,37 @@ pub trait IntoRedisValue {
     fn into_redis_value(self) -> Value;
 }
 
+macro_rules! into_redis_value_impl_int {
+    ($t:ty) => {
+        impl IntoRedisValue for $t {
+            fn into_redis_value(self) -> Value {
+                Value::Int(self as i64)
+            }
+        }
+    };
+}
+
+into_redis_value_impl_int!(i8);
+into_redis_value_impl_int!(i16);
+into_redis_value_impl_int!(i32);
+into_redis_value_impl_int!(i64);
+into_redis_value_impl_int!(u8);
+into_redis_value_impl_int!(u16);
+into_redis_value_impl_int!(u32);
+
+macro_rules! into_redis_value_impl_float {
+    ($t:ty) => {
+        impl IntoRedisValue for $t {
+            fn into_redis_value(self) -> Value {
+                Value::Double(self as f64)
+            }
+        }
+    };
+}
+
+into_redis_value_impl_float!(f32);
+into_redis_value_impl_float!(f64);
+
 impl IntoRedisValue for String {
     fn into_redis_value(self) -> Value {
         Value::BulkString(self.as_bytes().to_vec())
@@ -56,6 +87,12 @@ impl IntoRedisValue for String {
 impl IntoRedisValue for &str {
     fn into_redis_value(self) -> Value {
         Value::BulkString(self.as_bytes().to_vec())
+    }
+}
+
+impl IntoRedisValue for bool {
+    fn into_redis_value(self) -> Value {
+        Value::Boolean(self)
     }
 }
 
@@ -75,12 +112,6 @@ impl IntoRedisValue for Vec<u8> {
 impl IntoRedisValue for Value {
     fn into_redis_value(self) -> Value {
         self
-    }
-}
-
-impl IntoRedisValue for i64 {
-    fn into_redis_value(self) -> Value {
-        Value::Int(self)
     }
 }
 
@@ -324,8 +355,38 @@ mod tests {
     use redis::{ErrorKind, Value, cmd, pipe};
 
     #[test]
+    fn into_redis_value_i8() {
+        assert_eq!(42_i8.into_redis_value(), Value::Int(42));
+    }
+
+    #[test]
+    fn into_redis_value_i16() {
+        assert_eq!(42_i16.into_redis_value(), Value::Int(42));
+    }
+
+    #[test]
+    fn into_redis_value_i32() {
+        assert_eq!(42_i32.into_redis_value(), Value::Int(42));
+    }
+
+    #[test]
     fn into_redis_value_i64() {
         assert_eq!(42_i64.into_redis_value(), Value::Int(42));
+    }
+
+    #[test]
+    fn into_redis_value_u8() {
+        assert_eq!(42_u8.into_redis_value(), Value::Int(42));
+    }
+
+    #[test]
+    fn into_redis_value_u16() {
+        assert_eq!(42_u16.into_redis_value(), Value::Int(42));
+    }
+
+    #[test]
+    fn into_redis_value_u32() {
+        assert_eq!(42_u32.into_redis_value(), Value::Int(42));
     }
 
     #[test]
@@ -354,6 +415,16 @@ mod tests {
             0x6f, /* o */
         ]);
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn into_redis_value_bool_true() {
+        assert_eq!(true.into_redis_value(), Value::Boolean(true));
+    }
+
+    #[test]
+    fn into_redis_value_bool_false() {
+        assert_eq!(false.into_redis_value(), Value::Boolean(false));
     }
 
     #[cfg(feature = "bytes")]
