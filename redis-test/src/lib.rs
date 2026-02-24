@@ -320,8 +320,79 @@ impl AioConnectionLike for MockRedisConnection {
 
 #[cfg(test)]
 mod tests {
-    use super::{MockCmd, MockRedisConnection};
+    use super::{IntoRedisValue, MockCmd, MockRedisConnection};
     use redis::{ErrorKind, Value, cmd, pipe};
+
+    #[test]
+    fn into_redis_value_i64() {
+        assert_eq!(42_i64.into_redis_value(), Value::Int(42));
+    }
+
+    #[test]
+    fn into_redis_value_string() {
+        let input = "foo".to_string();
+
+        let actual = input.into_redis_value();
+
+        let expected = Value::BulkString(vec![
+            0x66, /* f */
+            0x6f, /* o */
+            0x6f, /* o */
+        ]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn into_redis_value_str_ref() {
+        let input = "foo";
+
+        let actual = input.into_redis_value();
+
+        let expected = Value::BulkString(vec![
+            0x66, /* f */
+            0x6f, /* o */
+            0x6f, /* o */
+        ]);
+        assert_eq!(actual, expected);
+    }
+
+    #[cfg(feature = "bytes")]
+    #[test]
+    fn into_redis_value_bytes() {
+        let input = bytes::Bytes::from("foo");
+
+        let actual = input.into_redis_value();
+
+        let expected = Value::BulkString(vec![
+            0x66, /* f */
+            0x6f, /* o */
+            0x6f, /* o */
+        ]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn into_redis_value_vec_u8() {
+        let input = vec![0x66 /* f */, 0x6f /* o */, 0x6f /* o */];
+
+        let actual = input.into_redis_value();
+
+        let expected = Value::BulkString(vec![
+            0x66, /* f */
+            0x6f, /* o */
+            0x6f, /* o */
+        ]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn into_redis_value_value() {
+        let input = Value::Int(42);
+
+        let actual = input.into_redis_value();
+
+        assert_eq!(actual, Value::Int(42));
+    }
 
     #[test]
     fn sync_basic_test() {
