@@ -28,10 +28,12 @@ pub mod sentinel;
 pub mod server;
 pub mod utils;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
-use redis::{Cmd, ConnectionLike, ErrorKind, Pipeline, RedisError, RedisResult, Value};
+use redis::{
+    Cmd, ConnectionLike, ErrorKind, Pipeline, RedisError, RedisResult, ServerError, Value,
+};
 
 #[cfg(feature = "aio")]
 use futures::{FutureExt, future};
@@ -109,9 +111,54 @@ impl IntoRedisValue for Vec<u8> {
     }
 }
 
+impl IntoRedisValue for Vec<Value> {
+    fn into_redis_value(self) -> Value {
+        Value::Array(self)
+    }
+}
+
+impl IntoRedisValue for Vec<(Value, Value)> {
+    fn into_redis_value(self) -> Value {
+        Value::Map(self)
+    }
+}
+
+impl<K, V> IntoRedisValue for HashMap<K, V>
+where
+    K: IntoRedisValue,
+    V: IntoRedisValue,
+{
+    fn into_redis_value(self) -> Value {
+        Value::Map(
+            self.into_iter()
+                .map(|(k, v)| (k.into_redis_value(), v.into_redis_value()))
+                .collect(),
+        )
+    }
+}
+
+impl<V> IntoRedisValue for HashSet<V>
+where
+    V: IntoRedisValue,
+{
+    fn into_redis_value(self) -> Value {
+        Value::Set(
+            self.into_iter()
+                .map(IntoRedisValue::into_redis_value)
+                .collect(),
+        )
+    }
+}
+
 impl IntoRedisValue for Value {
     fn into_redis_value(self) -> Value {
         self
+    }
+}
+
+impl IntoRedisValue for ServerError {
+    fn into_redis_value(self) -> Value {
+        Value::ServerError(self)
     }
 }
 
@@ -352,7 +399,8 @@ impl AioConnectionLike for MockRedisConnection {
 #[cfg(test)]
 mod tests {
     use super::{IntoRedisValue, MockCmd, MockRedisConnection};
-    use redis::{ErrorKind, Value, cmd, pipe};
+    use redis::{ErrorKind, ServerError, Value, cmd, make_extension_error, pipe};
+    use std::collections::{HashMap, HashSet};
 
     #[test]
     fn into_redis_value_i8() {
@@ -457,12 +505,104 @@ mod tests {
     }
 
     #[test]
+    fn into_redis_value_vec_value() {
+        let input = vec![Value::Int(42), Value::Boolean(true)];
+
+        let actual = input.into_redis_value();
+
+        let expected = Value::Array(vec![Value::Int(42), Value::Boolean(true)]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn into_redis_value_vec_value_value() {
+        let input = vec![
+            (Value::Int(42), Value::Boolean(true)),
+            (Value::Int(23), Value::Nil),
+        ];
+
+        let actual = input.into_redis_value();
+
+        let expected = Value::Map(vec![
+            (Value::Int(42), Value::Boolean(true)),
+            (Value::Int(23), Value::Nil),
+        ]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn into_redis_value_hashmap() {
+        let input = HashMap::from([(23, true), (42, false)]);
+
+        let actual = input.into_redis_value();
+
+        let mut actual_entries = actual
+            .into_map_iter()
+            .expect("extracting elements should work")
+            .collect::<Vec<(Value, Value)>>();
+
+        // Sorting the entries, to make sure they are in the order that we expect
+        actual_entries.sort_by(|a, b| {
+            let Value::Int(int_key_a) = a.0 else {
+                panic!("left-hand argument has to be a `Value::Int`");
+            };
+            let Value::Int(int_key_b) = b.0 else {
+                panic!("right-hand argument has to be a `Value::Int`");
+            };
+            int_key_a.cmp(&int_key_b)
+        });
+
+        let expected_entries = vec![
+            (Value::Int(23), Value::Boolean(true)),
+            (Value::Int(42), Value::Boolean(false)),
+        ];
+
+        assert_eq!(actual_entries, expected_entries);
+    }
+
+    #[test]
+    fn into_redis_value_hashset() {
+        let input = HashSet::from([23, 42]);
+
+        let actual = input.into_redis_value();
+
+        let mut actual_entries = actual
+            .into_sequence()
+            .expect("extracting elements should work");
+
+        // Sorting the entries, to make sure they are in the order that we expect
+        actual_entries.sort_by(|a, b| {
+            let Value::Int(int_a) = a else {
+                panic!("left-hand argument has to be a `Value::Int`");
+            };
+            let Value::Int(int_b) = b else {
+                panic!("right-hand argument has to be a `Value::Int`");
+            };
+            int_a.cmp(int_b)
+        });
+
+        let expected_entries = vec![Value::Int(23), Value::Int(42)];
+
+        assert_eq!(actual_entries, expected_entries);
+    }
+
+    #[test]
     fn into_redis_value_value() {
         let input = Value::Int(42);
 
         let actual = input.into_redis_value();
 
         assert_eq!(actual, Value::Int(42));
+    }
+
+    #[test]
+    fn into_redis_value_server_error() {
+        let server_error = ServerError::try_from(make_extension_error("FOO".to_string(), None))
+            .expect("conversion should work");
+
+        let actual = server_error.clone().into_redis_value();
+
+        assert_eq!(actual, Value::ServerError(server_error));
     }
 
     #[test]
