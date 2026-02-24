@@ -15,7 +15,7 @@ mod support;
 use futures_util::{Stream, StreamExt};
 use redis::auth::{BasicAuth, StreamingCredentialsProvider};
 use redis::cluster::ClusterClientBuilder;
-use redis::{cmd, ErrorKind, RedisError, RedisResult};
+use redis::{ErrorKind, RedisError, RedisResult, cmd};
 use std::pin::Pin;
 use std::sync::Once;
 use support::*;
@@ -88,7 +88,8 @@ mod cluster_credentials_provider_tests {
                 builder.set_credentials_provider(DefaultCredentialsProvider)
             });
 
-        let mut connection = cluster.async_connection().await;
+        let mut connection: redis::cluster_async::ClusterConnection =
+            cluster.async_connection().await;
 
         cmd("SET")
             .arg("test_key")
