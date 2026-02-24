@@ -10,6 +10,7 @@ mod types {
 
     use assert_matches::assert_matches;
     use redis::{ErrorKind, FromRedisValue, RedisError, ToRedisArgs, Value};
+    use redis_test::redis_value;
 
     #[test]
     fn test_is_io_error() {
@@ -113,9 +114,7 @@ mod types {
 
         for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
             let d: InfoDict = parse_mode
-                .parse_redis_value(Value::SimpleString(
-                    "# this is a comment\nkey1:foo\nkey2:42\n".into(),
-                ))
+                .parse_redis_value(redis_value!(simple:"# this is a comment\nkey1:foo\nkey2:42\n"))
                 .unwrap();
 
             assert_eq!(d.get("key1"), Some("foo".to_string()));
@@ -132,21 +131,13 @@ mod types {
         let parse_models = [RedisParseMode::Owned, RedisParseMode::Ref];
         let test_cases = vec![
             (
-                Value::Array(vec![
-                    Value::BulkString("master".into()),
-                    Value::Int(3129659),
-                    Value::Array(vec![
-                        Value::Array(vec![
-                            Value::BulkString("127.0.0.1".into()),
-                            Value::BulkString("9001".into()),
-                            Value::BulkString("3129242".into()),
-                        ]),
-                        Value::Array(vec![
-                            Value::BulkString("127.0.0.1".into()),
-                            Value::BulkString("9002".into()),
-                            Value::BulkString("3129543".into()),
-                        ]),
-                    ]),
+                redis_value!([
+                    "master",
+                    3129659,
+                    [
+                        ["127.0.0.1", "9001", "3129242"],
+                        ["127.0.0.1", "9002", "3129543"]
+                    ]
                 ]),
                 Role::Primary {
                     replication_offset: 3129659,
@@ -165,13 +156,7 @@ mod types {
                 },
             ),
             (
-                Value::Array(vec![
-                    Value::BulkString("slave".into()),
-                    Value::BulkString("127.0.0.1".into()),
-                    Value::Int(9000),
-                    Value::BulkString("connected".into()),
-                    Value::Int(3167038),
-                ]),
+                redis_value!(["slave", "127.0.0.1", 9000, "connected", 3167038]),
                 Role::Replica {
                     primary_ip: "127.0.0.1".to_string(),
                     primary_port: 9000,
@@ -180,14 +165,14 @@ mod types {
                 },
             ),
             (
-                Value::Array(vec![
-                    Value::BulkString("sentinel".into()),
-                    Value::Array(vec![
-                        Value::BulkString("resque-master".into()),
-                        Value::BulkString("html-fragments-master".into()),
-                        Value::BulkString("stats-master".into()),
-                        Value::BulkString("metadata-master".into()),
-                    ]),
+                redis_value!([
+                    "sentinel",
+                    [
+                        "resque-master",
+                        "html-fragments-master",
+                        "stats-master",
+                        "metadata-master"
+                    ]
                 ]),
                 Role::Sentinel {
                     primary_names: vec![
@@ -215,22 +200,21 @@ mod types {
         let everything_str_x = "42x";
 
         for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
-            let i = parse_mode.parse_redis_value(Value::SimpleString(everything_num.to_string()));
+            let i = parse_mode.parse_redis_value(redis_value!(simple:everything_num));
             assert_eq!(i, Ok(everything_num));
 
-            let i = parse_mode.parse_redis_value(Value::Int(everything_num.into()));
+            let i = parse_mode.parse_redis_value(redis_value!(everything_num));
             assert_eq!(i, Ok(everything_num));
 
-            let i =
-                parse_mode.parse_redis_value(Value::BulkString(everything_num.to_string().into()));
+            let i = parse_mode.parse_redis_value(redis_value!(everything_num.to_string()));
             assert_eq!(i, Ok(everything_num));
 
             let bad_i: Result<i32, _> =
-                parse_mode.parse_redis_value(Value::SimpleString(everything_str_x.into()));
+                parse_mode.parse_redis_value(redis_value!(simple:everything_str_x));
             assert_matches!(bad_i, Err(_));
 
             let bad_i_deref: Result<Box<i32>, _> =
-                parse_mode.parse_redis_value(Value::SimpleString(everything_str_x.into()));
+                parse_mode.parse_redis_value(redis_value!(simple:everything_str_x));
             assert_matches!(bad_i_deref, Err(_));
         }
     }
@@ -238,11 +222,10 @@ mod types {
     #[test]
     fn test_u32() {
         for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
-            let i = parse_mode.parse_redis_value(Value::SimpleString("42".into()));
+            let i = parse_mode.parse_redis_value(redis_value!(simple:"42"));
             assert_eq!(i, Ok(42u32));
 
-            let bad_i: Result<u32, _> =
-                parse_mode.parse_redis_value(Value::SimpleString("-1".into()));
+            let bad_i: Result<u32, _> = parse_mode.parse_redis_value(redis_value!(simple:"-1"));
             assert_matches!(bad_i, Err(_));
         }
     }
@@ -572,14 +555,13 @@ mod types {
                 parse_mode.parse_redis_value(Value::BulkString("garbage".into()));
             assert_matches!(v, Err(_));
 
-            let v = parse_mode.parse_redis_value(Value::SimpleString("1".into()));
+            let v = parse_mode.parse_redis_value(redis_value!(simple:"1"));
             assert_eq!(v, Ok(true));
 
-            let v = parse_mode.parse_redis_value(Value::SimpleString("0".into()));
+            let v = parse_mode.parse_redis_value(redis_value!(simple:"0"));
             assert_eq!(v, Ok(false));
 
-            let v: Result<bool, _> =
-                parse_mode.parse_redis_value(Value::SimpleString("garbage".into()));
+            let v: Result<bool, _> = parse_mode.parse_redis_value(redis_value!(simple:"garbage"));
             assert_matches!(v, Err(_));
 
             let v = parse_mode.parse_redis_value(Value::Okay);
@@ -609,8 +591,7 @@ mod types {
             let v: Result<Bytes, _> = parse_mode.parse_redis_value(Value::BulkString(content_vec));
             assert_eq!(v, Ok(content_bytes));
 
-            let v: Result<Bytes, _> =
-                parse_mode.parse_redis_value(Value::SimpleString("garbage".into()));
+            let v: Result<Bytes, _> = parse_mode.parse_redis_value(redis_value!(simple:"garbage"));
             assert_matches!(v, Err(_));
 
             let v: Result<Bytes, _> = parse_mode.parse_redis_value(Value::Okay);
@@ -641,7 +622,7 @@ mod types {
         assert_eq!(v, Ok(uuid));
 
         let v: Result<Uuid, _> =
-            FromRedisValue::from_redis_value_ref(&Value::SimpleString("garbage".into()));
+            FromRedisValue::from_redis_value_ref(&redis_value!(simple:"garbage"));
         assert_matches!(v, Err(_));
 
         let v: Result<Uuid, _> = FromRedisValue::from_redis_value_ref(&Value::Okay);
@@ -670,23 +651,23 @@ mod types {
             assert_eq!(v, Ok(CString::new(content).unwrap()));
 
             let v: Result<CString, _> =
-                parse_mode.parse_redis_value(Value::SimpleString("garbage".into()));
+                parse_mode.parse_redis_value(redis_value!(simple:"garbage"));
             assert_eq!(v, Ok(CString::new("garbage").unwrap()));
 
             let v: Result<CString, _> = parse_mode.parse_redis_value(Value::Okay);
             assert_eq!(v, Ok(CString::new("OK").unwrap()));
 
             let v: Result<CString, _> =
-                parse_mode.parse_redis_value(Value::SimpleString("gar\0bage".into()));
+                parse_mode.parse_redis_value(redis_value!(simple:"gar\0bage"));
             assert_matches!(v, Err(_));
 
             let v: Result<CString, _> = parse_mode.parse_redis_value(Value::Nil);
             assert_matches!(v, Err(_));
 
-            let v: Result<CString, _> = parse_mode.parse_redis_value(Value::Int(0));
+            let v: Result<CString, _> = parse_mode.parse_redis_value(redis_value!(0));
             assert_matches!(v, Err(_));
 
-            let v: Result<CString, _> = parse_mode.parse_redis_value(Value::Int(42));
+            let v: Result<CString, _> = parse_mode.parse_redis_value(redis_value!(42));
             assert_matches!(v, Err(_));
         }
     }
@@ -897,16 +878,13 @@ mod types {
             let x: Value = FromRedisValue::from_redis_value_ref(&val).unwrap();
             assert_eq!(
                 x,
-                Value::Array(vec![
-                    Value::Int(1),
-                    Value::Int(2),
-                    Value::Attribute {
-                        data: Box::new(Value::Int(3)),
-                        attributes: vec![(
-                            Value::SimpleString("ttl".to_string()),
-                            Value::Int(3600)
-                        )]
-                    }
+                redis_value!([
+                    1,
+                    2,
+                    (Value::Attribute {
+                        data: Box::new(redis_value!(3)),
+                        attributes: vec![(redis_value!(simple:"ttl"), redis_value!(3600))]
+                    })
                 ])
             )
         }
@@ -915,16 +893,7 @@ mod types {
     #[test]
     fn arrays_to_tuples() {
         for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
-            let value = Value::Array(vec![
-                Value::Array(vec![
-                    Value::BulkString(b"Hi1".to_vec()),
-                    Value::BulkString(b"Bye1".to_vec()),
-                ]),
-                Value::Array(vec![
-                    Value::BulkString(b"Hi2".to_vec()),
-                    Value::BulkString(b"Bye2".to_vec()),
-                ]),
-            ]);
+            let value = redis_value!([["Hi1", "Bye1"], ["Hi2", "Bye2"]]);
             let res: Vec<(String, String)> = parse_mode.parse_redis_value(value).unwrap();
 
             assert_eq!(
@@ -940,35 +909,13 @@ mod types {
     #[test]
     fn test_complex_nested_tuples() {
         for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
-            let value = Value::Array(vec![
-                Value::Array(vec![
-                    Value::BulkString(b"Hi1".to_vec()),
-                    Value::BulkString(b"Bye1".to_vec()),
-                    Value::BulkString(b"Hi2".to_vec()),
-                    Value::BulkString(b"Bye2".to_vec()),
-                ]),
-                Value::Array(vec![
-                    Value::BulkString(b"S1".to_vec()),
-                    Value::BulkString(b"S2".to_vec()),
-                    Value::BulkString(b"S3".to_vec()),
-                ]),
-                Value::Array(vec![
-                    Value::BulkString(b"Hi3".to_vec()),
-                    Value::BulkString(b"Bye3".to_vec()),
-                    Value::BulkString(b"Hi4".to_vec()),
-                    Value::BulkString(b"Bye4".to_vec()),
-                    Value::BulkString(b"Hi5".to_vec()),
-                    Value::BulkString(b"Bye5".to_vec()),
-                ]),
-                Value::Array(vec![
-                    Value::BulkString(b"S4".to_vec()),
-                    Value::BulkString(b"S5".to_vec()),
-                ]),
-                Value::Array(vec![
-                    Value::BulkString(b"Hi6".to_vec()),
-                    Value::BulkString(b"Bye6".to_vec()),
-                ]),
-                Value::Array(vec![Value::BulkString(b"S6".to_vec())]),
+            let value = redis_value!([
+                ["Hi1", "Bye1", "Hi2", "Bye2"],
+                ["S1", "S2", "S3"],
+                ["Hi3", "Bye3", "Hi4", "Bye4", "Hi5", "Bye5"],
+                ["S4", "S5"],
+                ["Hi6", "Bye6"],
+                ["S6"]
             ]);
             let res: Vec<(HashMap<String, String>, Vec<String>)> =
                 parse_mode.parse_redis_value(value).unwrap();
@@ -1002,37 +949,11 @@ mod types {
     #[test]
     fn test_complex_nested_tuples_resp3() {
         for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
-            let value = Value::Array(vec![
-                Value::Map(vec![
-                    (
-                        Value::BulkString(b"Hi1".to_vec()),
-                        Value::BulkString(b"Bye1".to_vec()),
-                    ),
-                    (
-                        Value::BulkString(b"Hi2".to_vec()),
-                        Value::BulkString(b"Bye2".to_vec()),
-                    ),
-                ]),
-                Value::Set(vec![
-                    Value::BulkString(b"S1".to_vec()),
-                    Value::BulkString(b"S2".to_vec()),
-                    Value::BulkString(b"S3".to_vec()),
-                ]),
-                Value::Map(vec![
-                    (
-                        Value::BulkString(b"Hi3".to_vec()),
-                        Value::BulkString(b"Bye3".to_vec()),
-                    ),
-                    (
-                        Value::BulkString(b"Hi4".to_vec()),
-                        Value::BulkString(b"Bye4".to_vec()),
-                    ),
-                ]),
-                Value::Set(vec![
-                    Value::BulkString(b"S4".to_vec()),
-                    Value::BulkString(b"S5".to_vec()),
-                    Value::BulkString(b"S6".to_vec()),
-                ]),
+            let value = redis_value!([
+                {"Hi1": "Bye1", "Hi2": "Bye2"},
+                (set:["S1", "S2", "S3"]),
+                {"Hi3": "Bye3", "Hi4": "Bye4"},
+                (set:["S4", "S5", "S6"])
             ]);
             let res: Vec<(HashMap<String, String>, HashSet<String>)> =
                 parse_mode.parse_redis_value(value).unwrap();

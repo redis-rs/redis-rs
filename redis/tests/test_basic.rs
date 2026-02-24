@@ -27,6 +27,7 @@ mod basic {
         EmbeddingInput, VAddOptions, VEmbOptions, VSimOptions, VectorAddInput, VectorQuantization,
         VectorSimilaritySearchInput,
     };
+    use redis_test::redis_value;
     use redis_test::server::redis_settings;
     use redis_test::utils::get_listener_on_free_port;
 
@@ -324,10 +325,7 @@ mod basic {
         let mut con = ctx.connection();
 
         let info: redis::InfoDict = redis::cmd("INFO").query(&mut con).unwrap();
-        assert_eq!(
-            info.find(&"role"),
-            Some(&redis::Value::SimpleString("master".to_string()))
-        );
+        assert_eq!(info.find(&"role"), Some(&redis_value!(simple:"master")));
         assert_eq!(info.get("role"), Some("master".to_string()));
         assert_eq!(info.get("loading"), Some(false));
         assert!(!info.is_empty());
@@ -1637,7 +1635,7 @@ mod basic {
             assert_eq!(
                 (
                     PushKind::Subscribe,
-                    vec![Value::BulkString("foo".as_bytes().to_vec()), Value::Int(1)]
+                    vec![redis_value!("foo"), redis_value!(1)]
                 ),
                 (kind, data)
             );
@@ -1645,10 +1643,7 @@ mod basic {
             assert_eq!(
                 (
                     PushKind::Message,
-                    vec![
-                        Value::BulkString("foo".as_bytes().to_vec()),
-                        Value::BulkString("42".as_bytes().to_vec())
-                    ]
+                    vec![redis_value!("foo"), redis_value!("42")]
                 ),
                 (kind, data)
             );
@@ -1656,10 +1651,7 @@ mod basic {
             assert_eq!(
                 (
                     PushKind::Message,
-                    vec![
-                        Value::BulkString("foo".as_bytes().to_vec()),
-                        Value::BulkString("23".as_bytes().to_vec())
-                    ]
+                    vec![redis_value!("foo"), redis_value!("23")]
                 ),
                 (kind, data)
             );
@@ -3760,10 +3752,7 @@ mod basic {
             .vsim(key, VectorSimilaritySearchInput::Element(point_of_interest))
             .unwrap();
         if let Value::Array(results_array) = &element_search_results {
-            assert_eq!(
-                results_array[0],
-                Value::BulkString(point_of_interest.as_bytes().to_vec())
-            );
+            assert_eq!(results_array[0], redis_value!(point_of_interest));
         } else {
             panic!("Expected array result from VSIM, got {element_search_results:?}");
         }
@@ -3822,16 +3811,13 @@ mod basic {
             Value::Array(results_array) => {
                 assert_eq!(results_array.len(), elements_count * 2);
                 // Expect an exact match with the point of interest.
-                assert_eq!(
-                    results_array[0],
-                    Value::BulkString(point_of_interest.as_bytes().to_vec())
-                );
-                assert_eq!(results_array[1], Value::BulkString("1".as_bytes().to_vec()));
+                assert_eq!(results_array[0], redis_value!(point_of_interest));
+                assert_eq!(results_array[1], redis_value!("1"));
             }
             Value::Map(results_map) => {
                 assert_eq!(results_map.len(), elements_count);
                 // Find the point of interest.
-                let point_key = Value::BulkString(point_of_interest.as_bytes().to_vec());
+                let point_key = redis_value!(point_of_interest);
                 let score = results_map
                     .iter()
                     .find_map(|(k, v)| if k == &point_key { Some(v) } else { None });
@@ -3865,18 +3851,9 @@ mod basic {
 
         if let Value::Array(results_array) = &element_search_results {
             assert_eq!(results_array.len(), 3);
-            assert_eq!(
-                results_array[0],
-                Value::BulkString("pt:A".as_bytes().to_vec())
-            );
-            assert_eq!(
-                results_array[1],
-                Value::BulkString("pt:C".as_bytes().to_vec())
-            );
-            assert_eq!(
-                results_array[2],
-                Value::BulkString("pt:B".as_bytes().to_vec())
-            );
+            assert_eq!(results_array[0], redis_value!("pt:A"));
+            assert_eq!(results_array[1], redis_value!("pt:C"));
+            assert_eq!(results_array[2], redis_value!("pt:B"));
         } else {
             panic!("Expected array result from VSIM, got {element_search_results:?}");
         }
@@ -3892,14 +3869,8 @@ mod basic {
             .unwrap();
         if let Value::Array(results_array) = &element_search_results {
             assert_eq!(results_array.len(), 2);
-            assert_eq!(
-                results_array[0],
-                Value::BulkString("pt:C".as_bytes().to_vec())
-            );
-            assert_eq!(
-                results_array[1],
-                Value::BulkString("pt:B".as_bytes().to_vec())
-            );
+            assert_eq!(results_array[0], redis_value!("pt:C"));
+            assert_eq!(results_array[1], redis_value!("pt:B"));
         } else {
             panic!("Expected array result from VSIM, got {element_search_results:?}");
         }
@@ -3974,7 +3945,7 @@ mod basic {
                 assert_eq!(embeddings_array.len(), expected_embedding_response_length);
                 assert_eq!(
                     embeddings_array[0],
-                    Value::SimpleString(expected_embedding_response_quantization.to_string())
+                    redis_value!(simple:expected_embedding_response_quantization),
                 );
             } else {
                 panic!("Expected array result from VEMB RAW, got {current_point_embeddings_raw:?}");
@@ -3987,25 +3958,23 @@ mod basic {
         // Extract some properties from the response and validate that they match the expected values.
         assert_eq!(
             vector_set_information.get("quant-type"),
-            Some(&Value::SimpleString(
-                expected_embedding_response_quantization.to_string()
-            ))
+            Some(&redis_value!(simple:expected_embedding_response_quantization))
         );
         assert_eq!(
             vector_set_information.get("hnsw-m"),
-            Some(&Value::Int(max_number_of_links as i64))
+            Some(&redis_value!(max_number_of_links as i64))
         );
         assert_eq!(
             vector_set_information.get("vector-dim"),
-            Some(&Value::Int(reduction_dimension as i64))
+            Some(&redis_value!(reduction_dimension as i64))
         );
         assert_eq!(
             vector_set_information.get("size"),
-            Some(&Value::Int(points_data.len() as i64))
+            Some(&redis_value!(points_data.len() as i64))
         );
         assert_eq!(
             vector_set_information.get("attributes-count"),
-            Some(&Value::Int(1))
+            Some(&redis_value!(1))
         );
         // VINFO returns NIL for non-existent keys, which is represented as None.
         assert_eq!(con.vinfo(non_existent_key), Ok(None));
@@ -4242,7 +4211,7 @@ mod basic {
                 VectorSimilaritySearchInput::Values(EmbeddingInput::Float64(&points_data[0].1)),
             )
             .unwrap();
-        assert_eq!(search_results, Value::Array(Vec::<Value>::new()));
+        assert_eq!(search_results, redis_value!([]));
 
         let search_results: Value = con
             .vsim(
@@ -4250,7 +4219,7 @@ mod basic {
                 VectorSimilaritySearchInput::Element(point_of_interest),
             )
             .unwrap();
-        assert_eq!(search_results, Value::Array(Vec::<Value>::new()));
+        assert_eq!(search_results, redis_value!([]));
 
         // VSIM returns an error for similarity searches with non-existent elements.
         let result: RedisResult<Value> = con.vsim(
@@ -4287,12 +4256,7 @@ mod basic {
             con.get_int("key_1").unwrap();
             let PushInfo { kind, data } = rx.try_recv().unwrap();
             assert_eq!(
-                (
-                    PushKind::Invalidate,
-                    vec![Value::Array(vec![Value::BulkString(
-                        "key_1".as_bytes().to_vec()
-                    )])]
-                ),
+                (PushKind::Invalidate, vec![redis_value!(["key_1"])]),
                 (kind, data)
             );
         }
@@ -4303,12 +4267,7 @@ mod basic {
         con.get_int("key_1").unwrap();
         let PushInfo { kind, data } = new_rx.try_recv().unwrap();
         assert_eq!(
-            (
-                PushKind::Invalidate,
-                vec![Value::Array(vec![Value::BulkString(
-                    "key_1".as_bytes().to_vec()
-                )])]
-            ),
+            (PushKind::Invalidate, vec![redis_value!(["key_1"])]),
             (kind, data)
         );
 
@@ -4381,24 +4340,21 @@ mod basic {
         assert!(
             messages.contains(&(
                 PushKind::Subscribe,
-                vec![Value::BulkString("foo".as_bytes().to_vec()), Value::Int(1)]
+                vec![redis_value!("foo"), redis_value!(1)]
             )),
             "{messages:?}"
         );
         assert!(
             messages.contains(&(
                 PushKind::PSubscribe,
-                vec![Value::BulkString("bar*".as_bytes().to_vec()), Value::Int(2)]
+                vec![redis_value!("bar*"), redis_value!(2)]
             )),
             "{messages:?}"
         );
         assert!(
             messages.contains(&(
                 PushKind::Message,
-                vec![
-                    Value::BulkString("foo".as_bytes().to_vec()),
-                    Value::BulkString("42".as_bytes().to_vec())
-                ]
+                vec![redis_value!("foo"), redis_value!("42")]
             )),
             "{messages:?}"
         );
@@ -4406,9 +4362,9 @@ mod basic {
             messages.contains(&(
                 PushKind::PMessage,
                 vec![
-                    Value::BulkString("bar*".as_bytes().to_vec()),
-                    Value::BulkString("barvaz".as_bytes().to_vec()),
-                    Value::BulkString("23".as_bytes().to_vec())
+                    redis_value!("bar*"),
+                    redis_value!("barvaz"),
+                    redis_value!("23"),
                 ]
             )),
             "{messages:?}"
@@ -4426,7 +4382,7 @@ mod basic {
         assert_eq!(
             (
                 PushKind::Unsubscribe,
-                vec![Value::BulkString("foo".as_bytes().to_vec()), Value::Int(1)]
+                vec![redis_value!("foo"), redis_value!(1)]
             ),
             (kind, data)
         );
@@ -4434,7 +4390,7 @@ mod basic {
         assert_eq!(
             (
                 PushKind::PUnsubscribe,
-                vec![Value::BulkString("bar*".as_bytes().to_vec()), Value::Int(0)]
+                vec![redis_value!("bar*"), redis_value!(0)]
             ),
             (kind, data)
         );

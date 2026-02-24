@@ -29,6 +29,7 @@ mod cluster_async {
         cmd, from_redis_value, parse_redis_value, pipe,
     };
     use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
+    use redis_test::redis_value;
     use redis_test::server::use_protocol;
     use rstest::rstest;
     use test_macros::async_test;
@@ -334,19 +335,7 @@ mod cluster_async {
         let _: () = connection.hset("hash", "bar", "foobar").await.unwrap();
         let result: Value = connection.hgetall("hash").await.unwrap();
 
-        assert_eq!(
-            result,
-            Value::Map(vec![
-                (
-                    Value::BulkString("foo".as_bytes().to_vec()),
-                    Value::BulkString("baz".as_bytes().to_vec())
-                ),
-                (
-                    Value::BulkString("bar".as_bytes().to_vec()),
-                    Value::BulkString("foobar".as_bytes().to_vec())
-                )
-            ])
-        );
+        assert_eq!(result, redis_value!({"foo": "baz", "bar": "foobar"}));
     }
 
     #[async_test]
@@ -430,7 +419,7 @@ mod cluster_async {
             .await
             .unwrap();
 
-        assert_eq!(result, vec![Value::Okay, Value::Int(1)]);
+        assert_eq!(result, vec![Value::Okay, redis_value!(1)]);
     }
 
     #[cfg(feature = "tls-rustls")]
@@ -690,13 +679,9 @@ mod cluster_async {
             ..
         } = MockEnv::new(name, move |cmd: &[u8], _| {
             if contains_slice(cmd, b"PING") {
-                Err(Ok(Value::SimpleString("OK".into())))
+                Err(Ok(redis_value!(simple:"OK")))
             } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-                Err(Ok(Value::Array(vec![Value::Array(vec![
-                    Value::Int(0),
-                    Value::Int(16383),
-                    Value::Array(vec![Value::Nil, Value::Int(6379)]),
-                ])])))
+                Err(Ok(redis_value!([[0, 16383, [nil, 6379]]])))
             } else {
                 Err(Ok(Value::Nil))
             }
@@ -718,25 +703,11 @@ mod cluster_async {
             ..
         } = MockEnv::new(name, move |cmd: &[u8], _| {
             if contains_slice(cmd, b"PING") {
-                Err(Ok(Value::SimpleString("OK".into())))
+                Err(Ok(redis_value!(simple:"OK")))
             } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-                Err(Ok(Value::Array(vec![
-                    Value::Array(vec![
-                        Value::Int(0),
-                        Value::Int(7000),
-                        Value::Array(vec![
-                            Value::BulkString(name.as_bytes().to_vec()),
-                            Value::Int(6379),
-                        ]),
-                    ]),
-                    Value::Array(vec![
-                        Value::Int(7001),
-                        Value::Int(16383),
-                        Value::Array(vec![
-                            Value::BulkString("?".as_bytes().to_vec()),
-                            Value::Int(6380),
-                        ]),
-                    ]),
+                Err(Ok(redis_value!([
+                    [0, 7000, [name, 6379]],
+                    [7001, 16383, ["?", 6380]]
                 ])))
             } else {
                 Err(Ok(Value::Nil))
@@ -766,7 +737,7 @@ mod cluster_async {
 
                 match requests.fetch_add(1, atomic::Ordering::SeqCst) {
                     0..=4 => Err(parse_redis_value(b"-TRYAGAIN mock\r\n")),
-                    _ => Err(Ok(Value::BulkString(b"123".to_vec()))),
+                    _ => Err(Ok(redis_value!("123"))),
                 }
             },
         );
@@ -837,13 +808,13 @@ mod cluster_async {
             started.store(true, atomic::Ordering::SeqCst);
 
             if contains_slice(cmd, b"PING") {
-                return Err(Ok(Value::SimpleString("OK".into())));
+                return Err(Ok(redis_value!(simple:"OK")));
             }
 
             let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
 
             let is_get_cmd = contains_slice(cmd, b"GET");
-            let get_response = Err(Ok(Value::BulkString(b"123".to_vec())));
+            let get_response = Err(Ok(redis_value!("123")));
             match i {
                 // Respond that the key exists on a node that does not yet have a connection:
                 0 => Err(parse_redis_value(
@@ -853,23 +824,9 @@ mod cluster_async {
                     if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
                         // Should not attempt to refresh slots more than once:
                         assert!(!refreshed.swap(true, Ordering::SeqCst));
-                        Err(Ok(Value::Array(vec![
-                            Value::Array(vec![
-                                Value::Int(0),
-                                Value::Int(1),
-                                Value::Array(vec![
-                                    Value::BulkString(name.as_bytes().to_vec()),
-                                    Value::Int(6379),
-                                ]),
-                            ]),
-                            Value::Array(vec![
-                                Value::Int(2),
-                                Value::Int(16383),
-                                Value::Array(vec![
-                                    Value::BulkString(name.as_bytes().to_vec()),
-                                    Value::Int(6380),
-                                ]),
-                            ]),
+                        Err(Ok(redis_value!([
+                            [0, 1, [name, 6379]],
+                            [2, 16383, [name, 6380]]
                         ])))
                     } else {
                         assert_eq!(port, 6380);
@@ -909,32 +866,18 @@ mod cluster_async {
                 }
 
                 if contains_slice(cmd, b"PING") {
-                    return Err(Ok(Value::SimpleString("OK".into())));
+                    return Err(Ok(redis_value!(simple:"OK")));
                 }
 
                 if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-                    return Err(Ok(Value::Array(vec![
-                        Value::Array(vec![
-                            Value::Int(0),
-                            Value::Int(1),
-                            Value::Array(vec![
-                                Value::BulkString(name.as_bytes().to_vec()),
-                                Value::Int(6379),
-                            ]),
-                        ]),
-                        Value::Array(vec![
-                            Value::Int(2),
-                            Value::Int(16383),
-                            Value::Array(vec![
-                                Value::BulkString(name.as_bytes().to_vec()),
-                                Value::Int(6380),
-                            ]),
-                        ]),
+                    return Err(Ok(redis_value!([
+                        [0, 1, [name, 6379]],
+                        [2, 16383, [name, 6380]]
                     ])));
                 }
 
                 if contains_slice(cmd, b"GET") {
-                    let get_response = Err(Ok(Value::BulkString(b"123".to_vec())));
+                    let get_response = Err(Ok(redis_value!("123")));
                     match port {
                         6380 => get_response,
                         // Respond that the key exists on a node that does not yet have a connection:
@@ -1003,7 +946,7 @@ mod cluster_async {
                     if should_reconnect.swap(false, Ordering::SeqCst) {
                         Err(Err(broken_pipe_error()))
                     } else {
-                        Err(Ok(Value::BulkString(b"PONG".to_vec())))
+                        Err(Ok(redis_value!("PONG")))
                     }
                 } else {
                     panic!("unexpected command {cmd:?}")
@@ -1037,7 +980,7 @@ mod cluster_async {
             }),
         ));
 
-        assert_eq!(value, Ok(Value::BulkString(b"PONG".to_vec())));
+        assert_eq!(value, Ok(redis_value!("PONG")));
         // 5 - because of the 4 above, and then another PING for new connections.
         assert_eq!(connection_count_clone.load(Ordering::Relaxed), 5);
     }
@@ -1074,7 +1017,7 @@ mod cluster_async {
                             }
                             2 => {
                                 assert!(contains_slice(cmd, b"GET"));
-                                Err(Ok(Value::BulkString(b"123".to_vec())))
+                                Err(Ok(redis_value!("123")))
                             }
                             _ => panic!("Node should not be called now"),
                         },
@@ -1156,7 +1099,7 @@ mod cluster_async {
                 // accept the next request
                 (6379, 1) => {
                     assert!(contains_slice(cmd, b"GET"));
-                    Err(Ok(Value::BulkString(b"123".to_vec())))
+                    Err(Ok(redis_value!("123")))
                 }
                 _ => panic!("Wrong node. port: {port}, received count: {count}"),
             }
@@ -1241,7 +1184,7 @@ mod cluster_async {
             started.store(true, atomic::Ordering::SeqCst);
 
             if contains_slice(cmd, b"PING") {
-                return Err(Ok(Value::SimpleString("OK".into())));
+                return Err(Ok(redis_value!(simple:"OK")));
             }
 
             let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
@@ -1259,7 +1202,7 @@ mod cluster_async {
                 2 => {
                     assert_eq!(port, 6380);
                     assert!(contains_slice(cmd, b"GET"));
-                    Err(Ok(Value::BulkString(b"123".to_vec())))
+                    Err(Ok(redis_value!("123")))
                 }
                 _ => {
                     panic!("Unexpected request: {cmd:?}");
@@ -1294,7 +1237,7 @@ mod cluster_async {
             move |cmd: &[u8], port| {
                 respond_startup_with_replica(name, cmd)?;
                 match port {
-                    6380 => Err(Ok(Value::BulkString(b"123".to_vec()))),
+                    6380 => Err(Ok(redis_value!("123"))),
                     _ => panic!("Wrong node"),
                 }
             },
@@ -1321,7 +1264,7 @@ mod cluster_async {
             move |cmd: &[u8], port| {
                 respond_startup_with_replica(name, cmd)?;
                 match port {
-                    6379 => Err(Ok(Value::SimpleString("OK".into()))),
+                    6379 => Err(Ok(redis_value!(simple:"OK"))),
                     _ => panic!("Wrong node"),
                 }
             },
@@ -1333,7 +1276,7 @@ mod cluster_async {
                 .arg("123")
                 .query_async::<Option<Value>>(&mut connection),
         );
-        assert_eq!(value, Ok(Some(Value::SimpleString("OK".to_owned()))));
+        assert_eq!(value, Ok(Some(redis_value!(simple:"OK"))));
     }
 
     fn test_async_cluster_fan_out(
@@ -1368,7 +1311,7 @@ mod cluster_async {
                 )?;
                 if received_cmd == packed_cmd {
                     ports_clone.lock().unwrap().push(port);
-                    return Err(Ok(Value::SimpleString("OK".into())));
+                    return Err(Ok(redis_value!(simple:"OK")));
                 }
                 Ok(())
             },
@@ -1536,7 +1479,7 @@ mod cluster_async {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
 
                 let res = 6383 - port as i64;
-                Err(Ok(Value::Int(res))) // this results in 1,2,3,4
+                Err(Ok(redis_value!(res))) // this results in 1,2,3,4
             },
         );
 
@@ -1571,19 +1514,9 @@ mod cluster_async {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
 
                 if port == 6381 {
-                    return Err(Ok(Value::Array(vec![
-                        Value::Int(0),
-                        Value::Int(0),
-                        Value::Int(1),
-                        Value::Int(1),
-                    ])));
+                    return Err(Ok(redis_value!([0, 0, 1, 1])));
                 } else if port == 6379 {
-                    return Err(Ok(Value::Array(vec![
-                        Value::Int(0),
-                        Value::Int(1),
-                        Value::Int(0),
-                        Value::Int(1),
-                    ])));
+                    return Err(Ok(redis_value!([0, 1, 0, 1])));
                 }
 
                 panic!("unexpected port {port}");
@@ -1765,7 +1698,7 @@ mod cluster_async {
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
                 if port == 6381 {
-                    return Err(Ok(Value::BulkString("foo".as_bytes().to_vec())));
+                    return Err(Ok(redis_value!("foo")));
                 }
                 Err(Ok(Value::Nil))
             },
@@ -1794,9 +1727,7 @@ mod cluster_async {
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
-                Err(Ok(Value::BulkString(
-                    format!("latency: {port}").into_bytes(),
-                )))
+                Err(Ok(redis_value!(format!("latency: {port}"))))
             },
         );
 
@@ -1833,9 +1764,7 @@ mod cluster_async {
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
-                Err(Ok(Value::Array(vec![Value::BulkString(
-                    format!("key:{port}").into_bytes(),
-                )])))
+                Err(Ok(redis_value!([(format!("key:{port}"))])))
             },
         );
 
@@ -1872,9 +1801,7 @@ mod cluster_async {
                     .iter()
                     .filter_map(|expected_key| {
                         if cmd_str.contains(expected_key) {
-                            Some(Value::BulkString(
-                                format!("{expected_key}-{port}").into_bytes(),
-                            ))
+                            Some(redis_value!(format!("{expected_key}-{port}").into_bytes()))
                         } else {
                             None
                         }
@@ -1920,9 +1847,7 @@ mod cluster_async {
                     .iter()
                     .filter_map(|expected_key| {
                         if cmd_str.contains(expected_key) {
-                            Some(Value::BulkString(
-                                format!("{expected_key}-{port}").into_bytes(),
-                            ))
+                            Some(redis_value!(format!("{expected_key}-{port}")))
                         } else {
                             None
                         }
@@ -1987,7 +1912,7 @@ mod cluster_async {
                             std::io::ErrorKind::ConnectionReset,
                             "mock-io-error",
                         )))),
-                        _ => Err(Ok(Value::BulkString(b"123".to_vec()))),
+                        _ => Err(Ok(redis_value!("123"))),
                     },
                 }
             },
@@ -2064,7 +1989,7 @@ mod cluster_async {
                     received_cmd,
                     slots_config.clone(),
                 )?;
-                Err(Ok(Value::SimpleString("PONG".into())))
+                Err(Ok(redis_value!(simple:"PONG")))
             },
         );
 
@@ -2129,7 +2054,7 @@ mod cluster_async {
         });
 
         let result = connection.req_packed_command(&cmd).await.unwrap();
-        assert_eq!(result, Value::SimpleString("PONG".to_string()));
+        assert_eq!(result, redis_value!(simple:"PONG"));
     }
 
     #[async_test]
@@ -2160,7 +2085,7 @@ mod cluster_async {
             )
             .await
             .unwrap();
-        assert_eq!(result, Value::SimpleString("PONG".to_string()));
+        assert_eq!(result, redis_value!(simple:"PONG"));
     }
 
     #[test]
@@ -2212,7 +2137,7 @@ mod cluster_async {
                         // other node (i.e., not doing a full slot rebuild)
                         Err(Err(broken_pipe_error()))
                     } else {
-                        Err(Ok(Value::BulkString(b"123".to_vec())))
+                        Err(Ok(redis_value!("123")))
                     }
                 }
             },
@@ -2394,10 +2319,7 @@ mod cluster_async {
                 push,
                 PushInfo {
                     kind: PushKind::Subscribe,
-                    data: vec![
-                        Value::BulkString(b"regular-phonewave".to_vec()),
-                        Value::Int(1)
-                    ]
+                    data: vec![redis_value!("regular-phonewave"), redis_value!(1)]
                 }
             );
 
@@ -2407,7 +2329,7 @@ mod cluster_async {
                 push,
                 PushInfo {
                     kind: PushKind::PSubscribe,
-                    data: vec![Value::BulkString(b"phonewave*".to_vec()), Value::Int(2)]
+                    data: vec![redis_value!("phonewave*"), redis_value!(2)]
                 }
             );
 
@@ -2418,7 +2340,7 @@ mod cluster_async {
                     push,
                     PushInfo {
                         kind: PushKind::SSubscribe,
-                        data: vec![Value::BulkString(b"sphonewave".to_vec()), Value::Int(1)]
+                        data: vec![redis_value!("sphonewave"), redis_value!(1)]
                     }
                 );
             }
@@ -2446,10 +2368,7 @@ mod cluster_async {
                 push,
                 PushInfo {
                     kind: PushKind::Message,
-                    data: vec![
-                        Value::BulkString(b"regular-phonewave".to_vec()),
-                        Value::BulkString(b"banana".to_vec()),
-                    ]
+                    data: vec![redis_value!("regular-phonewave"), redis_value!("banana"),]
                 }
             );
 
@@ -2463,9 +2382,9 @@ mod cluster_async {
                 PushInfo {
                     kind: PushKind::PMessage,
                     data: vec![
-                        Value::BulkString(b"phonewave*".to_vec()),
-                        Value::BulkString(b"phonewave-pattern".to_vec()),
-                        Value::BulkString(b"banana".to_vec()),
+                        redis_value!("phonewave*"),
+                        redis_value!("phonewave-pattern"),
+                        redis_value!("banana"),
                     ]
                 }
             );
@@ -2477,10 +2396,7 @@ mod cluster_async {
                     push,
                     PushInfo {
                         kind: PushKind::SMessage,
-                        data: vec![
-                            Value::BulkString(b"sphonewave".to_vec()),
-                            Value::BulkString(b"banana".to_vec()),
-                        ]
+                        data: vec![redis_value!("sphonewave"), redis_value!("banana"),]
                     }
                 );
             }
@@ -2564,10 +2480,7 @@ mod cluster_async {
                 push,
                 PushInfo {
                     kind: PushKind::Subscribe,
-                    data: vec![
-                        Value::BulkString(b"regular-phonewave".to_vec()),
-                        Value::Int(1)
-                    ]
+                    data: vec![redis_value!("regular-phonewave"), redis_value!(1)]
                 }
             );
             let _: () = pubsub_conn.unsubscribe("regular-phonewave").await.unwrap();
@@ -2576,10 +2489,7 @@ mod cluster_async {
                 push,
                 PushInfo {
                     kind: PushKind::Unsubscribe,
-                    data: vec![
-                        Value::BulkString(b"regular-phonewave".to_vec()),
-                        Value::Int(0)
-                    ]
+                    data: vec![redis_value!("regular-phonewave"), redis_value!(0)]
                 }
             );
 
@@ -2589,7 +2499,7 @@ mod cluster_async {
                 push,
                 PushInfo {
                     kind: PushKind::PSubscribe,
-                    data: vec![Value::BulkString(b"phonewave*".to_vec()), Value::Int(1)]
+                    data: vec![redis_value!("phonewave*"), redis_value!(1)]
                 }
             );
             let _: () = pubsub_conn.punsubscribe("phonewave*").await.unwrap();
@@ -2598,7 +2508,7 @@ mod cluster_async {
                 push,
                 PushInfo {
                     kind: PushKind::PUnsubscribe,
-                    data: vec![Value::BulkString(b"phonewave*".to_vec()), Value::Int(0)]
+                    data: vec![redis_value!("phonewave*"), redis_value!(0)]
                 }
             );
 
@@ -2609,7 +2519,7 @@ mod cluster_async {
                     push,
                     PushInfo {
                         kind: PushKind::SSubscribe,
-                        data: vec![Value::BulkString(b"sphonewave".to_vec()), Value::Int(1)]
+                        data: vec![redis_value!("sphonewave"), redis_value!(1)]
                     }
                 );
                 let _: () = pubsub_conn.sunsubscribe("sphonewave").await.unwrap();
@@ -2618,7 +2528,7 @@ mod cluster_async {
                     push,
                     PushInfo {
                         kind: PushKind::SUnsubscribe,
-                        data: vec![Value::BulkString(b"sphonewave".to_vec()), Value::Int(0)]
+                        data: vec![redis_value!("sphonewave"), redis_value!(0)]
                     }
                 );
             }
@@ -2694,8 +2604,8 @@ mod cluster_async {
                     PushInfo {
                         kind: PushKind::Subscribe,
                         data: vec![
-                            Value::BulkString(format!("regular-phonewave{i}").as_bytes().to_vec()),
-                            Value::Int(i)
+                            redis_value!(format!("regular-phonewave{i}")),
+                            redis_value!(i),
                         ]
                     }
                 );
@@ -2711,8 +2621,8 @@ mod cluster_async {
                     PushInfo {
                         kind: PushKind::Unsubscribe,
                         data: vec![
-                            Value::BulkString(format!("regular-phonewave{i}").as_bytes().to_vec()),
-                            Value::Int(3 - i)
+                            redis_value!(format!("regular-phonewave{i}")),
+                            redis_value!(3 - i),
                         ]
                     }
                 );
@@ -2728,10 +2638,7 @@ mod cluster_async {
                     push,
                     PushInfo {
                         kind: PushKind::PSubscribe,
-                        data: vec![
-                            Value::BulkString(format!("phonewave*{i}").as_bytes().to_vec()),
-                            Value::Int(i)
-                        ]
+                        data: vec![redis_value!(format!("phonewave*{i}")), redis_value!(i)]
                     }
                 );
             }
@@ -2746,10 +2653,7 @@ mod cluster_async {
                     push,
                     PushInfo {
                         kind: PushKind::PUnsubscribe,
-                        data: vec![
-                            Value::BulkString(format!("phonewave*{i}").as_bytes().to_vec()),
-                            Value::Int(3 - i)
-                        ]
+                        data: vec![redis_value!(format!("phonewave*{i}")), redis_value!(3 - i)]
                     }
                 );
             }
@@ -2765,10 +2669,7 @@ mod cluster_async {
                         push,
                         PushInfo {
                             kind: PushKind::SSubscribe,
-                            data: vec![
-                                Value::BulkString(format!("{{sphonewave}}{i}").as_bytes().to_vec()),
-                                Value::Int(i)
-                            ]
+                            data: vec![redis_value!(format!("{{sphonewave}}{i}")), redis_value!(i)]
                         }
                     );
                 }
@@ -2784,8 +2685,8 @@ mod cluster_async {
                         PushInfo {
                             kind: PushKind::SUnsubscribe,
                             data: vec![
-                                Value::BulkString(format!("{{sphonewave}}{i}").as_bytes().to_vec()),
-                                Value::Int(3 - i)
+                                redis_value!(format!("{{sphonewave}}{i}")),
+                                redis_value!(3 - i),
                             ]
                         }
                     );
@@ -2868,20 +2769,17 @@ mod cluster_async {
             assert_matches!(rx.try_recv(), Err(_));
             assert!(pushes.contains(&PushInfo {
                 kind: PushKind::Subscribe,
-                data: vec![
-                    Value::BulkString(b"regular-phonewave".to_vec()),
-                    Value::Int(1)
-                ]
+                data: vec![redis_value!("regular-phonewave"), redis_value!(1)]
             }));
             assert!(pushes.contains(&PushInfo {
                 kind: PushKind::PSubscribe,
-                data: vec![Value::BulkString(b"phonewave*".to_vec()), Value::Int(2)]
+                data: vec![redis_value!("phonewave*"), redis_value!(2)]
             }));
 
             if !is_redis_6 {
                 assert!(pushes.contains(&PushInfo {
                     kind: PushKind::SSubscribe,
-                    data: vec![Value::BulkString(b"sphonewave".to_vec()), Value::Int(1)]
+                    data: vec![redis_value!("sphonewave"), redis_value!(1)]
                 }));
             }
 
