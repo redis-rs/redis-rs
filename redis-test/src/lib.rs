@@ -162,6 +162,42 @@ impl IntoRedisValue for ServerError {
     }
 }
 
+/// Build [`Value`]s from a JSON-like notation
+///
+/// This macro handles:
+///
+/// * `u8`, `u16`, `u32`, `i8`, `i16`, `i32`, `i64`, `String`, `&str` and other types that implement [`IntoRedisValue`]
+/// * `true`, `false` - map to their corresponding [`Value::Boolean`]
+/// * `nil` - maps to [`Value::Nil`]
+/// * `ok`, `okay` - map to [`Value::Okay`]
+/// * `[element1, element2, ..., elementN]` - maps to [`Value::Array`]
+/// * `{key1: value1, key2: value2, ..., keyN: valueN]` - maps to [`Value::Map`]
+/// * `set:[element1, element2, ..., elementN]` - maps to [`Value::Set`] (wrap in `()` within complex structures)
+/// * `simple:"SomeString"` - maps to [`Value::SimpleString`] (wrap in `()` within complex structures)
+///
+/// # Example
+///
+/// ```rust
+/// use redis::Value;
+/// use redis_test::redis_value;
+///
+/// let actual = redis_value!([42, "foo", {true: nil}]);
+///
+/// let expected = Value::Array(vec![
+///   Value::Int(42),
+///   Value::BulkString("foo".as_bytes().to_vec()),
+///   Value::Map(vec![(Value::Boolean(true), Value::Nil)])
+/// ]);
+/// assert_eq!(actual, expected)
+/// ```
+#[macro_export]
+macro_rules! redis_value {
+    // Primitive conversion
+    ($e:expr) => {
+        $crate::IntoRedisValue::into_redis_value($e)
+    };
+}
+
 /// Helper trait for converting `redis::Cmd` and `redis::Pipeline` instances into
 /// encoded byte vectors.
 pub trait IntoRedisCmdBytes {
@@ -603,6 +639,82 @@ mod tests {
         let actual = server_error.clone().into_redis_value();
 
         assert_eq!(actual, Value::ServerError(server_error));
+    }
+
+    #[test]
+    fn redis_i8() {
+        assert_eq!(redis_value!(42_i8), Value::Int(42));
+    }
+
+    #[test]
+    fn redis_i16() {
+        assert_eq!(redis_value!(42_i16), Value::Int(42));
+    }
+
+    #[test]
+    fn redis_i32() {
+        assert_eq!(redis_value!(42_i32), Value::Int(42));
+    }
+
+    #[test]
+    fn redis_i64() {
+        assert_eq!(redis_value!(42_i64), Value::Int(42));
+    }
+
+    #[test]
+    fn redis_u8() {
+        assert_eq!(redis_value!(42_u8), Value::Int(42));
+    }
+
+    #[test]
+    fn redis_u16() {
+        assert_eq!(redis_value!(42_u16), Value::Int(42));
+    }
+
+    #[test]
+    fn redis_u32() {
+        assert_eq!(redis_value!(42_u32), Value::Int(42));
+    }
+
+    #[test]
+    fn redis_string() {
+        let actual = redis_value!("foo".to_string());
+
+        let expected = Value::BulkString(vec![
+            0x66, /* f */
+            0x6f, /* o */
+            0x6f, /* o */
+        ]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn redis_str_ref() {
+        let actual = redis_value!("foo");
+
+        let expected = Value::BulkString(vec![
+            0x66, /* f */
+            0x6f, /* o */
+            0x6f, /* o */
+        ]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn redis_true() {
+        assert_eq!(redis_value!(true), Value::Boolean(true));
+    }
+
+    #[test]
+    fn redis_false() {
+        assert_eq!(redis_value!(false), Value::Boolean(false));
+    }
+
+    #[test]
+    fn redis_value() {
+        let actual = Value::Int(42);
+
+        assert_eq!(redis_value!(actual), Value::Int(42));
     }
 
     #[test]
