@@ -1,7 +1,7 @@
 //! Tests for connection-layer behavior when streaming credentials providers fail.
 //!
-//! These tests focus on how `MultiplexedConnection` handles credentials provider failures,
-//! as opposed to:
+//! These tests focus on how connections handle credentials provider failures,
+//! for both `MultiplexedConnection` (single-node) and `ClusterConnection` (cluster), as opposed to:
 //! - `entra_id.rs` tests → Provider internals (token fetching, retry logic)
 //! - `test_acl.rs` tests → Authentication mechanisms over time (token rotation, ACL operations)
 //! - `test_auth.rs` tests → Integration tests for Entra ID authentication
@@ -215,5 +215,45 @@ mod credentials_provider_failures_tests {
             err.to_string().contains("re-authentication failure"),
             "Error message should mention re-authentication failure: {err}"
         );
+    }
+
+    #[cfg(feature = "cluster-async")]
+    mod cluster {
+        use super::*;
+        use redis::cluster::ClusterClientBuilder;
+
+        #[tokio::test]
+        async fn test_cluster_connection_fails_when_credentials_provider_returns_error() {
+            init_logger();
+            let cluster = TestClusterContext::new_with_cluster_client_builder(
+                |builder: ClusterClientBuilder| {
+                    builder.set_credentials_provider(ImmediatelyFailingCredentialsProvider)
+                },
+            );
+
+            let result = cluster.client.get_async_connection().await;
+
+            assert!(
+                result.is_err(),
+                "Cluster connection should fail when the credentials provider returns an error."
+            );
+        }
+
+        #[tokio::test]
+        async fn test_cluster_connection_fails_when_credentials_stream_is_empty() {
+            init_logger();
+            let cluster = TestClusterContext::new_with_cluster_client_builder(
+                |builder: ClusterClientBuilder| {
+                    builder.set_credentials_provider(EmptyStreamCredentialsProvider)
+                },
+            );
+
+            let result = cluster.client.get_async_connection().await;
+
+            assert!(
+                result.is_err(),
+                "Cluster connection should fail when the credentials stream closes without yielding."
+            );
+        }
     }
 }

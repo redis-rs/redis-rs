@@ -1003,4 +1003,64 @@ mod token_based_authentication_acl_tests {
 
         println!("Connection rendered unusable test completed successfully!");
     }
+
+    #[cfg(feature = "cluster-async")]
+    mod cluster {
+        use super::*;
+        use redis::cluster::ClusterClientBuilder;
+
+        #[tokio::test]
+        async fn test_cluster_auth_with_mock_streaming_credentials_provider() {
+            init_logger();
+            let cluster = TestClusterContext::new_with_cluster_client_builder(
+                |builder: ClusterClientBuilder| {
+                    let mut mock_provider = MockStreamingCredentialsProvider::new();
+                    mock_provider.start();
+                    builder.set_credentials_provider(mock_provider)
+                },
+            );
+
+            let mut admin_con = {
+                let admin_client =
+                    redis::cluster::ClusterClient::new(cluster.nodes.clone()).unwrap();
+                admin_client.get_async_connection().await.unwrap()
+            };
+
+            let expected_username = OID_CLAIM_VALUE;
+            redis::cmd("ACL")
+                .arg("SETUSER")
+                .arg(expected_username)
+                .arg("on")
+                .arg(format!(">{}", MOCKED_TOKEN.as_str()))
+                .arg("~*")
+                .arg("+@all")
+                .exec_async(&mut admin_con)
+                .await
+                .expect("ACL SETUSER should succeed");
+
+            let mut connection = cluster.async_connection().await;
+
+            let current_user: String = redis::cmd("ACL")
+                .arg("WHOAMI")
+                .query_async(&mut connection)
+                .await
+                .unwrap();
+            assert_eq!(current_user, expected_username);
+
+            redis::cmd("SET")
+                .arg("test_key")
+                .arg("test_value")
+                .exec_async(&mut connection)
+                .await
+                .expect("SET should succeed with credentials provider");
+
+            let result: String = redis::cmd("GET")
+                .arg("test_key")
+                .query_async(&mut connection)
+                .await
+                .expect("GET should succeed with credentials provider");
+
+            assert_eq!(result, "test_value");
+        }
+    }
 }
