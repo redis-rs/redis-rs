@@ -1498,7 +1498,7 @@ where
     }
     #[cfg(feature = "token-based-authentication")]
     if let Some(credentials_provider) = &params.credentials_provider {
-        config.credentials_provider = Some(credentials_provider.clone());
+        config = config.set_credentials_provider_internal(credentials_provider.clone());
     }
     let mut conn = match C::connect_with_config(info, config).await {
         Ok(conn) => conn,
