@@ -57,6 +57,11 @@ pub struct TlsConnParams {
 
 static DEFAULT_PORT: u16 = 6379;
 
+/// Default library name to connect with
+const DEFAULT_CLIENT_SETINFO_LIB_NAME: &str = "redis-rs";
+/// Default library version to connect with
+const DEFAULT_CLIENT_SETINFO_LIB_VER: &str = env!("CARGO_PKG_VERSION");
+
 #[inline(always)]
 fn connect_tcp(addr: (&str, u16), tcp_settings: &TcpSettings) -> io::Result<TcpStream> {
     let socket = TcpStream::connect(addr)?;
@@ -1342,13 +1347,13 @@ pub(crate) fn connection_setup_pipeline(
             .cmd("CLIENT")
             .arg("SETINFO")
             .arg("LIB-NAME")
-            .arg("redis-rs")
+            .arg(DEFAULT_CLIENT_SETINFO_LIB_NAME)
             .ignore();
         pipeline
             .cmd("CLIENT")
             .arg("SETINFO")
             .arg("LIB-VER")
-            .arg(env!("CARGO_PKG_VERSION"))
+            .arg(DEFAULT_CLIENT_SETINFO_LIB_VER)
             .ignore();
     }
 
