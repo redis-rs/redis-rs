@@ -1,6 +1,6 @@
 #[cfg(feature = "cluster-async")]
 use crate::aio::AsyncPushSender;
-#[cfg(feature = "token-based-authentication")]
+#[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
 use crate::auth::StreamingCredentialsProvider;
 #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
 use crate::caching::{CacheConfig, CacheManager};
@@ -50,7 +50,7 @@ struct BuilderParams {
     async_dns_resolver: Option<Arc<dyn AsyncDNSResolver>>,
     #[cfg(feature = "cache-aio")]
     cache_config: Option<CacheConfig>,
-    #[cfg(feature = "token-based-authentication")]
+    #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
     credentials_provider: Option<std::sync::Arc<dyn StreamingCredentialsProvider>>,
 }
 
@@ -499,7 +499,7 @@ impl ClusterClientBuilder {
     ///
     /// Each node connection will independently subscribe to the provider and automatically
     /// re-authenticate when new credentials are emitted.
-    #[cfg(feature = "token-based-authentication")]
+    #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
     pub fn set_credentials_provider<P>(mut self, provider: P) -> ClusterClientBuilder
     where
         P: StreamingCredentialsProvider + 'static,

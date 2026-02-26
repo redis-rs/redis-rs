@@ -237,6 +237,9 @@ mod credentials_provider_failures_tests {
                 result.is_err(),
                 "Cluster connection should fail when the credentials provider returns an error."
             );
+
+            let err = result.err().unwrap();
+            assert_eq!(err.kind(), ErrorKind::AuthenticationFailed);
         }
 
         #[tokio::test]
@@ -254,6 +257,9 @@ mod credentials_provider_failures_tests {
                 result.is_err(),
                 "Cluster connection should fail when the credentials stream closes without yielding."
             );
+
+            let err = result.err().unwrap();
+            assert_eq!(err.kind(), ErrorKind::AuthenticationFailed);
         }
     }
 }
