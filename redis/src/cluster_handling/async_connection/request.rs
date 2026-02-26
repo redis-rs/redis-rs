@@ -23,7 +23,7 @@ use super::{
     routing::{InternalRoutingInfo, InternalSingleNodeRouting},
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(super) enum CmdArg<C> {
     Cmd {
         cmd: Arc<Cmd>,
@@ -37,6 +37,7 @@ pub(super) enum CmdArg<C> {
     },
 }
 
+#[derive(Debug)]
 pub(super) enum Retry<C> {
     Immediately {
         request: PendingRequest<C>,
@@ -126,26 +127,43 @@ pin_project! {
 pub(super) enum ResultExpectation {
     // request was received from the user, and so must continue as long as the sender is alive
     External(oneshot::Sender<RedisResult<Response>>),
-    // request was created internally, and must continue regardless of the response.
-    Internal,
+    // request was created internally, and must continue regardless of the response. This is
+    // used in recovery handling, and so it shouldn't trigger recovery
+    InternalDoNotRecover,
+}
+
+impl std::fmt::Debug for ResultExpectation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResultExpectation::External(_) => write!(f, "ResultExpectation::External"),
+            ResultExpectation::InternalDoNotRecover => {
+                write!(f, "ResultExpectation::InternalDoNotRecover")
+            }
+        }
+    }
 }
 
 impl ResultExpectation {
     pub(super) fn send(self, result: RedisResult<Response>) {
         let _ = match self {
             ResultExpectation::External(sender) => sender.send(result),
-            ResultExpectation::Internal => Ok(()),
+            ResultExpectation::InternalDoNotRecover => Ok(()),
         };
     }
 
     pub(super) fn is_closed(&self) -> bool {
         match self {
             ResultExpectation::External(sender) => sender.is_closed(),
-            ResultExpectation::Internal => false,
+            ResultExpectation::InternalDoNotRecover => false,
         }
+    }
+
+    fn should_recover(&self) -> bool {
+        !matches!(self, ResultExpectation::InternalDoNotRecover)
     }
 }
 
+#[derive(Debug)]
 pub(super) struct PendingRequest<C> {
     pub(super) retry: u32,
     pub(super) sender: ResultExpectation,
@@ -161,7 +179,7 @@ pin_project! {
     }
 }
 
-pub(crate) fn choose_response<C>(
+fn choose_response_internal<C>(
     result: OperationResult,
     mut request: PendingRequest<C>,
     retry_params: &RetryParams,
@@ -281,6 +299,22 @@ pub(crate) fn choose_response<C>(
             PollFlushAction::None,
         ),
     }
+}
+
+pub(crate) fn choose_response<C>(
+    result: OperationResult,
+    request: PendingRequest<C>,
+    retry_params: &RetryParams,
+) -> (Option<Retry<C>>, PollFlushAction) {
+    let should_recover = request.sender.should_recover();
+    let (retry, action) = choose_response_internal(result, request, retry_params);
+
+    let action = if should_recover {
+        action
+    } else {
+        PollFlushAction::None
+    };
+    (retry, action)
 }
 
 impl<C> Future for Request<C> {
@@ -457,7 +491,7 @@ mod tests {
     }
 
     #[test]
-    fn never_retry_on_fanout_operation_target() {
+    fn never_retry_on_fan_out_operation_target() {
         let (request, mut receiver) = request_and_receiver(0);
         let err_string = format!("-MOVED 123 {ADDRESS}\r\n");
         let result = (OperationTarget::FanOut, single_result(&err_string));
@@ -549,5 +583,24 @@ mod tests {
             panic!("Expected retry");
         };
         assert_eq!(next, PollFlushAction::ReconnectFromInitialConnections);
+    }
+
+    #[test]
+    fn internal_requests_should_not_trigger_poll_flush_actions() {
+        let retry_params = RetryParams::default();
+        let (mut request, mut receiver) = request_and_receiver(0);
+        request.sender = ResultExpectation::InternalDoNotRecover;
+        let err_string = format!("-MOVED 123 {ADDRESS}\r\n");
+        let result = (
+            OperationTarget::Node {
+                address: ADDRESS.into(),
+            },
+            single_result(&err_string),
+        );
+        let (retry, next) = choose_response(result, request, &retry_params);
+
+        assert_matches!(receiver.try_recv(), Err(_));
+        assert!(matches!(retry, Some(super::Retry::Immediately { .. })));
+        assert_eq!(next, PollFlushAction::None);
     }
 }
