@@ -192,7 +192,31 @@ impl IntoRedisValue for ServerError {
 /// ```
 #[macro_export]
 macro_rules! redis_value {
-    // Primitive conversion
+    // Simple strings
+    (simple:$e:tt) => {
+        redis::Value::SimpleString($e.to_string())
+    };
+
+    // Nil
+    (nil) => {
+        redis::Value::Nil
+    };
+
+    // Okay
+    (ok) => {
+        $crate::redis_value!(okay)
+    };
+
+    (okay) => {
+        redis::Value::Okay
+    };
+
+    // Unwrap extra context-isolating parentheses
+    (($context:tt:$e:tt)) => {
+        $crate::redis_value!($context:$e)
+    };
+
+    // Fallback to primitive conversion
     ($e:expr) => {
         $crate::IntoRedisValue::into_redis_value($e)
     };
@@ -639,6 +663,29 @@ mod tests {
         let actual = server_error.clone().into_redis_value();
 
         assert_eq!(actual, Value::ServerError(server_error));
+    }
+
+    #[test]
+    fn redis_simple_direct() {
+        assert_eq!(
+            redis_value!(simple:"foo"),
+            Value::SimpleString("foo".to_string())
+        );
+    }
+
+    #[test]
+    fn redis_nil() {
+        assert_eq!(redis_value!(nil), Value::Nil);
+    }
+
+    #[test]
+    fn redis_ok() {
+        assert_eq!(redis_value!(ok), Value::Okay);
+    }
+
+    #[test]
+    fn redis_okay() {
+        assert_eq!(redis_value!(okay), Value::Okay);
     }
 
     #[test]
