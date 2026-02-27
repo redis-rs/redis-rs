@@ -94,7 +94,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     future::Future,
-    io, mem,
+    io,
     ops::Deref,
     pin::Pin,
     sync::{Arc, Mutex},
@@ -438,7 +438,7 @@ type ConnectionMap<C> = HashMap<ArcStr, C>;
 struct InnerCore<C> {
     conn_lock: RwLock<(ConnectionMap<C>, SlotMap)>,
     cluster_params: ClusterParams,
-    pending_requests: Mutex<Vec<PendingRequest<C>>>,
+    pending_requests_tx: mpsc::UnboundedSender<PendingRequest<C>>,
     initial_nodes: Vec<ConnectionInfo>,
     subscription_tracker: Option<Mutex<SubscriptionTracker>>,
 }
@@ -533,7 +533,9 @@ where
             }
         };
         drop(read_guard);
-        self.pending_requests.lock().unwrap().extend(requests);
+        for request in requests {
+            let _ = self.pending_requests_tx.send(request);
+        }
 
         (
             OperationTarget::FanOut,
@@ -949,7 +951,9 @@ where
                 },
             }
         });
-        self.pending_requests.lock().unwrap().extend(requests);
+        for request in requests {
+            let _ = self.pending_requests_tx.send(request);
+        }
     }
 }
 
@@ -961,6 +965,7 @@ struct ClusterConnInner<C> {
     state: ConnectionState,
     #[allow(clippy::complexity)]
     in_flight_requests: stream::FuturesUnordered<Pin<Box<Request<C>>>>,
+    pending_requests_rx: mpsc::UnboundedReceiver<PendingRequest<C>>,
     refresh_error: Option<RedisError>,
 }
 
@@ -1032,13 +1037,15 @@ where
         } else {
             None
         };
+
+        let (pending_requests_tx, pending_requests_rx) = mpsc::unbounded_channel();
         let inner = Arc::new(InnerCore {
             conn_lock: RwLock::new((
                 Default::default(),
                 SlotMap::new(cluster_params.read_from_replicas),
             )),
             cluster_params,
-            pending_requests: Mutex::new(Vec::new()),
+            pending_requests_tx,
             initial_nodes: initial_nodes.to_vec(),
             subscription_tracker,
         });
@@ -1046,6 +1053,7 @@ where
         let mut inner = ClusterConnInner {
             inner: core.clone(),
             in_flight_requests: Default::default(),
+            pending_requests_rx,
             refresh_error: None,
             state: ConnectionState::PollComplete,
         };
@@ -1181,7 +1189,7 @@ where
     fn handle_retries(&mut self, request_handling: Option<Retry<C>>) {
         match request_handling {
             Some(Retry::MoveToPending { request }) => {
-                self.inner.pending_requests.lock().unwrap().push(request);
+                let _ = self.inner.pending_requests_tx.send(request);
             }
             Some(Retry::Immediately { request }) => {
                 let future = self.inner.clone().try_request(request.cmd.clone());
@@ -1213,27 +1221,27 @@ where
     fn poll_complete(&mut self, cx: &mut task::Context<'_>) -> Poll<PollFlushAction> {
         let mut poll_flush_action = PollFlushAction::None;
 
-        let mut pending_requests_guard = self.inner.pending_requests.lock().unwrap();
-        if !pending_requests_guard.is_empty() {
-            let mut pending_requests = mem::take(&mut *pending_requests_guard);
-            for request in pending_requests.drain(..) {
-                // Drop the request if no-one is waiting for a response to free up resources for
-                // requests callers care about (load shedding). It will be ambiguous whether the
-                // request actually goes through regardless.
-                if request.sender.is_closed() {
-                    continue;
-                }
+        loop {
+            let request = match self.pending_requests_rx.try_recv() {
+                Ok(request) => request,
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+                | Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+            };
 
-                let future = self.inner.clone().try_request(request.cmd.clone()).boxed();
-                self.in_flight_requests.push(Box::pin(Request {
-                    retry_params: self.inner.cluster_params.retry_params.clone(),
-                    request: Some(request),
-                    future: RequestState::Future { future },
-                }));
+            // Drop the request if no-one is waiting for a response to free up resources for
+            // requests callers care about (load shedding). It will be ambiguous whether the
+            // request actually goes through regardless.
+            if request.sender.is_closed() {
+                continue;
             }
-            *pending_requests_guard = pending_requests;
+
+            let future = self.inner.clone().try_request(request.cmd.clone()).boxed();
+            self.in_flight_requests.push(Box::pin(Request {
+                retry_params: self.inner.cluster_params.retry_params.clone(),
+                request: Some(request),
+                future: RequestState::Future { future },
+            }));
         }
-        drop(pending_requests_guard);
 
         loop {
             let (request_handling, next) =
@@ -1270,7 +1278,7 @@ where
         }
         if inflight_requests.is_empty() {
             // Use a separate binding for this to release the lock guard before calling send.
-            let maybe_request = self.inner.pending_requests.lock().unwrap().pop();
+            let maybe_request = self.pending_requests_rx.try_recv().ok();
             if let Some(request) = maybe_request {
                 inflight_requests.push((request, self.inner.cluster_params.retry_params.clone()));
             }
@@ -1350,15 +1358,11 @@ where
         trace!("start_send");
         let Message { cmd, sender } = msg;
 
-        self.inner
-            .pending_requests
-            .lock()
-            .unwrap()
-            .push(PendingRequest {
-                retry: 0,
-                sender: request::ResultExpectation::External(sender),
-                cmd,
-            });
+        let _ = self.inner.pending_requests_tx.send(PendingRequest {
+            retry: 0,
+            sender: request::ResultExpectation::External(sender),
+            cmd,
+        });
         Ok(())
     }
 
