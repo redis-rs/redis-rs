@@ -10,7 +10,6 @@ use crate::cmd::{cmd, pipe};
 use crate::pipeline::Pipeline;
 use crate::{FromRedisValue, RedisError, ToRedisArgs};
 use futures_util::future::select_ok;
-use log::trace;
 use std::future::Future;
 
 pub(crate) async fn connect_simple<T: RedisRuntime>(
@@ -77,26 +76,9 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
 ///
 /// The provided closure may be executed multiple times if the transaction fails due to
 /// watched keys being modified between WATCH and EXEC. Any side effects in the closure
-/// should account for possible multiple executions.
-///
-/// # Arguments
-///
-/// * `connection` - A connection implementing [`ConnectionLike`](crate::aio::ConnectionLike) + Clone
-/// * `keys` - Array of keys to watch for changes during the transaction
-/// * `func` - Closure that implements the transaction logic. Will receive a cloned connection
-///   and an atomic pipeline (pre-configured with `MULTI`/`EXEC`). Should return
-///   `Result<Option<T>, RedisError>` where:
-///   - `None` indicates the transaction should be retried
-///   - `Some(T)` contains the final result if successful
-///   - `Err` aborts the transaction
-///
-/// # Type Parameters
-///
-/// * `C` - Connection type implementing ConnectionLike + Clone
-/// * `K` - Key type implementing ToRedisArgs
-/// * `T` - Return value type implementing FromRedisValue
-/// * `F` - Closure type taking (C, Pipeline) and returning Fut
-/// * `Fut` - Future returning Result<Option<T>, RedisError>
+/// should account for possible multiple executions. The closure should return `Ok(None)` to indicate a transaction failure and to
+/// retry (this will happen automatically if the last call in the closure is to run the transaction), or `Err(err)`` to abort the
+/// transaction with an error. A successful transaction should return `Ok(Some(value))` with the desired result from the EXEC command.
 ///
 /// # Examples
 ///
@@ -130,25 +112,40 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
 ///
 /// ## Warning: Concurrent Transactions on Multiplexed Connections
 ///
-/// When using a multiplexed connection (e.g. [`ConnectionManager`](crate::aio::ConnectionManager)),
+/// When using a multiplexed connection (e.g. async connection types in this crate),
 /// cloning shares the underlying channel. Running concurrent transactions on clones of
 /// the same multiplexed connection is **unsafe**: the `WATCH`/`MULTI`/`EXEC` sequence
-/// from one transaction may interleave with commands from another, causing data
-/// corruption. Ensure at most one transaction is active on a given multiplexed
+/// from one transaction may interleave with commands from another, causing potential
+/// unexpected behavior. Ensure at most one transaction is active on a given multiplexed
 /// connection at a time.
+///
+/// ## Warning: Transactions on cluster connections
+///
+/// A cluster connection is a collection of multiple underlying connections to different
+/// cluster nodes. Running a transaction on a cluster connection is only safe if all the
+/// keys being watched and modified in the transaction are guaranteed to be on the same
+/// cluster node, since Redis transactions cannot span multiple nodes. It is the caller's
+/// responsibility to ensure this condition is met when using `transaction_async` with a
+/// cluster connection.
 ///
 /// For more details on Redis transactions, see the [Redis documentation](https://redis.io/topics/transactions)
 pub async fn transaction_async<
     C: ConnectionLike + Clone,
     K: ToRedisArgs,
     T: FromRedisValue,
-    F: Fn(C, Pipeline) -> Fut,
+    F: FnMut(C, Pipeline) -> Fut,
     Fut: Future<Output = Result<Option<T>, RedisError>>,
 >(
     mut connection: C,
     keys: &[K],
-    func: F,
+    mut func: F,
 ) -> Result<T, RedisError> {
+    if keys.is_empty() {
+        fail!((
+            crate::errors::ErrorKind::InvalidClientConfig,
+            "At least one key must be provided to watch for transactions"
+        ));
+    }
     loop {
         cmd("WATCH").arg(keys).exec_async(&mut connection).await?;
 
@@ -157,7 +154,6 @@ pub async fn transaction_async<
 
         match response {
             Ok(None) => {
-                trace!("Transaction failed, retrying");
                 // WATCH is automatically cleared by a failed EXEC, so loop back directly.
                 // Send UNWATCH as a best-effort safety net for any edge cases where EXEC
                 // was not reached (e.g. the closure returned None before calling query_async).

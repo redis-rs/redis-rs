@@ -170,7 +170,6 @@ aio = [
   "tokio-util/codec",
   "combine/tokio",
   "dep:cfg-if",
-  "dep:log",
 ]
 
 [dev-dependencies]
