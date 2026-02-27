@@ -1920,7 +1920,7 @@ mod basic_async {
                             )));
                         }
 
-                        // this triggers a
+                        // this triggers a retry of the transaction
                         Ok(None)
                     }
                 },

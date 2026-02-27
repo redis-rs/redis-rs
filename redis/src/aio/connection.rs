@@ -77,7 +77,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
 /// The provided closure may be executed multiple times if the transaction fails due to
 /// watched keys being modified between WATCH and EXEC. Any side effects in the closure
 /// should account for possible multiple executions. The closure should return `Ok(None)` to indicate a transaction failure and to
-/// retry (this will happen automatically if the last call in the closure is to run the transaction), or `Err(err)`` to abort the
+/// retry (this will happen automatically if the last call in the closure is to run the transaction), or `Err(err)` to abort the
 /// transaction with an error. A successful transaction should return `Ok(Some(value))` with the desired result from the EXEC command.
 ///
 /// # Examples
@@ -114,9 +114,9 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
 ///
 /// When using a multiplexed connection (e.g. async connection types in this crate),
 /// cloning shares the underlying channel. Running concurrent transactions on clones of
-/// the same multiplexed connection is **unsafe**: the `WATCH`/`MULTI`/`EXEC` sequence
-/// from one transaction may interleave with commands from another, causing potential
-/// unexpected behavior. Ensure at most one transaction is active on a given multiplexed
+/// the same multiplexed connection could lead to unexpected behavior: the
+/// `WATCH`/`MULTI`/`EXEC` sequence from one transaction may interleave with commands from
+/// another. Ensure at most one transaction is active on a given multiplexed
 /// connection at a time.
 ///
 /// ## Warning: Transactions on cluster connections
