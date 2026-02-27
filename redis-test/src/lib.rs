@@ -193,17 +193,17 @@ impl IntoRedisValue for ServerError {
 #[macro_export]
 macro_rules! redis_value {
     // Map of elements
-    ({$($k:tt: $v:tt),*}) => {
+    ({$($k:tt: $v:tt),* $(,)*}) => {
         redis::Value::Map(vec![$(($crate::redis_value!($k), $crate::redis_value!($v))),*])
     };
 
     // Array of elements
-    ([$($e:tt),*]) => {
+    ([$($e:tt),* $(,)*]) => {
         redis::Value::Array(vec![$($crate::redis_value!($e)),*])
     };
 
     // Set of elements
-    (set:[$($e:tt),*]) => {
+    (set:[$($e:tt),* $(,)*]) => {
         redis::Value::Set(vec![$($crate::redis_value!($e)),*])
     };
 
@@ -801,6 +801,14 @@ mod tests {
     }
 
     #[test]
+    fn redis_array_single_entry_trailing_comma() {
+        let actual = redis_value!([42,]);
+
+        let expected = Value::Array(vec![Value::Int(42)]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn redis_array_multiple_primitive_entries() {
         let last_arg = Value::Boolean(true); // pass the last arg in as variable
         let actual = redis_value!([42, "foo", nil, last_arg]);
@@ -820,7 +828,7 @@ mod tests {
     #[test]
     fn redis_array_multiple_entries() {
         let last_arg = Value::Boolean(true); // pass the last arg in as variable
-        let actual = redis_value!([42, ["foo", nil], last_arg]);
+        let actual = redis_value!([42, ["foo", nil,], last_arg]);
 
         let expected1 = Value::Int(42);
         let expected21 = Value::BulkString(vec![
@@ -849,6 +857,14 @@ mod tests {
     }
 
     #[test]
+    fn redis_set_single_entry_trailing_comma() {
+        let actual = redis_value!(set:[42,]);
+
+        let expected = Value::Set(vec![Value::Int(42)]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn redis_set_multiple_primitive_entries() {
         let last_arg = Value::Boolean(true); // pass the last arg in as variable
         let actual = redis_value!(set:[42, "foo", nil, last_arg]);
@@ -868,7 +884,7 @@ mod tests {
     #[test]
     fn redis_set_multiple_entries() {
         let last_arg = Value::Boolean(true); // pass the last arg in as variable
-        let actual = redis_value!(set:[42, (set:["foo", nil]), last_arg]);
+        let actual = redis_value!(set:[42, (set:["foo", nil,]), last_arg]);
 
         let expected1 = Value::Int(42);
         let expected21 = Value::BulkString(vec![
@@ -897,6 +913,14 @@ mod tests {
     }
 
     #[test]
+    fn redis_map_single_entry_trailing_comma() {
+        let actual = redis_value!({42: true,});
+
+        let expected = Value::Map(vec![(Value::Int(42), Value::Boolean(true))]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn redis_map_multiple_primitive_entries() {
         let actual = redis_value!({42: true, nil: "foo"});
 
@@ -915,7 +939,7 @@ mod tests {
 
     #[test]
     fn redis_map_multiple_entries() {
-        let actual = redis_value!({[42, false]: {true: [23, 4711]}, nil: "foo"});
+        let actual = redis_value!({[42, false]: {true: [23, 4711],}, nil: "foo"});
 
         let expected1_key = Value::Array(vec![Value::Int(42), Value::Boolean(false)]);
         let expected1_value_key = Value::Boolean(true);
