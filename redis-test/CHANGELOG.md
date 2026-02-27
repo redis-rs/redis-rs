@@ -1,3 +1,7 @@
+### 1.0.2 (2026-02-27)
+
+* Add redis! macro to support building Values ([#1966](https://github.com/redis-rs/redis-rs/pull/1966) by @somechris)
+
 ### 1.0.1 (2025-12-24)
 
 * MockRedisConnection with cosumation assert ([#1898](https://github.com/redis-rs/redis-rs/pull/1898) by @meierfra-ergon)

@@ -2167,7 +2167,7 @@ dependencies = [
 
 [[package]]
 name = "redis-test"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "bytes",
  "futures",
