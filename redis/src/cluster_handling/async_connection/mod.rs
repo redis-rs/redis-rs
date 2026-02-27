@@ -702,8 +702,12 @@ where
                     .inspect(|res| {
                         if !matches!(res, Value::ServerError(_)) {
                             if let Some(tracker) = &self.subscription_tracker {
-                                let mut tracker = tracker.lock().unwrap();
-                                tracker.update_with_cmd(cmd.as_ref());
+                                if let Some((action, args)) =
+                                    SubscriptionTracker::to_request(cmd.as_ref())
+                                {
+                                    let mut tracker = tracker.lock().unwrap();
+                                    tracker.update_with_request(action, args);
+                                }
                             }
                         }
                     })
@@ -739,10 +743,21 @@ where
                         } else {
                             res
                         };
-                        for (index, cmd) in pipeline.cmd_iter().enumerate() {
+                        let mut iterator = pipeline
+                            .cmd_iter()
+                            .enumerate()
+                            .flat_map(|(index, cmd)| {
+                                if matches!(res[index], Value::ServerError(_)) {
+                                    None
+                                } else {
+                                    SubscriptionTracker::to_request(cmd)
+                                }
+                            })
+                            .peekable();
+                        if iterator.peek().is_some() {
                             let mut tracker = tracker.lock().unwrap();
-                            if !matches!(res[index], Value::ServerError(_)) {
-                                tracker.update_with_cmd(cmd);
+                            for (action, args) in iterator {
+                                tracker.update_with_request(action, args);
                             }
                         }
                     })
