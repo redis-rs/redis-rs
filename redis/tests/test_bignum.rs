@@ -5,6 +5,7 @@
 ))]
 use assert_matches::assert_matches;
 use redis::{FromRedisValue, ToRedisArgs, Value};
+use redis_test::redis_value;
 use std::str::FromStr;
 
 fn test<T>(content: &str)
@@ -17,16 +18,16 @@ where
         + std::fmt::Debug,
     <T as FromStr>::Err: std::fmt::Debug,
 {
-    let v = T::from_redis_value_ref(&Value::BulkString(Vec::from(content)));
+    let v = T::from_redis_value_ref(&redis_value!(content));
     assert_eq!(v, Ok(T::from_str(content).unwrap()));
 
     let arg = ToRedisArgs::to_redis_args(&v.unwrap());
     assert_eq!(arg[0], Vec::from(content));
 
-    let v = T::from_redis_value_ref(&Value::Int(0));
+    let v = T::from_redis_value_ref(&redis_value!(0));
     assert_eq!(v.unwrap(), T::from(0u32));
 
-    let v = T::from_redis_value_ref(&Value::Int(42));
+    let v = T::from_redis_value_ref(&redis_value!(42));
     assert_eq!(v.unwrap(), T::from(42u32));
 
     let v = T::from_redis_value_ref(&Value::Okay);

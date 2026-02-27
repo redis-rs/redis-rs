@@ -15,6 +15,7 @@ mod basic_async {
         RedisConnectionInfo, RedisError, RedisResult, ScanOptions, ServerErrorKind, Value,
         aio::ConnectionLike, cmd, pipe,
     };
+    use redis_test::redis_value;
     #[cfg(feature = "json")]
     use redis_test::server::Module;
     use redis_test::server::{redis_settings, use_protocol};
@@ -391,15 +392,9 @@ mod basic_async {
             .await
             .unwrap();
 
-        assert_eq!(result.0.unwrap(), Value::SimpleString("PONG".to_string()));
-        assert_eq!(
-            result.2.unwrap(),
-            Value::BulkString("\"value\"".as_bytes().to_vec())
-        );
-        assert_eq!(
-            result.4.unwrap(),
-            Value::BulkString("142".as_bytes().to_vec())
-        );
+        assert_eq!(result.0.unwrap(), redis_value!(simple:"PONG"));
+        assert_eq!(result.2.unwrap(), redis_value!("\"value\""));
+        assert_eq!(result.4.unwrap(), redis_value!("142"));
 
         assert_eq!(result.1.unwrap_err().code(), Some("Existing"));
         assert_eq!(
@@ -428,14 +423,8 @@ mod basic_async {
             .await
             .unwrap();
 
-        assert_eq!(
-            result[0].clone().unwrap(),
-            Value::SimpleString("PONG".to_string())
-        );
-        assert_eq!(
-            result[2].clone().unwrap(),
-            Value::BulkString("142".as_bytes().to_vec())
-        );
+        assert_eq!(result[0].clone().unwrap(), redis_value!(simple:"PONG"));
+        assert_eq!(result[2].clone().unwrap(), redis_value!("142"));
 
         assert_eq!(
             result[1].clone().unwrap_err().kind(),
@@ -1209,7 +1198,7 @@ mod basic_async {
                 .await
                 .unwrap();
 
-            assert_eq!(results.pop().unwrap(), Value::Int(1));
+            assert_eq!(results.pop().unwrap(), redis_value!(1));
             assert_matches!(results.pop().unwrap().extract_error(), Err(_));
         }
 
@@ -1245,8 +1234,8 @@ mod basic_async {
                 assert_eq!(
                     push.data,
                     vec![
-                        Value::BulkString("phonewave".as_bytes().to_vec()),
-                        Value::BulkString(format!("banana {i}").into_bytes())
+                        redis_value!("phonewave"),
+                        redis_value!(format!("banana {i}")),
                     ]
                 );
             }
@@ -1261,10 +1250,7 @@ mod basic_async {
             assert_eq!(push.kind, PushKind::Message);
             assert_eq!(
                 push.data,
-                vec![
-                    Value::BulkString("phonewave".as_bytes().to_vec()),
-                    Value::BulkString("banana!".as_bytes().to_vec())
-                ]
+                vec![redis_value!("phonewave"), redis_value!("banana!")]
             );
 
             //Giving none for channel id should unsubscribe all subscriptions from that channel and send unsubcribe command to server.
@@ -1346,34 +1332,19 @@ mod basic_async {
 
             let push = rx.recv().await.unwrap();
             assert_eq!(push.kind, PushKind::Subscribe);
-            assert_eq!(
-                push.data,
-                vec![Value::BulkString(b"phonewave".to_vec()), Value::Int(1)]
-            );
+            assert_eq!(push.data, vec![redis_value!("phonewave"), redis_value!(1)]);
             let push = rx.recv().await.unwrap();
             assert_eq!(push.kind, PushKind::Subscribe);
-            assert_eq!(
-                push.data,
-                vec![Value::BulkString(b"foo".to_vec()), Value::Int(2)]
-            );
+            assert_eq!(push.data, vec![redis_value!("foo"), redis_value!(2)]);
             let push = rx.recv().await.unwrap();
             assert_eq!(push.kind, PushKind::Subscribe);
-            assert_eq!(
-                push.data,
-                vec![Value::BulkString(b"bar".to_vec()), Value::Int(3)]
-            );
+            assert_eq!(push.data, vec![redis_value!("bar"), redis_value!(3)]);
             let push = rx.recv().await.unwrap();
             assert_eq!(push.kind, PushKind::PSubscribe);
-            assert_eq!(
-                push.data,
-                vec![Value::BulkString(b"zoom*".to_vec()), Value::Int(4)]
-            );
+            assert_eq!(push.data, vec![redis_value!("zoom*"), redis_value!(4)]);
             let push = rx.recv().await.unwrap();
             assert_eq!(push.kind, PushKind::Unsubscribe);
-            assert_eq!(
-                push.data,
-                vec![Value::BulkString(b"foo".to_vec()), Value::Int(3)]
-            );
+            assert_eq!(push.data, vec![redis_value!("foo"), redis_value!(3)]);
 
             let addr = ctx.server.client_addr().clone();
             drop(ctx);
@@ -1390,18 +1361,14 @@ mod basic_async {
             let push2 = rx.recv().await.unwrap();
             assert_eq!(push2.kind, PushKind::Subscribe);
             assert!(
-                (push1.data == vec![Value::BulkString(b"phonewave".to_vec()), Value::Int(1)]
-                    && push2.data == vec![Value::BulkString(b"bar".to_vec()), Value::Int(2)])
-                    || (push1.data == vec![Value::BulkString(b"bar".to_vec()), Value::Int(1)]
-                        && push2.data
-                            == vec![Value::BulkString(b"phonewave".to_vec()), Value::Int(2)])
+                (push1.data == vec![redis_value!("phonewave"), redis_value!(1)]
+                    && push2.data == vec![redis_value!("bar"), redis_value!(2)])
+                    || (push1.data == vec![redis_value!("bar"), redis_value!(1)]
+                        && push2.data == vec![redis_value!("phonewave"), redis_value!(2)])
             );
             let push = rx.recv().await.unwrap();
             assert_eq!(push.kind, PushKind::PSubscribe);
-            assert_eq!(
-                push.data,
-                vec![Value::BulkString(b"zoom*".to_vec()), Value::Int(3)]
-            );
+            assert_eq!(push.data, vec![redis_value!("zoom*"), redis_value!(3)]);
 
             let mut publish_conn = ctx.async_connection().await.unwrap();
             let _: () = publish_conn.publish("phonewave", "banana").await.unwrap();
@@ -1410,10 +1377,7 @@ mod basic_async {
             assert_eq!(push.kind, PushKind::Message);
             assert_eq!(
                 push.data,
-                vec![
-                    Value::BulkString(b"phonewave".to_vec()),
-                    Value::BulkString(b"banana".to_vec())
-                ]
+                vec![redis_value!("phonewave"), redis_value!("banana")]
             );
 
             // this should be skipped, because we unsubscribed from foo
@@ -1424,9 +1388,9 @@ mod basic_async {
             assert_eq!(
                 push.data,
                 vec![
-                    Value::BulkString(b"zoom*".to_vec()),
-                    Value::BulkString(b"zoomer".to_vec()),
-                    Value::BulkString(b"foobar".to_vec())
+                    redis_value!("zoom*"),
+                    redis_value!("zoomer"),
+                    redis_value!("foobar"),
                 ]
             );
 
@@ -1781,12 +1745,7 @@ mod basic_async {
         let _: i32 = manager.get("key_1").await.unwrap();
         let redis::PushInfo { kind, data } = rx.try_recv().unwrap();
         assert_eq!(
-            (
-                PushKind::Invalidate,
-                vec![Value::Array(vec![Value::BulkString(
-                    "key_1".as_bytes().to_vec()
-                )])]
-            ),
+            (PushKind::Invalidate, vec![redis_value!(["key_1"])]),
             (kind, data)
         );
     }

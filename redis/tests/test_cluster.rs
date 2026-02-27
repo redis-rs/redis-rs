@@ -18,6 +18,7 @@ mod cluster {
     };
     use redis_test::{
         cluster::{RedisCluster, RedisClusterConfiguration},
+        redis_value,
         server::use_protocol,
     };
 
@@ -170,19 +171,7 @@ mod cluster {
         let _: () = connection.hset("hash", "bar", "foobar").unwrap();
         let result: Value = connection.hgetall("hash").unwrap();
 
-        assert_eq!(
-            result,
-            Value::Map(vec![
-                (
-                    Value::BulkString("foo".as_bytes().to_vec()),
-                    Value::BulkString("baz".as_bytes().to_vec())
-                ),
-                (
-                    Value::BulkString("bar".as_bytes().to_vec()),
-                    Value::BulkString("foobar".as_bytes().to_vec())
-                )
-            ])
-        );
+        assert_eq!(result, redis_value!({"foo": "baz", "bar": "foobar"}));
     }
 
     #[test]
@@ -364,13 +353,9 @@ mod cluster {
 
         let MockEnv { mut connection, .. } = MockEnv::new(name, move |cmd: &[u8], _| {
             if contains_slice(cmd, b"PING") {
-                Err(Ok(Value::SimpleString("OK".into())))
+                Err(Ok(redis_value!(simple:"OK")))
             } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-                Err(Ok(Value::Array(vec![Value::Array(vec![
-                    Value::Int(0),
-                    Value::Int(16383),
-                    Value::Array(vec![Value::Nil, Value::Int(6379)]),
-                ])])))
+                Err(Ok(redis_value!([[0, 16383, [nil, 6379]]])))
             } else {
                 Err(Ok(Value::Nil))
             }
@@ -388,25 +373,11 @@ mod cluster {
 
         let MockEnv { mut connection, .. } = MockEnv::new(name, move |cmd: &[u8], _| {
             if contains_slice(cmd, b"PING") {
-                Err(Ok(Value::SimpleString("OK".into())))
+                Err(Ok(redis_value!(simple:"OK")))
             } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-                Err(Ok(Value::Array(vec![
-                    Value::Array(vec![
-                        Value::Int(0),
-                        Value::Int(7000),
-                        Value::Array(vec![
-                            Value::BulkString(name.as_bytes().to_vec()),
-                            Value::Int(6379),
-                        ]),
-                    ]),
-                    Value::Array(vec![
-                        Value::Int(7001),
-                        Value::Int(16383),
-                        Value::Array(vec![
-                            Value::BulkString("?".as_bytes().to_vec()),
-                            Value::Int(6380),
-                        ]),
-                    ]),
+                Err(Ok(redis_value!([
+                    [0, 7000, [name, 6379]],
+                    [7001, 16383, ["?", 6380]]
                 ])))
             } else {
                 Err(Ok(Value::Nil))
@@ -434,7 +405,7 @@ mod cluster {
 
                 match requests.fetch_add(1, atomic::Ordering::SeqCst) {
                     0..=4 => Err(parse_redis_value(b"-TRYAGAIN mock\r\n")),
-                    _ => Err(Ok(Value::BulkString(b"123".to_vec()))),
+                    _ => Err(Ok(redis_value!("123"))),
                 }
             },
         );
@@ -493,7 +464,7 @@ mod cluster {
             started.store(true, atomic::Ordering::SeqCst);
 
             if contains_slice(cmd, b"PING") {
-                return Err(Ok(Value::SimpleString("OK".into())));
+                return Err(Ok(redis_value!(simple:"OK")));
             }
 
             let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
@@ -502,28 +473,14 @@ mod cluster {
                 // Respond that the key exists on a node that does not yet have a connection:
                 0 => Err(parse_redis_value(b"-MOVED 123\r\n")),
                 // Respond with the new masters
-                1 => Err(Ok(Value::Array(vec![
-                    Value::Array(vec![
-                        Value::Int(0),
-                        Value::Int(1),
-                        Value::Array(vec![
-                            Value::BulkString(name.as_bytes().to_vec()),
-                            Value::Int(6379),
-                        ]),
-                    ]),
-                    Value::Array(vec![
-                        Value::Int(2),
-                        Value::Int(16383),
-                        Value::Array(vec![
-                            Value::BulkString(name.as_bytes().to_vec()),
-                            Value::Int(6380),
-                        ]),
-                    ]),
+                1 => Err(Ok(redis_value!([
+                    [0, 1, [name, 6379]],
+                    [2, 16383, [name, 6380]]
                 ]))),
                 _ => {
                     // Check that the correct node receives the request after rebuilding
                     assert_eq!(port, 6380);
-                    Err(Ok(Value::BulkString(b"123".to_vec())))
+                    Err(Ok(redis_value!("123")))
                 }
             }
         });
@@ -564,7 +521,7 @@ mod cluster {
                             }
                             2 => {
                                 assert!(contains_slice(cmd, b"GET"));
-                                Err(Ok(Value::BulkString(b"123".to_vec())))
+                                Err(Ok(redis_value!("123")))
                             }
                             _ => panic!("Node should not be called now"),
                         },
@@ -597,7 +554,7 @@ mod cluster {
             started.store(true, atomic::Ordering::SeqCst);
 
             if contains_slice(cmd, b"PING") {
-                return Err(Ok(Value::SimpleString("OK".into())));
+                return Err(Ok(redis_value!(simple:"OK")));
             }
 
             let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
@@ -615,7 +572,7 @@ mod cluster {
                 2 => {
                     assert_eq!(port, 6380);
                     assert!(contains_slice(cmd, b"GET"));
-                    Err(Ok(Value::BulkString(b"123".to_vec())))
+                    Err(Ok(redis_value!("123")))
                 }
                 _ => {
                     panic!("Unexpected request: {cmd:?}");
@@ -646,7 +603,7 @@ mod cluster {
                 respond_startup_with_replica(name, cmd)?;
 
                 match port {
-                    6380 => Err(Ok(Value::BulkString(b"123".to_vec()))),
+                    6380 => Err(Ok(redis_value!("123"))),
                     _ => panic!("Wrong node"),
                 }
             },
@@ -668,7 +625,7 @@ mod cluster {
             move |cmd: &[u8], port| {
                 respond_startup_with_replica(name, cmd)?;
                 match port {
-                    6379 => Err(Ok(Value::SimpleString("OK".into()))),
+                    6379 => Err(Ok(redis_value!(simple:"OK"))),
                     _ => panic!("Wrong node"),
                 }
             },
@@ -678,7 +635,7 @@ mod cluster {
             .arg("test")
             .arg("123")
             .query::<Option<Value>>(&mut connection);
-        assert_eq!(value, Ok(Some(Value::SimpleString("OK".to_owned()))));
+        assert_eq!(value, Ok(Some(redis_value!(simple:"OK"))));
     }
 
     #[test]
@@ -703,7 +660,7 @@ mod cluster {
                             std::io::ErrorKind::ConnectionReset,
                             "mock-io-error",
                         )))),
-                        _ => Err(Ok(Value::BulkString(b"123".to_vec()))),
+                        _ => Err(Ok(redis_value!("123"))),
                     },
                 }
             },
@@ -769,7 +726,7 @@ mod cluster {
                 )?;
                 if received_cmd == packed_cmd {
                     ports_clone.lock().unwrap().push(port);
-                    return Err(Ok(Value::SimpleString("OK".into())));
+                    return Err(Ok(redis_value!(simple:"OK")));
                 }
                 Ok(())
             },
@@ -874,9 +831,7 @@ mod cluster {
                     .iter()
                     .filter_map(|expected_key| {
                         if cmd_str.contains(expected_key) {
-                            Some(Value::BulkString(
-                                format!("{expected_key}-{port}").into_bytes(),
-                            ))
+                            Some(redis_value!(format!("{expected_key}-{port}")))
                         } else {
                             None
                         }
@@ -909,16 +864,7 @@ mod cluster {
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
                 if port == 6381 {
-                    let results = vec![
-                        Value::BulkString("OK".as_bytes().to_vec()),
-                        Value::BulkString("QUEUED".as_bytes().to_vec()),
-                        Value::BulkString("QUEUED".as_bytes().to_vec()),
-                        Value::Array(vec![
-                            Value::BulkString("OK".as_bytes().to_vec()),
-                            Value::BulkString("bar".as_bytes().to_vec()),
-                        ]),
-                    ];
-                    return Err(Ok(Value::Array(results)));
+                    return Err(Ok(redis_value!(["OK", "QUEUED", "QUEUED", ["OK", "bar"]])));
                 }
                 Err(Err(RedisError::from(std::io::Error::new(
                     std::io::ErrorKind::ConnectionReset,
@@ -930,13 +876,7 @@ mod cluster {
         let result = connection
             .req_packed_commands(&packed_pipeline, 3, 1)
             .unwrap();
-        assert_eq!(
-            result,
-            vec![
-                Value::BulkString("OK".as_bytes().to_vec()),
-                Value::BulkString("bar".as_bytes().to_vec()),
-            ]
-        );
+        assert_eq!(result, vec![redis_value!("OK"), redis_value!("bar"),]);
     }
 
     #[test]
@@ -945,16 +885,7 @@ mod cluster {
         let mut pipeline = redis::pipe();
         pipeline.atomic().set("foo", "bar").get("foo");
         let packed_pipeline = pipeline.get_packed_pipeline();
-        let results = vec![
-            Value::BulkString("OK".as_bytes().to_vec()),
-            Value::BulkString("QUEUED".as_bytes().to_vec()),
-            Value::BulkString("QUEUED".as_bytes().to_vec()),
-            Value::Array(vec![
-                Value::BulkString("OK".as_bytes().to_vec()),
-                Value::BulkString("bar".as_bytes().to_vec()),
-            ]),
-        ];
-        let expected_result = Value::Array(results);
+        let expected_result = redis_value!(["OK", "QUEUED", "QUEUED", ["OK", "bar"]]);
         let cloned_result = expected_result.clone();
 
         let MockEnv {
@@ -1072,7 +1003,7 @@ mod cluster {
         let result = connection
             .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
             .unwrap();
-        assert_eq!(result, Value::SimpleString("PONG".to_string()));
+        assert_eq!(result, redis_value!(simple:"PONG"));
     }
 
     #[test]
@@ -1103,7 +1034,7 @@ mod cluster {
                 )),
             )
             .unwrap();
-        assert_eq!(result, Value::SimpleString("PONG".to_string()));
+        assert_eq!(result, redis_value!(simple:"PONG"));
     }
 
     #[test]
