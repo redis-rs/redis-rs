@@ -192,6 +192,21 @@ impl IntoRedisValue for ServerError {
 /// ```
 #[macro_export]
 macro_rules! redis_value {
+    // Map of elements
+    ({$($k:tt: $v:tt),*}) => {
+        redis::Value::Map(vec![$(($crate::redis_value!($k), $crate::redis_value!($v))),*])
+    };
+
+    // Array of elements
+    ([$($e:tt),*]) => {
+        redis::Value::Array(vec![$($crate::redis_value!($e)),*])
+    };
+
+    // Set of elements
+    (set:[$($e:tt),*]) => {
+        redis::Value::Set(vec![$($crate::redis_value!($e)),*])
+    };
+
     // Simple strings
     (simple:$e:tt) => {
         redis::Value::SimpleString($e.to_string())
@@ -674,6 +689,14 @@ mod tests {
     }
 
     #[test]
+    fn redis_simple_in_complex() {
+        let actual = redis_value!([(simple:"foo")]);
+
+        let expected = Value::Array(vec![Value::SimpleString("foo".to_string())]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn redis_nil() {
         assert_eq!(redis_value!(nil), Value::Nil);
     }
@@ -762,6 +785,153 @@ mod tests {
         let actual = Value::Int(42);
 
         assert_eq!(redis_value!(actual), Value::Int(42));
+    }
+
+    #[test]
+    fn redis_array_empty() {
+        assert_eq!(redis_value!([]), Value::Array(vec![]));
+    }
+
+    #[test]
+    fn redis_array_single_entry() {
+        let actual = redis_value!([42]);
+
+        let expected = Value::Array(vec![Value::Int(42)]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn redis_array_multiple_primitive_entries() {
+        let last_arg = Value::Boolean(true); // pass the last arg in as variable
+        let actual = redis_value!([42, "foo", nil, last_arg]);
+
+        let expected1 = Value::Int(42);
+        let expected2 = Value::BulkString(vec![
+            0x66, /* f */
+            0x6f, /* o */
+            0x6f, /* o */
+        ]);
+        let expected3 = Value::Nil;
+        let expected4 = Value::Boolean(true);
+        let expected = Value::Array(vec![expected1, expected2, expected3, expected4]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn redis_array_multiple_entries() {
+        let last_arg = Value::Boolean(true); // pass the last arg in as variable
+        let actual = redis_value!([42, ["foo", nil], last_arg]);
+
+        let expected1 = Value::Int(42);
+        let expected21 = Value::BulkString(vec![
+            0x66, /* f */
+            0x6f, /* o */
+            0x6f, /* o */
+        ]);
+        let expected22 = Value::Nil;
+        let expected2 = Value::Array(vec![expected21, expected22]);
+        let expected3 = Value::Boolean(true);
+        let expected = Value::Array(vec![expected1, expected2, expected3]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn redis_set_empty() {
+        assert_eq!(redis_value!(set:[]), Value::Set(vec![]));
+    }
+
+    #[test]
+    fn redis_set_single_entry() {
+        let actual = redis_value!(set:[42]);
+
+        let expected = Value::Set(vec![Value::Int(42)]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn redis_set_multiple_primitive_entries() {
+        let last_arg = Value::Boolean(true); // pass the last arg in as variable
+        let actual = redis_value!(set:[42, "foo", nil, last_arg]);
+
+        let expected1 = Value::Int(42);
+        let expected2 = Value::BulkString(vec![
+            0x66, /* f */
+            0x6f, /* o */
+            0x6f, /* o */
+        ]);
+        let expected3 = Value::Nil;
+        let expected4 = Value::Boolean(true);
+        let expected = Value::Set(vec![expected1, expected2, expected3, expected4]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn redis_set_multiple_entries() {
+        let last_arg = Value::Boolean(true); // pass the last arg in as variable
+        let actual = redis_value!(set:[42, (set:["foo", nil]), last_arg]);
+
+        let expected1 = Value::Int(42);
+        let expected21 = Value::BulkString(vec![
+            0x66, /* f */
+            0x6f, /* o */
+            0x6f, /* o */
+        ]);
+        let expected22 = Value::Nil;
+        let expected2 = Value::Set(vec![expected21, expected22]);
+        let expected3 = Value::Boolean(true);
+        let expected = Value::Set(vec![expected1, expected2, expected3]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn redis_map_empty() {
+        assert_eq!(redis_value!({}), Value::Map(vec![]));
+    }
+
+    #[test]
+    fn redis_map_single_entry() {
+        let actual = redis_value!({42: true});
+
+        let expected = Value::Map(vec![(Value::Int(42), Value::Boolean(true))]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn redis_map_multiple_primitive_entries() {
+        let actual = redis_value!({42: true, nil: "foo"});
+
+        let expected1 = (Value::Int(42), Value::Boolean(true));
+        let expected2 = (
+            Value::Nil,
+            Value::BulkString(vec![
+                0x66, /* f */
+                0x6f, /* o */
+                0x6f, /* o */
+            ]),
+        );
+        let expected = Value::Map(vec![expected1, expected2]);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn redis_map_multiple_entries() {
+        let actual = redis_value!({[42, false]: {true: [23, 4711]}, nil: "foo"});
+
+        let expected1_key = Value::Array(vec![Value::Int(42), Value::Boolean(false)]);
+        let expected1_value_key = Value::Boolean(true);
+        let expected1_value_value = Value::Array(vec![Value::Int(23), Value::Int(4711)]);
+        let expected1_value = Value::Map(vec![(expected1_value_key, expected1_value_value)]);
+        let expected1 = (expected1_key, expected1_value);
+        let expected2 = (
+            Value::Nil,
+            Value::BulkString(vec![
+                0x66, /* f */
+                0x6f, /* o */
+                0x6f, /* o */
+            ]),
+        );
+        let expected = Value::Map(vec![expected1, expected2]);
+        assert_eq!(actual, expected);
     }
 
     #[test]
