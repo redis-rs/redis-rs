@@ -297,8 +297,12 @@ pub struct RedisConnectionInfo {
     pub(crate) password: Option<ArcStr>,
     /// Version of the protocol to use.
     pub(crate) protocol: ProtocolVersion,
-    /// If set, the connection shouldn't send the library name to the server.
+    /// If set, the connection shouldn't send the library name and version to the server.
     pub(crate) skip_set_lib_name: bool,
+    /// Library name to send to the server after connecting (if [`Self::skip_set_lib_name`] is `false`)
+    pub(crate) lib_name: Option<ArcStr>,
+    /// Library name to send to the server after connecting (if [`Self::skip_set_lib_name`] is `false`)
+    pub(crate) lib_ver: Option<ArcStr>,
 }
 
 impl RedisConnectionInfo {
@@ -320,6 +324,16 @@ impl RedisConnectionInfo {
     /// Returns `true` if the `CLIENT SETINFO` command should be skipped.
     pub fn skip_set_lib_name(&self) -> bool {
         self.skip_set_lib_name
+    }
+
+    /// Returns the set library name
+    pub fn lib_name(&self) -> Option<&str> {
+        self.lib_name.as_deref()
+    }
+
+    /// Returns the set library version
+    pub fn lib_ver(&self) -> Option<&str> {
+        self.lib_ver.as_deref()
     }
 
     /// Returns the database number to use.
@@ -346,8 +360,21 @@ impl RedisConnectionInfo {
     }
 
     /// Removes the pipelined `CLIENT SETINFO` call from the connection creation.
+    ///
+    /// This function makes previously set [`lib_name`](Self::lib_name) and
+    /// [`lib_ver`](Self::lib_ver) ineffective.
     pub fn set_skip_set_lib_name(mut self) -> Self {
         self.skip_set_lib_name = true;
+        self
+    }
+
+    /// Sets the library information and enables sending it when connecting.
+    ///
+    /// This function clears [`skip_set_lib_name`](Self::skip_set_lib_name).
+    pub fn set_lib_name(mut self, lib_name: impl AsRef<str>, lib_ver: impl AsRef<str>) -> Self {
+        self.lib_name = Some(lib_name.as_ref().into());
+        self.lib_ver = Some(lib_ver.as_ref().into());
+        self.skip_set_lib_name = false;
         self
     }
 
@@ -366,6 +393,8 @@ impl std::fmt::Debug for RedisConnectionInfo {
             password,
             protocol,
             skip_set_lib_name,
+            lib_name,
+            lib_ver,
         } = self;
         let mut debug_info = f.debug_struct("RedisConnectionInfo");
 
@@ -374,6 +403,8 @@ impl std::fmt::Debug for RedisConnectionInfo {
         debug_info.field("password", &password.as_ref().map(|_| "<redacted>"));
         debug_info.field("protocol", &protocol);
         debug_info.field("skip_set_lib_name", &skip_set_lib_name);
+        debug_info.field("lib_name", &lib_name);
+        debug_info.field("lib_ver", &lib_ver);
 
         debug_info.finish()
     }
@@ -579,6 +610,8 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             },
             protocol: parse_protocol(&query)?,
             skip_set_lib_name: false,
+            lib_name: None,
+            lib_ver: None,
         },
         tcp_settings: TcpSettings::default(),
     })
@@ -602,7 +635,9 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             username: query.get("user").map(|username| username.as_ref().into()),
             password: query.get("pass").map(|password| password.as_ref().into()),
             protocol: parse_protocol(&query)?,
-            ..Default::default()
+            skip_set_lib_name: false,
+            lib_name: None,
+            lib_ver: None,
         },
         tcp_settings: TcpSettings::default(),
     })
@@ -1347,13 +1382,23 @@ pub(crate) fn connection_setup_pipeline(
             .cmd("CLIENT")
             .arg("SETINFO")
             .arg("LIB-NAME")
-            .arg(DEFAULT_CLIENT_SETINFO_LIB_NAME)
+            .arg(
+                connection_info
+                    .lib_name
+                    .as_ref()
+                    .map_or(DEFAULT_CLIENT_SETINFO_LIB_NAME, ArcStr::as_str),
+            )
             .ignore();
         pipeline
             .cmd("CLIENT")
             .arg("SETINFO")
             .arg("LIB-VER")
-            .arg(DEFAULT_CLIENT_SETINFO_LIB_VER)
+            .arg(
+                connection_info
+                    .lib_ver
+                    .as_ref()
+                    .map_or(DEFAULT_CLIENT_SETINFO_LIB_VER, ArcStr::as_str),
+            )
             .ignore();
     }
 
@@ -2421,7 +2466,49 @@ pub fn get_resp3_hello_command_error(err: RedisError) -> RedisError {
 
 #[cfg(test)]
 mod tests {
+    mod util {
+        use crate::connection::connection_setup_pipeline;
+        use crate::{RedisConnectionInfo, cmd};
+
+        /// Assures that the given [`RedisConnectionInfo`] sets the given expected library name and version
+        pub fn assert_lib_name_in_connection_setup_pipeline(
+            redis_connection_info: &RedisConnectionInfo,
+            expected_lib_name: &str,
+            expected_lib_ver: &str,
+        ) {
+            // Build the pipeline
+            let pipeline = connection_setup_pipeline(
+                redis_connection_info,
+                false,
+                #[cfg(feature = "cache-aio")]
+                None,
+            )
+            .0;
+
+            let actual_packed_cmds = pipeline
+                .commands
+                .iter()
+                .map(|c| c.get_packed_command())
+                .collect::<Vec<_>>();
+
+            let expected_lib_name_packed_cmd = cmd("CLIENT")
+                .arg("SETINFO")
+                .arg("LIB-NAME")
+                .arg(expected_lib_name)
+                .get_packed_command();
+            assert!(actual_packed_cmds.contains(&expected_lib_name_packed_cmd));
+
+            let expected_lib_ver_packed_cmd = cmd("CLIENT")
+                .arg("SETINFO")
+                .arg("LIB-VER")
+                .arg(expected_lib_ver)
+                .get_packed_command();
+            assert!(actual_packed_cmds.contains(&expected_lib_ver_packed_cmd));
+        }
+    }
+
     use super::*;
+    use util::assert_lib_name_in_connection_setup_pipeline;
 
     #[test]
     fn test_parse_redis_url() {
@@ -2477,7 +2564,10 @@ mod tests {
                         db: 2,
                         username: Some("%johndoe%".into()),
                         password: Some("#@<>$".into()),
-                        ..Default::default()
+                        protocol: ProtocolVersion::RESP2,
+                        skip_set_lib_name: false,
+                        lib_name: None,
+                        lib_ver: None,
                     },
                     tcp_settings: TcpSettings::default(),
                 },
@@ -2495,8 +2585,13 @@ mod tests {
                 ConnectionInfo {
                     addr: ConnectionAddr::Tcp("127.0.0.1".to_string(), 6379),
                     redis: RedisConnectionInfo {
+                        db: 0,
+                        username: None,
+                        password: None,
                         protocol: ProtocolVersion::RESP3,
-                        ..Default::default()
+                        skip_set_lib_name: false,
+                        lib_name: None,
+                        lib_ver: None,
                     },
                     tcp_settings: TcpSettings::default(),
                 },
@@ -2572,6 +2667,8 @@ mod tests {
                         password: None,
                         protocol: ProtocolVersion::RESP2,
                         skip_set_lib_name: false,
+                        lib_name: None,
+                        lib_ver: None,
                     },
                     tcp_settings: Default::default(),
                 },
@@ -2582,7 +2679,12 @@ mod tests {
                     addr: ConnectionAddr::Unix("/var/run/redis.sock".into()),
                     redis: RedisConnectionInfo {
                         db: 1,
-                        ..Default::default()
+                        username: None,
+                        password: None,
+                        protocol: ProtocolVersion::RESP2,
+                        skip_set_lib_name: false,
+                        lib_name: None,
+                        lib_ver: None,
                     },
                     tcp_settings: TcpSettings::default(),
                 },
@@ -2598,7 +2700,10 @@ mod tests {
                         db: 2,
                         username: Some("%johndoe%".into()),
                         password: Some("#@<>$".into()),
-                        ..Default::default()
+                        protocol: ProtocolVersion::RESP2,
+                        skip_set_lib_name: false,
+                        lib_name: None,
+                        lib_ver: None,
                     },
                     tcp_settings: TcpSettings::default(),
                 },
@@ -2614,7 +2719,10 @@ mod tests {
                         db: 2,
                         username: Some("%johndoe%".into()),
                         password: Some("&?= *+".into()),
-                        ..Default::default()
+                        protocol: ProtocolVersion::RESP2,
+                        skip_set_lib_name: false,
+                        lib_name: None,
+                        lib_ver: None,
                     },
                     tcp_settings: TcpSettings::default(),
                 },
@@ -2624,8 +2732,13 @@ mod tests {
                 ConnectionInfo {
                     addr: ConnectionAddr::Unix("/var/run/redis.sock".into()),
                     redis: RedisConnectionInfo {
+                        db: 0,
+                        username: None,
+                        password: None,
                         protocol: ProtocolVersion::RESP3,
-                        ..Default::default()
+                        skip_set_lib_name: false,
+                        lib_name: None,
+                        lib_ver: None,
                     },
                     tcp_settings: TcpSettings::default(),
                 },
@@ -2652,5 +2765,41 @@ mod tests {
                 "password of {url} is not expected",
             );
         }
+    }
+
+    #[test]
+    fn redis_connection_info_lib_name_default() {
+        let redis_connection_info = RedisConnectionInfo::default();
+
+        // Check the accessors
+        assert_eq!(redis_connection_info.lib_name(), None);
+        assert_eq!(redis_connection_info.lib_ver(), None);
+
+        // Check the connection setup pipeline
+        assert_lib_name_in_connection_setup_pipeline(
+            &redis_connection_info,
+            DEFAULT_CLIENT_SETINFO_LIB_NAME,
+            DEFAULT_CLIENT_SETINFO_LIB_VER,
+        );
+    }
+
+    #[test]
+    fn redis_connection_info_lib_name_custom() {
+        let mut redis_connection_info = RedisConnectionInfo::default();
+
+        // Mark to skip setting the lib_name. This allows to test that `set_lib_name` clears it again;
+        redis_connection_info = redis_connection_info.set_skip_set_lib_name();
+        assert!(redis_connection_info.skip_set_lib_name());
+
+        // Set the lib_name
+        redis_connection_info = redis_connection_info.set_lib_name("foo", "42.4711");
+
+        // Check the accessors
+        assert!(!redis_connection_info.skip_set_lib_name());
+        assert_eq!(redis_connection_info.lib_name(), Some("foo"));
+        assert_eq!(redis_connection_info.lib_ver(), Some("42.4711"));
+
+        // Check the connection setup pipeline
+        assert_lib_name_in_connection_setup_pipeline(&redis_connection_info, "foo", "42.4711");
     }
 }
