@@ -363,9 +363,8 @@ mod basic {
 
     #[test]
     fn test_hash_expiration() {
-        let ctx = TestContext::new();
         // Hash expiration is only supported in Redis 7.4.0 and later.
-        run_test_if_version_supported!(&(7, 4, 0));
+        let ctx = run_test_if_version_supported!(&(7, 4, 0));
 
         let mut con = ctx.connection();
         redis::cmd("HMSET")
@@ -3362,9 +3361,8 @@ mod basic {
 
     #[test]
     fn test_expire_time() {
-        let ctx = TestContext::new();
         // EXPIRETIME/PEXPIRETIME is available from Redis version 7.4.0
-        run_test_if_version_supported!(&(7, 4, 0));
+        let ctx = run_test_if_version_supported!(&(7, 4, 0));
 
         let mut con = ctx.connection();
 

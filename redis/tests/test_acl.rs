@@ -157,8 +157,7 @@ fn test_acl_log() {
 
 #[test]
 fn test_acl_dryrun() {
-    let ctx = TestContext::new();
-    run_test_if_version_supported!(&(7, 0, 0));
+    let ctx = run_test_if_version_supported!(&(7, 0, 0));
 
     let mut con = ctx.connection();
 
@@ -186,8 +185,7 @@ fn test_acl_dryrun() {
 }
 #[test]
 fn test_acl_info() {
-    let ctx = TestContext::new();
-    run_test_if_version_supported!(&(7, 0, 0));
+    let ctx = run_test_if_version_supported!(&(7, 0, 0));
     let mut conn = ctx.connection();
     let username = "tenant";
     let password = "securepassword123";
@@ -264,8 +262,7 @@ fn test_acl_info() {
 }
 #[test]
 fn test_acl_sample_info() {
-    let ctx = TestContext::new();
-    run_test_if_version_supported!(&(7, 0, 0));
+    let ctx = run_test_if_version_supported!(&(7, 0, 0));
     let mut conn = ctx.connection();
     let sample_rule = vec![
         Rule::On,
