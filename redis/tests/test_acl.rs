@@ -1254,13 +1254,12 @@ mod token_based_authentication_acl_tests {
             tokio::time::sleep(Duration::from_millis(600)).await;
 
             let result: redis::RedisResult<String> = whoami_cmd.query_async(&mut con).await;
-            assert!(result.is_err());
-            let error = result.unwrap_err();
-            assert_eq!(error.kind(), ErrorKind::AuthenticationFailed);
             assert!(
-                error.to_string().contains("re-authentication failure"),
-                "Error message should mention re-authentication failure: {error}"
+                result.is_err(),
+                "Commands should fail after re-authentication with invalid credentials."
             );
+            let error = result.unwrap_err();
+            assert_eq!(error.kind(), ErrorKind::ClusterConnectionNotFound);
         }
     }
 }

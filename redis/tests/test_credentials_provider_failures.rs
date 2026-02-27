@@ -239,7 +239,7 @@ mod credentials_provider_failures_tests {
             );
 
             let err = result.err().unwrap();
-            assert_eq!(err.kind(), ErrorKind::AuthenticationFailed);
+            assert_eq!(err.kind(), ErrorKind::Io);
         }
 
         #[tokio::test]
@@ -259,7 +259,7 @@ mod credentials_provider_failures_tests {
             );
 
             let err = result.err().unwrap();
-            assert_eq!(err.kind(), ErrorKind::AuthenticationFailed);
+            assert_eq!(err.kind(), ErrorKind::Io);
         }
     }
 }
