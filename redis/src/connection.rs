@@ -297,8 +297,12 @@ pub struct RedisConnectionInfo {
     pub(crate) password: Option<ArcStr>,
     /// Version of the protocol to use.
     pub(crate) protocol: ProtocolVersion,
-    /// If set, the connection shouldn't send the library name to the server.
+    /// If set, the connection shouldn't send the library name and version to the server.
     pub(crate) skip_set_lib_name: bool,
+    /// Library name to send to the server after connecting (if [`Self::skip_set_lib_name`] is `false`)
+    pub(crate) lib_name: Option<ArcStr>,
+    /// Library name to send to the server after connecting (if [`Self::skip_set_lib_name`] is `false`)
+    pub(crate) lib_ver: Option<ArcStr>,
 }
 
 impl RedisConnectionInfo {
@@ -351,6 +355,18 @@ impl RedisConnectionInfo {
         self
     }
 
+    /// Sets the library name to send to the server after connecting (if [`Self::skip_set_lib_name`] is `false`)
+    pub fn set_lib_name(mut self, lib_name: impl AsRef<str>) -> Self {
+        self.lib_name = Some(lib_name.as_ref().into());
+        self
+    }
+
+    /// Sets the library version to send to the server after connecting (if [`Self::skip_set_lib_name`] is `false`)
+    pub fn set_lib_ver(mut self, lib_ver: impl AsRef<str>) -> Self {
+        self.lib_ver = Some(lib_ver.as_ref().into());
+        self
+    }
+
     /// Sets the database number to use.
     pub fn set_db(mut self, db: i64) -> Self {
         self.db = db;
@@ -366,6 +382,8 @@ impl std::fmt::Debug for RedisConnectionInfo {
             password,
             protocol,
             skip_set_lib_name,
+            lib_name,
+            lib_ver,
         } = self;
         let mut debug_info = f.debug_struct("RedisConnectionInfo");
 
@@ -374,6 +392,8 @@ impl std::fmt::Debug for RedisConnectionInfo {
         debug_info.field("password", &password.as_ref().map(|_| "<redacted>"));
         debug_info.field("protocol", &protocol);
         debug_info.field("skip_set_lib_name", &skip_set_lib_name);
+        debug_info.field("lib_name", &lib_name);
+        debug_info.field("lib_ver", &lib_ver);
 
         debug_info.finish()
     }
@@ -578,7 +598,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 None => None,
             },
             protocol: parse_protocol(&query)?,
-            skip_set_lib_name: false,
+            ..Default::default()
         },
         tcp_settings: TcpSettings::default(),
     })
@@ -1347,13 +1367,23 @@ pub(crate) fn connection_setup_pipeline(
             .cmd("CLIENT")
             .arg("SETINFO")
             .arg("LIB-NAME")
-            .arg(DEFAULT_CLIENT_SETINFO_LIB_NAME)
+            .arg(
+                connection_info
+                    .lib_name
+                    .as_ref()
+                    .map_or(DEFAULT_CLIENT_SETINFO_LIB_NAME, ArcStr::as_str),
+            )
             .ignore();
         pipeline
             .cmd("CLIENT")
             .arg("SETINFO")
             .arg("LIB-VER")
-            .arg(DEFAULT_CLIENT_SETINFO_LIB_VER)
+            .arg(
+                connection_info
+                    .lib_ver
+                    .as_ref()
+                    .map_or(DEFAULT_CLIENT_SETINFO_LIB_VER, ArcStr::as_str),
+            )
             .ignore();
     }
 
@@ -2571,7 +2601,7 @@ mod tests {
                         username: None,
                         password: None,
                         protocol: ProtocolVersion::RESP2,
-                        skip_set_lib_name: false,
+                        ..Default::default()
                     },
                     tcp_settings: Default::default(),
                 },
@@ -2652,5 +2682,139 @@ mod tests {
                 "password of {url} is not expected",
             );
         }
+    }
+
+    #[test]
+    fn redis_connection_info_lib_name_default() {
+        let connection_info = RedisConnectionInfo::default();
+
+        // Check the default value
+        assert_eq!(connection_info.lib_name, None);
+
+        // Check the corresponding setup pipeline (we detour to packed cmds, as [`Cmd`] lacks [`Eq`])
+        let pipeline = connection_setup_pipeline(
+            &connection_info,
+            false,
+            #[cfg(feature = "cache-aio")]
+            None,
+        )
+        .0;
+        let actual_packed_cmds = pipeline
+            .commands
+            .iter()
+            .map(|c| c.get_packed_command())
+            .collect::<Vec<_>>();
+
+        let expected_packed_cmd = cmd("CLIENT")
+            .arg("SETINFO")
+            .arg("LIB-NAME")
+            .arg(DEFAULT_CLIENT_SETINFO_LIB_NAME)
+            .get_packed_command();
+        assert!(actual_packed_cmds.contains(&expected_packed_cmd));
+    }
+
+    #[test]
+    fn redis_connection_info_lib_name_custom() {
+        let mut connection_info = RedisConnectionInfo::default();
+
+        // Set the lib_name
+        connection_info = connection_info.set_lib_name("foo");
+
+        // Check its value
+        assert_eq!(
+            connection_info
+                .lib_name
+                .as_ref()
+                .expect("lib_name should have a value"),
+            "foo"
+        );
+
+        // Check the corresponding setup pipeline (we detour to packed cmds, as [`Cmd`] lacks [`Eq`])
+        let pipeline = connection_setup_pipeline(
+            &connection_info,
+            false,
+            #[cfg(feature = "cache-aio")]
+            None,
+        )
+        .0;
+        let actual_packed_cmds = pipeline
+            .commands
+            .iter()
+            .map(|c| c.get_packed_command())
+            .collect::<Vec<_>>();
+
+        let expected_packed_cmd = cmd("CLIENT")
+            .arg("SETINFO")
+            .arg("LIB-NAME")
+            .arg("foo")
+            .get_packed_command();
+        assert!(actual_packed_cmds.contains(&expected_packed_cmd));
+    }
+
+    #[test]
+    fn redis_connection_info_lib_ver_default() {
+        let connection_info = RedisConnectionInfo::default();
+
+        // Check the default value
+        assert_eq!(connection_info.lib_ver, None);
+
+        // Check the corresponding setup pipeline (we detour to packed cmds, as [`Cmd`] lacks [`Eq`])
+        let pipeline = connection_setup_pipeline(
+            &connection_info,
+            false,
+            #[cfg(feature = "cache-aio")]
+            None,
+        )
+        .0;
+        let actual_packed_cmds = pipeline
+            .commands
+            .iter()
+            .map(|c| c.get_packed_command())
+            .collect::<Vec<_>>();
+
+        let expected_packed_cmd = cmd("CLIENT")
+            .arg("SETINFO")
+            .arg("LIB-VER")
+            .arg(DEFAULT_CLIENT_SETINFO_LIB_VER)
+            .get_packed_command();
+        assert!(actual_packed_cmds.contains(&expected_packed_cmd));
+    }
+
+    #[test]
+    fn redis_connection_info_lib_ver_custom() {
+        let mut connection_info = RedisConnectionInfo::default();
+
+        // Set the lib_ver
+        connection_info = connection_info.set_lib_ver("42.4711");
+
+        // Check its value
+        assert_eq!(
+            connection_info
+                .lib_ver
+                .as_ref()
+                .expect("lib_ver should have a value"),
+            "42.4711"
+        );
+
+        // Check the corresponding setup pipeline (we detour to packed cmds, as [`Cmd`] lacks [`Eq`])
+        let pipeline = connection_setup_pipeline(
+            &connection_info,
+            false,
+            #[cfg(feature = "cache-aio")]
+            None,
+        )
+        .0;
+        let actual_packed_cmds = pipeline
+            .commands
+            .iter()
+            .map(|c| c.get_packed_command())
+            .collect::<Vec<_>>();
+
+        let expected_packed_cmd = cmd("CLIENT")
+            .arg("SETINFO")
+            .arg("LIB-VER")
+            .arg("42.4711")
+            .get_packed_command();
+        assert!(actual_packed_cmds.contains(&expected_packed_cmd));
     }
 }
