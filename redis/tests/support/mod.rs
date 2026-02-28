@@ -409,6 +409,7 @@ pub fn is_version(expected_major_minor: (u16, u16), version: Version) -> bool {
 }
 
 // Redis version constants for version-gated tests
+pub const REDIS_VERSION_CE_7_2: Version = (7, 2, 0);
 pub const REDIS_VERSION_CE_8_0: Version = (8, 0, 0);
 pub const REDIS_VERSION_CE_8_2: Version = (8, 1, 240);
 pub const REDIS_VERSION_CE_8_4: Version = (8, 3, 224);
