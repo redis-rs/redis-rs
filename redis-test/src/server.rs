@@ -150,7 +150,8 @@ impl RedisServer {
         modules: &[Module],
         spawner: F,
     ) -> RedisServer {
-        let mut redis_cmd = process::Command::new("redis-server");
+        let bin = env::var("REDISRS_SERVER_BIN").unwrap_or_else(|_| "redis-server".to_string());
+        let mut redis_cmd = process::Command::new(bin);
 
         if let Some(config_path) = config_file {
             redis_cmd.arg(config_path);

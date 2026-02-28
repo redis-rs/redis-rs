@@ -292,6 +292,8 @@ To test:
 
 Note: `make test` requires cargo-nextest installed, to learn more about it please visit [homepage of cargo-nextest](https://nexte.st/).
 
+Note: If your Redis server binary cannot be found as `redis-server` in the PATH, point the `REDISRS_SERVER_BIN` environment variable to the binary.
+
 
     $ make test
     
