@@ -28,11 +28,13 @@ mod cluster_async {
         },
         cmd, from_redis_value, parse_redis_value, pipe,
     };
+    use redis::{PushInfo, PushKind, cluster_async::ClusterConnection};
     use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
     use redis_test::redis_value;
     use redis_test::server::use_protocol;
     use rstest::rstest;
     use test_macros::async_test;
+    use tokio::{join, sync::mpsc::UnboundedReceiver};
 
     use crate::support::*;
 
@@ -2291,9 +2293,6 @@ mod cluster_async {
     }
 
     mod pubsub {
-        use redis::{PushInfo, PushKind, cluster_async::ClusterConnection};
-        use tokio::{join, sync::mpsc::UnboundedReceiver};
-
         use super::*;
 
         async fn check_if_redis_6(conn: &mut ClusterConnection) -> bool {
@@ -2912,6 +2911,175 @@ mod cluster_async {
                     }
                 }
             }
+        }
+    }
+
+    mod transaction {
+        use std::sync::atomic::AtomicUsize;
+
+        use futures::future::join;
+        use redis::FromRedisValue;
+
+        use super::*;
+
+        async fn check_unwatched(con: &mut ClusterConnection) {
+            let result = con
+                .route_command(
+                    cmd("CLIENT").arg("INFO").take(),
+                    RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
+                )
+                .await
+                .unwrap();
+            let result = HashMap::<String, String>::from_redis_value_ref(&result).unwrap();
+            for (_, info) in result {
+                assert!(
+                    // Info only contains "watch" since Redis 7.4 or valkey 8.
+                    info.contains("watch=0") || !info.contains("watch"),
+                    "{info}"
+                );
+            }
+        }
+
+        #[async_test]
+        async fn simple_case_success() {
+            let cluster = TestClusterContext::new();
+            let mut con = cluster.async_connection().await;
+
+            let res: Vec<usize> = redis::aio::transaction_async(
+                con.clone(),
+                &["{test}x", "{test}y"],
+                |mut con, mut pipe| async move {
+                    pipe.set("{test}x", 42)
+                        .ignore()
+                        .set("{test}y", 21)
+                        .ignore()
+                        .get("{test}x")
+                        .get("{test}y")
+                        .query_async(&mut con)
+                        .await
+                },
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(&res, &[42, 21]);
+            check_unwatched(&mut con).await;
+        }
+
+        #[async_test]
+        async fn transaction_should_retry_on_watch() {
+            let cluster = TestClusterContext::new();
+            let con1 = cluster.async_connection().await;
+            let mut con2 = cluster.async_connection().await;
+
+            let attempts = Arc::new(AtomicUsize::new(0));
+            let transaction_started = Arc::new(tokio::sync::Notify::new());
+            let transaction_started_clone = transaction_started.clone();
+            let interfering_value_sent = Arc::new(tokio::sync::Notify::new());
+            let interfering_value_sent_clone = interfering_value_sent.clone();
+
+            let res: Vec<usize> = join(
+                redis::aio::transaction_async(
+                    con1.clone(),
+                    &["{test}x", "{test}y"],
+                    |mut con, mut pipe| {
+                        let attempts = attempts.clone();
+                        let transaction_started = transaction_started_clone.clone();
+                        let interfering_value_sent = interfering_value_sent_clone.clone();
+                        async move {
+                            transaction_started.notify_one();
+                            interfering_value_sent.notified().await;
+                            let res = attempts.fetch_add(1, Ordering::Relaxed);
+
+                            pipe.set("{test}x", res)
+                                .ignore()
+                                .get("{test}x")
+                                .query_async(&mut con)
+                                .await
+                        }
+                    },
+                ),
+                async move {
+                    transaction_started.notified().await;
+                    () = con2.set("{test}x", "interfering_value").await.unwrap();
+                    interfering_value_sent.notify_one();
+                    // we do this again, in order to let the next transaction pass
+                    interfering_value_sent.notify_one();
+                },
+            )
+            .await
+            .0
+            .unwrap();
+
+            assert_eq!(&res, &[1]);
+            check_unwatched(&mut con1.clone()).await;
+        }
+
+        #[async_test]
+        async fn transaction_should_retry_on_none_from_closure() {
+            let cluster = TestClusterContext::new();
+            let con = cluster.async_connection().await;
+
+            let attempts = Arc::new(AtomicUsize::new(0));
+
+            let res: Vec<usize> = redis::aio::transaction_async(
+                con.clone(),
+                &["{test}x", "{test}y"],
+                |_con, _pipe| {
+                    let attempts = attempts.clone();
+                    async move {
+                        let res = attempts.fetch_add(1, Ordering::Relaxed);
+
+                        if res > 1 {
+                            return Ok(Some(vec![res]));
+                        }
+
+                        Ok(None)
+                    }
+                },
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(&res, &[2]);
+            check_unwatched(&mut con.clone()).await;
+        }
+
+        #[async_test]
+        async fn transaction_abort_if_internal_function_returns_error() {
+            let cluster = TestClusterContext::new();
+            let con = cluster.async_connection().await;
+            let attempts = Arc::new(AtomicUsize::new(0));
+
+            let res = redis::aio::transaction_async::<_, _, (), _, _>(
+                con.clone(),
+                &["z"],
+                |_con, _pipe| {
+                    let attempts = attempts.clone();
+                    async move {
+                        let curr_attempts = attempts.fetch_add(1, Ordering::SeqCst);
+
+                        if curr_attempts > 1 {
+                            return Err(redis::RedisError::from((
+                                redis::ErrorKind::Io,
+                                "Internal error",
+                            )));
+                        }
+
+                        // this triggers a retry of the transaction
+                        Ok(None)
+                    }
+                },
+            )
+            .await
+            .unwrap_err();
+
+            assert_eq!(
+                res,
+                redis::RedisError::from((redis::ErrorKind::Io, "Internal error",))
+            );
+            assert_eq!(attempts.load(Ordering::SeqCst), 3);
+            check_unwatched(&mut con.clone()).await;
         }
     }
 }
