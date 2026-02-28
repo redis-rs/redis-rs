@@ -36,6 +36,41 @@ impl SubscriptionAction {
 }
 
 impl SubscriptionTracker {
+    pub(crate) fn to_request(
+        cmd: &Cmd,
+    ) -> Option<(SubscriptionAction, impl Iterator<Item = Vec<u8>>)> {
+        let mut args_iter = cmd.args_iter();
+        let first_arg = args_iter.next()?;
+
+        let first_arg = match first_arg {
+            Arg::Simple(arg) => arg,
+            Arg::Cursor => return None,
+        };
+        let first_arg = str::from_utf8(first_arg).ok()?;
+
+        let args = args_iter.filter_map(|arg| match arg {
+            Arg::Simple(arg) => Some(arg.to_vec()),
+            Arg::Cursor => None,
+        });
+
+        let action = if first_arg.eq_ignore_ascii_case("SUBSCRIBE") {
+            SubscriptionAction::Subscribe
+        } else if first_arg.eq_ignore_ascii_case("PSUBSCRIBE") {
+            SubscriptionAction::PSubscribe
+        } else if first_arg.eq_ignore_ascii_case("SSUBSCRIBE") {
+            SubscriptionAction::SSubscribe
+        } else if first_arg.eq_ignore_ascii_case("UNSUBSCRIBE") {
+            SubscriptionAction::Unsubscribe
+        } else if first_arg.eq_ignore_ascii_case("PUNSUBSCRIBE") {
+            SubscriptionAction::PUnsubscribe
+        } else if first_arg.eq_ignore_ascii_case("SUNSUBSCRIBE") {
+            SubscriptionAction::Sunsubscribe
+        } else {
+            return None;
+        };
+        Some((action, args))
+    }
+
     pub(crate) fn update_with_request(
         &mut self,
         action: SubscriptionAction,
@@ -64,38 +99,11 @@ impl SubscriptionTracker {
         }
     }
 
-    pub(crate) fn update_with_cmd<'a>(&'a mut self, cmd: &'a Cmd) {
-        let mut args_iter = cmd.args_iter();
-        let first_arg = args_iter.next();
-
-        let Some(Arg::Simple(first_arg)) = first_arg else {
-            return;
-        };
-        let Ok(first_arg) = str::from_utf8(first_arg) else {
-            return;
-        };
-
-        let args = args_iter.filter_map(|arg| match arg {
-            Arg::Simple(arg) => Some(arg.to_vec()),
-            Arg::Cursor => None,
-        });
-
-        let action = if first_arg.eq_ignore_ascii_case("SUBSCRIBE") {
-            SubscriptionAction::Subscribe
-        } else if first_arg.eq_ignore_ascii_case("PSUBSCRIBE") {
-            SubscriptionAction::PSubscribe
-        } else if first_arg.eq_ignore_ascii_case("SSUBSCRIBE") {
-            SubscriptionAction::SSubscribe
-        } else if first_arg.eq_ignore_ascii_case("UNSUBSCRIBE") {
-            SubscriptionAction::Unsubscribe
-        } else if first_arg.eq_ignore_ascii_case("PUNSUBSCRIBE") {
-            SubscriptionAction::PUnsubscribe
-        } else if first_arg.eq_ignore_ascii_case("SUNSUBSCRIBE") {
-            SubscriptionAction::Sunsubscribe
-        } else {
-            return;
-        };
-        self.update_with_request(action, args);
+    #[cfg(test)]
+    fn update_with_cmd<'a>(&'a mut self, cmd: &'a Cmd) {
+        if let Some((action, args)) = Self::to_request(cmd) {
+            self.update_with_request(action, args);
+        }
     }
 
     pub(crate) fn get_subscription_pipeline(&self) -> Pipeline {
