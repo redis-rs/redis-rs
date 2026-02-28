@@ -85,7 +85,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
 /// ```rust,no_run
 /// use redis::{AsyncCommands, RedisResult, pipe};
 ///
-/// async fn increment(con: redis::aio::ConnectionManager) -> RedisResult<isize> {
+/// async fn increment(con: redis::aio::MultiplexedConnection) -> RedisResult<isize> {
 ///     let key = "my_counter";
 ///     redis::aio::transaction_async(con, &[key], |mut con, mut pipe| async move {
 ///         // Read the current value first
@@ -149,27 +149,14 @@ pub async fn transaction_async<
     loop {
         cmd("WATCH").arg(keys).exec_async(&mut connection).await?;
 
-        let mut p = pipe();
-        let response = func(connection.clone(), p.atomic().to_owned()).await;
-
-        match response {
-            Ok(None) => {
-                // WATCH is automatically cleared by a failed EXEC, so loop back directly.
-                // Send UNWATCH as a best-effort safety net for any edge cases where EXEC
-                // was not reached (e.g. the closure returned None before calling query_async).
-                let _ = cmd("UNWATCH").exec_async(&mut connection).await;
-                continue;
-            }
-            Ok(Some(value)) => {
-                // A successful EXEC already discards all WATCHes; no extra UNWATCH needed.
-                return Ok(value);
-            }
-            Err(err) => {
-                // The closure aborted. WATCH may still be active, so discard it to leave
-                // the connection in a clean state for subsequent commands.
-                let _ = cmd("UNWATCH").exec_async(&mut connection).await;
-                return Err(err);
-            }
+        let mut pipeline = pipe();
+        pipeline.atomic();
+        let response = func(connection.clone(), pipeline).await;
+        // Send UNWATCH as a best-effort safety net for any edge cases where EXEC
+        // was not reached (e.g. the closure returned None before calling query_async).
+        let _ = cmd("UNWATCH").exec_async(&mut connection).await;
+        if let Some(result) = response? {
+            return Ok(result);
         }
     }
 }

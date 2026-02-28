@@ -1845,13 +1845,20 @@ mod basic_async {
             let mut con2 = ctx.async_connection().await.unwrap();
 
             let attempts = Arc::new(AtomicUsize::new(0));
+            let transaction_started = Arc::new(tokio::sync::Notify::new());
+            let transaction_started_clone = transaction_started.clone();
+            let interferring_value_sent = Arc::new(tokio::sync::Notify::new());
+            let interferring_value_sent_clone = interferring_value_sent.clone();
 
             let res: Vec<usize> = join(
                 redis::aio::transaction_async(con1.clone(), &["x", "y"], |mut con, mut pipe| {
                     let attempts = attempts.clone();
+                    let transaction_started = transaction_started_clone.clone();
+                    let interferring_value_sent = interferring_value_sent_clone.clone();
                     async move {
+                        transaction_started.notify_one();
+                        interferring_value_sent.notified().await;
                         let res = attempts.fetch_add(1, Ordering::Relaxed);
-                        sleep(Duration::from_millis(20).into()).await;
 
                         pipe.set("x", res)
                             .ignore()
@@ -1861,9 +1868,12 @@ mod basic_async {
                     }
                 }),
                 async move {
-                    // sleep a bit, to allow the first watch request to be processed
-                    sleep(Duration::from_millis(1).into()).await;
+                    transaction_started.notified().await;
                     () = con2.set("x", "interfering_value").await.unwrap();
+                    interferring_value_sent.notify_one();
+                    // we do this again, in order to let the next transaction pass
+                    transaction_started.notified().await;
+                    interferring_value_sent.notify_one();
                 },
             )
             .await
