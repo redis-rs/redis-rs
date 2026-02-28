@@ -157,7 +157,8 @@ fn test_acl_log() {
 
 #[test]
 fn test_acl_dryrun() {
-    let ctx = run_test_if_version_supported!(&(7, 0, 0));
+    // Skip the test <7.2, as the error message at the end was different before 7.2
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_7_2);
 
     let mut con = ctx.connection();
 
@@ -185,7 +186,8 @@ fn test_acl_dryrun() {
 }
 #[test]
 fn test_acl_info() {
-    let ctx = run_test_if_version_supported!(&(7, 0, 0));
+    // Skip the test <7.2, as `sanitize-payload` was not available before 7.2
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_7_2);
     let mut conn = ctx.connection();
     let username = "tenant";
     let password = "securepassword123";
@@ -262,7 +264,8 @@ fn test_acl_info() {
 }
 #[test]
 fn test_acl_sample_info() {
-    let ctx = run_test_if_version_supported!(&(7, 0, 0));
+    // Skip the test <7.2, as `sanitize-payload` was not available before 7.2
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_7_2);
     let mut conn = ctx.connection();
     let sample_rule = vec![
         Rule::On,
