@@ -117,7 +117,7 @@ socket2 = { version = "0.6", features = ["all"] }
 azure_identity = { version = "0.31", optional = true, features = [
   "client_certificate",
 ] }
-azure_core = { version = "0.31", optional = true }
+azure_core = { version = "0.32", optional = true }
 base64 = { version = "0.22.1", optional = true }
 
 [features]
