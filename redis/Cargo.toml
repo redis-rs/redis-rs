@@ -178,7 +178,7 @@ assert_approx_eq = "1.0"
 fnv = "1.0.5"
 futures = "0.3"
 futures-time = "3"
-criterion = "0.7"
+criterion = "0.8"
 partial-io = { version = "0.5", features = ["tokio", "quickcheck1"] }
 quickcheck = "1.0.3"
 tokio = { workspace = true, features = ["macros"] }
