@@ -65,7 +65,7 @@ bb8 = { version = "0.9.1", optional = true }
 
 # Only needed for cluster
 crc16 = { version = "0.4", optional = true }
-rand = { version = "0.9", optional = true }
+rand = { version = "0.10", optional = true }
 
 #only needed for smol support
 smol = { workspace = true, optional = true }
@@ -186,7 +186,7 @@ tempfile = "3.24.0"
 anyhow = "1"
 redis-test = { path = "../redis-test" }
 rstest = "0.26"
-rand = "0.9"
+rand = "0.10"
 rustls = { version = "0.23", features = ["ring"] }
 test-macros = { path = "../test-macros" }
 assert_matches = "1.5.0"
