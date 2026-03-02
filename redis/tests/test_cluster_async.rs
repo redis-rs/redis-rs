@@ -678,7 +678,7 @@ mod cluster_async {
             async_connection: mut connection,
             ..
         } = MockEnv::new(name, move |cmd: &[u8], _| {
-            if contains_slice(cmd, b"PING") {
+            if is_connection_check(cmd) {
                 Err(Ok(redis_value!(simple:"OK")))
             } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
                 Err(Ok(redis_value!([[0, 16383, [nil, 6379]]])))
@@ -702,7 +702,7 @@ mod cluster_async {
             async_connection: mut connection,
             ..
         } = MockEnv::new(name, move |cmd: &[u8], _| {
-            if contains_slice(cmd, b"PING") {
+            if is_connection_check(cmd) {
                 Err(Ok(redis_value!(simple:"OK")))
             } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
                 Err(Ok(redis_value!([
@@ -807,7 +807,7 @@ mod cluster_async {
             }
             started.store(true, atomic::Ordering::SeqCst);
 
-            if contains_slice(cmd, b"PING") {
+            if is_connection_check(cmd) {
                 return Err(Ok(redis_value!(simple:"OK")));
             }
 
@@ -865,7 +865,7 @@ mod cluster_async {
                     respond_startup(name, cmd)?;
                 }
 
-                if contains_slice(cmd, b"PING") {
+                if is_connection_check(cmd) {
                     return Err(Ok(redis_value!(simple:"OK")));
                 }
 
@@ -954,9 +954,10 @@ mod cluster_async {
             },
         );
 
-        // 4 - MockEnv creates a sync & async connections, each calling CLUSTER SLOTS once & PING per node.
-        // If we add more nodes or more setup calls, this number should increase.
-        assert_eq!(connection_count_clone.load(Ordering::Relaxed), 4);
+        // 5 - MockEnv creates sync & async connections. Each calls CLUSTER SLOTS once and
+        // READONLY per node during connect. The sync connection sends an additional READONLY
+        // in its connect() method.
+        assert_eq!(connection_count_clone.load(Ordering::Relaxed), 5);
 
         let value = runtime.block_on(connection.route_command(
             cmd("ECHO"),
@@ -981,8 +982,8 @@ mod cluster_async {
         ));
 
         assert_eq!(value, Ok(redis_value!("PONG")));
-        // 5 - because of the 4 above, and then another PING for new connections.
-        assert_eq!(connection_count_clone.load(Ordering::Relaxed), 5);
+        // 6 - because of the 5 above, and then another READONLY for the new connection.
+        assert_eq!(connection_count_clone.load(Ordering::Relaxed), 6);
     }
 
     #[test]
@@ -1058,7 +1059,7 @@ mod cluster_async {
                         ));
                     }
 
-                    if contains_slice(cmd, b"PING") {
+                    if is_connection_check(cmd) {
                         ping_attempts_clone.fetch_add(1, Ordering::Relaxed);
                     }
                     respond_startup_two_nodes(name, cmd)?;
@@ -1183,7 +1184,7 @@ mod cluster_async {
             }
             started.store(true, atomic::Ordering::SeqCst);
 
-            if contains_slice(cmd, b"PING") {
+            if is_connection_check(cmd) {
                 return Err(Ok(redis_value!(simple:"OK")));
             }
 
@@ -2111,7 +2112,7 @@ mod cluster_async {
                     ));
                 }
 
-                if contains_slice(cmd, b"PING") {
+                if is_connection_check(cmd) {
                     let connect_attempt = ping_attempts_clone.fetch_add(1, Ordering::Relaxed);
                     let past_get_attempts = get_attempts.load(Ordering::Relaxed);
                     // We want connection checks to fail after the first GET attempt, until it retries. Hence, we wait for 5 PINGs -

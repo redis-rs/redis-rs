@@ -518,10 +518,10 @@ where
         let info = get_connection_info(node, &self.cluster_params)?;
 
         let mut conn = C::connect(info, Some(self.cluster_params.connection_timeout))?;
-        if self.cluster_params.read_from_replicas {
-            // If READONLY is sent to primary nodes, it will have no effect
-            cmd("READONLY").exec(&mut conn)?;
-        }
+        // If READONLY is sent to primary nodes, it will have no effect.
+        // We set this unconditionally, because we don't know whether we'll be making read calls
+        // to replicas. (We allow overriding routing per-call)
+        cmd("READONLY").exec(&mut conn)?;
         conn.set_read_timeout(*self.read_timeout.borrow())?;
         conn.set_write_timeout(*self.write_timeout.borrow())?;
         Ok(conn)
