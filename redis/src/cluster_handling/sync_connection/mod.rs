@@ -74,6 +74,7 @@ pub use super::client::{ClusterClient, ClusterClientBuilder};
 use super::topology::parse_slots;
 use super::{
     client::ClusterParams,
+    read_routing::ReadRoutingStrategy,
     routing::{Redirect, Route, RoutingInfo},
     slot_map::{SLOT_SIZE, SlotMap},
 };
@@ -305,6 +306,7 @@ pub struct ClusterConnection<C = Connection> {
     auto_reconnect: RefCell<bool>,
     read_timeout: RefCell<Option<Duration>>,
     write_timeout: RefCell<Option<Duration>>,
+    routing_strategy: Option<Box<dyn ReadRoutingStrategy>>,
     cluster_params: ClusterParams,
 }
 
@@ -316,12 +318,18 @@ where
         cluster_params: ClusterParams,
         initial_nodes: Vec<ConnectionInfo>,
     ) -> RedisResult<Self> {
+        let routing_strategy = cluster_params
+            .read_routing_factory
+            .as_ref()
+            .map(|f| f.create_strategy());
+
         let connection = Self {
             connections: RefCell::new(HashMap::new()),
-            slots: RefCell::new(SlotMap::new(cluster_params.read_from_replicas)),
+            slots: RefCell::new(SlotMap::new()),
             auto_reconnect: RefCell::new(true),
             read_timeout: RefCell::new(cluster_params.response_timeout),
             write_timeout: RefCell::new(None),
+            routing_strategy,
             initial_nodes: initial_nodes.to_vec(),
             cluster_params,
         };
@@ -463,6 +471,10 @@ where
         let mut slots = self.slots.borrow_mut();
         *slots = self.create_new_slots()?;
 
+        if let Some(ref strategy) = self.routing_strategy {
+            strategy.on_topology_changed(&slots.topology());
+        }
+
         let mut nodes = slots.values().flatten().collect::<Vec<_>>();
         nodes.sort_unstable();
         nodes.dedup();
@@ -497,10 +509,7 @@ where
         for (addr, conn) in connections.iter_mut() {
             let value = conn.req_command(&slot_cmd())?;
             if let Ok(slots_data) = parse_slots(value, addr.host()) {
-                new_slots = Some(SlotMap::from_slots(
-                    slots_data,
-                    self.cluster_params.read_from_replicas,
-                ));
+                new_slots = Some(SlotMap::from_slots(slots_data));
                 break;
             }
         }
@@ -533,7 +542,7 @@ where
         route: &Route,
     ) -> (NodeAddress, RedisResult<&'a mut C>) {
         let slots = self.slots.borrow();
-        if let Some(addr) = slots.slot_addr_for_route(route) {
+        if let Some(addr) = slots.slot_addr_for_route(route, self.routing_strategy.as_deref()) {
             (addr.clone(), self.get_connection_by_addr(connections, addr))
         } else {
             // try a random node next.  This is safe if slots are involved
@@ -565,7 +574,7 @@ where
 
         let addr_for_slot = |route: Route| -> RedisResult<NodeAddress> {
             let slot_addr = slots
-                .slot_addr_for_route(&route)
+                .slot_addr_for_route(&route, self.routing_strategy.as_deref())
                 .ok_or((ErrorKind::Client, "Missing slot coverage"))?;
             Ok(slot_addr.clone())
         };
@@ -655,7 +664,7 @@ where
         'b: 'a,
     {
         slots
-            .addresses_for_multi_slot(routes)
+            .addresses_for_multi_slot(routes, self.routing_strategy.as_deref())
             .enumerate()
             .map(|(index, addr)| {
                 let addr = addr.ok_or(RedisError::from((
