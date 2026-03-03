@@ -10,6 +10,9 @@
 //! - [`RandomReplicaStrategy`] — picks a random replica for each read, falling back to
 //!   the primary when no replicas exist. This is the default when
 //!   `read_from_replicas()` is called.
+//! - [`RoundRobinReplicaStrategy`] — cycles through replicas in order, falling back to
+//!   the primary when no replicas exist. Each clone (i.e. each cluster connection)
+//!   starts a fresh counter.
 //!
 //! # Custom strategies
 //!
@@ -40,9 +43,11 @@
 //! ```
 
 mod random_replica;
+mod round_robin_replica;
 mod traits;
 
 pub use random_replica::RandomReplicaStrategy;
+pub use round_robin_replica::RoundRobinReplicaStrategy;
 pub use traits::{
     ReadCandidates, ReadRoutingStrategy, ReadRoutingStrategyFactory, Replicas, SlotTopology,
 };
