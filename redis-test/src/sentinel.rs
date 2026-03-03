@@ -153,7 +153,7 @@ pub fn wait_for_replica(
     mut get_client_fn: impl FnMut() -> RedisResult<Client>,
 ) -> Result<(), SentinelError> {
     let rolecmd = redis::cmd("ROLE");
-    for _ in 0..200 {
+    for i in 0..300 {
         let replica_client = get_client_fn();
         match replica_client {
             Ok(client) => match client.get_connection() {
@@ -176,7 +176,8 @@ pub fn wait_for_replica(
             }
         }
 
-        sleep(Duration::from_millis(25));
+        let delay = if i < 100 { 25 } else { 50 };
+        sleep(Duration::from_millis(delay));
     }
 
     Err(SentinelError)
