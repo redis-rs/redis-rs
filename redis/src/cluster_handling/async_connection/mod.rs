@@ -105,11 +105,12 @@ use std::{
 mod request;
 mod routing;
 use crate::{
-    AsyncConnectionConfig, Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, NodeAddress,
-    RedisError, RedisFuture, RedisResult, ToRedisArgs, Value,
+    AsyncConnectionConfig, Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError,
+    RedisFuture, RedisResult, ToRedisArgs, Value,
     aio::{ConnectionLike, HandleContainer, MultiplexedConnection, Runtime},
     check_resp3,
     cluster_handling::{
+        NodeAddress,
         client::ClusterParams,
         get_connection_info,
         routing::{

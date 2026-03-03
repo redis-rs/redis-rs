@@ -32,10 +32,19 @@ pub struct NodeAddress {
 impl NodeAddress {
     /// Creates a new `NodeAddress` from a host and port.
     pub fn new(host: impl Into<ArcStr>, port: u16) -> Self {
-        Self {
-            host: host.into(),
-            port,
-        }
+        Self::from_parts(host.into(), port)
+    }
+
+    /// Creates a new `NodeAddress` from pre-constructed parts.
+    ///
+    /// This is a `const fn` variant of [`new`](Self::new), useful for defining
+    /// compile-time constants via [`arcstr::literal!`]:
+    ///
+    /// ```ignore
+    /// const ADDR: NodeAddress = NodeAddress::from_parts(arcstr::literal!("127.0.0.1"), 6379);
+    /// ```
+    pub const fn from_parts(host: ArcStr, port: u16) -> Self {
+        Self { host, port }
     }
 
     /// Returns the hostname portion of the address.

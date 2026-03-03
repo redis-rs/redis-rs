@@ -9,7 +9,7 @@ use std::{
 
 use crate::errors::RetryMethod;
 use crate::{
-    Cmd, NodeAddress, RedisResult, cluster_async::OperationTarget,
+    Cmd, RedisResult, cluster_async::OperationTarget, cluster_handling::NodeAddress,
     cluster_handling::client::RetryParams, cluster_routing::Redirect,
 };
 
@@ -324,17 +324,14 @@ mod tests {
     use tokio::sync::oneshot;
 
     use crate::{
-        NodeAddress, RedisError, RedisResult,
+        RedisError, RedisResult,
         cluster_async::{PollFlushAction, routing},
+        cluster_handling::NodeAddress,
         cluster_handling::client::RetryParams,
         parse_redis_value,
     };
 
     use super::*;
-
-    fn test_addr(s: &str) -> NodeAddress {
-        NodeAddress::try_from(s).unwrap()
-    }
 
     fn get_redirect<C>(request: &PendingRequest<C>) -> Option<Redirect> {
         match &request.cmd {
@@ -372,7 +369,7 @@ mod tests {
         )
     }
 
-    const ADDRESS: &str = "foo:1234";
+    const ADDRESS: NodeAddress = NodeAddress::from_parts(arcstr::literal!("foo"), 1234);
 
     fn single_result(val: &str) -> RedisResult<Response> {
         parse_redis_value(val.as_bytes()).map(Response::Single)
@@ -390,21 +387,13 @@ mod tests {
         let (request, mut receiver) = request_and_receiver(0);
         let err_string = format!("-ASK 123 {ADDRESS}\r\n");
         let err = || single_result(&err_string);
-        let result = (
-            OperationTarget::Node {
-                address: test_addr(ADDRESS),
-            },
-            err(),
-        );
+        let result = (OperationTarget::Node { address: ADDRESS }, err());
         let retry_params = RetryParams::default();
         let (retry, next) = choose_response(result, request, &retry_params);
 
         assert_matches!(receiver.try_recv(), Err(_));
         if let Some(super::Retry::Immediately { request, .. }) = retry {
-            assert_eq!(
-                get_redirect(&request),
-                Some(Redirect::Ask(test_addr(ADDRESS)))
-            );
+            assert_eq!(get_redirect(&request), Some(Redirect::Ask(ADDRESS)));
         } else {
             panic!("Expected retry");
         };
@@ -412,12 +401,7 @@ mod tests {
 
         // try the same, without remaining retries
         let (request, mut receiver) = request_and_receiver(retry_params.number_of_retries);
-        let result = (
-            OperationTarget::Node {
-                address: test_addr(ADDRESS),
-            },
-            err(),
-        );
+        let result = (OperationTarget::Node { address: ADDRESS }, err());
         let (retry, next) = choose_response(result, request, &retry_params);
 
         assert_eq!(receiver.try_recv(), Ok(Err(to_err(&err_string))));
@@ -430,20 +414,12 @@ mod tests {
         let err_string = format!("-MOVED 123 {ADDRESS}\r\n");
         let err = || single_result(&err_string);
         let (request, mut receiver) = request_and_receiver(0);
-        let result = (
-            OperationTarget::Node {
-                address: test_addr(ADDRESS),
-            },
-            err(),
-        );
+        let result = (OperationTarget::Node { address: ADDRESS }, err());
         let retry_params = RetryParams::default();
         let (retry, next) = choose_response(result, request, &retry_params);
 
         if let Some(super::Retry::Immediately { request, .. }) = retry {
-            assert_eq!(
-                get_redirect(&request),
-                Some(Redirect::Moved(test_addr(ADDRESS)))
-            );
+            assert_eq!(get_redirect(&request), Some(Redirect::Moved(ADDRESS)));
         } else {
             panic!("Expected retry");
         };
@@ -452,12 +428,7 @@ mod tests {
 
         // try the same, without remaining retries
         let (request, mut receiver) = request_and_receiver(retry_params.number_of_retries);
-        let result = (
-            OperationTarget::Node {
-                address: test_addr(ADDRESS),
-            },
-            err(),
-        );
+        let result = (OperationTarget::Node { address: ADDRESS }, err());
         let (retry, next) = choose_response(result, request, &retry_params);
 
         assert_eq!(receiver.try_recv(), Ok(Err(to_err(&err_string))));
@@ -498,12 +469,7 @@ mod tests {
 
         // try the same, without remaining retries
         let (request, mut receiver) = request_and_receiver(retry_params.number_of_retries);
-        let result = (
-            OperationTarget::Node {
-                address: test_addr(ADDRESS),
-            },
-            err(),
-        );
+        let result = (OperationTarget::Node { address: ADDRESS }, err());
         let (retry, next) = choose_response(result, request, &retry_params);
 
         assert_eq!(receiver.try_recv(), Ok(Err(to_err(&err_string))));
@@ -530,12 +496,7 @@ mod tests {
 
         // try the same, with a different target
         let (request, mut receiver) = request_and_receiver(0);
-        let result = (
-            OperationTarget::Node {
-                address: test_addr(ADDRESS),
-            },
-            Err(err()),
-        );
+        let result = (OperationTarget::Node { address: ADDRESS }, Err(err()));
         let (retry, next) = choose_response(result, request, &retry_params);
 
         assert_matches!(receiver.try_recv(), Err(_));

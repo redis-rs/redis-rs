@@ -1,5 +1,6 @@
 use crate::{
-    Cmd, NodeAddress, RedisResult,
+    Cmd, RedisResult,
+    cluster_handling::NodeAddress,
     cluster_routing::{
         MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, RoutingInfo,
         SingleNodeRoutingInfo, SlotAddr,

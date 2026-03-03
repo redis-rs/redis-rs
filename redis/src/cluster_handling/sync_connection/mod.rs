@@ -69,6 +69,7 @@ use std::time::Duration;
 
 mod pipeline;
 
+pub use super::NodeAddress;
 pub use super::client::{ClusterClient, ClusterClientBuilder};
 use super::topology::parse_slots;
 use super::{
@@ -77,7 +78,6 @@ use super::{
     slot_map::{SLOT_SIZE, SlotMap},
 };
 use crate::IntoConnectionInfo;
-use crate::NodeAddress;
 pub use crate::TlsMode; // Pub for backwards compatibility
 use crate::cluster_handling::{get_connection_info, slot_cmd};
 use crate::cluster_routing::{
