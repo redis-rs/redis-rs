@@ -467,14 +467,14 @@ mod cluster_async {
     #[async_test]
     async fn async_cluster_basic_failover() {
         test_failover(
-                    &TestClusterContext::new_with_config(
-                        RedisClusterConfiguration::single_replica_config(),
-                    ),
-                    10,
-                    123,
-                    false,
-                )
-                .await;
+                &TestClusterContext::new_with_config(
+                    RedisClusterConfiguration::single_replica_config(),
+                ),
+                10,
+                123,
+                false,
+            )
+            .await;
     }
 
     async fn do_failover(
@@ -563,20 +563,14 @@ mod cluster_async {
                         }
                     } else {
                         let key = format!("test-{value}-{i}");
-                        cmd("SET")
-                            .arg(&key)
-                            .arg(i)
-                            .clone()
-                            .exec_async(&mut connection)
-                            .await
-                            .unwrap();
-                        let res: i32 = cmd("GET")
-                            .arg(key)
-                            .clone()
+                        let res: Vec<i32> = pipe()
+                            .set(key.clone(), i)
+                            .ignore()
+                            .get(key)
                             .query_async(&mut connection)
                             .await
                             .unwrap();
-                        assert_eq!(res, i);
+                        assert_eq!(res, &[i]);
                         completed.fetch_add(1, Ordering::SeqCst);
                         Ok::<_, anyhow::Error>(())
                     }
