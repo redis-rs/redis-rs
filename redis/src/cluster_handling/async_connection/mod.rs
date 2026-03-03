@@ -110,6 +110,7 @@ use crate::{
     aio::{ConnectionLike, HandleContainer, MultiplexedConnection, Runtime},
     check_resp3,
     cluster_handling::{
+        NodeAddress,
         client::ClusterParams,
         get_connection_info,
         routing::{
@@ -127,7 +128,6 @@ use crate::{
 use crate::ProtocolVersion;
 #[cfg(feature = "cache-aio")]
 use crate::caching::{CacheManager, CacheStatistics};
-use arcstr::ArcStr;
 use futures_util::{
     future::{self, BoxFuture, FutureExt},
     ready,
@@ -430,7 +430,7 @@ where
     }
 }
 
-type ConnectionMap<C> = HashMap<ArcStr, C>;
+type ConnectionMap<C> = HashMap<NodeAddress, C>;
 
 /// This is the internal representation of an async Redis Cluster connection. It stores the
 /// underlying connections maintained for each node in the cluster, as well
@@ -479,7 +479,7 @@ where
             );
         }
         let (receivers, requests): (Vec<_>, Vec<_>) = {
-            let to_request = |(addr, cmd): (&ArcStr, Arc<Cmd>)| {
+            let to_request = |(addr, cmd): (&NodeAddress, Arc<Cmd>)| {
                 read_guard.0.get(addr).cloned().map(|conn| {
                     let (sender, receiver) = oneshot::channel();
                     let addr = addr.clone();
@@ -546,7 +546,7 @@ where
     }
 
     async fn aggregate_results(
-        receivers: Vec<(ArcStr, oneshot::Receiver<RedisResult<Response>>)>,
+        receivers: Vec<(NodeAddress, oneshot::Receiver<RedisResult<Response>>)>,
         routing: &MultipleNodeRoutingInfo,
         response_policy: Option<ResponsePolicy>,
     ) -> RedisResult<Value> {
@@ -670,7 +670,10 @@ where
                                 Ok(server_error) => Ok(Value::ServerError(server_error)),
                                 Err(err) => Err(err),
                             })?;
-                        Ok::<_, RedisError>((Value::BulkString(addr.as_bytes().to_vec()), result))
+                        Ok::<_, RedisError>((
+                            Value::BulkString(addr.to_string().into_bytes()),
+                            result,
+                        ))
                     }))
                     .await
                     .into_iter()
@@ -785,7 +788,7 @@ where
     async fn get_connection(
         &self,
         route: InternalSingleNodeRouting<C>,
-    ) -> RedisResult<(ArcStr, C)> {
+    ) -> RedisResult<(NodeAddress, C)> {
         let read_guard = self.conn_lock.read().await;
 
         let conn = match route {
@@ -848,7 +851,7 @@ where
         Ok((addr, conn))
     }
 
-    async fn get_redirected_connection(&self, redirect: Redirect) -> RedisResult<(ArcStr, C)> {
+    async fn get_redirected_connection(&self, redirect: Redirect) -> RedisResult<(NodeAddress, C)> {
         let asking = matches!(redirect, Redirect::Ask(_));
         let addr = match redirect {
             Redirect::Moved(addr) => addr,
@@ -871,7 +874,7 @@ where
         Ok((addr, conn))
     }
 
-    async fn connect_check_and_add(&self, addr: &ArcStr) -> RedisResult<C> {
+    async fn connect_check_and_add(&self, addr: &NodeAddress) -> RedisResult<C> {
         match connect_and_check::<C>(addr, &self.cluster_params).await {
             Ok(conn) => {
                 self.conn_lock
@@ -897,7 +900,7 @@ where
                     .req_packed_command(&slot_cmd())
                     .await
                     .and_then(|value| value.extract_error())?;
-                let v: Vec<Slot> = parse_slots(value, addr.rsplit_once(':').unwrap().0)?;
+                let v: Vec<Slot> = parse_slots(value, addr.host())?;
                 build_slot_map(slots, v)
             }
             .await;
@@ -916,7 +919,7 @@ where
     async fn refresh_connections_locked(
         &self,
         connections: &mut ConnectionMap<C>,
-        nodes: HashSet<ArcStr>,
+        nodes: HashSet<NodeAddress>,
     ) {
         let nodes_len = nodes.len();
 
@@ -995,14 +998,14 @@ pub(crate) enum Response {
 }
 
 enum OperationTarget {
-    Node { address: ArcStr },
+    Node { address: NodeAddress },
     NotFound,
     FanOut,
 }
 type OperationResult = (OperationTarget, Result<Response, RedisError>);
 
-impl From<ArcStr> for OperationTarget {
-    fn from(address: ArcStr) -> Self {
+impl From<NodeAddress> for OperationTarget {
+    fn from(address: NodeAddress) -> Self {
         OperationTarget::Node { address }
     }
 }
@@ -1084,7 +1087,7 @@ where
     ) -> RedisResult<ConnectionMap<C>> {
         let (connections, error) = stream::iter(initial_nodes.iter().cloned())
             .map(async move |info| {
-                let addr = info.addr.to_string();
+                let addr = NodeAddress::try_from(&info.addr)?;
                 let result = connect_and_check(&addr, params).await;
                 match result {
                     Ok(conn) => Ok((addr, conn)),
@@ -1100,7 +1103,7 @@ where
                 |(mut connections, mut error), result| async move {
                     match result {
                         Ok((addr, conn)) => {
-                            connections.insert(addr.into(), conn);
+                            connections.insert(addr, conn);
                         }
                         Err(err) => {
                             // Store at least one error to use as detail in the connection error if
@@ -1145,7 +1148,10 @@ where
         }
     }
 
-    fn refresh_connections(&mut self, addrs: HashSet<ArcStr>) -> impl Future<Output = ()> + use<C> {
+    fn refresh_connections(
+        &mut self,
+        addrs: HashSet<NodeAddress>,
+    ) -> impl Future<Output = ()> + use<C> {
         let inner = self.inner.clone();
         async move {
             let mut write_guard = inner.conn_lock.write().await;
@@ -1312,7 +1318,7 @@ where
 }
 
 async fn get_or_create_conn<C>(
-    addr: &str,
+    addr: &NodeAddress,
     conn_option: Option<C>,
     params: &ClusterParams,
 ) -> RedisResult<C>
@@ -1333,7 +1339,7 @@ where
 enum PollFlushAction {
     None,
     RebuildSlots,
-    Reconnect(HashSet<ArcStr>),
+    Reconnect(HashSet<NodeAddress>),
     ReconnectFromInitialConnections,
 }
 
@@ -1496,11 +1502,11 @@ impl Connect for MultiplexedConnection {
     }
 }
 
-async fn connect_and_check<C>(node: &str, params: &ClusterParams) -> RedisResult<C>
+async fn connect_and_check<C>(node: &NodeAddress, params: &ClusterParams) -> RedisResult<C>
 where
     C: ConnectionLike + Connect + Send + 'static,
 {
-    let info = get_connection_info(node, params)?;
+    let info = get_connection_info(node, params);
     let mut config =
         AsyncConnectionConfig::default().set_connection_timeout(Some(params.connection_timeout));
     config = config.set_response_timeout(params.response_timeout);
@@ -1539,7 +1545,7 @@ where
     Ok(())
 }
 
-fn get_random_connection<C>(connections: &ConnectionMap<C>) -> Option<(ArcStr, C)>
+fn get_random_connection<C>(connections: &ConnectionMap<C>) -> Option<(NodeAddress, C)>
 where
     C: Clone,
 {

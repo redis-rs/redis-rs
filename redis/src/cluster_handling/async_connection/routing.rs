@@ -1,7 +1,6 @@
-use arcstr::ArcStr;
-
 use crate::{
     Cmd, RedisResult,
+    cluster_handling::NodeAddress,
     cluster_routing::{
         MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, RoutingInfo,
         SingleNodeRoutingInfo, SlotAddr,
@@ -44,9 +43,9 @@ pub(super) enum InternalSingleNodeRouting<C> {
     #[default]
     Random,
     SpecificNode(Route),
-    ByAddress(ArcStr),
+    ByAddress(NodeAddress),
     Connection {
-        identifier: ArcStr,
+        identifier: NodeAddress,
         conn: C,
     },
     Redirect {
@@ -88,7 +87,7 @@ impl<C> From<SingleNodeRoutingInfo> for InternalSingleNodeRouting<C> {
                 InternalSingleNodeRouting::SpecificNode(route)
             }
             SingleNodeRoutingInfo::ByAddress { host, port } => {
-                InternalSingleNodeRouting::ByAddress(format!("{host}:{port}").into())
+                InternalSingleNodeRouting::ByAddress(NodeAddress::new(host, port))
             }
             SingleNodeRoutingInfo::RandomPrimary => {
                 InternalSingleNodeRouting::SpecificNode(Route::new_random_primary())

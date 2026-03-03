@@ -1,7 +1,6 @@
 //! This module provides the functionality to refresh and calculate the cluster topology for Redis Cluster.
 
-use arcstr::ArcStr;
-
+use super::NodeAddress;
 use super::slot_map::Slot;
 use crate::{RedisResult, Value, connection::is_wildcard_address};
 
@@ -66,7 +65,7 @@ pub(crate) fn parse_slots(
                 } else {
                     return None;
                 };
-                Some(format!("{hostname}:{port}").into())
+                Some(NodeAddress::new(hostname.as_ref(), port))
             };
 
             let mut iterator = item.into_iter().skip(2);
@@ -80,7 +79,7 @@ pub(crate) fn parse_slots(
             let Some(primary) = primary else {
                 continue;
             };
-            let replicas: Vec<ArcStr> = iterator.filter_map(try_to_address).collect();
+            let replicas: Vec<NodeAddress> = iterator.filter_map(try_to_address).collect();
 
             slots.push(Slot::new(start, end, primary, replicas));
         }
