@@ -1,5 +1,7 @@
 #[cfg(feature = "cluster-async")]
 use crate::aio::AsyncPushSender;
+#[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
+use crate::auth::StreamingCredentialsProvider;
 #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
 use crate::caching::{CacheConfig, CacheManager};
 use crate::client::DEFAULT_CONNECTION_TIMEOUT;
@@ -48,6 +50,8 @@ struct BuilderParams {
     async_dns_resolver: Option<Arc<dyn AsyncDNSResolver>>,
     #[cfg(feature = "cache-aio")]
     cache_config: Option<CacheConfig>,
+    #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
+    credentials_provider: Option<std::sync::Arc<dyn StreamingCredentialsProvider>>,
 }
 
 #[derive(Clone)]
@@ -109,6 +113,8 @@ pub(crate) struct ClusterParams {
     pub(crate) async_dns_resolver: Option<Arc<dyn AsyncDNSResolver>>,
     #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
     pub(crate) cache_manager: Option<CacheManager>,
+    #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
+    pub(crate) credentials_provider: Option<std::sync::Arc<dyn StreamingCredentialsProvider>>,
 }
 
 impl ClusterParams {
@@ -163,6 +169,8 @@ impl ClusterParams {
             async_dns_resolver: value.async_dns_resolver,
             #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
             cache_manager,
+            #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
+            credentials_provider: value.credentials_provider,
         })
     }
 
@@ -483,6 +491,20 @@ impl ClusterClientBuilder {
     #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
     pub fn cache_config(mut self, cache_config: CacheConfig) -> Self {
         self.builder_params.cache_config = Some(cache_config);
+        self
+    }
+
+    /// Sets a credentials provider for dynamic authentication (e.g., token-based authentication)
+    /// on all cluster node connections.
+    ///
+    /// Each node connection will independently subscribe to the provider and automatically
+    /// re-authenticate when new credentials are emitted.
+    #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
+    pub fn set_credentials_provider<P>(mut self, provider: P) -> ClusterClientBuilder
+    where
+        P: StreamingCredentialsProvider + 'static,
+    {
+        self.builder_params.credentials_provider = Some(std::sync::Arc::new(provider));
         self
     }
 }

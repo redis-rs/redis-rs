@@ -349,11 +349,19 @@ impl AsyncConnectionConfig {
     /// # }
     /// ```
     #[cfg(feature = "token-based-authentication")]
-    pub fn set_credentials_provider<P>(mut self, provider: P) -> Self
+    pub fn set_credentials_provider<P>(self, provider: P) -> Self
     where
         P: StreamingCredentialsProvider + 'static,
     {
-        self.credentials_provider = Some(std::sync::Arc::new(provider));
+        self.set_credentials_provider_internal(std::sync::Arc::new(provider))
+    }
+
+    #[cfg(feature = "token-based-authentication")]
+    pub(crate) fn set_credentials_provider_internal(
+        mut self,
+        provider: std::sync::Arc<dyn StreamingCredentialsProvider>,
+    ) -> Self {
+        self.credentials_provider = Some(provider);
         self
     }
 }

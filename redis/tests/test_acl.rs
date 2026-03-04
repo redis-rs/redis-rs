@@ -1003,4 +1003,263 @@ mod token_based_authentication_acl_tests {
 
         println!("Connection rendered unusable test completed successfully!");
     }
+
+    #[cfg(feature = "cluster-async")]
+    mod cluster {
+        use super::*;
+        use redis::cluster::ClusterClientBuilder;
+
+        /// Sets up a single ACL user on every node in the cluster.
+        async fn add_user_on_all_nodes(cluster: &TestClusterContext, username: &str, token: &str) {
+            for server in &cluster.cluster.servers {
+                let client = redis::Client::open(server.connection_info()).unwrap();
+                let mut con = client.get_multiplexed_async_connection().await.unwrap();
+                redis::cmd("ACL")
+                    .arg("SETUSER")
+                    .arg(username)
+                    .arg("on")
+                    .arg(format!(">{token}"))
+                    .arg("~*")
+                    .arg("+@all")
+                    .exec_async(&mut con)
+                    .await
+                    .expect("ACL SETUSER should succeed");
+            }
+        }
+
+        /// Sets up Redis users for each token in the rotation sequence on every node.
+        async fn add_users_with_jwt_tokens_on_all_nodes(cluster: &TestClusterContext) {
+            for (username, token_payload) in CREDENTIALS.iter() {
+                add_user_on_all_nodes(cluster, username, token_payload).await;
+            }
+        }
+
+        #[tokio::test]
+        async fn test_cluster_authentication_with_mock_streaming_credentials_provider() {
+            init_logger();
+            let cluster = TestClusterContext::new_with_cluster_client_builder(
+                |builder: ClusterClientBuilder| {
+                    let mut mock_provider = MockStreamingCredentialsProvider::new();
+                    mock_provider.start();
+                    builder.set_credentials_provider(mock_provider)
+                },
+            );
+
+            add_user_on_all_nodes(&cluster, OID_CLAIM_VALUE, &MOCKED_TOKEN).await;
+
+            let mut connection = cluster.async_connection().await;
+
+            let current_user: String = redis::cmd("ACL")
+                .arg("WHOAMI")
+                .query_async(&mut connection)
+                .await
+                .unwrap();
+            assert_eq!(current_user, OID_CLAIM_VALUE);
+
+            redis::cmd("SET")
+                .arg("test_key")
+                .arg("test_value")
+                .exec_async(&mut connection)
+                .await
+                .expect("SET should succeed with credentials provider");
+
+            let result: String = redis::cmd("GET")
+                .arg("test_key")
+                .query_async(&mut connection)
+                .await
+                .expect("GET should succeed with credentials provider");
+
+            assert_eq!(result, "test_value");
+        }
+
+        #[tokio::test]
+        async fn test_cluster_token_rotation_with_mock_streaming_credentials_provider() {
+            init_logger();
+            let cluster = TestClusterContext::new_with_cluster_client_builder(
+                |builder: ClusterClientBuilder| {
+                    let mut mock_provider = MockStreamingCredentialsProvider::multiple_tokens();
+                    mock_provider.start();
+                    builder.set_credentials_provider(mock_provider)
+                },
+            );
+
+            add_users_with_jwt_tokens_on_all_nodes(&cluster).await;
+
+            let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
+            let mut con = cluster.async_connection().await;
+
+            let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
+            assert_eq!(current_user, ALICE_OID_CLAIM);
+
+            tokio::time::sleep(Duration::from_millis(600)).await;
+
+            let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
+            assert_eq!(current_user, BOB_OID_CLAIM);
+
+            tokio::time::sleep(Duration::from_millis(600)).await;
+
+            let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
+            assert_eq!(current_user, CHARLIE_OID_CLAIM);
+        }
+
+        #[tokio::test]
+        async fn test_cluster_authentication_error_handling_with_mock_streaming_credentials_provider()
+         {
+            init_logger();
+            let cluster = TestClusterContext::new_with_cluster_client_builder(
+                |builder: ClusterClientBuilder| {
+                    let mut mock_provider =
+                        MockStreamingCredentialsProvider::multiple_tokens_with_errors(vec![1]);
+                    mock_provider.start();
+                    builder.set_credentials_provider(mock_provider)
+                },
+            );
+
+            add_users_with_jwt_tokens_on_all_nodes(&cluster).await;
+
+            let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
+            let mut con = cluster.async_connection().await;
+
+            let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
+            assert_eq!(current_user, ALICE_OID_CLAIM);
+
+            // Position 1 is an error — user should remain Alice
+            tokio::time::sleep(Duration::from_millis(600)).await;
+            let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
+            assert_eq!(current_user, ALICE_OID_CLAIM);
+
+            // Position 2 succeeds — should rotate to Charlie
+            tokio::time::sleep(Duration::from_millis(600)).await;
+            let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
+            assert_eq!(current_user, CHARLIE_OID_CLAIM);
+
+            // Cycles back to position 0 — Alice
+            tokio::time::sleep(Duration::from_millis(600)).await;
+            let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
+            assert_eq!(current_user, ALICE_OID_CLAIM);
+        }
+
+        #[tokio::test]
+        async fn test_cluster_multiple_connections_sharing_a_single_credentials_provider() {
+            init_logger();
+            let cluster = TestClusterContext::new_with_cluster_client_builder(
+                |builder: ClusterClientBuilder| {
+                    let mut mock_provider = MockStreamingCredentialsProvider::multiple_tokens();
+                    mock_provider.start();
+                    builder.set_credentials_provider(mock_provider)
+                },
+            );
+
+            add_users_with_jwt_tokens_on_all_nodes(&cluster).await;
+
+            let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
+            let mut con1 = cluster.client.get_async_connection().await.unwrap();
+            let mut con2 = cluster.client.get_async_connection().await.unwrap();
+
+            for (i, con) in [&mut con1, &mut con2].into_iter().enumerate() {
+                let current_user: String = whoami_cmd.query_async(con).await.unwrap();
+                assert_eq!(current_user, ALICE_OID_CLAIM);
+                redis::cmd("SET")
+                    .arg(format!("test_key_{i}"))
+                    .arg(i.to_string())
+                    .exec_async(con)
+                    .await
+                    .unwrap();
+            }
+
+            tokio::time::sleep(Duration::from_millis(600)).await;
+
+            for (i, con) in [&mut con1, &mut con2].into_iter().enumerate() {
+                let current_user: String = whoami_cmd.query_async(con).await.unwrap();
+                assert_eq!(current_user, BOB_OID_CLAIM);
+                let val: String = redis::cmd("GET")
+                    .arg(format!("test_key_{i}"))
+                    .query_async(con)
+                    .await
+                    .unwrap();
+                assert_eq!(val, i.to_string());
+            }
+        }
+
+        #[tokio::test]
+        async fn test_cluster_multiple_clients_sharing_a_single_credentials_provider() {
+            init_logger();
+            let cluster = TestClusterContext::new();
+
+            add_users_with_jwt_tokens_on_all_nodes(&cluster).await;
+
+            let mut mock_provider = MockStreamingCredentialsProvider::multiple_tokens();
+            mock_provider.start();
+
+            let client1 = ClusterClientBuilder::new(cluster.nodes.clone())
+                .set_credentials_provider(mock_provider.clone())
+                .build()
+                .unwrap();
+            let client2 = ClusterClientBuilder::new(cluster.nodes.clone())
+                .set_credentials_provider(mock_provider)
+                .build()
+                .unwrap();
+
+            let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
+            let mut con1 = client1.get_async_connection().await.unwrap();
+            let mut con2 = client2.get_async_connection().await.unwrap();
+
+            for (i, con) in [&mut con1, &mut con2].into_iter().enumerate() {
+                let current_user: String = whoami_cmd.query_async(con).await.unwrap();
+                assert_eq!(current_user, ALICE_OID_CLAIM);
+                redis::cmd("SET")
+                    .arg(format!("test_key_{i}"))
+                    .arg(i.to_string())
+                    .exec_async(con)
+                    .await
+                    .unwrap();
+            }
+
+            tokio::time::sleep(Duration::from_millis(600)).await;
+
+            for (i, con) in [&mut con1, &mut con2].into_iter().enumerate() {
+                let current_user: String = whoami_cmd.query_async(con).await.unwrap();
+                assert_eq!(current_user, BOB_OID_CLAIM);
+                let val: String = redis::cmd("GET")
+                    .arg(format!("test_key_{i}"))
+                    .query_async(con)
+                    .await
+                    .unwrap();
+                assert_eq!(val, i.to_string());
+            }
+        }
+
+        #[tokio::test]
+        async fn test_cluster_connection_rendered_unusable_when_reauthentication_fails() {
+            init_logger();
+            let cluster = TestClusterContext::new_with_cluster_client_builder(
+                |builder: ClusterClientBuilder| {
+                    let mut mock_provider = MockStreamingCredentialsProvider::with_config(
+                        MockProviderConfig::valid_then_invalid_credentials(),
+                    );
+                    mock_provider.start();
+                    builder.set_credentials_provider(mock_provider)
+                },
+            );
+
+            add_users_with_jwt_tokens_on_all_nodes(&cluster).await;
+
+            let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
+            let mut con = cluster.async_connection().await;
+
+            let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
+            assert_eq!(current_user, ALICE_OID_CLAIM);
+
+            // Wait for rotation to yield invalid credentials
+            tokio::time::sleep(Duration::from_millis(600)).await;
+
+            let result: redis::RedisResult<String> = whoami_cmd.query_async(&mut con).await;
+            assert!(
+                result.is_err(),
+                "Commands should fail after re-authentication with invalid credentials."
+            );
+            let error = result.unwrap_err();
+            assert_eq!(error.kind(), ErrorKind::ClusterConnectionNotFound);
+        }
+    }
 }
