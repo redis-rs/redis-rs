@@ -772,10 +772,10 @@ async fn test_cache_async_cluster_slot_change(migrate: bool) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
-    if !migrate && TestContext::new().get_version().0 == 6 {
-        // Redis 6.x won't invalidate data when migrate doesn't happen.
-        // This case can be removed when support for 6.x is dropped.
-        return;
+    // When not `migrate`, this test relies on Redis commit 8945067 which was included beginning
+    // with Redis 7.2
+    if !migrate {
+        run_test_if_version_supported!(&REDIS_VERSION_CE_7_2);
     }
 
     struct NodeData {

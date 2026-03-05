@@ -22,13 +22,15 @@ jobs:
     strategy:
       matrix:
         config: [
-            # Different DB cases:
-            {  db-org: redis, db-name: redis, db-version: 6.2.13 },
-            {  db-org: redis, db-name: redis, db-version: 7.2.4, json-module-version: v2.6.22 },
-            {  db-org: redis, db-name: redis, db-version: 8.0.2, json-module-version: v2.8.16 },
-            {  db-org: redis, db-name: redis, db-version: 8.2.0, json-module-version: v2.8.16 },
-            {  db-org: valkey-io, db-name: valkey, db-version: 7.2.6, json-module-version: v2.6.22 },
-            {  db-org: valkey-io, db-name: valkey, db-version: 8.0.1, json-module-version: v2.6.22 },
+            # Different DB cases: (earliest and latest minor for each major version, with latest patch)
+            {  db-org: redis, db-name: redis, db-version: 6.2.21 },
+            {  db-org: redis, db-name: redis, db-version: 7.0.15, json-module-version: v2.6.22 },
+            {  db-org: redis, db-name: redis, db-version: 7.4.8, json-module-version: v2.6.22 },
+            {  db-org: redis, db-name: redis, db-version: 8.0.4, json-module-version: v2.8.16 },
+            {  db-org: redis, db-name: redis, db-version: 8.6.1, json-module-version: v2.8.16 },
+            {  db-org: valkey-io, db-name: valkey, db-version: 7.2.12, json-module-version: v2.6.22 },
+            {  db-org: valkey-io, db-name: valkey, db-version: 8.0.7, json-module-version: v2.6.22 },
+            {  db-org: valkey-io, db-name: valkey, db-version: 9.0.3, json-module-version: v2.6.22 },
           ]
 
     steps:
