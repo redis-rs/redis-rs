@@ -275,7 +275,7 @@ redis-rs tests that webassembly succesfully builds for the sync client work, but
 To test `redis` you're going to need to be able to test with the Redis Modules, to do this
 you must set the following environment variable before running the test script
 
--   `REDIS_RS_REDIS_JSON_PATH` = The absolute path to the RedisJSON module (Either `librejson.so` for Linux or `librejson.dylib` for MacOS).
+-   `REDISRS_REDIS_JSON_PATH` = The absolute path to the RedisJSON module (Either `librejson.so` for Linux or `librejson.dylib` for MacOS).
 
 -   Please refer to this [link](https://github.com/RedisJSON/RedisJSON) to access the RedisJSON module:
 
