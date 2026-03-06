@@ -33,23 +33,6 @@ mod basic_async {
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     #[should_panic(expected = "Internal thread panicked")]
     fn test_block_on_all_panics_from_spawns(#[case] runtime: RuntimeType) {
-        fn spawn<T>(fut: impl std::future::Future<Output = T> + Send + Sync + 'static)
-        where
-            T: Send + 'static,
-        {
-            match tokio::runtime::Handle::try_current() {
-                Ok(tokio_runtime) => {
-                    tokio_runtime.spawn(fut);
-                }
-                Err(_) => {
-                    #[cfg(feature = "smol-comp")]
-                    smol::spawn(fut).detach();
-                    #[cfg(not(feature = "smol-comp"))]
-                    unreachable!()
-                }
-            }
-        }
-
         use std::sync::{Arc, atomic::AtomicBool};
 
         let slept = Arc::new(AtomicBool::new(false));
