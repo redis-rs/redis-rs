@@ -11,6 +11,8 @@ use std::str::FromStr;
 #[cfg(feature = "cluster-async")]
 pub mod async_connection;
 pub mod client;
+/// Pluggable read routing strategies for cluster connections.
+pub mod read_routing;
 /// Routing information for cluster commands.
 pub mod routing;
 pub(crate) mod slot_map;
