@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
-      matrix:
+      matrix: &db-matrix
         config: [
             # Different DB cases: (earliest and latest minor for each major version, with latest patch)
             {  db-org: redis, db-name: redis, db-version: 6.2.21 },
@@ -145,15 +145,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        config: [
-            # Different DB cases:
-            { db-org: redis, db-name: redis, db-version: 6.2.13 },
-            { db-org: redis, db-name: redis, db-version: 7.2.4 },
-            { db-org: valkey-io, db-name: valkey, db-version: 8.0.1 },
-            { db-org: redis, db-name: redis, db-version: 8.2.2 },
-            { db-org: valkey-io, db-name: valkey, db-version: 9.0.0 },
-          ]
+      matrix: *db-matrix
 
     steps:
       - uses: actions/checkout@v6
