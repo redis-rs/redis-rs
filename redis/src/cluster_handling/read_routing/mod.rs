@@ -7,40 +7,8 @@
 //!
 //! # Built-in strategies
 //!
-//! - [`RandomReplicaStrategy`](crate::cluster_read_routing::RandomReplicaStrategy) — picks a random replica for each read, falling back to
-//!   the primary when no replicas exist. This is the default when
-//!   `read_from_replicas()` is called.
-//! - [`RoundRobinReplicaStrategy`](crate::cluster_read_routing::RoundRobinReplicaStrategy) — cycles through replicas in order, falling back to
-//!   the primary when no replicas exist. Each clone (i.e. each cluster connection)
-//!   starts a fresh counter.
-//!
-//! # Custom strategies
-//!
-//! Implement [`ReadRoutingStrategy`](crate::cluster_read_routing::ReadRoutingStrategy) to create your own routing logic:
-//!
-//! ```rust
-//! use redis::cluster_read_routing::{
-//!     ReadRoutingStrategy, ReadCandidates,
-//! };
-//! use redis::cluster::NodeAddress;
-//!
-//! #[derive(Clone)]
-//! struct FirstReplica;
-//!
-//! impl ReadRoutingStrategy for FirstReplica {
-//!     fn route_read<'a>(&self, candidates: &ReadCandidates<'a>) -> &'a NodeAddress {
-//!         match candidates {
-//!             ReadCandidates::AnyNode {
-//!                 primary, replicas, ..
-//!             } => match replicas {
-//!                 Some(replicas) => replicas.first(),
-//!                 None => primary,
-//!             },
-//!             ReadCandidates::ReplicasOnly { replicas, .. } => replicas.first(),
-//!         }
-//!     }
-//! }
-//! ```
+//! - [`RandomReplicaStrategy`](crate::cluster_read_routing::RandomReplicaStrategy) — picks a random replica for each read, falling back to the primary when no replicas exist. This is the default when `read_from_replicas()` is called.
+//! - [`RoundRobinReplicaStrategy`](crate::cluster_read_routing::RoundRobinReplicaStrategy) — cycles through replicas in order, falling back to the primary when no replicas exist. Each clone (i.e. each cluster connection) starts a fresh counter.
 
 mod random_replica;
 mod round_robin_replica;

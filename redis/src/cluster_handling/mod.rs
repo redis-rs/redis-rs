@@ -25,12 +25,6 @@ pub(crate) mod topology;
 /// without repeated string parsing. The host may be an IPv4 address
 /// (e.g. `127.0.0.1`), an IPv6 address (e.g. `dead::cafe:beef`), or a hostname
 /// (e.g. `redis-node-1.example.com`).
-///
-/// This type is used in [`ReadCandidates`] and [`ReadRoutingStrategy`] to identify
-/// cluster nodes when routing read commands.
-///
-/// [`ReadCandidates`]: crate::cluster_read_routing::ReadCandidates
-/// [`ReadRoutingStrategy`]: crate::cluster_read_routing::ReadRoutingStrategy
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct NodeAddress {
     host: ArcStr,
