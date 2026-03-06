@@ -161,11 +161,26 @@ impl RedisServer {
         for module in modules {
             match module {
                 Module::Json => {
-                    redis_cmd
-                        .arg("--loadmodule")
-                        .arg(env::var("REDIS_RS_REDIS_JSON_PATH").expect(
-                        "Unable to find path to RedisJSON at REDIS_RS_REDIS_JSON_PATH, is it set?",
-                    ));
+                    // Try to pick up json module path from REDISRS_REDIS_JSON_PATH environment variable
+                    let path = match env::var("REDISRS_REDIS_JSON_PATH") {
+                        Ok(path) => path,
+                        // Falling back to legacy REDIS_RS_REDIS_JSON_PATH environment variable
+                        Err(_) => match env::var("REDIS_RS_REDIS_JSON_PATH") {
+                            Ok(path) => {
+                                eprintln!(
+                                    "Warning: Use of REDIS_RS_REDIS_JSON_PATH is deprecated. Use REDISRS_REDIS_JSON_PATH (no '_' before 'RS') instead"
+                                );
+                                path
+                            }
+                            Err(_) => {
+                                panic!(
+                                    "Unable to find path to RedisJSON at REDISRS_REDIS_JSON_PATH, is it set?"
+                                );
+                            }
+                        },
+                    };
+
+                    redis_cmd.arg("--loadmodule").arg(path);
                 }
             };
         }
