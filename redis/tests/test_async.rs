@@ -20,7 +20,6 @@ mod basic_async {
     #[cfg(feature = "json")]
     use redis_test::server::Module;
     use redis_test::server::{redis_settings, use_protocol};
-    use rstest::rstest;
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -1638,7 +1637,7 @@ mod basic_async {
     mod mtls_test {
         use super::*;
 
-        #[rstest]
+        #[rstest::rstest]
         #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
         #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
         fn test_should_connect_mtls(#[case] runtime: RuntimeType) {
@@ -1665,7 +1664,7 @@ mod basic_async {
             );
         }
 
-        #[rstest]
+        #[rstest::rstest]
         #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
         #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
         fn test_should_not_connect_if_tls_active(#[case] runtime: RuntimeType) {
