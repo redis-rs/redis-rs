@@ -8,7 +8,6 @@ use redis::cluster_routing::*;
 use redis::{AsyncCommands, RedisError, caching::CacheConfig};
 #[cfg(feature = "json")]
 use redis_test::server::Module;
-use rstest::rstest;
 #[cfg(feature = "json")]
 use serde_json::json;
 use std::collections::HashMap;
