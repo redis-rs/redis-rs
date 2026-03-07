@@ -4,6 +4,7 @@ mod support;
 mod basic_async {
     use std::{collections::HashMap, time::Duration};
 
+    use super::*;
     use crate::support::*;
     use assert_matches::assert_matches;
     use futures::{StreamExt, prelude::*};
@@ -19,7 +20,6 @@ mod basic_async {
     #[cfg(feature = "json")]
     use redis_test::server::Module;
     use redis_test::server::{redis_settings, use_protocol};
-    use rstest::rstest;
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -32,23 +32,6 @@ mod basic_async {
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     #[should_panic(expected = "Internal thread panicked")]
     fn test_block_on_all_panics_from_spawns(#[case] runtime: RuntimeType) {
-        fn spawn<T>(fut: impl std::future::Future<Output = T> + Send + Sync + 'static)
-        where
-            T: Send + 'static,
-        {
-            match tokio::runtime::Handle::try_current() {
-                Ok(tokio_runtime) => {
-                    tokio_runtime.spawn(fut);
-                }
-                Err(_) => {
-                    #[cfg(feature = "smol-comp")]
-                    smol::spawn(fut).detach();
-                    #[cfg(not(feature = "smol-comp"))]
-                    unreachable!()
-                }
-            }
-        }
-
         use std::sync::{Arc, atomic::AtomicBool};
 
         let slept = Arc::new(AtomicBool::new(false));
@@ -1654,7 +1637,7 @@ mod basic_async {
     mod mtls_test {
         use super::*;
 
-        #[rstest]
+        #[rstest::rstest]
         #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
         #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
         fn test_should_connect_mtls(#[case] runtime: RuntimeType) {
@@ -1681,7 +1664,7 @@ mod basic_async {
             );
         }
 
-        #[rstest]
+        #[rstest::rstest]
         #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
         #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
         fn test_should_not_connect_if_tls_active(#[case] runtime: RuntimeType) {

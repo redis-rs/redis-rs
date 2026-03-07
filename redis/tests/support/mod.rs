@@ -576,3 +576,20 @@ pub async fn kill_client_async(
 
     Ok(())
 }
+
+pub fn spawn<T>(fut: impl std::future::Future<Output = T> + Send + Sync + 'static)
+where
+    T: Send + 'static,
+{
+    match tokio::runtime::Handle::try_current() {
+        Ok(tokio_runtime) => {
+            tokio_runtime.spawn(fut);
+        }
+        Err(_) => {
+            #[cfg(feature = "smol-comp")]
+            smol::spawn(fut).detach();
+            #[cfg(not(feature = "smol-comp"))]
+            unreachable!()
+        }
+    }
+}

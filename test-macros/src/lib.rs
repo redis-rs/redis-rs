@@ -37,24 +37,24 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
             quote! {
                 #item
 
-                #[rstest]
-                #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-                #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-                fn #test_multiplexed_connection_function_name (#[case]runtime: RuntimeType) {
+                #[rstest::rstest]
+                #[cfg_attr(feature = "tokio-comp", case::tokio(support::RuntimeType::Tokio))]
+                #[cfg_attr(feature = "smol-comp", case::smol(support::RuntimeType::Smol))]
+                fn #test_multiplexed_connection_function_name (#[case]runtime: support::RuntimeType) {
                     let ctx = TestContext::new();
-                    block_on_all(async move {
+                    support::block_on_all(async move {
                         let conn = ctx.async_connection().await.unwrap();
                         #function_name (conn).await
                     }, runtime);
                 }
 
-                #[rstest]
-                #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-                #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+                #[rstest::rstest]
+                #[cfg_attr(feature = "tokio-comp", case::tokio(support::RuntimeType::Tokio))]
+                #[cfg_attr(feature = "smol-comp", case::smol(support::RuntimeType::Smol))]
                 #[cfg(feature = "connection-manager")]
-                fn #test_connection_manager_function_name (#[case]runtime: RuntimeType) {
+                fn #test_connection_manager_function_name (#[case]runtime: support::RuntimeType) {
                     let ctx = TestContext::new();
-                    block_on_all(async move {
+                    support::block_on_all(async move {
                         let conn = ctx.client.get_connection_manager().await.unwrap();
                         #function_name (conn).await
                     }, runtime);
@@ -64,7 +64,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
             quote! {
                 #item
 
-                #[rstest]
+                #[rstest::rstest]
                 #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
                 #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
                 fn #test_function_name (#[case]runtime: RuntimeType, #[values(true, false)] arg: bool) {
@@ -83,7 +83,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
         quote! {
             #item
 
-            #[rstest]
+            #[rstest::rstest]
             #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
             #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
             fn #test_function_name (#[case]runtime: RuntimeType) {
