@@ -168,8 +168,6 @@ impl RedisCluster {
                         .arg(tempdir.path().join("nodes.conf"))
                         .arg("--cluster-node-timeout")
                         .arg("5000")
-                        .arg("--appendonly")
-                        .arg("yes")
                         .arg("--aclfile")
                         .arg(&acl_path);
                     if is_tls {
