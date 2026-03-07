@@ -4446,7 +4446,7 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
         let ret = redis::cmd("ROLE").query::<Role>(&mut con).unwrap();
-        assert!(matches!(ret, Role::Primary { .. }));
+        assert_matches!(ret, Role::Primary { .. });
     }
 
     #[test]

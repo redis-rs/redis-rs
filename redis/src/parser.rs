@@ -681,7 +681,7 @@ mod tests {
             ba.extend(end);
             match parse_redis_value(&ba) {
                 Ok(_) => panic!("Expected ParseError"),
-                Err(e) => assert!(matches!(e.kind(), ErrorKind::Parse)),
+                Err(e) => assert_matches!(e.kind(), ErrorKind::Parse),
             }
         }
     }
@@ -703,7 +703,7 @@ mod tests {
         ba.extend(end);
         match parse_redis_value(&ba) {
             Ok(_) => panic!("Expected ParseError"),
-            Err(e) => assert!(matches!(e.kind(), ErrorKind::Parse)),
+            Err(e) => assert_matches!(e.kind(), ErrorKind::Parse),
         }
     }
 }
