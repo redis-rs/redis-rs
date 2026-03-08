@@ -1,3 +1,26 @@
+### 1.0.5 (2026-03-08)
+
+#### Changes & Bug fixes
+
+* Reduce blocking on async cluster connection. ([#1967](https://github.com/redis-rs/redis-rs/pull/1967) by @nihohit)
+* Unconditionally try to set READONLY on cluster connections ([#1981](https://github.com/redis-rs/redis-rs/pull/1981) by @PDXKimani)
+* Add async transaction support. ([#1969](https://github.com/redis-rs/redis-rs/pull/1969) by @nihohit)
+* Introduce modeled NodeAddress type to clusters ([#1982](https://github.com/redis-rs/redis-rs/pull/1982) by @PDXKimani)
+* Add support for StreamingCredentialsProvider to Redis cluster client ([#1965](https://github.com/redis-rs/redis-rs/pull/1965) by @alexcole)
+* Allow to override the library name and version advertised to the server ([#1970](https://github.com/redis-rs/redis-rs/pull/1970) by @somechris)
+
+#### CI improvements
+
+* tests: Allow to set used Redis server binary via `REDISRS_SERVER_BIN` ([#1971](https://github.com/redis-rs/redis-rs/pull/1971) by @somechris)
+* Fix flakey test ([#1983](https://github.com/redis-rs/redis-rs/pull/1983) by @nihohit)
+* Reduce chance for sentinel test flakey failure ([#1984](https://github.com/redis-rs/redis-rs/pull/1984) by @nihohit)
+* Test matrix redis version update ([#1987](https://github.com/redis-rs/redis-rs/pull/1987) by @somechris)
+* Replace new tokio tests with runtime-agnostic tests. ([#1990](https://github.com/redis-rs/redis-rs/pull/1990) by @nihohit)
+* ci: Dedupe test matrix ([#1991](https://github.com/redis-rs/redis-rs/pull/1991) by @somechris)
+* Use assert matches in more tests ([#1993](https://github.com/redis-rs/redis-rs/pull/1993) by @nihohit)
+* Try fix flakiness in tests. ([#1992](https://github.com/redis-rs/redis-rs/pull/1992) by @nihohit)
+* Harmonize on `REDISRS_` as prefix for environment variables ([#1989](https://github.com/redis-rs/redis-rs/pull/1989) by @somechris)
+
 ### 1.0.4 (2026-02-13)
 
 #### Changes & Bug fixes
