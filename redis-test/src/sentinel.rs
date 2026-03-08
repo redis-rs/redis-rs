@@ -40,7 +40,6 @@ fn spawn_master_server(
         |cmd| {
             // Minimize startup delay
             cmd.arg("--repl-diskless-sync-delay").arg("0");
-            cmd.arg("--appendonly").arg("yes");
             if let ConnectionAddr::TcpTls { .. } = get_addr(port) {
                 cmd.arg("--tls-replication").arg("yes");
             }
@@ -73,7 +72,6 @@ fn spawn_replica_server(
             if let ConnectionAddr::TcpTls { .. } = get_addr(port) {
                 cmd.arg("--tls-replication").arg("yes");
             }
-            cmd.arg("--appendonly").arg("yes");
             cmd.current_dir(dir.path());
             cmd.spawn().unwrap()
         },
@@ -105,7 +103,6 @@ fn spawn_sentinel_server(
         modules,
         |cmd| {
             cmd.arg("--sentinel");
-            cmd.arg("--appendonly").arg("yes");
             if let ConnectionAddr::TcpTls { .. } = get_addr(port) {
                 cmd.arg("--tls-replication").arg("yes");
             }
@@ -129,6 +126,7 @@ pub fn wait_for_master_server(
                     let r: Vec<redis::Value> = rolecmd.query(&mut conn).unwrap();
                     let role = String::from_redis_value_ref(r.first().unwrap()).unwrap();
                     if role.starts_with("master") {
+                        println!("found master");
                         return Ok(());
                     } else {
                         println!("failed check for master role - current role: {r:?}")
@@ -162,6 +160,7 @@ pub fn wait_for_replica(
                     let role = String::from_redis_value_ref(r.first().unwrap()).unwrap();
                     let state = String::from_redis_value_ref(r.get(3).unwrap()).unwrap();
                     if role.starts_with("slave") && state == "connected" {
+                        println!("found replica");
                         return Ok(());
                     } else {
                         println!("failed check for replica role - current role: {r:?}")
