@@ -1,12 +1,12 @@
 name: "Install DB"
 inputs:
-  db-org: 
+  db-org:
     type: string,
     required: true
-  db-name: 
+  db-name:
     type: string,
     required: true
-  db-version: 
+  db-version:
     type: string,
     required: true
 
@@ -30,10 +30,10 @@ runs:
         sudo apt-get update
         wget https://github.com/${{ inputs.db-org }}/${{ inputs.db-name }}/archive/${{ inputs.db-version }}.tar.gz;
         tar -xzvf ${{ inputs.db-version }}.tar.gz;
-        pushd ${{ inputs.db-name }}-${{ inputs.db-version }} && 
-        BUILD_TLS=yes make install && 
+        pushd ${{ inputs.db-name }}-${{ inputs.db-version }} &&
+        BUILD_TLS=yes make install &&
         sudo mv src/${{ inputs.db-name }}-server $HOME/redis-server &&
-        sudo mv src/${{ inputs.db-name }}-cli $HOME/redis-cli && 
+        sudo mv src/${{ inputs.db-name }}-cli $HOME/redis-cli &&
         popd;
         echo $PATH
 
@@ -49,4 +49,4 @@ runs:
     - name: set PATH
       shell: bash
       run: |
-        echo "$HOME" >> $GITHUB_PATH        
+        echo "$HOME" >> $GITHUB_PATH
