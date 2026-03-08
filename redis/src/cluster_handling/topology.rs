@@ -1,5 +1,9 @@
 //! This module provides the functionality to refresh and calculate the cluster topology for Redis Cluster.
 
+use std::collections::HashSet;
+
+use arcstr::ArcStr;
+
 use super::NodeAddress;
 use super::slot_map::Slot;
 use crate::{RedisResult, Value, connection::is_wildcard_address};
@@ -12,6 +16,7 @@ pub(crate) fn parse_slots(
 ) -> RedisResult<Vec<Slot>> {
     // Parse response.
     let mut slots = Vec::with_capacity(2);
+    let mut hosts = HashSet::<ArcStr>::new();
 
     if let Value::Array(items) = raw_slot_resp {
         let mut iter = items.into_iter();
@@ -32,7 +37,7 @@ pub(crate) fn parse_slots(
                 continue;
             };
 
-            let try_to_address = |node: Value| {
+            let mut try_to_address = |node: Value| {
                 let Value::Array(node) = node else {
                     return None;
                 };
@@ -65,7 +70,16 @@ pub(crate) fn parse_slots(
                 } else {
                     return None;
                 };
-                Some(NodeAddress::new(hostname.as_ref(), port))
+                // if the hostname was already seen, we'll prefer to take it, in order to reduce fragmentation
+                let hostname = match hosts.get(hostname.as_ref()) {
+                    Some(host) => host.clone(),
+                    None => {
+                        let hostname: ArcStr = hostname.into();
+                        hosts.insert(hostname.clone());
+                        hostname
+                    }
+                };
+                Some(NodeAddress::new(hostname, port))
             };
 
             let mut iterator = item.into_iter().skip(2);
