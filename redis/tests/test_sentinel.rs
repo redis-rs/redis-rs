@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::support::*;
+use assert_matches::assert_matches;
 use redis::sentinel::SentinelClientBuilder;
 use redis::{
     Client, Connection, ConnectionAddr, ConnectionInfo, ErrorKind, RedisError, Role,
@@ -383,7 +384,7 @@ fn test_sentinel_redis_client() {
             .get_connection()
             .unwrap();
         let role: Role = redis::cmd("ROLE").query(&mut conn).unwrap();
-        assert!(matches!(role, Role::Sentinel { .. }));
+        assert_matches!(role, Role::Sentinel { .. });
     }
 
     let mut master_client = SentinelClient::build(
@@ -404,7 +405,7 @@ fn test_sentinel_redis_client() {
 
     let mut master_con = master_client.get_connection().unwrap();
     let role: Role = redis::cmd("ROLE").query(&mut master_con).unwrap();
-    assert!(matches!(role, Role::Primary { .. }));
+    assert_matches!(role, Role::Primary { .. });
 
     assert_is_connection_to_master(&mut master_con);
 
@@ -417,7 +418,7 @@ fn test_sentinel_redis_client() {
     for _ in 0..20 {
         let mut replica_con = replica_client.get_connection().unwrap();
         let role = redis::cmd("ROLE").query(&mut replica_con).unwrap();
-        assert!(matches!(role, Role::Replica { .. }));
+        assert_matches!(role, Role::Replica { .. });
 
         assert_connection_is_replica_of_correct_master(&mut replica_con, &master_client);
     }
@@ -515,7 +516,7 @@ fn test_sentinel_client_builder() {
             .get_connection()
             .unwrap();
         let role: Role = redis::cmd("ROLE").query(&mut conn).unwrap();
-        assert!(matches!(role, Role::Sentinel { .. }));
+        assert_matches!(role, Role::Sentinel { .. });
     }
 
     let mut master_client_builder = SentinelClientBuilder::new(
@@ -550,7 +551,7 @@ fn test_sentinel_client_builder() {
 
     let mut master_con = master_client.get_connection().unwrap();
     let role: Role = redis::cmd("ROLE").query(&mut master_con).unwrap();
-    assert!(matches!(role, Role::Primary { .. }));
+    assert_matches!(role, Role::Primary { .. });
 
     assert_is_connection_to_master(&mut master_con);
 
@@ -563,7 +564,7 @@ fn test_sentinel_client_builder() {
     for _ in 0..20 {
         let mut replica_con = replica_client.get_connection().unwrap();
         let role = redis::cmd("ROLE").query(&mut replica_con).unwrap();
-        assert!(matches!(role, Role::Replica { .. }));
+        assert_matches!(role, Role::Replica { .. });
 
         assert_connection_is_replica_of_correct_master(&mut replica_con, &master_client);
     }

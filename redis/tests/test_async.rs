@@ -474,8 +474,8 @@ mod basic_async {
         pipe.zrange("zset", 0, 0);
         let frames = con.req_packed_commands(&pipe, 0, 2).await.unwrap();
         assert_eq!(frames.len(), 2);
-        assert!(matches!(frames[0], redis::Value::Array(_)));
-        assert!(matches!(frames[1], redis::Value::Array(_)));
+        assert_matches!(frames[0], redis::Value::Array(_));
+        assert_matches!(frames[1], redis::Value::Array(_));
     }
 
     #[async_test]
