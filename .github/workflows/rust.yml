@@ -128,8 +128,6 @@ jobs:
       - name: Run module-specific tests
         if: matrix.config.json-module-version != ''
         run: make test-module
-        env:
-          REDIS_VERSION: ${{ matrix.config.db-version }}
 
       - name: Cache RedisJSON
         if: matrix.config.json-module-version != ''
