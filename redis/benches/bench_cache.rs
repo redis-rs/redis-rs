@@ -11,6 +11,7 @@ use rand::{
     distr::{Bernoulli, Distribution},
 };
 use redis::caching::CacheConfig;
+use redis_test::server::use_protocol;
 use std::env;
 fn generate_commands(key: String, total_command: u32, total_read: u32) -> Vec<Cmd> {
     let mut cmds = vec![];
@@ -93,7 +94,7 @@ fn prepare_benchmark(
 }
 
 fn bench_cache(c: &mut Criterion) {
-    if env::var("PROTOCOL").unwrap_or_default() != "RESP3" {
+    if !use_protocol().supports_resp3() {
         return;
     }
     let is_cache_enabled = env::var("ENABLE_CLIENT_SIDE_CACHE").unwrap_or_default() == "true";
