@@ -1021,4 +1021,130 @@ mod tests {
     fn test_pipeline_resolve_buffer_size_custom() {
         assert_eq!(Pipeline::resolve_buffer_size(Some(100)), 100);
     }
+
+    fn mock_conn_info() -> RedisConnectionInfo {
+        let mut info = RedisConnectionInfo::default();
+        info.skip_set_lib_name = true;
+        info
+    }
+
+    async fn create_mock_connection(
+        concurrency_limit: usize,
+    ) -> (
+        MultiplexedConnection,
+        tokio::sync::mpsc::Receiver<()>,
+        tokio::sync::mpsc::Sender<()>,
+    ) {
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+        use tokio_util::codec::FramedRead;
+
+        let (client_half, server_half) = tokio::io::duplex(4096);
+        let (cmd_received_tx, cmd_received_rx) = tokio::sync::mpsc::channel::<()>(10);
+        let (send_response_tx, mut send_response_rx) = tokio::sync::mpsc::channel::<()>(10);
+
+        let (server_read, mut server_write) = tokio::io::split(server_half);
+
+        tokio::spawn(async move {
+            let mut reader = FramedRead::new(server_read, ValueCodec::default());
+            while let Some(Ok(_)) = reader.next().await {
+                let _ = cmd_received_tx.send(()).await;
+            }
+        });
+
+        tokio::spawn(async move {
+            while send_response_rx.recv().await.is_some() {
+                let _ = server_write.write_all(b"+OK\r\n").await;
+                let _ = server_write.flush().await;
+            }
+        });
+
+        let config = AsyncConnectionConfig::new()
+            .set_concurrency_limit(concurrency_limit)
+            .set_response_timeout(None)
+            .set_connection_timeout(None);
+
+        let (conn, driver) =
+            MultiplexedConnection::new_with_config(&mock_conn_info(), client_half, config)
+                .await
+                .unwrap();
+        tokio::spawn(driver);
+
+        (conn, cmd_received_rx, send_response_tx)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrency_limit_enforced() {
+        let (conn, mut cmd_received_rx, send_response_tx) = create_mock_connection(2).await;
+
+        let h1 = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+        let h2 = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+        let h3 = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+
+        cmd_received_rx.recv().await.unwrap();
+        cmd_received_rx.recv().await.unwrap();
+
+        let third = tokio::time::timeout(
+            Duration::from_millis(100),
+            cmd_received_rx.recv(),
+        )
+        .await;
+        assert!(
+            third.is_err(),
+            "3rd request should be blocked by concurrency limit"
+        );
+
+        send_response_tx.send(()).await.unwrap();
+
+        cmd_received_rx.recv().await.unwrap();
+
+        send_response_tx.send(()).await.unwrap();
+        send_response_tx.send(()).await.unwrap();
+
+        h1.await.unwrap().unwrap();
+        h2.await.unwrap().unwrap();
+        h3.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_no_limit_bypasses_concurrency_limit() {
+        let (conn, mut cmd_received_rx, send_response_tx) = create_mock_connection(1).await;
+
+        let h1 = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+
+        cmd_received_rx.recv().await.unwrap();
+
+        let h2 = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command_no_limit(&cmd("PING")).await }
+        });
+
+        let received = tokio::time::timeout(
+            Duration::from_millis(100),
+            cmd_received_rx.recv(),
+        )
+        .await;
+        assert!(
+            received.is_ok(),
+            "no_limit request should bypass concurrency limit"
+        );
+
+        send_response_tx.send(()).await.unwrap();
+        send_response_tx.send(()).await.unwrap();
+
+        h1.await.unwrap().unwrap();
+        h2.await.unwrap().unwrap();
+    }
 }

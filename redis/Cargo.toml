@@ -181,7 +181,7 @@ futures-time = "3"
 criterion = "0.7"
 partial-io = { version = "0.5", features = ["tokio", "quickcheck1"] }
 quickcheck = "1.0.3"
-tokio = { workspace = true, features = ["macros"] }
+tokio = { workspace = true, features = ["macros", "io-util"] }
 tempfile = "3.24.0"
 anyhow = "1"
 redis-test = { path = "../redis-test" }
