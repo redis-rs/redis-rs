@@ -281,6 +281,7 @@ impl IntoRedisCmdBytes for &mut Pipeline {
 }
 
 /// Represents a command to be executed against a `MockConnection`.
+#[derive(Clone)]
 pub struct MockCmd {
     cmd_bytes: Vec<u8>,
     responses: Result<Vec<Value>, RedisError>,
