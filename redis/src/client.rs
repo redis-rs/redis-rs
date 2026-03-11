@@ -333,6 +333,14 @@ impl AsyncConnectionConfig {
     /// When set, at most `limit` requests can be awaiting a response at any given time.
     /// Additional requests will wait until an in-flight request completes.
     ///
+    /// This is useful for preventing a large backlog of commands from building up when the
+    /// server becomes slow or unresponsive. Without a limit, requests continue to queue
+    /// unboundedly. When the server is degraded, requests near the back of the queue spend
+    /// most of their time waiting behind earlier requests and are likely to hit their response
+    /// timeout before the server even processes them -- wasting work on both sides. Setting a
+    /// concurrency limit caps the number of in-flight requests, so backpressure is applied
+    /// earlier and fewer requests are lost to timeouts.
+    ///
     /// By default there is no limit.
     pub fn set_concurrency_limit(mut self, limit: usize) -> Self {
         self.concurrency_limit = Some(limit);

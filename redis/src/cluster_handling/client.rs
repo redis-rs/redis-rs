@@ -500,8 +500,15 @@ impl ClusterClientBuilder {
     /// Sets the maximum number of outstanding requests allowed per connection to a cluster node.
     ///
     /// When set, each node connection will allow at most `limit` concurrent in-flight requests.
-    /// Additional requests will wait until an in-flight request completes. The limit is associated
-    /// with each node address and persists across reconnections to the same node.
+    /// Additional requests will wait until an in-flight request completes.
+    ///
+    /// This is useful for preventing a large backlog of commands from building up when a node
+    /// goes offline or becomes slow. Without a limit, requests continue to queue unboundedly
+    /// on the connection. When the node is degraded, requests near the back of the queue
+    /// spend most of their time waiting behind earlier requests and are likely to hit their
+    /// response timeout before the server even processes them -- wasting work on both sides.
+    /// Setting a concurrency limit caps the number of in-flight requests per node, so
+    /// backpressure is applied earlier and fewer requests are lost to timeouts.
     ///
     /// By default there is no limit.
     pub fn connection_concurrency_limit(mut self, limit: usize) -> ClusterClientBuilder {
