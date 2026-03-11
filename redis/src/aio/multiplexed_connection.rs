@@ -13,7 +13,7 @@ use crate::{
 };
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync::{mpsc, oneshot},
+    sync::{Semaphore, mpsc, oneshot},
 };
 #[cfg(feature = "token-based-authentication")]
 use {
@@ -500,6 +500,7 @@ pub struct MultiplexedConnection {
     db: i64,
     response_timeout: Option<Duration>,
     protocol: ProtocolVersion,
+    concurrency_limiter: Option<Arc<Semaphore>>,
     // This handle ensures that once all the clones of the connection will be dropped, the underlying task will stop.
     // This handle is only set for connection whose task was spawned by the crate, not for users who spawned their own
     // task.
@@ -523,6 +524,7 @@ impl Debug for MultiplexedConnection {
             db,
             response_timeout,
             protocol,
+            concurrency_limiter: _,
             _task_handle,
             #[cfg(feature = "cache-aio")]
                 cache_manager: _,
@@ -646,11 +648,16 @@ impl MultiplexedConnection {
             Pipeline::resolve_buffer_size(config.pipeline_buffer_size),
         );
 
+        let concurrency_limiter = config
+            .concurrency_limit
+            .map(|n| Arc::new(Semaphore::new(n)));
+
         let con = MultiplexedConnection {
             pipeline,
             db: connection_info.db,
             response_timeout: config.response_timeout,
             protocol: connection_info.protocol,
+            concurrency_limiter,
             _task_handle: None,
             #[cfg(feature = "cache-aio")]
             cache_manager: cache_manager_opt,
@@ -722,9 +729,34 @@ impl MultiplexedConnection {
         self.response_timeout = Some(timeout);
     }
 
+    async fn acquire_concurrency_permit(
+        &self,
+    ) -> RedisResult<Option<tokio::sync::OwnedSemaphorePermit>> {
+        match &self.concurrency_limiter {
+            Some(limiter) => Ok(Some(
+                limiter
+                    .clone()
+                    .acquire_owned()
+                    .await
+                    .map_err(|_| closed_connection_error())?,
+            )),
+            None => Ok(None),
+        }
+    }
+
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+        let _permit = self.acquire_concurrency_permit().await?;
+        self.send_packed_command_inner(cmd).await
+    }
+
+    /// Like [`send_packed_command`](Self::send_packed_command) but bypasses the concurrency limiter.
+    pub(crate) async fn send_packed_command_no_limit(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+        self.send_packed_command_inner(cmd).await
+    }
+
+    async fn send_packed_command_inner(&mut self, cmd: &Cmd) -> RedisResult<Value> {
         #[cfg(feature = "token-based-authentication")]
         if self.re_authentication_failed.load(Ordering::Relaxed) {
             return Err(RedisError::from((
@@ -774,6 +806,16 @@ impl MultiplexedConnection {
     /// and reads `count` responses from it.  This is used to implement
     /// pipelining.
     pub async fn send_packed_commands(
+        &mut self,
+        cmd: &crate::Pipeline,
+        offset: usize,
+        count: usize,
+    ) -> RedisResult<Vec<Value>> {
+        let _permit = self.acquire_concurrency_permit().await?;
+        self.send_packed_commands_inner(cmd, offset, count).await
+    }
+
+    async fn send_packed_commands_inner(
         &mut self,
         cmd: &crate::Pipeline,
         offset: usize,
@@ -841,6 +883,10 @@ impl MultiplexedConnection {
 impl ConnectionLike for MultiplexedConnection {
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
         (async move { self.send_packed_command(cmd).await }).boxed()
+    }
+
+    fn req_packed_command_no_limit<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
+        (async move { self.send_packed_command_no_limit(cmd).await }).boxed()
     }
 
     fn req_packed_commands<'a>(
@@ -955,7 +1001,7 @@ impl MultiplexedConnection {
         let auth_cmd =
             crate::connection::authenticate_cmd(Some(&credentials.username), &credentials.password);
         // Send the AUTH command and convert any Redis error response to an Err
-        self.send_packed_command(&auth_cmd)
+        self.send_packed_command_no_limit(&auth_cmd)
             .await?
             .extract_error()
             .map(|_| ())
