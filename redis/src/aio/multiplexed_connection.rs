@@ -1094,11 +1094,7 @@ mod tests {
         cmd_received_rx.recv().await.unwrap();
         cmd_received_rx.recv().await.unwrap();
 
-        let third = tokio::time::timeout(
-            Duration::from_millis(100),
-            cmd_received_rx.recv(),
-        )
-        .await;
+        let third = tokio::time::timeout(Duration::from_millis(100), cmd_received_rx.recv()).await;
         assert!(
             third.is_err(),
             "3rd request should be blocked by concurrency limit"
@@ -1132,11 +1128,8 @@ mod tests {
             async move { c.send_packed_command_no_limit(&cmd("PING")).await }
         });
 
-        let received = tokio::time::timeout(
-            Duration::from_millis(100),
-            cmd_received_rx.recv(),
-        )
-        .await;
+        let received =
+            tokio::time::timeout(Duration::from_millis(100), cmd_received_rx.recv()).await;
         assert!(
             received.is_ok(),
             "no_limit request should bypass concurrency limit"

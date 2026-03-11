@@ -1560,4 +1560,3 @@ where
         .choose(&mut rng())
         .map(|(addr, conn)| (addr.clone(), conn.clone()))
 }
-
