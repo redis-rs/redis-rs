@@ -1023,9 +1023,10 @@ mod tests {
     }
 
     fn mock_conn_info() -> RedisConnectionInfo {
-        let mut info = RedisConnectionInfo::default();
-        info.skip_set_lib_name = true;
-        info
+        RedisConnectionInfo {
+            skip_set_lib_name: true,
+            ..Default::default()
+        }
     }
 
     async fn create_mock_connection(
