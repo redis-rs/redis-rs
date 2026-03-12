@@ -52,6 +52,8 @@ struct BuilderParams {
     cache_config: Option<CacheConfig>,
     #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
     credentials_provider: Option<std::sync::Arc<dyn StreamingCredentialsProvider>>,
+    #[cfg(feature = "cluster-async")]
+    overall_request_timeout: Option<Option<Duration>>,
 }
 
 #[derive(Clone)]
@@ -115,6 +117,8 @@ pub(crate) struct ClusterParams {
     pub(crate) cache_manager: Option<CacheManager>,
     #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
     pub(crate) credentials_provider: Option<std::sync::Arc<dyn StreamingCredentialsProvider>>,
+    #[cfg(feature = "cluster-async")]
+    pub(crate) overall_request_timeout: Option<Duration>,
 }
 
 impl ClusterParams {
@@ -171,6 +175,11 @@ impl ClusterParams {
             cache_manager,
             #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
             credentials_provider: value.credentials_provider,
+            #[cfg(feature = "cluster-async")]
+            overall_request_timeout: match value.overall_request_timeout {
+                Some(explicit) => explicit,
+                None => value.response_timeout,
+            },
         })
     }
 
@@ -426,8 +435,26 @@ impl ClusterClientBuilder {
     /// Enables timing out on slow responses.
     ///
     /// If enabled, the cluster will only wait the given time to each response from each node.
+    /// This timeout is also used as the overall request timeout (including retries) unless
+    /// overridden with [`Self::overall_request_timeout`].
     pub fn response_timeout(mut self, response_timeout: Duration) -> ClusterClientBuilder {
         self.builder_params.response_timeout = Some(response_timeout);
+        self
+    }
+
+    /// Sets the overall timeout for a complete cluster request, including all retries,
+    /// reconnections, and redirections (e.g. MOVED/ASK).
+    ///
+    /// By default this matches `response_timeout`, meaning the same duration is used both
+    /// per-attempt and overall. This can cause requests to time out when retries are needed,
+    /// since the retry must complete within whatever time remains from the original timeout.
+    ///
+    /// Set to `None` to disable the overall request timeout. Each individual attempt will
+    /// still be bounded by `response_timeout`, but the total operation can take longer when
+    /// retries occur.
+    #[cfg(feature = "cluster-async")]
+    pub fn overall_request_timeout(mut self, timeout: Option<Duration>) -> ClusterClientBuilder {
+        self.builder_params.overall_request_timeout = Some(timeout);
         self
     }
 
@@ -639,6 +666,7 @@ impl ClusterClient {
 #[cfg(test)]
 mod tests {
     use super::{ClusterClient, ClusterClientBuilder, ConnectionInfo, IntoConnectionInfo};
+    use std::time::Duration;
 
     fn get_connection_data() -> Vec<ConnectionInfo> {
         vec![
@@ -750,5 +778,43 @@ mod tests {
     fn give_empty_initial_nodes() {
         let client = ClusterClient::new(Vec::<String>::new());
         assert!(client.is_err())
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn overall_request_timeout_defaults_to_response_timeout() {
+        let client = ClusterClientBuilder::new(get_connection_data())
+            .response_timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        assert_eq!(
+            client.cluster_params.overall_request_timeout,
+            Some(Duration::from_secs(5))
+        );
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn overall_request_timeout_can_be_disabled() {
+        let client = ClusterClientBuilder::new(get_connection_data())
+            .response_timeout(Duration::from_secs(5))
+            .overall_request_timeout(None)
+            .build()
+            .unwrap();
+        assert_eq!(client.cluster_params.overall_request_timeout, None);
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn overall_request_timeout_can_be_set_independently() {
+        let client = ClusterClientBuilder::new(get_connection_data())
+            .response_timeout(Duration::from_secs(5))
+            .overall_request_timeout(Some(Duration::from_secs(30)))
+            .build()
+            .unwrap();
+        assert_eq!(
+            client.cluster_params.overall_request_timeout,
+            Some(Duration::from_secs(30))
+        );
     }
 }
