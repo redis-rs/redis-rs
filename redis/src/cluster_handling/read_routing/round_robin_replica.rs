@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use arc_swap::ArcSwap;
 
@@ -229,6 +229,9 @@ mod tests {
         // Clone should start fresh.
         let cloned = strategy.clone();
         let cloned_first = cloned.route_read(&candidates);
-        assert_eq!(first, cloned_first, "cloned strategy should start from counter 0");
+        assert_eq!(
+            first, cloned_first,
+            "cloned strategy should start from counter 0"
+        );
     }
 }
