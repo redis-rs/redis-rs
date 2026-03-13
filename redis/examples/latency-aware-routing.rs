@@ -94,59 +94,36 @@ struct LatencyAwareStrategy {
 }
 
 impl ReadRoutingStrategy for LatencyAwareStrategy {
-    fn on_topology_changed(&self, topology: &[SlotTopology]) {
+    fn on_topology_changed(&self, topology: Vec<SlotTopology>) {
         // Forward the new topology to the probe task. If the channel is closed
         // the factory has been dropped and there's nothing to do.
-        let _ = self.topology_tx.send(topology.to_vec());
+        let _ = self.topology_tx.send(topology);
     }
 
     fn route_read<'a>(&self, candidates: &ReadCandidates<'a>) -> &'a NodeAddress {
         let snapshot = self.latency_rx.borrow();
+        let latency_of = |node: &NodeAddress| {
+            snapshot
+                .get(&node.to_string())
+                .copied()
+                .unwrap_or(Duration::MAX)
+        };
         match candidates {
             ReadCandidates::AnyNode {
                 primary, replicas, ..
-            } => {
-                let mut best = *primary;
-                let mut best_latency = snapshot
-                    .get(&primary.to_string())
-                    .copied()
-                    .unwrap_or(Duration::MAX);
-
-                if let Some(replicas) = replicas {
-                    for replica in replicas.iter() {
-                        let latency = snapshot
-                            .get(&replica.to_string())
-                            .copied()
-                            .unwrap_or(Duration::MAX);
-                        if latency < best_latency {
-                            best = replica;
-                            best_latency = latency;
-                        }
-                    }
-                }
-
-                best
-            }
-            ReadCandidates::ReplicasOnly { replicas, .. } => {
-                let mut best = replicas.first();
-                let mut best_latency = snapshot
-                    .get(&best.to_string())
-                    .copied()
-                    .unwrap_or(Duration::MAX);
-
-                for replica in replicas.iter().skip(1) {
-                    let latency = snapshot
-                        .get(&replica.to_string())
-                        .copied()
-                        .unwrap_or(Duration::MAX);
-                    if latency < best_latency {
-                        best = replica;
-                        best_latency = latency;
-                    }
-                }
-
-                best
-            }
+            } => match replicas {
+                Some(replicas) => std::iter::once(*primary)
+                    .chain(replicas.iter())
+                    .min_by_key(|node| latency_of(node))
+                    // expect is safe because `once` guarantees at least one element
+                    .expect("iter is not empty"),
+                None => primary,
+            },
+            ReadCandidates::ReplicasOnly { replicas, .. } => replicas
+                .iter()
+                .min_by_key(|node| latency_of(node))
+                // expect is safe because Replicas is guaranteed non-empty
+                .expect("replicas is non-empty"),
         }
     }
 }
@@ -202,13 +179,47 @@ async fn probe_task(
             }
         }
 
-        // Probe every node.
-        let mut snapshot = HashMap::with_capacity(nodes.len());
+        // Ensure all nodes have connections before probing.
         for addr in &nodes {
-            let rtt = ping_node(addr, &mut connections).await;
-            match rtt {
+            if !connections.contains_key(addr.as_str()) {
+                match redis::Client::open(format!("redis://{addr}")) {
+                    Ok(client) => match client.get_multiplexed_async_connection().await {
+                        Ok(con) => {
+                            connections.insert(addr.clone(), con);
+                        }
+                        Err(e) => {
+                            eprintln!("[probe] {addr}: connect failed: {e}");
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("[probe] {addr}: {e}");
+                    }
+                }
+            }
+        }
+
+        // Probe all nodes concurrently.
+        let futures: Vec<_> = nodes
+            .iter()
+            .filter_map(|addr| {
+                connections.get(addr.as_str()).map(|con| {
+                    let mut con = con.clone();
+                    let addr = addr.clone();
+                    async move {
+                        let start = Instant::now();
+                        let result = redis::cmd("PING").exec_async(&mut con).await;
+                        (addr, result.map(|()| start.elapsed()))
+                    }
+                })
+            })
+            .collect();
+        let results = futures::future::join_all(futures).await;
+
+        let mut snapshot = HashMap::with_capacity(results.len());
+        for (addr, result) in results {
+            match result {
                 Ok(d) => {
-                    snapshot.insert(addr.clone(), d);
+                    snapshot.insert(addr, d);
                 }
                 Err(e) => {
                     eprintln!("[probe] {addr}: {e}");
@@ -245,22 +256,6 @@ fn unique_addresses(topology: &[SlotTopology]) -> HashSet<String> {
     seen
 }
 
-/// PING a node using a persistent connection, reconnecting if necessary.
-async fn ping_node(
-    addr: &str,
-    connections: &mut HashMap<String, redis::aio::MultiplexedConnection>,
-) -> RedisResult<Duration> {
-    if !connections.contains_key(addr) {
-        let client = redis::Client::open(format!("redis://{addr}"))?;
-        let con = client.get_multiplexed_async_connection().await?;
-        connections.insert(addr.to_owned(), con);
-    }
-
-    let con = connections.get_mut(addr).unwrap();
-    let start = Instant::now();
-    redis::cmd("PING").exec_async(con).await?;
-    Ok(start.elapsed())
-}
 
 // ---------------------------------------------------------------------------
 // main

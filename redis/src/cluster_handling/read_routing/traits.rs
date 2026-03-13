@@ -84,6 +84,17 @@ pub enum ReadCandidates<'a> {
     },
 }
 
+impl ReadCandidates<'_> {
+    /// Returns the slot being read from.
+    pub fn slot(&self) -> u16 {
+        match self {
+            ReadCandidates::AnyNode { slot, .. } | ReadCandidates::ReplicasOnly { slot, .. } => {
+                *slot
+            }
+        }
+    }
+}
+
 /// A strategy for choosing which node to route read commands to in a Redis Cluster.
 ///
 /// [`route_read`](ReadRoutingStrategy::route_read) is called for each read command with
@@ -130,7 +141,7 @@ pub trait ReadRoutingStrategy: Send + Sync {
     /// This is called on every slot map refresh, including the initial topology
     /// discovery when a connection is first created. The default implementation
     /// does nothing.
-    fn on_topology_changed(&self, _topology: &[SlotTopology]) {}
+    fn on_topology_changed(&self, _topology: Vec<SlotTopology>) {}
 
     /// Choose which node to route a read command to.
     ///

@@ -914,7 +914,7 @@ where
         result?;
 
         if let Some(ref strategy) = self.routing_strategy {
-            strategy.on_topology_changed(&slots.topology());
+            strategy.on_topology_changed(slots.topology().collect());
         }
 
         let nodes = slots.values().flatten().cloned().collect::<HashSet<_>>();

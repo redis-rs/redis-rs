@@ -114,16 +114,13 @@ impl SlotMap {
 
     /// Produces a topology snapshot suitable for
     /// [`ReadRoutingStrategy::on_topology_changed`].
-    pub fn topology(&self) -> Vec<SlotTopology> {
-        self.slots
-            .iter()
-            .map(|(end, slot_value)| SlotTopology {
-                slot_range_start: slot_value.start,
-                slot_range_end: *end,
-                primary: slot_value.addrs.primary.clone(),
-                replicas: slot_value.addrs.replicas.clone(),
-            })
-            .collect()
+    pub fn topology(&self) -> impl Iterator<Item = SlotTopology> + '_ {
+        self.slots.iter().map(|(end, slot_value)| SlotTopology {
+            slot_range_start: slot_value.start,
+            slot_range_end: *end,
+            primary: slot_value.addrs.primary.clone(),
+            replicas: slot_value.addrs.replicas.clone(),
+        })
     }
 }
 
@@ -148,27 +145,27 @@ impl SlotAddrs {
         slot_addr: &SlotAddr,
         strategy: Option<&dyn ReadRoutingStrategy>,
     ) -> &NodeAddress {
-        match slot_addr {
-            SlotAddr::Master => &self.primary,
-            SlotAddr::ReplicaOptional => match strategy {
-                Some(strategy) => strategy.route_read(&ReadCandidates::AnyNode {
-                    slot,
-                    primary: &self.primary,
-                    replicas: Replicas::new(&self.replicas),
-                }),
-                None => &self.primary,
-            },
-            SlotAddr::ReplicaRequired => match strategy {
-                Some(strategy) => match Replicas::new(&self.replicas) {
-                    Some(replicas) => {
-                        strategy.route_read(&ReadCandidates::ReplicasOnly { slot, replicas })
-                    }
-                    None => &self.primary,
-                },
-                None => match Replicas::new(&self.replicas) {
+        let Some(strategy) = strategy else {
+            return match slot_addr {
+                SlotAddr::Master | SlotAddr::ReplicaOptional => &self.primary,
+                SlotAddr::ReplicaRequired => match Replicas::new(&self.replicas) {
                     Some(replicas) => replicas.choose_random(),
                     None => &self.primary,
                 },
+            };
+        };
+        match slot_addr {
+            SlotAddr::Master => &self.primary,
+            SlotAddr::ReplicaOptional => strategy.route_read(&ReadCandidates::AnyNode {
+                slot,
+                primary: &self.primary,
+                replicas: Replicas::new(&self.replicas),
+            }),
+            SlotAddr::ReplicaRequired => match Replicas::new(&self.replicas) {
+                Some(replicas) => {
+                    strategy.route_read(&ReadCandidates::ReplicasOnly { slot, replicas })
+                }
+                None => &self.primary,
             },
         }
     }
@@ -214,15 +211,31 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
-    use crate::cluster_handling::read_routing::RandomReplicaStrategy;
-
     fn addr(s: &str) -> NodeAddress {
         NodeAddress::try_from(s).unwrap()
     }
 
+    /// Always picks the first replica, or the primary if no replicas exist.
+    #[derive(Clone)]
+    struct FirstReplicaStrategy;
+
+    impl ReadRoutingStrategy for FirstReplicaStrategy {
+        fn route_read<'a>(&self, candidates: &ReadCandidates<'a>) -> &'a NodeAddress {
+            match candidates {
+                ReadCandidates::AnyNode {
+                    primary, replicas, ..
+                } => match replicas {
+                    Some(replicas) => replicas.first(),
+                    None => primary,
+                },
+                ReadCandidates::ReplicasOnly { replicas, .. } => replicas.first(),
+            }
+        }
+    }
+
     #[test]
     fn test_slot_map_with_strategy() {
-        let strategy = RandomReplicaStrategy;
+        let strategy = FirstReplicaStrategy;
         let slot_map = SlotMap::from_slots(vec![
             Slot {
                 start: 1,
@@ -377,7 +390,7 @@ mod tests {
 
     #[test]
     fn test_slot_map_get_multi_node() {
-        let strategy = RandomReplicaStrategy;
+        let strategy = FirstReplicaStrategy;
         let slot_map = get_slot_map();
         let routes = vec![
             (Route::new(1, SlotAddr::Master), vec![]),
@@ -386,11 +399,9 @@ mod tests {
         let addresses = slot_map
             .addresses_for_multi_slot(&routes, Some(&strategy))
             .collect::<Vec<_>>();
-        assert!(addresses.contains(&Some(&addr("node1:6379"))));
-        assert!(
-            addresses.contains(&Some(&addr("replica4:6379")))
-                || addresses.contains(&Some(&addr("replica5:6379")))
-                || addresses.contains(&Some(&addr("replica6:6379")))
+        assert_eq!(
+            addresses,
+            vec![Some(&addr("node1:6379")), Some(&addr("replica4:6379"))]
         );
     }
 
@@ -414,7 +425,7 @@ mod tests {
     /// that node's address will appear multiple times, in the same order.
     #[test]
     fn test_slot_map_get_repeating_addresses_when_the_same_node_is_found_in_multi_slot() {
-        let strategy = RandomReplicaStrategy;
+        let strategy = FirstReplicaStrategy;
         let slot_map = get_slot_map();
         let routes = vec![
             (Route::new(1, SlotAddr::ReplicaOptional), vec![]),
@@ -442,7 +453,7 @@ mod tests {
 
     #[test]
     fn test_slot_map_get_none_when_slot_is_missing_from_multi_slot() {
-        let strategy = RandomReplicaStrategy;
+        let strategy = FirstReplicaStrategy;
         let slot_map = get_slot_map();
         let routes = vec![
             (Route::new(1, SlotAddr::ReplicaOptional), vec![]),
@@ -470,7 +481,7 @@ mod tests {
             Slot::new(0, 5000, addr("node1:6379"), vec![addr("replica1:6379")]),
             Slot::new(5001, 10000, addr("node2:6379"), vec![]),
         ]);
-        let topo = slot_map.topology();
+        let topo: Vec<_> = slot_map.topology().collect();
         assert_eq!(topo.len(), 2);
         assert_eq!(topo[0].slot_range_start, 0);
         assert_eq!(topo[0].slot_range_end, 5000);
