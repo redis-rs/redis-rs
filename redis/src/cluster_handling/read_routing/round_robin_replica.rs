@@ -214,6 +214,51 @@ mod tests {
     }
 
     #[test]
+    fn multiple_ranges_on_same_shard_share_counter() {
+        let strategy = RoundRobinReplicaStrategy::new();
+        // One shard (same primary) owns two disjoint ranges: 0-1000 and 2001-3000.
+        strategy.on_topology_changed(vec![
+            SlotTopology {
+                slot_range_start: 0,
+                slot_range_end: 1000,
+                primary: node("primary1", 6379),
+                replicas: vec![node("replica1a", 6379), node("replica1b", 6379)],
+            },
+            SlotTopology {
+                slot_range_start: 1001,
+                slot_range_end: 2000,
+                primary: node("primary2", 6379),
+                replicas: vec![node("replica2a", 6379), node("replica2b", 6379)],
+            },
+            SlotTopology {
+                slot_range_start: 2001,
+                slot_range_end: 3000,
+                primary: node("primary1", 6379),
+                replicas: vec![node("replica1a", 6379), node("replica1b", 6379)],
+            },
+        ]);
+
+        let replicas = [node("replica1a", 6379), node("replica1b", 6379)];
+
+        let candidates_low = ReadCandidates::ReplicasOnly {
+            slot: 500,
+            replicas: Replicas::new(&replicas).unwrap(),
+        };
+        let candidates_high = ReadCandidates::ReplicasOnly {
+            slot: 2500,
+            replicas: Replicas::new(&replicas).unwrap(),
+        };
+
+        // Reading from slot 500 advances the shared counter.
+        assert_eq!(strategy.route_read(&candidates_low), &replicas[0]);
+        // Reading from slot 2500 sees the same counter (same shard), so it continues.
+        assert_eq!(strategy.route_read(&candidates_high), &replicas[1]);
+        // Back to low range — counter keeps advancing.
+        assert_eq!(strategy.route_read(&candidates_low), &replicas[0]);
+        assert_eq!(strategy.route_read(&candidates_high), &replicas[1]);
+    }
+
+    #[test]
     fn clone_resets_counters() {
         let strategy = setup_strategy();
         let replicas = [node("replica1a", 6379), node("replica1b", 6379)];
