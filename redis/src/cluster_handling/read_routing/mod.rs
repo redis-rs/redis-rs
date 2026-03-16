@@ -17,5 +17,6 @@ mod traits;
 pub use random_replica::RandomReplicaStrategy;
 pub use round_robin_replica::RoundRobinReplicaStrategy;
 pub use traits::{
-    ReadCandidates, ReadRoutingStrategy, ReadRoutingStrategyFactory, Replicas, SlotTopology,
+    ClusterTopology, ReadCandidates, ReadRoutingStrategy, ReadRoutingStrategyFactory, Replicas,
+    Shard,
 };

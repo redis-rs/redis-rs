@@ -25,7 +25,7 @@ use tokio::sync::{mpsc, watch};
 
 use redis::cluster::ClusterClientBuilder;
 use redis::cluster_read_routing::{
-    ReadCandidates, ReadRoutingStrategy, ReadRoutingStrategyFactory, SlotTopology,
+    ClusterTopology, ReadCandidates, ReadRoutingStrategy, ReadRoutingStrategyFactory,
 };
 use redis::{AsyncCommands, RedisResult, cluster::NodeAddress};
 
@@ -47,7 +47,7 @@ impl Drop for ProbeHandle {
 }
 
 struct LatencyAwareFactory {
-    topology_tx: mpsc::UnboundedSender<Vec<SlotTopology>>,
+    topology_tx: mpsc::UnboundedSender<ClusterTopology>,
     latency_rx: watch::Receiver<LatencySnapshot>,
     _probe_handle: Arc<ProbeHandle>,
 }
@@ -86,7 +86,7 @@ impl ReadRoutingStrategyFactory for LatencyAwareFactory {
 // ---------------------------------------------------------------------------
 
 struct LatencyAwareStrategy {
-    topology_tx: mpsc::UnboundedSender<Vec<SlotTopology>>,
+    topology_tx: mpsc::UnboundedSender<ClusterTopology>,
     latency_rx: watch::Receiver<LatencySnapshot>,
     /// Shared ownership of the probe task — keeps it alive even if the factory
     /// is dropped while connections still exist.
@@ -94,7 +94,7 @@ struct LatencyAwareStrategy {
 }
 
 impl ReadRoutingStrategy for LatencyAwareStrategy {
-    fn on_topology_changed(&self, topology: Vec<SlotTopology>) {
+    fn on_topology_changed(&self, topology: ClusterTopology) {
         // Forward the new topology to the probe task. If the channel is closed
         // the factory has been dropped and there's nothing to do.
         let _ = self.topology_tx.send(topology);
@@ -137,7 +137,7 @@ impl ReadRoutingStrategy for LatencyAwareStrategy {
 /// 2. Maintains persistent PING connections to every known node.
 /// 3. Periodically measures RTT and publishes a snapshot via `latency_tx`.
 async fn probe_task(
-    mut topology_rx: mpsc::UnboundedReceiver<Vec<SlotTopology>>,
+    mut topology_rx: mpsc::UnboundedReceiver<ClusterTopology>,
     latency_tx: watch::Sender<LatencySnapshot>,
     probe_interval: Duration,
 ) {
@@ -245,11 +245,11 @@ async fn probe_task(
 }
 
 /// Extract unique node addresses from a topology snapshot.
-fn unique_addresses(topology: &[SlotTopology]) -> HashSet<String> {
+fn unique_addresses(topology: &ClusterTopology) -> HashSet<String> {
     let mut seen = HashSet::new();
-    for slot in topology {
-        seen.insert(slot.primary.to_string());
-        for replica in &slot.replicas {
+    for shard in topology.shards() {
+        seen.insert(shard.primary.to_string());
+        for replica in &shard.replicas {
             seen.insert(replica.to_string());
         }
     }

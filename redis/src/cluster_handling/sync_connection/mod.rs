@@ -472,7 +472,7 @@ where
         *slots = self.create_new_slots()?;
 
         if let Some(ref strategy) = self.routing_strategy {
-            strategy.on_topology_changed(slots.topology().collect());
+            strategy.on_topology_changed(slots.topology());
         }
 
         let mut nodes = slots.values().flatten().collect::<Vec<_>>();

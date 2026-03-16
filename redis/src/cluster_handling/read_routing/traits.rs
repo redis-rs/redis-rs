@@ -1,19 +1,68 @@
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
 use super::super::NodeAddress;
 
-/// A snapshot of the topology for a single slot range in the cluster.
+/// A snapshot of the topology for a single shard in the cluster.
 ///
-/// Passed to [`ReadRoutingStrategy::on_topology_changed`] so that strategies
-/// can maintain internal state (e.g. latency tables, connection counts).
+/// A shard is a group of slot ranges served by the same set of nodes.
 #[derive(Debug, Clone)]
-pub struct SlotTopology {
-    /// First slot in the range (inclusive).
-    pub slot_range_start: u16,
-    /// Last slot in the range (inclusive).
-    pub slot_range_end: u16,
-    /// The primary node for this range.
+pub struct Shard {
+    /// The slot ranges owned by this shard. Each tuple is `(start, end)` inclusive.
+    pub slot_ranges: Vec<(u16, u16)>,
+    /// The primary node for this shard.
     pub primary: NodeAddress,
-    /// The replica nodes for this range (may be empty).
+    /// The replica nodes for this shard (may be empty).
     pub replicas: Vec<NodeAddress>,
+}
+
+/// A pre-built view of the cluster topology, organized by shard.
+///
+/// Provides both O(log n) slot-to-shard lookup via [`shard_for_slot`](Self::shard_for_slot)
+/// and iteration over all shards via [`shards`](Self::shards). Strategies
+/// receive this in [`ReadRoutingStrategy::on_topology_changed`] and can store
+/// it for use during [`route_read`](ReadRoutingStrategy::route_read).
+#[derive(Debug, Clone)]
+pub struct ClusterTopology {
+    /// Maps slot range end → the shard that owns it.
+    /// Multiple entries may point to the same `Arc<Shard>` when they belong
+    /// to the same shard.
+    slots: BTreeMap<u16, Arc<Shard>>,
+}
+
+impl ClusterTopology {
+    /// Build a topology from a list of shards.
+    pub fn from_shards(shards: Vec<Shard>) -> Self {
+        let mut slots = BTreeMap::new();
+        for shard in shards {
+            let shard = Arc::new(shard);
+            for &(_, end) in &shard.slot_ranges {
+                slots.insert(end, Arc::clone(&shard));
+            }
+        }
+        Self { slots }
+    }
+
+    /// Returns the shard that owns the given slot, or `None` if the slot
+    /// is not covered by any shard.
+    pub fn shard_for_slot(&self, slot: u16) -> Option<&Shard> {
+        self.slots
+            .range(slot..)
+            .next()
+            .map(|(_, shard)| shard.as_ref())
+    }
+
+    /// Iterates over all unique shards in the topology.
+    pub fn shards(&self) -> impl Iterator<Item = &Shard> {
+        let mut seen = std::collections::HashSet::new();
+        self.slots.values().filter_map(move |shard| {
+            if seen.insert(Arc::as_ptr(shard)) {
+                Some(shard.as_ref())
+            } else {
+                None
+            }
+        })
+    }
 }
 
 /// A non-empty slice of replica [`NodeAddress`]es.
@@ -70,16 +119,16 @@ pub enum ReadCandidates<'a> {
     AnyNode {
         /// The exact slot being read.
         slot: u16,
-        /// The primary node for this slot range.
+        /// The primary node for this shard.
         primary: &'a NodeAddress,
-        /// The replicas for this slot range, if any exist.
+        /// The replicas for this shard, if any exist.
         replicas: Option<Replicas<'a>>,
     },
     /// A replica is required for this read.
     ReplicasOnly {
         /// The exact slot being read.
         slot: u16,
-        /// The replicas for this slot range (guaranteed non-empty).
+        /// The replicas for this shard (guaranteed non-empty).
         replicas: Replicas<'a>,
     },
 }
@@ -102,6 +151,9 @@ impl ReadCandidates<'_> {
 ///
 /// Optionally, implement [`on_topology_changed`](ReadRoutingStrategy::on_topology_changed)
 /// to receive notifications when the cluster topology is discovered or refreshed.
+/// The [`ClusterTopology`] provides both an iterable shard list and O(log n)
+/// slot-to-shard lookup — store it to correlate [`route_read`](Self::route_read)
+/// calls with shards.
 ///
 /// Set the strategy via [`ClusterClientBuilder::read_routing_strategy`] or use the
 /// convenience method [`ClusterClientBuilder::read_from_replicas`] which installs a
@@ -138,10 +190,15 @@ impl ReadCandidates<'_> {
 pub trait ReadRoutingStrategy: Send + Sync {
     /// Called when the connection discovers or refreshes the cluster topology.
     ///
+    /// The [`ClusterTopology`] groups slot ranges into shards by primary node.
+    /// Strategies that need per-shard state should store this topology and use
+    /// [`ClusterTopology::shard_for_slot`] during [`route_read`](Self::route_read)
+    /// to identify which shard a read belongs to.
+    ///
     /// This is called on every slot map refresh, including the initial topology
     /// discovery when a connection is first created. The default implementation
     /// does nothing.
-    fn on_topology_changed(&self, _topology: Vec<SlotTopology>) {}
+    fn on_topology_changed(&self, _topology: ClusterTopology) {}
 
     /// Choose which node to route a read command to.
     ///

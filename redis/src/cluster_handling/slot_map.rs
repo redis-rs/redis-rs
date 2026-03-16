@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::NodeAddress;
-use super::read_routing::{ReadCandidates, ReadRoutingStrategy, Replicas, SlotTopology};
+use super::read_routing::{ClusterTopology, ReadCandidates, ReadRoutingStrategy, Replicas, Shard};
 use crate::cluster_routing::{Route, SlotAddr};
 
 pub(crate) const SLOT_SIZE: u16 = 16384;
@@ -112,15 +112,31 @@ impl SlotMap {
             .map(move |(route, _)| self.slot_addr_for_route(route, strategy))
     }
 
-    /// Produces a topology snapshot suitable for
+    /// Produces a [`ClusterTopology`] snapshot suitable for
     /// [`ReadRoutingStrategy::on_topology_changed`].
-    pub fn topology(&self) -> impl Iterator<Item = SlotTopology> + '_ {
-        self.slots.iter().map(|(end, slot_value)| SlotTopology {
-            slot_range_start: slot_value.start,
-            slot_range_end: *end,
-            primary: slot_value.addrs.primary.clone(),
-            replicas: slot_value.addrs.replicas.clone(),
-        })
+    ///
+    /// Slot ranges are grouped by primary node into shards.
+    pub fn topology(&self) -> ClusterTopology {
+        // Group slot ranges by primary address into shards.
+        let mut shards: Vec<Shard> = Vec::new();
+
+        for (end, slot_value) in &self.slots {
+            let range = (slot_value.start, *end);
+            if let Some(shard) = shards
+                .iter_mut()
+                .find(|s| s.primary == slot_value.addrs.primary)
+            {
+                shard.slot_ranges.push(range);
+            } else {
+                shards.push(Shard {
+                    slot_ranges: vec![range],
+                    primary: slot_value.addrs.primary.clone(),
+                    replicas: slot_value.addrs.replicas.clone(),
+                });
+            }
+        }
+
+        ClusterTopology::from_shards(shards)
     }
 }
 
@@ -208,9 +224,9 @@ impl Slot {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
     use super::*;
+    use crate::cluster_handling::read_routing::ReadRoutingStrategy;
+
     fn addr(s: &str) -> NodeAddress {
         NodeAddress::try_from(s).unwrap()
     }
@@ -481,16 +497,53 @@ mod tests {
             Slot::new(0, 5000, addr("node1:6379"), vec![addr("replica1:6379")]),
             Slot::new(5001, 10000, addr("node2:6379"), vec![]),
         ]);
-        let topo: Vec<_> = slot_map.topology().collect();
-        assert_eq!(topo.len(), 2);
-        assert_eq!(topo[0].slot_range_start, 0);
-        assert_eq!(topo[0].slot_range_end, 5000);
-        assert_eq!(topo[0].primary, addr("node1:6379"));
-        assert_eq!(topo[0].replicas, vec![addr("replica1:6379")]);
-        assert_eq!(topo[1].slot_range_start, 5001);
-        assert_eq!(topo[1].slot_range_end, 10000);
-        assert_eq!(topo[1].primary, addr("node2:6379"));
-        assert!(topo[1].replicas.is_empty());
+        let topo = slot_map.topology();
+        assert_eq!(topo.shards().count(), 2);
+
+        let node1 = topo
+            .shards()
+            .find(|s| s.primary == addr("node1:6379"))
+            .unwrap();
+        assert_eq!(node1.slot_ranges, vec![(0, 5000)]);
+        assert_eq!(node1.replicas, vec![addr("replica1:6379")]);
+
+        let node2 = topo
+            .shards()
+            .find(|s| s.primary == addr("node2:6379"))
+            .unwrap();
+        assert_eq!(node2.slot_ranges, vec![(5001, 10000)]);
+        assert!(node2.replicas.is_empty());
+    }
+
+    #[test]
+    fn test_slot_map_topology_groups_by_primary() {
+        let slot_map = get_slot_map();
+        let topo = slot_map.topology();
+        // node2 has two ranges (1002-2000 and 3001-4000), should be one shard
+        assert_eq!(topo.shards().count(), 3);
+        let node2_shard = topo
+            .shards()
+            .find(|s| s.primary == addr("node2:6379"))
+            .unwrap();
+        assert_eq!(node2_shard.slot_ranges, vec![(1002, 2000), (3001, 4000)]);
+    }
+
+    #[test]
+    fn test_slot_map_topology_shard_lookup() {
+        let slot_map = get_slot_map();
+        let topo = slot_map.topology();
+
+        let shard = topo.shard_for_slot(500).unwrap();
+        assert_eq!(shard.primary, addr("node1:6379"));
+
+        let shard = topo.shard_for_slot(1500).unwrap();
+        assert_eq!(shard.primary, addr("node2:6379"));
+
+        // Slot 3500 is in the second range of node2's shard
+        let shard = topo.shard_for_slot(3500).unwrap();
+        assert_eq!(shard.primary, addr("node2:6379"));
+
+        assert!(topo.shard_for_slot(5000).is_none());
     }
 
     #[test]
@@ -535,6 +588,14 @@ mod tests {
                 .slot_addr_for_route(&Route::new(500, SlotAddr::ReplicaRequired), Some(&strategy))
                 .unwrap(),
             "replica1:6379"
+        );
+
+        // Master always returns primary regardless of strategy
+        assert_eq!(
+            slot_map
+                .slot_addr_for_route(&Route::new(500, SlotAddr::Master), Some(&strategy))
+                .unwrap(),
+            "node1:6379"
         );
     }
 }
