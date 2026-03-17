@@ -45,6 +45,7 @@ futures-util = { version = "0.3.31", default-features = false, features = [
 ], optional = true }
 pin-project-lite = { version = "0.2", optional = true }
 tokio-util = { version = "0.7", optional = true }
+async-lock = { version = "3", optional = true }
 tokio = { version = "1", features = [
   "rt",
   "net",
@@ -167,6 +168,7 @@ aio = [
   "dep:futures-util",
   "dep:tokio",
   "dep:tokio-util",
+  "dep:async-lock",
   "tokio-util/codec",
   "combine/tokio",
   "dep:cfg-if",

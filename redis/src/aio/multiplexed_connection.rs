@@ -13,7 +13,7 @@ use crate::{
 };
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync::{Semaphore, mpsc, oneshot},
+    sync::{mpsc, oneshot},
 };
 #[cfg(feature = "token-based-authentication")]
 use {
@@ -500,7 +500,7 @@ pub struct MultiplexedConnection {
     db: i64,
     response_timeout: Option<Duration>,
     protocol: ProtocolVersion,
-    concurrency_limiter: Option<Arc<Semaphore>>,
+    concurrency_limiter: Option<Arc<async_lock::Semaphore>>,
     // This handle ensures that once all the clones of the connection will be dropped, the underlying task will stop.
     // This handle is only set for connection whose task was spawned by the crate, not for users who spawned their own
     // task.
@@ -650,7 +650,7 @@ impl MultiplexedConnection {
 
         let concurrency_limiter = config
             .concurrency_limit
-            .map(|n| Arc::new(Semaphore::new(n)));
+            .map(|n| Arc::new(async_lock::Semaphore::new(n)));
 
         let con = MultiplexedConnection {
             pipeline,
@@ -729,25 +729,17 @@ impl MultiplexedConnection {
         self.response_timeout = Some(timeout);
     }
 
-    async fn acquire_concurrency_permit(
-        &self,
-    ) -> RedisResult<Option<tokio::sync::OwnedSemaphorePermit>> {
+    async fn acquire_concurrency_permit(&self) -> Option<async_lock::SemaphoreGuardArc> {
         match &self.concurrency_limiter {
-            Some(limiter) => Ok(Some(
-                limiter
-                    .clone()
-                    .acquire_owned()
-                    .await
-                    .map_err(|_| closed_connection_error())?,
-            )),
-            None => Ok(None),
+            Some(limiter) => Some(limiter.acquire_arc().await),
+            None => None,
         }
     }
 
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
-        let _permit = self.acquire_concurrency_permit().await?;
+        let _permit = self.acquire_concurrency_permit().await;
         self.send_packed_command_inner(cmd).await
     }
 
@@ -811,7 +803,7 @@ impl MultiplexedConnection {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
-        let _permit = self.acquire_concurrency_permit().await?;
+        let _permit = self.acquire_concurrency_permit().await;
         self.send_packed_commands_inner(cmd, offset, count).await
     }
 
