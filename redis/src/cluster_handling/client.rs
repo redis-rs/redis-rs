@@ -52,6 +52,7 @@ struct BuilderParams {
     cache_config: Option<CacheConfig>,
     #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
     credentials_provider: Option<std::sync::Arc<dyn StreamingCredentialsProvider>>,
+    #[cfg(feature = "cluster-async")]
     connection_concurrency_limit: Option<usize>,
 }
 
@@ -116,6 +117,7 @@ pub(crate) struct ClusterParams {
     pub(crate) cache_manager: Option<CacheManager>,
     #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
     pub(crate) credentials_provider: Option<std::sync::Arc<dyn StreamingCredentialsProvider>>,
+    #[cfg(feature = "cluster-async")]
     pub(crate) connection_concurrency_limit: Option<usize>,
 }
 
@@ -173,6 +175,7 @@ impl ClusterParams {
             cache_manager,
             #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
             credentials_provider: value.credentials_provider,
+            #[cfg(feature = "cluster-async")]
             connection_concurrency_limit: value.connection_concurrency_limit,
         })
     }
@@ -511,6 +514,7 @@ impl ClusterClientBuilder {
     /// backpressure is applied earlier and fewer requests are lost to timeouts.
     ///
     /// By default there is no limit.
+    #[cfg(feature = "cluster-async")]
     pub fn connection_concurrency_limit(mut self, limit: usize) -> ClusterClientBuilder {
         self.builder_params.connection_concurrency_limit = Some(limit);
         self
@@ -774,12 +778,14 @@ mod tests {
         assert!(client.is_err())
     }
 
+    #[cfg(feature = "cluster-async")]
     #[test]
     fn connection_concurrency_limit_default() {
         let client = ClusterClient::new(get_connection_data()).unwrap();
         assert_eq!(client.cluster_params.connection_concurrency_limit, None);
     }
 
+    #[cfg(feature = "cluster-async")]
     #[test]
     fn connection_concurrency_limit_custom() {
         let client = ClusterClientBuilder::new(get_connection_data())
