@@ -95,16 +95,6 @@ pub trait ConnectionLike {
     /// also might be incorrect if the connection like object is not
     /// actually connected.
     fn get_db(&self) -> i64;
-
-    /// Like [`req_packed_command`](Self::req_packed_command) but bypasses any concurrency limiter.
-    ///
-    /// Intended for internal infrastructure commands (e.g. health checks, slot refresh)
-    /// that must not be blocked by user-request concurrency limits.
-    /// The default implementation delegates to `req_packed_command`.
-    #[doc(hidden)]
-    fn req_packed_command_no_limit<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
-        self.req_packed_command(cmd)
-    }
 }
 
 async fn execute_connection_pipeline<T>(

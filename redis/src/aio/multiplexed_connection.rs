@@ -729,26 +729,16 @@ impl MultiplexedConnection {
         self.response_timeout = Some(timeout);
     }
 
-    async fn acquire_concurrency_permit(&self) -> Option<async_lock::SemaphoreGuardArc> {
-        match &self.concurrency_limiter {
-            Some(limiter) => Some(limiter.acquire_arc().await),
-            None => None,
-        }
-    }
-
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
-        let _permit = self.acquire_concurrency_permit().await;
-        self.send_packed_command_inner(cmd).await
-    }
-
-    /// Like [`send_packed_command`](Self::send_packed_command) but bypasses the concurrency limiter.
-    pub(crate) async fn send_packed_command_no_limit(&mut self, cmd: &Cmd) -> RedisResult<Value> {
-        self.send_packed_command_inner(cmd).await
-    }
-
-    async fn send_packed_command_inner(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+        let _permit = if cmd.skip_concurrency_limit {
+            None
+        } else if let Some(limiter) = &self.concurrency_limiter {
+            Some(limiter.acquire_arc().await)
+        } else {
+            None
+        };
         #[cfg(feature = "token-based-authentication")]
         if self.re_authentication_failed.load(Ordering::Relaxed) {
             return Err(RedisError::from((
@@ -803,16 +793,11 @@ impl MultiplexedConnection {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
-        let _permit = self.acquire_concurrency_permit().await;
-        self.send_packed_commands_inner(cmd, offset, count).await
-    }
-
-    async fn send_packed_commands_inner(
-        &mut self,
-        cmd: &crate::Pipeline,
-        offset: usize,
-        count: usize,
-    ) -> RedisResult<Vec<Value>> {
+        let _permit = if let Some(limiter) = &self.concurrency_limiter {
+            Some(limiter.acquire_arc().await)
+        } else {
+            None
+        };
         #[cfg(feature = "token-based-authentication")]
         if self.re_authentication_failed.load(Ordering::Relaxed) {
             return Err(RedisError::from((
@@ -875,10 +860,6 @@ impl MultiplexedConnection {
 impl ConnectionLike for MultiplexedConnection {
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
         (async move { self.send_packed_command(cmd).await }).boxed()
-    }
-
-    fn req_packed_command_no_limit<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
-        (async move { self.send_packed_command_no_limit(cmd).await }).boxed()
     }
 
     fn req_packed_commands<'a>(
@@ -990,10 +971,10 @@ impl MultiplexedConnection {
         &mut self,
         credentials: &crate::auth::BasicAuth,
     ) -> RedisResult<()> {
-        let auth_cmd =
+        let mut auth_cmd =
             crate::connection::authenticate_cmd(Some(&credentials.username), &credentials.password);
-        // Send the AUTH command and convert any Redis error response to an Err
-        self.send_packed_command_no_limit(&auth_cmd)
+        auth_cmd.skip_concurrency_limit = true;
+        self.send_packed_command(&auth_cmd)
             .await?
             .extract_error()
             .map(|_| ())
@@ -1117,7 +1098,11 @@ mod tests {
 
         let h2 = tokio::spawn({
             let mut c = conn.clone();
-            async move { c.send_packed_command_no_limit(&cmd("PING")).await }
+            async move {
+                let mut ping = cmd("PING");
+                ping.skip_concurrency_limit = true;
+                c.send_packed_command(&ping).await
+            }
         });
 
         let received =
