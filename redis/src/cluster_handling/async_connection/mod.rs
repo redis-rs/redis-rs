@@ -143,7 +143,7 @@ use tokio::sync::{RwLock, mpsc, oneshot};
 struct ClientSideState {
     protocol: ProtocolVersion,
     _task_handle: HandleContainer,
-    overall_request_timeout: Option<Duration>,
+    overall_response_timeout: Option<Duration>,
     runtime: Runtime,
     #[cfg(feature = "cache-aio")]
     cache_manager: Option<CacheManager>,
@@ -187,7 +187,7 @@ where
         cluster_params: ClusterParams,
     ) -> (ClusterConnection<C>, oneshot::Receiver<RedisResult<()>>) {
         let protocol = cluster_params.protocol.unwrap_or_default();
-        let overall_request_timeout = cluster_params.overall_request_timeout;
+        let overall_response_timeout = cluster_params.overall_response_timeout;
         #[cfg(feature = "cache-aio")]
         let cache_manager = cluster_params.cache_manager.clone();
         let runtime = Runtime::locate();
@@ -212,7 +212,7 @@ where
                 state: Arc::new(ClientSideState {
                     protocol,
                     _task_handle,
-                    overall_request_timeout,
+                    overall_response_timeout,
                     runtime,
                     #[cfg(feature = "cache-aio")]
                     cache_manager,
@@ -257,7 +257,7 @@ where
                 })
         };
 
-        match self.state.overall_request_timeout {
+        match self.state.overall_response_timeout {
             Some(duration) => self.state.runtime.timeout(duration, request).await?,
             None => request.await,
         }
@@ -295,7 +295,7 @@ where
                 })
         };
 
-        match self.state.overall_request_timeout {
+        match self.state.overall_response_timeout {
             Some(duration) => self.state.runtime.timeout(duration, request).await?,
             None => request.await,
         }
