@@ -150,7 +150,7 @@ async fn cache_mget() {
 #[cfg(feature = "json")]
 #[async_test]
 async fn module_cache_json_get_mget() {
-    let ctx = TestContext::with_modules(&[Module::Json], false);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -220,7 +220,7 @@ async fn module_cache_json_get_mget() {
 #[cfg(feature = "json")]
 #[async_test]
 async fn module_cache_json_get_mget_different_paths() {
-    let ctx = TestContext::with_modules(&[Module::Json], false);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     if !ctx.protocol.supports_resp3() {
         return;
     }
