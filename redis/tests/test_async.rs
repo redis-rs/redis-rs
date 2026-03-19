@@ -341,7 +341,7 @@ mod basic_async {
     #[async_test]
     #[cfg(feature = "json")]
     async fn module_json_and_pipeline_transaction_with_ignore_errors() {
-        let ctx = TestContext::with_modules(&[Module::Json], false);
+        let ctx = TestContext::with_modules(&[Module::Json]);
         let mut con = ctx.async_connection().await.unwrap();
         con.set::<_, _, ()>("x", 42).await.unwrap();
         con.json_set::<_, _, _, ()>("y", "$", &serde_json::json!({"path": "value"}))
