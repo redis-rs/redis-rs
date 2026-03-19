@@ -85,6 +85,11 @@ fn command_properties(cmd: &[u8]) -> Properties {
         | b"ACL USERS"
         | b"ACL WHOAMI"
         | b"AUTH"
+        | b"BF.CARD"
+        | b"BF.EXISTS"
+        | b"BF.INFO"
+        | b"BF.MEXISTS"
+        | b"BF.SCANDUMP"
         | b"BGREWRITEAOF"
         | b"BGSAVE"
         | b"PFCOUNT"
@@ -3011,6 +3016,200 @@ assert_eq!(invok_2_res, 5);
     /// [Redis Docs](https://redis.io/commands/FLUSHDB)
     fn flushdb_options<>(options: &'a FlushDbOptions) -> () {
         cmd("FLUSHDB").arg(options).take()
+    }
+
+    // Bloom filter commands
+
+    /// Adds an item to a Bloom filter.
+    ///
+    /// ```text
+    /// BF.ADD <key> <item>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/BF.ADD)
+    #[cfg(feature = "bloom")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
+    fn bf_add<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, value: V) -> (bool) {
+        cmd("BF.ADD").arg(key).arg(value).take()
+    }
+
+    /// Returns the number of items in a Bloom filter.
+    ///
+    /// ```text
+    /// BF.CARD <key>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/BF.CARD)
+    #[cfg(feature = "bloom")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
+    fn bf_card<K: ToSingleRedisArg>(key: K) -> (usize) {
+        cmd("BF.CARD").arg(key).take()
+    }
+
+    /// Checks if an item exists in a Bloom filter.
+    ///
+    /// ```text
+    /// BF.EXISTS <key> <item>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/BF.EXISTS)
+    #[cfg(feature = "bloom")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
+    fn bf_exists<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, value: V) -> (bool) {
+        cmd("BF.EXISTS").arg(key).arg(value).take()
+    }
+
+    /// Returns all available information about a Bloom filter.
+    ///
+    /// ```text
+    /// BF.INFO <key>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/BF.INFO)
+    #[cfg(feature = "bloom")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
+    fn bf_info<K: ToSingleRedisArg>(key: K) -> (std::collections::HashMap<String, crate::bloom::BloomFilterInfoTypeResponse>) {
+        cmd("BF.INFO").arg(key).take()
+    }
+
+    /// Returns specific information about a Bloom filter.
+    ///
+    /// ```text
+    /// BF.INFO <key> <type>
+    /// ```
+    ///
+    /// Due incompatibilities between RESP2 and RESP3, and furthermore conversion limitations of our
+    /// framework, this function cannot return `i64` directly. Instead, it returns
+    /// [`BloomFilterInfoTypeResponse`](crate::bloom::BloomFilterInfoTypeResponse)) which derefs to
+    /// `i64`.
+    ///
+    /// [Redis Docs](https://redis.io/commands/BF.INFO)
+    #[cfg(feature = "bloom")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
+    fn bf_info_type<K: ToSingleRedisArg>(key: K, info_type: crate::bloom::BloomFilterInfoType) -> (crate::bloom::BloomFilterInfoTypeResponse) {
+        cmd("BF.INFO").arg(key).arg(info_type).take()
+    }
+
+    /// Adds items to a Bloom filter, creating it with default options if it does not yet exist.
+    ///
+    /// ```text
+    /// BF.INSERT <key> ITEMS <item1> <item2> ...
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/BF.INSERT)
+    #[cfg(feature = "bloom")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
+    fn bf_insert<K: ToSingleRedisArg,  V: ToRedisArgs>(
+        key: K,
+        items: V) -> (Vec<bool>){
+        cmd("BF.INSERT")
+            .arg(key)
+            .arg("ITEMS")
+            .arg(items)
+            .take()
+    }
+
+    /// Adds items to a Bloom filter, creating it with custom options if it does not exist yet.
+    ///
+    /// ```text
+    /// BF.INSERT <key> [options] ITEMS <item1> <item2> ...
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/BF.INSERT)
+    #[cfg(feature = "bloom")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
+    fn bf_insert_options<K: ToSingleRedisArg,  V: ToRedisArgs>(
+        key: K,
+        items: V,
+        options: crate::bloom::BloomFilterInsertOptions) -> (Vec<bool>) {
+        cmd("BF.INSERT")
+            .arg(key)
+            .arg(options)
+            .arg("ITEMS")
+            .arg(items)
+            .take()
+    }
+
+
+    /// Restores a Bloom filter previously saved using [`bf_scandump`](Self::bf_scandump).
+    ///
+    /// ```text
+    /// BF.LOADCHUNK <key> <iterator> <data>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/BF.LOADCHUNK)
+    #[cfg(feature = "bloom")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
+    fn bf_loadchunk<K: ToSingleRedisArg>(key: K, chunk: crate::bloom::BloomFilterDumpChunk) -> (()) {
+        cmd("BF.LOADCHUNK").arg(key).arg(chunk.iterator).arg(chunk.data).take()
+    }
+
+    /// Adds multiple items to a Bloom filter.
+    ///
+    /// ```text
+    /// BF.MADD <key> <item1> <item2> ...
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/BF.MADD)
+    #[cfg(feature = "bloom")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
+    fn bf_madd<K: ToSingleRedisArg, V: ToRedisArgs>(key: K, items: V) -> (Vec<bool>) {
+        cmd("BF.MADD").arg(key).arg(items).take()
+    }
+
+    /// Checks if an item exists in a Bloom filter.
+    ///
+    /// ```text
+    /// BF.MEXISTS <key> <item1> <item2> ...
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/BF.MEXISTS)
+    #[cfg(feature = "bloom")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
+    fn bf_mexists<K: ToSingleRedisArg, V: ToRedisArgs>(key: K, items: &'a [V]) -> (Vec<bool>) {
+        cmd("BF.MEXISTS").arg(key).arg(items).take()
+    }
+
+    /// Creates an empty Bloom filter with default settings.
+    ///
+    /// ```text
+    /// BF.RESERVE <key> <error_rate> <capacity>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/BF.RESERVE)
+    #[cfg(feature = "bloom")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
+    fn bf_reserve<K: ToSingleRedisArg>(key: K, err_rate: f64, capacity: usize) -> (()) {
+        cmd("BF.RESERVE").arg(key).arg(err_rate).arg(capacity).take()
+    }
+
+    /// Creates an empty Bloom filter with options.
+    ///
+    /// ```text
+    /// BF.RESERVE <key> <error_rate> <capacity> [EXPANSION expansion] [NONSCALING]
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/BF.RESERVE)
+    #[cfg(feature = "bloom")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
+    fn bf_reserve_options<K: ToSingleRedisArg, E: ToSingleRedisArg, C: ToSingleRedisArg>(key: K, err_rate: E, capacity: C, options: crate::bloom::BloomFilterScalingOptions) -> (()) {
+      cmd("BF.RESERVE").arg(key).arg(err_rate).arg(capacity).arg(options).take()
+    }
+
+    /// Begins an incremental save of the Bloom filter
+    ///
+    /// ```text
+    /// BF.SCANDUMP <key> <iterator>
+    /// ```
+    ///
+    /// [`BloomFilterDumpIterator`](crate::bloom::BloomFilterDumpIterator) allows to dump a Bloom
+    /// filter in a more accessible way than manually dumping chunk by chunk.
+    ///
+    /// [Redis Docs](https://redis.io/commands/BF.SCANDUMP)
+    #[cfg(feature = "bloom")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
+    fn bf_scandump<K: ToSingleRedisArg>(key: K, iterator: i64) -> (crate::bloom::BloomFilterDumpChunk) {
+        cmd("BF.SCANDUMP").arg(key).arg(iterator).take()
     }
 }
 
