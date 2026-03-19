@@ -15,7 +15,7 @@ pub enum Unit {
     Kilometers,
     /// Represents miles.
     Miles,
-    /// Represents feed.
+    /// Represents feet.
     Feet,
 }
 
