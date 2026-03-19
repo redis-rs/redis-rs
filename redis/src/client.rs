@@ -333,6 +333,10 @@ impl AsyncConnectionConfig {
     /// When set, at most `limit` requests can be awaiting a response at any given time.
     /// Additional requests will wait until an in-flight request completes.
     ///
+    /// Pipelined commands try to acquire one permit per command, but will proceed with
+    /// fewer if not all are immediately available. This means a pipeline may temporarily
+    /// push the effective in-flight count above the limit.
+    ///
     /// This is useful for preventing a large backlog of commands from building up when the
     /// server becomes slow or unresponsive. Without a limit, requests continue to queue
     /// unboundedly. When the server is degraded, requests near the back of the queue spend

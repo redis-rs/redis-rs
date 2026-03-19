@@ -505,6 +505,10 @@ impl ClusterClientBuilder {
     /// When set, each node connection will allow at most `limit` concurrent in-flight requests.
     /// Additional requests will wait until an in-flight request completes.
     ///
+    /// Pipelined commands try to acquire one permit per command, but will proceed with
+    /// fewer if not all are immediately available. This means a pipeline may temporarily
+    /// push the effective in-flight count above the limit.
+    ///
     /// This is useful for preventing a large backlog of commands from building up when a node
     /// goes offline or becomes slow. Without a limit, requests continue to queue unboundedly
     /// on the connection. When the node is degraded, requests near the back of the queue
