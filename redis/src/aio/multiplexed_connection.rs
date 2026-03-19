@@ -793,10 +793,22 @@ impl MultiplexedConnection {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
-        let _permit = if let Some(limiter) = &self.concurrency_limiter {
-            Some(limiter.acquire_arc().await)
+        // Try to acquire 1 permit per command in the pipeline: block on the first to guarantee
+        // progress, then grab as many more as are immediately available without blocking.
+        // This roughly reflects the pipeline's load on the server while avoiding deadlock --
+        // a large pipeline can always proceed even if it can't acquire all permits.
+        let _permits = if let Some(limiter) = &self.concurrency_limiter {
+            let mut permits = Vec::with_capacity(count.max(1));
+            permits.push(limiter.acquire_arc().await);
+            for _ in 1..count {
+                match limiter.try_acquire_arc() {
+                    Some(permit) => permits.push(permit),
+                    None => break,
+                }
+            }
+            permits
         } else {
-            None
+            Vec::new()
         };
         #[cfg(feature = "token-based-authentication")]
         if self.re_authentication_failed.load(Ordering::Relaxed) {
@@ -1117,5 +1129,87 @@ mod tests {
 
         h1.await.unwrap().unwrap();
         h2.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_pipeline_acquires_multiple_permits() {
+        let (conn, mut cmd_received_rx, send_response_tx) = create_mock_connection(3).await;
+
+        let pipeline_handle = tokio::spawn({
+            let mut c = conn.clone();
+            async move {
+                let mut pipe = crate::Pipeline::new();
+                pipe.cmd("SET").arg("a").arg("1");
+                pipe.cmd("SET").arg("b").arg("2");
+                pipe.cmd("SET").arg("c").arg("3");
+                c.send_packed_commands(&pipe, 0, 3).await
+            }
+        });
+
+        for _ in 0..3 {
+            cmd_received_rx.recv().await.unwrap();
+        }
+
+        let single_handle = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+
+        let blocked =
+            tokio::time::timeout(Duration::from_millis(100), cmd_received_rx.recv()).await;
+        assert!(
+            blocked.is_err(),
+            "single command should be blocked while pipeline holds all permits"
+        );
+
+        for _ in 0..3 {
+            send_response_tx.send(()).await.unwrap();
+        }
+
+        cmd_received_rx.recv().await.unwrap();
+        send_response_tx.send(()).await.unwrap();
+
+        pipeline_handle.await.unwrap().unwrap();
+        single_handle.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_pipeline_proceeds_with_partial_permits() {
+        let (conn, mut cmd_received_rx, send_response_tx) = create_mock_connection(2).await;
+
+        let single_handle = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+        cmd_received_rx.recv().await.unwrap();
+
+        let pipeline_handle = tokio::spawn({
+            let mut c = conn.clone();
+            async move {
+                let mut pipe = crate::Pipeline::new();
+                for i in 0..5 {
+                    pipe.cmd("SET").arg(format!("k{i}")).arg(i);
+                }
+                c.send_packed_commands(&pipe, 0, 5).await
+            }
+        });
+
+        let received =
+            tokio::time::timeout(Duration::from_millis(100), cmd_received_rx.recv()).await;
+        assert!(
+            received.is_ok(),
+            "pipeline should proceed even with only partial permits"
+        );
+
+        for _ in 1..5 {
+            cmd_received_rx.recv().await.unwrap();
+        }
+
+        for _ in 0..6 {
+            send_response_tx.send(()).await.unwrap();
+        }
+
+        single_handle.await.unwrap().unwrap();
+        pipeline_handle.await.unwrap().unwrap();
     }
 }
