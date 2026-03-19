@@ -727,8 +727,7 @@ where
         count: usize,
         route: InternalSingleNodeRouting<C>,
     ) -> OperationResult {
-        let conn = self.get_connection(route);
-        match conn.await {
+        match self.get_connection(route).await {
             Ok((addr, mut conn)) => (
                 OperationTarget::Node { address: addr },
                 conn.req_packed_commands(&pipeline, offset, count)
@@ -865,8 +864,10 @@ where
             None => self.connect_check_and_add(&addr).await?,
         };
         if asking {
+            let mut asking_cmd = crate::cmd::cmd("ASKING");
+            asking_cmd.skip_concurrency_limit = true;
             let _ = conn
-                .req_packed_command(&crate::cmd::cmd("ASKING"))
+                .req_packed_command(&asking_cmd)
                 .await
                 .and_then(|value| value.extract_error());
         }
@@ -896,8 +897,10 @@ where
         let mut result = Ok(());
         for (addr, conn) in &mut *connections {
             result = async {
+                let mut slot_refresh_cmd = slot_cmd();
+                slot_refresh_cmd.skip_concurrency_limit = true;
                 let value = conn
-                    .req_packed_command(&slot_cmd())
+                    .req_packed_command(&slot_refresh_cmd)
                     .await
                     .and_then(|value| value.extract_error())?;
                 let v: Vec<Slot> = parse_slots(value, addr.host())?;
@@ -1525,6 +1528,9 @@ where
     if let Some(credentials_provider) = &params.credentials_provider {
         config = config.set_credentials_provider_internal(credentials_provider.clone());
     }
+    if let Some(limit) = params.connection_concurrency_limit {
+        config = config.set_concurrency_limit(limit);
+    }
     let mut conn = match C::connect_with_config(info, config).await {
         Ok(conn) => conn,
         Err(err) => {
@@ -1535,7 +1541,9 @@ where
     // If READONLY is sent to primary nodes, it will have no effect.
     // We set this unconditionally, because we don't know whether we'll be making read calls
     // to replicas. (We allow overriding routing per-call)
-    conn.req_packed_command(&cmd("READONLY")).await?;
+    let mut readonly_cmd = cmd("READONLY");
+    readonly_cmd.skip_concurrency_limit = true;
+    conn.req_packed_command(&readonly_cmd).await?;
     Ok(conn)
 }
 
@@ -1543,9 +1551,11 @@ async fn check_connection<C>(conn: &mut C) -> RedisResult<()>
 where
     C: ConnectionLike + Send + 'static,
 {
-    let mut cmd = Cmd::new();
-    cmd.arg("PING");
-    cmd.query_async::<()>(conn).await?;
+    let mut ping_cmd = cmd("PING");
+    ping_cmd.skip_concurrency_limit = true;
+    conn.req_packed_command(&ping_cmd)
+        .await
+        .and_then(|v| v.extract_error())?;
     Ok(())
 }
 

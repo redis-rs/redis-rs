@@ -2156,6 +2156,7 @@ dependencies = [
  "assert_approx_eq",
  "assert_matches",
  "async-io",
+ "async-lock",
  "async-native-tls",
  "async-trait",
  "azure_core",

@@ -52,6 +52,8 @@ struct BuilderParams {
     cache_config: Option<CacheConfig>,
     #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
     credentials_provider: Option<std::sync::Arc<dyn StreamingCredentialsProvider>>,
+    #[cfg(feature = "cluster-async")]
+    connection_concurrency_limit: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -115,6 +117,8 @@ pub(crate) struct ClusterParams {
     pub(crate) cache_manager: Option<CacheManager>,
     #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
     pub(crate) credentials_provider: Option<std::sync::Arc<dyn StreamingCredentialsProvider>>,
+    #[cfg(feature = "cluster-async")]
+    pub(crate) connection_concurrency_limit: Option<usize>,
 }
 
 impl ClusterParams {
@@ -171,6 +175,8 @@ impl ClusterParams {
             cache_manager,
             #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
             credentials_provider: value.credentials_provider,
+            #[cfg(feature = "cluster-async")]
+            connection_concurrency_limit: value.connection_concurrency_limit,
         })
     }
 
@@ -494,6 +500,30 @@ impl ClusterClientBuilder {
         self
     }
 
+    /// Sets the maximum number of outstanding requests allowed per connection to a cluster node.
+    ///
+    /// When set, each node connection will allow at most `limit` concurrent in-flight requests.
+    /// Additional requests will wait until an in-flight request completes.
+    ///
+    /// Pipelined commands try to acquire one permit per command, but will proceed with
+    /// fewer if not all are immediately available. This means a pipeline may temporarily
+    /// push the effective in-flight count above the limit.
+    ///
+    /// This is useful for preventing a large backlog of commands from building up when a node
+    /// goes offline or becomes slow. Without a limit, requests continue to queue unboundedly
+    /// on the connection. When the node is degraded, requests near the back of the queue
+    /// spend most of their time waiting behind earlier requests and are likely to hit their
+    /// response timeout before the server even processes them -- wasting work on both sides.
+    /// Setting a concurrency limit caps the number of in-flight requests per node, so
+    /// backpressure is applied earlier and fewer requests are lost to timeouts.
+    ///
+    /// By default there is no limit.
+    #[cfg(feature = "cluster-async")]
+    pub fn connection_concurrency_limit(mut self, limit: usize) -> ClusterClientBuilder {
+        self.builder_params.connection_concurrency_limit = Some(limit);
+        self
+    }
+
     /// Sets a credentials provider for dynamic authentication (e.g., token-based authentication)
     /// on all cluster node connections.
     ///
@@ -750,5 +780,25 @@ mod tests {
     fn give_empty_initial_nodes() {
         let client = ClusterClient::new(Vec::<String>::new());
         assert!(client.is_err())
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn connection_concurrency_limit_default() {
+        let client = ClusterClient::new(get_connection_data()).unwrap();
+        assert_eq!(client.cluster_params.connection_concurrency_limit, None);
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn connection_concurrency_limit_custom() {
+        let client = ClusterClientBuilder::new(get_connection_data())
+            .connection_concurrency_limit(128)
+            .build()
+            .unwrap();
+        assert_eq!(
+            client.cluster_params.connection_concurrency_limit,
+            Some(128)
+        );
     }
 }

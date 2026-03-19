@@ -500,6 +500,7 @@ pub struct MultiplexedConnection {
     db: i64,
     response_timeout: Option<Duration>,
     protocol: ProtocolVersion,
+    concurrency_limiter: Option<Arc<async_lock::Semaphore>>,
     // This handle ensures that once all the clones of the connection will be dropped, the underlying task will stop.
     // This handle is only set for connection whose task was spawned by the crate, not for users who spawned their own
     // task.
@@ -523,6 +524,7 @@ impl Debug for MultiplexedConnection {
             db,
             response_timeout,
             protocol,
+            concurrency_limiter: _,
             _task_handle,
             #[cfg(feature = "cache-aio")]
                 cache_manager: _,
@@ -646,11 +648,16 @@ impl MultiplexedConnection {
             Pipeline::resolve_buffer_size(config.pipeline_buffer_size),
         );
 
+        let concurrency_limiter = config
+            .concurrency_limit
+            .map(|n| Arc::new(async_lock::Semaphore::new(n)));
+
         let con = MultiplexedConnection {
             pipeline,
             db: connection_info.db,
             response_timeout: config.response_timeout,
             protocol: connection_info.protocol,
+            concurrency_limiter,
             _task_handle: None,
             #[cfg(feature = "cache-aio")]
             cache_manager: cache_manager_opt,
@@ -725,6 +732,13 @@ impl MultiplexedConnection {
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+        let _permit = if cmd.skip_concurrency_limit {
+            None
+        } else if let Some(limiter) = &self.concurrency_limiter {
+            Some(limiter.acquire().await)
+        } else {
+            None
+        };
         #[cfg(feature = "token-based-authentication")]
         if self.re_authentication_failed.load(Ordering::Relaxed) {
             return Err(RedisError::from((
@@ -779,6 +793,23 @@ impl MultiplexedConnection {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
+        // Try to acquire 1 permit per command in the pipeline: block on the first to guarantee
+        // progress, then grab as many more as are immediately available without blocking.
+        // This roughly reflects the pipeline's load on the server while avoiding deadlock --
+        // a large pipeline can always proceed even if it can't acquire all permits.
+        let _permits = if let Some(limiter) = &self.concurrency_limiter {
+            let mut permits = Vec::with_capacity(count.max(1));
+            permits.push(limiter.acquire().await);
+            for _ in 1..count {
+                match limiter.try_acquire() {
+                    Some(permit) => permits.push(permit),
+                    None => break,
+                }
+            }
+            permits
+        } else {
+            Vec::new()
+        };
         #[cfg(feature = "token-based-authentication")]
         if self.re_authentication_failed.load(Ordering::Relaxed) {
             return Err(RedisError::from((
@@ -952,9 +983,9 @@ impl MultiplexedConnection {
         &mut self,
         credentials: &crate::auth::BasicAuth,
     ) -> RedisResult<()> {
-        let auth_cmd =
+        let mut auth_cmd =
             crate::connection::authenticate_cmd(Some(&credentials.username), &credentials.password);
-        // Send the AUTH command and convert any Redis error response to an Err
+        auth_cmd.skip_concurrency_limit = true;
         self.send_packed_command(&auth_cmd)
             .await?
             .extract_error()
@@ -974,5 +1005,300 @@ mod tests {
     #[test]
     fn test_pipeline_resolve_buffer_size_custom() {
         assert_eq!(Pipeline::resolve_buffer_size(Some(100)), 100);
+    }
+
+    fn mock_conn_info() -> RedisConnectionInfo {
+        RedisConnectionInfo {
+            skip_set_lib_name: true,
+            ..Default::default()
+        }
+    }
+
+    async fn create_mock_connection(
+        concurrency_limit: usize,
+    ) -> (
+        MultiplexedConnection,
+        tokio::sync::mpsc::Receiver<()>,
+        tokio::sync::mpsc::Sender<()>,
+    ) {
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+        use tokio_util::codec::FramedRead;
+
+        let (client_half, server_half) = tokio::io::duplex(4096);
+        let (cmd_received_tx, cmd_received_rx) = tokio::sync::mpsc::channel::<()>(10);
+        let (send_response_tx, mut send_response_rx) = tokio::sync::mpsc::channel::<()>(10);
+
+        let (server_read, mut server_write) = tokio::io::split(server_half);
+
+        tokio::spawn(async move {
+            let mut reader = FramedRead::new(server_read, ValueCodec::default());
+            while let Some(Ok(_)) = reader.next().await {
+                let _ = cmd_received_tx.send(()).await;
+            }
+        });
+
+        tokio::spawn(async move {
+            while send_response_rx.recv().await.is_some() {
+                let _ = server_write.write_all(b"+OK\r\n").await;
+                let _ = server_write.flush().await;
+            }
+        });
+
+        let config = AsyncConnectionConfig::new()
+            .set_concurrency_limit(concurrency_limit)
+            .set_response_timeout(None)
+            .set_connection_timeout(None);
+
+        let (conn, driver) =
+            MultiplexedConnection::new_with_config(&mock_conn_info(), client_half, config)
+                .await
+                .unwrap();
+        tokio::spawn(driver);
+
+        (conn, cmd_received_rx, send_response_tx)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrency_limit_enforced() {
+        let (conn, mut cmd_received_rx, send_response_tx) = create_mock_connection(2).await;
+
+        let h1 = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+        let h2 = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+        let h3 = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+
+        cmd_received_rx.recv().await.unwrap();
+        cmd_received_rx.recv().await.unwrap();
+
+        let third = tokio::time::timeout(Duration::from_millis(100), cmd_received_rx.recv()).await;
+        assert!(
+            third.is_err(),
+            "3rd request should be blocked by concurrency limit"
+        );
+
+        send_response_tx.send(()).await.unwrap();
+
+        cmd_received_rx.recv().await.unwrap();
+
+        send_response_tx.send(()).await.unwrap();
+        send_response_tx.send(()).await.unwrap();
+
+        h1.await.unwrap().unwrap();
+        h2.await.unwrap().unwrap();
+        h3.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_no_limit_bypasses_concurrency_limit() {
+        let (conn, mut cmd_received_rx, send_response_tx) = create_mock_connection(1).await;
+
+        let h1 = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+
+        cmd_received_rx.recv().await.unwrap();
+
+        let h2 = tokio::spawn({
+            let mut c = conn.clone();
+            async move {
+                let mut ping = cmd("PING");
+                ping.skip_concurrency_limit = true;
+                c.send_packed_command(&ping).await
+            }
+        });
+
+        let received =
+            tokio::time::timeout(Duration::from_millis(100), cmd_received_rx.recv()).await;
+        assert!(
+            received.is_ok(),
+            "no_limit request should bypass concurrency limit"
+        );
+
+        send_response_tx.send(()).await.unwrap();
+        send_response_tx.send(()).await.unwrap();
+
+        h1.await.unwrap().unwrap();
+        h2.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_pipeline_acquires_multiple_permits() {
+        let (conn, mut cmd_received_rx, send_response_tx) = create_mock_connection(3).await;
+
+        let pipeline_handle = tokio::spawn({
+            let mut c = conn.clone();
+            async move {
+                let mut pipe = crate::Pipeline::new();
+                pipe.cmd("SET").arg("a").arg("1");
+                pipe.cmd("SET").arg("b").arg("2");
+                pipe.cmd("SET").arg("c").arg("3");
+                c.send_packed_commands(&pipe, 0, 3).await
+            }
+        });
+
+        for _ in 0..3 {
+            cmd_received_rx.recv().await.unwrap();
+        }
+
+        let single_handle = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+
+        let blocked =
+            tokio::time::timeout(Duration::from_millis(100), cmd_received_rx.recv()).await;
+        assert!(
+            blocked.is_err(),
+            "single command should be blocked while pipeline holds all permits"
+        );
+
+        for _ in 0..3 {
+            send_response_tx.send(()).await.unwrap();
+        }
+
+        cmd_received_rx.recv().await.unwrap();
+        send_response_tx.send(()).await.unwrap();
+
+        pipeline_handle.await.unwrap().unwrap();
+        single_handle.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_pipeline_proceeds_with_partial_permits() {
+        let (conn, mut cmd_received_rx, send_response_tx) = create_mock_connection(2).await;
+
+        let single_handle = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+        cmd_received_rx.recv().await.unwrap();
+
+        let pipeline_handle = tokio::spawn({
+            let mut c = conn.clone();
+            async move {
+                let mut pipe = crate::Pipeline::new();
+                for i in 0..5 {
+                    pipe.cmd("SET").arg(format!("k{i}")).arg(i);
+                }
+                c.send_packed_commands(&pipe, 0, 5).await
+            }
+        });
+
+        let received =
+            tokio::time::timeout(Duration::from_millis(100), cmd_received_rx.recv()).await;
+        assert!(
+            received.is_ok(),
+            "pipeline should proceed even with only partial permits"
+        );
+
+        for _ in 1..5 {
+            cmd_received_rx.recv().await.unwrap();
+        }
+
+        for _ in 0..6 {
+            send_response_tx.send(()).await.unwrap();
+        }
+
+        single_handle.await.unwrap().unwrap();
+        pipeline_handle.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_permit_released_on_cancellation() {
+        let (conn, mut cmd_received_rx, send_response_tx) = create_mock_connection(1).await;
+
+        let h1 = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+        cmd_received_rx.recv().await.unwrap();
+
+        // Start a second request that will block on the semaphore, then cancel it
+        let h2 = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        h2.abort();
+        let _ = h2.await;
+
+        // Complete the first request
+        send_response_tx.send(()).await.unwrap();
+        h1.await.unwrap().unwrap();
+
+        // The permit from the cancelled request should have been released,
+        // so a new request should proceed
+        let h3 = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+
+        let received =
+            tokio::time::timeout(Duration::from_millis(100), cmd_received_rx.recv()).await;
+        assert!(
+            received.is_ok(),
+            "request after cancellation should acquire the permit"
+        );
+
+        send_response_tx.send(()).await.unwrap();
+        h3.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_permit_released_on_response_timeout() {
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+        use tokio_util::codec::FramedRead;
+
+        let (client_half, server_half) = tokio::io::duplex(4096);
+        let (cmd_received_tx, mut cmd_received_rx) = tokio::sync::mpsc::channel::<()>(10);
+
+        let (server_read, mut server_write) = tokio::io::split(server_half);
+
+        tokio::spawn(async move {
+            let mut reader = FramedRead::new(server_read, ValueCodec::default());
+            while let Some(Ok(_)) = reader.next().await {
+                let _ = cmd_received_tx.send(()).await;
+            }
+        });
+
+        tokio::spawn(async move {
+            futures_util::future::pending::<()>().await;
+            let _ = server_write.write_all(b"").await;
+        });
+
+        let config = AsyncConnectionConfig::new()
+            .set_concurrency_limit(1)
+            .set_response_timeout(Some(Duration::from_millis(100)))
+            .set_connection_timeout(None);
+
+        let (conn, driver) =
+            MultiplexedConnection::new_with_config(&mock_conn_info(), client_half, config)
+                .await
+                .unwrap();
+        tokio::spawn(driver);
+
+        // First request times out since the mock never responds
+        let mut c1 = conn.clone();
+        let err = c1.send_packed_command(&cmd("PING")).await.unwrap_err();
+        assert!(err.is_io_error(), "expected IO error from timeout");
+        cmd_received_rx.recv().await.unwrap();
+
+        // Second request should acquire the permit released by the first,
+        // reach the server, and then also time out
+        let mut c2 = conn.clone();
+        let err = c2.send_packed_command(&cmd("PING")).await.unwrap_err();
+        assert!(err.is_io_error(), "expected IO error from timeout");
+        cmd_received_rx.recv().await.unwrap();
     }
 }

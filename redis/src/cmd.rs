@@ -83,6 +83,7 @@ pub struct Cmd {
     cursor: Option<u64>,
     // If it's true command's response won't be read from socket. Useful for Pub/Sub.
     no_response: bool,
+    pub(crate) skip_concurrency_limit: bool,
     #[cfg(feature = "cache-aio")]
     cache: Option<CommandCacheConfig>,
 }
@@ -490,6 +491,7 @@ impl Cmd {
             args: vec![],
             cursor: None,
             no_response: false,
+            skip_concurrency_limit: false,
             #[cfg(feature = "cache-aio")]
             cache: None,
         }
@@ -502,6 +504,7 @@ impl Cmd {
             args: Vec::with_capacity(arg_count),
             cursor: None,
             no_response: false,
+            skip_concurrency_limit: false,
             #[cfg(feature = "cache-aio")]
             cache: None,
         }
@@ -537,6 +540,7 @@ impl Cmd {
         self.args.clear();
         self.cursor = None;
         self.no_response = false;
+        self.skip_concurrency_limit = false;
         #[cfg(feature = "cache-aio")]
         {
             self.cache = None;
