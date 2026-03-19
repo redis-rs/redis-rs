@@ -1424,24 +1424,24 @@ macro_rules! impl_to_redis_args_for_set {
 
 impl_to_redis_args_for_set!(
     for <T, S> std::collections::HashSet<T, S>,
-    where (T: ToRedisArgs + Hash + Eq)
+    where (T: ToRedisArgs)
 );
 
 impl_to_redis_args_for_set!(
     for <T> std::collections::BTreeSet<T>,
-    where (T: ToRedisArgs + Hash + Eq + Ord)
+    where (T: ToRedisArgs)
 );
 
 #[cfg(feature = "hashbrown")]
 impl_to_redis_args_for_set!(
     for <T, S> hashbrown::HashSet<T, S>,
-    where (T: ToRedisArgs + Hash + Eq)
+    where (T: ToRedisArgs)
 );
 
 #[cfg(feature = "ahash")]
 impl_to_redis_args_for_set!(
     for <T, S> ahash::AHashSet<T, S>,
-    where (T: ToRedisArgs + Hash + Eq)
+    where (T: ToRedisArgs)
 );
 
 /// @note: Redis cannot store empty maps so the application has to
@@ -1479,25 +1479,25 @@ macro_rules! impl_to_redis_args_for_map {
 
 impl_to_redis_args_for_map!(
     for <K, V, S> std::collections::HashMap<K, V, S>,
-    where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
+    where (K: ToRedisArgs, V: ToRedisArgs)
 );
 
 impl_to_redis_args_for_map!(
     /// this flattens BTreeMap into something that goes well with HMSET
     for <K, V> std::collections::BTreeMap<K, V>,
-    where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
+    where (K: ToRedisArgs, V: ToRedisArgs)
 );
 
 #[cfg(feature = "hashbrown")]
 impl_to_redis_args_for_map!(
     for <K, V, S> hashbrown::HashMap<K, V, S>,
-    where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
+    where (K: ToRedisArgs, V: ToRedisArgs)
 );
 
 #[cfg(feature = "ahash")]
 impl_to_redis_args_for_map!(
     for <K, V, S> ahash::AHashMap<K, V, S>,
-    where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
+    where (K: ToRedisArgs, V: ToRedisArgs)
 );
 
 macro_rules! to_redis_args_for_tuple {
@@ -2050,7 +2050,7 @@ impl_from_redis_value_for_map!(
 
 impl_from_redis_value_for_map!(
     for <K, V> std::collections::BTreeMap<K, V>,
-    where (K: FromRedisValue + Eq + Hash + Ord, V: FromRedisValue)
+    where (K: FromRedisValue + Eq + Ord, V: FromRedisValue)
 );
 
 #[cfg(feature = "hashbrown")]
@@ -2101,7 +2101,7 @@ impl_from_redis_value_for_set!(
 
 impl_from_redis_value_for_set!(
     for <T> std::collections::BTreeSet<T>,
-    where (T: FromRedisValue + Eq + Ord)
+    where (T: FromRedisValue + Ord)
 );
 
 #[cfg(feature = "hashbrown")]

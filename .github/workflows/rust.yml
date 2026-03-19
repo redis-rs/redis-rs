@@ -26,8 +26,8 @@ jobs:
             {  db-org: redis, db-name: redis, db-version: 6.2.21 },
             {  db-org: redis, db-name: redis, db-version: 7.0.15, json-module-version: v2.6.22 },
             {  db-org: redis, db-name: redis, db-version: 7.4.8, json-module-version: v2.6.22 },
-            {  db-org: redis, db-name: redis, db-version: 8.0.4, json-module-version: v8.0.1 },
-            {  db-org: redis, db-name: redis, db-version: 8.6.1, json-module-version: v8.6.0 },
+            {  db-org: redis, db-name: redis, db-version: 8.0.6, json-module-version: bundled },
+            {  db-org: redis, db-name: redis, db-version: 8.6.1, json-module-version: bundled },
             {  db-org: valkey-io, db-name: valkey, db-version: 7.2.12, json-module-version: v2.6.22 },
             {  db-org: valkey-io, db-name: valkey, db-version: 8.0.7, json-module-version: v2.6.22 },
             {  db-org: valkey-io, db-name: valkey, db-version: 9.0.3, json-module-version: v2.6.22 },
@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Cache RedisJSON
-        if: matrix.config.json-module-version != ''
+        if: matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
         id: cache-redisjson
         uses: actions/cache/restore@v5
         with:
@@ -51,6 +51,11 @@ jobs:
           db-org: ${{ matrix.config.db-org }}
           db-name: ${{ matrix.config.db-name }}
           db-version: ${{ matrix.config.db-version }}
+
+      - name: Copy bundled RedisJSON into place
+        if: matrix.config.json-module-version == 'bundled'
+        run: |
+          cp "$HOME/db/rejson.so" "$REDISRS_REDIS_JSON_PATH"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain/@master
@@ -69,7 +74,7 @@ jobs:
         run: make test
 
       - name: Checkout RedisJSON
-        if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.json-module-version != ''
+        if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
         uses: actions/checkout@v6
         with:
           repository: "RedisJSON/RedisJSON"
@@ -78,7 +83,7 @@ jobs:
           set-safe-directory: false
 
       - name: Compile RedisJSON
-        if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.json-module-version != ''
+        if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
         run: |
           cp ./Cargo.toml ./Cargo.toml.actual
           echo $'\nexclude = [\"./__ci/redis-json\"]' >> Cargo.toml
@@ -117,7 +122,9 @@ jobs:
               redis-cli -p $TEST_PORT SHUTDOWN NOSAVE
               exit 1
             }
-            echo "JSON commands working"
+            echo "JSON commands are working"
+            echo "Loaded modules:"
+            redis-cli -p $TEST_PORT --no-raw MODULE LIST
             redis-cli -p $TEST_PORT SHUTDOWN NOSAVE
           else
             echo "ERROR: Redis server not responding"
@@ -130,7 +137,7 @@ jobs:
         run: make test-module
 
       - name: Cache RedisJSON
-        if: matrix.config.json-module-version != ''
+        if: matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
         id: cache-redisjson-save
         uses: actions/cache/save@v5
         with:

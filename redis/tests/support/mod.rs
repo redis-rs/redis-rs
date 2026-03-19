@@ -148,20 +148,20 @@ pub(crate) fn start_tls_crypto_provider() {
 
 impl TestContext {
     pub fn new() -> TestContext {
-        TestContext::with_modules(&[], false)
+        TestContext::with_modules(&[])
     }
 
     #[cfg(feature = "tls-rustls")]
     pub fn new_with_mtls() -> TestContext {
-        Self::with_modules(&[], true)
+        Self::with_modules_and_tls(&[], true, None)
     }
 
     pub fn with_tls(tls_files: TlsFilePaths, mtls_enabled: bool) -> TestContext {
         Self::with_modules_and_tls(&[], mtls_enabled, Some(tls_files))
     }
 
-    pub fn with_modules(modules: &[Module], mtls_enabled: bool) -> TestContext {
-        Self::with_modules_and_tls(modules, mtls_enabled, None)
+    pub fn with_modules(modules: &[Module]) -> TestContext {
+        Self::with_modules_and_tls(modules, false, None)
     }
 
     pub fn new_with_addr(addr: ConnectionAddr) -> Self {
