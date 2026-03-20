@@ -157,6 +157,10 @@ impl RedisServer {
             redis_cmd.arg(config_path);
         }
 
+        // Disable snapshotting
+        // This stops littering `dump.rdb` files during testing/development.
+        redis_cmd.arg("--save").arg("");
+
         // Load Redis Modules
         for module in modules {
             match module {
