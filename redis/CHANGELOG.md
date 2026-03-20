@@ -1,3 +1,24 @@
+### 1.1.0 (2026-03-20)
+
+#### Changes & Bug fixes
+
+* Reuse host names during topology parsing. ([#1995](https://github.com/redis-rs/redis-rs/pull/1995) by @nihohit)
+* Relax trait requirements from ToRedisArgs impls ([#2003](https://github.com/redis-rs/redis-rs/pull/2003) by @nihohit)
+* Fix typo in geo.rs ([#2007](https://github.com/redis-rs/redis-rs/pull/2007) by @cheneyni-451)
+* Add a per-connection concurrency limiter ([#2002](https://github.com/redis-rs/redis-rs/pull/2002) by @alexcole)
+* Separate overall_response_timeout from response_timeout on cluster connections ([#2005](https://github.com/redis-rs/redis-rs/pull/2005) by @alexcole)
+* Fix AsyncConnectionConfig::new documentation ([#2006](https://github.com/redis-rs/redis-rs/pull/2014) by @unixo)
+
+#### CI improvements
+
+* bench/cache: Dedupe RESP3 detection ([#1997](https://github.com/redis-rs/redis-rs/pull/1997) by @somechris)
+* ci: Use the bundled JSON module version for Redis >=8 ([#1998](https://github.com/redis-rs/redis-rs/pull/1998) by @somechris)
+* ci: Make RESP3 flag effective for JSON module tests ([#1996](https://github.com/redis-rs/redis-rs/pull/1996) by @somechris)
+* ci: Clean up trailing whitespace from configs/actions ([#1999](https://github.com/redis-rs/redis-rs/pull/1999) by @somechris)
+* ci: Switch Redis 8 to the bundled JSON module ([#2004](https://github.com/redis-rs/redis-rs/pull/2004) by @somechris)
+* tests: Drop tls parameter from `TestContext::with_modules` ([#2008](https://github.com/redis-rs/redis-rs/pull/2008) by @somechris)
+* tests: Disable snapshotting when running Redis in tests ([#2010](https://github.com/redis-rs/redis-rs/pull/2010) by @somechris)
+
 ### 1.0.5 (2026-03-08)
 
 #### Changes & Bug fixes
