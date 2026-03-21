@@ -1,9 +1,8 @@
 #![cfg(feature = "json")]
 
+use redis::{Commands, JsonCommands, ValueType};
 use std::assert_eq;
 use std::collections::HashMap;
-
-use redis::JsonCommands;
 
 use redis::{
     ErrorKind, RedisResult,
@@ -534,4 +533,8 @@ fn test_module_json_type() {
         );
         assert_eq!(json_type_c, Ok(Array(vec![])));
     }
+
+    // Checking the type of the key as a whole
+    let key_type: RedisResult<ValueType> = con.key_type(TEST_KEY);
+    assert_eq!(key_type, Ok(ValueType::JSON));
 }
