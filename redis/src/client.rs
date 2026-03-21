@@ -220,7 +220,7 @@ impl Default for AsyncConnectionConfig {
 
 #[cfg(feature = "aio")]
 impl AsyncConnectionConfig {
-    /// Creates a new instance of the options with nothing set
+    /// Creates a new instance of the config with all parameters set to default values.
     pub fn new() -> Self {
         Self::default()
     }
