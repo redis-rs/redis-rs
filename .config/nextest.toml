@@ -12,16 +12,19 @@ slow-timeout = { period = "20s", terminate-after = 2 }
 
 
 [profile.tcp_tls]
-default-filter = 'not (test(test_module))'
+default-filter = 'not (test(test_module) | binary(test_ft_create))'
 
 [profile.tcp]
-default-filter = 'not (test(tls) | test(test_module))'
+default-filter = 'not (test(tls) | test(test_module) | binary(test_ft_create))'
 
 [profile.unix]
-default-filter = 'not (test(cluster) | binary(test_sentinel) | test(tls) | test(test_module))'
+default-filter = 'not (test(cluster) | binary(test_sentinel) | test(tls) | test(test_module) | binary(test_ft_create))'
 
 [profile.module_bloom]
 default-filter = 'binary(test_module_bloom*)'
 
 [profile.module_json]
 default-filter = 'test(test_module_json)'
+
+[profile.module_search]
+default-filter = 'binary(test_ft_create)'
