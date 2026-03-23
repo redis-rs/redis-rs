@@ -9,6 +9,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   REDISRS_REDIS_JSON_PATH: "/tmp/librejson.so"
+  REDISRS_REDIS_SEARCH_PATH: "/tmp/redisearch.so"
 
 concurrency:
   group: "${{ github.workflow }}-${{ github.head_ref || github.run_id || github.ref }}"
@@ -26,8 +27,8 @@ jobs:
             {  db-org: redis, db-name: redis, db-version: 6.2.21 },
             {  db-org: redis, db-name: redis, db-version: 7.0.15, json-module-version: v2.6.22 },
             {  db-org: redis, db-name: redis, db-version: 7.4.8, json-module-version: v2.6.22 },
-            {  db-org: redis, db-name: redis, db-version: 8.0.6, json-module-version: bundled },
-            {  db-org: redis, db-name: redis, db-version: 8.6.1, json-module-version: bundled },
+            {  db-org: redis, db-name: redis, db-version: 8.0.6, json-module-version: bundled, search-module-version: bundled },
+            {  db-org: redis, db-name: redis, db-version: 8.6.1, json-module-version: bundled, search-module-version: bundled },
             {  db-org: valkey-io, db-name: valkey, db-version: 7.2.12, json-module-version: v2.6.22 },
             {  db-org: valkey-io, db-name: valkey, db-version: 8.0.7, json-module-version: v2.6.22 },
             {  db-org: valkey-io, db-name: valkey, db-version: 9.0.3, json-module-version: v2.6.22 },
@@ -56,6 +57,11 @@ jobs:
         if: matrix.config.json-module-version == 'bundled'
         run: |
           cp "$HOME/db/rejson.so" "$REDISRS_REDIS_JSON_PATH"
+
+      - name: Copy bundled RediSearch into place
+        if: matrix.config.search-module-version == 'bundled'
+        run: |
+          cp "$HOME/db/redisearch.so" "$REDISRS_REDIS_SEARCH_PATH"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain/@master
@@ -132,9 +138,53 @@ jobs:
             exit 1
           fi
 
-      - name: Run module-specific tests
+      - name: Verify RediSearch module
+        if: matrix.config.search-module-version != ''
+        run: |
+          if [ ! -f "${{ env.REDISRS_REDIS_SEARCH_PATH }}" ]; then
+            echo "ERROR: RediSearch module not found at ${{ env.REDISRS_REDIS_SEARCH_PATH }}"
+            exit 1
+          fi
+          ls -lh "${{ env.REDISRS_REDIS_SEARCH_PATH }}"
+
+          # Test that Redis can load the module
+          echo "Testing Redis server with RediSearch module..."
+          TEST_PORT=16380
+          TEST_LOG="/tmp/redis-search-module-test.log"
+          redis-server --port $TEST_PORT --loadmodule "${{ env.REDISRS_REDIS_SEARCH_PATH }}" \
+            --logfile "$TEST_LOG" --daemonize yes || {
+            echo "ERROR: Failed to start Redis with RediSearch module"
+            cat "$TEST_LOG"
+            exit 1
+          }
+
+          sleep 2
+
+          if redis-cli -p $TEST_PORT PING; then
+            echo "Redis server started successfully"
+            redis-cli -p $TEST_PORT FT.CREATE testidx ON HASH SCHEMA title TEXT || {
+              echo "ERROR: FT.CREATE command not working"
+              cat "$TEST_LOG"
+              redis-cli -p $TEST_PORT SHUTDOWN NOSAVE
+              exit 1
+            }
+            echo "FT.CREATE command is working"
+            echo "Loaded modules:"
+            redis-cli -p $TEST_PORT --no-raw MODULE LIST
+            redis-cli -p $TEST_PORT SHUTDOWN NOSAVE
+          else
+            echo "ERROR: Redis server not responding"
+            cat "$TEST_LOG"
+            exit 1
+          fi
+
+      - name: Run JSON module tests
         if: matrix.config.json-module-version != ''
-        run: make test-module
+        run: make test-module-json
+
+      - name: Run Search module tests
+        if: matrix.config.search-module-version != ''
+        run: make test-module-search
 
       - name: Cache RedisJSON
         if: matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'

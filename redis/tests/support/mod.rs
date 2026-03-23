@@ -417,10 +417,34 @@ pub const REDIS_VERSION_CE_8_4: Version = (8, 3, 224);
 
 /// Macro to run tests only if the Redis version meets the minimum requirement.
 /// If the version is insufficient, the test is skipped with a message.
+///
+/// # Usage
+///
+/// Without modules:
+/// ```ignore
+/// let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+/// ```
+///
+/// With modules:
+/// ```ignore
+/// let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
+/// ```
 #[macro_export]
 macro_rules! run_test_if_version_supported {
     ($minimum_required_version:expr) => {{
         let ctx = $crate::support::TestContext::new();
+        let redis_version = ctx.get_version();
+
+        if redis_version < *$minimum_required_version {
+            eprintln!("Skipping the test because the current version of Redis {:?} doesn't match the minimum required version {:?}.",
+            redis_version, $minimum_required_version);
+            return;
+        }
+
+        ctx
+    }};
+    ($minimum_required_version:expr, $modules:expr) => {{
+        let ctx = $crate::support::TestContext::with_modules($modules);
         let redis_version = ctx.get_version();
 
         if redis_version < *$minimum_required_version {
