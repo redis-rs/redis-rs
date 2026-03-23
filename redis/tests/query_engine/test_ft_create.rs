@@ -6,6 +6,7 @@ use crate::support::*;
 use redis::Commands;
 use redis::schema;
 use redis::search::*;
+use redis_test::server::Module;
 
 static TEXT_FIELD_NAME: &str = "title";
 static NUMERIC_FIELD_NAME: &str = "price";
@@ -16,7 +17,7 @@ static GEOSHAPE_FIELD_NAME: &str = "area";
 
 #[test]
 fn test_ft_create_with_an_empty_index_name() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
     let mut con = ctx.connection();
     let schema = schema! {
         TEXT_FIELD_NAME => SchemaTextField::new()
@@ -29,7 +30,7 @@ fn test_ft_create_with_an_empty_index_name() {
 
 #[test]
 fn test_simple_ft_create() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
     let mut con = ctx.connection();
     let index_name = "index";
     let schema = schema! {
@@ -49,7 +50,7 @@ fn test_simple_ft_create() {
 
 #[test]
 fn test_ft_create_create_options() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
     let mut con = ctx.connection();
     let schema = schema! {
         TEXT_FIELD_NAME => SchemaTextField::new()
@@ -108,7 +109,7 @@ fn test_ft_create_create_options() {
 
 #[test]
 fn test_ft_create_schema_text_field() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
     let mut con = ctx.connection();
 
     type SchemaTextFieldModifier = fn(SchemaTextField) -> SchemaTextField;
@@ -195,7 +196,7 @@ fn test_ft_create_schema_text_field() {
 
 #[test]
 fn test_ft_create_schema_tag_field() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
     let mut con = ctx.connection();
 
     type SchemaTagFieldModifier = fn(SchemaTagField) -> SchemaTagField;
@@ -281,7 +282,7 @@ fn test_ft_create_schema_tag_field() {
 
 #[test]
 fn test_ft_create_schema_numeric_field() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
     let mut con = ctx.connection();
 
     type SchemaNumericFieldModifier = fn(SchemaNumericField) -> SchemaNumericField;
@@ -362,7 +363,7 @@ fn test_ft_create_schema_numeric_field() {
 
 #[test]
 fn test_ft_create_schema_geo_field() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
     let mut con = ctx.connection();
 
     type SchemaGeoFieldModifier = fn(SchemaGeoField) -> SchemaGeoField;
@@ -445,7 +446,7 @@ type VectorFieldModifier = fn(VectorField) -> VectorField;
 
 #[test]
 fn test_ft_create_schema_flat_vector_field() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
     let mut con = ctx.connection();
 
     const DIM: u32 = 128;
@@ -548,7 +549,7 @@ fn test_ft_create_schema_flat_vector_field() {
 
 #[test]
 fn test_ft_create_schema_hnsw_vector_field() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
     let mut con = ctx.connection();
 
     const DIM: u32 = 128;
@@ -656,7 +657,7 @@ fn test_ft_create_schema_hnsw_vector_field() {
 #[test]
 fn test_ft_create_schema_vamana_vector_field() {
     // The VAMANA index was introduced in Redis 8.2
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2, &[Module::Search]);
     let mut con = ctx.connection();
 
     const DIM: u32 = 128;
@@ -809,7 +810,7 @@ fn test_ft_create_schema_vamana_vector_field() {
 
 #[test]
 fn test_ft_create_schema_geoshape_field() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
     let mut con = ctx.connection();
 
     type SchemaGeoShapeFieldModifier = fn(SchemaGeoShapeField) -> SchemaGeoShapeField;
