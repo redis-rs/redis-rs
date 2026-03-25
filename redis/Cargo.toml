@@ -127,6 +127,7 @@ acl = []
 geospatial = []
 json = ["dep:serde", "serde/derive", "dep:serde_json"]
 vector-sets = ["dep:serde", "serde/derive", "dep:serde_json"]
+search = ["dep:serde", "serde/derive", "dep:serde_json", "dep:log"]
 cluster = ["dep:crc16", "dep:rand"]
 script = ["dep:sha1_smol"]
 tls-native-tls = ["dep:native-tls"]
@@ -222,6 +223,11 @@ required-features = ["script"]
 
 [[test]]
 name = "test_digest_utils"
+
+[[test]]
+name = "test_ft_create"
+path = "tests/query_engine/test_ft_create.rs"
+required-features = ["search"]
 
 [[bench]]
 name = "bench_basic"
