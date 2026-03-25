@@ -57,7 +57,7 @@ runs:
         then
           mv -v modules/*/*.so "$HOME/db"
         else
-          echo "Skipping bundled modules as we do not support them on ${{ inputs.db-name }} ${{ db-version }}"
+          echo "Skipping bundled modules as we do not support them on ${{ inputs.db-name }} ${{ inputs.db-version }}"
         fi
 
         # Clean up build directory
