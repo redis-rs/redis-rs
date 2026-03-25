@@ -1,29 +1,15 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 
 use super::NodeAddress;
 use super::read_routing::{ClusterTopology, ReadCandidates, ReadRoutingStrategy, Replicas, Shard};
+use super::slot_range_map::SlotRangeMap;
 use crate::cluster_routing::{Route, SlotAddr};
 
 pub(crate) const SLOT_SIZE: u16 = 16384;
 
-#[derive(Debug)]
-struct SlotMapValue {
-    start: u16,
-    addrs: SlotAddrs,
-}
-
-impl SlotMapValue {
-    fn from_slot(slot: Slot) -> Self {
-        Self {
-            start: slot.start,
-            addrs: SlotAddrs::from_slot(slot),
-        }
-    }
-}
-
 #[derive(Debug, Default)]
 pub(crate) struct SlotMap {
-    slots: BTreeMap<u16, SlotMapValue>,
+    slots: SlotRangeMap<SlotAddrs>,
 }
 
 impl SlotMap {
@@ -34,18 +20,18 @@ impl SlotMap {
     }
 
     pub fn from_slots(slots: Vec<Slot>) -> Self {
-        Self {
-            slots: slots
-                .into_iter()
-                .map(|slot| (slot.end, SlotMapValue::from_slot(slot)))
-                .collect(),
+        let mut map = SlotRangeMap::new();
+        for slot in slots {
+            map.insert(slot.start, slot.end, SlotAddrs::from_slot(slot));
         }
+        Self { slots: map }
     }
 
     #[cfg(feature = "cluster-async")]
     pub fn fill_slots(&mut self, slots: Vec<Slot>) {
         for slot in slots {
-            self.slots.insert(slot.end, SlotMapValue::from_slot(slot));
+            self.slots
+                .insert(slot.start, slot.end, SlotAddrs::from_slot(slot));
         }
     }
 
@@ -56,19 +42,8 @@ impl SlotMap {
     ) -> Option<&NodeAddress> {
         let slot = route.slot();
         self.slots
-            .range(slot..)
-            .next()
-            .and_then(|(end, slot_value)| {
-                if slot <= *end && slot_value.start <= slot {
-                    Some(
-                        slot_value
-                            .addrs
-                            .slot_addr(slot, &route.slot_addr(), strategy),
-                    )
-                } else {
-                    None
-                }
-            })
+            .get(slot)
+            .map(|addrs| addrs.slot_addr(slot, &route.slot_addr(), strategy))
     }
 
     #[cfg(feature = "cluster-async")]
@@ -77,7 +52,7 @@ impl SlotMap {
     }
 
     pub fn values(&self) -> impl Iterator<Item = &SlotAddrs> {
-        self.slots.values().map(|slot_value| &slot_value.addrs)
+        self.slots.values()
     }
 
     fn all_unique_addresses(&self, only_primaries: bool) -> HashSet<&NodeAddress> {
@@ -112,31 +87,34 @@ impl SlotMap {
             .map(move |(route, _)| self.slot_addr_for_route(route, strategy))
     }
 
-    /// Produces a [`ClusterTopology`] snapshot suitable for
-    /// [`ReadRoutingStrategy::on_topology_changed`].
-    ///
-    /// Slot ranges are grouped by primary node into shards.
+    /// Produces a [`ClusterTopology`] snapshot by grouping slot ranges by
+    /// primary node into shards.
     pub fn topology(&self) -> ClusterTopology {
-        // Group slot ranges by primary address into shards.
-        let mut shards: Vec<Shard> = Vec::new();
+        struct ShardBuilder {
+            primary: NodeAddress,
+            slot_ranges: Vec<(u16, u16)>,
+            replicas: Vec<NodeAddress>,
+        }
 
-        for (end, slot_value) in &self.slots {
-            let range = (slot_value.start, *end);
-            if let Some(shard) = shards
-                .iter_mut()
-                .find(|s| s.primary == slot_value.addrs.primary)
-            {
-                shard.slot_ranges.push(range);
+        let mut builders: Vec<ShardBuilder> = Vec::new();
+        for (start, end, addrs) in self.slots.iter() {
+            if let Some(b) = builders.iter_mut().find(|b| b.primary == addrs.primary) {
+                b.slot_ranges.push((start, end));
             } else {
-                shards.push(Shard {
-                    slot_ranges: vec![range],
-                    primary: slot_value.addrs.primary.clone(),
-                    replicas: slot_value.addrs.replicas.clone(),
+                builders.push(ShardBuilder {
+                    primary: addrs.primary.clone(),
+                    slot_ranges: vec![(start, end)],
+                    replicas: addrs.replicas.clone(),
                 });
             }
         }
 
-        ClusterTopology::from_shards(shards)
+        ClusterTopology::from_shards(
+            builders
+                .into_iter()
+                .map(|b| Shard::new(b.slot_ranges, b.primary, b.replicas))
+                .collect(),
+        )
     }
 }
 
@@ -170,19 +148,17 @@ impl SlotAddrs {
                 },
             };
         };
-        match slot_addr {
-            SlotAddr::Master => &self.primary,
-            SlotAddr::ReplicaOptional => strategy.route_read(&ReadCandidates::AnyNode {
-                slot,
-                primary: &self.primary,
-                replicas: Replicas::new(&self.replicas),
-            }),
-            SlotAddr::ReplicaRequired => match Replicas::new(&self.replicas) {
-                Some(replicas) => {
-                    strategy.route_read(&ReadCandidates::ReplicasOnly { slot, replicas })
+        match Replicas::new(&self.replicas) {
+            Some(replicas) => match slot_addr {
+                SlotAddr::Master => &self.primary,
+                SlotAddr::ReplicaOptional => {
+                    strategy.route_read(&ReadCandidates::any_node(slot, &self.primary, replicas))
                 }
-                None => &self.primary,
+                SlotAddr::ReplicaRequired => {
+                    strategy.route_read(&ReadCandidates::replicas_only(slot, replicas))
+                }
             },
+            None => &self.primary,
         }
     }
 
@@ -231,20 +207,15 @@ mod tests {
         NodeAddress::try_from(s).unwrap()
     }
 
-    /// Always picks the first replica, or the primary if no replicas exist.
-    #[derive(Clone)]
+    /// Always picks the first replica.
+    #[derive(Default)]
     struct FirstReplicaStrategy;
 
     impl ReadRoutingStrategy for FirstReplicaStrategy {
         fn route_read<'a>(&self, candidates: &ReadCandidates<'a>) -> &'a NodeAddress {
             match candidates {
-                ReadCandidates::AnyNode {
-                    primary, replicas, ..
-                } => match replicas {
-                    Some(replicas) => replicas.first(),
-                    None => primary,
-                },
-                ReadCandidates::ReplicasOnly { replicas, .. } => replicas.first(),
+                ReadCandidates::AnyNode(c) => c.replicas().first(),
+                ReadCandidates::ReplicasOnly(c) => c.replicas().first(),
             }
         }
     }
@@ -502,17 +473,17 @@ mod tests {
 
         let node1 = topo
             .shards()
-            .find(|s| s.primary == addr("node1:6379"))
+            .find(|s| s.primary() == &addr("node1:6379"))
             .unwrap();
-        assert_eq!(node1.slot_ranges, vec![(0, 5000)]);
-        assert_eq!(node1.replicas, vec![addr("replica1:6379")]);
+        assert_eq!(node1.slot_ranges(), &[(0, 5000)]);
+        assert_eq!(node1.replicas(), &[addr("replica1:6379")]);
 
         let node2 = topo
             .shards()
-            .find(|s| s.primary == addr("node2:6379"))
+            .find(|s| s.primary() == &addr("node2:6379"))
             .unwrap();
-        assert_eq!(node2.slot_ranges, vec![(5001, 10000)]);
-        assert!(node2.replicas.is_empty());
+        assert_eq!(node2.slot_ranges(), &[(5001, 10000)]);
+        assert!(node2.replicas().is_empty());
     }
 
     #[test]
@@ -523,9 +494,9 @@ mod tests {
         assert_eq!(topo.shards().count(), 3);
         let node2_shard = topo
             .shards()
-            .find(|s| s.primary == addr("node2:6379"))
+            .find(|s| s.primary() == &addr("node2:6379"))
             .unwrap();
-        assert_eq!(node2_shard.slot_ranges, vec![(1002, 2000), (3001, 4000)]);
+        assert_eq!(node2_shard.slot_ranges(), &[(1002, 2000), (3001, 4000)]);
     }
 
     #[test]
@@ -534,34 +505,29 @@ mod tests {
         let topo = slot_map.topology();
 
         let shard = topo.shard_for_slot(500).unwrap();
-        assert_eq!(shard.primary, addr("node1:6379"));
+        assert_eq!(shard.primary(), &addr("node1:6379"));
 
         let shard = topo.shard_for_slot(1500).unwrap();
-        assert_eq!(shard.primary, addr("node2:6379"));
+        assert_eq!(shard.primary(), &addr("node2:6379"));
 
         // Slot 3500 is in the second range of node2's shard
         let shard = topo.shard_for_slot(3500).unwrap();
-        assert_eq!(shard.primary, addr("node2:6379"));
+        assert_eq!(shard.primary(), &addr("node2:6379"));
 
         assert!(topo.shard_for_slot(5000).is_none());
     }
 
     #[test]
     fn test_custom_strategy() {
-        /// Always picks the first replica, falling back to the primary.
-        #[derive(Clone)]
+        /// Always picks the first replica.
+        #[derive(Default)]
         struct AlwaysFirstReplica;
 
         impl ReadRoutingStrategy for AlwaysFirstReplica {
             fn route_read<'a>(&self, candidates: &ReadCandidates<'a>) -> &'a NodeAddress {
                 match candidates {
-                    ReadCandidates::AnyNode {
-                        primary, replicas, ..
-                    } => match replicas {
-                        Some(replicas) => replicas.first(),
-                        None => primary,
-                    },
-                    ReadCandidates::ReplicasOnly { replicas, .. } => replicas.first(),
+                    ReadCandidates::AnyNode(c) => c.replicas().first(),
+                    ReadCandidates::ReplicasOnly(c) => c.replicas().first(),
                 }
             }
         }

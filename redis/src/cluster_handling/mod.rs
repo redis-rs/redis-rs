@@ -16,6 +16,7 @@ pub mod read_routing;
 /// Routing information for cluster commands.
 pub mod routing;
 pub(crate) mod slot_map;
+pub(crate) mod slot_range_map;
 pub mod sync_connection;
 pub(crate) mod topology;
 

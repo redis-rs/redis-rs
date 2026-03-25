@@ -109,20 +109,14 @@ impl ReadRoutingStrategy for LatencyAwareStrategy {
                 .unwrap_or(Duration::MAX)
         };
         match candidates {
-            ReadCandidates::AnyNode {
-                primary, replicas, ..
-            } => match replicas {
-                Some(replicas) => std::iter::once(*primary)
-                    .chain(replicas.iter())
-                    .min_by_key(|node| latency_of(node))
-                    // expect is safe because `once` guarantees at least one element
-                    .expect("iter is not empty"),
-                None => primary,
-            },
-            ReadCandidates::ReplicasOnly { replicas, .. } => replicas
+            ReadCandidates::AnyNode(c) => std::iter::once(c.primary())
+                .chain(c.replicas().iter())
+                .min_by_key(|node| latency_of(node))
+                .expect("iter is not empty"),
+            ReadCandidates::ReplicasOnly(c) => c
+                .replicas()
                 .iter()
                 .min_by_key(|node| latency_of(node))
-                // expect is safe because Replicas is guaranteed non-empty
                 .expect("replicas is non-empty"),
         }
     }
@@ -248,8 +242,8 @@ async fn probe_task(
 fn unique_addresses(topology: &ClusterTopology) -> HashSet<String> {
     let mut seen = HashSet::new();
     for shard in topology.shards() {
-        seen.insert(shard.primary.to_string());
-        for replica in &shard.replicas {
+        seen.insert(shard.primary().to_string());
+        for replica in shard.replicas() {
             seen.insert(replica.to_string());
         }
     }

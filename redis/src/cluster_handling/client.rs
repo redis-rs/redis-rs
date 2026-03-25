@@ -402,33 +402,35 @@ impl ClusterClientBuilder {
     ///
     /// Read queries will go to a random replica node and write queries will go to the
     /// primary node. If there are no replica nodes, then all queries will go to the primary node.
-    ///
-    /// This is a convenience method equivalent to calling
-    /// [`read_routing_strategy`](Self::read_routing_strategy) with a [`RandomReplicaStrategy`] strategy.
-    ///
-    /// [`RandomReplicaStrategy`]: crate::cluster_read_routing::RandomReplicaStrategy
+    #[deprecated(note = "Use `read_routing_strategy(RandomReplicaStrategy)` instead")]
     pub fn read_from_replicas(mut self) -> ClusterClientBuilder {
         self.builder_params.read_routing_factory = Some(Arc::new(RandomReplicaStrategy));
         self
     }
 
-    /// Sets a custom [`ReadRoutingStrategy`] or [`ReadRoutingStrategyFactory`] for routing
-    /// read commands to cluster nodes.
+    /// Sets a custom `ReadRoutingStrategyFactory` for routing read commands within Shards.
     ///
-    /// When set, the strategy controls which node (primary or replica) handles each read
-    /// command. Write commands always go to the primary node regardless of the strategy.
+    /// Cluster slots are assigned to a shard consisting of a primary node and zero or more
+    /// replica nodes. By default, the cluster client will route all commands to the primary
+    /// node of a shard.
     ///
-    /// A blanket implementation of [`ReadRoutingStrategyFactory`] is provided for any
-    /// `T: ReadRoutingStrategy + Clone + 'static`, so simple strategies can be passed
-    /// directly. For strategies that need per-connection state (e.g. latency tracking),
-    /// implement [`ReadRoutingStrategyFactory`] explicitly.
+    /// By providing a strategy factory here, you can control how read requests will be routed
+    /// within a shard. This allows the routing of reads to replicas.
     ///
-    /// Use [`read_from_replicas`](Self::read_from_replicas) for simple random replica routing,
-    /// or implement [`ReadRoutingStrategy`] for custom logic such as latency-based or
-    /// geography-aware routing.
+    /// The strategy factory is responsible for producing a `ReadRoutingStrategy` each time
+    /// a new connection is created from this client.
     ///
-    /// [`ReadRoutingStrategy`]: crate::cluster_read_routing::ReadRoutingStrategy
-    /// [`ReadRoutingStrategyFactory`]: crate::cluster_read_routing::ReadRoutingStrategyFactory
+    /// A blanket implementation of `ReadRoutingStrategyFactory` is provided for any
+    /// `T: ReadRoutingStrategy + Default + 'static`, so simple strategies can be passed directly.
+    /// The blanket implementation uses default to construct a new strategy for each connection.
+    ///
+    /// The `cluster_read_routing` module provides built-in simple strategies such as
+    /// `RandomReplicaStrategy` and `RoundRobinReplicaStrategy`.
+    ///
+    /// You can implement your own `ReadRoutingStrategy` using the provided traits.
+    ///
+    /// For strategies that need cross-connection shared state (e.g. latency tracking),
+    /// implement `ReadRoutingStrategyFactory` directly.
     ///
     /// # Examples
     ///
@@ -438,19 +440,14 @@ impl ClusterClientBuilder {
     /// use redis::cluster::NodeAddress;
     ///
     /// /// Routes reads to the first replica.
-    /// #[derive(Clone)]
+    /// #[derive(Default)]
     /// struct FirstReplica;
     ///
     /// impl ReadRoutingStrategy for FirstReplica {
     ///     fn route_read<'a>(&self, candidates: &ReadCandidates<'a>) -> &'a NodeAddress {
     ///         match candidates {
-    ///             ReadCandidates::AnyNode {
-    ///                 primary, replicas, ..
-    ///             } => match replicas {
-    ///                 Some(replicas) => replicas.first(),
-    ///                 None => primary,
-    ///             },
-    ///             ReadCandidates::ReplicasOnly { replicas, .. } => replicas.first(),
+    ///             ReadCandidates::AnyNode(c) => c.replicas().first(),
+    ///             ReadCandidates::ReplicasOnly(c) => c.replicas().first(),
     ///         }
     ///     }
     /// }
