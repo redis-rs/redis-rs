@@ -144,7 +144,7 @@ use crate::tls::retrieve_tls_certificates;
 use crate::{
     Client, Cmd, Connection, ConnectionAddr, ErrorKind, FromRedisValue, IntoConnectionInfo,
     ProtocolVersion, RedisConnectionInfo, RedisError, Role, TlsMode, cmd,
-    connection::ConnectionInfo, errors::ServerErrorKind, types::RedisResult,
+    connection::ConnectionInfo, errors::ServerErrorKind, io::tcp::TcpSettings, types::RedisResult,
 };
 
 /// The Sentinel type, serves as a special purpose client which builds other clients on
@@ -169,6 +169,9 @@ pub struct SentinelNodeConnectionInfo {
 
     /// The Redis specific/connection independent information to be used.
     redis_connection_info: Option<RedisConnectionInfo>,
+
+    /// TCP settings for the connection.
+    tcp_settings: Option<TcpSettings>,
 }
 
 impl SentinelNodeConnectionInfo {
@@ -184,6 +187,14 @@ impl SentinelNodeConnectionInfo {
     pub fn set_redis_connection_info(self, redis_connection_info: RedisConnectionInfo) -> Self {
         Self {
             redis_connection_info: Some(redis_connection_info),
+            ..self
+        }
+    }
+
+    /// Sets the TCP settings for the connection
+    pub fn set_tcp_settings(self, tcp_settings: TcpSettings) -> Self {
+        Self {
+            tcp_settings: Some(tcp_settings),
             ..self
         }
     }
@@ -216,7 +227,7 @@ impl SentinelNodeConnectionInfo {
         Ok(ConnectionInfo {
             addr,
             redis: self.redis_connection_info.clone().unwrap_or_default(),
-            tcp_settings: Default::default(),
+            tcp_settings: self.tcp_settings.clone().unwrap_or_default(),
         })
     }
 }
@@ -226,6 +237,7 @@ impl Default for &SentinelNodeConnectionInfo {
         static DEFAULT_VALUE: SentinelNodeConnectionInfo = SentinelNodeConnectionInfo {
             tls_mode: None,
             redis_connection_info: None,
+            tcp_settings: None,
         };
         &DEFAULT_VALUE
     }
@@ -1315,6 +1327,7 @@ struct BuilderConnectionParams {
     username: Option<ArcStr>,
     password: Option<ArcStr>,
     protocol: Option<ProtocolVersion>,
+    tcp_settings: TcpSettings,
     #[cfg(feature = "tls-rustls")]
     certificates: Option<TlsCertificates>,
 }
@@ -1351,6 +1364,7 @@ impl SentinelClientBuilder {
                 username: None,
                 password: None,
                 protocol: None,
+                tcp_settings: TcpSettings::default(),
                 #[cfg(feature = "tls-rustls")]
                 certificates: None,
             },
@@ -1360,6 +1374,7 @@ impl SentinelClientBuilder {
                 username: None,
                 password: None,
                 protocol: None,
+                tcp_settings: TcpSettings::default(),
                 #[cfg(feature = "tls-rustls")]
                 certificates: None,
             },
@@ -1389,6 +1404,7 @@ impl SentinelClientBuilder {
         let client_to_redis_connection_info = SentinelNodeConnectionInfo {
             tls_mode: self.client_to_redis_params.tls_mode,
             redis_connection_info: Some(client_to_redis_connection_info),
+            tcp_settings: Some(self.client_to_redis_params.tcp_settings),
         };
 
         for sentinel in &mut self.sentinels {
@@ -1475,7 +1491,7 @@ impl SentinelClientBuilder {
             .map(|connection_addr| ConnectionInfo {
                 addr: connection_addr,
                 redis: client_to_sentinel_redis_connection_info.clone(),
-                tcp_settings: Default::default(),
+                tcp_settings: self.client_to_sentinel_params.tcp_settings.clone(),
             })
             .collect();
 
@@ -1538,6 +1554,15 @@ impl SentinelClientBuilder {
         self
     }
 
+    /// Set TCP settings for the connection to the Redis nodes
+    pub fn set_client_to_redis_tcp_settings(
+        mut self,
+        tcp_settings: TcpSettings,
+    ) -> SentinelClientBuilder {
+        self.client_to_redis_params.tcp_settings = tcp_settings;
+        self
+    }
+
     /// Set tls mode for the connection to the sentinels
     pub fn set_client_to_sentinel_tls_mode(mut self, tls_mode: TlsMode) -> SentinelClientBuilder {
         self.client_to_sentinel_params.tls_mode = Some(tls_mode);
@@ -1559,6 +1584,15 @@ impl SentinelClientBuilder {
         password: impl AsRef<str>,
     ) -> SentinelClientBuilder {
         self.client_to_sentinel_params.password = Some(password.as_ref().into());
+        self
+    }
+
+    /// Set TCP settings for the connection to the sentinels
+    pub fn set_client_to_sentinel_tcp_settings(
+        mut self,
+        tcp_settings: TcpSettings,
+    ) -> SentinelClientBuilder {
+        self.client_to_sentinel_params.tcp_settings = tcp_settings;
         self
     }
 
