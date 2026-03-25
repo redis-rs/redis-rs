@@ -11,9 +11,9 @@
 //!
 //! See `examples/latency-aware-routing.rs` for a more complex custom strategy.
 
+mod interface;
 mod random_replica;
 mod round_robin_replica;
-mod interface;
 
 pub use interface::{
     AnyNodeCandidates, ClusterTopology, ReadCandidates, ReadRoutingStrategy,

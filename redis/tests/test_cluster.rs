@@ -671,11 +671,7 @@ mod cluster {
                 .read_routing_strategy(RoundRobinReplicaStrategy::new()),
             name,
             move |cmd: &[u8], port| {
-                respond_startup_with_replica_using_config(
-                    name,
-                    cmd,
-                    Some(slots_config.clone()),
-                )?;
+                respond_startup_with_replica_using_config(name, cmd, Some(slots_config.clone()))?;
                 if contains_slice(cmd, b"GET") {
                     ports_clone.lock().unwrap().push(port);
                     return Err(Ok(redis_value!("123")));
@@ -688,7 +684,14 @@ mod cluster {
         // "{foo}test" hashes to slot 12182 → shard 2 (replicas 6383, 6384).
         // Interleave reads across both shards and verify each shard
         // round-robins independently.
-        for key in ["test", "{foo}test", "test", "{foo}test", "test", "{foo}test"] {
+        for key in [
+            "test",
+            "{foo}test",
+            "test",
+            "{foo}test",
+            "test",
+            "{foo}test",
+        ] {
             let _: Option<i32> = cmd("GET").arg(key).query(&mut connection).unwrap();
         }
 

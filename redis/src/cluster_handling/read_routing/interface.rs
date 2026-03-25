@@ -197,11 +197,7 @@ impl<'a> ReadCandidates<'a> {
         }
     }
 
-    pub(crate) fn any_node(
-        slot: u16,
-        primary: &'a NodeAddress,
-        replicas: Replicas<'a>,
-    ) -> Self {
+    pub(crate) fn any_node(slot: u16, primary: &'a NodeAddress, replicas: Replicas<'a>) -> Self {
         ReadCandidates::AnyNode(AnyNodeCandidates {
             slot,
             primary,

@@ -21,9 +21,11 @@ impl<V> SlotRangeMap<V> {
 
     /// Look up the value whose range contains `slot`, if any.
     pub fn get(&self, slot: u16) -> Option<&V> {
-        self.inner.range(slot..).next().and_then(|(_, (start, v))| {
-            if slot >= *start { Some(v) } else { None }
-        })
+        self.inner.range(slot..).next().and_then(
+            |(_, (start, v))| {
+                if slot >= *start { Some(v) } else { None }
+            },
+        )
     }
 
     /// Iterate over all values (one per range entry, in slot order).

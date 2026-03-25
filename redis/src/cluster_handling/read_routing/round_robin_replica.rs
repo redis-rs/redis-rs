@@ -49,8 +49,7 @@ impl ReadRoutingStrategy for RoundRobinReplicaStrategy {
                 slots.insert(start, end, Arc::clone(&counter));
             }
         }
-        self.state
-            .store(Arc::new(SlotCounters { slots }));
+        self.state.store(Arc::new(SlotCounters { slots }));
     }
 
     fn route_read<'a>(&self, candidates: &ReadCandidates<'a>) -> &'a NodeAddress {
@@ -104,8 +103,7 @@ mod tests {
         let replica_b = node("replica1b", 6379);
         let replicas = [replica_a.clone(), replica_b.clone()];
 
-        let candidates =
-            ReadCandidates::replicas_only(1, Replicas::new(&replicas).unwrap());
+        let candidates = ReadCandidates::replicas_only(1, Replicas::new(&replicas).unwrap());
 
         // Two full cycles: a, b, a, b
         assert_eq!(strategy.route_read(&candidates), &replica_a);
@@ -121,10 +119,8 @@ mod tests {
         let replicas1 = [node("replica1a", 6379), node("replica1b", 6379)];
         let replicas2 = [node("replica2a", 6379), node("replica2b", 6379)];
 
-        let candidates1 =
-            ReadCandidates::replicas_only(1, Replicas::new(&replicas1).unwrap());
-        let candidates2 =
-            ReadCandidates::replicas_only(1001, Replicas::new(&replicas2).unwrap());
+        let candidates1 = ReadCandidates::replicas_only(1, Replicas::new(&replicas1).unwrap());
+        let candidates2 = ReadCandidates::replicas_only(1001, Replicas::new(&replicas2).unwrap());
 
         // interleave — each shard keeps its own position.
         assert_eq!(strategy.route_read(&candidates1), &replicas1[0]);
@@ -144,8 +140,7 @@ mod tests {
         let replica_b = node("replica1b", 6379);
         let replicas = [replica_a.clone(), replica_b.clone()];
 
-        let candidates =
-            ReadCandidates::any_node(1, &primary, Replicas::new(&replicas).unwrap());
+        let candidates = ReadCandidates::any_node(1, &primary, Replicas::new(&replicas).unwrap());
 
         // Two full cycles through replicas: a, b, a, b
         assert_eq!(strategy.route_read(&candidates), &replica_a);
@@ -173,8 +168,7 @@ mod tests {
 
         let replicas = [node("replica1a", 6379), node("replica1b", 6379)];
 
-        let candidates_low =
-            ReadCandidates::replicas_only(500, Replicas::new(&replicas).unwrap());
+        let candidates_low = ReadCandidates::replicas_only(500, Replicas::new(&replicas).unwrap());
         let candidates_high =
             ReadCandidates::replicas_only(2500, Replicas::new(&replicas).unwrap());
 
