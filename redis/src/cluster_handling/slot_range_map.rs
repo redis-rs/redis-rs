@@ -38,6 +38,7 @@ impl<V> SlotRangeMap<V> {
         self.inner.iter().map(|(&end, (start, v))| (*start, end, v))
     }
 
+    #[cfg(feature = "cluster-async")]
     pub fn clear(&mut self) {
         self.inner.clear();
     }
