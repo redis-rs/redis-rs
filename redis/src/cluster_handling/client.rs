@@ -96,12 +96,15 @@ impl Default for RetryParams {
     }
 }
 
+/// Exclusive upper bound (ms) for [`RetryParams::wait_time_for_retry`] jitter; see [`ClusterClientBuilder::retry_wait_formula`].
+fn cluster_retry_wait_upper_ms(base_wait: u64, min_wait: u64, max_wait: u64) -> u64 {
+    base_wait.max(min_wait + 1).min(max_wait)
+}
+
 impl RetryParams {
     pub(crate) fn wait_time_for_retry(&self, retry: u32) -> Duration {
         let base_wait = self.exponent_base.pow(retry) * self.factor;
-        let clamped_wait = base_wait
-            .min(self.max_wait_time)
-            .max(self.min_wait_time + 1);
+        let clamped_wait = cluster_retry_wait_upper_ms(base_wait, self.min_wait_time, self.max_wait_time);
         let jittered_wait = rand::rng().random_range(self.min_wait_time..clamped_wait);
         Duration::from_millis(jittered_wait)
     }
@@ -879,5 +882,12 @@ mod tests {
             client.cluster_params.connection_concurrency_limit,
             Some(128)
         );
+    }
+
+    #[test]
+    fn cluster_retry_wait_upper_caps_max_when_min_plus_one_exceeds_max() {
+        // When min_retry_wait + 1 > max_retry_wait, applying `.min(max).max(min+1)` can exceed
+        // `max_retry_wait`; the backoff upper bound must be capped at `max_retry_wait` after the floor.
+        assert_eq!(super::cluster_retry_wait_upper_ms(10, 100, 50), 50);
     }
 }
