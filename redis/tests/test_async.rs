@@ -4,6 +4,7 @@ mod support;
 mod basic_async {
     use std::{collections::HashMap, time::Duration};
 
+    use super::*;
     use crate::support::*;
     use assert_matches::assert_matches;
     use futures::{StreamExt, prelude::*};
@@ -19,7 +20,6 @@ mod basic_async {
     #[cfg(feature = "json")]
     use redis_test::server::Module;
     use redis_test::server::{redis_settings, use_protocol};
-    use rstest::rstest;
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -32,23 +32,6 @@ mod basic_async {
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     #[should_panic(expected = "Internal thread panicked")]
     fn test_block_on_all_panics_from_spawns(#[case] runtime: RuntimeType) {
-        fn spawn<T>(fut: impl std::future::Future<Output = T> + Send + Sync + 'static)
-        where
-            T: Send + 'static,
-        {
-            match tokio::runtime::Handle::try_current() {
-                Ok(tokio_runtime) => {
-                    tokio_runtime.spawn(fut);
-                }
-                Err(_) => {
-                    #[cfg(feature = "smol-comp")]
-                    smol::spawn(fut).detach();
-                    #[cfg(not(feature = "smol-comp"))]
-                    unreachable!()
-                }
-            }
-        }
-
         use std::sync::{Arc, atomic::AtomicBool};
 
         let slept = Arc::new(AtomicBool::new(false));
@@ -358,7 +341,7 @@ mod basic_async {
     #[async_test]
     #[cfg(feature = "json")]
     async fn module_json_and_pipeline_transaction_with_ignore_errors() {
-        let ctx = TestContext::with_modules(&[Module::Json], false);
+        let ctx = TestContext::with_modules(&[Module::Json]);
         let mut con = ctx.async_connection().await.unwrap();
         con.set::<_, _, ()>("x", 42).await.unwrap();
         con.json_set::<_, _, _, ()>("y", "$", &serde_json::json!({"path": "value"}))
@@ -491,8 +474,8 @@ mod basic_async {
         pipe.zrange("zset", 0, 0);
         let frames = con.req_packed_commands(&pipe, 0, 2).await.unwrap();
         assert_eq!(frames.len(), 2);
-        assert!(matches!(frames[0], redis::Value::Array(_)));
-        assert!(matches!(frames[1], redis::Value::Array(_)));
+        assert_matches!(frames[0], redis::Value::Array(_));
+        assert_matches!(frames[1], redis::Value::Array(_));
     }
 
     #[async_test]
@@ -1654,7 +1637,7 @@ mod basic_async {
     mod mtls_test {
         use super::*;
 
-        #[rstest]
+        #[rstest::rstest]
         #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
         #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
         fn test_should_connect_mtls(#[case] runtime: RuntimeType) {
@@ -1681,7 +1664,7 @@ mod basic_async {
             );
         }
 
-        #[rstest]
+        #[rstest::rstest]
         #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
         #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
         fn test_should_not_connect_if_tls_active(#[case] runtime: RuntimeType) {

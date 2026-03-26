@@ -52,7 +52,7 @@ test-module:
 	@echo "===================================================================="
 	@echo "Testing RESP3 with module support enabled (currently only RedisJSON)"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 RESP3=true cargo nextest run -p redis --all-features e -E 'test(test_module)'
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 PROTOCOL=RESP3 cargo nextest run -p redis --all-features e -E 'test(test_module)'
 
 test-single: test
 

@@ -1,6 +1,6 @@
 [package]
 name = "redis"
-version = "1.0.4"
+version = "1.1.0"
 keywords = ["redis", "valkey", "cluster", "sentinel", "pubsub"]
 description = "Redis driver for Rust."
 homepage = "https://github.com/redis-rs/redis-rs"
@@ -45,6 +45,7 @@ futures-util = { version = "0.3.31", default-features = false, features = [
 ], optional = true }
 pin-project-lite = { version = "0.2", optional = true }
 tokio-util = { version = "0.7", optional = true }
+async-lock = { version = "3", optional = true }
 tokio = { version = "1", features = [
   "rt",
   "net",
@@ -167,6 +168,7 @@ aio = [
   "dep:futures-util",
   "dep:tokio",
   "dep:tokio-util",
+  "dep:async-lock",
   "tokio-util/codec",
   "combine/tokio",
   "dep:cfg-if",
@@ -181,7 +183,7 @@ futures-time = "3"
 criterion = "0.7"
 partial-io = { version = "0.5", features = ["tokio", "quickcheck1"] }
 quickcheck = "1.0.3"
-tokio = { workspace = true, features = ["macros"] }
+tokio = { workspace = true, features = ["macros", "io-util"] }
 tempfile = "3.24.0"
 anyhow = "1"
 redis-test = { path = "../redis-test" }

@@ -8,7 +8,6 @@ use redis::cluster_routing::*;
 use redis::{AsyncCommands, RedisError, caching::CacheConfig};
 #[cfg(feature = "json")]
 use redis_test::server::Module;
-use rstest::rstest;
 #[cfg(feature = "json")]
 use serde_json::json;
 use std::collections::HashMap;
@@ -151,7 +150,7 @@ async fn cache_mget() {
 #[cfg(feature = "json")]
 #[async_test]
 async fn module_cache_json_get_mget() {
-    let ctx = TestContext::with_modules(&[Module::Json], false);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -221,7 +220,7 @@ async fn module_cache_json_get_mget() {
 #[cfg(feature = "json")]
 #[async_test]
 async fn module_cache_json_get_mget_different_paths() {
-    let ctx = TestContext::with_modules(&[Module::Json], false);
+    let ctx = TestContext::with_modules(&[Module::Json]);
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -772,10 +771,10 @@ async fn test_cache_async_cluster_slot_change(migrate: bool) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
-    if !migrate && TestContext::new().get_version().0 == 6 {
-        // Redis 6.x won't invalidate data when migrate doesn't happen.
-        // This case can be removed when support for 6.x is dropped.
-        return;
+    // When not `migrate`, this test relies on Redis commit 8945067 which was included beginning
+    // with Redis 7.2
+    if !migrate {
+        run_test_if_version_supported!(&REDIS_VERSION_CE_7_2);
     }
 
     struct NodeData {

@@ -194,6 +194,7 @@ pub struct AsyncConnectionConfig {
     pub(crate) cache: Option<Cache>,
     pub(crate) dns_resolver: Option<std::sync::Arc<dyn AsyncDNSResolver>>,
     pub(crate) pipeline_buffer_size: Option<usize>,
+    pub(crate) concurrency_limit: Option<usize>,
     /// Optional credentials provider for dynamic authentication (e.g., token-based authentication)
     #[cfg(feature = "token-based-authentication")]
     pub(crate) credentials_provider: Option<std::sync::Arc<dyn StreamingCredentialsProvider>>,
@@ -210,6 +211,7 @@ impl Default for AsyncConnectionConfig {
             cache: Default::default(),
             dns_resolver: Default::default(),
             pipeline_buffer_size: None,
+            concurrency_limit: None,
             #[cfg(feature = "token-based-authentication")]
             credentials_provider: None,
         }
@@ -218,7 +220,7 @@ impl Default for AsyncConnectionConfig {
 
 #[cfg(feature = "aio")]
 impl AsyncConnectionConfig {
-    /// Creates a new instance of the options with nothing set
+    /// Creates a new instance of the config with all parameters set to default values.
     pub fn new() -> Self {
         Self::default()
     }
@@ -326,6 +328,29 @@ impl AsyncConnectionConfig {
         self
     }
 
+    /// Sets the maximum number of concurrent in-flight requests on this connection.
+    ///
+    /// When set, at most `limit` requests can be awaiting a response at any given time.
+    /// Additional requests will wait until an in-flight request completes.
+    ///
+    /// Pipelined commands try to acquire one permit per command, but will proceed with
+    /// fewer if not all are immediately available. This means a pipeline may temporarily
+    /// push the effective in-flight count above the limit.
+    ///
+    /// This is useful for preventing a large backlog of commands from building up when the
+    /// server becomes slow or unresponsive. Without a limit, requests continue to queue
+    /// unboundedly. When the server is degraded, requests near the back of the queue spend
+    /// most of their time waiting behind earlier requests and are likely to hit their response
+    /// timeout before the server even processes them -- wasting work on both sides. Setting a
+    /// concurrency limit caps the number of in-flight requests, so backpressure is applied
+    /// earlier and fewer requests are lost to timeouts.
+    ///
+    /// By default there is no limit.
+    pub fn set_concurrency_limit(mut self, limit: usize) -> Self {
+        self.concurrency_limit = Some(limit);
+        self
+    }
+
     /// Sets a credentials provider for dynamic authentication (e.g., token-based authentication).
     ///
     /// This is useful for authentication mechanisms that require periodic credential refresh,
@@ -349,11 +374,19 @@ impl AsyncConnectionConfig {
     /// # }
     /// ```
     #[cfg(feature = "token-based-authentication")]
-    pub fn set_credentials_provider<P>(mut self, provider: P) -> Self
+    pub fn set_credentials_provider<P>(self, provider: P) -> Self
     where
         P: StreamingCredentialsProvider + 'static,
     {
-        self.credentials_provider = Some(std::sync::Arc::new(provider));
+        self.set_credentials_provider_internal(std::sync::Arc::new(provider))
+    }
+
+    #[cfg(feature = "token-based-authentication")]
+    pub(crate) fn set_credentials_provider_internal(
+        mut self,
+        provider: std::sync::Arc<dyn StreamingCredentialsProvider>,
+    ) -> Self {
+        self.credentials_provider = Some(provider);
         self
     }
 }
@@ -632,5 +665,19 @@ mod test {
     fn test_async_connection_config_pipeline_buffer_size_custom() {
         let config = AsyncConnectionConfig::new().set_pipeline_buffer_size(100);
         assert_eq!(config.pipeline_buffer_size, Some(100));
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn test_async_connection_config_concurrency_limit_default() {
+        let config = AsyncConnectionConfig::new();
+        assert_eq!(config.concurrency_limit, None);
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn test_async_connection_config_concurrency_limit_custom() {
+        let config = AsyncConnectionConfig::new().set_concurrency_limit(128);
+        assert_eq!(config.concurrency_limit, Some(128));
     }
 }

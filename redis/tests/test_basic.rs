@@ -363,9 +363,8 @@ mod basic {
 
     #[test]
     fn test_hash_expiration() {
-        let ctx = TestContext::new();
         // Hash expiration is only supported in Redis 7.4.0 and later.
-        run_test_if_version_supported!(&(7, 4, 0));
+        let ctx = run_test_if_version_supported!(&(7, 4, 0));
 
         let mut con = ctx.connection();
         redis::cmd("HMSET")
@@ -3362,9 +3361,8 @@ mod basic {
 
     #[test]
     fn test_expire_time() {
-        let ctx = TestContext::new();
         // EXPIRETIME/PEXPIRETIME is available from Redis version 7.4.0
-        run_test_if_version_supported!(&(7, 4, 0));
+        let ctx = run_test_if_version_supported!(&(7, 4, 0));
 
         let mut con = ctx.connection();
 
@@ -4448,7 +4446,7 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
         let ret = redis::cmd("ROLE").query::<Role>(&mut con).unwrap();
-        assert!(matches!(ret, Role::Primary { .. }));
+        assert_matches!(ret, Role::Primary { .. });
     }
 
     #[test]
@@ -4494,5 +4492,39 @@ mod basic {
             .unwrap_err();
         assert_eq!(error.kind(), ErrorKind::Client);
         assert_eq!(error.to_string(), "empty command - Client");
+    }
+
+    #[test]
+    fn test_connection_info_lib_name() {
+        // Setting the lib_name etc is only supported in Redis 7.2.0 and later.
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_7_2);
+
+        // Build a `ConnectionInfo` that sets lib_name etc
+        let redis = redis_settings().set_lib_name("redis-rs-test-basic-lib-name", "42.4711");
+        let connection_info = ctx.server.connection_info().set_redis_settings(redis);
+
+        // Grab a connection with it
+        let client = Client::open(connection_info).unwrap();
+        let mut con = client
+            .get_connection()
+            .expect("getting the connection should succeed");
+
+        // Get the current CLIENT INFO and prepare it as HashMap
+        let client_info_str: String = redis::cmd("CLIENT").arg("INFO").query(&mut con).unwrap();
+        let mut client_info = HashMap::new();
+        for pair_str in client_info_str.split(" ") {
+            let items = pair_str.splitn(2, '=').collect::<Vec<&str>>();
+            client_info.insert(items[0].trim(), items[1].trim());
+        }
+
+        // Check the reported client info
+        assert_eq!(
+            *client_info.get("lib-name").expect("lib-name should exist"),
+            "redis-rs-test-basic-lib-name"
+        );
+        assert_eq!(
+            *client_info.get("lib-ver").expect("lib-ver should exist"),
+            "42.4711"
+        );
     }
 }

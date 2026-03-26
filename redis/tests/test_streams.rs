@@ -240,7 +240,7 @@ fn test_xgroup_createconsumer() {
 
     // xgroup_createconsumer
     let result = con.xgroup_createconsumer("k1", "g1", "c1");
-    assert!(matches!(result, Ok(true)));
+    assert_matches!(result, Ok(true));
 
     // xinfo consumers (consumer was created)
     let result = con.xinfo_consumers("k1", "g1");
@@ -251,7 +251,7 @@ fn test_xgroup_createconsumer() {
 
     // second call will not create consumer
     let result = con.xgroup_createconsumer("k1", "g1", "c1");
-    assert!(matches!(result, Ok(false)));
+    assert_matches!(result, Ok(false));
 
     // xinfo consumers (consumer still exists)
     let result = con.xinfo_consumers("k1", "g1");
@@ -1787,7 +1787,7 @@ fn test_xdel_ex() {
 
     // Test with invalid ID format
     let result = con.xdel_ex(stream_name, &["invalid-0"], StreamDeletionPolicy::DelRef);
-    assert!(matches!(result, Err(e) if e.to_string().contains("Invalid stream ID")));
+    assert_matches!(result, Err(e) if e.to_string().contains("Invalid stream ID"));
 }
 
 #[test]
@@ -2085,7 +2085,7 @@ fn test_xack_del() {
         &["invalid-0"],
         StreamDeletionPolicy::DelRef,
     );
-    assert!(matches!(result, Err(e) if e.to_string().contains("Invalid stream ID")));
+    assert_matches!(result, Err(e) if e.to_string().contains("Invalid stream ID"));
 }
 
 #[test]

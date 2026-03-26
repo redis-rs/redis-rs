@@ -8,7 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  REDIS_RS_REDIS_JSON_PATH: "/tmp/librejson.so"
+  REDISRS_REDIS_JSON_PATH: "/tmp/librejson.so"
 
 concurrency:
   group: "${{ github.workflow }}-${{ github.head_ref || github.run_id || github.ref }}"
@@ -20,22 +20,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
-      matrix:
+      matrix: &db-matrix
         config: [
-            # Different DB cases:
-            {  db-org: redis, db-name: redis, db-version: 6.2.13 },
-            {  db-org: redis, db-name: redis, db-version: 7.2.4, json-module-version: v2.6.22 },
-            {  db-org: redis, db-name: redis, db-version: 8.0.2, json-module-version: v2.8.16 },
-            {  db-org: redis, db-name: redis, db-version: 8.2.0, json-module-version: v2.8.16 },
-            {  db-org: valkey-io, db-name: valkey, db-version: 7.2.6, json-module-version: v2.6.22 },
-            {  db-org: valkey-io, db-name: valkey, db-version: 8.0.1, json-module-version: v2.6.22 },
+            # Different DB cases: (earliest and latest minor for each major version, with latest patch)
+            {  db-org: redis, db-name: redis, db-version: 6.2.21 },
+            {  db-org: redis, db-name: redis, db-version: 7.0.15, json-module-version: v2.6.22 },
+            {  db-org: redis, db-name: redis, db-version: 7.4.8, json-module-version: v2.6.22 },
+            {  db-org: redis, db-name: redis, db-version: 8.0.6, json-module-version: bundled },
+            {  db-org: redis, db-name: redis, db-version: 8.6.1, json-module-version: bundled },
+            {  db-org: valkey-io, db-name: valkey, db-version: 7.2.12, json-module-version: v2.6.22 },
+            {  db-org: valkey-io, db-name: valkey, db-version: 8.0.7, json-module-version: v2.6.22 },
+            {  db-org: valkey-io, db-name: valkey, db-version: 9.0.3, json-module-version: v2.6.22 },
           ]
 
     steps:
       - uses: actions/checkout@v6
 
       - name: Cache RedisJSON
-        if: matrix.config.json-module-version != ''
+        if: matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
         id: cache-redisjson
         uses: actions/cache/restore@v5
         with:
@@ -49,6 +51,11 @@ jobs:
           db-org: ${{ matrix.config.db-org }}
           db-name: ${{ matrix.config.db-name }}
           db-version: ${{ matrix.config.db-version }}
+
+      - name: Copy bundled RedisJSON into place
+        if: matrix.config.json-module-version == 'bundled'
+        run: |
+          cp "$HOME/db/rejson.so" "$REDISRS_REDIS_JSON_PATH"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain/@master
@@ -67,7 +74,7 @@ jobs:
         run: make test
 
       - name: Checkout RedisJSON
-        if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.json-module-version != ''
+        if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
         uses: actions/checkout@v6
         with:
           repository: "RedisJSON/RedisJSON"
@@ -76,37 +83,37 @@ jobs:
           set-safe-directory: false
 
       - name: Compile RedisJSON
-        if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.json-module-version != ''
+        if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
         run: |
           cp ./Cargo.toml ./Cargo.toml.actual
           echo $'\nexclude = [\"./__ci/redis-json\"]' >> Cargo.toml
           cargo +stable build --release --manifest-path ./__ci/redis-json/Cargo.toml
-          mv ./__ci/redis-json/target/release/librejson.so ${{ env.REDIS_RS_REDIS_JSON_PATH }}
+          mv ./__ci/redis-json/target/release/librejson.so ${{ env.REDISRS_REDIS_JSON_PATH }}
           rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
           rm -rf ./__ci/redis-json
 
       - name: Verify RedisJSON module
         if: matrix.config.json-module-version != ''
         run: |
-          if [ ! -f "${{ env.REDIS_RS_REDIS_JSON_PATH }}" ]; then
-            echo "ERROR: RedisJSON module not found at ${{ env.REDIS_RS_REDIS_JSON_PATH }}"
+          if [ ! -f "${{ env.REDISRS_REDIS_JSON_PATH }}" ]; then
+            echo "ERROR: RedisJSON module not found at ${{ env.REDISRS_REDIS_JSON_PATH }}"
             exit 1
           fi
-          ls -lh "${{ env.REDIS_RS_REDIS_JSON_PATH }}"
-          
+          ls -lh "${{ env.REDISRS_REDIS_JSON_PATH }}"
+
           # Test that Redis can load the module
           echo "Testing Redis server with module..."
           TEST_PORT=16379
           TEST_LOG="/tmp/redis-module-test.log"
-          redis-server --port $TEST_PORT --loadmodule "${{ env.REDIS_RS_REDIS_JSON_PATH }}" \
+          redis-server --port $TEST_PORT --loadmodule "${{ env.REDISRS_REDIS_JSON_PATH }}" \
             --logfile "$TEST_LOG" --daemonize yes || {
             echo "ERROR: Failed to start Redis with module"
             cat "$TEST_LOG"
             exit 1
           }
-          
+
           sleep 2
-          
+
           if redis-cli -p $TEST_PORT PING; then
             echo "Redis server started successfully"
             redis-cli -p $TEST_PORT JSON.SET test \$ '{"test":1}' || {
@@ -115,7 +122,9 @@ jobs:
               redis-cli -p $TEST_PORT SHUTDOWN NOSAVE
               exit 1
             }
-            echo "JSON commands working"
+            echo "JSON commands are working"
+            echo "Loaded modules:"
+            redis-cli -p $TEST_PORT --no-raw MODULE LIST
             redis-cli -p $TEST_PORT SHUTDOWN NOSAVE
           else
             echo "ERROR: Redis server not responding"
@@ -126,16 +135,14 @@ jobs:
       - name: Run module-specific tests
         if: matrix.config.json-module-version != ''
         run: make test-module
-        env:
-          REDIS_VERSION: ${{ matrix.config.db-version }}
 
       - name: Cache RedisJSON
-        if: matrix.config.json-module-version != ''
+        if: matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
         id: cache-redisjson-save
         uses: actions/cache/save@v5
         with:
-          path: ${{ env.REDIS_RS_REDIS_JSON_PATH }}
-          key: ${{ runner.os }}-redisjson-${{ matrix.config.json-module-version }}          
+          path: ${{ env.REDISRS_REDIS_JSON_PATH }}
+          key: ${{ runner.os }}-redisjson-${{ matrix.config.json-module-version }}
 
   examples:
     needs: [lint, build-and-test]
@@ -143,15 +150,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        config: [
-            # Different DB cases:
-            { db-org: redis, db-name: redis, db-version: 6.2.13 },
-            { db-org: redis, db-name: redis, db-version: 7.2.4 },
-            { db-org: valkey-io, db-name: valkey, db-version: 8.0.1 },
-            { db-org: redis, db-name: redis, db-version: 8.2.2 },
-            { db-org: valkey-io, db-name: valkey, db-version: 9.0.0 },
-          ]
+      matrix: *db-matrix
 
     steps:
       - uses: actions/checkout@v6
@@ -222,7 +221,7 @@ jobs:
         run: cargo doc --all-features --no-deps --document-private-items
         env:
           RUSTDOCFLAGS: -Dwarnings
-          
+
       - name: doc tests
         run: cargo test --doc --locked --all-features
         env:
@@ -266,7 +265,7 @@ jobs:
           cargo install critcmp
           cargo bench -p redis --all-features -- --measurement-time 15 --save-baseline changes
           git fetch
-          git checkout ${{ github.base_ref }} 
+          git checkout ${{ github.base_ref }}
           cargo bench -p redis --all-features -- --measurement-time 15 --save-baseline base
           critcmp base changes
 

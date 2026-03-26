@@ -1,12 +1,12 @@
 //! Tests for connection-layer behavior when streaming credentials providers fail.
 //!
-//! These tests focus on how `MultiplexedConnection` handles credentials provider failures,
-//! as opposed to:
+//! These tests focus on how connections handle credentials provider failures,
+//! for both `MultiplexedConnection` (single-node) and `ClusterConnection` (cluster), as opposed to:
 //! - `entra_id.rs` tests → Provider internals (token fetching, retry logic)
 //! - `test_acl.rs` tests → Authentication mechanisms over time (token rotation, ACL operations)
 //! - `test_auth.rs` tests → Integration tests for Entra ID authentication
 
-#![cfg(all(feature = "token-based-authentication", feature = "tokio-comp"))]
+#![cfg(feature = "token-based-authentication")]
 
 mod support;
 
@@ -102,8 +102,10 @@ impl StreamingCredentialsProvider for DelayedFailureCredentialsProvider {
 #[cfg(test)]
 mod credentials_provider_failures_tests {
     use super::*;
+    use futures_time::task::sleep;
+    use test_macros::async_test;
 
-    #[tokio::test]
+    #[async_test]
     async fn test_connection_fails_when_initial_credentials_request_returns_error() {
         init_logger();
         let ctx = TestContext::new();
@@ -125,7 +127,7 @@ mod credentials_provider_failures_tests {
         assert_eq!(err.kind(), ErrorKind::AuthenticationFailed);
     }
 
-    #[tokio::test]
+    #[async_test]
     async fn test_connection_fails_when_credentials_stream_closes() {
         init_logger();
         let ctx = TestContext::new();
@@ -147,7 +149,7 @@ mod credentials_provider_failures_tests {
         assert_eq!(err.kind(), ErrorKind::AuthenticationFailed);
     }
 
-    #[tokio::test]
+    #[async_test]
     async fn test_connection_renders_unusable_when_the_subscription_stream_closes() {
         init_logger();
         let ctx = TestContext::new();
@@ -165,7 +167,7 @@ mod credentials_provider_failures_tests {
         assert!(result.is_ok(), "PING should succeed.");
 
         // Give the token rotation task time to process the stream closure
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        sleep(std::time::Duration::from_millis(100).into()).await;
 
         // Subsequent commands should fail because the connection is unusable
         let result: RedisResult<String> = redis::cmd("PING").query_async(&mut con).await;
@@ -182,7 +184,7 @@ mod credentials_provider_failures_tests {
         );
     }
 
-    #[tokio::test]
+    #[async_test]
     async fn test_connection_renders_unusable_when_the_subscription_stream_closes_after_an_error() {
         init_logger();
         let ctx = TestContext::new();
@@ -200,7 +202,7 @@ mod credentials_provider_failures_tests {
         assert!(result.is_ok(), "PING should succeed.");
 
         // Give the token rotation task time to process the error
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        sleep(std::time::Duration::from_millis(100).into()).await;
 
         // Subsequent commands should fail because the connection is unusable
         let result: RedisResult<String> = redis::cmd("PING").query_async(&mut con).await;
@@ -215,5 +217,51 @@ mod credentials_provider_failures_tests {
             err.to_string().contains("re-authentication failure"),
             "Error message should mention re-authentication failure: {err}"
         );
+    }
+
+    #[cfg(feature = "cluster-async")]
+    mod cluster {
+        use super::*;
+        use redis::cluster::ClusterClientBuilder;
+
+        #[async_test]
+        async fn test_cluster_connection_fails_when_credentials_provider_returns_error() {
+            init_logger();
+            let cluster = TestClusterContext::new_with_cluster_client_builder(
+                |builder: ClusterClientBuilder| {
+                    builder.set_credentials_provider(ImmediatelyFailingCredentialsProvider)
+                },
+            );
+
+            let result = cluster.client.get_async_connection().await;
+
+            assert!(
+                result.is_err(),
+                "Cluster connection should fail when the credentials provider returns an error."
+            );
+
+            let err = result.err().unwrap();
+            assert_eq!(err.kind(), ErrorKind::Io);
+        }
+
+        #[async_test]
+        async fn test_cluster_connection_fails_when_credentials_stream_is_empty() {
+            init_logger();
+            let cluster = TestClusterContext::new_with_cluster_client_builder(
+                |builder: ClusterClientBuilder| {
+                    builder.set_credentials_provider(EmptyStreamCredentialsProvider)
+                },
+            );
+
+            let result = cluster.client.get_async_connection().await;
+
+            assert!(
+                result.is_err(),
+                "Cluster connection should fail when the credentials stream closes without yielding."
+            );
+
+            let err = result.err().unwrap();
+            assert_eq!(err.kind(), ErrorKind::Io);
+        }
     }
 }

@@ -148,20 +148,20 @@ pub(crate) fn start_tls_crypto_provider() {
 
 impl TestContext {
     pub fn new() -> TestContext {
-        TestContext::with_modules(&[], false)
+        TestContext::with_modules(&[])
     }
 
     #[cfg(feature = "tls-rustls")]
     pub fn new_with_mtls() -> TestContext {
-        Self::with_modules(&[], true)
+        Self::with_modules_and_tls(&[], true, None)
     }
 
     pub fn with_tls(tls_files: TlsFilePaths, mtls_enabled: bool) -> TestContext {
         Self::with_modules_and_tls(&[], mtls_enabled, Some(tls_files))
     }
 
-    pub fn with_modules(modules: &[Module], mtls_enabled: bool) -> TestContext {
-        Self::with_modules_and_tls(modules, mtls_enabled, None)
+    pub fn with_modules(modules: &[Module]) -> TestContext {
+        Self::with_modules_and_tls(modules, false, None)
     }
 
     pub fn new_with_addr(addr: ConnectionAddr) -> Self {
@@ -409,6 +409,8 @@ pub fn is_version(expected_major_minor: (u16, u16), version: Version) -> bool {
 }
 
 // Redis version constants for version-gated tests
+pub const REDIS_VERSION_CE_7_0: Version = (7, 0, 0);
+pub const REDIS_VERSION_CE_7_2: Version = (7, 2, 0);
 pub const REDIS_VERSION_CE_8_0: Version = (8, 0, 0);
 pub const REDIS_VERSION_CE_8_2: Version = (8, 1, 240);
 pub const REDIS_VERSION_CE_8_4: Version = (8, 3, 224);
@@ -574,4 +576,21 @@ pub async fn kill_client_async(
         .unwrap();
 
     Ok(())
+}
+
+pub fn spawn<T>(fut: impl std::future::Future<Output = T> + Send + Sync + 'static)
+where
+    T: Send + 'static,
+{
+    match tokio::runtime::Handle::try_current() {
+        Ok(tokio_runtime) => {
+            tokio_runtime.spawn(fut);
+        }
+        Err(_) => {
+            #[cfg(feature = "smol-comp")]
+            smol::spawn(fut).detach();
+            #[cfg(not(feature = "smol-comp"))]
+            unreachable!()
+        }
+    }
 }

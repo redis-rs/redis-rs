@@ -1,12 +1,12 @@
 name: "Install DB"
 inputs:
-  db-org: 
+  db-org:
     type: string,
     required: true
-  db-name: 
+  db-name:
     type: string,
     required: true
-  db-version: 
+  db-version:
     type: string,
     required: true
 
@@ -14,39 +14,70 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Cache DB
+    - name: Restore cached DB (and upon cache miss, mark for caching built artifacts)
       id: cache-redis
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
+        # The old variant stored the required files directly in the $HOME directory.
+        # But that does not scale when also adding bundled modules. So for new cache
+        # entries, we store the files in $HOME/db
         path: |
           ~/redis-cli
           ~/redis-server
+          ~/db
         key: ${{ runner.os }}-${{ inputs.db-name }}-${{ inputs.db-version }}
 
-    - name: Install DB
+    - name: Build and Install DB
       if: steps.cache-redis.outputs.cache-hit != 'true'
       shell: bash
       run: |
-        sudo apt-get update
-        wget https://github.com/${{ inputs.db-org }}/${{ inputs.db-name }}/archive/${{ inputs.db-version }}.tar.gz;
-        tar -xzvf ${{ inputs.db-version }}.tar.gz;
-        pushd ${{ inputs.db-name }}-${{ inputs.db-version }} && 
-        BUILD_TLS=yes make install && 
-        sudo mv src/${{ inputs.db-name }}-server $HOME/redis-server &&
-        sudo mv src/${{ inputs.db-name }}-cli $HOME/redis-cli && 
-        popd;
-        echo $PATH
+        # Installing DB ${{ inputs.db-org }}/${{ inputs.db-name }} version ${{ inputs.db-version }}
 
-    - name: Save DB to cache
-      if: steps.cache-redis.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v4
-      with:
-        path: |
-          ~/redis-cli
-          ~/redis-server
-        key: ${{ runner.os }}-${{ inputs.db-name }}-${{ inputs.db-version }}
+        # Prepare and switch a temporary build directory
+        cd "$HOME"
+        mkdir -p db/tmp
+        cd db/tmp
 
-    - name: set PATH
+        # Fetch and unpack the db's tarball
+        wget "https://github.com/${{ inputs.db-org }}/${{ inputs.db-name }}/archive/${{ inputs.db-version }}.tar.gz"
+        tar -xzvf "${{ inputs.db-version }}.tar.gz"
+
+        # Move into the unpacked directory
+        cd "${{ inputs.db-name }}-${{ inputs.db-version }}"
+
+        # Build the db (with modules, if possible)
+        BUILD_TLS=yes BUILD_WITH_MODULES=yes make
+
+        # Copy the built executables out
+        mv -v "src/${{ inputs.db-name }}-server" "$HOME/db/redis-server"
+        mv -v "src/${{ inputs.db-name }}-cli" "$HOME/db/redis-cli"
+
+        # Copy the built modules out (only possible for Redis v8+)
+        if [ "${{ inputs.db-name }}" = "redis" -a "$(cut -f 1 -d . <<<"${{ inputs.db-version }}")" -ge 8 ]
+        then
+          mv -v modules/*/*.so "$HOME/db"
+        else
+          echo "Skipping bundled modules as we do not support them on ${{ inputs.db-name }} ${{ inputs.db-version }}"
+        fi
+
+        # Clean up build directory
+        rm -rf "$HOME/db/tmp"
+
+    - name: Show available db files
       shell: bash
       run: |
-        echo "$HOME" >> $GITHUB_PATH        
+        # Show available db files
+        # This is useful for debugging
+
+        find "$HOME/db" -type f | sort
+
+    - name: Update PATH to to include db files
+      shell: bash
+      run: |
+        # Update PATH to to include db files
+
+        # Add path for old variant caches
+        echo "$HOME" >>"$GITHUB_PATH"
+
+        # Add path for new variant caches
+        echo "$HOME/db" >>"$GITHUB_PATH"
