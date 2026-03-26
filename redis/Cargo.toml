@@ -1,6 +1,6 @@
 [package]
 name = "redis"
-version = "1.1.0"
+version = "1.2.0"
 keywords = ["redis", "valkey", "cluster", "sentinel", "pubsub"]
 description = "Redis driver for Rust."
 homepage = "https://github.com/redis-rs/redis-rs"
@@ -127,7 +127,7 @@ acl = []
 geospatial = []
 json = ["dep:serde", "serde/derive", "dep:serde_json"]
 vector-sets = ["dep:serde", "serde/derive", "dep:serde_json"]
-cluster = ["dep:crc16", "dep:rand"]
+cluster = ["dep:crc16", "dep:rand", "dep:arc-swap"]
 script = ["dep:sha1_smol"]
 tls-native-tls = ["dep:native-tls"]
 tls-rustls = ["dep:rustls", "rustls/std", "dep:rustls-native-certs"]
@@ -285,3 +285,7 @@ name = "typed"
 [[example]]
 name = "async-caching"
 required-features = ["tokio-comp", "cache-aio"]
+
+[[example]]
+name = "latency-aware-routing"
+required-features = ["cluster-async", "tokio-comp"]

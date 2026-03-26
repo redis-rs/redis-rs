@@ -5,6 +5,7 @@ use crate::auth::StreamingCredentialsProvider;
 #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
 use crate::caching::{CacheConfig, CacheManager};
 use crate::client::DEFAULT_CONNECTION_TIMEOUT;
+use crate::cluster_handling::read_routing::{RandomReplicaStrategy, ReadRoutingStrategyFactory};
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::errors::{ErrorKind, RedisError};
 #[cfg(feature = "cluster-async")]
@@ -14,7 +15,6 @@ use crate::types::{ProtocolVersion, RedisResult};
 use crate::{TlsMode, cluster};
 use arcstr::ArcStr;
 use rand::Rng;
-#[cfg(feature = "cluster-async")]
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -45,7 +45,7 @@ use crate::tls::{TlsCertificates, retrieve_tls_certificates};
 struct BuilderParams {
     password: Option<ArcStr>,
     username: Option<ArcStr>,
-    read_from_replicas: bool,
+    read_routing_factory: Option<Arc<dyn ReadRoutingStrategyFactory>>,
     tls: Option<TlsMode>,
     #[cfg(feature = "tls-rustls")]
     certs: Option<TlsCertificates>,
@@ -112,7 +112,7 @@ impl RetryParams {
 pub(crate) struct ClusterParams {
     pub(crate) password: Option<ArcStr>,
     pub(crate) username: Option<ArcStr>,
-    pub(crate) read_from_replicas: bool,
+    pub(crate) read_routing_factory: Option<Arc<dyn ReadRoutingStrategyFactory>>,
     /// tls indicates tls behavior of connections.
     /// When Some(TlsMode), connections use tls and verify certification depends on TlsMode.
     /// When None, connections do not use tls.
@@ -173,7 +173,7 @@ impl ClusterParams {
         Ok(Self {
             password: value.password,
             username: value.username,
-            read_from_replicas: value.read_from_replicas,
+            read_routing_factory: value.read_routing_factory,
             tls: value.tls,
             retry_params: value.retries_configuration,
             tls_params,
@@ -435,10 +435,68 @@ impl ClusterClientBuilder {
 
     /// Enables reading from replicas for all new connections (default is disabled).
     ///
-    /// If enabled, then read queries will go to the replica nodes & write queries will go to the
-    /// primary nodes. If there are no replica nodes, then all queries will go to the primary nodes.
+    /// Read queries will go to a random replica node and write queries will go to the
+    /// primary node. If there are no replica nodes, then all queries will go to the primary node.
+    #[deprecated(note = "Use `read_routing_strategy(RandomReplicaStrategy)` instead")]
     pub fn read_from_replicas(mut self) -> ClusterClientBuilder {
-        self.builder_params.read_from_replicas = true;
+        self.builder_params.read_routing_factory = Some(Arc::new(RandomReplicaStrategy));
+        self
+    }
+
+    /// Sets a custom `ReadRoutingStrategyFactory` for routing read commands within Shards.
+    ///
+    /// Cluster slots are assigned to a shard consisting of a primary node and zero or more
+    /// replica nodes. By default, the cluster client will route all commands to the primary
+    /// node of a shard.
+    ///
+    /// By providing a strategy factory here, you can control how read requests will be routed
+    /// within a shard. This allows the routing of reads to replicas.
+    ///
+    /// The strategy factory is responsible for producing a `ReadRoutingStrategy` each time
+    /// a new connection is created from this client.
+    ///
+    /// A blanket implementation of `ReadRoutingStrategyFactory` is provided for any
+    /// `T: ReadRoutingStrategy + Default + 'static`, so simple strategies can be passed directly.
+    /// The blanket implementation uses default to construct a new strategy for each connection.
+    ///
+    /// The `cluster_read_routing` module provides built-in simple strategies such as
+    /// `RandomReplicaStrategy` and `RoundRobinReplicaStrategy`.
+    ///
+    /// You can implement your own `ReadRoutingStrategy` using the provided traits.
+    ///
+    /// For strategies that need cross-connection shared state (e.g. latency tracking),
+    /// implement `ReadRoutingStrategyFactory` directly.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use redis::cluster::ClusterClientBuilder;
+    /// use redis::cluster_read_routing::{ReadRoutingStrategy, ReadCandidates};
+    /// use redis::cluster::NodeAddress;
+    ///
+    /// /// Routes reads to the first replica.
+    /// #[derive(Default)]
+    /// struct FirstReplica;
+    ///
+    /// impl ReadRoutingStrategy for FirstReplica {
+    ///     fn route_read<'a>(&self, candidates: &ReadCandidates<'a>) -> &'a NodeAddress {
+    ///         match candidates {
+    ///             ReadCandidates::AnyNode(c) => c.replicas().first(),
+    ///             ReadCandidates::ReplicasOnly(c) => c.replicas().first(),
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// let client = ClusterClientBuilder::new(vec!["redis://127.0.0.1:6379/"])
+    ///     .read_routing_strategy(FirstReplica)
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn read_routing_strategy(
+        mut self,
+        strategy: impl ReadRoutingStrategyFactory + 'static,
+    ) -> ClusterClientBuilder {
+        self.builder_params.read_routing_factory = Some(Arc::new(strategy));
         self
     }
 

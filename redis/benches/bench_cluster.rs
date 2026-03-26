@@ -3,6 +3,7 @@ use std::hint::black_box;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use redis::cluster::cluster_pipe;
+use redis::cluster_read_routing::RandomReplicaStrategy;
 use redis_test::cluster::RedisClusterConfiguration;
 
 use support::*;
@@ -92,7 +93,7 @@ fn bench_cluster_setup(c: &mut Criterion) {
 fn bench_cluster_read_from_replicas_setup(c: &mut Criterion) {
     let cluster = TestClusterContext::new_with_config_and_builder(
         RedisClusterConfiguration::single_replica_config(),
-        |builder| builder.read_from_replicas(),
+        |builder| builder.read_routing_strategy(RandomReplicaStrategy),
     );
     cluster.wait_for_cluster_up();
 

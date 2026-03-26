@@ -758,6 +758,11 @@ pub use cluster_handling::sync_connection as cluster;
 #[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
 pub use cluster_handling::routing as cluster_routing;
 
+/// Pluggable read routing strategies for cluster connections.
+#[cfg(feature = "cluster")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
+pub use cluster_handling::read_routing as cluster_read_routing;
+
 #[cfg(feature = "r2d2")]
 #[cfg_attr(docsrs, doc(cfg(feature = "r2d2")))]
 mod r2d2;

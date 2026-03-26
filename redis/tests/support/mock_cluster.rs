@@ -179,25 +179,21 @@ pub fn respond_startup_with_replica_using_config(
         let slots = slots_config
             .into_iter()
             .map(|slot_config| {
-                let replicas = slot_config
-                    .replica_ports
-                    .into_iter()
-                    .flat_map(|replica_port| {
-                        vec![
-                            Value::BulkString(name.as_bytes().to_vec()),
-                            Value::Int(replica_port as i64),
-                        ]
-                    })
-                    .collect();
-                Value::Array(vec![
+                let mut entry = vec![
                     Value::Int(slot_config.slot_range.start as i64),
                     Value::Int(slot_config.slot_range.end as i64),
                     Value::Array(vec![
                         Value::BulkString(name.as_bytes().to_vec()),
                         Value::Int(slot_config.primary_port as i64),
                     ]),
-                    Value::Array(replicas),
-                ])
+                ];
+                for replica_port in slot_config.replica_ports {
+                    entry.push(Value::Array(vec![
+                        Value::BulkString(name.as_bytes().to_vec()),
+                        Value::Int(replica_port as i64),
+                    ]));
+                }
+                Value::Array(entry)
             })
             .collect();
         Err(Ok(Value::Array(slots)))
