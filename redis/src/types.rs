@@ -2576,6 +2576,8 @@ pub enum ValueType {
     TDigest,
     /// A Top-K. [Redis Docs](https://redis.io/docs/latest/develop/data-types/probabilistic/top-k/)
     TopK,
+    /// A time series. [Redis Docs](https://redis.io/docs/latest/develop/data-types/timeseries/)
+    TimeSeries,
     /// Any other value type not explicitly defined in [Redis Docs](https://redis.io/docs/latest/commands/type/)
     Unknown(String),
 }
@@ -2599,6 +2601,8 @@ impl<T: AsRef<str>> From<T> for ValueType {
             "MBbloomCF" => ValueType::CuckooFilter,
             "TDIS-TYPE" => ValueType::TDigest,
             "TopK-TYPE" => ValueType::TopK,
+            // Timeseries module
+            "TSDB-TYPE" => ValueType::TimeSeries,
             // Fallback
             s => ValueType::Unknown(s.to_string()),
         }
@@ -2624,6 +2628,8 @@ impl From<ValueType> for String {
             ValueType::TDigest => "TDIS-TYPE".to_string(),
             ValueType::TopK => "TopK-TYPE".to_string(),
             ValueType::CountMin => "CMSk-TYPE".to_string(),
+            // Timeseries module
+            ValueType::TimeSeries => "TSDB-TYPE".to_string(),
             // Fallback
             ValueType::Unknown(s) => s,
         }
