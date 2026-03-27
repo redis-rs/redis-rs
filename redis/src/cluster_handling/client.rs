@@ -97,8 +97,16 @@ impl Default for RetryParams {
 }
 
 /// Exclusive upper bound (ms) for [`RetryParams::wait_time_for_retry`] jitter; see [`ClusterClientBuilder::retry_wait_formula`].
+///
+/// The result is always strictly greater than `min_wait` so the half-open jitter range is never empty
+/// (e.g. when `max_retry_wait == min_retry_wait`, or when the clamp would otherwise equal `min_wait`).
 fn cluster_retry_wait_upper_ms(base_wait: u64, min_wait: u64, max_wait: u64) -> u64 {
-    base_wait.max(min_wait + 1).min(max_wait)
+    let capped = base_wait.max(min_wait + 1).min(max_wait);
+    if capped <= min_wait {
+        min_wait.saturating_add(1)
+    } else {
+        capped
+    }
 }
 
 impl RetryParams {
@@ -886,9 +894,31 @@ mod tests {
     }
 
     #[test]
-    fn cluster_retry_wait_upper_caps_max_when_min_plus_one_exceeds_max() {
-        // When min_retry_wait + 1 > max_retry_wait, applying `.min(max).max(min+1)` can exceed
-        // `max_retry_wait`; the backoff upper bound must be capped at `max_retry_wait` after the floor.
-        assert_eq!(super::cluster_retry_wait_upper_ms(10, 100, 50), 50);
+    fn cluster_retry_clamp_order_caps_at_max_after_floor() {
+        // Documented chain is `max(base, min+1).min(max)`; the old `.min(max).max(min+1)` overshoots `max` here.
+        let base = 10u64;
+        let min_w = 100u64;
+        let max_w = 50u64;
+        assert_eq!(base.max(min_w + 1).min(max_w), 50);
+        assert_eq!(base.min(max_w).max(min_w + 1), 101);
+        // Exclusive upper must exceed `min_wait` for `random_range`, so we lift when the clamp hits `min_wait`.
+        assert_eq!(super::cluster_retry_wait_upper_ms(base, min_w, max_w), min_w + 1);
+    }
+
+    #[test]
+    fn cluster_retry_wait_upper_strictly_above_min_when_min_equals_max() {
+        assert_eq!(super::cluster_retry_wait_upper_ms(10, 100, 100), 101);
+    }
+
+    #[test]
+    fn cluster_retry_wait_time_does_not_panic_when_min_equals_max() {
+        let p = super::RetryParams {
+            number_of_retries: 16,
+            max_wait_time: 100,
+            min_wait_time: 100,
+            exponent_base: 2,
+            factor: 10,
+        };
+        let _ = p.wait_time_for_retry(0);
     }
 }
