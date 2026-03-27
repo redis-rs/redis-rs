@@ -104,7 +104,8 @@ fn cluster_retry_wait_upper_ms(base_wait: u64, min_wait: u64, max_wait: u64) -> 
 impl RetryParams {
     pub(crate) fn wait_time_for_retry(&self, retry: u32) -> Duration {
         let base_wait = self.exponent_base.pow(retry) * self.factor;
-        let clamped_wait = cluster_retry_wait_upper_ms(base_wait, self.min_wait_time, self.max_wait_time);
+        let clamped_wait =
+            cluster_retry_wait_upper_ms(base_wait, self.min_wait_time, self.max_wait_time);
         let jittered_wait = rand::rng().random_range(self.min_wait_time..clamped_wait);
         Duration::from_millis(jittered_wait)
     }
