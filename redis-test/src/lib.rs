@@ -335,6 +335,14 @@ impl MockRedisConnection {
         }
     }
 
+    /// Add commands to the end of the queue.
+    pub fn add_commands<I>(&mut self, commands: I)
+    where
+        I: IntoIterator<Item = MockCmd>,
+    {
+        self.commands.lock().unwrap().extend(commands);
+    }
+
     /// Enable assertion to ensure all commands have been consumed
     pub fn assert_all_commands_consumed(mut self) -> Self {
         self.assert_is_empty_on_drop = true;
@@ -1088,5 +1096,28 @@ mod tests {
             .query(&mut conn)
             .expect("success");
         assert_eq!(results, vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn extent_commands_test() {
+        let mut conn = MockRedisConnection::new(vec![
+            MockCmd::new(cmd("SET").arg("foo").arg(42), Ok("")),
+            MockCmd::new(cmd("GET").arg("foo"), Ok(42))
+        ])
+        .assert_all_commands_consumed();
+
+        conn.add_commands(vec![
+          MockCmd::new(cmd("SET").arg("bar").arg("foo"), Ok("")),
+          MockCmd::new(cmd("GET").arg("bar"), Ok("foo")),
+        ]);
+
+        cmd("SET").arg("foo").arg(42).exec(&mut conn).unwrap();
+        assert_eq!(cmd("GET").arg("foo").query(&mut conn), Ok(42));
+
+        cmd("SET").arg("bar").arg("foo").exec(&mut conn).unwrap();
+        assert_eq!(
+            cmd("GET").arg("bar").query(&mut conn),
+            Ok(Value::BulkString(b"foo".as_ref().into()))
+        );
     }
 }
