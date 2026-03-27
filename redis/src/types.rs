@@ -2566,6 +2566,16 @@ pub enum ValueType {
     VectorSet,
     /// A RedisJSON value. [Redis Docs](https://redis.io/docs/latest/develop/data-types/json/)
     JSON,
+    /// A Bloom filter. [Redis Docs](https://redis.io/docs/latest/develop/data-types/probabilistic/bloom-filter/)
+    BloomFilter,
+    /// A Cuckoo filter. [Redis Docs](https://redis.io/docs/latest/develop/data-types/probabilistic/cuckoo-filter/)
+    CuckooFilter,
+    /// A Count-min. [Redis Docs](https://redis.io/docs/latest/develop/data-types/probabilistic/count-min-sketch/)
+    CountMin,
+    /// A t-Digest. [Redis Docs](https://redis.io/docs/latest/develop/data-types/probabilistic/t-digest/)
+    TDigest,
+    /// A Top-K. [Redis Docs](https://redis.io/docs/latest/develop/data-types/probabilistic/top-k/)
+    TopK,
     /// Any other value type not explicitly defined in [Redis Docs](https://redis.io/docs/latest/commands/type/)
     Unknown(String),
 }
@@ -2581,7 +2591,15 @@ impl<T: AsRef<str>> From<T> for ValueType {
             "hash" => ValueType::Hash,
             "stream" => ValueType::Stream,
             "vectorset" => ValueType::VectorSet,
+            // JSON module
             "ReJSON-RL" => ValueType::JSON,
+            // Bloom module
+            "CMSk-TYPE" => ValueType::CountMin,
+            "MBbloom--" => ValueType::BloomFilter,
+            "MBbloomCF" => ValueType::CuckooFilter,
+            "TDIS-TYPE" => ValueType::TDigest,
+            "TopK-TYPE" => ValueType::TopK,
+            // Fallback
             s => ValueType::Unknown(s.to_string()),
         }
     }
@@ -2598,7 +2616,15 @@ impl From<ValueType> for String {
             ValueType::Hash => "hash".to_string(),
             ValueType::Stream => "stream".to_string(),
             ValueType::VectorSet => "vectorset".to_string(),
+            // JSON module
             ValueType::JSON => "ReJSON-RL".to_string(),
+            // Bloom module
+            ValueType::BloomFilter => "MBbloom--".to_string(),
+            ValueType::CuckooFilter => "MBbloomCF".to_string(),
+            ValueType::TDigest => "TDIS-TYPE".to_string(),
+            ValueType::TopK => "TopK-TYPE".to_string(),
+            ValueType::CountMin => "CMSk-TYPE".to_string(),
+            // Fallback
             ValueType::Unknown(s) => s,
         }
     }
