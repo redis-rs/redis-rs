@@ -2562,6 +2562,8 @@ pub enum ValueType {
     Hash,
     /// A Redis Stream. [Redis Docs](https://redis.io/docs/latest/develop/data-types/stream)
     Stream,
+    /// A vector set. [Redis Docs](https://redis.io/docs/latest/develop/data-types/vector-sets/)
+    VectorSet,
     /// A RedisJSON value. [Redis Docs](https://redis.io/docs/latest/develop/data-types/json/)
     JSON,
     /// Any other value type not explicitly defined in [Redis Docs](https://redis.io/docs/latest/commands/type/)
@@ -2578,6 +2580,7 @@ impl<T: AsRef<str>> From<T> for ValueType {
             "zset" => ValueType::ZSet,
             "hash" => ValueType::Hash,
             "stream" => ValueType::Stream,
+            "vectorset" => ValueType::VectorSet,
             "ReJSON-RL" => ValueType::JSON,
             s => ValueType::Unknown(s.to_string()),
         }
@@ -2594,6 +2597,7 @@ impl From<ValueType> for String {
             ValueType::ZSet => "zset".to_string(),
             ValueType::Hash => "hash".to_string(),
             ValueType::Stream => "stream".to_string(),
+            ValueType::VectorSet => "vectorset".to_string(),
             ValueType::JSON => "ReJSON-RL".to_string(),
             ValueType::Unknown(s) => s,
         }
