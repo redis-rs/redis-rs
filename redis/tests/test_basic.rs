@@ -160,6 +160,12 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
+        // The key does not have a value
+        let none_key_type = con
+            .key_type("foo")
+            .expect("getting the type should succeed");
+        assert_eq!(none_key_type, ValueType::None);
+
         //The key is a simple value
         redis::cmd("SET").arg("foo").arg(42).exec(&mut con).unwrap();
         let string_key_type = con.key_type("foo").unwrap();

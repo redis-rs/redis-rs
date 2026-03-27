@@ -2548,6 +2548,8 @@ pub(crate) type SyncPushSender = std::sync::mpsc::Sender<PushInfo>;
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ValueType {
+    /// Key does not have a value
+    None,
     /// Generally returned by anything that returns a single element. [Redis Docs](https://redis.io/docs/latest/develop/data-types/strings/)
     String,
     /// A list of String values. [Redis Docs](https://redis.io/docs/latest/develop/data-types/lists/)
@@ -2569,6 +2571,7 @@ pub enum ValueType {
 impl<T: AsRef<str>> From<T> for ValueType {
     fn from(s: T) -> Self {
         match s.as_ref() {
+            "none" => ValueType::None,
             "string" => ValueType::String,
             "list" => ValueType::List,
             "set" => ValueType::Set,
@@ -2584,6 +2587,7 @@ impl<T: AsRef<str>> From<T> for ValueType {
 impl From<ValueType> for String {
     fn from(v: ValueType) -> Self {
         match v {
+            ValueType::None => "none".to_string(),
             ValueType::String => "string".to_string(),
             ValueType::List => "list".to_string(),
             ValueType::Set => "set".to_string(),
