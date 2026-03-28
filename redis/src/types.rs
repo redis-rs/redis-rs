@@ -2578,6 +2578,8 @@ pub enum ValueType {
     TopK,
     /// A time series. [Redis Docs](https://redis.io/docs/latest/develop/data-types/timeseries/)
     TimeSeries,
+    /// A Trie. [Redis Docs](https://redis.io/docs/latest/develop/ai/search-and-query/advanced-concepts/autocomplete/)
+    Trie,
     /// Any other value type not explicitly defined in [Redis Docs](https://redis.io/docs/latest/commands/type/)
     Unknown(String),
 }
@@ -2601,6 +2603,8 @@ impl<T: AsRef<str>> From<T> for ValueType {
             "MBbloomCF" => ValueType::CuckooFilter,
             "TDIS-TYPE" => ValueType::TDigest,
             "TopK-TYPE" => ValueType::TopK,
+            // Search module
+            "trietype0" => ValueType::Trie,
             // Timeseries module
             "TSDB-TYPE" => ValueType::TimeSeries,
             // Fallback
@@ -2628,6 +2632,8 @@ impl From<ValueType> for String {
             ValueType::TDigest => "TDIS-TYPE".to_string(),
             ValueType::TopK => "TopK-TYPE".to_string(),
             ValueType::CountMin => "CMSk-TYPE".to_string(),
+            // Search module
+            ValueType::Trie => "trietype0".to_string(),
             // Timeseries module
             ValueType::TimeSeries => "TSDB-TYPE".to_string(),
             // Fallback
