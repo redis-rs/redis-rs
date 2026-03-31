@@ -19,7 +19,7 @@ use ::tokio::{
 use {
     crate::errors::ErrorKind,
     arcstr::ArcStr,
-    log::{debug, error},
+    log::{debug, error, warn},
     std::sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -676,6 +676,7 @@ impl MultiplexedConnection {
 
             let subscription_task_handle = Runtime::locate().spawn(async move {
                 let mut error_cause_logged = false;
+                let mut connection_dead = false;
                 while let Some(result) = stream.next().await {
                     match result {
                         Ok(credentials) => {
@@ -683,6 +684,15 @@ impl MultiplexedConnection {
                                 .re_authenticate_with_credentials(&credentials)
                                 .await
                             {
+                                if err.is_connection_dropped() {
+                                    // The underlying TCP connection is already dead (e.g. broken
+                                    // pipe). Don't mark as re-auth failure — the connection will
+                                    // surface its own IO error on the next command, letting the
+                                    // cluster driver reconnect normally.
+                                    warn!("Re-authentication skipped, connection is dead: {err}");
+                                    connection_dead = true;
+                                    break;
+                                }
                                 error!("Failed to re-authenticate async connection: {err}.");
                                 error_cause_logged = true;
                                 re_authentication_failed_arc.store(true, Ordering::Relaxed);
@@ -697,9 +707,11 @@ impl MultiplexedConnection {
                         }
                     }
                 }
-                if !re_authentication_failed_arc.load(Ordering::Relaxed) {
+                if !connection_dead
+                    && !re_authentication_failed_arc.load(Ordering::Relaxed)
+                {
                     if !error_cause_logged {
-                        error!("Re-authentication stream ended unexpectedly.");
+                        warn!("Re-authentication stream ended.");
                     }
                     re_authentication_failed_arc.store(true, Ordering::Relaxed);
                 }
