@@ -2374,3 +2374,252 @@ fn test_xautoclaim_invalid_pel_entries_claiming_just_ids() {
         assert_eq!(reply.deleted_ids.len(), 0);
     }
 }
+
+#[test]
+fn test_xadd_idempotency_manual_mode() {
+    // Test IDMP (manual mode) - prevents messages with the same PID and IID from being added to the stream.
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_6);
+    let mut con = ctx.connection();
+
+    const STREAM_NAME: &str = "test_idmp_stream";
+    const FIELD_VALUES: [(&str, &str); 2] = [("field1", "value1"), ("field2", "value2")];
+    const PID_1: &str = "producer-1";
+    const PID_2: &str = "producer-2";
+    const IID_1: &str = "msg-1";
+    const IID_2: &str = "msg-2";
+
+    // Add a message with IDMP mode.
+    let mut opts = StreamAddOptions::default().idmp(PID_1, IID_1);
+    let id1: Option<String> = con
+        .xadd_options(STREAM_NAME, "*", &FIELD_VALUES[0], &opts)
+        .unwrap();
+    assert!(id1.is_some());
+
+    // Trying to add the same message again with the same PID and IID should succeed.
+    // The message should be deduplicated and the ID of the original message should be returned.
+    let id2: Option<String> = con
+        .xadd_options(STREAM_NAME, "*", &FIELD_VALUES[0], &opts)
+        .unwrap();
+    assert!(id2.is_some());
+
+    // Verify that the returned message ID is the same as the original message ID and that the stream only has one entry.
+    assert_eq!(id1, id2);
+    assert_eq!(con.xlen(STREAM_NAME), Ok(1));
+
+    // Even adding a different message with the same PID and IID should succeed and be deduplicated to the original message.
+    let id3: Option<String> = con
+        .xadd_options(STREAM_NAME, "*", &FIELD_VALUES[1], &opts)
+        .unwrap();
+    assert!(id3.is_some());
+    assert_eq!(id1, id3);
+    assert_eq!(con.xlen(STREAM_NAME), Ok(1));
+    let reply = con.xrange_all(STREAM_NAME).unwrap();
+    assert!(reply.ids[0].contains_key(FIELD_VALUES[0].0));
+
+    // Adding a different message with the same PID but different IID should succeed.
+    opts = opts.idmp(PID_1, IID_2);
+    let id4: Option<String> = con
+        .xadd_options(STREAM_NAME, "*", &FIELD_VALUES[1], &opts)
+        .unwrap();
+    assert!(id4.is_some());
+    assert_ne!(id1, id4);
+    assert_eq!(con.xlen(STREAM_NAME), Ok(2));
+
+    // Adding an existing message with an existing IID but non-existing PID should succeed.
+    opts = opts.idmp(PID_2, IID_1);
+    let id5: Option<String> = con
+        .xadd_options(STREAM_NAME, "*", &FIELD_VALUES[0], &opts)
+        .unwrap();
+    assert!(id5.is_some());
+    assert_ne!(id1, id5);
+    assert_ne!(id4, id5);
+    assert_eq!(con.xlen(STREAM_NAME), Ok(3));
+}
+
+#[test]
+fn test_xadd_idempotency_automatic_mode() {
+    // Test IDMPAUTO (automatic mode) - prevents messages with the same PID and content from being added to the stream.
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_6);
+    let mut con = ctx.connection();
+
+    const STREAM_NAME: &str = "test_idmpauto_stream";
+    const FIELD_VALUES: [(&str, &str); 2] = [("field1", "value1"), ("field2", "value2")];
+    const PID_1: &str = "producer-1";
+    const PID_2: &str = "producer-2";
+
+    // Add a message with IDMPAUTO mode.
+    let opts = StreamAddOptions::default().idmpauto(PID_1);
+    let id1: Option<String> = con
+        .xadd_options(STREAM_NAME, "*", &FIELD_VALUES[0], &opts)
+        .unwrap();
+    assert!(id1.is_some());
+
+    // Adding the same message again should be deduplicated, returning the ID of the original message,
+    // because identical producer and content values result in the same auto-generated ID.
+    let id2: Option<String> = con
+        .xadd_options(
+            STREAM_NAME,
+            "*",
+            &FIELD_VALUES[0], // Same content
+            &opts,
+        )
+        .unwrap();
+    assert!(id2.is_some());
+
+    // Verify that the returned message ID is the same as the original message ID and that the stream only has one entry.
+    assert_eq!(id1, id2);
+    assert_eq!(con.xlen(STREAM_NAME), Ok(1));
+
+    // Adding a message with different content should succeed.
+    let id3: Option<String> = con
+        .xadd_options(STREAM_NAME, "*", &FIELD_VALUES[1], &opts)
+        .unwrap();
+    assert!(id3.is_some());
+    assert_ne!(id1, id3);
+    assert_eq!(con.xlen(STREAM_NAME), Ok(2));
+
+    // Adding an existing message with different PID should succeed.
+    let id4: Option<String> = con
+        .xadd_options(STREAM_NAME, "*", &FIELD_VALUES[0], &opts.idmpauto(PID_2))
+        .unwrap();
+    assert!(id4.is_some());
+    assert_ne!(id1, id4);
+    assert_ne!(id3, id4);
+    assert_eq!(con.xlen(STREAM_NAME), Ok(3));
+}
+
+#[test]
+fn test_xadd_idempotency_with_other_options() {
+    // Test that idempotency works correctly with other XADD options
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_6);
+    let mut con = ctx.connection();
+
+    const STREAM_NAME: &str = "test_idmp_combined";
+    const GROUP_NAME: &str = "test_group";
+    const CONSUMER_NAME: &str = "consumer";
+    const PID: &str = "producer-1";
+    const IID: &str = "msg-1";
+
+    const INITIAL_STREAM_ENTRIES: [(&str, &str); 3] = [
+        ("field1", "value1"),
+        ("field2", "value2"),
+        ("field3", "value3"),
+    ];
+    const ADDITIONAL_STREAM_ENTRY: (&str, &str) = ("field4", "value4");
+    const FINAL_STREAM_ENTRY: (&str, &str) = ("field5", "value5");
+
+    // Test that NOMKSTREAM does not create the stream if it doesn't exist.
+    let result = con.xadd_options(
+        STREAM_NAME,
+        "*",
+        &[("field", "value")],
+        &StreamAddOptions::default().idmp(PID, IID).nomkstream(),
+    );
+    assert_eq!(result, Ok(None));
+
+    // Verify that the stream did not get created.
+    let result = con.xinfo_stream(STREAM_NAME);
+    assert_matches!(&result, Err(e) if e.kind() == redis::ServerErrorKind::ResponseError.into()
+        && e.code() == Some("ERR")
+        && e.detail() == Some("no such key")
+    );
+
+    // Create stream with initial entries.
+    let [_id1, id2, id3]: [String; 3] =
+        INITIAL_STREAM_ENTRIES.map(|entry| con.xadd(STREAM_NAME, "*", &[entry]).unwrap().unwrap());
+
+    // Create a consumer group and read all initial messages to create PEL entries.
+    let _: () = con
+        .xgroup_create_mkstream(STREAM_NAME, GROUP_NAME, "0")
+        .unwrap();
+    let _: Option<StreamReadReply> = con
+        .xread_options(
+            &[STREAM_NAME],
+            &[">"],
+            &StreamReadOptions::default()
+                .group(GROUP_NAME, CONSUMER_NAME)
+                .count(INITIAL_STREAM_ENTRIES.len() + 1),
+        )
+        .unwrap();
+    let pending = con.xpending(STREAM_NAME, GROUP_NAME).unwrap();
+    assert_eq!(pending.count(), INITIAL_STREAM_ENTRIES.len());
+
+    // Add the additional entry with idempotency, apply trimming and deletion policy.
+    // This should trim the stream and keep references in PEL.
+    let id4 = con
+        .xadd_options(
+            STREAM_NAME,
+            "*",
+            &[ADDITIONAL_STREAM_ENTRY],
+            &StreamAddOptions::default()
+                .idmp(PID, IID)
+                .trim(StreamTrimStrategy::maxlen(
+                    StreamTrimmingMode::Exact,
+                    INITIAL_STREAM_ENTRIES.len(),
+                ))
+                .set_deletion_policy(StreamDeletionPolicy::KeepRef),
+        )
+        .unwrap()
+        .unwrap();
+
+    // The stream should have been trimmed as its entries exceeded the maximum length.
+    // As a result, the first entry should have been removed.
+    assert_eq!(con.xlen(STREAM_NAME).unwrap(), INITIAL_STREAM_ENTRIES.len());
+    let info = con.xinfo_stream(STREAM_NAME).unwrap();
+    assert_eq!(info.first_entry.id, id2);
+    assert_eq!(info.last_generated_id, id4);
+
+    // References should still exist in PEL (KeepRef policy).
+    let pending = con.xpending(STREAM_NAME, GROUP_NAME).unwrap();
+    assert_eq!(pending.count(), INITIAL_STREAM_ENTRIES.len());
+
+    // Trying to add the same message again with the same PID and IID should succeed.
+    // The message should be deduplicated and the ID of the original message should be returned.
+    let id5 = con
+        .xadd_options(
+            STREAM_NAME,
+            "*",
+            &[ADDITIONAL_STREAM_ENTRY],
+            &StreamAddOptions::default()
+                .idmp(PID, IID)
+                .trim(StreamTrimStrategy::maxlen(
+                    StreamTrimmingMode::Exact,
+                    INITIAL_STREAM_ENTRIES.len(),
+                ))
+                .set_deletion_policy(StreamDeletionPolicy::KeepRef),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(id4, id5);
+
+    // The stream should remain unchanged.
+    assert_eq!(con.xlen(STREAM_NAME).unwrap(), INITIAL_STREAM_ENTRIES.len());
+    let info = con.xinfo_stream(STREAM_NAME).unwrap();
+    assert_eq!(info.first_entry.id, id2);
+    assert_eq!(info.last_generated_id, id4);
+
+    // Adding another message with different IID (generated by automatic mode) - should succeed and trim further.
+    let id6 = con
+        .xadd_options(
+            STREAM_NAME,
+            "*",
+            &[FINAL_STREAM_ENTRY],
+            &StreamAddOptions::default()
+                .idmpauto(PID)
+                .trim(StreamTrimStrategy::maxlen(
+                    StreamTrimmingMode::Exact,
+                    INITIAL_STREAM_ENTRIES.len(),
+                ))
+                .set_deletion_policy(StreamDeletionPolicy::KeepRef),
+        )
+        .unwrap()
+        .unwrap();
+    assert_ne!(id5, id6);
+
+    // The stream should have been trimmed again, as its entries once again exceeded the maximum length.
+    // As a result, the first entry (second from the initial entries) should have been removed.
+    assert_eq!(con.xlen(STREAM_NAME).unwrap(), INITIAL_STREAM_ENTRIES.len());
+    let info = con.xinfo_stream(STREAM_NAME).unwrap();
+    assert_eq!(info.first_entry.id, id3); // id2 should now be trimmed
+    assert_eq!(info.last_generated_id, id6);
+}

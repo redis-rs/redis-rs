@@ -170,6 +170,52 @@ impl ToRedisArgs for StreamTrimOptions {
     }
 }
 
+/// Idempotency mode for stream message production
+///
+/// Supports idempotent message processing to prevent duplicate entries.
+/// See [Redis Streams Idempotency](https://redis.io/docs/latest/develop/data-types/streams/idempotency/)
+#[derive(Debug, Clone)]
+pub enum StreamIdempotencyMode {
+    /// Manual mode: Producer provides both producer ID (pid) and idempotent ID (iid)
+    ///
+    /// Example: `XADD key IDMP producer-1 iid-1 * field value`
+    Manual {
+        /// Producer ID - unique identifier for the message producer
+        producer_id: String,
+        /// Idempotent ID - unique identifier for this specific message
+        idempotent_id: String,
+    },
+    /// Automatic mode: Producer provides only producer ID (pid), Redis generates iid from message content
+    ///
+    /// Example: `XADD key IDMPAUTO producer-1 * field value`
+    Automatic {
+        /// Producer ID - unique identifier for the message producer
+        producer_id: String,
+    },
+}
+
+impl ToRedisArgs for StreamIdempotencyMode {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            StreamIdempotencyMode::Manual {
+                producer_id,
+                idempotent_id,
+            } => {
+                out.write_arg(b"IDMP");
+                out.write_arg(producer_id.as_bytes());
+                out.write_arg(idempotent_id.as_bytes());
+            }
+            StreamIdempotencyMode::Automatic { producer_id } => {
+                out.write_arg(b"IDMPAUTO");
+                out.write_arg(producer_id.as_bytes());
+            }
+        }
+    }
+}
+
 /// Builder options for [`xadd_options`] command
 ///
 /// [`xadd_options`]: ../trait.Commands.html#method.xadd_options
@@ -179,6 +225,7 @@ pub struct StreamAddOptions {
     nomkstream: bool,
     trim: Option<StreamTrimStrategy>,
     deletion_policy: Option<StreamDeletionPolicy>,
+    idempotency: Option<StreamIdempotencyMode>,
 }
 
 impl StreamAddOptions {
@@ -199,6 +246,66 @@ impl StreamAddOptions {
         self.deletion_policy = Some(deletion_policy);
         self
     }
+
+    /// Enable idempotent message production with manual mode (IDMP)
+    ///
+    /// Manual mode requires both producer ID and idempotent ID to be provided.
+    /// The producer ID uniquely identifies the message producer.
+    /// The idempotent ID uniquely identifies this specific message.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use redis::{Commands, streams::StreamAddOptions};
+    /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    /// # let mut con = client.get_connection().unwrap();
+    ///
+    /// let opts = StreamAddOptions::default()
+    ///     .idmp("producer-1", "iid-1");
+    /// let _: Option<String> = con.xadd_options(
+    ///     "key",
+    ///     "*",
+    ///     &[("field", "value")],
+    ///     &opts
+    /// ).unwrap();
+    /// ```
+    pub fn idmp(
+        mut self,
+        producer_id: impl Into<String>,
+        idempotent_id: impl Into<String>,
+    ) -> Self {
+        self.idempotency = Some(StreamIdempotencyMode::Manual {
+            producer_id: producer_id.into(),
+            idempotent_id: idempotent_id.into(),
+        });
+        self
+    }
+
+    /// Enable idempotent message production with automatic mode (IDMPAUTO)
+    ///
+    /// Automatic mode requires only a producer ID to be provided.
+    /// Redis automatically generates the idempotent ID based on the message content.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use redis::{Commands, streams::StreamAddOptions};
+    /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    /// # let mut con = client.get_connection().unwrap();
+    ///
+    /// let opts = StreamAddOptions::default()
+    ///     .idmpauto("producer-1");
+    /// let _: Option<String> = con.xadd_options(
+    ///     "key",
+    ///     "*",
+    ///     &[("field", "value")],
+    ///     &opts
+    /// ).unwrap();
+    /// ```
+    pub fn idmpauto(mut self, producer_id: impl Into<String>) -> Self {
+        self.idempotency = Some(StreamIdempotencyMode::Automatic {
+            producer_id: producer_id.into(),
+        });
+        self
+    }
 }
 
 impl ToRedisArgs for StreamAddOptions {
@@ -209,11 +316,14 @@ impl ToRedisArgs for StreamAddOptions {
         if self.nomkstream {
             out.write_arg(b"NOMKSTREAM");
         }
-        if let Some(strategy) = self.trim.as_ref() {
-            strategy.write_redis_args(out);
-        }
         if let Some(deletion_policy) = self.deletion_policy.as_ref() {
             deletion_policy.write_redis_args(out);
+        }
+        if let Some(idempotency) = self.idempotency.as_ref() {
+            idempotency.write_redis_args(out);
+        }
+        if let Some(strategy) = self.trim.as_ref() {
+            strategy.write_redis_args(out);
         }
     }
 }
@@ -1428,6 +1538,69 @@ mod tests {
                 .trim(StreamTrimStrategy::maxlen(StreamTrimmingMode::Exact, 10));
 
             assert_command_eq(options, b"NOMKSTREAM MAXLEN = 10");
+        }
+
+        #[test]
+        fn with_idmp_manual_mode() {
+            let options = StreamAddOptions::default().idmp("producer-1", "iid-1");
+
+            assert_command_eq(options, b"IDMP producer-1 iid-1");
+        }
+
+        #[test]
+        fn with_idmpauto_automatic_mode() {
+            let options = StreamAddOptions::default().idmpauto("producer-1");
+
+            assert_command_eq(options, b"IDMPAUTO producer-1");
+        }
+
+        #[test]
+        fn with_nomkstream_and_idmp() {
+            let options = StreamAddOptions::default()
+                .nomkstream()
+                .idmp("producer-1", "iid-1");
+
+            assert_command_eq(options, b"NOMKSTREAM IDMP producer-1 iid-1");
+        }
+
+        #[test]
+        fn with_trim_and_idmp() {
+            let options = StreamAddOptions::default()
+                .trim(StreamTrimStrategy::maxlen(StreamTrimmingMode::Exact, 100))
+                .idmp("producer-1", "iid-1");
+
+            assert_command_eq(options, b"IDMP producer-1 iid-1 MAXLEN = 100");
+        }
+
+        #[test]
+        fn with_all_options_and_idmp() {
+            let options = StreamAddOptions::default()
+                .nomkstream()
+                .trim(StreamTrimStrategy::maxlen(StreamTrimmingMode::Approx, 100))
+                .idmp("producer-1", "iid-1")
+                .set_deletion_policy(StreamDeletionPolicy::KeepRef);
+
+            assert_command_eq(
+                options,
+                b"NOMKSTREAM KEEPREF IDMP producer-1 iid-1 MAXLEN ~ 100",
+            );
+        }
+
+        #[test]
+        fn with_all_options_and_idmpauto() {
+            let options = StreamAddOptions::default()
+                .nomkstream()
+                .trim(StreamTrimStrategy::minid(
+                    StreamTrimmingMode::Exact,
+                    "123456-0",
+                ))
+                .idmpauto("producer-2")
+                .set_deletion_policy(StreamDeletionPolicy::DelRef);
+
+            assert_command_eq(
+                options,
+                b"NOMKSTREAM DELREF IDMPAUTO producer-2 MINID = 123456-0",
+            );
         }
     }
 }

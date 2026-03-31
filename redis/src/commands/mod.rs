@@ -2079,8 +2079,13 @@ implement_commands! {
     /// map.insert("ij", "kl");
     /// ```
     ///
+    /// Supports idempotent message production for preventing duplicate entries.
+    ///
+    /// [Idempotency Docs](https://redis.io/docs/latest/develop/data-types/streams/idempotency/)
+    /// See [`StreamAddOptions::idmp`] and [`StreamAddOptions::idmpauto`] for more details.
+    ///
     /// ```text
-    /// XADD key [NOMKSTREAM] [<MAXLEN|MINID> [~|=] threshold [LIMIT count]] <* | ID> field value [field value] [KEEPREF | DELREF | ACKED] ...
+    /// XADD key [NOMKSTREAM] [KEEPREF | DELREF | ACKED] [IDMPAUTO pid | IDMP pid iid] [<MAXLEN|MINID> [~|=] threshold [LIMIT count]] <* | ID> field value [field value]  ...
     /// ```
     /// [Redis Docs](https://redis.io/commands/XADD)
     #[cfg(feature = "streams")]
