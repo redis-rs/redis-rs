@@ -192,7 +192,7 @@ rand = "0.9"
 rustls = { version = "0.23", features = ["ring"] }
 test-macros = { path = "../test-macros" }
 assert_matches = "1.5.0"
-env_logger = "0.11.8"
+env_logger = "0.11.10"
 
 [[test]]
 name = "test_async"
