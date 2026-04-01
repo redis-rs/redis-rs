@@ -14,7 +14,7 @@ use crate::{
 use arc_swap::ArcSwap;
 use backon::{ExponentialBuilder, Retryable};
 use futures_channel::oneshot;
-use futures_util::future::{self, BoxFuture, FutureExt, Shared};
+use futures_util::future::{BoxFuture, FutureExt, Shared};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -405,7 +405,6 @@ impl ConnectionManager {
     /// the Tokio executor.
     pub async fn new(client: Client) -> RedisResult<Self> {
         let config = ConnectionManagerConfig::new();
-
         Self::new_with_config(client, config).await
     }
 
@@ -424,7 +423,27 @@ impl ConnectionManager {
         client: Client,
         config: ConnectionManagerConfig,
     ) -> RedisResult<Self> {
-        // Create a MultiplexedConnection and wait for it to be established
+        // Create the lazy connection manager
+        let manager = Self::new_lazy_with_config(client, config)?;
+
+        // Trigger the connection by loading and awaiting it
+        let guard = manager.0.connection.load();
+        (**guard).clone().await.map_err(|e| e.clone())?;
+
+        Ok(manager)
+    }
+
+    /// Creates a `ConnectionManager` with config without establishing a connection.
+    ///
+    /// The connection will be established lazily on the first request.
+    /// This is a synchronous function that returns immediately.
+    ///
+    /// This requires the `connection-manager` feature, which will also pull in
+    /// the Tokio executor.
+    pub fn new_lazy_with_config(
+        client: Client,
+        config: ConnectionManagerConfig,
+    ) -> RedisResult<Self> {
         let runtime = Runtime::locate();
 
         if config.resubscribe_automatically && config.push_sender.is_none() {
@@ -485,17 +504,32 @@ impl ConnectionManager {
                 connection_config.set_push_sender_internal(Arc::new(internal_sender));
         }
 
-        let connection =
-            Self::new_connection(&client, retry_strategy, &connection_config, None).await?;
         let subscription_tracker = if config.resubscribe_automatically {
             Some(Mutex::new(SubscriptionTracker::default()))
         } else {
             None
         };
 
+        let client_clone = client.clone();
+        let retry_strategy_clone = retry_strategy;
+        let connection_config_clone = connection_config.clone();
+
+        // Create a lazy connection future that will be resolved on first use
+        let lazy_connection: SharedRedisFuture<MultiplexedConnection> = async move {
+            Self::new_connection(
+                &client_clone,
+                retry_strategy_clone,
+                &connection_config_clone,
+                None,
+            )
+            .await
+        }
+        .boxed()
+        .shared();
+
         let new_self = Self(Arc::new(Internals {
             client,
-            connection: ArcSwap::from_pointee(future::ok(connection).boxed().shared()),
+            connection: ArcSwap::from_pointee(lazy_connection),
             runtime,
             retry_strategy,
             connection_config,
@@ -801,5 +835,25 @@ mod tests {
     fn test_connection_manager_config_pipeline_buffer_size_custom() {
         let config = ConnectionManagerConfig::new().set_pipeline_buffer_size(100);
         assert_eq!(config.pipeline_buffer_size, Some(100));
+    }
+
+    #[test]
+    fn test_lazy_connection_manager_with_config() {
+        // Test that lazy connection manager can be created with custom config
+        let client = Client::open("redis://127.0.0.1/").unwrap();
+        let config = ConnectionManagerConfig::new()
+            .set_pipeline_buffer_size(100)
+            .set_number_of_retries(3);
+        let result = ConnectionManager::new_lazy_with_config(client, config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_lazy_connection_manager_rejects_invalid_config() {
+        // Test that lazy connection manager rejects invalid configuration
+        let client = Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
+        let config = ConnectionManagerConfig::new().set_automatic_resubscription(); // This requires a push sender
+        let result = ConnectionManager::new_lazy_with_config(client, config);
+        assert_matches::assert_matches!(result, Err(err) if err.kind() == crate::ErrorKind::Client);
     }
 }
