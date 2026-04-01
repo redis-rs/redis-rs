@@ -464,7 +464,7 @@ impl ClusterClientBuilder {
     ///
     /// You can implement your own `ReadRoutingStrategy` using the provided traits.
     ///
-    /// For strategies that need cross-connection shared state (e.g. latency tracking),
+    /// For strategies that need to maintain shared state, such as cross-connection latency tracking,
     /// implement `ReadRoutingStrategyFactory` directly.
     ///
     /// # Examples

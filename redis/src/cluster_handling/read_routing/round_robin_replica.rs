@@ -1,7 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-
-use arc_swap::ArcSwap;
+use std::sync::{Arc, RwLock};
 
 use super::interface::{ClusterTopology, ReadCandidates, ReadRoutingStrategy};
 use crate::cluster_handling::NodeAddress;
@@ -20,7 +18,7 @@ struct SlotCounters {
 /// ensures that reads to different shards rotate independently — a hot shard
 /// won't skew the rotation for other shards.
 pub struct RoundRobinReplicaStrategy {
-    state: Arc<ArcSwap<SlotCounters>>,
+    state: Arc<RwLock<SlotCounters>>,
 }
 
 impl RoundRobinReplicaStrategy {
@@ -33,7 +31,7 @@ impl RoundRobinReplicaStrategy {
 impl Default for RoundRobinReplicaStrategy {
     fn default() -> Self {
         Self {
-            state: Arc::new(ArcSwap::from_pointee(SlotCounters {
+            state: Arc::new(RwLock::new(SlotCounters {
                 slots: SlotRangeMap::new(),
             })),
         }
@@ -49,17 +47,20 @@ impl ReadRoutingStrategy for RoundRobinReplicaStrategy {
                 slots.insert(start, end, Arc::clone(&counter));
             }
         }
-        self.state.store(Arc::new(SlotCounters { slots }));
+        let mut state = self.state.write().expect("Lock poisoned");
+        state.slots = slots;
     }
 
     fn route_read<'a>(&self, candidates: &ReadCandidates<'a>) -> &'a NodeAddress {
-        let state = self.state.load();
         let slot = candidates.slot();
-        let idx = state
-            .slots
-            .get(slot)
-            .map(|counter| counter.fetch_add(1, Ordering::Relaxed))
-            .unwrap_or(0);
+        let idx = {
+            let state = self.state.read().expect("Lock poisoned");
+            state
+                .slots
+                .get(slot)
+                .map(|counter| counter.fetch_add(1, Ordering::Relaxed))
+                .unwrap_or(0)
+        };
 
         let replicas = match candidates {
             ReadCandidates::AnyNode(c) => c.replicas(),

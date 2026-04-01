@@ -9,7 +9,7 @@
 //! **Warning:** This example is illustrative — it shows what a more complex
 //! routing strategy might look like, but it has not undergone extensive testing.
 //! Due diligence should be used before adopting it as a strategy for actual
-//! use.
+//! use. Notably, handling of connection drops/ping failures is not particularly robust.
 //!
 //! Run with a Redis Cluster available:
 //!
