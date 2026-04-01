@@ -1943,4 +1943,101 @@ mod basic_async {
             check_unwatched(&mut con.clone()).await;
         }
     }
+
+    #[cfg(feature = "connection-manager")]
+    mod lazy_connection_manager {
+        use super::*;
+
+        #[async_test]
+        async fn lazy_connection_manager_can_be_created_synchronously() {
+            let ctx = TestContext::new();
+
+            let config = redis::aio::ConnectionManagerConfig::new()
+                .set_pipeline_buffer_size(100)
+                .set_number_of_retries(3);
+
+            let manager = ctx.client.get_connection_manager_lazy(config).unwrap();
+
+            let mut manager = manager;
+            let _: () = manager.set("key", "value").await.unwrap();
+            let result: String = manager.get("key").await.unwrap();
+            assert_eq!(result, "value");
+        }
+
+        #[async_test]
+        async fn lazy_connection_manager_reconnects_after_disconnect() {
+            let ctx = TestContext::new();
+
+            let max_delay_between_attempts = Duration::from_millis(2);
+            let config = redis::aio::ConnectionManagerConfig::new()
+                .set_max_delay(max_delay_between_attempts);
+
+            let mut manager = ctx.client.get_connection_manager_lazy(config).unwrap();
+
+            let _: () = manager.set("key", "value").await.unwrap();
+
+            let addr = ctx.server.client_addr().clone();
+            drop(ctx);
+
+            let result: RedisResult<String> = manager.get("key").await;
+            assert!(result.is_err());
+
+            let _ctx = TestContext::new_with_addr(addr);
+
+            for _ in 0..10 {
+                sleep(Duration::from_millis(10).into()).await;
+                if manager.set::<_, _, ()>("key2", "value2").await.is_ok() {
+                    let result: String = manager.get("key2").await.unwrap();
+                    assert_eq!(result, "value2");
+                    return;
+                }
+            }
+            panic!("Failed to reconnect after multiple attempts");
+        }
+
+        #[async_test]
+        async fn lazy_connection_manager_can_be_cloned_before_sending() {
+            let ctx = TestContext::new();
+
+            let config = redis::aio::ConnectionManagerConfig::new();
+            let manager = ctx.client.get_connection_manager_lazy(config).unwrap();
+            let mut manager1 = manager.clone();
+            let mut manager2 = manager;
+
+            let _: () = manager1.set("key1", "value1").await.unwrap();
+            let _: () = manager2.set("key2", "value2").await.unwrap();
+
+            let result1: String = manager1.get("key2").await.unwrap();
+            let result2: String = manager2.get("key1").await.unwrap();
+
+            assert_eq!(result1, "value2");
+            assert_eq!(result2, "value1");
+        }
+
+        #[async_test]
+        async fn lazy_connection_manager_with_resp3_push() {
+            let ctx = TestContext::new();
+            if !ctx.protocol.supports_resp3() {
+                return;
+            }
+
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let config = redis::aio::ConnectionManagerConfig::new().set_push_sender(tx);
+
+            let mut manager = ctx.client.get_connection_manager_lazy(config).unwrap();
+
+            let _: () = manager.set("key", "value").await.unwrap();
+
+            manager
+                .send_packed_command(cmd("CLIENT").arg("TRACKING").arg("ON"))
+                .await
+                .unwrap();
+
+            let _: String = manager.get("key").await.unwrap();
+            let _: () = manager.set("key", "new_value").await.unwrap();
+
+            let push = rx.recv().await.unwrap();
+            assert_eq!(push.kind, PushKind::Invalidate);
+        }
+    }
 }

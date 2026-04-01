@@ -454,6 +454,20 @@ impl Client {
         crate::aio::ConnectionManager::new(self.clone()).await
     }
 
+    /// Returns an async [`ConnectionManager`][connection-manager] from the client without establishing a connection.
+    ///
+    /// The connection will be established lazily on the first request.
+    ///
+    /// [connection-manager]: aio/struct.ConnectionManager.html
+    #[cfg(feature = "connection-manager")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
+    pub fn get_connection_manager_lazy(
+        &self,
+        config: crate::aio::ConnectionManagerConfig,
+    ) -> RedisResult<crate::aio::ConnectionManager> {
+        crate::aio::ConnectionManager::new_lazy_with_config(self.clone(), config)
+    }
+
     /// Returns an async [`ConnectionManager`][connection-manager] from the client.
     ///
     /// The connection manager wraps a
