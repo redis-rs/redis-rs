@@ -687,8 +687,7 @@ impl MultiplexedConnection {
                                 if err.is_connection_dropped() {
                                     // The underlying TCP connection is already dead (e.g. broken
                                     // pipe). Don't mark as re-auth failure — the connection will
-                                    // surface its own IO error on the next command, letting the
-                                    // cluster driver reconnect normally.
+                                    // surface its own IO error on the next command.
                                     warn!("Re-authentication skipped, connection is dead: {err}");
                                     connection_dead = true;
                                     break;
@@ -707,11 +706,9 @@ impl MultiplexedConnection {
                         }
                     }
                 }
-                if !connection_dead
-                    && !re_authentication_failed_arc.load(Ordering::Relaxed)
-                {
+                if !connection_dead && !re_authentication_failed_arc.load(Ordering::Relaxed) {
                     if !error_cause_logged {
-                        warn!("Re-authentication stream ended.");
+                        error!("Re-authentication stream ended unexpectedly.");
                     }
                     re_authentication_failed_arc.store(true, Ordering::Relaxed);
                 }
