@@ -937,26 +937,6 @@ impl Routable for Value {
     }
 }
 
-#[derive(Debug, Hash, Clone)]
-pub(crate) struct Slot {
-    pub(crate) start: u16,
-    pub(crate) end: u16,
-    pub(crate) master: String,
-    pub(crate) replicas: Vec<String>,
-}
-
-impl Slot {
-    #[allow(dead_code)] // used in tests
-    pub(crate) fn master(&self) -> &str {
-        self.master.as_str()
-    }
-
-    #[allow(dead_code)] // used in tests
-    pub(crate) fn replicas(&self) -> Vec<String> {
-        self.replicas.clone()
-    }
-}
-
 /// What type of node should a request be routed to, assuming read from replica is enabled.
 #[derive(Eq, PartialEq, Clone, Copy, Debug, Hash)]
 #[non_exhaustive]

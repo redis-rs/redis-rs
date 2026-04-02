@@ -22,6 +22,7 @@ mod cluster_async {
         aio::{ConnectionLike, MultiplexedConnection},
         cluster::ClusterClient,
         cluster_async::Connect,
+        cluster_read_routing::{RandomReplicaStrategy, RoundRobinReplicaStrategy},
         cluster_routing::{
             MultipleNodeRoutingInfo, ResponsePolicy, Route, RoutingInfo, SingleNodeRoutingInfo,
             SlotAddr,
@@ -277,7 +278,7 @@ mod cluster_async {
             .map(|server| server.connection_info())
             .collect();
         let client = ClusterClient::builder(cluster_addresses.clone())
-            .read_from_replicas()
+            .read_routing_strategy(RandomReplicaStrategy)
             .build()
             .unwrap();
         let mut connection = client.get_async_connection().await.unwrap();
@@ -1216,8 +1217,8 @@ mod cluster_async {
     }
 
     #[test]
-    fn test_async_cluster_replica_read() {
-        let name = "test_async_cluster_replica_read";
+    fn test_async_cluster_random_replica_read() {
+        let name = "test_async_cluster_random_replica_read";
 
         // requests should route to replica
         let MockEnv {
@@ -1228,7 +1229,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |cmd: &[u8], port| {
                 respond_startup_with_replica(name, cmd)?;
@@ -1255,7 +1256,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |cmd: &[u8], port| {
                 respond_startup_with_replica(name, cmd)?;
@@ -1273,6 +1274,69 @@ mod cluster_async {
                 .query_async::<Option<Value>>(&mut connection),
         );
         assert_eq!(value, Ok(Some(redis_value!(simple:"OK"))));
+    }
+
+    #[test]
+    fn test_async_cluster_round_robin_read() {
+        let name = "test_async_cluster_round_robin_read";
+        let ports = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let ports_clone = ports.clone();
+
+        // Two shards, each with two replicas.
+        // Shard 1 (slots 0..8192):    primary 6379, replicas 6380, 6381
+        // Shard 2 (slots 8192..16384): primary 6382, replicas 6383, 6384
+        let slots_config = vec![
+            MockSlotRange {
+                primary_port: 6379,
+                replica_ports: vec![6380, 6381],
+                slot_range: 0..8192,
+            },
+            MockSlotRange {
+                primary_port: 6382,
+                replica_ports: vec![6383, 6384],
+                slot_range: 8192..16384,
+            },
+        ];
+
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .retries(0)
+                .read_routing_strategy(RoundRobinReplicaStrategy::new()),
+            name,
+            move |cmd: &[u8], port| {
+                respond_startup_with_replica_using_config(name, cmd, Some(slots_config.clone()))?;
+                if contains_slice(cmd, b"GET") {
+                    ports_clone.lock().unwrap().push(port);
+                    return Err(Ok(redis_value!("123")));
+                }
+                Ok(())
+            },
+        );
+
+        // "test" hashes to slot 6918 → shard 1 (replicas 6380, 6381).
+        // "{foo}test" hashes to slot 12182 → shard 2 (replicas 6383, 6384).
+        // Interleave reads across both shards and verify each shard
+        // round-robins independently.
+        for key in [
+            "test",
+            "{foo}test",
+            "test",
+            "{foo}test",
+            "test",
+            "{foo}test",
+        ] {
+            let _: Option<i32> = runtime
+                .block_on(cmd("GET").arg(key).query_async(&mut connection))
+                .unwrap();
+        }
+
+        let recorded = ports.lock().unwrap().clone();
+        assert_eq!(recorded, vec![6380, 6383, 6381, 6384, 6380, 6383]);
     }
 
     fn test_async_cluster_fan_out(
@@ -1297,7 +1361,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(
@@ -1407,7 +1471,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |cmd: &[u8], port| {
                 respond_startup_with_replica(name, cmd)?;
@@ -1469,7 +1533,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -1504,7 +1568,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -1538,7 +1602,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -1572,7 +1636,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |received_cmd: &[u8], _| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -1599,7 +1663,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |received_cmd: &[u8], _port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -1630,7 +1694,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |received_cmd: &[u8], _port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -1656,7 +1720,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -1689,7 +1753,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -1719,7 +1783,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -1756,7 +1820,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -1788,7 +1852,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -1826,7 +1890,8 @@ mod cluster_async {
             handler: _handler,
             ..
         } = MockEnv::with_client_builder(
-            ClusterClient::builder(vec![&*format!("redis://{name}")]).read_from_replicas(),
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -1977,7 +2042,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |received_cmd: &[u8], _| {
                 respond_startup_with_replica_using_config(
