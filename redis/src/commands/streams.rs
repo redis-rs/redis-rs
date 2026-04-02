@@ -216,6 +216,147 @@ impl ToRedisArgs for StreamIdempotencyMode {
     }
 }
 
+/// Minimum value for IDMP-DURATION parameter (1 second)
+pub const IDMP_DURATION_MIN: u32 = 1;
+/// Maximum value for IDMP-DURATION parameter (86400 seconds = 24 hours)
+pub const IDMP_DURATION_MAX: u32 = 86400;
+/// Minimum value for IDMP-MAXSIZE parameter (1 entry)
+pub const IDMP_MAXSIZE_MIN: u16 = 1;
+/// Maximum value for IDMP-MAXSIZE parameter (10000 entries)
+pub const IDMP_MAXSIZE_MAX: u16 = 10000;
+
+/// Configuration options for [`xcfgset`] command
+///
+/// Configures idempotency parameters for a stream.
+/// Use the constructor methods to create an instance with at least one parameter set,
+/// or use the setter methods to add parameters to an existing instance.
+///
+/// [`xcfgset`]: ../trait.Commands.html#method.xcfgset
+///
+/// # Example
+/// ```no_run
+/// use redis::{Commands, streams::StreamConfigOptions};
+/// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+/// # let mut con = client.get_connection().unwrap();
+///
+/// // Create with duration, optionally add maxsize
+/// let opts1 = StreamConfigOptions::with_duration(300)
+///     .unwrap()
+///     .maxsize(1000)
+///     .unwrap();
+/// let _: String = con.xcfgset("key", &opts1).unwrap();
+///
+/// // Or create with maxsize only and optionally add duration
+/// let opts2 = StreamConfigOptions::with_maxsize(500)
+///     .unwrap()
+///     .duration(300)
+///     .unwrap();
+/// let _: String = con.xcfgset("key", &opts2).unwrap();
+/// ```
+#[derive(Debug)]
+pub struct StreamConfigOptions {
+    /// Duration in seconds that each idempotent ID is kept
+    ///
+    /// Valid range: `1..=86400` (see [`IDMP_DURATION_MIN`] and [`IDMP_DURATION_MAX`])
+    idmp_duration: Option<u32>,
+    /// Maximum number of idempotent IDs kept per producer
+    ///
+    /// Valid range: `1..=10000` (see [`IDMP_MAXSIZE_MIN`] and [`IDMP_MAXSIZE_MAX`])
+    idmp_maxsize: Option<u16>,
+}
+
+impl StreamConfigOptions {
+    /// Create configuration options with IDMP-DURATION parameter
+    ///
+    /// Sets the duration in seconds that each idempotent ID (iid) is kept
+    /// in the stream's IDMP map. Default: 100 seconds.
+    ///
+    /// # Errors
+    /// Returns an error if seconds is not in the valid range `1..=86400`
+    /// (see [`IDMP_DURATION_MIN`] and [`IDMP_DURATION_MAX`])
+    pub fn with_duration(seconds: u32) -> Result<Self, String> {
+        if !(IDMP_DURATION_MIN..=IDMP_DURATION_MAX).contains(&seconds) {
+            return Err(format!(
+                "IDMP-DURATION must be between {} and {} seconds, got: {}",
+                IDMP_DURATION_MIN, IDMP_DURATION_MAX, seconds
+            ));
+        }
+        Ok(Self {
+            idmp_duration: Some(seconds),
+            idmp_maxsize: None,
+        })
+    }
+
+    /// Create configuration options with IDMP-MAXSIZE parameter
+    ///
+    /// Sets the maximum number of most recent idempotent IDs kept for each
+    /// producer in the stream's IDMP map. Default: 100 entries.
+    ///
+    /// # Errors
+    /// Returns an error if size is not in the valid range `1..=10000`
+    /// (see [`IDMP_MAXSIZE_MIN`] and [`IDMP_MAXSIZE_MAX`])
+    pub fn with_maxsize(size: u16) -> Result<Self, String> {
+        if !(IDMP_MAXSIZE_MIN..=IDMP_MAXSIZE_MAX).contains(&size) {
+            return Err(format!(
+                "IDMP-MAXSIZE must be between {} and {} entries, got: {}",
+                IDMP_MAXSIZE_MIN, IDMP_MAXSIZE_MAX, size
+            ));
+        }
+        Ok(Self {
+            idmp_duration: None,
+            idmp_maxsize: Some(size),
+        })
+    }
+
+    /// Set or update the IDMP-DURATION parameter
+    ///
+    /// # Errors
+    /// Returns an error if seconds is not in the valid range `1..=86400`
+    /// (see [`IDMP_DURATION_MIN`] and [`IDMP_DURATION_MAX`])
+    pub fn duration(mut self, seconds: u32) -> Result<Self, String> {
+        if !(IDMP_DURATION_MIN..=IDMP_DURATION_MAX).contains(&seconds) {
+            return Err(format!(
+                "IDMP-DURATION must be between {} and {} seconds, got: {}",
+                IDMP_DURATION_MIN, IDMP_DURATION_MAX, seconds
+            ));
+        }
+        self.idmp_duration = Some(seconds);
+        Ok(self)
+    }
+
+    /// Set or update the IDMP-MAXSIZE parameter
+    ///
+    /// # Errors
+    /// Returns an error if size is not in the valid range `1..=10000`
+    /// (see [`IDMP_MAXSIZE_MIN`] and [`IDMP_MAXSIZE_MAX`])
+    pub fn maxsize(mut self, size: u16) -> Result<Self, String> {
+        if !(IDMP_MAXSIZE_MIN..=IDMP_MAXSIZE_MAX).contains(&size) {
+            return Err(format!(
+                "IDMP-MAXSIZE must be between {} and {} entries, got: {}",
+                IDMP_MAXSIZE_MIN, IDMP_MAXSIZE_MAX, size
+            ));
+        }
+        self.idmp_maxsize = Some(size);
+        Ok(self)
+    }
+}
+
+impl ToRedisArgs for StreamConfigOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if let Some(duration) = self.idmp_duration {
+            out.write_arg(b"IDMP-DURATION");
+            out.write_arg(duration.to_string().as_bytes());
+        }
+        if let Some(maxsize) = self.idmp_maxsize {
+            out.write_arg(b"IDMP-MAXSIZE");
+            out.write_arg(maxsize.to_string().as_bytes());
+        }
+    }
+}
+
 /// Builder options for [`xadd_options`] command
 ///
 /// [`xadd_options`]: ../trait.Commands.html#method.xadd_options
@@ -693,7 +834,11 @@ pub struct StreamPendingCountReply {
 /// The very first and last IDs in the stream are shown,
 /// in order to give some sense about what is the stream content.
 ///
+/// **Note:** For Redis 8.6+ idempotency tracking fields, use [`StreamInfoStreamReplyWithIdempotency`]
+/// via the [`xinfo_stream_with_idempotency`] command instead.
+///
 /// [`xinfo_stream`]: ../trait.Commands.html#method.xinfo_stream
+/// [`xinfo_stream_with_idempotency`]: ../trait.Commands.html#method.xinfo_stream_with_idempotency
 ///
 #[derive(Default, Debug, Clone)]
 pub struct StreamInfoStreamReply {
@@ -711,6 +856,53 @@ pub struct StreamInfoStreamReply {
     pub first_entry: StreamId,
     /// The very last entry in the stream.
     pub last_entry: StreamId,
+}
+
+// TODO: Remove this type and extend StreamInfoStreamReply when creating the next major release.
+/// Reply type used with [`xinfo_stream_with_idempotency`] command (Redis 8.6+).
+///
+/// This type composes [`StreamInfoStreamReply`] with additional idempotency tracking fields
+/// introduced in Redis 8.6.
+///
+/// The base stream information is accessible via the `base` field, while idempotency
+/// fields are directly available as top-level fields.
+///
+/// [`xinfo_stream_with_idempotency`]: ../trait.Commands.html#method.xinfo_stream_with_idempotency
+///
+/// # Example
+/// ```no_run
+/// use redis::{Commands, streams::StreamInfoStreamReplyWithIdempotency};
+/// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+/// # let mut con = client.get_connection().unwrap();
+///
+/// let info: StreamInfoStreamReplyWithIdempotency = con.xinfo_stream_with_idempotency("stream").unwrap();
+///
+/// // Access base stream info
+/// println!("Stream length: {}", info.base.length);
+/// println!("Last ID: {}", info.base.last_generated_id);
+///
+/// // Access idempotency tracking (Redis 8.6+)
+/// println!("Producers tracked: {}", info.pids_tracked);
+/// println!("Idempotent IDs tracked: {}", info.iids_tracked);
+/// println!("Duplicates prevented: {}", info.iids_duplicates);
+/// ```
+#[derive(Default, Debug, Clone)]
+#[non_exhaustive]
+pub struct StreamInfoStreamReplyWithIdempotency {
+    /// Base stream information
+    pub base: StreamInfoStreamReply,
+    /// The duration in seconds that idempotent IDs are retained in the stream's IDMP map
+    pub idmp_duration: u32,
+    /// The maximum number of idempotent IDs kept for each producer in the stream's IDMP map
+    pub idmp_maxsize: u16,
+    /// The number of unique producer IDs currently being tracked
+    pub pids_tracked: usize,
+    /// The total number of idempotent IDs currently stored across all producers
+    pub iids_tracked: usize,
+    /// The total count of idempotent IDs that have been added to the stream during its lifetime
+    pub iids_added: usize,
+    /// The total count of duplicate messages that were detected and prevented by IDMP
+    pub iids_duplicates: usize,
 }
 
 /// Reply type used with [`xinfo_consumer`] command, an array of every
@@ -1160,6 +1352,60 @@ impl FromRedisValue for StreamInfoStreamReply {
     }
 }
 
+impl FromRedisValue for StreamInfoStreamReplyWithIdempotency {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        let mut map: HashMap<String, Value> = from_redis_value(v)?;
+
+        // Parse base fields into the composed StreamInfoStreamReply
+        let mut base = StreamInfoStreamReply::default();
+        if let Some(v) = map.remove("last-generated-id") {
+            base.last_generated_id = from_redis_value(v)?;
+        }
+        if let Some(v) = map.remove("radix-tree-nodes") {
+            base.radix_tree_keys = from_redis_value(v)?;
+        }
+        if let Some(v) = map.remove("groups") {
+            base.groups = from_redis_value(v)?;
+        }
+        if let Some(v) = map.remove("length") {
+            base.length = from_redis_value(v)?;
+        }
+        if let Some(v) = map.remove("first-entry") {
+            base.first_entry = StreamId::from_array_value(v)?;
+        }
+        if let Some(v) = map.remove("last-entry") {
+            base.last_entry = StreamId::from_array_value(v)?;
+        }
+
+        // Parse idempotency fields
+        let mut reply = StreamInfoStreamReplyWithIdempotency {
+            base,
+            ..Default::default()
+        };
+
+        if let Some(v) = map.remove("idmp-duration") {
+            reply.idmp_duration = from_redis_value(v)?;
+        }
+        if let Some(v) = map.remove("idmp-maxsize") {
+            reply.idmp_maxsize = from_redis_value(v)?;
+        }
+        if let Some(v) = map.remove("pids-tracked") {
+            reply.pids_tracked = from_redis_value(v)?;
+        }
+        if let Some(v) = map.remove("iids-tracked") {
+            reply.iids_tracked = from_redis_value(v)?;
+        }
+        if let Some(v) = map.remove("iids-added") {
+            reply.iids_added = from_redis_value(v)?;
+        }
+        if let Some(v) = map.remove("iids-duplicates") {
+            reply.iids_duplicates = from_redis_value(v)?;
+        }
+
+        Ok(reply)
+    }
+}
+
 impl FromRedisValue for StreamInfoConsumersReply {
     fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let consumers: Vec<HashMap<String, Value>> = from_redis_value(v)?;
@@ -1601,6 +1847,124 @@ mod tests {
                 options,
                 b"NOMKSTREAM DELREF IDMPAUTO producer-2 MINID = 123456-0",
             );
+        }
+    }
+
+    mod stream_config_options {
+        use super::*;
+
+        #[test]
+        fn with_duration_only() {
+            let options = StreamConfigOptions::with_duration(300).unwrap();
+            assert_command_eq(options, b"IDMP-DURATION 300");
+        }
+
+        #[test]
+        fn with_maxsize_only() {
+            let options = StreamConfigOptions::with_maxsize(1000).unwrap();
+            assert_command_eq(options, b"IDMP-MAXSIZE 1000");
+        }
+
+        #[test]
+        fn with_both_starting_duration() {
+            let options = StreamConfigOptions::with_duration(300)
+                .unwrap()
+                .maxsize(1000)
+                .unwrap();
+            assert_command_eq(options, b"IDMP-DURATION 300 IDMP-MAXSIZE 1000");
+        }
+
+        #[test]
+        fn with_both_starting_maxsize() {
+            let options = StreamConfigOptions::with_maxsize(1000)
+                .unwrap()
+                .duration(300)
+                .unwrap();
+            assert_command_eq(options, b"IDMP-DURATION 300 IDMP-MAXSIZE 1000");
+        }
+
+        #[test]
+        fn with_max_values() {
+            let options = StreamConfigOptions::with_duration(IDMP_DURATION_MAX)
+                .unwrap()
+                .maxsize(IDMP_MAXSIZE_MAX)
+                .unwrap();
+            assert_command_eq(
+                options,
+                format!("IDMP-DURATION {IDMP_DURATION_MAX} IDMP-MAXSIZE {IDMP_MAXSIZE_MAX}")
+                    .as_bytes(),
+            );
+        }
+
+        #[test]
+        fn with_min_values() {
+            let options = StreamConfigOptions::with_duration(IDMP_DURATION_MIN)
+                .unwrap()
+                .maxsize(IDMP_MAXSIZE_MIN)
+                .unwrap();
+            assert_command_eq(
+                options,
+                format!("IDMP-DURATION {IDMP_DURATION_MIN} IDMP-MAXSIZE {IDMP_MAXSIZE_MIN}")
+                    .as_bytes(),
+            );
+        }
+
+        #[test]
+        fn error_duration_too_low() {
+            let result = StreamConfigOptions::with_duration(IDMP_DURATION_MIN - 1);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains(&format!(
+                "must be between {IDMP_DURATION_MIN} and {IDMP_DURATION_MAX}"
+            )));
+        }
+
+        #[test]
+        fn error_duration_too_high() {
+            let result = StreamConfigOptions::with_duration(IDMP_DURATION_MAX + 1);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains(&format!(
+                "must be between {IDMP_DURATION_MIN} and {IDMP_DURATION_MAX}"
+            )));
+        }
+
+        #[test]
+        fn error_maxsize_too_low() {
+            let result = StreamConfigOptions::with_maxsize(IDMP_MAXSIZE_MIN - 1);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains(&format!(
+                "must be between {IDMP_MAXSIZE_MIN} and {IDMP_MAXSIZE_MAX}"
+            )));
+        }
+
+        #[test]
+        fn error_maxsize_too_high() {
+            let result = StreamConfigOptions::with_maxsize(IDMP_MAXSIZE_MAX + 1);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains(&format!(
+                "must be between {IDMP_MAXSIZE_MIN} and {IDMP_MAXSIZE_MAX}"
+            )));
+        }
+
+        #[test]
+        fn error_setter_duration_too_low() {
+            let result = StreamConfigOptions::with_maxsize(100)
+                .unwrap()
+                .duration(IDMP_DURATION_MIN - 1);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains(&format!(
+                "must be between {IDMP_DURATION_MIN} and {IDMP_DURATION_MAX}"
+            )));
+        }
+
+        #[test]
+        fn error_setter_maxsize_too_high() {
+            let result = StreamConfigOptions::with_duration(100)
+                .unwrap()
+                .maxsize(IDMP_MAXSIZE_MAX + 1);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains(&format!(
+                "must be between {IDMP_MAXSIZE_MIN} and {IDMP_MAXSIZE_MAX}"
+            )));
         }
     }
 }

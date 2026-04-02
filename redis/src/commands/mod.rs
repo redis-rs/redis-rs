@@ -2082,7 +2082,7 @@ implement_commands! {
     /// Supports idempotent message production for preventing duplicate entries.
     ///
     /// [Idempotency Docs](https://redis.io/docs/latest/develop/data-types/streams/idempotency/)
-    /// See [`StreamAddOptions::idmp`] and [`StreamAddOptions::idmpauto`] for more details.
+    /// See [`streams::StreamAddOptions::idmp`] and [`streams::StreamAddOptions::idmpauto`] for more details.
     ///
     /// ```text
     /// XADD key [NOMKSTREAM] [KEEPREF | DELREF | ACKED] [IDMPAUTO pid | IDMP pid iid] [<MAXLEN|MINID> [~|=] threshold [LIMIT count]] <* | ID> field value [field value]  ...
@@ -2492,8 +2492,9 @@ implement_commands! {
     /// (first & last message `id`, length, number of groups, etc.)
     /// Take note of the StreamInfoStreamReply return type.
     ///
-    /// *It's possible this return value might not contain new fields
-    /// added by Redis in future versions.*
+    /// *It's possible this return value might not contain new fields added by Redis in future versions,
+    /// such as the idempotency fields introduced in Redis 8.6. For IDMP tracking statistics, use
+    /// [`xinfo_stream_with_idempotency`](Self::xinfo_stream_with_idempotency).*
     ///
     /// ```text
     /// XINFO STREAM <key>
@@ -2502,6 +2503,23 @@ implement_commands! {
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xinfo_stream<K: ToRedisArgs>(key: K) -> (streams::StreamInfoStreamReply) {
+        cmd("XINFO").arg("STREAM").arg(key).take()
+    }
+
+    // TODO: Remove this function when creating the next major release.
+    /// Returns stream info with idempotency tracking statistics (Redis 8.6+).
+    ///
+    /// This command returns [`StreamInfoStreamReplyWithIdempotency`](streams::StreamInfoStreamReplyWithIdempotency)
+    /// which composes [`StreamInfoStreamReply`](streams::StreamInfoStreamReply) (accessible via the `base` field)
+    /// and adds IDMP (Idempotent Message Processing) tracking fields.
+    ///
+    /// ```text
+    /// XINFO STREAM <key>
+    /// ```
+    /// [Redis Docs](https://redis.io/commands/XINFO-STREAM)
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xinfo_stream_with_idempotency<K: ToRedisArgs>(key: K) -> (streams::StreamInfoStreamReplyWithIdempotency) {
         cmd("XINFO").arg("STREAM").arg(key).take()
     }
 
@@ -2835,6 +2853,43 @@ implement_commands! {
         options: &'a streams::StreamTrimOptions
     ) -> usize {
         cmd("XTRIM").arg(key).arg(options).take()
+    }
+
+    /// Configure idempotency parameters for a stream
+    ///
+    /// Sets the IDMP configuration parameters for a stream. This command configures
+    /// how long idempotent IDs are retained and the maximum number of idempotent IDs
+    /// tracked per producer.
+    ///
+    /// **Note:** Calling XCFGSET clears all existing producer IDMP maps for the stream.
+    ///
+    /// ```text
+    /// XCFGSET key [IDMP-DURATION idmp-duration] [IDMP-MAXSIZE idmp-maxsize]
+    /// ```
+    /// [Redis Docs](https://redis.io/commands/XCFGSET)
+    ///
+    /// # Example
+    /// ```no_run
+    /// use redis::{Commands, streams::StreamConfigOptions};
+    /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    /// # let mut con = client.get_connection().unwrap();
+    ///
+    /// // Configure stream with 5 minute duration and max 1000 IDs per producer
+    /// // Valid ranges: IDMP-DURATION (1-86400), IDMP-MAXSIZE (1-10000)
+    /// let opts = StreamConfigOptions::with_duration(300)
+    ///     .unwrap()
+    ///     .maxsize(1000)
+    ///     .unwrap();
+    /// let result: String = con.xcfgset("key", &opts).unwrap();
+    /// assert_eq!(result, "OK");
+    /// ```
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xcfgset<K: ToRedisArgs>(
+        key: K,
+        options: &'a streams::StreamConfigOptions
+    ) -> String {
+        cmd("XCFGSET").arg(key).arg(options).take()
     }
 
     // script commands
