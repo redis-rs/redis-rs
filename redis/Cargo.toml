@@ -250,23 +250,23 @@ required-features = ["acl"]
 
 [[example]]
 name = "async-await"
-required-features = ["aio"]
+required-features = ["tokio-comp"]
 
 [[example]]
 name = "async-resp2-pub-sub"
-required-features = ["aio"]
+required-features = ["tokio-comp"]
 
 [[example]]
 name = "async-resp3-pub-sub"
-required-features = ["aio", "connection-manager"]
+required-features = ["tokio-comp", "connection-manager"]
 
 [[example]]
 name = "async-scan"
-required-features = ["aio"]
+required-features = ["tokio-comp"]
 
 [[example]]
 name = "async-connection-loss"
-required-features = ["connection-manager"]
+required-features = ["tokio-comp", "connection-manager"]
 
 [[example]]
 name = "streams"
@@ -274,7 +274,7 @@ required-features = ["streams"]
 
 [[example]]
 name = "async-typed"
-required-features = ["aio"]
+required-features = ["tokio-comp"]
 
 [[example]]
 name = "typed"
