@@ -1,3 +1,8 @@
+### 1.0.3 (2026-04-04)
+
+* Track redis 1.2.0 release
+* Disable snapshotting when running Redis in tests ([#2010](https://github.com/redis-rs/redis-rs/pull/2010) by @somechris)
+
 ### 1.0.2 (2026-02-27)
 
 * Add redis! macro to support building Values ([#1966](https://github.com/redis-rs/redis-rs/pull/1966) by @somechris)
