@@ -47,9 +47,6 @@ pin-project-lite = { version = "0.2", optional = true }
 tokio-util = { version = "0.7", optional = true }
 async-lock = { version = "3", optional = true }
 tokio = { version = "1", features = [
-  "rt",
-  "net",
-  "time",
   "sync",
 ], optional = true }
 
@@ -136,7 +133,7 @@ tls-rustls-webpki-roots = ["tls-rustls", "dep:webpki-roots"]
 smol-comp = ["aio", "dep:smol", "dep:smol-timeout", "dep:async-io"]
 smol-native-tls-comp = ["smol-comp", "dep:async-native-tls", "tls-native-tls"]
 smol-rustls-comp = ["smol-comp", "dep:futures-rustls", "tls-rustls"]
-tokio-comp = ["aio", "tokio/net"]
+tokio-comp = ["aio", "tokio/net", "tokio/rt", "tokio/time"]
 tokio-native-tls-comp = ["tokio-comp", "tls-native-tls", "dep:tokio-native-tls"]
 tokio-rustls-comp = ["tokio-comp", "tls-rustls", "dep:tokio-rustls"]
 connection-manager = [
@@ -253,23 +250,23 @@ required-features = ["acl"]
 
 [[example]]
 name = "async-await"
-required-features = ["aio"]
+required-features = ["tokio-comp"]
 
 [[example]]
 name = "async-resp2-pub-sub"
-required-features = ["aio"]
+required-features = ["tokio-comp"]
 
 [[example]]
 name = "async-resp3-pub-sub"
-required-features = ["aio", "connection-manager"]
+required-features = ["tokio-comp", "connection-manager"]
 
 [[example]]
 name = "async-scan"
-required-features = ["aio"]
+required-features = ["tokio-comp"]
 
 [[example]]
 name = "async-connection-loss"
-required-features = ["connection-manager"]
+required-features = ["tokio-comp", "connection-manager"]
 
 [[example]]
 name = "streams"
@@ -277,7 +274,7 @@ required-features = ["streams"]
 
 [[example]]
 name = "async-typed"
-required-features = ["aio"]
+required-features = ["tokio-comp"]
 
 [[example]]
 name = "typed"
