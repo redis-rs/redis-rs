@@ -318,3 +318,9 @@ If the fuzzer finds a crash, in order to reproduce it, run:
 
     $ cd afl/<target>/
     $ cargo run --bin reproduce -- out/crashes/<crashfile>
+
+### AI contributions
+
+This is not a firm policy, but for the time being, PRs get evaluated on their
+contents, not on who (or what) wrote them. So AI contributions are not
+prohibited.
