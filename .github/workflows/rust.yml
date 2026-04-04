@@ -23,6 +23,7 @@ jobs:
       matrix: &db-matrix
         config: [
             # Different DB cases: (earliest and latest minor for each major version, with latest patch)
+            # When making changes here, also update `README.md` accordingly (grep for `CI runs against`).
             {  db-org: redis, db-name: redis, db-version: 6.2.21 },
             {  db-org: redis, db-name: redis, db-version: 7.0.15, json-module-version: v2.6.22 },
             {  db-org: redis, db-name: redis, db-version: 7.4.8, json-module-version: v2.6.22 },
