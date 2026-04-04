@@ -1,3 +1,14 @@
+### 1.2.0 (2026-04-04)
+
+#### Changes & Bug fixes
+
+* feat: support custom TcpSettings on sentinel client ([#2016](https://github.com/redis-rs/redis-rs/pull/2016) by @hugobpx)
+* Attempt to Fix CI ([#2017](https://github.com/redis-rs/redis-rs/pull/2017) by @nihohit)
+* Add lazy instantiation to the connection manager. ([#2022](https://github.com/redis-rs/redis-rs/pull/2022) by @nihohit)
+* Add strategies for routing reads to cluster replicas ([#1985](https://github.com/redis-rs/redis-rs/pull/1985) by @PDXKimani)
+* README: Add stanza about AI contributions ([#2033](https://github.com/redis-rs/redis-rs/pull/2033) by @somechris)
+* Don't compile tokio runtime when using smol ([#2036](https://github.com/redis-rs/redis-rs/pull/2036) by @cstyles)
+
 ### 1.1.0 (2026-03-20)
 
 #### Changes & Bug fixes
