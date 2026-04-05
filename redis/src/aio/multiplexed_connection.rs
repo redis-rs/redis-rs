@@ -16,10 +16,8 @@ use crate::{
     parser::ValueCodec,
     types::{RedisFuture, RedisResult, Value},
 };
-use ::tokio::{
-    io::{AsyncRead, AsyncWrite},
-    sync::{mpsc, oneshot},
-};
+use ::tokio::io::{AsyncRead, AsyncWrite};
+use futures_channel::{mpsc, oneshot};
 #[cfg(feature = "token-based-authentication")]
 use {
     arcstr::ArcStr,
@@ -29,8 +27,8 @@ use {
 use futures_util::{
     future::{Future, FutureExt},
     ready,
-    sink::Sink,
-    stream::{self, Stream, StreamExt},
+    sink::{Sink, SinkExt},
+    stream::{Stream, StreamExt},
 };
 use pin_project_lite::pin_project;
 use std::collections::VecDeque;
@@ -475,7 +473,7 @@ where
         // If initially a receiver was created, but then dropped, there is nothing to receive our output we do not need to send the message as it is
         // ambiguous whether the message will be sent anyway. Helps shed some load on the
         // connection.
-        if output.as_ref().is_some_and(|output| output.is_closed()) {
+        if output.as_ref().is_some_and(|output| output.is_canceled()) {
             return Ok(());
         }
 
@@ -566,7 +564,7 @@ impl Pipeline {
         T: Stream<Item = RedisResult<Value>>,
         T: Unpin + Send + 'static,
     {
-        let (sender, mut receiver) = mpsc::channel(buffer_size);
+        let (sender, receiver) = mpsc::channel(buffer_size);
 
         let sink = PipelineSink::new(
             sink_stream,
@@ -575,10 +573,7 @@ impl Pipeline {
             #[cfg(feature = "cache-aio")]
             cache_manager,
         );
-        let f = stream::poll_fn(move |cx| receiver.poll_recv(cx))
-            .map(Ok)
-            .forward(sink)
-            .map(|_| ());
+        let f = receiver.map(Ok).forward(sink).map(|_| ());
         (Self { sender }, f)
     }
 
@@ -597,28 +592,32 @@ impl Pipeline {
 
         let request = async {
             if skip_response {
-                self.sender
-                    .send(PipelineMessage {
+                SinkExt::send(
+                    &mut self.sender,
+                    PipelineMessage {
                         input,
                         expectation,
                         output: None,
-                    })
-                    .await
-                    .map_err(|_| None)?;
+                    },
+                )
+                .await
+                .map_err(|_| None)?;
 
                 return Ok(Value::Nil);
             }
 
             let (sender, receiver) = oneshot::channel();
 
-            self.sender
-                .send(PipelineMessage {
+            SinkExt::send(
+                &mut self.sender,
+                PipelineMessage {
                     input,
                     expectation,
                     output: Some(sender),
-                })
-                .await
-                .map_err(|_| None)?;
+                },
+            )
+            .await
+            .map_err(|_| None)?;
 
             receiver
                 .await
@@ -1071,7 +1070,7 @@ impl MultiplexedConnection {
     /// ```rust,no_run
     /// # async fn func() -> redis::RedisResult<()> {
     /// let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
-    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    /// let (tx, mut rx) = futures_channel::mpsc::unbounded();
     /// let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
     /// let mut con = client.get_multiplexed_async_connection_with_config(&config).await?;
     /// con.subscribe(&["channel_1", "channel_2"]).await?;
@@ -1089,7 +1088,7 @@ impl MultiplexedConnection {
     /// ```rust,no_run
     /// # async fn func() -> redis::RedisResult<()> {
     /// let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
-    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    /// let (tx, mut rx) = futures_channel::mpsc::unbounded();
     /// let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
     /// let mut con = client.get_multiplexed_async_connection_with_config(&config).await?;
     /// con.subscribe(&["channel_1", "channel_2"]).await?;
@@ -1111,7 +1110,7 @@ impl MultiplexedConnection {
     /// ```rust,no_run
     /// # async fn func() -> redis::RedisResult<()> {
     /// let client = redis::Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
-    /// let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    /// let (tx, mut rx) = futures_channel::mpsc::unbounded();
     /// let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
     /// let mut con = client.get_multiplexed_async_connection_with_config(&config).await?;
     /// con.psubscribe("channel*_1").await?;

@@ -45,11 +45,13 @@ futures-util = { version = "0.3.31", default-features = false, features = [
 pin-project-lite = { version = "0.2", optional = true }
 tokio-util = { version = "0.7.5", optional = true }
 async-lock = { version = "3", optional = true }
-tokio = { version = "1", features = ["sync"], optional = true }
+tokio = { version = "1", features = [
+  "sync",
+], default-features = false, optional = true }
 
 # Only needed for the connection manager
 arc-swap = { version = "1.9.1", optional = true }
-futures-channel = { version = "0.3.31", optional = true }
+futures-channel = { version = "0.3.31", optional = true, features = ["sink"] }
 backon = { version = "1.6.0", optional = true, default-features = false }
 
 # Only needed for the r2d2 feature
@@ -123,9 +125,10 @@ default = ["acl", "streams", "geospatial", "script", "num-bigint", "bloom"]
 acl = []
 bloom = []
 geospatial = []
+search = []
+streams = []
 json = ["dep:serde", "serde/derive", "dep:serde_json"]
 vector-sets = ["dep:serde", "serde/derive", "dep:serde_json"]
-search = []
 cluster = ["dep:crc16", "dep:rand"]
 script = ["dep:sha1_smol"]
 tls-native-tls = ["dep:native-tls", "redis-test/tls-native-tls"]
@@ -149,11 +152,9 @@ tokio-native-tls-comp = ["tokio-comp", "tls-native-tls", "dep:tokio-native-tls"]
 tokio-rustls-comp = ["tokio-comp", "tls-rustls", "dep:tokio-rustls"]
 connection-manager = [
   "dep:arc-swap",
-  "dep:futures-channel",
   "aio",
   "dep:backon",
 ]
-streams = []
 cluster-async = ["aio", "cluster", "dep:log", "dep:futures-channel"]
 sentinel = ["dep:log", "dep:rand"]
 num-bigint = ["dep:num-bigint"]
@@ -181,6 +182,7 @@ aio = [
   "combine/tokio",
   "dep:cfg-if",
   "redis-test/aio",
+  "dep:futures-channel",
 ]
 
 [dev-dependencies]

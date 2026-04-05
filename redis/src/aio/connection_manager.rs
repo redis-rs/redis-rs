@@ -15,11 +15,12 @@ use crate::{
 };
 use arc_swap::ArcSwap;
 use backon::{ExponentialBuilder, Retryable};
+use futures_channel::mpsc::{UnboundedReceiver, unbounded};
 use futures_channel::oneshot;
 use futures_util::future::{BoxFuture, FutureExt, Shared};
+use futures_util::stream::StreamExt;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
-use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 type OptionalPushSender = Option<Arc<dyn AsyncPushSender>>;
 
@@ -520,13 +521,13 @@ impl ConnectionManager {
                 "Can only pass push sender to a connection using RESP3"
             );
 
-            let (internal_sender, internal_receiver) = unbounded_channel();
+            let (internal_sender, internal_receiver) = unbounded();
             components_for_reconnection_on_push = Some((internal_receiver, Some(push_sender)));
 
             connection_config =
                 connection_config.set_push_sender_internal(Arc::new(internal_sender));
         } else if client.connection_info.redis.protocol.supports_resp3() {
-            let (internal_sender, internal_receiver) = unbounded_channel();
+            let (internal_sender, internal_receiver) = unbounded();
             components_for_reconnection_on_push = Some((internal_receiver, None));
 
             connection_config =
@@ -684,7 +685,7 @@ impl ConnectionManager {
         let Ok((this, mut internal_receiver, external_sender)) = receiver.await else {
             return;
         };
-        while let Some(push_info) = internal_receiver.recv().await {
+        while let Some(push_info) = internal_receiver.next().await {
             if push_info.kind == PushKind::Disconnection {
                 let Some(internals) = this.upgrade() else {
                     return;
