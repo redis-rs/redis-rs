@@ -185,6 +185,16 @@ pub trait AsyncPushSender: Send + Sync + 'static {
     fn send(&self, info: PushInfo) -> Result<(), SendError>;
 }
 
+impl AsyncPushSender for futures_channel::mpsc::UnboundedSender<PushInfo> {
+    fn send(&self, info: PushInfo) -> Result<(), SendError> {
+        match self.unbounded_send(info) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(SendError),
+        }
+    }
+}
+
+// TODO - move to behind a feature, to allow removing the tokio dependency.
 impl AsyncPushSender for ::tokio::sync::mpsc::UnboundedSender<PushInfo> {
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         match self.send(info) {
@@ -194,6 +204,7 @@ impl AsyncPushSender for ::tokio::sync::mpsc::UnboundedSender<PushInfo> {
     }
 }
 
+// TODO - move to behind a feature, to allow removing the tokio dependency.
 impl AsyncPushSender for ::tokio::sync::broadcast::Sender<PushInfo> {
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         match self.send(info) {
