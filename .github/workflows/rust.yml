@@ -28,7 +28,7 @@ jobs:
             {  db-org: redis, db-name: redis, db-version: 7.0.15, json-module-version: v2.6.22 },
             {  db-org: redis, db-name: redis, db-version: 7.4.8, json-module-version: v2.6.22 },
             {  db-org: redis, db-name: redis, db-version: 8.0.6, json-module-version: bundled },
-            {  db-org: redis, db-name: redis, db-version: 8.6.1, json-module-version: bundled },
+            {  db-org: redis, db-name: redis, db-version: 8.6.2, json-module-version: bundled },
             {  db-org: valkey-io, db-name: valkey, db-version: 7.2.12, json-module-version: v2.6.22 },
             {  db-org: valkey-io, db-name: valkey, db-version: 8.0.7, json-module-version: v2.6.22 },
             {  db-org: valkey-io, db-name: valkey, db-version: 9.0.3, json-module-version: v2.6.22 },
