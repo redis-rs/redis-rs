@@ -2876,9 +2876,9 @@ implement_commands! {
     ///
     /// // Configure stream with 5 minute duration and max 1000 IDs per producer
     /// // Valid ranges: IDMP-DURATION (1-86400), IDMP-MAXSIZE (1-10000)
-    /// let opts = StreamConfigOptions::with_duration(300)
+    /// let opts = StreamConfigOptions::with_idempotency_seconds(300)
     ///     .unwrap()
-    ///     .maxsize(1000)
+    ///     .idempotency_maxsize(1000)
     ///     .unwrap();
     /// let result: String = con.xcfgset("key", &opts).unwrap();
     /// assert_eq!(result, "OK");

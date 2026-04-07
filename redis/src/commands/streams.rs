@@ -239,17 +239,17 @@ pub const IDMP_MAXSIZE_MAX: u16 = 10000;
 /// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
 /// # let mut con = client.get_connection().unwrap();
 ///
-/// // Create with duration, optionally add maxsize
-/// let opts1 = StreamConfigOptions::with_duration(300)
+/// // Create with idempotency duration in seconds, optionally add maxsize
+/// let opts1 = StreamConfigOptions::with_idempotency_seconds(300)
 ///     .unwrap()
-///     .maxsize(1000)
+///     .idempotency_maxsize(1000)
 ///     .unwrap();
 /// let _: String = con.xcfgset("key", &opts1).unwrap();
 ///
-/// // Or create with maxsize only and optionally add duration
-/// let opts2 = StreamConfigOptions::with_maxsize(500)
+/// // Or create with maxsize only and optionally add idempotency duration in seconds
+/// let opts2 = StreamConfigOptions::with_idempotency_maxsize(500)
 ///     .unwrap()
-///     .duration(300)
+///     .idempotency_seconds(300)
 ///     .unwrap();
 /// let _: String = con.xcfgset("key", &opts2).unwrap();
 /// ```
@@ -274,11 +274,10 @@ impl StreamConfigOptions {
     /// # Errors
     /// Returns an error if seconds is not in the valid range `1..=86400`
     /// (see [`IDMP_DURATION_MIN`] and [`IDMP_DURATION_MAX`])
-    pub fn with_duration(seconds: u32) -> Result<Self, String> {
+    pub fn with_idempotency_seconds(seconds: u32) -> Result<Self, String> {
         if !(IDMP_DURATION_MIN..=IDMP_DURATION_MAX).contains(&seconds) {
             return Err(format!(
-                "IDMP-DURATION must be between {} and {} seconds, got: {}",
-                IDMP_DURATION_MIN, IDMP_DURATION_MAX, seconds
+                "IDMP-DURATION must be between {IDMP_DURATION_MIN} and {IDMP_DURATION_MAX} seconds, got: {seconds}"
             ));
         }
         Ok(Self {
@@ -295,11 +294,10 @@ impl StreamConfigOptions {
     /// # Errors
     /// Returns an error if size is not in the valid range `1..=10000`
     /// (see [`IDMP_MAXSIZE_MIN`] and [`IDMP_MAXSIZE_MAX`])
-    pub fn with_maxsize(size: u16) -> Result<Self, String> {
+    pub fn with_idempotency_maxsize(size: u16) -> Result<Self, String> {
         if !(IDMP_MAXSIZE_MIN..=IDMP_MAXSIZE_MAX).contains(&size) {
             return Err(format!(
-                "IDMP-MAXSIZE must be between {} and {} entries, got: {}",
-                IDMP_MAXSIZE_MIN, IDMP_MAXSIZE_MAX, size
+                "IDMP-MAXSIZE must be between {IDMP_MAXSIZE_MIN} and {IDMP_MAXSIZE_MAX} entries, got: {size}"
             ));
         }
         Ok(Self {
@@ -313,11 +311,10 @@ impl StreamConfigOptions {
     /// # Errors
     /// Returns an error if seconds is not in the valid range `1..=86400`
     /// (see [`IDMP_DURATION_MIN`] and [`IDMP_DURATION_MAX`])
-    pub fn duration(mut self, seconds: u32) -> Result<Self, String> {
+    pub fn idempotency_seconds(mut self, seconds: u32) -> Result<Self, String> {
         if !(IDMP_DURATION_MIN..=IDMP_DURATION_MAX).contains(&seconds) {
             return Err(format!(
-                "IDMP-DURATION must be between {} and {} seconds, got: {}",
-                IDMP_DURATION_MIN, IDMP_DURATION_MAX, seconds
+                "IDMP-DURATION must be between {IDMP_DURATION_MIN} and {IDMP_DURATION_MAX} seconds, got: {seconds}"
             ));
         }
         self.idmp_duration = Some(seconds);
@@ -329,11 +326,10 @@ impl StreamConfigOptions {
     /// # Errors
     /// Returns an error if size is not in the valid range `1..=10000`
     /// (see [`IDMP_MAXSIZE_MIN`] and [`IDMP_MAXSIZE_MAX`])
-    pub fn maxsize(mut self, size: u16) -> Result<Self, String> {
+    pub fn idempotency_maxsize(mut self, size: u16) -> Result<Self, String> {
         if !(IDMP_MAXSIZE_MIN..=IDMP_MAXSIZE_MAX).contains(&size) {
             return Err(format!(
-                "IDMP-MAXSIZE must be between {} and {} entries, got: {}",
-                IDMP_MAXSIZE_MIN, IDMP_MAXSIZE_MAX, size
+                "IDMP-MAXSIZE must be between {IDMP_MAXSIZE_MIN} and {IDMP_MAXSIZE_MAX} entries, got: {size}"
             ));
         }
         self.idmp_maxsize = Some(size);
@@ -1853,41 +1849,60 @@ mod tests {
     mod stream_config_options {
         use super::*;
 
+        const IDMP_CUSTOM_DURATION: u32 = 300;
+        const IDMP_CUSTOM_MAXSIZE: u16 = 1000;
+
         #[test]
-        fn with_duration_only() {
-            let options = StreamConfigOptions::with_duration(300).unwrap();
-            assert_command_eq(options, b"IDMP-DURATION 300");
+        fn with_idempotency_seconds_only() {
+            let options =
+                StreamConfigOptions::with_idempotency_seconds(IDMP_CUSTOM_DURATION).unwrap();
+            assert_command_eq(
+                options,
+                format!("IDMP-DURATION {IDMP_CUSTOM_DURATION}").as_bytes(),
+            );
         }
 
         #[test]
-        fn with_maxsize_only() {
-            let options = StreamConfigOptions::with_maxsize(1000).unwrap();
-            assert_command_eq(options, b"IDMP-MAXSIZE 1000");
+        fn with_idempotency_maxsize_only() {
+            let options =
+                StreamConfigOptions::with_idempotency_maxsize(IDMP_CUSTOM_MAXSIZE).unwrap();
+            assert_command_eq(
+                options,
+                format!("IDMP-MAXSIZE {IDMP_CUSTOM_MAXSIZE}").as_bytes(),
+            );
         }
 
         #[test]
-        fn with_both_starting_duration() {
-            let options = StreamConfigOptions::with_duration(300)
+        fn with_both_options_starting_with_idempotency_seconds() {
+            let options = StreamConfigOptions::with_idempotency_seconds(IDMP_CUSTOM_DURATION)
                 .unwrap()
-                .maxsize(1000)
+                .idempotency_maxsize(IDMP_CUSTOM_MAXSIZE)
                 .unwrap();
-            assert_command_eq(options, b"IDMP-DURATION 300 IDMP-MAXSIZE 1000");
+            assert_command_eq(
+                options,
+                format!("IDMP-DURATION {IDMP_CUSTOM_DURATION} IDMP-MAXSIZE {IDMP_CUSTOM_MAXSIZE}")
+                    .as_bytes(),
+            );
         }
 
         #[test]
-        fn with_both_starting_maxsize() {
-            let options = StreamConfigOptions::with_maxsize(1000)
+        fn with_both_options_starting_with_idempotency_maxsize() {
+            let options = StreamConfigOptions::with_idempotency_maxsize(IDMP_CUSTOM_MAXSIZE)
                 .unwrap()
-                .duration(300)
+                .idempotency_seconds(IDMP_CUSTOM_DURATION)
                 .unwrap();
-            assert_command_eq(options, b"IDMP-DURATION 300 IDMP-MAXSIZE 1000");
+            assert_command_eq(
+                options,
+                format!("IDMP-DURATION {IDMP_CUSTOM_DURATION} IDMP-MAXSIZE {IDMP_CUSTOM_MAXSIZE}")
+                    .as_bytes(),
+            );
         }
 
         #[test]
         fn with_max_values() {
-            let options = StreamConfigOptions::with_duration(IDMP_DURATION_MAX)
+            let options = StreamConfigOptions::with_idempotency_seconds(IDMP_DURATION_MAX)
                 .unwrap()
-                .maxsize(IDMP_MAXSIZE_MAX)
+                .idempotency_maxsize(IDMP_MAXSIZE_MAX)
                 .unwrap();
             assert_command_eq(
                 options,
@@ -1898,9 +1913,9 @@ mod tests {
 
         #[test]
         fn with_min_values() {
-            let options = StreamConfigOptions::with_duration(IDMP_DURATION_MIN)
+            let options = StreamConfigOptions::with_idempotency_seconds(IDMP_DURATION_MIN)
                 .unwrap()
-                .maxsize(IDMP_MAXSIZE_MIN)
+                .idempotency_maxsize(IDMP_MAXSIZE_MIN)
                 .unwrap();
             assert_command_eq(
                 options,
@@ -1910,60 +1925,60 @@ mod tests {
         }
 
         #[test]
-        fn error_duration_too_low() {
-            let result = StreamConfigOptions::with_duration(IDMP_DURATION_MIN - 1);
+        fn error_idempotency_seconds_too_low() {
+            let result = StreamConfigOptions::with_idempotency_seconds(IDMP_DURATION_MIN - 1);
             assert!(result.is_err());
             assert!(result.unwrap_err().contains(&format!(
-                "must be between {IDMP_DURATION_MIN} and {IDMP_DURATION_MAX}"
+                "IDMP-DURATION must be between {IDMP_DURATION_MIN} and {IDMP_DURATION_MAX}"
             )));
         }
 
         #[test]
-        fn error_duration_too_high() {
-            let result = StreamConfigOptions::with_duration(IDMP_DURATION_MAX + 1);
+        fn error_idempotency_seconds_too_high() {
+            let result = StreamConfigOptions::with_idempotency_seconds(IDMP_DURATION_MAX + 1);
             assert!(result.is_err());
             assert!(result.unwrap_err().contains(&format!(
-                "must be between {IDMP_DURATION_MIN} and {IDMP_DURATION_MAX}"
+                "IDMP-DURATION must be between {IDMP_DURATION_MIN} and {IDMP_DURATION_MAX}"
             )));
         }
 
         #[test]
-        fn error_maxsize_too_low() {
-            let result = StreamConfigOptions::with_maxsize(IDMP_MAXSIZE_MIN - 1);
+        fn error_idempotency_maxsize_too_low() {
+            let result = StreamConfigOptions::with_idempotency_maxsize(IDMP_MAXSIZE_MIN - 1);
             assert!(result.is_err());
             assert!(result.unwrap_err().contains(&format!(
-                "must be between {IDMP_MAXSIZE_MIN} and {IDMP_MAXSIZE_MAX}"
+                "IDMP-MAXSIZE must be between {IDMP_MAXSIZE_MIN} and {IDMP_MAXSIZE_MAX}"
             )));
         }
 
         #[test]
-        fn error_maxsize_too_high() {
-            let result = StreamConfigOptions::with_maxsize(IDMP_MAXSIZE_MAX + 1);
+        fn error_idempotency_maxsize_too_high() {
+            let result = StreamConfigOptions::with_idempotency_maxsize(IDMP_MAXSIZE_MAX + 1);
             assert!(result.is_err());
             assert!(result.unwrap_err().contains(&format!(
-                "must be between {IDMP_MAXSIZE_MIN} and {IDMP_MAXSIZE_MAX}"
+                "IDMP-MAXSIZE must be between {IDMP_MAXSIZE_MIN} and {IDMP_MAXSIZE_MAX}"
             )));
         }
 
         #[test]
-        fn error_setter_duration_too_low() {
-            let result = StreamConfigOptions::with_maxsize(100)
+        fn error_setter_idempotency_seconds_too_low() {
+            let result = StreamConfigOptions::with_idempotency_maxsize(IDMP_CUSTOM_MAXSIZE)
                 .unwrap()
-                .duration(IDMP_DURATION_MIN - 1);
+                .idempotency_seconds(IDMP_DURATION_MIN - 1);
             assert!(result.is_err());
             assert!(result.unwrap_err().contains(&format!(
-                "must be between {IDMP_DURATION_MIN} and {IDMP_DURATION_MAX}"
+                "IDMP-DURATION must be between {IDMP_DURATION_MIN} and {IDMP_DURATION_MAX}"
             )));
         }
 
         #[test]
-        fn error_setter_maxsize_too_high() {
-            let result = StreamConfigOptions::with_duration(100)
+        fn error_setter_idempotency_maxsize_too_high() {
+            let result = StreamConfigOptions::with_idempotency_seconds(IDMP_CUSTOM_DURATION)
                 .unwrap()
-                .maxsize(IDMP_MAXSIZE_MAX + 1);
+                .idempotency_maxsize(IDMP_MAXSIZE_MAX + 1);
             assert!(result.is_err());
             assert!(result.unwrap_err().contains(&format!(
-                "must be between {IDMP_MAXSIZE_MIN} and {IDMP_MAXSIZE_MAX}"
+                "IDMP-MAXSIZE must be between {IDMP_MAXSIZE_MIN} and {IDMP_MAXSIZE_MAX}"
             )));
         }
     }

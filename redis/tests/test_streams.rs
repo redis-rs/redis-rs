@@ -2704,7 +2704,7 @@ mod idempotency_tests {
         // Trying to configure a non-existent stream should return an error.
         let result: redis::RedisResult<String> = con.xcfgset(
             STREAM_NAME,
-            &StreamConfigOptions::with_duration(IDMP_CUSTOM_DURATION).unwrap(),
+            &StreamConfigOptions::with_idempotency_seconds(IDMP_CUSTOM_DURATION).unwrap(),
         );
         assert!(result.is_err());
         if let Err(e) = result {
@@ -2715,7 +2715,7 @@ mod idempotency_tests {
         assert_eq!(con.set(KEY_VALUE.0, KEY_VALUE.1), Ok(()));
         let result: redis::RedisResult<String> = con.xcfgset(
             KEY_VALUE.0,
-            &StreamConfigOptions::with_duration(IDMP_CUSTOM_DURATION).unwrap(),
+            &StreamConfigOptions::with_idempotency_seconds(IDMP_CUSTOM_DURATION).unwrap(),
         );
         assert!(result.is_err());
         if let Err(e) = result {
@@ -2735,7 +2735,7 @@ mod idempotency_tests {
         assert_eq!(
             con.xcfgset(
                 STREAM_NAME,
-                &StreamConfigOptions::with_duration(IDMP_CUSTOM_DURATION).unwrap()
+                &StreamConfigOptions::with_idempotency_seconds(IDMP_CUSTOM_DURATION).unwrap()
             )
             .unwrap(),
             "OK"
@@ -2749,7 +2749,7 @@ mod idempotency_tests {
         assert_eq!(
             con.xcfgset(
                 STREAM_NAME,
-                &StreamConfigOptions::with_maxsize(IDMP_CUSTOM_MAXSIZE).unwrap()
+                &StreamConfigOptions::with_idempotency_maxsize(IDMP_CUSTOM_MAXSIZE).unwrap()
             )
             .unwrap(),
             "OK"
@@ -2760,9 +2760,9 @@ mod idempotency_tests {
         assert_eq!(info.idmp_maxsize, IDMP_CUSTOM_MAXSIZE);
 
         // Configure with both parameters, by first setting the duration and then the maxsize.
-        let opts = StreamConfigOptions::with_duration(IDMP_CUSTOM_DURATION * 2)
+        let opts = StreamConfigOptions::with_idempotency_seconds(IDMP_CUSTOM_DURATION * 2)
             .unwrap()
-            .maxsize(IDMP_CUSTOM_MAXSIZE * 2)
+            .idempotency_maxsize(IDMP_CUSTOM_MAXSIZE * 2)
             .unwrap();
         assert_eq!(con.xcfgset(STREAM_NAME, &opts).unwrap(), "OK");
         let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
@@ -2771,9 +2771,9 @@ mod idempotency_tests {
         assert_eq!(info.idmp_maxsize, IDMP_CUSTOM_MAXSIZE * 2);
 
         // Configure with both parameters, by first setting the maxsize and then the duration.
-        let opts = StreamConfigOptions::with_maxsize(IDMP_CUSTOM_MAXSIZE)
+        let opts = StreamConfigOptions::with_idempotency_maxsize(IDMP_CUSTOM_MAXSIZE)
             .unwrap()
-            .duration(IDMP_CUSTOM_DURATION)
+            .idempotency_seconds(IDMP_CUSTOM_DURATION)
             .unwrap();
         assert_eq!(con.xcfgset(STREAM_NAME, &opts).unwrap(), "OK");
         let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
@@ -2824,7 +2824,7 @@ mod idempotency_tests {
         assert_eq!(
             con.xcfgset(
                 STREAM_NAME,
-                &StreamConfigOptions::with_duration(IDMP_CUSTOM_DURATION).unwrap()
+                &StreamConfigOptions::with_idempotency_seconds(IDMP_CUSTOM_DURATION).unwrap()
             )
             .unwrap(),
             "OK"
@@ -2870,7 +2870,7 @@ mod idempotency_tests {
         assert_eq!(
             con.xcfgset(
                 STREAM_NAME,
-                &StreamConfigOptions::with_maxsize(IDMP_CUSTOM_MAXSIZE).unwrap()
+                &StreamConfigOptions::with_idempotency_maxsize(IDMP_CUSTOM_MAXSIZE).unwrap()
             )
             .unwrap(),
             "OK"
@@ -2906,7 +2906,7 @@ mod idempotency_tests {
         assert_eq!(
             con.xcfgset(
                 STREAM_NAME,
-                &StreamConfigOptions::with_maxsize(IDMP_MAXSIZE_LIMIT).unwrap()
+                &StreamConfigOptions::with_idempotency_maxsize(IDMP_MAXSIZE_LIMIT).unwrap()
             )
             .unwrap(),
             "OK"
@@ -2975,7 +2975,7 @@ mod idempotency_tests {
         assert_eq!(
             con.xcfgset(
                 STREAM_NAME,
-                &StreamConfigOptions::with_duration(IDMP_SHORT_DURATION).unwrap()
+                &StreamConfigOptions::with_idempotency_seconds(IDMP_SHORT_DURATION).unwrap()
             )
             .unwrap(),
             "OK"
