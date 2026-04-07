@@ -2566,8 +2566,8 @@ pub enum ValueType {
     VectorSet,
     /// A RedisJSON value. [Redis Docs](https://redis.io/docs/latest/develop/data-types/json/)
     JSON,
-    /// A Bloom filter. [Redis Docs](https://redis.io/docs/latest/develop/data-types/probabilistic/bloom-filter/)
-    BloomFilter,
+    /// A Bloom filter from Redis' module. [Redis Docs](https://redis.io/docs/latest/develop/data-types/probabilistic/bloom-filter/)
+    BloomFilterRedis,
     /// A Cuckoo filter. [Redis Docs](https://redis.io/docs/latest/develop/data-types/probabilistic/cuckoo-filter/)
     CuckooFilter,
     /// A Count-min. [Redis Docs](https://redis.io/docs/latest/develop/data-types/probabilistic/count-min-sketch/)
@@ -2580,6 +2580,8 @@ pub enum ValueType {
     TimeSeries,
     /// A Trie. [Redis Docs](https://redis.io/docs/latest/develop/ai/search-and-query/advanced-concepts/autocomplete/)
     Trie,
+    /// A Bloom filter from Valkey's module. [ValKey Docs](https://valkey.io/topics/bloomfilters/)
+    BloomFilterValKey,
     /// Any other value type not explicitly defined in [Redis Docs](https://redis.io/docs/latest/commands/type/)
     Unknown(String),
 }
@@ -2597,9 +2599,9 @@ impl<T: AsRef<str>> From<T> for ValueType {
             "vectorset" => ValueType::VectorSet,
             // JSON module
             "ReJSON-RL" => ValueType::JSON,
-            // Bloom module
+            // Bloom module (Redis)
             "CMSk-TYPE" => ValueType::CountMin,
-            "MBbloom--" => ValueType::BloomFilter,
+            "MBbloom--" => ValueType::BloomFilterRedis,
             "MBbloomCF" => ValueType::CuckooFilter,
             "TDIS-TYPE" => ValueType::TDigest,
             "TopK-TYPE" => ValueType::TopK,
@@ -2607,6 +2609,8 @@ impl<T: AsRef<str>> From<T> for ValueType {
             "trietype0" => ValueType::Trie,
             // Timeseries module
             "TSDB-TYPE" => ValueType::TimeSeries,
+            // Bloom module (ValKey)
+            "bloomfltr" => ValueType::BloomFilterValKey,
             // Fallback
             s => ValueType::Unknown(s.to_string()),
         }
@@ -2626,8 +2630,8 @@ impl From<ValueType> for String {
             ValueType::VectorSet => "vectorset".to_string(),
             // JSON module
             ValueType::JSON => "ReJSON-RL".to_string(),
-            // Bloom module
-            ValueType::BloomFilter => "MBbloom--".to_string(),
+            // Bloom module (Redis)
+            ValueType::BloomFilterRedis => "MBbloom--".to_string(),
             ValueType::CuckooFilter => "MBbloomCF".to_string(),
             ValueType::TDigest => "TDIS-TYPE".to_string(),
             ValueType::TopK => "TopK-TYPE".to_string(),
@@ -2636,6 +2640,8 @@ impl From<ValueType> for String {
             ValueType::Trie => "trietype0".to_string(),
             // Timeseries module
             ValueType::TimeSeries => "TSDB-TYPE".to_string(),
+            // Bloom module (ValKey)
+            ValueType::BloomFilterValKey => "bloomfltr".to_string(),
             // Fallback
             ValueType::Unknown(s) => s,
         }
