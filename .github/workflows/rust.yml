@@ -22,7 +22,13 @@ jobs:
     strategy:
       matrix: &db-matrix
         config: [
-            # Different DB cases: (earliest and latest minor for each major version, with latest patch)
+            # The databases to test with
+            #
+            # People typically test using recent versions locally. So, to be mindful of resources,
+            # CI only tests against the _earliest_ minor for each major version, with latest patch.
+            #
+            # If minor versions are sufficiently different, CI also tests against the latest minor.
+            #
             # When making changes here, also update `README.md` accordingly (grep for `CI runs against`).
             {  db-org: redis, db-name: redis, db-version: 6.2.21 },
             {  db-org: redis, db-name: redis, db-version: 7.0.15, json-module-version: v2.6.22 },
@@ -31,6 +37,7 @@ jobs:
             {  db-org: redis, db-name: redis, db-version: 8.6.2, json-module-version: bundled },
             {  db-org: valkey-io, db-name: valkey, db-version: 7.2.12, json-module-version: v2.6.22 },
             {  db-org: valkey-io, db-name: valkey, db-version: 8.0.7, json-module-version: v2.6.22 },
+            # Skipping ValKey 8.1 as it's too similar to 8.0
             {  db-org: valkey-io, db-name: valkey, db-version: 9.0.3, json-module-version: v2.6.22 },
           ]
 
