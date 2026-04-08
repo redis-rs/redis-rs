@@ -1,85 +1,85 @@
 // Generate implementation for function skeleton, we use this for `AsyncTypedCommands` because we want to be able to handle having a return type specified or unspecified with a fallback
 #[cfg(feature = "aio")]
 macro_rules! implement_command_async {
-	// If the return type is `Generic`, then we require the user to specify the return type
-	(
+    // If the return type is `Generic`, then we require the user to specify the return type
+    (
         $lifetime: lifetime
-		$(#[$attr:meta])+
-		fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-			$($argname:ident: $argty:ty),*) $body:block Generic
+        $(#[$attr:meta])+
+        fn $name:ident<$($tyargs:ident : $ty:ident),*>(
+            $($argname:ident: $argty:ty),*) $body:block Generic
     ) => {
-		$(#[$attr])*
-		#[inline]
-		#[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-		fn $name<$lifetime, RV: FromRedisValue, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
-			& $lifetime mut self
-			$(, $argname: $argty)*
-		) -> crate::types::RedisFuture<$lifetime, RV>
-		{
-			Box::pin(async move { $body.query_async(self).await })
-		}
-	};
+        $(#[$attr])*
+        #[inline]
+        #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
+        fn $name<$lifetime, RV: FromRedisValue, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
+            & $lifetime mut self
+            $(, $argname: $argty)*
+        ) -> crate::types::RedisFuture<$lifetime, RV>
+        {
+            Box::pin(async move { $body.query_async(self).await })
+        }
+    };
 
-	// If return type is specified in the input skeleton, then we will return it in the generated function (note match rule `$rettype:ty`)
-	(
+    // If return type is specified in the input skeleton, then we will return it in the generated function (note match rule `$rettype:ty`)
+    (
         $lifetime: lifetime
-		$(#[$attr:meta])+
-		fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-			$($argname:ident: $argty:ty),*) $body:block $rettype:ty
+        $(#[$attr:meta])+
+        fn $name:ident<$($tyargs:ident : $ty:ident),*>(
+            $($argname:ident: $argty:ty),*) $body:block $rettype:ty
     ) => {
-		$(#[$attr])*
-		#[inline]
-		#[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-		fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
-			& $lifetime mut self
-			$(, $argname: $argty)*
-		) -> crate::types::RedisFuture<$lifetime, $rettype>
+        $(#[$attr])*
+        #[inline]
+        #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
+        fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
+            & $lifetime mut self
+            $(, $argname: $argty)*
+        ) -> crate::types::RedisFuture<$lifetime, $rettype>
 
-		{
-			Box::pin(async move { $body.query_async(self).await })
-		}
-	};
+        {
+            Box::pin(async move { $body.query_async(self).await })
+        }
+    };
 }
 
 macro_rules! implement_command_sync {
-	// If the return type is `Generic`, then we require the user to specify the return type
-	(
+    // If the return type is `Generic`, then we require the user to specify the return type
+    (
         $lifetime: lifetime
-		$(#[$attr:meta])+
-		fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-			$($argname:ident: $argty:ty),*) $body:block Generic
+        $(#[$attr:meta])+
+        fn $name:ident<$($tyargs:ident : $ty:ident),*>(
+            $($argname:ident: $argty:ty),*) $body:block Generic
     ) => {
-		$(#[$attr])*
-		#[inline]
-		#[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-		fn $name<$lifetime, RV: FromRedisValue, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
-			& $lifetime mut self
-			$(, $argname: $argty)*
-		) -> RedisResult<RV>
-		{
-			Cmd::$name($($argname),*).query(self)
-		}
-	};
+        $(#[$attr])*
+        #[inline]
+        #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
+        fn $name<$lifetime, RV: FromRedisValue, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
+            & $lifetime mut self
+            $(, $argname: $argty)*
+        ) -> RedisResult<RV>
+        {
+            Cmd::$name($($argname),*).query(self)
+        }
+    };
 
-	// If return type is specified in the input skeleton, then we will return it in the generated function (note match rule `$rettype:ty`)
-	(
+    // If return type is specified in the input skeleton, then we will return it in the generated function (note match rule `$rettype:ty`)
+    (
         $lifetime: lifetime
-		$(#[$attr:meta])+
-		fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-			$($argname:ident: $argty:ty),*) $body:block $rettype:ty
+        $(#[$attr:meta])+
+        fn $name:ident<$($tyargs:ident : $ty:ident),*>(
+            $($argname:ident: $argty:ty),*) $body:block $rettype:ty
     ) => {
-		$(#[$attr])*
-		#[inline]
-		#[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-		fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
-			& $lifetime mut self
-			$(, $argname: $argty)*
-		) -> RedisResult<$rettype>
+        $(#[$attr])*
+        #[inline]
+        #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
+        fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
+            & $lifetime mut self
+            $(, $argname: $argty)*
+        ) -> RedisResult<$rettype>
 
-		{
-			Cmd::$name($($argname),*).query(self)
-		}
-	};
+        {
+            Cmd::$name($($argname),*).query(self)
+        }
+    };
 }
 
 macro_rules! implement_iterators {
@@ -221,9 +221,9 @@ macro_rules! implement_commands {
             )*
 
             implement_iterators! {
-				|c: Cmd, this| c.iter(this),
-				RedisResult<Iter<'_, RV>>
-			}
+                |c: Cmd, this| c.iter(this),
+                RedisResult<Iter<'_, RV>>
+            }
         }
 
         impl Cmd {
@@ -282,9 +282,9 @@ macro_rules! implement_commands {
                 }
             )*
 
-			implement_iterators! {
+            implement_iterators! {
                 |c: Cmd, this| Box::pin(async move { c.iter_async(this).await }),
-				crate::types::RedisFuture<'_, crate::cmd::AsyncIter<'_, RV>>
+                crate::types::RedisFuture<'_, crate::cmd::AsyncIter<'_, RV>>
             }
         }
 
@@ -292,67 +292,67 @@ macro_rules! implement_commands {
         /// The return types are concrete and opinionated. If you want to choose the return type you should use the `Commands` trait.
         pub trait TypedCommands : ConnectionLike+Sized {
             $(
-				implement_command_sync! {
-					$lifetime
-					$(#[$attr])*
-					fn $name<$($tyargs: $ty),*>(
-						$($argname: $argty),*
-					)
+                implement_command_sync! {
+                    $lifetime
+                    $(#[$attr])*
+                    fn $name<$($tyargs: $ty),*>(
+                        $($argname: $argty),*
+                    )
 
-					{
-						$body
-					} $rettype
-				}
+                    {
+                        $body
+                    } $rettype
+                }
             )*
 
             implement_iterators! {
                 |c: Cmd, this| c.iter(this),
-				RedisResult<Iter<'_, RV>>
+                RedisResult<Iter<'_, RV>>
             }
 
-			/// Get a value from Redis and convert it to an `Option<isize>`.
-			fn get_int<K: ToSingleRedisArg>(&mut self, key: K) -> RedisResult<Option<isize>> {
-        		cmd("GET").arg(key).query(self)
-    		}
+            /// Get a value from Redis and convert it to an `Option<isize>`.
+            fn get_int<K: ToSingleRedisArg>(&mut self, key: K) -> RedisResult<Option<isize>> {
+                cmd("GET").arg(key).query(self)
+            }
 
-			/// Get values from Redis and convert them to `Option<isize>`s.
-			fn mget_ints<K: ToRedisArgs>(&mut self, key: K) -> RedisResult<Vec<Option<isize>>> {
-        		cmd("MGET").arg(key).query(self)
-    		}
+            /// Get values from Redis and convert them to `Option<isize>`s.
+            fn mget_ints<K: ToRedisArgs>(&mut self, key: K) -> RedisResult<Vec<Option<isize>>> {
+                cmd("MGET").arg(key).query(self)
+            }
         }
 
-		/// Implements common redis commands over asynchronous connections.
+        /// Implements common redis commands over asynchronous connections.
         /// The return types are concrete and opinionated. If you want to choose the return type you should use the `AsyncCommands` trait.
-		#[cfg(feature = "aio")]
+        #[cfg(feature = "aio")]
         pub trait AsyncTypedCommands : crate::aio::ConnectionLike + Send + Sized {
             $(
-				implement_command_async! {
-					$lifetime
-					$(#[$attr])*
-					fn $name<$($tyargs: $ty),*>(
-						$($argname: $argty),*
-					)
+                implement_command_async! {
+                    $lifetime
+                    $(#[$attr])*
+                    fn $name<$($tyargs: $ty),*>(
+                        $($argname: $argty),*
+                    )
 
-					{
-						$body
-					} $rettype
-				}
+                    {
+                        $body
+                    } $rettype
+                }
             )*
 
             implement_iterators! {
-				|c: Cmd, this| Box::pin(async move { c.iter_async(this).await }),
-				crate::types::RedisFuture<'_, crate::cmd::AsyncIter<'_, RV>>
-			}
+                |c: Cmd, this| Box::pin(async move { c.iter_async(this).await }),
+                crate::types::RedisFuture<'_, crate::cmd::AsyncIter<'_, RV>>
+            }
 
-			/// Get a value from Redis and convert it to an `Option<isize>`.
-			fn get_int<$lifetime, K: ToSingleRedisArg + Send + Sync + $lifetime>(&$lifetime mut self, key: K) -> crate::types::RedisFuture<$lifetime, Option<isize>> {
-				Box::pin(async move { cmd("GET").arg(key).query_async(self).await })
-    		}
+            /// Get a value from Redis and convert it to an `Option<isize>`.
+            fn get_int<$lifetime, K: ToSingleRedisArg + Send + Sync + $lifetime>(&$lifetime mut self, key: K) -> crate::types::RedisFuture<$lifetime, Option<isize>> {
+                Box::pin(async move { cmd("GET").arg(key).query_async(self).await })
+            }
 
-			/// Get values from Redis and convert them to `Option<isize>`s.
-			fn mget_ints<$lifetime, K: ToRedisArgs + Send + Sync + $lifetime>(&$lifetime mut self, key: K) -> crate::types::RedisFuture<$lifetime, Vec<Option<isize>>> {
-				Box::pin(async move { cmd("MGET").arg(key).query_async(self).await })
-    		}
+            /// Get values from Redis and convert them to `Option<isize>`s.
+            fn mget_ints<$lifetime, K: ToRedisArgs + Send + Sync + $lifetime>(&$lifetime mut self, key: K) -> crate::types::RedisFuture<$lifetime, Vec<Option<isize>>> {
+                Box::pin(async move { cmd("MGET").arg(key).query_async(self).await })
+            }
         }
 
         /// Implements common redis commands for pipelines.  Unlike the regular

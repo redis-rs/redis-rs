@@ -39,13 +39,13 @@ implements the `FromRedisValue` trait.
 use redis::TypedCommands;
 
 fn fetch_an_integer() -> Option<isize> {
-	// connect to redis
-	let client = redis::Client::open("redis://127.0.0.1/")?;
-	let mut con = client.get_connection()?;
-	// `set` returns a `()`, so we don't need to specify the return type manually unlike in the previous example.
-	con.set("my_key", 42)?;
-	// `get_int` returns Option<isize>, as the key may not be found.
-	con.get_int("my_key").unwrap()
+    // connect to redis
+    let client = redis::Client::open("redis://127.0.0.1/")?;
+    let mut con = client.get_connection()?;
+    // `set` returns a `()`, so we don't need to specify the return type manually unlike in the previous example.
+    con.set("my_key", 42)?;
+    // `get_int` returns Option<isize>, as the key may not be found.
+    con.get_int("my_key").unwrap()
 }
 ```
 

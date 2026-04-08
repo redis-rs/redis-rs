@@ -687,7 +687,7 @@ pub use crate::types::{
     Role,
     ReplicaInfo,
     IntegerReplyOrNoOp,
-	ValueType,
+    ValueType,
     RedisResult,
     RedisWrite,
     ToRedisArgs,
