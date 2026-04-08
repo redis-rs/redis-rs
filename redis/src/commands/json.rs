@@ -71,12 +71,12 @@ macro_rules! implement_json_commands {
                 $(#[$attr])*
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
                 pub fn $name<$lifetime, $($tyargs: $ty),*>($($argname: $argty),*) -> RedisResult<Self> {
-					$body
+                    $body
                 }
             )*
         }
 
-		/// Implements RedisJSON commands over asynchronous connections. This
+        /// Implements RedisJSON commands over asynchronous connections. This
         /// allows you to send commands straight to a connection or client.
         ///
         /// This allows you to use nicer syntax for some common operations.
@@ -112,7 +112,7 @@ macro_rules! implement_json_commands {
         /// in square brackets (or empty brackets if not found). If you want to deserialize it
         /// with e.g. `serde_json` you have to use `Vec<T>` for your output type instead of `T`.
         ///
-		#[cfg(feature = "aio")]
+        #[cfg(feature = "aio")]
         pub trait JsonAsyncCommands : crate::aio::ConnectionLike + Send + Sized {
             $(
                 $(#[$attr])*
@@ -130,9 +130,9 @@ macro_rules! implement_json_commands {
                     })
                 }
             )*
-		}
+        }
 
-		/// Implements RedisJSON commands for pipelines.  Unlike the regular
+        /// Implements RedisJSON commands for pipelines.  Unlike the regular
         /// commands trait, this returns the pipeline rather than a result
         /// directly.  Other than that it works the same however.
         impl Pipeline {
@@ -144,12 +144,12 @@ macro_rules! implement_json_commands {
                     &mut self $(, $argname: $argty)*
                 ) -> RedisResult<&mut Self> {
                     self.add_command($body?);
-					Ok(self)
+                    Ok(self)
                 }
             )*
         }
 
-		/// Implements RedisJSON commands for cluster pipelines.  Unlike the regular
+        /// Implements RedisJSON commands for cluster pipelines.  Unlike the regular
         /// commands trait, this returns the cluster pipeline rather than a result
         /// directly.  Other than that it works the same however.
         #[cfg(feature = "cluster")]
@@ -162,7 +162,7 @@ macro_rules! implement_json_commands {
                     &mut self $(, $argname: $argty)*
                 ) -> RedisResult<&mut Self> {
                     self.add_command($body?);
-					Ok(self)
+                    Ok(self)
                 }
             )*
         }
