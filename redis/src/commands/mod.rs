@@ -289,7 +289,7 @@ implement_commands! {
     /// Sets multiple keys to their values.
     /// [Redis Docs](https://redis.io/commands/MSET)
     fn mset<K: ToRedisArgs, V: ToRedisArgs>(items: &'a [(K, V)]) -> (()) {
-        cmd("MSET").arg(items).take().take()
+        cmd("MSET").arg(items).take()
     }
 
     /// Set the value and expiration of a key.
