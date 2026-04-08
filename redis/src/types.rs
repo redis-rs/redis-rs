@@ -2548,6 +2548,8 @@ pub(crate) type SyncPushSender = std::sync::mpsc::Sender<PushInfo>;
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ValueType {
+    /// Key does not have a value
+    None,
     /// Generally returned by anything that returns a single element. [Redis Docs](https://redis.io/docs/latest/develop/data-types/strings/)
     String,
     /// A list of String values. [Redis Docs](https://redis.io/docs/latest/develop/data-types/lists/)
@@ -2560,8 +2562,26 @@ pub enum ValueType {
     Hash,
     /// A Redis Stream. [Redis Docs](https://redis.io/docs/latest/develop/data-types/stream)
     Stream,
+    /// A vector set. [Redis Docs](https://redis.io/docs/latest/develop/data-types/vector-sets/)
+    VectorSet,
     /// A RedisJSON value. [Redis Docs](https://redis.io/docs/latest/develop/data-types/json/)
     JSON,
+    /// A Bloom filter from Redis' module. [Redis Docs](https://redis.io/docs/latest/develop/data-types/probabilistic/bloom-filter/)
+    BloomFilterRedis,
+    /// A Cuckoo filter. [Redis Docs](https://redis.io/docs/latest/develop/data-types/probabilistic/cuckoo-filter/)
+    CuckooFilter,
+    /// A Count-min. [Redis Docs](https://redis.io/docs/latest/develop/data-types/probabilistic/count-min-sketch/)
+    CountMin,
+    /// A t-Digest. [Redis Docs](https://redis.io/docs/latest/develop/data-types/probabilistic/t-digest/)
+    TDigest,
+    /// A Top-K. [Redis Docs](https://redis.io/docs/latest/develop/data-types/probabilistic/top-k/)
+    TopK,
+    /// A time series. [Redis Docs](https://redis.io/docs/latest/develop/data-types/timeseries/)
+    TimeSeries,
+    /// A Trie. [Redis Docs](https://redis.io/docs/latest/develop/ai/search-and-query/advanced-concepts/autocomplete/)
+    Trie,
+    /// A Bloom filter from Valkey's module. [ValKey Docs](https://valkey.io/topics/bloomfilters/)
+    BloomFilterValKey,
     /// Any other value type not explicitly defined in [Redis Docs](https://redis.io/docs/latest/commands/type/)
     Unknown(String),
 }
@@ -2569,13 +2589,29 @@ pub enum ValueType {
 impl<T: AsRef<str>> From<T> for ValueType {
     fn from(s: T) -> Self {
         match s.as_ref() {
+            "none" => ValueType::None,
             "string" => ValueType::String,
             "list" => ValueType::List,
             "set" => ValueType::Set,
             "zset" => ValueType::ZSet,
             "hash" => ValueType::Hash,
             "stream" => ValueType::Stream,
+            "vectorset" => ValueType::VectorSet,
+            // JSON module
             "ReJSON-RL" => ValueType::JSON,
+            // Bloom module (Redis)
+            "CMSk-TYPE" => ValueType::CountMin,
+            "MBbloom--" => ValueType::BloomFilterRedis,
+            "MBbloomCF" => ValueType::CuckooFilter,
+            "TDIS-TYPE" => ValueType::TDigest,
+            "TopK-TYPE" => ValueType::TopK,
+            // Search module
+            "trietype0" => ValueType::Trie,
+            // Timeseries module
+            "TSDB-TYPE" => ValueType::TimeSeries,
+            // Bloom module (ValKey)
+            "bloomfltr" => ValueType::BloomFilterValKey,
+            // Fallback
             s => ValueType::Unknown(s.to_string()),
         }
     }
@@ -2584,13 +2620,29 @@ impl<T: AsRef<str>> From<T> for ValueType {
 impl From<ValueType> for String {
     fn from(v: ValueType) -> Self {
         match v {
+            ValueType::None => "none".to_string(),
             ValueType::String => "string".to_string(),
             ValueType::List => "list".to_string(),
             ValueType::Set => "set".to_string(),
             ValueType::ZSet => "zset".to_string(),
             ValueType::Hash => "hash".to_string(),
             ValueType::Stream => "stream".to_string(),
+            ValueType::VectorSet => "vectorset".to_string(),
+            // JSON module
             ValueType::JSON => "ReJSON-RL".to_string(),
+            // Bloom module (Redis)
+            ValueType::BloomFilterRedis => "MBbloom--".to_string(),
+            ValueType::CuckooFilter => "MBbloomCF".to_string(),
+            ValueType::TDigest => "TDIS-TYPE".to_string(),
+            ValueType::TopK => "TopK-TYPE".to_string(),
+            ValueType::CountMin => "CMSk-TYPE".to_string(),
+            // Search module
+            ValueType::Trie => "trietype0".to_string(),
+            // Timeseries module
+            ValueType::TimeSeries => "TSDB-TYPE".to_string(),
+            // Bloom module (ValKey)
+            ValueType::BloomFilterValKey => "bloomfltr".to_string(),
+            // Fallback
             ValueType::Unknown(s) => s,
         }
     }
