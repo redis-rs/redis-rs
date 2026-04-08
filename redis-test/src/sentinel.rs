@@ -36,6 +36,7 @@ fn spawn_master_server(
         None,
         Some(tlspaths.clone()),
         MTLS_NOT_ENABLED,
+        None, // cert_auth_field - not used in sentinel tests
         modules,
         |cmd| {
             // Minimize startup delay
@@ -64,6 +65,7 @@ fn spawn_replica_server(
         Some(&config_file_path),
         Some(tlspaths.clone()),
         MTLS_NOT_ENABLED,
+        None, // cert_auth_field - not used in sentinel tests
         modules,
         |cmd| {
             cmd.arg("--replicaof")
@@ -100,6 +102,7 @@ fn spawn_sentinel_server(
         Some(&config_file_path),
         Some(tlspaths.clone()),
         MTLS_NOT_ENABLED,
+        None, // cert_auth_field - not used in sentinel tests
         modules,
         |cmd| {
             cmd.arg("--sentinel");
