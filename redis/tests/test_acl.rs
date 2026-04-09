@@ -317,7 +317,7 @@ mod token_based_authentication_acl_tests {
     use futures_time::task::sleep;
     use futures_util::{Stream, StreamExt};
     use redis::{
-        AsyncTypedCommands, ErrorKind, RedisResult,
+        AsyncTypedCommands, RedisResult,
         aio::ConnectionLike,
         auth::{BasicAuth, StreamingCredentialsProvider},
     };

@@ -12,7 +12,7 @@ mod support;
 
 use futures_util::{Stream, StreamExt};
 use redis::auth::{BasicAuth, StreamingCredentialsProvider};
-use redis::{ErrorKind, RedisError};
+use redis::{ErrorKind, RedisError, RedisResult};
 use std::pin::Pin;
 use std::sync::Once;
 use support::*;
