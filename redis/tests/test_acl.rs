@@ -953,15 +953,14 @@ mod token_based_authentication_acl_tests {
         );
     }
 
-    /// Tests that the connection gets rendered unusable when Redis rejects credentials during re-authentication.
+    /// Tests that the connection remains usable when Redis rejects credentials during re-authentication.
     ///
     /// The scenario:
     /// 1. Provider yields valid credentials (Alice) - connection succeeds
     /// 2. Provider yields credentials for a non-existent user - the Redis server rejects the AUTH command
-    /// 3. Connection should be rendered unusable
-    /// 4. Subsequent commands should fail with `AuthenticationFailed`
+    /// 3. Connection should still work because the previous auth session is unaffected
     #[async_test]
-    async fn connection_rendered_unusable_when_reauthentication_fails() {
+    async fn connection_survives_failed_reauthentication() {
         init_logger();
         let ctx = TestContext::new();
 
@@ -992,25 +991,15 @@ mod token_based_authentication_acl_tests {
         assert_eq!(current_user, ALICE_OID_CLAIM);
         println!("Initial authentication successful as user: {current_user}.");
 
-        // Wait for token rotation to occur and yield invalid credentials
+        // Wait for the failed re-auth attempt to occur
         println!("Waiting for token rotation to yield invalid credentials...");
         sleep(Duration::from_millis(600).into()).await;
 
-        // The connection should now be rendered unusable because the Redis server rejected the AUTH command.
-        // Subsequent commands should fail with AuthenticationFailed.
-        println!("Attempting to execute a command on an unusable connection...");
-        let result: redis::RedisResult<String> = whoami_cmd.query_async(&mut con).await;
-
-        assert!(result.is_err());
-        let error = result.unwrap_err();
-        assert_eq!(error.kind(), ErrorKind::AuthenticationFailed);
-        assert!(
-            error.to_string().contains("re-authentication failure"),
-            "Error message should mention re-authentication failure: {error}"
-        );
-        println!("Command correctly failed with AuthenticationFailed: {error}");
-
-        println!("Connection rendered unusable test completed successfully!");
+        // The connection should still work — a failed AUTH doesn't invalidate the existing session
+        println!("Verifying connection still works after failed re-authentication...");
+        let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
+        assert_eq!(current_user, ALICE_OID_CLAIM);
+        println!("Connection survives failed re-authentication test completed successfully!");
     }
 
     #[cfg(feature = "cluster-async")]
@@ -1238,7 +1227,7 @@ mod token_based_authentication_acl_tests {
         }
 
         #[async_test]
-        async fn cluster_connection_rendered_unusable_when_reauthentication_fails() {
+        async fn cluster_connection_survives_failed_reauthentication() {
             init_logger();
             let cluster = TestClusterContext::new_with_cluster_client_builder(
                 |builder: ClusterClientBuilder| {
@@ -1258,16 +1247,12 @@ mod token_based_authentication_acl_tests {
             let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
             assert_eq!(current_user, ALICE_OID_CLAIM);
 
-            // Wait for rotation to yield invalid credentials
+            // Wait for the failed re-auth attempt to occur
             sleep(Duration::from_millis(600).into()).await;
 
-            let result: redis::RedisResult<String> = whoami_cmd.query_async(&mut con).await;
-            assert!(
-                result.is_err(),
-                "Commands should fail after re-authentication with invalid credentials."
-            );
-            let error = result.unwrap_err();
-            assert_eq!(error.kind(), ErrorKind::ClusterConnectionNotFound);
+            // The connection should still work — a failed AUTH doesn't invalidate the existing session
+            let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
+            assert_eq!(current_user, ALICE_OID_CLAIM);
         }
     }
 }

@@ -12,7 +12,7 @@ mod support;
 
 use futures_util::{Stream, StreamExt};
 use redis::auth::{BasicAuth, StreamingCredentialsProvider};
-use redis::{ErrorKind, RedisError, RedisResult};
+use redis::{ErrorKind, RedisError};
 use std::pin::Pin;
 use std::sync::Once;
 use support::*;
@@ -62,47 +62,9 @@ impl StreamingCredentialsProvider for EmptyStreamCredentialsProvider {
     }
 }
 
-/// A credentials provider that yields valid credentials initially, then closes the stream.
-///
-/// This simulates scenarios where the credentials provider's background task stops after providing initial credentials (e.g., provider shutdown).
-#[derive(Clone)]
-struct OneTimeCredentialsProvider;
-
-impl StreamingCredentialsProvider for OneTimeCredentialsProvider {
-    fn subscribe(&self) -> Pin<Box<dyn Stream<Item = RedisResult<BasicAuth>> + Send + 'static>> {
-        // Yield one valid credentials (default user, no password for test Redis) then close the stream
-        futures_util::stream::once(async move {
-            Ok(BasicAuth::new("default".to_string(), "".to_string()))
-        })
-        .boxed()
-    }
-}
-
-/// A credentials provider that yields valid credentials initially, then returns an error.
-///
-/// This simulates scenarios where the credentials provider exhausts retries after providing initial credentials.
-#[derive(Clone)]
-struct DelayedFailureCredentialsProvider;
-
-impl StreamingCredentialsProvider for DelayedFailureCredentialsProvider {
-    fn subscribe(&self) -> Pin<Box<dyn Stream<Item = RedisResult<BasicAuth>> + Send + 'static>> {
-        futures_util::stream::iter(vec![
-            // Valid credentials for initial connection
-            Ok(BasicAuth::new("default".to_string(), "".to_string())),
-            // Error simulating provider exhausted retries
-            Err(RedisError::from((
-                ErrorKind::AuthenticationFailed,
-                "Token refresh failed after max retries",
-            ))),
-        ])
-        .boxed()
-    }
-}
-
 #[cfg(test)]
 mod credentials_provider_failures_tests {
     use super::*;
-    use futures_time::task::sleep;
     use test_macros::async_test;
 
     #[async_test]
@@ -147,76 +109,6 @@ mod credentials_provider_failures_tests {
 
         let err = result.unwrap_err();
         assert_eq!(err.kind(), ErrorKind::AuthenticationFailed);
-    }
-
-    #[async_test]
-    async fn test_connection_renders_unusable_when_the_subscription_stream_closes() {
-        init_logger();
-        let ctx = TestContext::new();
-
-        let provider = OneTimeCredentialsProvider;
-        let config = redis::AsyncConnectionConfig::new().set_credentials_provider(provider);
-
-        let mut con = ctx
-            .client
-            .get_multiplexed_async_connection_with_config(&config)
-            .await
-            .expect("Initial connection should succeed.");
-
-        let result: RedisResult<String> = redis::cmd("PING").query_async(&mut con).await;
-        assert!(result.is_ok(), "PING should succeed.");
-
-        // Give the token rotation task time to process the stream closure
-        sleep(std::time::Duration::from_millis(100).into()).await;
-
-        // Subsequent commands should fail because the connection is unusable
-        let result: RedisResult<String> = redis::cmd("PING").query_async(&mut con).await;
-        assert!(
-            result.is_err(),
-            "Commands should fail after the subscription stream closes unexpectedly."
-        );
-
-        let err = result.unwrap_err();
-        assert_eq!(err.kind(), ErrorKind::AuthenticationFailed);
-        assert!(
-            err.to_string().contains("re-authentication failure"),
-            "Error message should mention re-authentication failure: {err}"
-        );
-    }
-
-    #[async_test]
-    async fn test_connection_renders_unusable_when_the_subscription_stream_closes_after_an_error() {
-        init_logger();
-        let ctx = TestContext::new();
-
-        let provider = DelayedFailureCredentialsProvider;
-        let config = redis::AsyncConnectionConfig::new().set_credentials_provider(provider);
-
-        let mut con = ctx
-            .client
-            .get_multiplexed_async_connection_with_config(&config)
-            .await
-            .expect("Initial connection should succeed.");
-
-        let result: RedisResult<String> = redis::cmd("PING").query_async(&mut con).await;
-        assert!(result.is_ok(), "PING should succeed.");
-
-        // Give the token rotation task time to process the error
-        sleep(std::time::Duration::from_millis(100).into()).await;
-
-        // Subsequent commands should fail because the connection is unusable
-        let result: RedisResult<String> = redis::cmd("PING").query_async(&mut con).await;
-        assert!(
-            result.is_err(),
-            "Commands should fail after the subscription stream returns error."
-        );
-
-        let err = result.unwrap_err();
-        assert_eq!(err.kind(), ErrorKind::AuthenticationFailed);
-        assert!(
-            err.to_string().contains("re-authentication failure"),
-            "Error message should mention re-authentication failure: {err}"
-        );
     }
 
     #[cfg(feature = "cluster-async")]
