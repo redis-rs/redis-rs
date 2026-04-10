@@ -433,6 +433,23 @@ mod token_based_authentication_acl_tests {
                     // Valid credentials (Alice is supposed to exist)
                     BasicAuth::new(ALICE_OID_CLAIM.to_string(), ALICE_TOKEN.to_string()),
                     // Invalid credentials (user is supposed to not exist)
+                    // this is repeated multiple times, to allow for delayed reconnect attempts.
+                    BasicAuth::new(INVALID_USER.to_string(), INVALID_TOKEN.to_string()),
+                    BasicAuth::new(INVALID_USER.to_string(), INVALID_TOKEN.to_string()),
+                    BasicAuth::new(INVALID_USER.to_string(), INVALID_TOKEN.to_string()),
+                    BasicAuth::new(INVALID_USER.to_string(), INVALID_TOKEN.to_string()),
+                    BasicAuth::new(INVALID_USER.to_string(), INVALID_TOKEN.to_string()),
+                    BasicAuth::new(INVALID_USER.to_string(), INVALID_TOKEN.to_string()),
+                    BasicAuth::new(INVALID_USER.to_string(), INVALID_TOKEN.to_string()),
+                    BasicAuth::new(INVALID_USER.to_string(), INVALID_TOKEN.to_string()),
+                    BasicAuth::new(INVALID_USER.to_string(), INVALID_TOKEN.to_string()),
+                    BasicAuth::new(INVALID_USER.to_string(), INVALID_TOKEN.to_string()),
+                    BasicAuth::new(INVALID_USER.to_string(), INVALID_TOKEN.to_string()),
+                    BasicAuth::new(INVALID_USER.to_string(), INVALID_TOKEN.to_string()),
+                    BasicAuth::new(INVALID_USER.to_string(), INVALID_TOKEN.to_string()),
+                    BasicAuth::new(INVALID_USER.to_string(), INVALID_TOKEN.to_string()),
+                    BasicAuth::new(INVALID_USER.to_string(), INVALID_TOKEN.to_string()),
+                    BasicAuth::new(INVALID_USER.to_string(), INVALID_TOKEN.to_string()),
                     BasicAuth::new(INVALID_USER.to_string(), INVALID_TOKEN.to_string()),
                 ],
                 refresh_interval: Duration::from_millis(500),
@@ -1267,7 +1284,12 @@ mod token_based_authentication_acl_tests {
                 "Commands should fail after re-authentication with invalid credentials."
             );
             let error = result.unwrap_err();
-            assert_eq!(error.kind(), ErrorKind::ClusterConnectionNotFound);
+            assert_eq!(error.kind(), ErrorKind::Io);
+            let detail = error.detail().unwrap();
+            assert!(
+                detail.contains("Password") || detail.contains("password"),
+                "{error}"
+            );
         }
     }
 }
