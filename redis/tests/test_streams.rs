@@ -2374,3 +2374,655 @@ fn test_xautoclaim_invalid_pel_entries_claiming_just_ids() {
         assert_eq!(reply.deleted_ids.len(), 0);
     }
 }
+
+mod idempotency_tests {
+    use super::*;
+
+    const PID_1: &str = "producer-1";
+    const PID_2: &str = "producer-2";
+    const IID_1: &str = "msg-1";
+    const IID_2: &str = "msg-2";
+
+    const IDMP_DEFAULT_DURATION: u32 = 100;
+    const IDMP_DEFAULT_MAXSIZE: u16 = 100;
+
+    const IDMP_CUSTOM_DURATION: u32 = 300;
+    const IDMP_CUSTOM_MAXSIZE: u16 = 500;
+
+    const FIELD_VALUES: [(&str, &str); 2] = [("field1", "value1"), ("field2", "value2")];
+
+    #[test]
+    fn test_xadd_idempotency_manual_mode() {
+        // Test IDMP (manual mode) - prevents messages with the same PID and IID from being added to the stream.
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_6);
+        let mut con = ctx.connection();
+
+        const STREAM_NAME: &str = "test_idmp_stream";
+
+        // Add a message with IDMP mode.
+        let mut opts = StreamAddOptions::default().idmp(PID_1, IID_1);
+        let id1: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", FIELD_VALUES[0], &opts)
+            .unwrap();
+        assert!(id1.is_some());
+        // Verify that the message was registered for tracking.
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.pids_tracked, 1);
+        assert_eq!(info.iids_tracked, 1);
+        assert_eq!(info.iids_duplicates, 0);
+
+        // Trying to add the same message again with the same PID and IID should succeed.
+        // The message should be deduplicated and the ID of the original message should be returned.
+        let id2: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", FIELD_VALUES[0], &opts)
+            .unwrap();
+        assert!(id2.is_some());
+
+        // Verify that the returned message ID is the same as the original message ID and that the stream only has one entry.
+        assert_eq!(id1, id2);
+        assert_eq!(con.xlen(STREAM_NAME), Ok(1));
+        // Verify that deduplication has taken place.
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.pids_tracked, 1);
+        assert_eq!(info.iids_tracked, 1);
+        assert_eq!(info.iids_duplicates, 1);
+
+        // Even adding a different message with the same PID and IID should succeed and be deduplicated to the original message.
+        let id3: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", FIELD_VALUES[1], &opts)
+            .unwrap();
+        assert!(id3.is_some());
+        assert_eq!(id1, id3);
+        assert_eq!(con.xlen(STREAM_NAME), Ok(1));
+        let reply = con.xrange_all(STREAM_NAME).unwrap();
+        assert!(reply.ids[0].contains_key(FIELD_VALUES[0].0));
+        // Verify that deduplication has taken place.
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.pids_tracked, 1);
+        assert_eq!(info.iids_tracked, 1);
+        assert_eq!(info.iids_duplicates, 2);
+
+        // Adding a different message with the same PID but different IID should succeed.
+        opts = opts.idmp(PID_1, IID_2);
+        let id4: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", FIELD_VALUES[1], &opts)
+            .unwrap();
+        assert!(id4.is_some());
+        assert_ne!(id1, id4);
+        assert_eq!(con.xlen(STREAM_NAME), Ok(2));
+        // Verify that the message was registered for tracking.
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.pids_tracked, 1);
+        assert_eq!(info.iids_tracked, 2);
+        assert_eq!(info.iids_duplicates, 2);
+
+        // Adding an existing message with an existing IID but non-existing PID should succeed.
+        opts = opts.idmp(PID_2, IID_1);
+        let id5: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", FIELD_VALUES[0], &opts)
+            .unwrap();
+        assert!(id5.is_some());
+        assert_ne!(id1, id5);
+        assert_ne!(id4, id5);
+        assert_eq!(con.xlen(STREAM_NAME), Ok(3));
+        // Verify that the message was registered for tracking.
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.pids_tracked, 2);
+        assert_eq!(info.iids_tracked, 3);
+        assert_eq!(info.iids_duplicates, 2);
+    }
+
+    #[test]
+    fn test_xadd_idempotency_automatic_mode() {
+        // Test IDMPAUTO (automatic mode) - prevents messages with the same PID and content from being added to the stream.
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_6);
+        let mut con = ctx.connection();
+
+        const STREAM_NAME: &str = "test_idmpauto_stream";
+
+        // Add a message with IDMPAUTO mode.
+        let opts = StreamAddOptions::default().idmpauto(PID_1);
+        let id1: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", FIELD_VALUES[0], &opts)
+            .unwrap();
+        assert!(id1.is_some());
+        // Verify that the message was registered for tracking.
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.pids_tracked, 1);
+        assert_eq!(info.iids_tracked, 1);
+        assert_eq!(info.iids_duplicates, 0);
+
+        // Adding the same message again should be deduplicated, returning the ID of the original message,
+        // as identical producer and content produce the same auto-generated ID.
+        let id2: Option<String> = con
+            .xadd_options(
+                STREAM_NAME,
+                "*",
+                FIELD_VALUES[0], // Same content
+                &opts,
+            )
+            .unwrap();
+        assert!(id2.is_some());
+
+        // Verify that the returned message ID is the same as the original message ID and that the stream only has one entry.
+        assert_eq!(id1, id2);
+        assert_eq!(con.xlen(STREAM_NAME), Ok(1));
+        // Verify that deduplication has taken place.
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.pids_tracked, 1);
+        assert_eq!(info.iids_tracked, 1);
+        assert_eq!(info.iids_duplicates, 1);
+
+        // Adding a message with different content should succeed.
+        let id3: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", FIELD_VALUES[1], &opts)
+            .unwrap();
+        assert!(id3.is_some());
+        assert_ne!(id1, id3);
+        assert_eq!(con.xlen(STREAM_NAME), Ok(2));
+        // Verify that the message was registered for tracking.
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.pids_tracked, 1);
+        assert_eq!(info.iids_tracked, 2);
+        assert_eq!(info.iids_duplicates, 1);
+
+        // Adding an existing message with different PID should succeed.
+        let id4: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", FIELD_VALUES[0], &opts.idmpauto(PID_2))
+            .unwrap();
+        assert!(id4.is_some());
+        assert_ne!(id1, id4);
+        assert_ne!(id3, id4);
+        assert_eq!(con.xlen(STREAM_NAME), Ok(3));
+        // Verify that the message was registered for tracking.
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.pids_tracked, 2);
+        assert_eq!(info.iids_tracked, 3);
+        assert_eq!(info.iids_duplicates, 1);
+    }
+
+    #[test]
+    fn test_xadd_idempotency_with_other_options() {
+        // Test that idempotency works correctly with other XADD options
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_6);
+        let mut con = ctx.connection();
+
+        const STREAM_NAME: &str = "test_idmp_combined_options_stream";
+        const GROUP_NAME: &str = "test_group";
+        const CONSUMER_NAME: &str = "consumer";
+
+        const INITIAL_STREAM_ENTRIES: [(&str, &str); 3] = [
+            ("field1", "value1"),
+            ("field2", "value2"),
+            ("field3", "value3"),
+        ];
+        const ADDITIONAL_STREAM_ENTRY: (&str, &str) = ("field4", "value4");
+        const FINAL_STREAM_ENTRY: (&str, &str) = ("field5", "value5");
+
+        // Test that NOMKSTREAM does not create the stream if it doesn't exist.
+        let result = con.xadd_options(
+            STREAM_NAME,
+            "*",
+            &[("field", "value")],
+            &StreamAddOptions::default().idmp(PID_1, IID_1).nomkstream(),
+        );
+        assert_eq!(result, Ok(None));
+
+        // Verify that the stream did not get created.
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME);
+        assert_matches!(&info, Err(e) if e.kind() == redis::ServerErrorKind::ResponseError.into()
+            && e.code() == Some("ERR")
+            && e.detail() == Some("no such key")
+        );
+
+        // Create stream with initial entries.
+        let [_id1, id2, id3]: [String; 3] = INITIAL_STREAM_ENTRIES
+            .map(|entry| con.xadd(STREAM_NAME, "*", &[entry]).unwrap().unwrap());
+
+        // Verify that since idempotency was not used, no tracking of the messages has taken place.
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.pids_tracked, 0);
+        assert_eq!(info.iids_tracked, 0);
+        assert_eq!(info.iids_duplicates, 0);
+
+        // Create a consumer group and read all initial messages to create PEL entries.
+        let _: () = con
+            .xgroup_create_mkstream(STREAM_NAME, GROUP_NAME, "0")
+            .unwrap();
+        let _: Option<StreamReadReply> = con
+            .xread_options(
+                &[STREAM_NAME],
+                &[">"],
+                &StreamReadOptions::default()
+                    .group(GROUP_NAME, CONSUMER_NAME)
+                    .count(INITIAL_STREAM_ENTRIES.len() + 1),
+            )
+            .unwrap();
+        let pending = con.xpending(STREAM_NAME, GROUP_NAME).unwrap();
+        assert_eq!(pending.count(), INITIAL_STREAM_ENTRIES.len());
+
+        // Add the additional entry with idempotency, apply trimming and deletion policy.
+        // This should trim the stream and keep references in PEL.
+        let id4 = con
+            .xadd_options(
+                STREAM_NAME,
+                "*",
+                &[ADDITIONAL_STREAM_ENTRY],
+                &StreamAddOptions::default()
+                    .idmp(PID_1, IID_1)
+                    .trim(StreamTrimStrategy::maxlen(
+                        StreamTrimmingMode::Exact,
+                        INITIAL_STREAM_ENTRIES.len(),
+                    ))
+                    .set_deletion_policy(StreamDeletionPolicy::KeepRef),
+            )
+            .unwrap()
+            .unwrap();
+
+        // The stream should have been trimmed as its entries exceeded the maximum length.
+        // As a result, the first entry should have been removed.
+        assert_eq!(con.xlen(STREAM_NAME).unwrap(), INITIAL_STREAM_ENTRIES.len());
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.base.first_entry.id, id2); // id1 should now be trimmed
+        assert_eq!(info.base.last_generated_id, id4);
+        // Additionally, verify that the message was registered for idempotency tracking.
+        assert_eq!(info.pids_tracked, 1);
+        assert_eq!(info.iids_tracked, 1);
+        assert_eq!(info.iids_duplicates, 0);
+
+        // References should still exist in PEL (KeepRef policy).
+        let pending = con.xpending(STREAM_NAME, GROUP_NAME).unwrap();
+        assert_eq!(pending.count(), INITIAL_STREAM_ENTRIES.len());
+
+        // Trying to add the same message again with the same PID and IID should succeed.
+        // The message should be deduplicated and the ID of the original message should be returned.
+        let id5 = con
+            .xadd_options(
+                STREAM_NAME,
+                "*",
+                &[ADDITIONAL_STREAM_ENTRY],
+                &StreamAddOptions::default()
+                    .idmp(PID_1, IID_1)
+                    .trim(StreamTrimStrategy::maxlen(
+                        StreamTrimmingMode::Exact,
+                        INITIAL_STREAM_ENTRIES.len(),
+                    ))
+                    .set_deletion_policy(StreamDeletionPolicy::KeepRef),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(id4, id5);
+
+        // The stream should remain unchanged.
+        assert_eq!(con.xlen(STREAM_NAME).unwrap(), INITIAL_STREAM_ENTRIES.len());
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.base.first_entry.id, id2);
+        assert_eq!(info.base.last_generated_id, id4);
+        // Additionally, verify that the message was deduplicated.
+        assert_eq!(info.pids_tracked, 1);
+        assert_eq!(info.iids_tracked, 1);
+        assert_eq!(info.iids_duplicates, 1);
+
+        // Adding another message with different IID (generated by automatic mode) - should succeed and trim further.
+        let id6 = con
+            .xadd_options(
+                STREAM_NAME,
+                "*",
+                &[FINAL_STREAM_ENTRY],
+                &StreamAddOptions::default()
+                    .idmpauto(PID_1)
+                    .trim(StreamTrimStrategy::maxlen(
+                        StreamTrimmingMode::Exact,
+                        INITIAL_STREAM_ENTRIES.len(),
+                    ))
+                    .set_deletion_policy(StreamDeletionPolicy::KeepRef),
+            )
+            .unwrap()
+            .unwrap();
+        assert_ne!(id5, id6);
+
+        // The stream should have been trimmed again, as its entries once again exceeded the maximum length.
+        // As a result, the first entry (second from the initial entries) should have been removed.
+        assert_eq!(con.xlen(STREAM_NAME).unwrap(), INITIAL_STREAM_ENTRIES.len());
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.base.first_entry.id, id3); // id2 should now be trimmed
+        assert_eq!(info.base.last_generated_id, id6);
+        // Additionally, verify that the message was registered for idempotency tracking.
+        assert_eq!(info.pids_tracked, 1);
+        assert_eq!(info.iids_tracked, 2);
+        assert_eq!(info.iids_duplicates, 1);
+    }
+
+    #[test]
+    fn test_xcfgset() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_6);
+        let mut con = ctx.connection();
+
+        const STREAM_NAME: &str = "test_xcfgset_stream";
+        const KEY_VALUE: (&str, &str) = ("test", "test");
+
+        // Trying to configure a non-existent stream should return an error.
+        let result: redis::RedisResult<String> = con.xcfgset(
+            STREAM_NAME,
+            &StreamConfigOptions::with_idempotency_seconds(IDMP_CUSTOM_DURATION).unwrap(),
+        );
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert_eq!(e.code(), Some("ERR"));
+            assert!(e.to_string().contains("no such key"));
+        }
+        // An error should be returned if the key is not a stream.
+        assert_eq!(con.set(KEY_VALUE.0, KEY_VALUE.1), Ok(()));
+        let result: redis::RedisResult<String> = con.xcfgset(
+            KEY_VALUE.0,
+            &StreamConfigOptions::with_idempotency_seconds(IDMP_CUSTOM_DURATION).unwrap(),
+        );
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert_eq!(e.code(), Some("WRONGTYPE"));
+        }
+
+        // Create an empty stream, using XGROUP CREATE MKSTREAM.
+        let _: () = con
+            .xgroup_create_mkstream(STREAM_NAME, "group", "$")
+            .unwrap();
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        // Verify that initially the defaults are used.
+        assert_eq!(info.idmp_duration, IDMP_DEFAULT_DURATION);
+        assert_eq!(info.idmp_maxsize, IDMP_DEFAULT_MAXSIZE);
+
+        // Configure with duration only.
+        assert_eq!(
+            con.xcfgset(
+                STREAM_NAME,
+                &StreamConfigOptions::with_idempotency_seconds(IDMP_CUSTOM_DURATION).unwrap()
+            )
+            .unwrap(),
+            "OK"
+        );
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        // Verify that only the duration has changed.
+        assert_eq!(info.idmp_duration, IDMP_CUSTOM_DURATION);
+        assert_eq!(info.idmp_maxsize, IDMP_DEFAULT_MAXSIZE);
+
+        // Configure with maxsize only.
+        assert_eq!(
+            con.xcfgset(
+                STREAM_NAME,
+                &StreamConfigOptions::with_idempotency_maxsize(IDMP_CUSTOM_MAXSIZE).unwrap()
+            )
+            .unwrap(),
+            "OK"
+        );
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        // Verify that the new max size is applied and that the previously set duration is preserved.
+        assert_eq!(info.idmp_duration, IDMP_CUSTOM_DURATION);
+        assert_eq!(info.idmp_maxsize, IDMP_CUSTOM_MAXSIZE);
+
+        // Configure with both parameters, by first setting the duration and then the maxsize.
+        let opts = StreamConfigOptions::with_idempotency_seconds(IDMP_CUSTOM_DURATION * 2)
+            .unwrap()
+            .idempotency_maxsize(IDMP_CUSTOM_MAXSIZE * 2)
+            .unwrap();
+        assert_eq!(con.xcfgset(STREAM_NAME, &opts).unwrap(), "OK");
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        // Verify that both parameters have changed and they are now doubled.
+        assert_eq!(info.idmp_duration, IDMP_CUSTOM_DURATION * 2);
+        assert_eq!(info.idmp_maxsize, IDMP_CUSTOM_MAXSIZE * 2);
+
+        // Configure with both parameters, by first setting the maxsize and then the duration.
+        let opts = StreamConfigOptions::with_idempotency_maxsize(IDMP_CUSTOM_MAXSIZE)
+            .unwrap()
+            .idempotency_seconds(IDMP_CUSTOM_DURATION)
+            .unwrap();
+        assert_eq!(con.xcfgset(STREAM_NAME, &opts).unwrap(), "OK");
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        // Verify that both parameters have changed and they are now set to the custom values.
+        assert_eq!(info.idmp_duration, IDMP_CUSTOM_DURATION);
+        assert_eq!(info.idmp_maxsize, IDMP_CUSTOM_MAXSIZE);
+    }
+
+    #[test]
+    fn test_xcfgset_with_idempotent_messages() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_6);
+        let mut con = ctx.connection();
+
+        const STREAM_NAME: &str = "test_xcfgset_with_idempotent_messages_stream";
+
+        // Add the first idempotent message.
+        let opts1 = StreamAddOptions::default().idmp(PID_1, IID_1);
+        let id1: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", FIELD_VALUES[0], &opts1)
+            .unwrap();
+        assert!(id1.is_some());
+
+        // Add the second idempotent message with different IID.
+        let opts2 = StreamAddOptions::default().idmp(PID_1, IID_2);
+        let id2: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", FIELD_VALUES[1], &opts2)
+            .unwrap();
+        assert!(id2.is_some());
+
+        // Verify that the IDMP map is populated.
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.pids_tracked, 1);
+        assert_eq!(info.iids_tracked, 2);
+        assert_eq!(info.iids_added, 2);
+        assert_eq!(info.iids_duplicates, 0);
+
+        // Verify duplicates are properly detected before clearing.
+        let id3: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", FIELD_VALUES[0], &opts1)
+            .unwrap();
+        assert!(id3.is_some());
+        assert_eq!(id1, id3);
+
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.iids_duplicates, 1);
+
+        // Changing the configuration should clear the IDMP map.
+        assert_eq!(
+            con.xcfgset(
+                STREAM_NAME,
+                &StreamConfigOptions::with_idempotency_seconds(IDMP_CUSTOM_DURATION).unwrap()
+            )
+            .unwrap(),
+            "OK"
+        );
+
+        // Verify that the configuration was applied and the IDMP map was cleared.
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.idmp_duration, IDMP_CUSTOM_DURATION);
+        assert_eq!(info.pids_tracked, 0);
+        assert_eq!(info.iids_tracked, 0);
+        // Reminder: iids_added and iids_duplicates are lifetime counters and should NOT be reset when the map is cleared.
+        assert_eq!(info.iids_added, 2, "Lifetime counter should not be reset");
+        assert_eq!(
+            info.iids_duplicates, 1,
+            "Lifetime counter should not be reset"
+        );
+
+        // After clearing, the same message should NOT be detected as duplicate.
+        let id4: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", FIELD_VALUES[0], &opts1)
+            .unwrap();
+        assert!(id4.is_some());
+        assert_ne!(id1, id4);
+
+        // Verify the IDMP map is now tracking again.
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.pids_tracked, 1);
+        assert_eq!(info.iids_tracked, 1);
+        assert_eq!(info.iids_added, 3);
+        assert_eq!(info.iids_duplicates, 1);
+
+        // Now the duplicate should be detected again.
+        let id5: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", FIELD_VALUES[0], &opts1)
+            .unwrap();
+        assert!(id5.is_some());
+        assert_eq!(id4, id5);
+
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.iids_duplicates, 2);
+
+        // Verify that changing maxsize also clears the IDMP map.
+        assert_eq!(
+            con.xcfgset(
+                STREAM_NAME,
+                &StreamConfigOptions::with_idempotency_maxsize(IDMP_CUSTOM_MAXSIZE).unwrap()
+            )
+            .unwrap(),
+            "OK"
+        );
+
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.idmp_maxsize, IDMP_CUSTOM_MAXSIZE);
+        assert_eq!(info.pids_tracked, 0);
+        assert_eq!(info.iids_tracked, 0);
+        assert_eq!(info.iids_added, 3, "Lifetime counter should not be reset");
+        assert_eq!(
+            info.iids_duplicates, 2,
+            "Lifetime counter should not be reset"
+        );
+    }
+
+    #[test]
+    fn test_xcfgset_idempotency_behavior() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_6);
+        let mut con = ctx.connection();
+
+        const STREAM_NAME: &str = "test_xcfgset_behavior_stream";
+        const IID_3: &str = "msg-3";
+
+        const IDMP_SHORT_DURATION: u32 = 2;
+        const IDMP_MAXSIZE_LIMIT: u16 = 2;
+        const EXTRA_FIELD_VALUE: (&str, &str) = ("extra-field", "extra-value");
+
+        // Test 1: Verify MAXSIZE limit enforcement
+        let _: () = con
+            .xgroup_create_mkstream(STREAM_NAME, "group", "$")
+            .unwrap();
+        assert_eq!(
+            con.xcfgset(
+                STREAM_NAME,
+                &StreamConfigOptions::with_idempotency_maxsize(IDMP_MAXSIZE_LIMIT).unwrap()
+            )
+            .unwrap(),
+            "OK"
+        );
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.idmp_maxsize, IDMP_MAXSIZE_LIMIT);
+
+        // Add messages up to IDMP_MAXSIZE_LIMIT (2 IIDs).
+        let opts1 = StreamAddOptions::default().idmp(PID_1, IID_1);
+        let id1: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", FIELD_VALUES[0], &opts1)
+            .unwrap();
+        assert!(id1.is_some());
+
+        let opts2 = StreamAddOptions::default().idmp(PID_1, IID_2);
+        let id2: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", FIELD_VALUES[1], &opts2)
+            .unwrap();
+        assert!(id2.is_some());
+
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.pids_tracked, 1);
+        assert_eq!(info.iids_tracked, 2);
+        assert_eq!(info.iids_added, 2);
+        assert_eq!(info.idmp_maxsize, IDMP_MAXSIZE_LIMIT);
+
+        // Add a third IID, which should evict the oldest one (IID_1) due to LRU behavior.
+        let opts3 = StreamAddOptions::default().idmp(PID_1, IID_3);
+        let id3: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", EXTRA_FIELD_VALUE, &opts3)
+            .unwrap();
+        assert!(id3.is_some());
+
+        // Verify that the IDMP map is still tracking exactly IDMP_MAXSIZE_LIMIT IIDs.
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.iids_tracked, IDMP_MAXSIZE_LIMIT as usize);
+        assert_eq!(info.iids_added, 3);
+
+        // Now IID_1 should NOT be detected as duplicate as it was evicted.
+        let id4: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", FIELD_VALUES[0], &opts1)
+            .unwrap();
+        assert!(id4.is_some());
+        assert_ne!(id1, id4);
+
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.iids_added, 4);
+        assert_eq!(info.iids_duplicates, 0);
+
+        // IID_3 should still be detected as a duplicate.
+        let id5: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", EXTRA_FIELD_VALUE, &opts3)
+            .unwrap();
+        assert!(id5.is_some());
+        assert_eq!(id3, id5);
+
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.iids_duplicates, 1);
+
+        // Test 2: Verify duration-based expiry
+        // Recreate the stream with short idempotency duration.
+        let _: usize = con.del(STREAM_NAME).unwrap();
+        let _: () = con
+            .xgroup_create_mkstream(STREAM_NAME, "group", "$")
+            .unwrap();
+        assert_eq!(
+            con.xcfgset(
+                STREAM_NAME,
+                &StreamConfigOptions::with_idempotency_seconds(IDMP_SHORT_DURATION).unwrap()
+            )
+            .unwrap(),
+            "OK"
+        );
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.idmp_duration, IDMP_SHORT_DURATION);
+
+        // Add an idempotent message.
+        let opts = StreamAddOptions::default().idmp(PID_1, IID_1);
+        let id1: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", FIELD_VALUES[0], &opts)
+            .unwrap();
+        assert!(id1.is_some());
+
+        // Immediately try to duplicate it, which should result in deduplication and the original ID being returned.
+        let id2: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", FIELD_VALUES[0], &opts)
+            .unwrap();
+        assert!(id2.is_some());
+        assert_eq!(id1, id2);
+
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        assert_eq!(info.iids_tracked, 1);
+        assert_eq!(info.iids_duplicates, 1);
+
+        // Wait for the idempotency duration to expire.
+        std::thread::sleep(std::time::Duration::from_secs(
+            (IDMP_SHORT_DURATION as u64) + 1,
+        ));
+
+        // After expiry, the same message should NOT be detected as duplicate.
+        let id3: Option<String> = con
+            .xadd_options(STREAM_NAME, "*", FIELD_VALUES[0], &opts)
+            .unwrap();
+        assert!(id3.is_some());
+        assert_ne!(id1, id3);
+
+        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        // The IID should be tracked again (re-added after expiry).
+        assert_eq!(info.iids_tracked, 1);
+        assert_eq!(
+            info.iids_added, 2,
+            "Should have added 2 unique messages (original + after expiry)"
+        );
+        assert_eq!(
+            info.iids_duplicates, 1,
+            "Duplicate counter should remain at 1"
+        );
+    }
+}
