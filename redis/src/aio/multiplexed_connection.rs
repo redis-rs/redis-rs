@@ -673,7 +673,9 @@ impl MultiplexedConnection {
                                 .await
                             {
                                 if err.is_connection_dropped() {
-                                    warn!("Re-authentication skipped, connection is dead: {err}");
+                                    warn!(
+                                        "Re-authentication task ended, connection is dead: {err}"
+                                    );
                                     return;
                                 }
                                 error!("Failed to re-authenticate async connection: {err}.");
