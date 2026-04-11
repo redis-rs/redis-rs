@@ -19,8 +19,7 @@ use ::tokio::{
 use {
     crate::errors::ErrorKind,
     arcstr::ArcStr,
-    log::{debug, error},
-    std::sync::atomic::{AtomicBool, Ordering},
+    log::{debug, error, warn},
 };
 
 use futures_util::{
@@ -511,10 +510,6 @@ pub struct MultiplexedConnection {
     // This handle ensures that once all the clones of the connection will be dropped, the underlying task will stop.
     // It is only set for connections that use a credentials provider for token-based authentication.
     _credentials_subscription_task_handle: Option<SharedHandleContainer>,
-    /// Flag indicating that re-authentication has failed and the connection is no longer usable.
-    /// When set, all subsequent commands will fail immediately with an authentication error.
-    #[cfg(feature = "token-based-authentication")]
-    re_authentication_failed: Arc<AtomicBool>,
 }
 
 impl Debug for MultiplexedConnection {
@@ -530,8 +525,6 @@ impl Debug for MultiplexedConnection {
                 cache_manager: _,
             #[cfg(feature = "token-based-authentication")]
                 _credentials_subscription_task_handle: _,
-            #[cfg(feature = "token-based-authentication")]
-                re_authentication_failed: _,
         } = self;
 
         f.debug_struct("MultiplexedConnection")
@@ -663,19 +656,15 @@ impl MultiplexedConnection {
             cache_manager: cache_manager_opt,
             #[cfg(feature = "token-based-authentication")]
             _credentials_subscription_task_handle: None,
-            #[cfg(feature = "token-based-authentication")]
-            re_authentication_failed: Arc::new(AtomicBool::new(false)),
         };
 
         // Set up streaming credentials subscription if provider is available
         #[cfg(feature = "token-based-authentication")]
         if let Some(streaming_provider) = config.credentials_provider {
             let mut inner_connection = con.clone();
-            let re_authentication_failed_arc = Arc::clone(&con.re_authentication_failed);
             let mut stream = streaming_provider.subscribe();
 
             let subscription_task_handle = Runtime::locate().spawn(async move {
-                let mut error_cause_logged = false;
                 while let Some(result) = stream.next().await {
                     match result {
                         Ok(credentials) => {
@@ -683,26 +672,24 @@ impl MultiplexedConnection {
                                 .re_authenticate_with_credentials(&credentials)
                                 .await
                             {
+                                if err.is_connection_dropped() {
+                                    warn!(
+                                        "Re-authentication task ended, connection is dead: {err}"
+                                    );
+                                    return;
+                                }
                                 error!("Failed to re-authenticate async connection: {err}.");
-                                error_cause_logged = true;
-                                re_authentication_failed_arc.store(true, Ordering::Relaxed);
-                                break;
+                                return;
                             } else {
                                 debug!("Re-authenticated async connection");
                             }
                         }
                         Err(err) => {
                             error!("Credentials stream error for async connection: {err}.");
-                            error_cause_logged = true;
                         }
                     }
                 }
-                if !re_authentication_failed_arc.load(Ordering::Relaxed) {
-                    if !error_cause_logged {
-                        error!("Re-authentication stream ended unexpectedly.");
-                    }
-                    re_authentication_failed_arc.store(true, Ordering::Relaxed);
-                }
+                warn!("Credentials stream ended; no further re-authentication will occur.");
             });
             return Ok((
                 Self {
@@ -739,13 +726,6 @@ impl MultiplexedConnection {
         } else {
             None
         };
-        #[cfg(feature = "token-based-authentication")]
-        if self.re_authentication_failed.load(Ordering::Relaxed) {
-            return Err(RedisError::from((
-                ErrorKind::AuthenticationFailed,
-                "Connection is no longer usable due to re-authentication failure",
-            )));
-        }
         #[cfg(feature = "cache-aio")]
         if let Some(cache_manager) = &self.cache_manager {
             match cache_manager.get_cached_cmd(cmd) {
@@ -810,13 +790,6 @@ impl MultiplexedConnection {
         } else {
             Vec::new()
         };
-        #[cfg(feature = "token-based-authentication")]
-        if self.re_authentication_failed.load(Ordering::Relaxed) {
-            return Err(RedisError::from((
-                ErrorKind::AuthenticationFailed,
-                "Connection is no longer usable due to re-authentication failure",
-            )));
-        }
         #[cfg(feature = "cache-aio")]
         if let Some(cache_manager) = &self.cache_manager {
             let (cacheable_pipeline, pipeline, (skipped_response_count, expected_response_count)) =

@@ -317,7 +317,7 @@ mod token_based_authentication_acl_tests {
     use futures_time::task::sleep;
     use futures_util::{Stream, StreamExt};
     use redis::{
-        AsyncTypedCommands, ErrorKind, RedisResult,
+        AsyncTypedCommands, RedisResult,
         aio::ConnectionLike,
         auth::{BasicAuth, StreamingCredentialsProvider},
     };
@@ -953,15 +953,15 @@ mod token_based_authentication_acl_tests {
         );
     }
 
-    /// Tests that the connection gets rendered unusable when Redis rejects credentials during re-authentication.
+    /// Tests the full re-authentication failure lifecycle:
     ///
-    /// The scenario:
     /// 1. Provider yields valid credentials (Alice) - connection succeeds
     /// 2. Provider yields credentials for a non-existent user - the Redis server rejects the AUTH command
-    /// 3. Connection should be rendered unusable
-    /// 4. Subsequent commands should fail with `AuthenticationFailed`
+    /// 3. Connection should still work because the previous auth session is unaffected
+    /// 4. Admin invalidates Alice via ACL DELUSER
+    /// 5. The server rejects the next command — proving we rely on the server for auth enforcement
     #[async_test]
-    async fn connection_rendered_unusable_when_reauthentication_fails() {
+    async fn server_rejects_after_user_invalidated() {
         init_logger();
         let ctx = TestContext::new();
 
@@ -992,25 +992,35 @@ mod token_based_authentication_acl_tests {
         assert_eq!(current_user, ALICE_OID_CLAIM);
         println!("Initial authentication successful as user: {current_user}.");
 
-        // Wait for token rotation to occur and yield invalid credentials
+        // Wait for the failed re-auth attempt to occur
         println!("Waiting for token rotation to yield invalid credentials...");
         sleep(Duration::from_millis(600).into()).await;
 
-        // The connection should now be rendered unusable because the Redis server rejected the AUTH command.
-        // Subsequent commands should fail with AuthenticationFailed.
-        println!("Attempting to execute a command on an unusable connection...");
+        // The connection should still work — a failed AUTH doesn't invalidate the existing session
+        println!("Verifying connection still works after failed re-authentication...");
+        let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
+        assert_eq!(current_user, ALICE_OID_CLAIM);
+
+        // Now simulate token expiry on the server side by deleting Alice's user
+        println!("Admin invalidating Alice via ACL DELUSER...");
+        let mut admin_con = ctx.async_connection().await.unwrap();
+        let del_result = admin_con
+            .req_packed_command(redis::cmd("ACL").arg("DELUSER").arg(ALICE_OID_CLAIM))
+            .await;
+        assert_eq!(del_result, Ok(redis::Value::Int(1)));
+
+        // The server should reject the next command since Alice no longer exists
+        // and no credential update can fix it (the re-auth task already exited)
+        println!("Verifying server rejects commands after user invalidation...");
         let result: redis::RedisResult<String> = whoami_cmd.query_async(&mut con).await;
-
-        assert!(result.is_err());
-        let error = result.unwrap_err();
-        assert_eq!(error.kind(), ErrorKind::AuthenticationFailed);
         assert!(
-            error.to_string().contains("re-authentication failure"),
-            "Error message should mention re-authentication failure: {error}"
+            result.is_err(),
+            "Commands should fail after the authenticated user is deleted from the server."
         );
-        println!("Command correctly failed with AuthenticationFailed: {error}");
-
-        println!("Connection rendered unusable test completed successfully!");
+        println!(
+            "Server correctly rejected command after user invalidation: {}",
+            result.unwrap_err()
+        );
     }
 
     #[cfg(feature = "cluster-async")]
@@ -1237,8 +1247,29 @@ mod token_based_authentication_acl_tests {
             }
         }
 
+        /// Deletes a single ACL user on every node in the cluster.
+        async fn delete_user_on_all_nodes(cluster: &TestClusterContext, username: &str) {
+            for server in &cluster.cluster.servers {
+                let client = redis::Client::open(server.connection_info()).unwrap();
+                let mut con = client.get_multiplexed_async_connection().await.unwrap();
+                redis::cmd("ACL")
+                    .arg("DELUSER")
+                    .arg(username)
+                    .exec_async(&mut con)
+                    .await
+                    .expect("ACL DELUSER should succeed");
+            }
+        }
+
+        /// Tests the full re-authentication failure lifecycle in a cluster:
+        ///
+        /// 1. Provider yields valid credentials (Alice) - connection succeeds
+        /// 2. Provider yields credentials for a non-existent user - the Redis server rejects the AUTH command
+        /// 3. Connection should still work because the previous auth session is unaffected
+        /// 4. Admin invalidates Alice via ACL DELUSER on all nodes
+        /// 5. The server rejects the next command — proving we rely on the server for auth enforcement
         #[async_test]
-        async fn cluster_connection_rendered_unusable_when_reauthentication_fails() {
+        async fn cluster_server_rejects_after_user_invalidated() {
             init_logger();
             let cluster = TestClusterContext::new_with_cluster_client_builder(
                 |builder: ClusterClientBuilder| {
@@ -1255,19 +1286,27 @@ mod token_based_authentication_acl_tests {
             let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
             let mut con = cluster.async_connection().await;
 
+            // Verify initial authentication succeeded
             let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
             assert_eq!(current_user, ALICE_OID_CLAIM);
 
-            // Wait for rotation to yield invalid credentials
+            // Wait for the failed re-auth attempt to occur
             sleep(Duration::from_millis(600).into()).await;
 
+            // The connection should still work — a failed AUTH doesn't invalidate the existing session
+            let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
+            assert_eq!(current_user, ALICE_OID_CLAIM);
+
+            // Now simulate token expiry on the server side by deleting Alice's user on all nodes
+            delete_user_on_all_nodes(&cluster, ALICE_OID_CLAIM).await;
+
+            // The server should reject the next command since Alice no longer exists
+            // and no credential update can fix it (the re-auth task already exited)
             let result: redis::RedisResult<String> = whoami_cmd.query_async(&mut con).await;
             assert!(
                 result.is_err(),
-                "Commands should fail after re-authentication with invalid credentials."
+                "Commands should fail after the authenticated user is deleted from the server."
             );
-            let error = result.unwrap_err();
-            assert_eq!(error.kind(), ErrorKind::ClusterConnectionNotFound);
         }
     }
 }
