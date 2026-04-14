@@ -15,16 +15,40 @@ static GEO_FIELD_NAME: &str = "location";
 static VECTOR_FIELD_NAME: &str = "embedding";
 static GEOSHAPE_FIELD_NAME: &str = "area";
 
+fn assert_no_index_and_index_missing_exclusivity_for_field(
+    result: redis::RedisResult<String>,
+    field_name: &str,
+) {
+    let server_error = redis::ServerError::try_from(result.unwrap_err()).unwrap();
+    assert_eq!(
+        server_error.details(),
+        Some(
+            format!(
+                "'Field cannot be defined with both `NOINDEX` and `INDEXMISSING` `{}` '",
+                field_name
+            )
+            .as_str()
+        ),
+    );
+}
+
 #[test]
 fn test_ft_create_with_an_empty_index_name() {
     let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
     let mut con = ctx.connection();
+    let empty_index_name = "";
+    let options = CreateOptions::new();
     let schema = schema! {
         TEXT_FIELD_NAME => SchemaTextField::new()
     };
+    // Check that the first call succeeds but the second one fails because the index already exists
     assert_eq!(
-        con.ft_create("", &CreateOptions::new(), &schema),
+        con.ft_create(empty_index_name, &options, &schema),
         Ok("OK".to_string())
+    );
+    assert!(
+        con.ft_create::<_, String>(empty_index_name, &options, &schema)
+            .is_err()
     );
 }
 
@@ -33,10 +57,10 @@ fn test_simple_ft_create() {
     let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
     let mut con = ctx.connection();
     let index_name = "index";
+    let options = CreateOptions::new();
     let schema = schema! {
         TEXT_FIELD_NAME => SchemaTextField::new()
     };
-    let options = CreateOptions::new();
     // Check that the first call succeeds but the second one fails because the index already exists
     assert_eq!(
         con.ft_create(index_name, &options, &schema),
@@ -182,15 +206,15 @@ fn test_ft_create_schema_text_field() {
         );
     }
     // Test that mutually exclusive modifiers are mutually exclusive indeed
-    assert!(
+    assert_no_index_and_index_missing_exclusivity_for_field(
         con.ft_create::<_, String>(
             "invalid_index",
             &CreateOptions::new(),
             &schema! {
                 TEXT_FIELD_NAME => SchemaTextField::new().no_index(true).index_missing(true)
-            }
-        )
-        .is_err()
+            },
+        ),
+        TEXT_FIELD_NAME,
     );
 }
 
@@ -268,15 +292,15 @@ fn test_ft_create_schema_tag_field() {
         );
     }
     // Test that mutually exclusive modifiers are mutually exclusive indeed
-    assert!(
+    assert_no_index_and_index_missing_exclusivity_for_field(
         con.ft_create::<_, String>(
             "invalid_index",
             &CreateOptions::new(),
             &schema! {
                 TAG_FIELD_NAME => SchemaTagField::new().no_index(true).index_missing(true)
-            }
-        )
-        .is_err()
+            },
+        ),
+        TAG_FIELD_NAME,
     );
 }
 
@@ -349,15 +373,15 @@ fn test_ft_create_schema_numeric_field() {
         );
     }
     // Test that mutually exclusive modifiers are mutually exclusive indeed
-    assert!(
+    assert_no_index_and_index_missing_exclusivity_for_field(
         con.ft_create::<_, String>(
             "invalid_index",
             &CreateOptions::new(),
             &schema! {
                 NUMERIC_FIELD_NAME => SchemaNumericField::new().no_index(true).index_missing(true)
-            }
-        )
-        .is_err()
+            },
+        ),
+        NUMERIC_FIELD_NAME,
     );
 }
 
@@ -430,15 +454,15 @@ fn test_ft_create_schema_geo_field() {
         );
     }
     // Test that mutually exclusive modifiers are mutually exclusive indeed
-    assert!(
+    assert_no_index_and_index_missing_exclusivity_for_field(
         con.ft_create::<_, String>(
             "invalid_index",
             &CreateOptions::new(),
             &schema! {
                 GEO_FIELD_NAME => SchemaGeoField::new().no_index(true).index_missing(true)
-            }
-        )
-        .is_err()
+            },
+        ),
+        GEO_FIELD_NAME,
     );
 }
 
@@ -888,15 +912,15 @@ fn test_ft_create_schema_geoshape_field() {
         }
 
         // Test that mutually exclusive modifiers are mutually exclusive indeed
-        assert!(
+        assert_no_index_and_index_missing_exclusivity_for_field(
             con.ft_create::<_, String>(
                 "invalid_index",
                 &CreateOptions::new(),
                 &schema! {
                     GEOSHAPE_FIELD_NAME => SchemaGeoShapeField::new().coord_system(coord_system.clone()).no_index(true).index_missing(true)
                 }
-            )
-            .is_err()
+            ),
+            GEOSHAPE_FIELD_NAME,
         );
     }
 }
