@@ -755,6 +755,7 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"COMMAND"
         | b"CONFIG GET"
         | b"ECHO"
+        | b"FT.CREATE"
         | b"FUNCTION LIST"
         | b"LASTSAVE"
         | b"LOLWUT"
