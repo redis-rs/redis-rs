@@ -582,7 +582,7 @@ where
         match RoutingInfo::for_routable(cmd) {
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => {
                 let mut rng = rng();
-                Ok(addr_for_slot(Route::new(
+                Ok(addr_for_slot(Route::new_unsafe(
                     rng.random_range(0..SLOT_SIZE),
                     SlotAddr::Master,
                 ))?)
