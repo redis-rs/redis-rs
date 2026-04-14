@@ -21,25 +21,23 @@
 //!     )
 //!     .schema(schema);
 //! ```
-use std::marker::PhantomData;
-
 use crate::Cmd;
 use crate::search::*;
 
 /// Marker type indicating no schema has been set yet.
-pub struct WithoutSchema;
-
-/// Marker type indicating a schema has been set.
-pub struct WithSchema;
+pub struct NoSchema;
 
 /// FT.CREATE command builder.
 ///
 /// Uses the typestate pattern to enforce at compile time that a schema
-/// is set before the command can be built.
+/// is set before the command can be built. The schema state is encoded
+/// directly in the generic parameter: before a schema is set the builder
+/// holds a [`NoSchema`] marker, and after the schema is set it holds the
+/// [`RediSearchSchema<NonEmpty>`] itself.
 ///
 /// # Type States
-/// - `FtCreateCommand<WithoutSchema>` - No schema set yet, `into_cmd()` not available
-/// - `FtCreateCommand<WithSchema>` - Schema set, `into_cmd()` available
+/// - `FtCreateCommand<NoSchema>` - No schema set yet, `into_cmd()` not available
+/// - `FtCreateCommand<RediSearchSchema<NonEmpty>>` - Schema set, `into_cmd()` available
 ///
 /// # Example
 /// ```rust
@@ -50,21 +48,19 @@ pub struct WithSchema;
 ///     .schema(schema! { "title" => SchemaTextField::new() })
 ///     .into_cmd();
 /// ```
-pub struct FtCreateCommand<State = WithoutSchema> {
+pub struct FtCreateCommand<S = NoSchema> {
     index: String,
     options: CreateOptions,
-    schema: Option<RediSearchSchema<NonEmpty>>,
-    _state: PhantomData<State>,
+    schema: S,
 }
 
-impl FtCreateCommand<WithoutSchema> {
+impl FtCreateCommand<NoSchema> {
     /// Create a new FT.CREATE command for the given index
     pub fn new<S: Into<String>>(index: S) -> Self {
         Self {
             index: index.into(),
             options: CreateOptions::default(),
-            schema: None,
-            _state: PhantomData,
+            schema: NoSchema,
         }
     }
 
@@ -79,19 +75,21 @@ impl FtCreateCommand<WithoutSchema> {
     /// The schema must be non-empty (contain at least one field).
     /// This is enforced at compile time by the type system.
     ///
-    /// This transitions the builder from `WithoutSchema` to `WithSchema` state,
-    /// making `into_cmd()` available.
-    pub fn schema(self, schema: RediSearchSchema<NonEmpty>) -> FtCreateCommand<WithSchema> {
+    /// This transitions the builder from `FtCreateCommand<NoSchema>` to
+    /// `FtCreateCommand<RediSearchSchema<NonEmpty>>`, making `into_cmd()` available.
+    pub fn schema(
+        self,
+        schema: RediSearchSchema<NonEmpty>,
+    ) -> FtCreateCommand<RediSearchSchema<NonEmpty>> {
         FtCreateCommand {
             index: self.index,
             options: self.options,
-            schema: Some(schema),
-            _state: PhantomData,
+            schema,
         }
     }
 }
 
-impl FtCreateCommand<WithSchema> {
+impl FtCreateCommand<RediSearchSchema<NonEmpty>> {
     /// Set the options for the command
     pub fn options(mut self, options: CreateOptions) -> Self {
         self.options = options;
@@ -104,8 +102,7 @@ impl FtCreateCommand<WithSchema> {
         cmd.arg(&self.index);
         cmd.arg(&self.options);
         cmd.arg("SCHEMA");
-        // Schema is guaranteed to be Some in this state (WithSchema).
-        cmd.arg(self.schema.unwrap());
+        cmd.arg(self.schema);
 
         cmd
     }

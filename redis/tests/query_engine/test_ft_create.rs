@@ -15,16 +15,36 @@ static GEO_FIELD_NAME: &str = "location";
 static VECTOR_FIELD_NAME: &str = "embedding";
 static GEOSHAPE_FIELD_NAME: &str = "area";
 
+fn assert_no_index_and_index_missing_exclusivity_for_field(
+    result: redis::RedisResult<String>,
+    field_name: &str,
+) {
+    let server_error = redis::ServerError::try_from(result.unwrap_err()).unwrap();
+    assert!(server_error.details().is_some_and(|details| {
+        details.contains(
+            format!("cannot be defined with both `NOINDEX` and `INDEXMISSING` `{field_name}`")
+                .as_str(),
+        )
+    }));
+}
+
 #[test]
 fn test_ft_create_with_an_empty_index_name() {
     let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
     let mut con = ctx.connection();
+    let empty_index_name = "";
+    let options = CreateOptions::new();
     let schema = schema! {
         TEXT_FIELD_NAME => SchemaTextField::new()
     };
+    // Check that the first call succeeds but the second one fails because the index already exists
     assert_eq!(
-        con.ft_create("", &CreateOptions::new(), &schema),
+        con.ft_create(empty_index_name, &options, &schema),
         Ok("OK".to_string())
+    );
+    assert!(
+        con.ft_create::<_, String>(empty_index_name, &options, &schema)
+            .is_err()
     );
 }
 
@@ -33,10 +53,10 @@ fn test_simple_ft_create() {
     let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
     let mut con = ctx.connection();
     let index_name = "index";
+    let options = CreateOptions::new();
     let schema = schema! {
         TEXT_FIELD_NAME => SchemaTextField::new()
     };
-    let options = CreateOptions::new();
     // Check that the first call succeeds but the second one fails because the index already exists
     assert_eq!(
         con.ft_create(index_name, &options, &schema),
@@ -85,7 +105,7 @@ fn test_ft_create_create_options() {
 
     // Test each option individually
     for (suffix, modifier) in &option_modifiers {
-        let index_name = format!("index_with_{}", suffix);
+        let index_name = format!("index_with_{suffix}");
         let options = modifier(CreateOptions::new());
 
         assert_eq!(
@@ -97,7 +117,7 @@ fn test_ft_create_create_options() {
     // Test all options combined
     let mut combined_options = CreateOptions::new();
     for (suffix, modifier) in &option_modifiers {
-        let combined_index_name = format!("combined_index_until_{}", suffix);
+        let combined_index_name = format!("combined_index_until_{suffix}");
         combined_options = modifier(combined_options);
 
         assert_eq!(
@@ -134,7 +154,7 @@ fn test_ft_create_schema_text_field() {
 
     // Test each common field modifier individually
     for (suffix, modifier) in &field_modifiers {
-        let index_name = format!("index_for_text_field_with_{}", suffix);
+        let index_name = format!("index_for_text_field_with_{suffix}");
         let schema = schema! {
             TEXT_FIELD_NAME => modifier(SchemaTextField::new())
         };
@@ -146,7 +166,7 @@ fn test_ft_create_schema_text_field() {
 
     // Test each mutually exclusive modifier individually
     for (suffix, modifier) in &mutually_exclusive_common_modifiers {
-        let index_name = format!("index_for_text_field_with_{}", suffix);
+        let index_name = format!("index_for_text_field_with_{suffix}");
         let schema = schema! {
             TEXT_FIELD_NAME => modifier(SchemaTextField::new())
         };
@@ -159,7 +179,7 @@ fn test_ft_create_schema_text_field() {
     // Test all combinations of field modifiers that are not mutually exclusive
     let mut combined_schema_text_field = SchemaTextField::new();
     for (suffix, modifier) in &field_modifiers {
-        let combined_index_name = format!("index_for_text_field_combined_until_{}", suffix);
+        let combined_index_name = format!("index_for_text_field_combined_until_{suffix}");
         combined_schema_text_field = modifier(combined_schema_text_field);
         let schema = schema! {
             TEXT_FIELD_NAME => combined_schema_text_field.clone()
@@ -172,7 +192,7 @@ fn test_ft_create_schema_text_field() {
 
     // After all of the modifiers above have been applied, add each of the mutually exclusive modifiers individually
     for (suffix, modifier) in &mutually_exclusive_common_modifiers {
-        let combined_index_name = format!("index_for_text_field_all_combined_with_{}", suffix);
+        let combined_index_name = format!("index_for_text_field_all_combined_with_{suffix}");
         let schema = schema! {
             TEXT_FIELD_NAME =>  modifier(combined_schema_text_field.clone())
         };
@@ -182,15 +202,15 @@ fn test_ft_create_schema_text_field() {
         );
     }
     // Test that mutually exclusive modifiers are mutually exclusive indeed
-    assert!(
+    assert_no_index_and_index_missing_exclusivity_for_field(
         con.ft_create::<_, String>(
             "invalid_index",
             &CreateOptions::new(),
             &schema! {
                 TEXT_FIELD_NAME => SchemaTextField::new().no_index(true).index_missing(true)
-            }
-        )
-        .is_err()
+            },
+        ),
+        TEXT_FIELD_NAME,
     );
 }
 
@@ -220,7 +240,7 @@ fn test_ft_create_schema_tag_field() {
 
     // Test each common field modifier individually
     for (suffix, modifier) in &field_modifiers {
-        let index_name = format!("index_for_tag_field_with_{}", suffix);
+        let index_name = format!("index_for_tag_field_with_{suffix}");
         let schema = schema! {
             TAG_FIELD_NAME => modifier(SchemaTagField::new())
         };
@@ -232,7 +252,7 @@ fn test_ft_create_schema_tag_field() {
 
     // Test each mutually exclusive modifier individually
     for (suffix, modifier) in &mutually_exclusive_common_modifiers {
-        let index_name = format!("index_for_tag_field_with_{}", suffix);
+        let index_name = format!("index_for_tag_field_with_{suffix}");
         let schema = schema! {
             TAG_FIELD_NAME => modifier(SchemaTagField::new())
         };
@@ -245,7 +265,7 @@ fn test_ft_create_schema_tag_field() {
     // Test all combinations of field modifiers that are not mutually exclusive
     let mut combined_schema_tag_field = SchemaTagField::new();
     for (suffix, modifier) in &field_modifiers {
-        let combined_index_name = format!("index_for_tag_field_combined_until_{}", suffix);
+        let combined_index_name = format!("index_for_tag_field_combined_until_{suffix}");
         combined_schema_tag_field = modifier(combined_schema_tag_field);
         let schema = schema! {
             TAG_FIELD_NAME => combined_schema_tag_field.clone()
@@ -258,7 +278,7 @@ fn test_ft_create_schema_tag_field() {
 
     // After all of the modifiers above have been applied, add each of the mutually exclusive modifiers individually
     for (suffix, modifier) in &mutually_exclusive_common_modifiers {
-        let combined_index_name = format!("index_for_tag_field_all_combined_with_{}", suffix);
+        let combined_index_name = format!("index_for_tag_field_all_combined_with_{suffix}");
         let schema = schema! {
             TAG_FIELD_NAME =>  modifier(combined_schema_tag_field.clone())
         };
@@ -268,15 +288,15 @@ fn test_ft_create_schema_tag_field() {
         );
     }
     // Test that mutually exclusive modifiers are mutually exclusive indeed
-    assert!(
+    assert_no_index_and_index_missing_exclusivity_for_field(
         con.ft_create::<_, String>(
             "invalid_index",
             &CreateOptions::new(),
             &schema! {
                 TAG_FIELD_NAME => SchemaTagField::new().no_index(true).index_missing(true)
-            }
-        )
-        .is_err()
+            },
+        ),
+        TAG_FIELD_NAME,
     );
 }
 
@@ -301,7 +321,7 @@ fn test_ft_create_schema_numeric_field() {
 
     // Test each common field modifier individually
     for (suffix, modifier) in &field_modifiers {
-        let index_name = format!("index_for_numeric_field_with_{}", suffix);
+        let index_name = format!("index_for_numeric_field_with_{suffix}");
         let schema = schema! {
             NUMERIC_FIELD_NAME => modifier(SchemaNumericField::new())
         };
@@ -313,7 +333,7 @@ fn test_ft_create_schema_numeric_field() {
 
     // Test each mutually exclusive modifier individually
     for (suffix, modifier) in &mutually_exclusive_common_modifiers {
-        let index_name = format!("index_for_numeric_field_with_{}", suffix);
+        let index_name = format!("index_for_numeric_field_with_{suffix}");
         let schema = schema! {
             NUMERIC_FIELD_NAME => modifier(SchemaNumericField::new())
         };
@@ -326,7 +346,7 @@ fn test_ft_create_schema_numeric_field() {
     // Test all combinations of field modifiers that are not mutually exclusive
     let mut combined_schema_numeric_field = SchemaNumericField::new();
     for (suffix, modifier) in &field_modifiers {
-        let combined_index_name = format!("index_for_numeric_field_combined_until_{}", suffix);
+        let combined_index_name = format!("index_for_numeric_field_combined_until_{suffix}");
         combined_schema_numeric_field = modifier(combined_schema_numeric_field);
         let schema = schema! {
             NUMERIC_FIELD_NAME => combined_schema_numeric_field.clone()
@@ -339,7 +359,7 @@ fn test_ft_create_schema_numeric_field() {
 
     // After all of the modifiers above have been applied, add each of the mutually exclusive modifiers individually
     for (suffix, modifier) in &mutually_exclusive_common_modifiers {
-        let combined_index_name = format!("index_for_numeric_field_all_combined_with_{}", suffix);
+        let combined_index_name = format!("index_for_numeric_field_all_combined_with_{suffix}");
         let schema = schema! {
             NUMERIC_FIELD_NAME =>  modifier(combined_schema_numeric_field.clone())
         };
@@ -349,15 +369,15 @@ fn test_ft_create_schema_numeric_field() {
         );
     }
     // Test that mutually exclusive modifiers are mutually exclusive indeed
-    assert!(
+    assert_no_index_and_index_missing_exclusivity_for_field(
         con.ft_create::<_, String>(
             "invalid_index",
             &CreateOptions::new(),
             &schema! {
                 NUMERIC_FIELD_NAME => SchemaNumericField::new().no_index(true).index_missing(true)
-            }
-        )
-        .is_err()
+            },
+        ),
+        NUMERIC_FIELD_NAME,
     );
 }
 
@@ -382,7 +402,7 @@ fn test_ft_create_schema_geo_field() {
 
     // Test each common field modifier individually
     for (suffix, modifier) in &field_modifiers {
-        let index_name = format!("index_for_geo_field_with_{}", suffix);
+        let index_name = format!("index_for_geo_field_with_{suffix}");
         let schema = schema! {
             GEO_FIELD_NAME => modifier(SchemaGeoField::new())
         };
@@ -394,7 +414,7 @@ fn test_ft_create_schema_geo_field() {
 
     // Test each mutually exclusive modifier individually
     for (suffix, modifier) in &mutually_exclusive_common_modifiers {
-        let index_name = format!("index_for_geo_field_with_{}", suffix);
+        let index_name = format!("index_for_geo_field_with_{suffix}");
         let schema = schema! {
             GEO_FIELD_NAME => modifier(SchemaGeoField::new())
         };
@@ -407,7 +427,7 @@ fn test_ft_create_schema_geo_field() {
     // Test all combinations of field modifiers that are not mutually exclusive
     let mut combined_schema_geo_field = SchemaGeoField::new();
     for (suffix, modifier) in &field_modifiers {
-        let combined_index_name = format!("index_for_geo_field_combined_until_{}", suffix);
+        let combined_index_name = format!("index_for_geo_field_combined_until_{suffix}");
         combined_schema_geo_field = modifier(combined_schema_geo_field);
         let schema = schema! {
             GEO_FIELD_NAME => combined_schema_geo_field.clone()
@@ -420,7 +440,7 @@ fn test_ft_create_schema_geo_field() {
 
     // After all of the modifiers above have been applied, add each of the mutually exclusive modifiers individually
     for (suffix, modifier) in &mutually_exclusive_common_modifiers {
-        let combined_index_name = format!("index_for_geo_field_all_combined_with_{}", suffix);
+        let combined_index_name = format!("index_for_geo_field_all_combined_with_{suffix}");
         let schema = schema! {
             GEO_FIELD_NAME =>  modifier(combined_schema_geo_field.clone())
         };
@@ -430,15 +450,15 @@ fn test_ft_create_schema_geo_field() {
         );
     }
     // Test that mutually exclusive modifiers are mutually exclusive indeed
-    assert!(
+    assert_no_index_and_index_missing_exclusivity_for_field(
         con.ft_create::<_, String>(
             "invalid_index",
             &CreateOptions::new(),
             &schema! {
                 GEO_FIELD_NAME => SchemaGeoField::new().no_index(true).index_missing(true)
-            }
-        )
-        .is_err()
+            },
+        ),
+        GEO_FIELD_NAME,
     );
 }
 
@@ -477,11 +497,11 @@ fn test_ft_create_schema_flat_vector_field() {
             ("ip", DistanceMetric::IP),
             ("cosine", DistanceMetric::Cosine),
         ] {
-            let base_name = format!("idx_flat_{}_{}", vector_type_name, distance_metric_name);
+            let base_name = format!("idx_flat_{vector_type_name}_{distance_metric_name}");
 
             // 1. Test each builder modifier individually
             for (builder_suffix, builder_modifier) in &builder_modifiers {
-                let index_name = format!("{}_builder_{}", base_name, builder_suffix);
+                let index_name = format!("{base_name}_builder_{builder_suffix}");
                 let schema = schema! {
                     VECTOR_FIELD_NAME => builder_modifier(VectorField::flat(vector_type, DIM, distance_metric)).build()
                 };
@@ -493,7 +513,7 @@ fn test_ft_create_schema_flat_vector_field() {
 
             // 2. Test each common field modifier individually
             for (field_suffix, field_modifier) in &field_modifiers {
-                let index_name = format!("{}_field_{}", base_name, field_suffix);
+                let index_name = format!("{base_name}_field_{field_suffix}");
                 let schema = schema! {
                     VECTOR_FIELD_NAME => field_modifier(VectorField::flat(vector_type, DIM, distance_metric).build())
                 };
@@ -507,7 +527,7 @@ fn test_ft_create_schema_flat_vector_field() {
             let mut combined_builder = VectorField::flat(vector_type, DIM, distance_metric);
             for (builder_suffix, builder_modifier) in &builder_modifiers {
                 combined_builder = builder_modifier(combined_builder);
-                let index_name = format!("{}_builders_until_{}", base_name, builder_suffix);
+                let index_name = format!("{base_name}_builders_until_{builder_suffix}");
                 let schema = schema! {
                     VECTOR_FIELD_NAME => combined_builder.clone().build()
                 };
@@ -519,7 +539,7 @@ fn test_ft_create_schema_flat_vector_field() {
 
             // 4. Test all builder modifiers + each field modifier
             for (field_suffix, field_modifier) in &field_modifiers {
-                let index_name = format!("{}_all_builders_with_{}", base_name, field_suffix);
+                let index_name = format!("{base_name}_all_builders_with_{field_suffix}");
                 let schema = schema! {
                     VECTOR_FIELD_NAME => field_modifier(combined_builder.clone().build())
                 };
@@ -533,8 +553,7 @@ fn test_ft_create_schema_flat_vector_field() {
             let mut combined_field = combined_builder.clone().build();
             for (field_suffix, field_modifier) in &field_modifiers {
                 combined_field = field_modifier(combined_field);
-                let index_name =
-                    format!("{}_all_builders_fields_until_{}", base_name, field_suffix);
+                let index_name = format!("{base_name}_all_builders_fields_until_{field_suffix}");
                 let schema = schema! {
                     VECTOR_FIELD_NAME => combined_field.clone()
                 };
@@ -584,11 +603,11 @@ fn test_ft_create_schema_hnsw_vector_field() {
             ("ip", DistanceMetric::IP),
             ("cosine", DistanceMetric::Cosine),
         ] {
-            let base_name = format!("idx_hnsw_{}_{}", vector_type_name, distance_metric_name);
+            let base_name = format!("idx_hnsw_{vector_type_name}_{distance_metric_name}");
 
             // 1. Test each builder modifier individually
             for (builder_suffix, builder_modifier) in &builder_modifiers {
-                let index_name = format!("{}_builder_{}", base_name, builder_suffix);
+                let index_name = format!("{base_name}_builder_{builder_suffix}");
                 let schema = schema! {
                     VECTOR_FIELD_NAME => builder_modifier(VectorField::hnsw(vector_type, DIM, distance_metric)).build()
                 };
@@ -600,7 +619,7 @@ fn test_ft_create_schema_hnsw_vector_field() {
 
             // 2. Test each common field modifier individually
             for (field_suffix, field_modifier) in &field_modifiers {
-                let index_name = format!("{}_field_{}", base_name, field_suffix);
+                let index_name = format!("{base_name}_field_{field_suffix}");
                 let schema = schema! {
                     VECTOR_FIELD_NAME => field_modifier(VectorField::hnsw(vector_type, DIM, distance_metric).build())
                 };
@@ -614,7 +633,7 @@ fn test_ft_create_schema_hnsw_vector_field() {
             let mut combined_builder = VectorField::hnsw(vector_type, DIM, distance_metric);
             for (builder_suffix, builder_modifier) in &builder_modifiers {
                 combined_builder = builder_modifier(combined_builder);
-                let index_name = format!("{}_builders_until_{}", base_name, builder_suffix);
+                let index_name = format!("{base_name}_builders_until_{builder_suffix}");
                 let schema = schema! {
                     VECTOR_FIELD_NAME => combined_builder.clone().build()
                 };
@@ -626,7 +645,7 @@ fn test_ft_create_schema_hnsw_vector_field() {
 
             // 4. Test all builder modifiers + each field modifier
             for (field_suffix, field_modifier) in &field_modifiers {
-                let index_name = format!("{}_all_builders_with_{}", base_name, field_suffix);
+                let index_name = format!("{base_name}_all_builders_with_{field_suffix}");
                 let schema = schema! {
                     VECTOR_FIELD_NAME => field_modifier(combined_builder.clone().build())
                 };
@@ -640,8 +659,7 @@ fn test_ft_create_schema_hnsw_vector_field() {
             let mut combined_field = combined_builder.clone().build();
             for (field_suffix, field_modifier) in &field_modifiers {
                 combined_field = field_modifier(combined_field);
-                let index_name =
-                    format!("{}_all_builders_fields_until_{}", base_name, field_suffix);
+                let index_name = format!("{base_name}_all_builders_fields_until_{field_suffix}");
                 let schema = schema! {
                     VECTOR_FIELD_NAME => combined_field.clone()
                 };
@@ -693,8 +711,7 @@ fn test_ft_create_schema_vamana_vector_field() {
             // For each compression type
             for (compression_name, compression_type) in &compression_types {
                 let base_name = format!(
-                    "idx_vamana_{}_{}_{}",
-                    vector_type_name, distance_metric_name, compression_name
+                    "idx_vamana_{vector_type_name}_{distance_metric_name}_{compression_name}"
                 );
 
                 // Build the list of builder modifiers based on compression type
@@ -741,7 +758,7 @@ fn test_ft_create_schema_vamana_vector_field() {
 
                 // 1. Test each builder modifier individually
                 for (builder_suffix, builder_modifier) in &builder_modifiers {
-                    let index_name = format!("{}_builder_{}", base_name, builder_suffix);
+                    let index_name = format!("{base_name}_builder_{builder_suffix}");
                     let schema = schema! {
                         VECTOR_FIELD_NAME => builder_modifier(VectorField::vamana(vector_type, DIM, distance_metric)).build()
                     };
@@ -753,7 +770,7 @@ fn test_ft_create_schema_vamana_vector_field() {
 
                 // 2. Test each common field modifier individually
                 for (field_suffix, field_modifier) in &field_modifiers {
-                    let index_name = format!("{}_field_{}", base_name, field_suffix);
+                    let index_name = format!("{base_name}_field_{field_suffix}");
                     let schema = schema! {
                         VECTOR_FIELD_NAME => field_modifier(VectorField::vamana(vector_type, DIM, distance_metric).build())
                     };
@@ -767,7 +784,7 @@ fn test_ft_create_schema_vamana_vector_field() {
                 let mut combined_builder = VectorField::vamana(vector_type, DIM, distance_metric);
                 for (builder_suffix, builder_modifier) in &builder_modifiers {
                     combined_builder = builder_modifier(combined_builder);
-                    let index_name = format!("{}_builders_until_{}", base_name, builder_suffix);
+                    let index_name = format!("{base_name}_builders_until_{builder_suffix}");
                     let schema = schema! {
                         VECTOR_FIELD_NAME => combined_builder.clone().build()
                     };
@@ -779,7 +796,7 @@ fn test_ft_create_schema_vamana_vector_field() {
 
                 // 4. Test all builder modifiers + each field modifier
                 for (field_suffix, field_modifier) in &field_modifiers {
-                    let index_name = format!("{}_all_builders_with_{}", base_name, field_suffix);
+                    let index_name = format!("{base_name}_all_builders_with_{field_suffix}");
                     let schema = schema! {
                         VECTOR_FIELD_NAME => field_modifier(combined_builder.clone().build())
                     };
@@ -794,7 +811,7 @@ fn test_ft_create_schema_vamana_vector_field() {
                 for (field_suffix, field_modifier) in &field_modifiers {
                     combined_field = field_modifier(combined_field);
                     let index_name =
-                        format!("{}_all_builders_fields_until_{}", base_name, field_suffix);
+                        format!("{base_name}_all_builders_fields_until_{field_suffix}");
                     let schema = schema! {
                         VECTOR_FIELD_NAME => combined_field.clone()
                     };
@@ -829,10 +846,7 @@ fn test_ft_create_schema_geoshape_field() {
     for coord_system in &[CoordSystem::Spherical, CoordSystem::Flat] {
         // Test each common field modifier individually
         for (suffix, modifier) in &field_modifiers {
-            let index_name = format!(
-                "index_for_geoshape_{:?}_field_with_{}",
-                coord_system, suffix
-            );
+            let index_name = format!("index_for_geoshape_{coord_system:?}_field_with_{suffix}");
             let schema = schema! {
                 GEOSHAPE_FIELD_NAME => modifier(SchemaGeoShapeField::new().coord_system(coord_system.clone()))
             };
@@ -844,10 +858,7 @@ fn test_ft_create_schema_geoshape_field() {
 
         // Test each mutually exclusive modifier individually
         for (suffix, modifier) in &mutually_exclusive_common_modifiers {
-            let index_name = format!(
-                "index_for_geoshape_{:?}_field_with_{}",
-                coord_system, suffix
-            );
+            let index_name = format!("index_for_geoshape_{coord_system:?}_field_with_{suffix}");
             let schema = schema! {
                 GEOSHAPE_FIELD_NAME => modifier(SchemaGeoShapeField::new().coord_system(coord_system.clone()))
             };
@@ -862,8 +873,7 @@ fn test_ft_create_schema_geoshape_field() {
         for (_suffix, modifier) in &field_modifiers {
             combined_field = modifier(combined_field);
         }
-        let combined_index_name =
-            format!("index_for_geoshape_{:?}_field_all_combined", coord_system);
+        let combined_index_name = format!("index_for_geoshape_{coord_system:?}_field_all_combined");
         let schema = schema! {
             GEOSHAPE_FIELD_NAME => combined_field.clone()
         };
@@ -874,10 +884,8 @@ fn test_ft_create_schema_geoshape_field() {
 
         // After all of the modifiers above have been applied, add each of the mutually exclusive modifiers individually
         for (suffix, modifier) in &mutually_exclusive_common_modifiers {
-            let combined_index_name = format!(
-                "index_for_geoshape_{:?}_field_all_combined_with_{}",
-                coord_system, suffix
-            );
+            let combined_index_name =
+                format!("index_for_geoshape_{coord_system:?}_field_all_combined_with_{suffix}");
             let schema = schema! {
                 GEOSHAPE_FIELD_NAME =>  modifier(combined_field.clone())
             };
@@ -888,15 +896,15 @@ fn test_ft_create_schema_geoshape_field() {
         }
 
         // Test that mutually exclusive modifiers are mutually exclusive indeed
-        assert!(
+        assert_no_index_and_index_missing_exclusivity_for_field(
             con.ft_create::<_, String>(
                 "invalid_index",
                 &CreateOptions::new(),
                 &schema! {
                     GEOSHAPE_FIELD_NAME => SchemaGeoShapeField::new().coord_system(coord_system.clone()).no_index(true).index_missing(true)
                 }
-            )
-            .is_err()
+            ),
+            GEOSHAPE_FIELD_NAME,
         );
     }
 }

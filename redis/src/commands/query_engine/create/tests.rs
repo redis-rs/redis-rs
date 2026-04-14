@@ -26,8 +26,8 @@ ToRedisArgs::write_redis_args() serializes to Redis protocol
       └── Other fields: writes field type, then modifiers
       ▼
 FtCreateCommand collects all args and offers conversion to redis::Cmd
-      └── FtCreateCommand<WithoutSchema> ──>[options()]──>schema()──> FtCreateCommand<WithSchema>
-      └── FtCreateCommand<WithSchema> ──>[options()]──>into_cmd()──> Cmd
+      └── FtCreateCommand<NoSchema> ──>[options()]──>schema()──> FtCreateCommand<RediSearchSchema<NonEmpty>>
+      └── FtCreateCommand<RediSearchSchema<NonEmpty>> ──>[options()]──>into_cmd()──> Cmd
 */
 
 mod create_tests {
