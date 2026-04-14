@@ -238,7 +238,7 @@ impl ToRedisArgs for CreateOptions {
 
         if let Some(ref filter) = self.filter {
             out.write_arg(b"FILTER");
-            format!("'{}'", filter).write_redis_args(out);
+            format!("'{filter}'").write_redis_args(out);
         }
 
         if let Some(ref language) = self.language {
@@ -1562,8 +1562,7 @@ impl VamanaVectorFieldBuilder {
             let clamped = std::cmp::min(training_threshold, MAX_TRAINING_THRESHOLD);
             if clamped != training_threshold {
                 warn!(
-                    "training_threshold exceeded the maximum allowed value; clamped from {} to {}.",
-                    training_threshold, clamped
+                    "training_threshold exceeded the maximum allowed value; clamped from {training_threshold} to {clamped}."
                 );
             }
             self.training_threshold = Some(clamped);
@@ -1585,8 +1584,7 @@ impl VamanaVectorFieldBuilder {
             let clamped = std::cmp::min(reduce, max_reduce).max(1);
             if clamped != reduce {
                 warn!(
-                    "reduce value {} out of valid range 1..={}; clamped to {}.",
-                    reduce, max_reduce, clamped
+                    "reduce value {reduce} out of valid range 1..={max_reduce}; clamped to {clamped}."
                 );
             }
             self.reduce = Some(clamped);
