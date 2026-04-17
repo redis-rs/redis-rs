@@ -25,7 +25,7 @@ mod cluster_async {
         cluster_read_routing::{RandomReplicaStrategy, RoundRobinReplicaStrategy},
         cluster_routing::{
             MultipleNodeRoutingInfo, ResponsePolicy, Route, RoutingInfo, SingleNodeRoutingInfo,
-            SlotAddr,
+            Slot, SlotAddr,
         },
         cmd, from_redis_value, parse_redis_value, pipe,
     };
@@ -193,7 +193,7 @@ mod cluster_async {
         let res2: Option<String> = connection.get("bar").await.unwrap();
         assert_eq!(res2, Some("foo".to_string()));
 
-        let route = Route::new_unchecked(1, SlotAddr::Master);
+        let route = Route::with_slot(Slot::new(1).unwrap(), SlotAddr::Master);
         let single_node_route = SingleNodeRoutingInfo::SpecificNode(route);
         let routing = RoutingInfo::SingleNode(single_node_route);
         assert_eq!(

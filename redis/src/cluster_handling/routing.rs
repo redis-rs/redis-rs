@@ -827,9 +827,10 @@ impl RoutingInfo {
                 r.arg_idx(2)
                     .and_then(|arg| std::str::from_utf8(arg).ok())
                     .and_then(|slot| slot.parse::<u16>().ok())
+                    .and_then(Slot::new)
                     .map(|slot| {
                         RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(
-                            Route::new_unchecked(slot, SlotAddr::Master),
+                            Route::with_slot(slot, SlotAddr::Master),
                         ))
                     })
             }
@@ -947,10 +948,6 @@ impl Route {
         note = "This function is deprecated because this allows user to create Route with invalid slot number. Use with_slot instead."
     )]
     pub fn new(slot: u16, slot_addr: SlotAddr) -> Self {
-        Self::new_unchecked(slot, slot_addr)
-    }
-
-    pub(crate) fn new_unchecked(slot: u16, slot_addr: SlotAddr) -> Self {
         Self(slot, slot_addr)
     }
 
@@ -1001,14 +998,17 @@ impl Slot {
     pub fn for_key(key: impl AsRef<[u8]>) -> Self {
         // prevent
         fn impl_(key: &[u8]) -> Slot {
-            Slot(crc16::State::<crc16::XMODEM>::calculate(get_hashtag(key).unwrap_or(key)) % SLOT_SIZE)
+            Slot(
+                crc16::State::<crc16::XMODEM>::calculate(get_hashtag(key).unwrap_or(key))
+                    % SLOT_SIZE,
+            )
         }
 
         impl_(key.as_ref())
     }
 
     /// Choose a random slot from `0..SLOT_SIZE` (excluding)
-    fn new_random() -> Self {
+    pub(crate) fn new_random() -> Self {
         let mut rng = rand::rng();
         Self(rng.random_range(0..SLOT_SIZE))
     }
