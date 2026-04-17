@@ -155,7 +155,7 @@ mod pipeline_routing_tests {
 
         assert_eq!(
             route_for_pipeline(&pipeline),
-            Ok(Some(Route::new_unsafe(12182, SlotAddr::ReplicaOptional)))
+            Ok(Some(Route::new_unchecked(12182, SlotAddr::ReplicaOptional)))
         );
     }
 
@@ -183,7 +183,7 @@ mod pipeline_routing_tests {
 
         assert_eq!(
             route_for_pipeline(&pipeline),
-            Ok(Some(Route::new_unsafe(12182, SlotAddr::Master)))
+            Ok(Some(Route::new_unchecked(12182, SlotAddr::Master)))
         );
     }
 

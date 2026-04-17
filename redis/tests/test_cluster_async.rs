@@ -193,7 +193,7 @@ mod cluster_async {
         let res2: Option<String> = connection.get("bar").await.unwrap();
         assert_eq!(res2, Some("foo".to_string()));
 
-        let route = Route::new_unsafe(1, SlotAddr::Master);
+        let route = Route::new_unchecked(1, SlotAddr::Master);
         let single_node_route = SingleNodeRoutingInfo::SpecificNode(route);
         let routing = RoutingInfo::SingleNode(single_node_route);
         assert_eq!(

@@ -829,7 +829,7 @@ impl RoutingInfo {
                     .and_then(|slot| slot.parse::<u16>().ok())
                     .map(|slot| {
                         RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(
-                            Route::new_unsafe(slot, SlotAddr::Master),
+                            Route::new_unchecked(slot, SlotAddr::Master),
                         ))
                     })
             }
@@ -947,10 +947,10 @@ impl Route {
         note = "This function is deprecated because this allows user to create Route with invalid slot number. Use with_slot instead."
     )]
     pub fn new(slot: u16, slot_addr: SlotAddr) -> Self {
-        Self::new_unsafe(slot, slot_addr)
+        Self::new_unchecked(slot, slot_addr)
     }
 
-    pub(crate) fn new_unsafe(slot: u16, slot_addr: SlotAddr) -> Self {
+    pub(crate) fn new_unchecked(slot: u16, slot_addr: SlotAddr) -> Self {
         Self(slot, slot_addr)
     }
 
