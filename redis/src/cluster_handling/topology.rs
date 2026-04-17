@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use arcstr::ArcStr;
 
 use super::NodeAddress;
-use super::slot_map::Slot;
+use super::slot_map::SlotRange;
 use crate::{RedisResult, Value, connection::is_wildcard_address};
 
 // Parse slot data from raw redis value.
@@ -13,7 +13,7 @@ pub(crate) fn parse_slots(
     raw_slot_resp: Value,
     // The DNS address of the node from which `raw_slot_resp` was received.
     addr_of_answering_node: &str,
-) -> RedisResult<Vec<Slot>> {
+) -> RedisResult<Vec<SlotRange>> {
     // Parse response.
     let mut slots = Vec::with_capacity(2);
     let mut hosts = HashSet::<ArcStr>::new();
@@ -95,7 +95,7 @@ pub(crate) fn parse_slots(
             };
             let replicas: Vec<NodeAddress> = iterator.filter_map(try_to_address).collect();
 
-            slots.push(Slot::new(start, end, primary, replicas));
+            slots.push(SlotRange::new(start, end, primary, replicas));
         }
     }
 
