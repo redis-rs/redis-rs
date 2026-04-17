@@ -118,7 +118,7 @@ use crate::{
             MultipleNodeRoutingInfo, Redirect, ResponsePolicy, RoutingInfo, SingleNodeRoutingInfo,
         },
         slot_cmd,
-        slot_map::{Slot, SlotMap},
+        slot_map::{SlotRange, SlotMap},
         topology::parse_slots,
     },
     cmd,
@@ -906,7 +906,7 @@ where
                     .req_packed_command(&slot_refresh_cmd)
                     .await
                     .and_then(|value| value.extract_error())?;
-                let v: Vec<Slot> = parse_slots(value, addr.host())?;
+                let v: Vec<SlotRange> = parse_slots(value, addr.host())?;
                 build_slot_map(slots, v)
             }
             .await;
@@ -1048,7 +1048,7 @@ impl fmt::Debug for ConnectionState {
     }
 }
 
-fn build_slot_map(slot_map: &mut SlotMap, slots_data: Vec<Slot>) -> RedisResult<()> {
+fn build_slot_map(slot_map: &mut SlotMap, slots_data: Vec<SlotRange>) -> RedisResult<()> {
     slot_map.clear();
     slot_map.fill_slots(slots_data);
     trace!("{slot_map:?}");

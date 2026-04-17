@@ -19,7 +19,7 @@ impl SlotMap {
         }
     }
 
-    pub fn from_slots(slots: Vec<Slot>) -> Self {
+    pub fn from_slots(slots: Vec<SlotRange>) -> Self {
         let mut map = SlotRangeMap::new();
         for slot in slots {
             map.insert(slot.start, slot.end, SlotAddrs::from_slot(slot));
@@ -28,7 +28,7 @@ impl SlotMap {
     }
 
     #[cfg(feature = "cluster-async")]
-    pub fn fill_slots(&mut self, slots: Vec<Slot>) {
+    pub fn fill_slots(&mut self, slots: Vec<SlotRange>) {
         for slot in slots {
             self.slots
                 .insert(slot.start, slot.end, SlotAddrs::from_slot(slot));
@@ -118,7 +118,7 @@ impl SlotMap {
     }
 }
 
-/// This is just a simplified version of [`Slot`],
+/// This is just a simplified version of [`SlotRange`],
 /// which stores only the master and optional replica
 /// to avoid the need to choose a replica each time
 /// a command is executed
@@ -162,7 +162,7 @@ impl SlotAddrs {
         }
     }
 
-    pub(crate) fn from_slot(slot: Slot) -> Self {
+    pub(crate) fn from_slot(slot: SlotRange) -> Self {
         SlotAddrs::new(slot.master, slot.replicas)
     }
 }
@@ -180,14 +180,14 @@ impl<'a> IntoIterator for &'a SlotAddrs {
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct Slot {
+pub(crate) struct SlotRange {
     pub(crate) start: u16,
     pub(crate) end: u16,
     pub(crate) master: NodeAddress,
     pub(crate) replicas: Vec<NodeAddress>,
 }
 
-impl Slot {
+impl SlotRange {
     pub fn new(s: u16, e: u16, m: NodeAddress, r: Vec<NodeAddress>) -> Self {
         Self {
             start: s,
@@ -224,13 +224,13 @@ mod tests {
     fn test_slot_map_with_strategy() {
         let strategy = FirstReplicaStrategy;
         let slot_map = SlotMap::from_slots(vec![
-            Slot {
+            SlotRange {
                 start: 1,
                 end: 1000,
                 master: addr("node1:6379"),
                 replicas: vec![addr("replica1:6379")],
             },
-            Slot {
+            SlotRange {
                 start: 1001,
                 end: 2000,
                 master: addr("node2:6379"),
@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn test_slot_map_when_no_strategy_is_set() {
-        let slot_map = SlotMap::from_slots(vec![Slot {
+        let slot_map = SlotMap::from_slots(vec![SlotRange {
             start: 1,
             end: 1000,
             master: addr("node1:6379"),
@@ -315,14 +315,14 @@ mod tests {
 
     fn get_slot_map() -> SlotMap {
         SlotMap::from_slots(vec![
-            Slot::new(1, 1000, addr("node1:6379"), vec![addr("replica1:6379")]),
-            Slot::new(
+            SlotRange::new(1, 1000, addr("node1:6379"), vec![addr("replica1:6379")]),
+            SlotRange::new(
                 1002,
                 2000,
                 addr("node2:6379"),
                 vec![addr("replica2:6379"), addr("replica3:6379")],
             ),
-            Slot::new(
+            SlotRange::new(
                 2001,
                 3000,
                 addr("node3:6379"),
@@ -332,7 +332,7 @@ mod tests {
                     addr("replica6:6379"),
                 ],
             ),
-            Slot::new(
+            SlotRange::new(
                 3001,
                 4000,
                 addr("node2:6379"),
@@ -465,8 +465,8 @@ mod tests {
     #[test]
     fn test_slot_map_topology() {
         let slot_map = SlotMap::from_slots(vec![
-            Slot::new(0, 5000, addr("node1:6379"), vec![addr("replica1:6379")]),
-            Slot::new(5001, 10000, addr("node2:6379"), vec![]),
+            SlotRange::new(0, 5000, addr("node1:6379"), vec![addr("replica1:6379")]),
+            SlotRange::new(5001, 10000, addr("node2:6379"), vec![]),
         ]);
         let topo = slot_map.topology();
         assert_eq!(topo.shards().count(), 2);
@@ -533,7 +533,7 @@ mod tests {
         }
 
         let strategy = AlwaysFirstReplica;
-        let slot_map = SlotMap::from_slots(vec![Slot::new(
+        let slot_map = SlotMap::from_slots(vec![SlotRange::new(
             1,
             1000,
             addr("node1:6379"),
