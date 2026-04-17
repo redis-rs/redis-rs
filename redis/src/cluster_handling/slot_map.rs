@@ -202,6 +202,7 @@ impl SlotRange {
 mod tests {
     use super::*;
     use crate::cluster_handling::read_routing::ReadRoutingStrategy;
+    use crate::cluster_routing::Slot;
 
     fn addr(s: &str) -> NodeAddress {
         NodeAddress::try_from(s).unwrap()
@@ -240,26 +241,35 @@ mod tests {
 
         assert_eq!(
             slot_map
-                .slot_addr_for_route(&Route::new_unchecked(1, SlotAddr::Master), Some(&strategy))
-                .unwrap(),
-            "node1:6379"
-        );
-        assert_eq!(
-            slot_map
-                .slot_addr_for_route(&Route::new_unchecked(500, SlotAddr::Master), Some(&strategy))
-                .unwrap(),
-            "node1:6379"
-        );
-        assert_eq!(
-            slot_map
-                .slot_addr_for_route(&Route::new_unchecked(1000, SlotAddr::Master), Some(&strategy))
+                .slot_addr_for_route(
+                    &Route::with_slot(Slot::new(1).unwrap(), SlotAddr::Master),
+                    Some(&strategy)
+                )
                 .unwrap(),
             "node1:6379"
         );
         assert_eq!(
             slot_map
                 .slot_addr_for_route(
-                    &Route::new_unchecked(1000, SlotAddr::ReplicaOptional),
+                    &Route::with_slot(Slot::new(500).unwrap(), SlotAddr::Master),
+                    Some(&strategy)
+                )
+                .unwrap(),
+            "node1:6379"
+        );
+        assert_eq!(
+            slot_map
+                .slot_addr_for_route(
+                    &Route::with_slot(Slot::new(1000).unwrap(), SlotAddr::Master),
+                    Some(&strategy)
+                )
+                .unwrap(),
+            "node1:6379"
+        );
+        assert_eq!(
+            slot_map
+                .slot_addr_for_route(
+                    &Route::with_slot(Slot::new(1000).unwrap(), SlotAddr::ReplicaOptional),
                     Some(&strategy)
                 )
                 .unwrap(),
@@ -267,25 +277,37 @@ mod tests {
         );
         assert_eq!(
             slot_map
-                .slot_addr_for_route(&Route::new_unchecked(1001, SlotAddr::Master), Some(&strategy))
+                .slot_addr_for_route(
+                    &Route::with_slot(Slot::new(1001).unwrap(), SlotAddr::Master),
+                    Some(&strategy)
+                )
                 .unwrap(),
             "node2:6379"
         );
         assert_eq!(
             slot_map
-                .slot_addr_for_route(&Route::new_unchecked(1500, SlotAddr::Master), Some(&strategy))
+                .slot_addr_for_route(
+                    &Route::with_slot(Slot::new(1500).unwrap(), SlotAddr::Master),
+                    Some(&strategy)
+                )
                 .unwrap(),
             "node2:6379"
         );
         assert_eq!(
             slot_map
-                .slot_addr_for_route(&Route::new_unchecked(2000, SlotAddr::Master), Some(&strategy))
+                .slot_addr_for_route(
+                    &Route::with_slot(Slot::new(2000).unwrap(), SlotAddr::Master),
+                    Some(&strategy)
+                )
                 .unwrap(),
             "node2:6379"
         );
         assert!(
             slot_map
-                .slot_addr_for_route(&Route::new_unchecked(2001, SlotAddr::Master), Some(&strategy))
+                .slot_addr_for_route(
+                    &Route::with_slot(Slot::new(2001).unwrap(), SlotAddr::Master),
+                    Some(&strategy)
+                )
                 .is_none()
         );
     }
@@ -301,13 +323,19 @@ mod tests {
 
         assert_eq!(
             slot_map
-                .slot_addr_for_route(&Route::new_unchecked(1000, SlotAddr::ReplicaOptional), None)
+                .slot_addr_for_route(
+                    &Route::with_slot(Slot::new(1000).unwrap(), SlotAddr::ReplicaOptional),
+                    None
+                )
                 .unwrap(),
             "node1:6379"
         );
         assert_eq!(
             slot_map
-                .slot_addr_for_route(&Route::new_unchecked(1000, SlotAddr::ReplicaRequired), None)
+                .slot_addr_for_route(
+                    &Route::with_slot(Slot::new(1000).unwrap(), SlotAddr::ReplicaRequired),
+                    None
+                )
                 .unwrap(),
             "replica1:6379"
         );
@@ -380,8 +408,14 @@ mod tests {
         let strategy = FirstReplicaStrategy;
         let slot_map = get_slot_map();
         let routes = vec![
-            (Route::new_unchecked(1, SlotAddr::Master), vec![]),
-            (Route::new_unchecked(2001, SlotAddr::ReplicaOptional), vec![]),
+            (
+                Route::with_slot(Slot::new(1).unwrap(), SlotAddr::Master),
+                vec![],
+            ),
+            (
+                Route::with_slot(Slot::new(2001).unwrap(), SlotAddr::ReplicaOptional),
+                vec![],
+            ),
         ];
         let addresses = slot_map
             .addresses_for_multi_slot(&routes, Some(&strategy))
@@ -396,8 +430,14 @@ mod tests {
     fn test_slot_map_should_ignore_replicas_in_multi_slot_if_no_strategy_is_set() {
         let slot_map = get_slot_map();
         let routes = vec![
-            (Route::new_unchecked(1, SlotAddr::Master), vec![]),
-            (Route::new_unchecked(2001, SlotAddr::ReplicaOptional), vec![]),
+            (
+                Route::with_slot(Slot::new(1).unwrap(), SlotAddr::Master),
+                vec![],
+            ),
+            (
+                Route::with_slot(Slot::new(2001).unwrap(), SlotAddr::ReplicaOptional),
+                vec![],
+            ),
         ];
         let addresses = slot_map
             .addresses_for_multi_slot(&routes, None)
@@ -415,12 +455,30 @@ mod tests {
         let strategy = FirstReplicaStrategy;
         let slot_map = get_slot_map();
         let routes = vec![
-            (Route::new_unchecked(1, SlotAddr::ReplicaOptional), vec![]),
-            (Route::new_unchecked(2001, SlotAddr::Master), vec![]),
-            (Route::new_unchecked(2, SlotAddr::ReplicaOptional), vec![]),
-            (Route::new_unchecked(2002, SlotAddr::Master), vec![]),
-            (Route::new_unchecked(3, SlotAddr::ReplicaOptional), vec![]),
-            (Route::new_unchecked(2003, SlotAddr::Master), vec![]),
+            (
+                Route::with_slot(Slot::new(1).unwrap(), SlotAddr::ReplicaOptional),
+                vec![],
+            ),
+            (
+                Route::with_slot(Slot::new(2001).unwrap(), SlotAddr::Master),
+                vec![],
+            ),
+            (
+                Route::with_slot(Slot::new(2).unwrap(), SlotAddr::ReplicaOptional),
+                vec![],
+            ),
+            (
+                Route::with_slot(Slot::new(2002).unwrap(), SlotAddr::Master),
+                vec![],
+            ),
+            (
+                Route::with_slot(Slot::new(3).unwrap(), SlotAddr::ReplicaOptional),
+                vec![],
+            ),
+            (
+                Route::with_slot(Slot::new(2003).unwrap(), SlotAddr::Master),
+                vec![],
+            ),
         ];
         let addresses = slot_map
             .addresses_for_multi_slot(&routes, Some(&strategy))
@@ -443,10 +501,22 @@ mod tests {
         let strategy = FirstReplicaStrategy;
         let slot_map = get_slot_map();
         let routes = vec![
-            (Route::new_unchecked(1, SlotAddr::ReplicaOptional), vec![]),
-            (Route::new_unchecked(5000, SlotAddr::Master), vec![]),
-            (Route::new_unchecked(6000, SlotAddr::ReplicaOptional), vec![]),
-            (Route::new_unchecked(2002, SlotAddr::Master), vec![]),
+            (
+                Route::with_slot(Slot::new(1).unwrap(), SlotAddr::ReplicaOptional),
+                vec![],
+            ),
+            (
+                Route::with_slot(Slot::new(5000).unwrap(), SlotAddr::Master),
+                vec![],
+            ),
+            (
+                Route::with_slot(Slot::new(6000).unwrap(), SlotAddr::ReplicaOptional),
+                vec![],
+            ),
+            (
+                Route::with_slot(Slot::new(2002).unwrap(), SlotAddr::Master),
+                vec![],
+            ),
         ];
         let addresses = slot_map
             .addresses_for_multi_slot(&routes, Some(&strategy))
@@ -544,7 +614,7 @@ mod tests {
         assert_eq!(
             slot_map
                 .slot_addr_for_route(
-                    &Route::new_unchecked(500, SlotAddr::ReplicaOptional),
+                    &Route::with_slot(Slot::new(500).unwrap(), SlotAddr::ReplicaOptional),
                     Some(&strategy)
                 )
                 .unwrap(),
@@ -555,7 +625,7 @@ mod tests {
         assert_eq!(
             slot_map
                 .slot_addr_for_route(
-                    &Route::new_unchecked(500, SlotAddr::ReplicaRequired),
+                    &Route::with_slot(Slot::new(500).unwrap(), SlotAddr::ReplicaRequired),
                     Some(&strategy)
                 )
                 .unwrap(),
@@ -565,7 +635,10 @@ mod tests {
         // Master always returns primary regardless of strategy
         assert_eq!(
             slot_map
-                .slot_addr_for_route(&Route::new_unchecked(500, SlotAddr::Master), Some(&strategy))
+                .slot_addr_for_route(
+                    &Route::with_slot(Slot::new(500).unwrap(), SlotAddr::Master),
+                    Some(&strategy)
+                )
                 .unwrap(),
             "node1:6379"
         );

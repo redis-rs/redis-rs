@@ -76,13 +76,13 @@ use super::{
     client::ClusterParams,
     read_routing::ReadRoutingStrategy,
     routing::{Redirect, Route, RoutingInfo},
-    slot_map::{SLOT_SIZE, SlotMap},
+    slot_map::SlotMap,
 };
 use crate::IntoConnectionInfo;
 pub use crate::TlsMode; // Pub for backwards compatibility
 use crate::cluster_handling::{get_connection_info, slot_cmd};
 use crate::cluster_routing::{
-    MultipleNodeRoutingInfo, ResponsePolicy, Routable, SingleNodeRoutingInfo, SlotAddr,
+    MultipleNodeRoutingInfo, ResponsePolicy, Routable, SingleNodeRoutingInfo, Slot, SlotAddr,
 };
 use crate::cmd::{Cmd, cmd};
 use crate::connection::{Connection, ConnectionInfo, ConnectionLike, connect};
@@ -90,7 +90,7 @@ use crate::errors::{ErrorKind, RedisError, RetryMethod};
 use crate::parser::parse_redis_value;
 use crate::types::{HashMap, RedisResult, Value};
 use pipeline::UNROUTABLE_ERROR;
-use rand::{Rng, rng, seq::IteratorRandom};
+use rand::{rng, seq::IteratorRandom};
 
 pub use pipeline::{ClusterPipeline, cluster_pipe};
 
@@ -580,13 +580,9 @@ where
         };
 
         match RoutingInfo::for_routable(cmd) {
-            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => {
-                let mut rng = rng();
-                Ok(addr_for_slot(Route::new_unchecked(
-                    rng.random_range(0..SLOT_SIZE),
-                    SlotAddr::Master,
-                ))?)
-            }
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => Ok(addr_for_slot(
+                Route::with_slot(Slot::new_random(), SlotAddr::Master),
+            )?),
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
                 Ok(addr_for_slot(route)?)
             }

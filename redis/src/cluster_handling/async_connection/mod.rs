@@ -118,7 +118,7 @@ use crate::{
             MultipleNodeRoutingInfo, Redirect, ResponsePolicy, RoutingInfo, SingleNodeRoutingInfo,
         },
         slot_cmd,
-        slot_map::{SlotRange, SlotMap},
+        slot_map::{SlotMap, SlotRange},
         topology::parse_slots,
     },
     cmd,
