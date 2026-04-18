@@ -100,9 +100,7 @@ mod entra_id_tests {
         test_redis_connection(provider, "service_principal_client_secret").await;
     }
 
-    #[tokio::test]
-    #[ignore]
-    async fn test_service_principal_client_certificate() {
+    fn setup_provider_with_client_certificate_and_scopes() -> EntraIdCredentialsProvider {
         use base64::Engine;
         use std::fs;
 
@@ -114,7 +112,7 @@ mod entra_id_tests {
         let certificate_base64 =
             base64::engine::general_purpose::STANDARD.encode(&certificate_data);
 
-        let provider = EntraIdCredentialsProvider::new_client_certificate_with_scopes(
+        EntraIdCredentialsProvider::new_client_certificate_with_scopes(
             get_env_var(AZURE_TENANT_ID),
             get_env_var(AZURE_CLIENT_ID),
             ClientCertificate {
@@ -124,7 +122,13 @@ mod entra_id_tests {
             get_redis_scopes().clone(),
             None,
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_service_principal_client_certificate() {
+        let provider = setup_provider_with_client_certificate_and_scopes();
         test_redis_connection(provider, "service_principal_client_certificate").await;
     }
 
@@ -154,5 +158,102 @@ mod entra_id_tests {
         )
         .unwrap();
         test_redis_connection(provider, "user_assigned_managed_identity").await;
+    }
+
+    /// Cluster-specific tests gated behind the `cluster-async` feature.
+    #[cfg(feature = "cluster-async")]
+    mod cluster {
+        use super::*;
+
+        const REDIS_CLUSTER_URL: &str = "REDIS_CLUSTER_URL";
+
+        fn get_redis_cluster_url() -> String {
+            std::env::var(REDIS_CLUSTER_URL).unwrap_or_else(|_| {
+                panic!("The `REDIS_CLUSTER_URL` environment variable is not set.")
+            })
+        }
+
+        async fn test_redis_cluster_connection(
+            mut provider: EntraIdCredentialsProvider,
+            test_key: &str,
+        ) {
+            init_logger();
+            provider.start(RetryConfig::default());
+
+            let client = redis::cluster::ClusterClientBuilder::new(vec![get_redis_cluster_url()])
+                .set_credentials_provider(provider)
+                .build()
+                .unwrap();
+            let mut con = client.get_async_connection().await.unwrap();
+
+            for i in 0..10 {
+                let key = format!("{}{}", test_key, i);
+                redis::cmd("SET")
+                    .arg(&key)
+                    .arg(42i32)
+                    .exec_async(&mut con)
+                    .await
+                    .unwrap();
+                let result: Option<String> = redis::cmd("GET")
+                    .arg(&key)
+                    .query_async(&mut con)
+                    .await
+                    .unwrap();
+                assert_eq!(result, Some("42".to_string()));
+            }
+        }
+
+        #[tokio::test]
+        #[ignore]
+        async fn test_service_principal_client_secret_cluster() {
+            let provider = EntraIdCredentialsProvider::new_client_secret_with_scopes(
+                get_env_var(AZURE_TENANT_ID),
+                get_env_var(AZURE_CLIENT_ID),
+                get_env_var(AZURE_CLIENT_SECRET),
+                get_redis_scopes().clone(),
+                None,
+            )
+            .unwrap();
+            test_redis_cluster_connection(provider, "service_principal_client_secret_cluster")
+                .await;
+        }
+
+        #[tokio::test]
+        #[ignore]
+        async fn test_service_principal_client_certificate_cluster() {
+            let provider = setup_provider_with_client_certificate_and_scopes();
+            test_redis_cluster_connection(provider, "service_principal_client_certificate_cluster")
+                .await;
+        }
+
+        #[tokio::test]
+        #[ignore]
+        async fn test_system_assigned_managed_identity_cluster() {
+            let provider =
+                EntraIdCredentialsProvider::new_system_assigned_managed_identity_with_scopes(
+                    get_redis_scopes().clone(),
+                    None,
+                )
+                .unwrap();
+            test_redis_cluster_connection(provider, "system_assigned_managed_identity_cluster")
+                .await;
+        }
+
+        #[tokio::test]
+        #[ignore]
+        async fn test_user_assigned_managed_identity_cluster() {
+            let provider =
+                EntraIdCredentialsProvider::new_user_assigned_managed_identity_with_scopes(
+                    get_redis_scopes().clone(),
+                    Some(ManagedIdentityCredentialOptions {
+                        user_assigned_id: Some(UserAssignedId::ObjectId(get_env_var(
+                            AZURE_USER_ASSIGNED_MANAGED_ID,
+                        ))),
+                        ..Default::default()
+                    }),
+                )
+                .unwrap();
+            test_redis_cluster_connection(provider, "user_assigned_managed_identity_cluster").await;
+        }
     }
 }
