@@ -149,6 +149,7 @@ impl RedisCluster {
                 None,
                 tls_paths.clone(),
                 mtls_enabled,
+                None, // cert_auth_field - not used in cluster tests
                 &modules,
                 |cmd| {
                     let tempdir = tempfile::Builder::new()
