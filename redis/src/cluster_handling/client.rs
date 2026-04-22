@@ -96,12 +96,24 @@ impl Default for RetryParams {
     }
 }
 
+/// Exclusive upper bound (ms) for [`RetryParams::wait_time_for_retry`] jitter; see [`ClusterClientBuilder::retry_wait_formula`].
+///
+/// The result is always strictly greater than `min_wait` so the half-open jitter range is never empty
+/// (e.g. when `max_retry_wait == min_retry_wait`, or when the clamp would otherwise equal `min_wait`).
+fn cluster_retry_wait_upper_ms(base_wait: u64, min_wait: u64, max_wait: u64) -> u64 {
+    let capped = base_wait.max(min_wait + 1).min(max_wait);
+    if capped <= min_wait {
+        min_wait.saturating_add(1)
+    } else {
+        capped
+    }
+}
+
 impl RetryParams {
     pub(crate) fn wait_time_for_retry(&self, retry: u32) -> Duration {
         let base_wait = self.exponent_base.pow(retry) * self.factor;
-        let clamped_wait = base_wait
-            .min(self.max_wait_time)
-            .max(self.min_wait_time + 1);
+        let clamped_wait =
+            cluster_retry_wait_upper_ms(base_wait, self.min_wait_time, self.max_wait_time);
         let jittered_wait = rand::rng().random_range(self.min_wait_time..clamped_wait);
         Duration::from_millis(jittered_wait)
     }
@@ -937,5 +949,34 @@ mod tests {
             client.cluster_params.connection_concurrency_limit,
             Some(128)
         );
+    }
+
+    #[test]
+    fn cluster_retry_clamp_order_caps_at_max_after_floor() {
+        // Documented chain is `max(base, min+1).min(max)`; the old `.min(max).max(min+1)` overshoots `max` here.
+        let base = 10u64;
+        let min_w = 100u64;
+        let max_w = 50u64;
+        assert_eq!(base.max(min_w + 1).min(max_w), 50);
+        assert_eq!(base.min(max_w).max(min_w + 1), 101);
+        // Exclusive upper must exceed `min_wait` for `random_range`, so we lift when the clamp hits `min_wait`.
+        assert_eq!(super::cluster_retry_wait_upper_ms(base, min_w, max_w), min_w + 1);
+    }
+
+    #[test]
+    fn cluster_retry_wait_upper_strictly_above_min_when_min_equals_max() {
+        assert_eq!(super::cluster_retry_wait_upper_ms(10, 100, 100), 101);
+    }
+
+    #[test]
+    fn cluster_retry_wait_time_does_not_panic_when_min_equals_max() {
+        let p = super::RetryParams {
+            number_of_retries: 16,
+            max_wait_time: 100,
+            min_wait_time: 100,
+            exponent_base: 2,
+            factor: 10,
+        };
+        let _ = p.wait_time_for_retry(0);
     }
 }
