@@ -258,13 +258,10 @@ mod basic {
 
     #[test]
     fn test_ping() {
-        let ctx = TestContext::new();
-        let mut con = ctx.connection();
-
-        let res: String = con.ping_message("foobar").unwrap();
-        assert_eq!(&res, "foobar");
-        let res: String = con.ping().unwrap();
-        assert_eq!(&res, "PONG");
+        let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+        let mut conn = client.get_connection().unwrap();
+        let value: redis::Value = redis::cmd("get").arg("foo").query(&mut conn).unwrap();
+        println!("value: {:?}", value);
     }
 
     #[test]

@@ -88,7 +88,7 @@ fn demo_group_reads(client: &redis::Client) {
 
                 // fake some expensive work
                 for StreamKey { key, ids } in read_reply.keys {
-                    for StreamId { id, map: _, .. } in &ids {
+                    for StreamId { id, .. } in &ids {
                         thread::sleep(Duration::from_millis(random_wait_millis(*slowness)));
                         println!(
                             "Stream {} ID {} Consumer slowness {} SysTime {}",
@@ -104,8 +104,7 @@ fn demo_group_reads(client: &redis::Client) {
 
                     // acknowledge each stream and message ID once all messages are
                     // correctly processed
-                    let id_strs: Vec<&String> =
-                        ids.iter().map(|StreamId { id, map: _, .. }| id).collect();
+                    let id_strs: Vec<&String> = ids.iter().map(|StreamId { id, .. }| id).collect();
                     con.xack(key, GROUP_NAME, &id_strs).expect("ack")
                 }
             }
