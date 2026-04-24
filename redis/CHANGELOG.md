@@ -1,3 +1,11 @@
+### 0.24.5 (2026-05-01)
+
+
+#### Bug fixes
+
+* fixup dependency on never type fallback to unit ([#2058](https://github.com/redis-rs/redis-rs/pull/2058) @WaffleLapkn)
+
+
 ### 0.23.4 (2023-11-26)
 
 
