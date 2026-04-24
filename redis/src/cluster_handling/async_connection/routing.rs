@@ -139,6 +139,7 @@ pub(super) fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Opti
 #[cfg(test)]
 mod pipeline_routing_tests {
     use super::route_for_pipeline;
+    use crate::cluster_routing::Slot;
     use crate::{
         cluster_routing::{Route, SlotAddr},
         cmd,
@@ -155,7 +156,10 @@ mod pipeline_routing_tests {
 
         assert_eq!(
             route_for_pipeline(&pipeline),
-            Ok(Some(Route::new(12182, SlotAddr::ReplicaOptional)))
+            Ok(Some(Route::with_slot(
+                Slot::new(12182).unwrap(),
+                SlotAddr::ReplicaOptional
+            )))
         );
     }
 
@@ -183,7 +187,10 @@ mod pipeline_routing_tests {
 
         assert_eq!(
             route_for_pipeline(&pipeline),
-            Ok(Some(Route::new(12182, SlotAddr::Master)))
+            Ok(Some(Route::with_slot(
+                Slot::new(12182).unwrap(),
+                SlotAddr::Master
+            )))
         );
     }
 
@@ -215,7 +222,10 @@ mod pipeline_routing_tests {
 
         assert_eq!(
             route_for_pipeline(&pipeline),
-            Ok(Some(Route::new(12182, SlotAddr::Master)))
+            Ok(Some(Route::with_slot(
+                Slot::new(12182).unwrap(),
+                SlotAddr::Master
+            )))
         );
     }
 }
