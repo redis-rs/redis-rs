@@ -147,7 +147,7 @@ impl<'a> ScriptInvocation<'a> {
             Ok(val) => Ok(val),
             Err(err) => {
                 if err.kind() == ErrorKind::NoScriptError {
-                    self.load_cmd().query(con)?;
+                    () = self.load_cmd().query(con)?;
                     eval_cmd.query(con)
                 } else {
                     Err(err)
@@ -173,7 +173,7 @@ impl<'a> ScriptInvocation<'a> {
             Err(err) => {
                 // Load the script into Redis if the script hash wasn't there already
                 if err.kind() == ErrorKind::NoScriptError {
-                    self.load_cmd().query_async(con).await?;
+                    () = self.load_cmd().query_async(con).await?;
                     eval_cmd.query_async(con).await
                 } else {
                     Err(err)
