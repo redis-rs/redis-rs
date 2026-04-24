@@ -8,7 +8,7 @@ repository = "https://github.com/redis-rs/redis-rs"
 documentation = "https://docs.rs/redis"
 license = "BSD-3-Clause"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.87"
 readme = "../README.md"
 
 [package.metadata.docs.rs]

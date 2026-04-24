@@ -213,7 +213,7 @@ jobs:
           {toolchain: stable},
           {toolchain: beta},
           {toolchain: nightly},
-          {toolchain: 1.85.0},
+          {toolchain: 1.87.0},
         ]
     steps:
       - uses: actions/checkout@v6
