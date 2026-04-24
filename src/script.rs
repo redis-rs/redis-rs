@@ -140,7 +140,7 @@ impl<'a> ScriptInvocation<'a> {
                         cmd("SCRIPT")
                             .arg("LOAD")
                             .arg(self.script.code.as_bytes())
-                            .query(con)?;
+                            .query::<()>(con)?;
                     } else {
                         fail!(err);
                     }
