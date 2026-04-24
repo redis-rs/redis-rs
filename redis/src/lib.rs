@@ -640,8 +640,12 @@ pub use crate::cmd::CommandCacheConfig;
 pub use crate::cmd::{Arg, Cmd, Iter, cmd, pack_command, pipe};
 pub use crate::commands::{
     Commands, ControlFlow, CopyOptions, Direction, FlushAllOptions, FlushDbOptions,
-    HashFieldExpirationOptions, LposOptions, MSetOptions, PubSubCommands, ScanOptions, SetOptions,
-    SortedSetAddOptions, TypedCommands, UpdateCheck,
+    HashFieldExpirationOptions, HotkeysCommands, LposOptions, MSetOptions, PubSubCommands,
+    ScanOptions, SetOptions, SortedSetAddOptions, TypedCommands, UpdateCheck,
+    hotkeys::{
+        HOTKEYS_COUNT_MAX, HOTKEYS_COUNT_MIN, HotKeyEntry, HotkeysOptions, HotkeysResponse,
+        SlotRange,
+    },
 };
 pub use crate::connection::{
     Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, IntoConnectionInfo, Msg, PubSub,
@@ -734,6 +738,10 @@ pub use crate::commands::JsonCommands;
 #[cfg(all(feature = "json", feature = "aio"))]
 #[cfg_attr(docsrs, doc(cfg(all(feature = "json", feature = "aio"))))]
 pub use crate::commands::JsonAsyncCommands;
+
+#[cfg(feature = "aio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
+pub use crate::commands::AsyncHotkeysCommands;
 
 #[cfg(feature = "vector-sets")]
 #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]

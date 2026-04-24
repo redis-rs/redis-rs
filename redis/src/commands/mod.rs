@@ -45,6 +45,8 @@ pub mod acl;
 #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
 pub mod vector_sets;
 
+pub mod hotkeys;
+
 #[cfg(any(feature = "cluster", feature = "cache-aio"))]
 enum Properties {
     ReadOnlyCacheable,
@@ -3730,3 +3732,185 @@ pub fn resp3_hello(connection_info: &RedisConnectionInfo) -> Cmd {
 
     hello_cmd
 }
+
+/// HOTKEYS commands for tracking hot keys on standalone connections (Redis 8.6.0+).
+///
+/// HOTKEYS is a stateful, node-local command requiring session affinity.
+/// It is ONLY implemented for standalone connection types (Connection, MultiplexedConnection, ConnectionManager)
+/// and NOT for cluster clients (ClusterConnection) to prevent session affinity issues.
+///
+/// # Example (Standalone)
+///
+/// ```rust,no_run
+/// use redis::{HotkeysCommands, HotkeysOptions};
+///
+/// # fn example() -> redis::RedisResult<()> {
+/// let client = redis::Client::open("redis://127.0.0.1/")?;
+/// let mut con = client.get_connection()?;
+///
+/// // Start tracking hot keys by CPU time percentage for 60 seconds
+/// let opts = HotkeysOptions::new_with_cpu()
+///     .with_duration_secs(60);
+/// con.hotkeys_start(opts)?;
+///
+/// // ... perform operations ...
+///
+/// // Get hot keys metrics. `None` means no tracking session state is available
+/// // (e.g. reset or never started).
+/// if let Some(response) = con.hotkeys_get()? {
+///     if let Some(cpu_keys) = response.by_cpu_time_us.as_ref() {
+///         for entry in cpu_keys {
+///             println!("Key: {}, CPU time: {}", entry.key, entry.value);
+///         }
+///     }
+/// }
+///
+/// // Stop tracking
+/// con.hotkeys_stop()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Using HOTKEYS in Cluster Mode
+///
+/// For cluster connections, use `route_command` with explicit node routing.
+/// See the documentation on [`HotkeysOptions`](hotkeys::HotkeysOptions) for a complete example.
+pub trait HotkeysCommands: ConnectionLike {
+    /// Start tracking hot keys with the given options.
+    ///
+    /// ```text
+    /// HOTKEYS START METRICS count [CPU] [NET] [COUNT k] [DURATION seconds] [SAMPLE ratio] [SLOTS count slot [slot ...]]
+    /// ```
+    /// [Redis Docs](https://redis.io/commands/hotkeys-start/)
+    fn hotkeys_start(&mut self, opts: hotkeys::HotkeysOptions) -> RedisResult<()>
+    where
+        Self: Sized,
+    {
+        cmd("HOTKEYS").arg("START").arg(opts).query(self)
+    }
+
+    /// Get the current hot keys metrics.
+    ///
+    /// Returns `Some(response)` when a tracking session state is available
+    /// (when there is an active tracking session or when the tracking session has been stopped but not reset)
+    /// and `None` when there is no session state to report (Redis replies `Nil` in that case).
+    ///
+    /// ```text
+    /// HOTKEYS GET
+    /// ```
+    /// [Redis Docs](https://redis.io/commands/hotkeys-get/)
+    fn hotkeys_get(&mut self) -> RedisResult<Option<hotkeys::HotkeysResponse>>
+    where
+        Self: Sized,
+    {
+        cmd("HOTKEYS").arg("GET").query(self)
+    }
+
+    /// Stop tracking hot keys.
+    ///
+    /// Returns `true` if a tracking session was running and has been stopped,
+    /// or `false` if no session was active (Redis replies `Nil` in that case).
+    ///
+    /// ```text
+    /// HOTKEYS STOP
+    /// ```
+    /// [Redis Docs](https://redis.io/commands/hotkeys-stop/)
+    fn hotkeys_stop(&mut self) -> RedisResult<bool>
+    where
+        Self: Sized,
+    {
+        cmd("HOTKEYS").arg("STOP").query(self)
+    }
+
+    /// Reset the hot keys tracking state.
+    ///
+    /// Only valid when no tracking session is currently running.
+    /// Calling RESET while a session is active returns a server error.
+    ///
+    /// ```text
+    /// HOTKEYS RESET
+    /// ```
+    /// [Redis Docs](https://redis.io/commands/hotkeys-reset/)
+    fn hotkeys_reset(&mut self) -> RedisResult<()>
+    where
+        Self: Sized,
+    {
+        cmd("HOTKEYS").arg("RESET").query(self)
+    }
+}
+
+// Implement ONLY for Connection (standalone sync)
+impl HotkeysCommands for Connection {}
+
+/// Async version of HOTKEYS commands for standalone async connections (Redis 8.6.0+).
+///
+/// HOTKEYS is a stateful, node-local command requiring session affinity.
+/// It is ONLY implemented for standalone connection types and NOT for cluster clients.
+#[cfg(feature = "aio")]
+pub trait AsyncHotkeysCommands: crate::aio::ConnectionLike + Send + Sync + Sized {
+    /// Start tracking hot keys with the given options.
+    ///
+    /// ```text
+    /// HOTKEYS START METRICS count [CPU] [NET] [COUNT k] [DURATION seconds] [SAMPLE ratio] [SLOTS count slot [slot ...]]
+    /// ```
+    /// [Redis Docs](https://redis.io/commands/hotkeys-start/)
+    fn hotkeys_start(
+        &mut self,
+        opts: hotkeys::HotkeysOptions,
+    ) -> crate::types::RedisFuture<'_, ()> {
+        Box::pin(async move {
+            cmd("HOTKEYS")
+                .arg("START")
+                .arg(opts)
+                .query_async(self)
+                .await
+        })
+    }
+
+    /// Get the current hot keys metrics.
+    ///
+    /// Returns `Some(response)` when a tracking session state is available
+    /// (when there is an active tracking session or when the tracking session has been stopped but not reset)
+    /// and `None` when there is no session state to report (Redis replies `Nil` in that case).
+    ///
+    /// ```text
+    /// HOTKEYS GET
+    /// ```
+    /// [Redis Docs](https://redis.io/commands/hotkeys-get/)
+    fn hotkeys_get(&mut self) -> crate::types::RedisFuture<'_, Option<hotkeys::HotkeysResponse>> {
+        Box::pin(async move { cmd("HOTKEYS").arg("GET").query_async(self).await })
+    }
+
+    /// Stop tracking hot keys.
+    ///
+    /// Returns `true` if a tracking session was running and has been stopped,
+    /// or `false` if no session was active (Redis replies `Nil` in that case).
+    ///
+    /// ```text
+    /// HOTKEYS STOP
+    /// ```
+    /// [Redis Docs](https://redis.io/commands/hotkeys-stop/)
+    fn hotkeys_stop(&mut self) -> crate::types::RedisFuture<'_, bool> {
+        Box::pin(async move { cmd("HOTKEYS").arg("STOP").query_async(self).await })
+    }
+
+    /// Reset the hot keys tracking state.
+    ///
+    /// Only valid when no tracking session is currently running.
+    /// Calling RESET while a session is active returns a server error.
+    ///
+    /// ```text
+    /// HOTKEYS RESET
+    /// ```
+    /// [Redis Docs](https://redis.io/commands/hotkeys-reset/)
+    fn hotkeys_reset(&mut self) -> crate::types::RedisFuture<'_, ()> {
+        Box::pin(async move { cmd("HOTKEYS").arg("RESET").query_async(self).await })
+    }
+}
+
+// Implement ONLY for standalone async connection types
+#[cfg(feature = "aio")]
+impl AsyncHotkeysCommands for crate::aio::MultiplexedConnection {}
+
+#[cfg(all(feature = "aio", feature = "connection-manager"))]
+impl AsyncHotkeysCommands for crate::aio::ConnectionManager {}
