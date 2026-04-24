@@ -1,4 +1,11 @@
 <a name="0.22.3"></a>
+### 0.22.3 (2026-05-01)
+
+#### Bug fixes
+* fixup dependency on never type fallback to unit ([#2057](https://github.com/redis-rs/redis-rs/pull/2057))
+
+
+<a name="0.22.3"></a>
 ### 0.22.3 (2023-01-23)
 
 #### Changes
