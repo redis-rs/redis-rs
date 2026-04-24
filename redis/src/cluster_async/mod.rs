@@ -1417,7 +1417,7 @@ where
     check_connection(&mut conn).await?;
     if read_from_replicas {
         // If READONLY is sent to primary nodes, it will have no effect
-        crate::cmd("READONLY").query_async(&mut conn).await?;
+        () = crate::cmd("READONLY").query_async(&mut conn).await?;
     }
     Ok(conn)
 }
