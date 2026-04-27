@@ -1,6 +1,6 @@
 [package]
 name = "redis"
-version = "1.3.0"
+version = "2.0.0-rc.1"
 keywords = ["redis", "valkey", "cluster", "sentinel", "pubsub"]
 description = "Redis driver for Rust."
 homepage = "https://github.com/redis-rs/redis-rs"
@@ -46,9 +46,7 @@ futures-util = { version = "0.3.31", default-features = false, features = [
 pin-project-lite = { version = "0.2", optional = true }
 tokio-util = { version = "0.7", optional = true }
 async-lock = { version = "3", optional = true }
-tokio = { version = "1", features = [
-  "sync",
-], optional = true }
+tokio = { version = "1", features = ["sync"], optional = true }
 
 # Only needed for the connection manager
 arc-swap = { version = "1.9.1", optional = true }
