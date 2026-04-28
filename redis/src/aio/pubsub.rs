@@ -3,10 +3,9 @@ use crate::{
     FromRedisValue, Msg, RedisConnectionInfo, ToRedisArgs, aio::Runtime, cmd, errors::RedisError,
     errors::closed_connection_error, from_redis_value, parser::ValueCodec,
 };
-use ::tokio::{
-    io::{AsyncRead, AsyncWrite},
-    sync::oneshot,
-};
+use ::tokio::io::{AsyncRead, AsyncWrite};
+use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
+use futures_channel::oneshot;
 use futures_util::{
     future::{Future, FutureExt},
     ready,
@@ -17,8 +16,6 @@ use pin_project_lite::pin_project;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::{self, Poll};
-use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::mpsc::unbounded_channel;
 use tokio_util::codec::Decoder;
 
 use super::{SharedHandleContainer, setup_connection};
@@ -58,7 +55,7 @@ pin_project! {
     /// the stream will cause the sink to return errors on requests.
     pub struct PubSubStream {
         #[pin]
-        receiver: tokio::sync::mpsc::UnboundedReceiver<Msg>,
+        receiver: UnboundedReceiver<Msg>,
         // This handle ensures that once the stream will be dropped, the underlying task will stop.
         _task_handle: Option<SharedHandleContainer>,
     }
@@ -127,7 +124,7 @@ where
                 }
 
                 if let Some(msg) = Msg::from_owned_value(Value::Array(value)) {
-                    let _ = self_.sender.send(msg);
+                    let _ = self_.sender.unbounded_send(msg);
                     Ok(())
                 } else {
                     Err(())
@@ -143,7 +140,7 @@ where
                 }
 
                 if let Some(msg) = Msg::from_push_info(crate::PushInfo { kind, data }) {
-                    let _ = self_.sender.send(msg);
+                    let _ = self_.sender.unbounded_send(msg);
                     Ok(())
                 } else {
                     Err(())
@@ -251,10 +248,10 @@ impl PubSubSink {
         T: Stream<Item = RedisResult<Value>>,
         T: Unpin + Send + 'static,
     {
-        let (sender, mut receiver) = unbounded_channel();
+        let (sender, mut receiver) = unbounded();
         let sink = PipelineSink::new(sink_stream, messages_sender);
         let f = stream::poll_fn(move |cx| {
-            let res = receiver.poll_recv(cx);
+            let res = receiver.poll_next_unpin(cx);
             match res {
                 // We don't want to stop the backing task for the stream, even if the sink was closed.
                 Poll::Ready(None) => Poll::Pending,
@@ -271,7 +268,7 @@ impl PubSubSink {
         let (sender, receiver) = oneshot::channel();
 
         self.sender
-            .send(PipelineMessage {
+            .unbounded_send(PipelineMessage {
                 input,
                 output: sender,
             })
@@ -393,7 +390,7 @@ impl PubSub {
             None,
         )
         .await?;
-        let (sender, receiver) = unbounded_channel();
+        let (sender, receiver) = unbounded();
         let (sink, driver) = PubSubSink::new(codec, sender);
         let handle = Runtime::locate().spawn(driver);
         let _task_handle = Some(SharedHandleContainer::new(handle));
@@ -513,6 +510,6 @@ impl Stream for PubSubStream {
     type Item = Msg;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
-        self.project().receiver.poll_recv(cx)
+        self.project().receiver.poll_next(cx)
     }
 }
