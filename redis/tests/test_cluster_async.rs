@@ -2285,8 +2285,10 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(5)
-                .max_retry_wait(2)
-                .min_retry_wait(2),
+                // Backoff must exceed the outer timeout; 1 ms was too tight (timeout could win
+                // before the first mock request on slow CI).
+                .max_retry_wait(64)
+                .min_retry_wait(64),
             name,
             move |received_cmd: &[u8], _| {
                 respond_startup(name, received_cmd)?;
@@ -2307,14 +2309,13 @@ mod cluster_async {
         runtime.block_on(async move {
             let err = cmd
                 .exec_async(&mut connection)
-                .timeout(futures_time::time::Duration::from_millis(1))
+                // Fires after the first TRYAGAIN returns but before min_retry_wait elapses.
+                .timeout(futures_time::time::Duration::from_millis(32))
                 .await
                 .unwrap_err();
             assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
 
-            // we sleep here, to allow the cluster connection time to retry. We expect it won't, but without this
-            // sleep the test will complete before the the runtime gave the connection time to retry, which would've made the
-            // test pass regardless of whether the connection tries retrying or not.
+            // Give the driver a chance to run a spurious retry if the drop path regressed.
             sleep(Duration::from_millis(10).into()).await;
         });
 
