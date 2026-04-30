@@ -1227,6 +1227,135 @@ mod tests {
         h3.await.unwrap().unwrap();
     }
 
+    /// Regression test for the TCP buffer deadlock reported in
+    /// <https://github.com/redis-rs/redis-rs/issues/1955>.
+    ///
+    /// # Why this can deadlock
+    ///
+    /// A TCP buffer deadlock is a property of *both* peers — neither can
+    /// produce it alone.
+    ///
+    /// **Client side (this bug):** `PipelineSink::poll_flush` polled the read
+    /// half only *after* the underlying writer's flush returned Ready. When
+    /// our TCP send buffer fills, the codec's flush is Pending, and we
+    /// returned Pending without ever registering a read waker — so response
+    /// bytes already sitting in our recv buffer were never polled. The driver
+    /// task parked indefinitely.
+    ///
+    /// **Server side:** any server that stops reading from a client's
+    /// socket while its own pending write to that client can't make
+    /// forward progress is enough to trigger the deadlock. Combined with
+    /// the client bug, both directions wedge: the client's send buffer
+    /// can't drain (server isn't reading), the server's send buffer can't
+    /// drain (client isn't reading because of the bug), and the state is
+    /// permanent.
+    ///
+    /// # What this test simulates
+    ///
+    /// `tokio::io::duplex` stands in for a TCP socket pair with tiny
+    /// kernel buffers. The mini-server is a loop that reads a request,
+    /// writes a response, repeats — awaiting the write makes the loop
+    /// stop reading the instant a write becomes Pending, which is the
+    /// general server-side behavior described above.
+    ///
+    /// The test issues a few large concurrent SETs whose request payloads
+    /// (and pretend responses) each exceed the duplex buffer in both
+    /// directions. With the bug, the client's codec backs up, the
+    /// server's writes back up, and both sides park without enough wakers
+    /// to escape — the test times out and panics. With the fix, the
+    /// driver drains responses even while the writer is back-pressured,
+    /// which keeps the duplex moving and lets the SETs complete.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_deadlock_when_writes_blocked_with_pending_response() {
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+        use tokio_util::codec::FramedRead;
+
+        // Small duplex buffer + ~4 KiB request/response sizes. The polling
+        // pathology doesn't depend on scale; a real socket would see the
+        // same shape with tens of KiB of buffer and MB-scale payloads.
+        const BUFFER_SIZE: usize = 256;
+        const PAYLOAD_SIZE: usize = 4096;
+        const REQUEST_COUNT: usize = 3;
+
+        let (client_half, server_half) = tokio::io::duplex(BUFFER_SIZE);
+        let (server_read, mut server_write) = tokio::io::split(server_half);
+
+        // Pretend response: a bulk string the same size as the request
+        // payload, so server-bound writes also exceed the duplex buffer
+        // (the server's write pends and its loop stops reading).
+        let mut response = Vec::with_capacity(PAYLOAD_SIZE + 16);
+        response.extend_from_slice(format!("${PAYLOAD_SIZE}\r\n").as_bytes());
+        response.extend(std::iter::repeat_n(b'V', PAYLOAD_SIZE));
+        response.extend_from_slice(b"\r\n");
+
+        // Mini-server: read a request, write a response, loop. Awaiting
+        // the write makes the loop stop reading the instant a write
+        // becomes Pending — the general "server stops reading once its
+        // own write is back-pressured" behavior the deadlock requires.
+        let server_task = tokio::spawn(async move {
+            let mut reader = FramedRead::new(server_read, ValueCodec::default());
+            loop {
+                match reader.next().await {
+                    Some(Ok(_)) => {}
+                    _ => return,
+                }
+                if server_write.write_all(&response).await.is_err() {
+                    return;
+                }
+            }
+        });
+
+        let config = AsyncConnectionConfig::new()
+            .set_response_timeout(None)
+            .set_connection_timeout(None);
+        let (conn, driver) =
+            MultiplexedConnection::new_with_config(&mock_conn_info(), client_half, config)
+                .await
+                .unwrap();
+        let driver_handle = tokio::spawn(driver);
+
+        // A handful of concurrent large SETs. Each request exceeds the
+        // duplex buffer (codec's flush stays backed up); each reply also
+        // exceeds the duplex buffer (server's write stays backed up). Both
+        // directions wedge.
+        let mut handles = Vec::with_capacity(REQUEST_COUNT);
+        for i in 0..REQUEST_COUNT {
+            let mut c = conn.clone();
+            handles.push(tokio::spawn(async move {
+                let mut set = cmd("SET");
+                set.arg(format!("k{i}")).arg(vec![b'X'; PAYLOAD_SIZE]);
+                c.send_packed_command(&set).await
+            }));
+        }
+
+        let join_all = async move {
+            let mut results = Vec::with_capacity(handles.len());
+            for h in handles {
+                results.push(h.await);
+            }
+            results
+        };
+
+        let outcome = tokio::time::timeout(Duration::from_secs(5), join_all).await;
+
+        // Clean up before asserting so a panic doesn't leak tasks.
+        driver_handle.abort();
+        server_task.abort();
+
+        let results = outcome.expect(
+            "DEADLOCK reproduced: client driver parked in poll_flush with no \
+             read waker registered. Server has buffered responses in the duplex \
+             and stopped reading once its own write became Pending; the client \
+             cannot send the rest of its requests because the server is no \
+             longer draining the link. Both sides wedged.",
+        );
+        for (i, res) in results.into_iter().enumerate() {
+            let join = res.unwrap_or_else(|e| panic!("SET task {i} panicked: {e}"));
+            join.unwrap_or_else(|e| panic!("SET task {i} returned an error: {e}"));
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_permit_released_on_response_timeout() {
         use futures_util::StreamExt;
