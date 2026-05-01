@@ -14,11 +14,11 @@ fn test_args() {
         redis::cmd("SET")
             .arg("key1")
             .arg(b"foo")
-            .query_async(&mut con)
+            .query_async::<_, ()>(&mut con)
             .await?;
         redis::cmd("SET")
             .arg(&["key2", "bar"])
-            .query_async(&mut con)
+            .query_async::<_, ()>(&mut con)
             .await?;
         let result = redis::cmd("MGET")
             .arg(&["key1", "key2"])
@@ -146,11 +146,11 @@ fn test_cmd(con: &MultiplexedConnection, i: i32) -> impl Future<Output = RedisRe
         redis::cmd("SET")
             .arg(&key[..])
             .arg(foo_val.as_bytes())
-            .query_async(&mut con)
+            .query_async::<_, ()>(&mut con)
             .await?;
         redis::cmd("SET")
             .arg(&[&key2, "bar"])
-            .query_async(&mut con)
+            .query_async::<_, ()>(&mut con)
             .await?;
         redis::cmd("MGET")
             .arg(&[&key_2, &key2_2])
@@ -274,7 +274,7 @@ fn test_async_scanning(batch_size: usize) {
                         redis::cmd("SADD")
                             .arg("foo")
                             .arg(x)
-                            .query_async(&mut con)
+                            .query_async::<_, ()>(&mut con)
                             .await?;
                         unseen.insert(x);
                     }
@@ -298,7 +298,7 @@ fn test_async_scanning(batch_size: usize) {
                     Ok(())
                 }
             })
-            .map_err(|err| panic!("{}", err))
+            .map_err::<(), _>(|err| panic!("{}", err))
             .await
     })
     .unwrap();
@@ -332,7 +332,7 @@ fn test_script() {
         script1
             .key("key1")
             .arg("foo")
-            .invoke_async(&mut con)
+            .invoke_async::<_, ()>(&mut con)
             .await?;
         let val: String = script2.key("key1").invoke_async(&mut con).await?;
         assert_eq!(val, "foo");
@@ -341,7 +341,7 @@ fn test_script() {
         script1
             .key("key1")
             .arg("bar")
-            .invoke_async(&mut con)
+            .invoke_async::<_, ()>(&mut con)
             .await?;
         let val: String = script2.key("key1").invoke_async(&mut con).await?;
         assert_eq!(val, "bar");
@@ -479,7 +479,9 @@ mod pub_sub {
             pubsub_conn.subscribe("phonewave").await?;
             let mut pubsub_stream = pubsub_conn.on_message();
             let mut publish_conn = ctx.async_connection().await?;
-            publish_conn.publish("phonewave", "banana").await?;
+            publish_conn
+                .publish::<_, _, ()>("phonewave", "banana")
+                .await?;
 
             let msg_payload: String = pubsub_stream.next().await.unwrap().get_payload()?;
             assert_eq!("banana".to_string(), msg_payload);
@@ -564,7 +566,7 @@ mod pub_sub {
             redis::cmd("SET")
                 .arg("foo")
                 .arg("bar")
-                .query_async(&mut conn)
+                .query_async::<_, ()>(&mut conn)
                 .await?;
 
             let res: String = redis::cmd("GET").arg("foo").query_async(&mut conn).await?;

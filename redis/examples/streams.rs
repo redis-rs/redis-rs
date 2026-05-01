@@ -124,7 +124,7 @@ fn add_records(client: &redis::Client) -> RedisResult<()> {
 
     // a stream whose records have two fields
     for _ in 0..thrifty_rand() {
-        con.xadd_maxlen(
+        con.xadd_maxlen::<_, _, _, _, ()>(
             DOG_STREAM,
             maxlen,
             "*",
@@ -134,7 +134,7 @@ fn add_records(client: &redis::Client) -> RedisResult<()> {
 
     // a streams whose records have three fields
     for _ in 0..thrifty_rand() {
-        con.xadd_maxlen(
+        con.xadd_maxlen::<_, _, _, _, ()>(
             CAT_STREAM,
             maxlen,
             "*",
@@ -148,7 +148,7 @@ fn add_records(client: &redis::Client) -> RedisResult<()> {
 
     // a streams whose records have four fields
     for _ in 0..thrifty_rand() {
-        con.xadd_maxlen(
+        con.xadd_maxlen::<_, _, _, _, ()>(
             DUCK_STREAM,
             maxlen,
             "*",
