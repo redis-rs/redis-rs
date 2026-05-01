@@ -174,7 +174,7 @@ impl<'a> ScriptInvocation<'a> {
             Err(err) => {
                 // Load the script into Redis if the script hash wasn't there already
                 if err.kind() == ErrorKind::NoScriptError {
-                    load_cmd.query_async(con).await?;
+                    load_cmd.query_async::<_, ()>(con).await?;
                     eval_cmd.query_async(con).await
                 } else {
                     Err(err)

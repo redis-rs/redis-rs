@@ -705,7 +705,7 @@ where
 
     let mut con = client.get_connection()?;
     if readonly {
-        cmd("READONLY").query(&mut con)?;
+        cmd("READONLY").query::<()>(&mut con)?;
     }
     Ok(con)
 }
