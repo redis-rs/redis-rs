@@ -57,12 +57,14 @@ mod util;
 pub use self::cluster::*;
 
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
+#[allow(unused)]
 pub use self::mock_cluster::*;
 
 #[cfg(feature = "sentinel")]
 mod sentinel;
 
 #[cfg(feature = "sentinel")]
+#[allow(unused)]
 pub use self::sentinel::*;
 
 #[derive(PartialEq)]
