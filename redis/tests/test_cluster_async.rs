@@ -32,7 +32,7 @@ fn test_async_cluster_basic_cmd() {
         cmd("SET")
             .arg("test")
             .arg("test_data")
-            .query_async(&mut connection)
+            .query_async::<_, ()>(&mut connection)
             .await?;
         let res: String = cmd("GET")
             .arg("test")
@@ -199,7 +199,7 @@ fn test_async_cluster_basic_pipe() {
         let mut pipe = redis::pipe();
         pipe.add_command(cmd("SET").arg("test").arg("test_data").clone());
         pipe.add_command(cmd("SET").arg("test3").arg("test_data3").clone());
-        pipe.query_async(&mut connection).await?;
+        pipe.query_async::<_, ()>(&mut connection).await?;
         let res: String = connection.get("test").await?;
         assert_eq!(res, "test_data");
         let res: String = connection.get("test3").await?;
@@ -237,7 +237,7 @@ fn test_async_cluster_basic_failover() {
 }
 
 async fn do_failover(redis: &mut redis::aio::MultiplexedConnection) -> Result<(), anyhow::Error> {
-    cmd("CLUSTER").arg("FAILOVER").query_async(redis).await?;
+    cmd("CLUSTER").arg("FAILOVER").query_async::<_, ()>(redis).await?;
     Ok(())
 }
 
@@ -280,7 +280,7 @@ async fn test_failover(env: &TestClusterContext, requests: i32, value: i32, mtls
                     tokio::time::timeout(std::time::Duration::from_secs(3), async {
                         Ok(redis::Cmd::new()
                             .arg("FLUSHALL")
-                            .query_async(&mut conn)
+                            .query_async::<_, ()>(&mut conn)
                             .await?)
                     })
                     .await
@@ -326,7 +326,7 @@ async fn test_failover(env: &TestClusterContext, requests: i32, value: i32, mtls
                         .arg(&key)
                         .arg(i)
                         .clone()
-                        .query_async(&mut connection)
+                        .query_async::<_, ()>(&mut connection)
                         .await?;
                     let res: i32 = cmd("GET")
                         .arg(key)
@@ -340,7 +340,7 @@ async fn test_failover(env: &TestClusterContext, requests: i32, value: i32, mtls
             }
         })
         .collect::<stream::FuturesUnordered<_>>()
-        .try_collect()
+        .try_collect::<()>()
         .await
         .unwrap_or_else(|e| panic!("{e}"));
 
@@ -1361,7 +1361,7 @@ fn test_async_cluster_with_username_and_password() {
         cmd("SET")
             .arg("test")
             .arg("test_data")
-            .query_async(&mut connection)
+            .query_async::<_, ()>(&mut connection)
             .await?;
         let res: String = cmd("GET")
             .arg("test")
@@ -1468,7 +1468,7 @@ mod mtls_test {
             cmd("SET")
                 .arg("test")
                 .arg("test_data")
-                .query_async(&mut connection)
+                .query_async::<_, ()>(&mut connection)
                 .await?;
             let res: String = cmd("GET")
                 .arg("test")
