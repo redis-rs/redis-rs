@@ -944,10 +944,10 @@ pub struct Route(u16, SlotAddr);
 
 impl Route {
     /// Returns a new Route.
-    /// 
-    /// Since this function allows creating route for non-existing slot, 
+    ///
+    /// Since this function allows creating route for non-existing slot,
     /// it's recommended to use [`with_slot`] instead.
-    /// 
+    ///
     /// [`with_slot`]: Self::with_slot
     pub fn new(slot: u16, slot_addr: SlotAddr) -> Self {
         // TODO: Deprecate and remove this function in the future release
