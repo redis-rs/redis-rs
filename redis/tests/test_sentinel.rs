@@ -13,6 +13,17 @@ use redis::{
 };
 use redis_test::server::use_protocol;
 
+fn log_connection_error(
+    context: &TestSentinelContext,
+    sentinel: &ConnectionInfo,
+    error: &RedisError,
+) {
+    println!("Connection error: {:?}", error);
+    if let ConnectionAddr::Tcp(_, port) = sentinel.addr() {
+        context.cluster.log_redis_state_via_cli(*port);
+    }
+}
+
 fn parse_replication_info(value: &str) -> HashMap<&str, &str> {
     let info_map: std::collections::HashMap<&str, &str> = value
         .split("\r\n")
@@ -169,9 +180,11 @@ fn test_get_replica_clients_with_one_replica_down() {
     let mut context = TestSentinelContext::new(2, number_of_replicas, 3);
     let node_conn_info = context.sentinel_node_connection_info();
     let sentinel_conn_info = context.sentinels_connection_info()[0].clone();
-    let mut conn = Client::open(sentinel_conn_info)
+    let mut conn = Client::open(sentinel_conn_info.clone())
+        .inspect_err(|e| log_connection_error(&context, &sentinel_conn_info, e))
         .unwrap()
         .get_connection()
+        .inspect_err(|e| log_connection_error(&context, &sentinel_conn_info, e))
         .unwrap();
 
     redis::cmd("SENTINEL")
@@ -380,8 +393,10 @@ fn test_sentinel_redis_client() {
     let mut context = TestSentinelContext::new(2, 3, 3);
     for sentinel in context.sentinels_connection_info() {
         let mut conn = Client::open(sentinel.clone())
+            .inspect_err(|e| log_connection_error(&context, sentinel, e))
             .unwrap()
             .get_connection()
+            .inspect_err(|e| log_connection_error(&context, sentinel, e))
             .unwrap();
         let role: Role = redis::cmd("ROLE").query(&mut conn).unwrap();
         assert_matches!(role, Role::Sentinel { .. });
@@ -512,8 +527,10 @@ fn test_sentinel_client_builder() {
     let mut context = TestSentinelContext::new(2, 3, 3);
     for sentinel in context.sentinels_connection_info() {
         let mut conn = Client::open(sentinel.clone())
+            .inspect_err(|e| log_connection_error(&context, sentinel, e))
             .unwrap()
             .get_connection()
+            .inspect_err(|e| log_connection_error(&context, sentinel, e))
             .unwrap();
         let role: Role = redis::cmd("ROLE").query(&mut conn).unwrap();
         assert_matches!(role, Role::Sentinel { .. });
@@ -1111,10 +1128,12 @@ pub mod async_tests {
         let node_conn_info = context.sentinel_node_connection_info();
         let sentinel_conn_info = context.sentinels_connection_info()[0].clone();
 
-        let mut conn = Client::open(sentinel_conn_info)
+        let mut conn = Client::open(sentinel_conn_info.clone())
+            .inspect_err(|e| log_connection_error(&context, &sentinel_conn_info, e))
             .unwrap()
             .get_multiplexed_async_connection()
             .await
+            .inspect_err(|e| log_connection_error(&context, &sentinel_conn_info, e))
             .unwrap();
 
         redis::cmd("SENTINEL")
