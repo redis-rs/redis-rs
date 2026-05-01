@@ -307,7 +307,9 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut task::Context,
     ) -> Poll<Result<(), Self::Error>> {
-        // Drain pending responses; see comment in poll_flush for rationale.
+        // Always service the read side of a connection concurrently with write to
+        // avoid TCP deadlock.
+        // See comment in poll_flush for more context.
         if matches!(self.as_mut().poll_read(cx), Poll::Ready(Err(()))) {
             return Poll::Ready(Err(()));
         }
@@ -368,32 +370,21 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut task::Context,
     ) -> Poll<Result<(), Self::Error>> {
-        // Drain pending responses *before* checking the flush state. The
-        // original code only invoked `poll_read` after the underlying flush
-        // returned Ready, so a back-pressured writer would starve the read
-        // side: when the server momentarily stops draining our requests, the
-        // codec's flush stays Pending, this function returns Pending without
-        // ever registering a read waker, and any responses already in the
-        // recv buffer never get polled. Combined with the server then stalling
-        // on its own pending write to us, both sides wedge permanently.
-        // Polling reads here registers a read waker so a response arriving
-        // from the server wakes the driver task even while the writer is
-        // parked. See https://github.com/redis-rs/redis-rs/issues/1955.
+        // To avoid TCP deadlock, we need to read and write concurrently.
+        // We don't care if the read side is Pending or not from poll_flush
+        // perspective, but if it's Pending, we need to make sure we wake
+        // again. Otherwise we are vulnerable to TCP deadlock.
+        // See https://github.com/redis-rs/redis-rs/issues/1955.
         if matches!(self.as_mut().poll_read(cx), Poll::Ready(Err(()))) {
             return Poll::Ready(Err(()));
         }
-        ready!(
-            self.as_mut()
-                .project()
-                .sink_stream
-                .poll_flush(cx)
-                .map_err(|err| {
-                    self.as_mut().send_result(Err(err));
-                })
-        )?;
-        // Re-poll reads in case the flush itself unblocked a response
-        // (e.g. server processed our request the moment we sent it).
-        self.poll_read(cx)
+        self.as_mut()
+            .project()
+            .sink_stream
+            .poll_flush(cx)
+            .map_err(|err| {
+                self.as_mut().send_result(Err(err));
+            })
     }
 
     fn poll_close(
