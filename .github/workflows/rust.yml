@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ main, 0.21.x ]
+    branches: [ main, 0.22.x ]
   pull_request:
-    branches: [ main, 0.21.x ]
+    branches: [ main, 0.22.x ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -29,7 +29,7 @@ jobs:
     steps:
     - name: Cache redis
       id: cache-redis
-      uses: actions/cache@v2
+      uses: actions/cache@v4
       with:
         path: |
           /usr/bin/redis-cli
