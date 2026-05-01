@@ -21,9 +21,9 @@ fn bench_cluster_async(
             runtime
                 .block_on(async {
                     let key = "test_key";
-                    redis::cmd("SET").arg(key).arg(42).query_async(con).await?;
+                    redis::cmd("SET").arg(key).arg(42).query_async::<_, ()>(con).await?;
                     let _: isize = redis::cmd("GET").arg(key).query_async(con).await?;
-                    redis::cmd("DEL").arg(key).query_async(con).await?;
+                    redis::cmd("DEL").arg(key).query_async::<_, ()>(con).await?;
 
                     Ok::<_, RedisError>(())
                 })
