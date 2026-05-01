@@ -411,9 +411,9 @@ impl Client {
     ///
     ///     let mut con = client.get_async_connection().await?;
     ///
-    ///     con.set("key1", b"foo").await?;
+    ///     () = con.set("key1", b"foo").await?;
     ///
-    ///     redis::cmd("SET")
+    ///     () = redis::cmd("SET")
     ///         .arg(&["key2", "bar"])
     ///         .query_async(&mut con)
     ///         .await?;
