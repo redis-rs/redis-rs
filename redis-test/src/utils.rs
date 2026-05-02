@@ -12,6 +12,13 @@ pub struct TlsFilePaths {
     pub ca_crt: PathBuf,
 }
 
+/// Client certificate and key paths for mTLS authentication
+#[derive(Clone, Debug)]
+pub struct ClientCertPaths {
+    pub client_crt: PathBuf,
+    pub client_key: PathBuf,
+}
+
 pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
     build_keys_and_certs_for_tls_ext(tempdir, true)
 }
@@ -158,6 +165,99 @@ pub fn build_keys_and_certs_for_tls_ext(tempdir: &TempDir, with_ip_alts: bool) -
         redis_crt,
         redis_key,
         ca_crt,
+    }
+}
+
+/// Build a client certificate with a custom common name (CN) field
+/// Redis 8.6+ allows certificate-based authentication where the common name (CN)
+/// is mapped to an ACL username
+pub fn build_client_cert_with_custom_cn(
+    tempdir: &TempDir,
+    common_name: &str,
+    ca_crt: &PathBuf,
+    ca_key: &PathBuf,
+) -> ClientCertPaths {
+    let client_crt = tempdir.path().join(format!("{}.crt", common_name));
+    let client_key = tempdir.path().join(format!("{}.key", common_name));
+    let ca_serial = tempdir.path().join("ca.txt");
+
+    // Generate client private key
+    let status = process::Command::new("openssl")
+        .arg("genrsa")
+        .arg("-out")
+        .arg(&client_key)
+        .arg("2048")
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn openssl")
+        .wait()
+        .expect("failed to create client key");
+    assert!(
+        status.success(),
+        "`openssl genrsa` failed to create client key: {status}"
+    );
+
+    // Create a basic extensions file for X.509 v3 client certificate
+    let client_ext_file = tempdir.path().join("client_ext.cnf");
+    let client_ext_content = "\
+        basicConstraints = CA:FALSE\n\
+        keyUsage = digitalSignature, keyEncipherment\n\
+    ";
+    fs::write(&client_ext_file, client_ext_content)
+        .expect("failed to create client extensions file");
+
+    // Create certificate signing request with custom CN
+    let mut csr_cmd = process::Command::new("openssl")
+        .arg("req")
+        .arg("-new")
+        .arg("-sha256")
+        .arg("-subj")
+        .arg(format!("/O=Redis Test/CN={}", common_name))
+        .arg("-key")
+        .arg(&client_key)
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn openssl for CSR");
+
+    // Sign the certificate with CA (X.509 v3)
+    let cert_status = process::Command::new("openssl")
+        .arg("x509")
+        .arg("-req")
+        .arg("-sha256")
+        .arg("-CA")
+        .arg(ca_crt)
+        .arg("-CAkey")
+        .arg(ca_key)
+        .arg("-CAserial")
+        .arg(&ca_serial)
+        .arg("-CAcreateserial")
+        .arg("-days")
+        .arg("365")
+        .arg("-extfile")
+        .arg(&client_ext_file)
+        .arg("-out")
+        .arg(&client_crt)
+        .stdin(csr_cmd.stdout.take().expect("should have stdout"))
+        .spawn()
+        .expect("failed to spawn openssl for certificate signing")
+        .wait()
+        .expect("failed to sign client certificate");
+
+    let csr_status = csr_cmd.wait().expect("failed to create CSR");
+    assert!(
+        csr_status.success(),
+        "`openssl req` failed to create CSR: {csr_status}"
+    );
+    assert!(
+        cert_status.success(),
+        "`openssl x509` failed to sign client certificate"
+    );
+
+    ClientCertPaths {
+        client_crt,
+        client_key,
     }
 }
 
