@@ -307,9 +307,12 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut task::Context,
     ) -> Poll<Result<(), Self::Error>> {
-        // Always service the read side of a connection concurrently with write to
-        // avoid TCP deadlock.
-        // See comment in poll_flush for more context.
+        // It is crucial that we always try to advance both the read and the write side together.
+        // If we do not, we are susceptible to TCP deadlock.
+        // Here, we do this by advancing reads and then moving on to advance writes regardless of
+        // whether the read was pending or not. This ensures that we are registered to be woken
+        // if either reads or writes become available.
+        // See https://github.com/redis-rs/redis-rs/issues/1955.
         if matches!(self.as_mut().poll_read(cx), Poll::Ready(Err(()))) {
             return Poll::Ready(Err(()));
         }
@@ -370,10 +373,11 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut task::Context,
     ) -> Poll<Result<(), Self::Error>> {
-        // To avoid TCP deadlock, we need to read and write concurrently.
-        // We don't care if the read side is Pending or not from poll_flush
-        // perspective, but if it's Pending, we need to make sure we wake
-        // again. Otherwise we are vulnerable to TCP deadlock.
+        // It is crucial that we always try to advance both the read and the write side together.
+        // If we do not, we are susceptible to TCP deadlock.
+        // Here, we do this by advancing reads and then moving on to advance writes regardless of
+        // whether the read was pending or not. This ensures that we are registered to be woken
+        // if either reads or writes become available.
         // See https://github.com/redis-rs/redis-rs/issues/1955.
         if matches!(self.as_mut().poll_read(cx), Poll::Ready(Err(()))) {
             return Poll::Ready(Err(()));
