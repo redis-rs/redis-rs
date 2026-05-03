@@ -1,3 +1,24 @@
+### 1.2.1 (2026-05-03)
+
+#### Changes & Bug fixes
+
+* commands: Stop double-`take`-ing for `mset` ([#2043](https://github.com/redis-rs/redis-rs/pull/2043) by @somechris)
+* json: Stop double-wrapping commands in `RedisResult` ([#2042](https://github.com/redis-rs/redis-rs/pull/2042) by @somechris)
+* ValueType: Add missing possible types ([#2030](https://github.com/redis-rs/redis-rs/pull/2030) by @somechris)
+* Stream idempotent producers (at-most-once guarantee) ([#2032](https://github.com/redis-rs/redis-rs/pull/2032) by @StefanPalashev)
+* Improve streaming auth error handling ([#2021](https://github.com/redis-rs/redis-rs/pull/2021) by @alexcole)
+* feat: add Slot type and functions to create Slot / Route with key ([#2047](https://github.com/redis-rs/redis-rs/pull/2047) by @anatawa12)
+* Fix async connection handling to avoid TCP deadlocks ([#2070](https://github.com/redis-rs/redis-rs/pull/2070) by @PDXKimani)
+
+#### CI improvements
+
+* ci: Bump Redis/Valkey versions ([#2035](https://github.com/redis-rs/redis-rs/pull/2035) by @somechris)
+* ci: Clarify how databases get selected ([#2040](https://github.com/redis-rs/redis-rs/pull/2040) by @somechris)
+* README: Declare "supported" versions ([#2034](https://github.com/redis-rs/redis-rs/pull/2034) by @somechris)
+* Add EntraID integration tests for OSS cluster API ([#2050](https://github.com/redis-rs/redis-rs/pull/2050) by @StefanPalashev)
+* fix new nightly lint & fmt ([#2052](https://github.com/redis-rs/redis-rs/pull/2052) by @nihohit)
+* log sentinel test startup failures. ([#2062](https://github.com/redis-rs/redis-rs/pull/2062) by @nihohit)
+
 ### 1.2.0 (2026-04-04)
 
 #### Changes & Bug fixes
