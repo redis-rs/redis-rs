@@ -39,7 +39,10 @@ fn bench_simple_getsetdel_async(b: &mut Bencher) {
                     .query_async::<_, ()>(&mut con)
                     .await?;
                 let _: isize = redis::cmd("GET").arg(key).query_async(&mut con).await?;
-                redis::cmd("DEL").arg(key).query_async::<_, ()>(&mut con).await?;
+                redis::cmd("DEL")
+                    .arg(key)
+                    .query_async::<_, ()>(&mut con)
+                    .await?;
                 Ok(())
             })
             .map_err(|err: RedisError| err)
