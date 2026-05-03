@@ -51,7 +51,7 @@ macro_rules! implement_commands {
         /// use redis::Commands;
         /// let client = redis::Client::open("redis://127.0.0.1/")?;
         /// let mut con = client.get_connection()?;
-        /// con.set("my_key", 42)?;
+        /// () = con.set("my_key", 42)?;
         /// assert_eq!(con.get("my_key"), Ok(42));
         /// # Ok(()) }
         /// ```
@@ -155,7 +155,7 @@ macro_rules! implement_commands {
         /// # async fn do_something() -> redis::RedisResult<()> {
         /// let client = redis::Client::open("redis://127.0.0.1/")?;
         /// let mut con = client.get_async_connection().await?;
-        /// redis::cmd("SET").arg("my_key").arg(42i32).query_async(&mut con).await?;
+        /// () = redis::cmd("SET").arg("my_key").arg(42i32).query_async(&mut con).await?;
         /// assert_eq!(redis::cmd("GET").arg("my_key").query_async(&mut con).await, Ok(42i32));
         /// # Ok(()) }
         /// ```
@@ -168,7 +168,7 @@ macro_rules! implement_commands {
         /// use redis::Commands;
         /// let client = redis::Client::open("redis://127.0.0.1/")?;
         /// let mut con = client.get_async_connection().await?;
-        /// con.set("my_key", 42i32).await?;
+        /// () = con.set("my_key", 42i32).await?;
         /// assert_eq!(con.get("my_key").await, Ok(42i32));
         /// # Ok(()) }
         /// ```
@@ -191,7 +191,7 @@ macro_rules! implement_commands {
 
             /// Incrementally iterate the keys space.
             #[inline]
-            fn scan<RV: FromRedisValue>(&mut self) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+            fn scan<RV: FromRedisValue>(&mut self) -> crate::types::RedisFuture<'_, crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("SCAN");
                 c.cursor_arg(0);
                 Box::pin(async move { c.iter_async(self).await })
@@ -199,7 +199,7 @@ macro_rules! implement_commands {
 
             /// Incrementally iterate set elements for elements matching a pattern.
             #[inline]
-            fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&mut self, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+            fn scan_match<P: ToRedisArgs, RV: FromRedisValue>(&mut self, pattern: P) -> crate::types::RedisFuture<'_, crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("SCAN");
                 c.cursor_arg(0).arg("MATCH").arg(pattern);
                 Box::pin(async move { c.iter_async(self).await })
@@ -207,7 +207,7 @@ macro_rules! implement_commands {
 
             /// Incrementally iterate hash fields and associated values.
             #[inline]
-            fn hscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+            fn hscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> crate::types::RedisFuture<'_, crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("HSCAN");
                 c.arg(key).cursor_arg(0);
                 Box::pin(async move {c.iter_async(self).await })
@@ -217,7 +217,7 @@ macro_rules! implement_commands {
             /// field names matching a pattern.
             #[inline]
             fn hscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
-                    (&mut self, key: K, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+                    (&mut self, key: K, pattern: P) -> crate::types::RedisFuture<'_, crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("HSCAN");
                 c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
                 Box::pin(async move {c.iter_async(self).await })
@@ -225,7 +225,7 @@ macro_rules! implement_commands {
 
             /// Incrementally iterate set elements.
             #[inline]
-            fn sscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+            fn sscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> crate::types::RedisFuture<'_, crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("SSCAN");
                 c.arg(key).cursor_arg(0);
                 Box::pin(async move {c.iter_async(self).await })
@@ -234,7 +234,7 @@ macro_rules! implement_commands {
             /// Incrementally iterate set elements for elements matching a pattern.
             #[inline]
             fn sscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
-                    (&mut self, key: K, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+                    (&mut self, key: K, pattern: P) -> crate::types::RedisFuture<'_, crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("SSCAN");
                 c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
                 Box::pin(async move {c.iter_async(self).await })
@@ -242,7 +242,7 @@ macro_rules! implement_commands {
 
             /// Incrementally iterate sorted set elements.
             #[inline]
-            fn zscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+            fn zscan<K: ToRedisArgs, RV: FromRedisValue>(&mut self, key: K) -> crate::types::RedisFuture<'_, crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("ZSCAN");
                 c.arg(key).cursor_arg(0);
                 Box::pin(async move {c.iter_async(self).await })
@@ -251,7 +251,7 @@ macro_rules! implement_commands {
             /// Incrementally iterate sorted set elements for elements matching a pattern.
             #[inline]
             fn zscan_match<K: ToRedisArgs, P: ToRedisArgs, RV: FromRedisValue>
-                    (&mut self, key: K, pattern: P) -> crate::types::RedisFuture<crate::cmd::AsyncIter<'_, RV>> {
+                    (&mut self, key: K, pattern: P) -> crate::types::RedisFuture<'_, crate::cmd::AsyncIter<'_, RV>> {
                 let mut c = cmd("ZSCAN");
                 c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
                 Box::pin(async move {c.iter_async(self).await })
