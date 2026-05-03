@@ -479,7 +479,9 @@ mod pub_sub {
             pubsub_conn.subscribe("phonewave").await?;
             let mut pubsub_stream = pubsub_conn.on_message();
             let mut publish_conn = ctx.async_connection().await?;
-            publish_conn.publish::<_, _, ()>("phonewave", "banana").await?;
+            publish_conn
+                .publish::<_, _, ()>("phonewave", "banana")
+                .await?;
 
             let msg_payload: String = pubsub_stream.next().await.unwrap().get_payload()?;
             assert_eq!("banana".to_string(), msg_payload);
