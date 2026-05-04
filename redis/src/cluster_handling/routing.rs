@@ -515,7 +515,7 @@ where
                 {
                     // Last key reached; add the path argument index for each route and break
                     let path_idx = curr_arg_idx + 1;
-                    for (_, arg_indices) in routes.iter_mut() {
+                    for arg_indices in routes.values_mut() {
                         arg_indices.push(path_idx);
                     }
                     break;
