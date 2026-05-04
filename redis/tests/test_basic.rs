@@ -64,7 +64,7 @@ mod basic {
             let hash_exists: bool = con.exists(&generated_hash_key).unwrap();
 
             if !hash_exists {
-                println!("Generated random testing hash key: {}", &generated_hash_key);
+                println!("Generated random testing hash key: {generated_hash_key}");
                 return generated_hash_key;
             }
         }
