@@ -430,7 +430,7 @@ fn test_async_cluster_async_std_basic_cmd() {
         redis::cmd("SET")
             .arg("test")
             .arg("test_data")
-            .query_async(&mut connection)
+            .query_async::<_, ()>(&mut connection)
             .await?;
         redis::cmd("GET")
             .arg("test")
