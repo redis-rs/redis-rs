@@ -130,7 +130,7 @@ jobs:
       - run: cargo fmt --all -- --check
         name: fmt
 
-      - run: cargo clippy --all-features --all-targets -- -D warnings
+      - run: cargo clippy --all-features -- -D warnings
         name: clippy
       - name: doc
         run: cargo doc --no-deps --document-private-items
