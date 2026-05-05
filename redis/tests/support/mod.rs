@@ -37,6 +37,7 @@ where
 mod cluster;
 
 #[cfg(feature = "cluster")]
+#[allow(unused)]
 pub use self::cluster::*;
 
 #[derive(PartialEq)]

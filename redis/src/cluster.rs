@@ -96,7 +96,7 @@ impl ClusterConnection {
                     None
                 } else {
                     // TODO: Maybe should run through whole list and make sure they're all matching?
-                    match &initial_nodes.get(0).unwrap().addr {
+                    match &initial_nodes.first().unwrap().addr {
                         ConnectionAddr::Tcp(_, _) => None,
                         ConnectionAddr::TcpTls {
                             host: _,
@@ -336,7 +336,7 @@ impl ClusterConnection {
         let mut conn = connect(&connection_info, None)?;
         if self.read_from_replicas {
             // If READONLY is sent to primary nodes, it will have no effect
-            cmd("READONLY").query(&mut conn)?;
+            cmd("READONLY").query::<()>(&mut conn)?;
         }
         Ok(conn)
     }

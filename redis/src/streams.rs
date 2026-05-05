@@ -253,18 +253,13 @@ pub struct StreamClaimReply {
 ///
 /// [`xpending`]: ../trait.Commands.html#method.xpending
 ///
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum StreamPendingReply {
     /// The stream is empty.
+    #[default]
     Empty,
     /// Data with payload exists in the stream.
     Data(StreamPendingData),
-}
-
-impl Default for StreamPendingReply {
-    fn default() -> StreamPendingReply {
-        StreamPendingReply::Empty
-    }
 }
 
 impl StreamPendingReply {
@@ -432,7 +427,7 @@ impl StreamId {
     fn from_bulk_value(v: &Value) -> RedisResult<Self> {
         let mut stream_id = StreamId::default();
         if let Value::Bulk(ref values) = *v {
-            if let Some(v) = values.get(0) {
+            if let Some(v) = values.first() {
                 stream_id.id = from_redis_value(v)?;
             }
             if let Some(v) = values.get(1) {
@@ -454,7 +449,7 @@ impl StreamId {
 
     /// Does the message contain a particular field?
     pub fn contains_key(&self, key: &&str) -> bool {
-        self.map.get(*key).is_some()
+        self.map.contains_key(*key)
     }
 
     /// Returns how many field/value pairs exist in this message.
