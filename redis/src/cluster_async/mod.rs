@@ -208,6 +208,8 @@ enum InternalSingleNodeRouting<C> {
     },
 }
 
+// The impl is not deriviable, because `derive(Default)` adds `C: Default` bound.
+#[allow(clippy::derivable_impls)]
 impl<C> Default for InternalSingleNodeRouting<C> {
     fn default() -> Self {
         Self::Random

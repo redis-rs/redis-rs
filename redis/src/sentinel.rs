@@ -339,7 +339,7 @@ fn get_valid_replicas_addresses(
 }
 
 #[cfg(feature = "aio")]
-async fn async_get_valid_replicas_addresses<'a>(
+async fn async_get_valid_replicas_addresses(
     replicas: Vec<HashMap<String, String>>,
     node_connection_info: &SentinelNodeConnectionInfo,
 ) -> Vec<ConnectionInfo> {
@@ -602,15 +602,15 @@ impl Sentinel {
         self.async_try_all_sentinels(sentinel_masters_cmd()).await
     }
 
-    async fn async_get_sentinel_replicas<'a>(
+    async fn async_get_sentinel_replicas(
         &mut self,
-        service_name: &'a str,
+        service_name: &str,
     ) -> RedisResult<Vec<HashMap<String, String>>> {
         self.async_try_all_sentinels(sentinel_replicas_cmd(service_name))
             .await
     }
 
-    async fn async_find_master_address<'a>(
+    async fn async_find_master_address(
         &mut self,
         service_name: &str,
         node_connection_info: &SentinelNodeConnectionInfo,
@@ -619,7 +619,7 @@ impl Sentinel {
         async_find_valid_master(masters, service_name, node_connection_info).await
     }
 
-    async fn async_find_valid_replica_addresses<'a>(
+    async fn async_find_valid_replica_addresses(
         &mut self,
         service_name: &str,
         node_connection_info: &SentinelNodeConnectionInfo,
@@ -661,7 +661,7 @@ impl Sentinel {
     /// There is no guarantee that we'll actually be connecting to a different replica
     /// in the next call, but in a static set of replicas (no replicas added or
     /// removed), on average we'll choose each replica the same number of times.
-    pub async fn async_replica_rotate_for<'a>(
+    pub async fn async_replica_rotate_for(
         &mut self,
         service_name: &str,
         node_connection_info: Option<&SentinelNodeConnectionInfo>,
