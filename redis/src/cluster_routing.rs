@@ -206,7 +206,7 @@ pub(crate) fn combine_array_results(values: Vec<Value>) -> RedisResult<Value> {
 /// the results in the final array.
 pub(crate) fn combine_and_sort_array_results<'a>(
     values: Vec<Value>,
-    sorting_order: impl Iterator<Item = &'a Vec<usize>> + ExactSizeIterator,
+    sorting_order: impl ExactSizeIterator<Item = &'a Vec<usize>>,
 ) -> RedisResult<Value> {
     let mut results = Vec::new();
     results.resize(
@@ -674,16 +674,10 @@ impl Route {
 
 fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
     let open = key.iter().position(|v| *v == b'{');
-    let open = match open {
-        Some(open) => open,
-        None => return None,
-    };
+    let open = open?;
 
     let close = key[open..].iter().position(|v| *v == b'}');
-    let close = match close {
-        Some(close) => close,
-        None => return None,
-    };
+    let close = close?;
 
     let rv = &key[open + 1..open + close];
     if rv.is_empty() {
