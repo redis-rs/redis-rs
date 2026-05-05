@@ -104,12 +104,11 @@ impl<'a, T: FromRedisValue + 'a> AsyncIter<'a, T> {
             if let Some(v) = self.batch.next() {
                 return Some(v);
             };
-            if let Some(cursor) = self.cmd.cursor {
+            {
+                let cursor = self.cmd.cursor?;
                 if cursor == 0 {
                     return None;
                 }
-            } else {
-                return None;
             }
 
             let rv = unwrap_or!(
@@ -473,7 +472,7 @@ impl Cmd {
     }
 
     /// Returns an iterator over the arguments in this command (including the command name itself)
-    pub fn args_iter(&self) -> impl Iterator<Item = Arg<&[u8]>> + Clone + ExactSizeIterator {
+    pub fn args_iter(&self) -> impl Clone + ExactSizeIterator<Item = Arg<&[u8]>> {
         let mut prev = 0;
         self.args.iter().map(move |arg| match *arg {
             Arg::Simple(i) => {

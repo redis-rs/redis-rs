@@ -96,7 +96,7 @@ impl ClusterConnection {
                     None
                 } else {
                     // TODO: Maybe should run through whole list and make sure they're all matching?
-                    match &initial_nodes.get(0).unwrap().addr {
+                    match &initial_nodes.first().unwrap().addr {
                         ConnectionAddr::Tcp(_, _) => None,
                         ConnectionAddr::TcpTls {
                             host: _,

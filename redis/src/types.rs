@@ -258,9 +258,7 @@ impl PartialEq for RedisError {
                 &ErrorRepr::WithDescriptionAndDetail(kind_a, _, _),
                 &ErrorRepr::WithDescriptionAndDetail(kind_b, _, _),
             ) => kind_a == kind_b,
-            (&ErrorRepr::ExtensionError(ref a, _), &ErrorRepr::ExtensionError(ref b, _)) => {
-                *a == *b
-            }
+            (ErrorRepr::ExtensionError(a, _), ErrorRepr::ExtensionError(b, _)) => *a == *b,
             _ => false,
         }
     }
@@ -870,7 +868,7 @@ impl ToRedisArgs for String {
     }
 }
 
-impl<'a> ToRedisArgs for &'a str {
+impl ToRedisArgs for &str {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -892,7 +890,7 @@ impl<T: ToRedisArgs> ToRedisArgs for Vec<T> {
     }
 }
 
-impl<'a, T: ToRedisArgs> ToRedisArgs for &'a [T] {
+impl<T: ToRedisArgs> ToRedisArgs for &[T] {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,

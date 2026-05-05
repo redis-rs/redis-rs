@@ -135,7 +135,7 @@ impl IntoConnectionInfo for ConnectionInfo {
     }
 }
 
-impl<'a> IntoConnectionInfo for &'a str {
+impl IntoConnectionInfo for &str {
     fn into_connection_info(self) -> RedisResult<ConnectionInfo> {
         match parse_redis_url(self) {
             Some(u) => u.into_connection_info(),

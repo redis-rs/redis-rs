@@ -120,7 +120,7 @@ macro_rules! implement_commands {
                 $(#[$attr])*
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
                 pub fn $name<$lifetime, $($tyargs: $ty),*>($($argname: $argty),*) -> Self {
-                    ::std::mem::replace($body, Cmd::new())
+                    ::std::mem::take($body)
                 }
             )*
         }
@@ -250,7 +250,7 @@ macro_rules! implement_commands {
                 pub fn $name<$lifetime, $($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
                 ) -> &mut Self {
-                    self.add_command(::std::mem::replace($body, Cmd::new()))
+                    self.add_command(::std::mem::take($body))
                 }
             )*
         }
@@ -267,7 +267,7 @@ macro_rules! implement_commands {
                 pub fn $name<$lifetime, $($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
                 ) -> &mut Self {
-                    self.add_command(::std::mem::replace($body, Cmd::new()))
+                    self.add_command(::std::mem::take($body))
                 }
             )*
         }
