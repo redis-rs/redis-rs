@@ -73,7 +73,7 @@ pub enum RoutingInfo {
 pub enum SingleNodeRoutingInfo {
     /// Route to any node at random
     Random,
-    /// Route to the node that matches the [route]
+    /// Route to the node that matches the [Route]
     SpecificNode(Route),
 }
 
