@@ -132,8 +132,8 @@ impl<'a, T: FromRedisValue + 'a + Unpin + Send> AsyncIter<'a, T> {
     /// # async fn scan_set() -> redis::RedisResult<()> {
     /// # let client = redis::Client::open("redis://127.0.0.1/")?;
     /// # let mut con = client.get_async_connection().await?;
-    /// con.sadd("my_set", 42i32).await?;
-    /// con.sadd("my_set", 43i32).await?;
+    /// () = con.sadd("my_set", 42i32).await?;
+    /// () = con.sadd("my_set", 43i32).await?;
     /// let mut iter: redis::AsyncIter<i32> = con.sscan("my_set").await?;
     /// while let Some(element) = iter.next_item().await {
     ///     assert!(element == 42 || element == 43);
@@ -527,7 +527,7 @@ impl Cmd {
     }
 
     /// Returns an iterator over the arguments in this command (including the command name itself)
-    pub fn args_iter(&self) -> impl Iterator<Item = Arg<&[u8]>> + Clone + ExactSizeIterator {
+    pub fn args_iter(&self) -> impl Clone + ExactSizeIterator<Item = Arg<&[u8]>> {
         let mut prev = 0;
         self.args.iter().map(move |arg| match *arg {
             Arg::Simple(i) => {
