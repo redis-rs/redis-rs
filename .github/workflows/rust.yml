@@ -193,11 +193,13 @@ jobs:
 
     - uses: actions/checkout@v4
 
+    # NB: we disable lints when running benchmark on old version as to prevent
+    # CI failures from new warnings introduced after the base commit has been merged
     - name: Benchmark
       run: |
         cargo install critcmp
         cargo bench --all-features -- --measurement-time 15 --save-baseline changes
         git fetch
-        git checkout ${{ github.base_ref }} 
-        cargo bench --all-features -- --measurement-time 15 --save-baseline base
+        git checkout ${{ github.base_ref }}
+        RUSTFLAGS="-Awarnings -Adependency_on_unit_never_type_fallback" cargo bench --all-features -- --measurement-time 15 --save-baseline base
         critcmp base changes
