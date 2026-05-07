@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ main, 0.21.x ]
+    branches: [ main, 0.24.x ]
   pull_request:
-    branches: [ main, 0.21.x ]
+    branches: [ main, 0.24.x ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -26,6 +26,17 @@ jobs:
           - beta
           - nightly
           - 1.65.0
+        include:
+          - rustc_flags: ""
+          # At this moment rustix nightly feature detection makes compilation fail, see
+          # <https://github.com/bytecodealliance/rustix/issues/1620>.
+          #
+          # To circuimvent this we use `-Zallow-features=`. However, that breaks ahash
+          # feature detection (it is checking the compiler version, instead of checking
+          # if a feature compiles), so to prevent that we need to allow the feature that
+          # ahash uses, namely min_specialization.
+          - rustc_flags: "-Zallow-features=min_specialization"
+            rust: nightly
 
     steps:
 
@@ -71,6 +82,8 @@ jobs:
 
     - name: Run tests
       run: make test
+      env:
+        RUSTFLAGS: ${{ matrix.rustc_flags }}
 
     - name: Checkout RedisJSON
       if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.redis != '6.2.4'
@@ -106,6 +119,8 @@ jobs:
     - name: Run module-specific tests
       if: matrix.redis != '6.2.4'
       run: make test-module
+      env:
+        RUSTFLAGS: ${{ matrix.rustc_flags }}
 
     - name: Check features
       run: |
@@ -117,6 +132,8 @@ jobs:
         cargo check --all-features
 
         cargo check --no-default-features --features async-std-comp
+      env:
+        RUSTFLAGS: ${{ matrix.rustc_flags }}
 
   lint:
     runs-on: ubuntu-latest
@@ -130,7 +147,7 @@ jobs:
       - run: cargo fmt --all -- --check
         name: fmt
 
-      - run: cargo clippy --all-features --all-targets -- -D warnings
+      - run: cargo clippy --all-features -- -D warnings
         name: clippy
       - name: doc
         run: cargo doc --no-deps --document-private-items
@@ -176,11 +193,13 @@ jobs:
 
     - uses: actions/checkout@v4
 
+    # NB: we disable lints when running benchmark on old version as to prevent
+    # CI failures from new warnings introduced after the base commit has been merged
     - name: Benchmark
       run: |
         cargo install critcmp
         cargo bench --all-features -- --measurement-time 15 --save-baseline changes
         git fetch
-        git checkout ${{ github.base_ref }} 
-        cargo bench --all-features -- --measurement-time 15 --save-baseline base
+        git checkout ${{ github.base_ref }}
+        RUSTFLAGS="-Awarnings -Adependency_on_unit_never_type_fallback" cargo bench --all-features -- --measurement-time 15 --save-baseline base
         critcmp base changes

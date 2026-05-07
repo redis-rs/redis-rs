@@ -8,13 +8,13 @@ async fn test_cmd(con: &MultiplexedConnection, i: i32) -> RedisResult<()> {
     let key2 = format!("key{i}_2");
     let value = format!("foo{i}");
 
-    redis::cmd("SET")
+    () = redis::cmd("SET")
         .arg(&key[..])
         .arg(&value)
         .query_async(&mut con)
         .await?;
 
-    redis::cmd("SET")
+    () = redis::cmd("SET")
         .arg(&[&key2, "bar"])
         .query_async(&mut con)
         .await?;
