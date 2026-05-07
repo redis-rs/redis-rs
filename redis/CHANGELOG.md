@@ -617,6 +617,14 @@
 * Add missing module skips. [#1083](https://github.com/redis-rs/redis-rs/pull/1083)
 * Add vscode settings to gitignore. [#1085](https://github.com/redis-rs/redis-rs/pull/1085)
 
+### 0.25.5 (2026-05-07)
+
+* fixup dependency on never type fallback to unit ([#2060](https://github.com/redis-rs/redis-rs/pull/2060) by @wafflelapkin)
+
+### 0.25.4 (2024-05-28)
+
+* Fix explicit IoError not being recognized ([#1191](https://github.com/redis-rs/redis-rs/pull/1191))
+
 ### 0.25.3 (2024-04-04)
 
 * Handle empty results in multi-node operations ([#1099](https://github.com/redis-rs/redis-rs/pull/1099))
@@ -681,6 +689,13 @@
 * Simplify Sink polling logic ([#1065](https://github.com/redis-rs/redis-rs/pull/1065))
 * Separate parsing errors from general response errors ([#1069](https://github.com/redis-rs/redis-rs/pull/1069))
 
+
+## 0.24.1 (2026-05-07)
+
+#### Bug fixes
+* fixup dependency on never type fallback to unit ([#2059](https://github.com/redis-rs/redis-rs/pull/2059) by @wafflelapkin)
+
+
 ### 0.24.0 (2023-12-05)
 
 #### Features
@@ -720,6 +735,13 @@
 * Deprecate functions that erroneously use `tokio` in their name. ([#913](https://github.com/redis-rs/redis-rs/pull/913))
 * CI: Increase timeouts and use newer redis. ([#949](https://github.com/redis-rs/redis-rs/pull/949))
 * Remove redis version from redis-test. ([#943](https://github.com/redis-rs/redis-rs/pull/943))
+
+
+### 0.23.5 (2026-05-06)
+
+#### Bug fixes
+* fixup dependency on never type fallback to unit ([#2058](https://github.com/redis-rs/redis-rs/pull/2058) by @WaffleLapkn)
+
 
 ### 0.23.4 (2023-11-26)
 **Yanked** -- Inadvertently introduced breaking changes (sorry!). The changes in this tag
@@ -839,6 +861,14 @@ Though async Redis Cluster functionality for the time being has been kept as clo
 * Fix broken json-module tests ([#786](https://github.com/redis-rs/redis-rs/pull/786))
 * `cluster`: Tls Builder support / simplify cluster connection map ([#718](https://github.com/redis-rs/redis-rs/pull/718) by @0xWOF, @utkarshgupta137)
 
+
+<a name="0.22.4"></a>
+### 0.22.4 (2026-05-05)
+
+#### Bug fixes
+* fixup dependency on never type fallback to unit ([#2057](https://github.com/redis-rs/redis-rs/pull/2057) by @wafflelapkin)
+
+
 <a name="0.22.3"></a>
 ### 0.22.3 (2023-01-23)
 
@@ -923,6 +953,23 @@ contributors -- thank you!
 *   Make dns resolution async, in async runtime ([#606](https://github.com/redis-rs/redis-rs/pull/606) by @roger)
 *   Make async_trait dependency optional ([#572](https://github.com/redis-rs/redis-rs/pull/572) by @kamulos)
 *   Add username to ClusterClient and ClusterConnection ([#596](https://github.com/redis-rs/redis-rs/pull/596) by @gildaf)
+
+
+<a name="0.21.8"></a>
+### 0.21.8 (2026-05-03)
+
+#### Bug fixes
+* fixup dependency on never type fallback to unit ([#2056](https://github.com/redis-rs/redis-rs/pull/2056) by @wafflelapkin)
+
+
+<a name="0.21.7"></a>
+### 0.21.7 (2022-12-12)
+
+This release addresses bugs related to server response parsing and `MultiPlexedConnection` error handling.
+
+#### Bug fixes
+* Limit parser recursion depth ([#724](https://github.com/redis-rs/redis-rs/pull/724)) -- thank you to the [OSS-Fuzz project](https://github.com/google/oss-fuzz) for identifying the [issue](https://bugs.chromium.org/p/oss-fuzz/issues/detail?id=52667#c4).
+* Improve MultiplexedConnection Error Handling ([#699](https://github.com/redis-rs/redis-rs/pull/699)) -- thank you to @kvcache for identifying the issue ([#698](https://github.com/redis-rs/redis-rs/issues/698)) and providing a reproducible example.
 
 
 <a name="0.21.6"></a>
