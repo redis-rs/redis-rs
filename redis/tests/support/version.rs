@@ -3,17 +3,42 @@
 use redis::ConnectionLike;
 use std::collections::HashMap;
 
+// A generic macro to create a [`Component`]
+macro_rules! version {
+    ($major:expr, $minor:expr) => {
+        ($major, $minor, 0)
+    };
+    ($major:expr, $minor:expr, $patch:expr) => {
+        ($major, $minor, $patch)
+    };
+}
+
+// Macro to create a [`Component`] for Redis
+macro_rules! redis_version {
+    ($($args:tt)*) => {
+        ("redis", version!($($args)*))
+    };
+}
+
+// Macro to create a [`Component`] for Valkey
+macro_rules! valkey_version {
+    ($($args:tt)*) => {
+        ("valkey", version!($($args)*))
+    };
+}
+
 // Redis version constants for version-gated tests
-pub const REDIS_VERSION_CE_6_0: Component = ("redis", (6, 0, 0));
-pub const REDIS_VERSION_CE_7_0: Component = ("redis", (7, 0, 0));
-pub const REDIS_VERSION_CE_7_2: Component = ("redis", (7, 2, 0));
-pub const REDIS_VERSION_CE_7_4: Component = ("redis", (7, 4, 0));
-pub const REDIS_VERSION_CE_8_0: Component = ("redis", (8, 0, 0));
-pub const REDIS_VERSION_CE_8_2: Component = ("redis", (8, 1, 240));
-pub const REDIS_VERSION_CE_8_4: Component = ("redis", (8, 3, 224));
-pub const REDIS_VERSION_CE_8_6: Component = ("redis", (8, 6, 0));
+pub const REDIS_VERSION_CE_6_0: Component = redis_version!(6, 0);
+pub const REDIS_VERSION_CE_7_0: Component = redis_version!(7, 0);
+pub const REDIS_VERSION_CE_7_2: Component = redis_version!(7, 2);
+pub const REDIS_VERSION_CE_7_4: Component = redis_version!(7, 4);
+pub const REDIS_VERSION_CE_8_0: Component = redis_version!(8, 0);
+pub const REDIS_VERSION_CE_8_2: Component = redis_version!(8, 1, 240);
+pub const REDIS_VERSION_CE_8_4: Component = redis_version!(8, 3, 224);
+pub const REDIS_VERSION_CE_8_6: Component = redis_version!(8, 6);
+pub const REDIS_VERSION_CE_8_8: Component = redis_version!(8, 8);
 /// Numbered databases in cluster mode were introduced in Valkey 9.0.
-pub const VALKEY_VERSION_CE_9_0: Component = ("valkey", (9, 0, 0));
+pub const VALKEY_VERSION_CE_9_0: Component = valkey_version!(9, 0);
 
 /// Version of a software component
 pub type Version = (u32, u32, u32);
@@ -314,10 +339,23 @@ macro_rules! skip_if_context_does_not_support {
 /// # Returns
 ///
 /// A [`TestContext`], if `$component` is available
+///
+/// # Example
+///
+/// Without modules:
+/// ```ignore
+/// let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_0);
+/// ```
+///
+/// With modules:
+/// ```ignore
+/// let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_0, &[Module::Search]);
+/// ```
 #[macro_export]
 macro_rules! run_test_if_version_supported {
-    ($component:expr) => {{
-        let ctx = $crate::support::TestContext::new();
+    ($component:expr) => {{ run_test_if_version_supported!($component, &[]) }};
+    ($component:expr, $modules:expr) => {{
+        let ctx = $crate::support::TestContext::with_modules($modules);
 
         $crate::skip_if_context_does_not_support!(ctx, $component);
 

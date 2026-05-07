@@ -1,7 +1,9 @@
 use crate::cmd::{Cmd, cmd};
 use crate::connection::ConnectionLike;
 use crate::pipeline::Pipeline;
-use crate::types::{FromRedisValue, RedisResult, ToRedisArgs, ToSingleRedisArg};
+use crate::types::{
+    ExistenceCheck, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs, ToSingleRedisArg,
+};
 
 #[cfg(feature = "cluster")]
 use crate::commands::ClusterPipeline;
@@ -264,6 +266,14 @@ implement_json_commands! {
         cmd("JSON.SET").arg(key).arg(path).arg(serde_json::to_string(value)?).take()
     }
 
+    /// Sets the JSON Value at `path` in `key` with options.
+    ///
+    /// The value (JSON document or FPHA float array) is carried inside `options`
+    /// alongside the optional `NX`/`XX` existence check. See [`JsonSetOptions`].
+    fn json_set_options<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P, options: &'a JsonSetOptions) {
+        cmd("JSON.SET").arg(key).arg(path).arg(options).take()
+    }
+
         /// Sets the value at the path per key, for every given tuple.
     fn json_mset<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key_path_values: &'a [(K,P,V)]) {
         let mut cmd = cmd("JSON.MSET");
@@ -302,3 +312,312 @@ impl<T> JsonCommands for T where T: ConnectionLike {}
 
 #[cfg(feature = "aio")]
 impl<T> JsonAsyncCommands for T where T: crate::aio::ConnectionLike + Send + Sized {}
+
+/// Storage-precision tag for the `FPHA` form of `JSON.SET`.
+///
+/// Pairs with an arbitrary `serde::Serialize` payload via
+/// [`JsonSetOptions::fpha_serialize`] to set values whose shape (matrices,
+/// objects with multiple FP-array fields, scalars) cannot be expressed as a
+/// flat [`FphaInput`] slice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FphaType {
+    /// Server stores lanes as Google brain-float 16 (`bfloat16`).
+    Bf16,
+    /// Server stores lanes as IEEE-754 binary16.
+    Fp16,
+    /// Server stores lanes as IEEE-754 binary32.
+    Fp32,
+    /// Server stores lanes as IEEE-754 binary64.
+    Fp64,
+}
+
+impl ToRedisArgs for FphaType {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            FphaType::Bf16 => out.write_arg(b"BF16"),
+            FphaType::Fp16 => out.write_arg(b"FP16"),
+            FphaType::Fp32 => out.write_arg(b"FP32"),
+            FphaType::Fp64 => out.write_arg(b"FP64"),
+        }
+    }
+}
+
+/// Float-array payload for the `FPHA` form of `JSON.SET`.
+///
+/// Each variant holds a borrowed flat slice of lanes; the variant determines
+/// both the serialized element type and the `FPHA <TYPE>` storage hint sent
+/// to the server. Used together with [`JsonSetOptions::fpha`] when the value
+/// is a flat 1-D vector.
+///
+/// For multi-dimensional payloads (matrices, objects with multiple FP-array
+/// fields, scalars), use [`JsonSetOptions::fpha_serialize`] with an explicit
+/// [`FphaType`] instead.
+#[derive(Clone, Copy, Debug)]
+pub enum FphaInput<'a> {
+    /// Server stores lanes as Google brain-float 16 (`bfloat16`).
+    Bf16(&'a [f32]),
+    /// Server stores lanes as IEEE-754 binary16.
+    Fp16(&'a [f32]),
+    /// Server stores lanes as IEEE-754 binary32.
+    Fp32(&'a [f32]),
+    /// Server stores lanes as IEEE-754 binary64.
+    Fp64(&'a [f64]),
+}
+
+impl FphaInput<'_> {
+    fn fpha_type(&self) -> FphaType {
+        match self {
+            FphaInput::Bf16(_) => FphaType::Bf16,
+            FphaInput::Fp16(_) => FphaType::Fp16,
+            FphaInput::Fp32(_) => FphaType::Fp32,
+            FphaInput::Fp64(_) => FphaType::Fp64,
+        }
+    }
+
+    fn serialize_json(&self) -> RedisResult<String> {
+        match *self {
+            FphaInput::Bf16(s) | FphaInput::Fp16(s) | FphaInput::Fp32(s) => {
+                serde_json::to_string(s)
+            }
+            FphaInput::Fp64(s) => serde_json::to_string(s),
+        }
+        .map_err(Into::into)
+    }
+}
+
+/// Options for the [`JSON.SET`](https://redis.io/commands/json.set) command.
+///
+/// Carries the value to write (either a JSON document or an [`FphaInput`]
+/// float-array payload) together with an optional `NX`/`XX` existence check.
+///
+/// # Example
+/// ```rust,no_run
+/// use redis::{ExistenceCheck, JsonCommands, JsonSetOptions};
+/// use serde_json::json;
+/// # fn do_something() -> redis::RedisResult<()> {
+/// let client = redis::Client::open("redis://127.0.0.1/")?;
+/// let mut con = client.get_connection()?;
+/// let opts = JsonSetOptions::json(&json!({"item": 42}))?
+///     .conditional_set(ExistenceCheck::NX);
+/// let _: () = con.json_set_options("my_key", "$", &opts)?;
+/// # Ok(()) }
+/// ```
+pub struct JsonSetOptions {
+    value: String,
+    fpha_tag: Option<FphaType>,
+    conditional_set: Option<ExistenceCheck>,
+}
+
+impl JsonSetOptions {
+    /// Build options that set `value` as a JSON document.
+    ///
+    /// The value is serialized eagerly via `serde_json`; serialization errors
+    /// surface here rather than at command-dispatch time.
+    pub fn json<V: Serialize + ?Sized>(value: &V) -> RedisResult<Self> {
+        Ok(Self {
+            value: serde_json::to_string(value)?,
+            fpha_tag: None,
+            conditional_set: None,
+        })
+    }
+
+    /// Build options that set the value from a flat float-array payload,
+    /// emitting the trailing `FPHA <TYPE>` tag on the wire.
+    ///
+    /// The lanes are serialized as a JSON array of numbers; `FPHA <TYPE>` is a
+    /// storage hint that tells the server which precision to pack the array as
+    /// internally. The variant of [`FphaInput`] both selects the storage type
+    /// and constrains the data element type, ensuring they match.
+    ///
+    /// For payloads that aren't a flat 1-D vector (matrices, objects with
+    /// multiple FP-array fields, scalars), use [`Self::fpha_serialize`].
+    pub fn fpha(input: FphaInput<'_>) -> RedisResult<Self> {
+        Ok(Self {
+            value: input.serialize_json()?,
+            fpha_tag: Some(input.fpha_type()),
+            conditional_set: None,
+        })
+    }
+
+    /// Build options that serialize an arbitrary value with an `FPHA <TYPE>`
+    /// storage hint.
+    ///
+    /// Unlike [`Self::fpha`], this accepts any [`Serialize`] payload, allowing
+    /// nested arrays (matrices), objects with multiple FP-array fields, or
+    /// scalars. The caller picks the [`FphaType`] explicitly; no compile-time
+    /// pairing of the data element type with the storage hint is enforced.
+    pub fn fpha_serialize<V: Serialize + ?Sized>(value: &V, ty: FphaType) -> RedisResult<Self> {
+        Ok(Self {
+            value: serde_json::to_string(value)?,
+            fpha_tag: Some(ty),
+            conditional_set: None,
+        })
+    }
+
+    /// Apply an `NX` or `XX` existence check to the command.
+    pub fn conditional_set(mut self, existence_check: ExistenceCheck) -> Self {
+        self.conditional_set = Some(existence_check);
+        self
+    }
+}
+
+impl ToRedisArgs for JsonSetOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        out.write_arg(self.value.as_bytes());
+        if let Some(ref conditional_set) = self.conditional_set {
+            conditional_set.write_redis_args(out);
+        }
+        if let Some(ref ty) = self.fpha_tag {
+            out.write_arg(b"FPHA");
+            ty.write_redis_args(out);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cmd::{Arg, Cmd, cmd};
+
+    fn simple_args(c: &Cmd) -> Vec<Vec<u8>> {
+        c.args_iter()
+            .map(|a| match a {
+                Arg::Simple(b) => b.to_vec(),
+                Arg::Cursor => b"<CURSOR>".to_vec(),
+            })
+            .collect()
+    }
+
+    fn build(opts: &JsonSetOptions) -> Vec<Vec<u8>> {
+        let mut c = cmd("JSON.SET");
+        c.arg("k").arg("$").arg(opts);
+        simple_args(&c)
+    }
+
+    #[test]
+    fn json_value_writes_serialized_document_only() {
+        let opts = JsonSetOptions::json(&serde_json::json!({"a": 1})).unwrap();
+        assert_eq!(
+            build(&opts),
+            vec![
+                b"JSON.SET".to_vec(),
+                b"k".to_vec(),
+                b"$".to_vec(),
+                br#"{"a":1}"#.to_vec(),
+            ],
+        );
+    }
+
+    #[test]
+    fn json_value_with_nx_appends_existence_check() {
+        let opts = JsonSetOptions::json(&serde_json::json!(1))
+            .unwrap()
+            .conditional_set(ExistenceCheck::NX);
+        let args = build(&opts);
+        assert_eq!(args.last().unwrap(), b"NX");
+        assert_eq!(args.len(), 5);
+    }
+
+    #[test]
+    fn fpha_bf16_writes_json_array_and_appends_type_tag() {
+        let lanes = [1.0_f32, 2.5];
+        let opts = JsonSetOptions::fpha(FphaInput::Bf16(&lanes)).unwrap();
+        let args = build(&opts);
+        // [JSON.SET, k, $, <json>, FPHA, BF16]
+        assert_eq!(args.len(), 6);
+        assert_eq!(args[3], b"[1.0,2.5]");
+        assert_eq!(args[4], b"FPHA");
+        assert_eq!(args[5], b"BF16");
+    }
+
+    #[test]
+    fn fpha_fp32_with_xx_orders_value_then_xx_then_fpha_tag() {
+        let lanes = [1.0_f32, -0.5, 1234.5];
+        let opts = JsonSetOptions::fpha(FphaInput::Fp32(&lanes))
+            .unwrap()
+            .conditional_set(ExistenceCheck::XX);
+        let args = build(&opts);
+        // [JSON.SET, k, $, <json>, XX, FPHA, FP32]
+        assert_eq!(args.len(), 7);
+        assert_eq!(args[3], b"[1.0,-0.5,1234.5]");
+        assert_eq!(args[4], b"XX");
+        assert_eq!(args[5], b"FPHA");
+        assert_eq!(args[6], b"FP32");
+    }
+
+    #[test]
+    fn fpha_fp64_emits_fp64_tag() {
+        let lanes = [1.0_f64, 2.0, 3.0, 4.0];
+        let opts = JsonSetOptions::fpha(FphaInput::Fp64(&lanes)).unwrap();
+        let args = build(&opts);
+        assert_eq!(args[3], b"[1.0,2.0,3.0,4.0]");
+        assert_eq!(args[5], b"FP64");
+    }
+
+    #[test]
+    fn fpha_fp16_emits_fp16_tag() {
+        let lanes = [1.0_f32; 5];
+        let opts = JsonSetOptions::fpha(FphaInput::Fp16(&lanes)).unwrap();
+        let args = build(&opts);
+        assert_eq!(args[3], b"[1.0,1.0,1.0,1.0,1.0]");
+        assert_eq!(args[5], b"FP16");
+    }
+
+    #[test]
+    fn fpha_empty_payload_still_emits_tag() {
+        let opts = JsonSetOptions::fpha(FphaInput::Fp32(&[])).unwrap();
+        let args = build(&opts);
+        assert_eq!(args.len(), 6);
+        assert_eq!(args[3], b"[]");
+        assert_eq!(args[5], b"FP32");
+    }
+
+    #[test]
+    fn fpha_type_matches_variant() {
+        assert_eq!(FphaInput::Bf16(&[]).fpha_type(), FphaType::Bf16);
+        assert_eq!(FphaInput::Fp16(&[]).fpha_type(), FphaType::Fp16);
+        assert_eq!(FphaInput::Fp32(&[]).fpha_type(), FphaType::Fp32);
+        assert_eq!(FphaInput::Fp64(&[]).fpha_type(), FphaType::Fp64);
+    }
+
+    #[test]
+    fn fpha_serialize_with_matrix_emits_nested_json_and_tag() {
+        let matrix: &[&[f32]] = &[&[1.0, 2.5], &[3.0, 4.0]];
+        let opts = JsonSetOptions::fpha_serialize(matrix, FphaType::Bf16).unwrap();
+        let args = build(&opts);
+        assert_eq!(args.len(), 6);
+        assert_eq!(args[3], b"[[1.0,2.5],[3.0,4.0]]");
+        assert_eq!(args[4], b"FPHA");
+        assert_eq!(args[5], b"BF16");
+    }
+
+    #[test]
+    fn fpha_serialize_with_object_emits_serialized_value_and_tag() {
+        let value = serde_json::json!({"weights": [1.0, 2.0], "bias": [0.5]});
+        let opts = JsonSetOptions::fpha_serialize(&value, FphaType::Fp16).unwrap();
+        let args = build(&opts);
+        assert_eq!(args.len(), 6);
+        assert_eq!(args[3], br#"{"bias":[0.5],"weights":[1.0,2.0]}"#);
+        assert_eq!(args[5], b"FP16");
+    }
+
+    #[test]
+    fn fpha_serialize_pairs_with_existence_check() {
+        let opts = JsonSetOptions::fpha_serialize(&[1.0_f32, 2.0], FphaType::Fp32)
+            .unwrap()
+            .conditional_set(ExistenceCheck::NX);
+        let args = build(&opts);
+        // [JSON.SET, k, $, <json>, NX, FPHA, FP32]
+        assert_eq!(args.len(), 7);
+        assert_eq!(args[3], b"[1.0,2.0]");
+        assert_eq!(args[4], b"NX");
+        assert_eq!(args[5], b"FPHA");
+        assert_eq!(args[6], b"FP32");
+    }
+}
