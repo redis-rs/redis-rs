@@ -24,7 +24,7 @@ mod macros;
 mod json;
 
 #[cfg(feature = "json")]
-pub use json::JsonCommands;
+pub use json::{FphaInput, FphaType, JsonCommands, JsonSetOptions};
 
 #[cfg(all(feature = "json", feature = "aio"))]
 pub use json::JsonAsyncCommands;
