@@ -1,7 +1,10 @@
-### 0.25.4 (2026-05-01)
+### 0.25.5 (2026-05-07)
+
+* fixup dependency on never type fallback to unit ([#2060](https://github.com/redis-rs/redis-rs/pull/2060) @WaffleLapkin)
+
+### 0.25.4 (2024-05-28)
 
 * Fix explicit IoError not being recognized ([#1191](https://github.com/redis-rs/redis-rs/pull/1191))
-* fixup dependency on never type fallback to unit ([#2060](https://github.com/redis-rs/redis-rs/pull/2060) @WaffleLapkin)
 
 ### 0.25.3 (2024-04-04)
 
