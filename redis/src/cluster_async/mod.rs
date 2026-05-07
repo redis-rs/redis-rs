@@ -208,6 +208,8 @@ enum InternalSingleNodeRouting<C> {
     },
 }
 
+// The impl is not deriviable, because `derive(Default)` adds `C: Default` bound.
+#[allow(clippy::derivable_impls)]
 impl<C> Default for InternalSingleNodeRouting<C> {
     fn default() -> Self {
         Self::Random
@@ -1417,7 +1419,7 @@ where
     check_connection(&mut conn).await?;
     if read_from_replicas {
         // If READONLY is sent to primary nodes, it will have no effect
-        crate::cmd("READONLY").query_async(&mut conn).await?;
+        () = crate::cmd("READONLY").query_async(&mut conn).await?;
     }
     Ok(conn)
 }
