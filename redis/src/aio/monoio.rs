@@ -13,8 +13,6 @@ use crate::types::RedisResult;
 use super::TaskHandle;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-#[cfg(any(feature = "monoio-native-tls-comp", feature = "monoio-rustls-comp"))]
-use crate::connection::TlsConnParams;
 
 // State for pending read operations
 // Note: Monoio futures are NOT Send, but we mark them as such because
@@ -239,23 +237,9 @@ async fn connect_tcp(
     addr: &SocketAddr,
     _tcp_settings: &crate::io::tcp::TcpSettings,
 ) -> io::Result<monoio::net::TcpStream> {
-    // First connect using monoio (non-blocking)
     let stream = monoio::net::TcpStream::connect(addr).await?;
 
-    // Unfortunately, we need to apply TCP settings which requires std::net::TcpStream
-    // This is a limitation of the current API design
-    //
-    // For now, we'll skip the settings application since monoio doesn't expose
-    // a way to convert back and forth while maintaining non-blocking behavior
-    // TODO: Either implement TCP settings directly on monoio stream, or
-    // find a way to apply them without blocking
-
-    // If settings are critical, we could do this (but it's not ideal):
-    // 1. Connect with std::net::TcpStream (blocking)
-    // 2. Apply settings
-    // 3. Convert to monoio
-    //
-    // But this defeats the purpose of async. Better to skip for now.
+    stream.set_nodelay(_tcp_settings.nodelay())?;
 
     Ok(stream)
 }
@@ -264,9 +248,6 @@ async fn connect_tcp(
 pub(crate) enum Monoio {
     /// Represents a TCP connection.
     Tcp(MonoioWrapped<monoio::net::TcpStream>),
-    /// Represents a TLS encrypted TCP connection.
-    #[cfg(any(feature = "monoio-native-tls-comp", feature = "monoio-rustls-comp"))]
-    TcpTls(Box<MonoioWrapped<monoio_tls::TlsStream<monoio::net::TcpStream>>>),
     /// Represents a Unix connection.
     #[cfg(unix)]
     Unix(MonoioWrapped<monoio::net::UnixStream>),
@@ -285,8 +266,6 @@ impl AsyncWrite for Monoio {
     ) -> Poll<io::Result<usize>> {
         match &mut *self {
             Monoio::Tcp(r) => Pin::new(r).poll_write(cx, buf),
-            #[cfg(any(feature = "monoio-native-tls-comp", feature = "monoio-rustls-comp"))]
-            Monoio::TcpTls(r) => Pin::new(r.as_mut()).poll_write(cx, buf),
             #[cfg(unix)]
             Monoio::Unix(r) => Pin::new(r).poll_write(cx, buf),
         }
@@ -295,8 +274,6 @@ impl AsyncWrite for Monoio {
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
         match &mut *self {
             Monoio::Tcp(r) => Pin::new(r).poll_flush(cx),
-            #[cfg(any(feature = "monoio-native-tls-comp", feature = "monoio-rustls-comp"))]
-            Monoio::TcpTls(r) => Pin::new(r.as_mut()).poll_flush(cx),
             #[cfg(unix)]
             Monoio::Unix(r) => Pin::new(r).poll_flush(cx),
         }
@@ -308,8 +285,6 @@ impl AsyncWrite for Monoio {
     ) -> Poll<io::Result<()>> {
         match &mut *self {
             Monoio::Tcp(r) => Pin::new(r).poll_shutdown(cx),
-            #[cfg(any(feature = "monoio-native-tls-comp", feature = "monoio-rustls-comp"))]
-            Monoio::TcpTls(r) => Pin::new(r.as_mut()).poll_shutdown(cx),
             #[cfg(unix)]
             Monoio::Unix(r) => Pin::new(r).poll_shutdown(cx),
         }
@@ -324,8 +299,6 @@ impl AsyncRead for Monoio {
     ) -> Poll<io::Result<()>> {
         match &mut *self {
             Monoio::Tcp(r) => Pin::new(r).poll_read(cx, buf),
-            #[cfg(any(feature = "monoio-native-tls-comp", feature = "monoio-rustls-comp"))]
-            Monoio::TcpTls(r) => Pin::new(r.as_mut()).poll_read(cx, buf),
             #[cfg(unix)]
             Monoio::Unix(r) => Pin::new(r).poll_read(cx, buf),
         }
@@ -342,37 +315,6 @@ impl RedisRuntime for Monoio {
             .map(|con| Self::Tcp(MonoioWrapped::new(con)))?)
     }
 
-    #[cfg(all(feature = "monoio-native-tls-comp", not(feature = "monoio-rustls-comp")))]
-    async fn connect_tcp_tls(
-        hostname: &str,
-        socket_addr: SocketAddr,
-        insecure: bool,
-        tls_params: &Option<TlsConnParams>,
-        tcp_settings: &crate::io::tcp::TcpSettings,
-    ) -> RedisResult<Self> {
-        // TODO: Implement TLS support for monoio
-        // This will require monoio-compatible TLS library (e.g., monoio-rustls or monoio-native-tls)
-        Err(crate::errors::RedisError::from((
-            crate::errors::ErrorKind::InvalidClientConfig,
-            "TLS support for monoio not yet implemented",
-        )))
-    }
-
-    #[cfg(feature = "monoio-rustls-comp")]
-    async fn connect_tcp_tls(
-        hostname: &str,
-        socket_addr: SocketAddr,
-        insecure: bool,
-        tls_params: &Option<TlsConnParams>,
-        tcp_settings: &crate::io::tcp::TcpSettings,
-    ) -> RedisResult<Self> {
-        // TODO: Implement TLS support for monoio with rustls
-        // This will require monoio-rustls integration
-        Err(crate::errors::RedisError::from((
-            crate::errors::ErrorKind::InvalidClientConfig,
-            "TLS support for monoio not yet implemented",
-        )))
-    }
 
     #[cfg(unix)]
     async fn connect_unix(path: &Path) -> RedisResult<Self> {
@@ -391,8 +333,6 @@ impl RedisRuntime for Monoio {
     fn boxed(self) -> Pin<Box<dyn AsyncStream + Send + Sync>> {
         match self {
             Monoio::Tcp(x) => Box::pin(x),
-            #[cfg(any(feature = "monoio-native-tls-comp", feature = "monoio-rustls-comp"))]
-            Monoio::TcpTls(x) => Box::pin(x),
             #[cfg(unix)]
             Monoio::Unix(x) => Box::pin(x),
         }

@@ -132,8 +132,6 @@ tokio-comp = ["aio", "tokio/net"]
 tokio-native-tls-comp = ["tokio-comp", "tls-native-tls", "dep:tokio-native-tls"]
 tokio-rustls-comp = ["tokio-comp", "tls-rustls", "dep:tokio-rustls"]
 monoio-comp = ["aio", "dep:monoio"]
-monoio-native-tls-comp = ["monoio-comp", "tls-native-tls"]
-monoio-rustls-comp = ["monoio-comp", "tls-rustls"]
 connection-manager = [
   "dep:arc-swap",
   "dep:futures-channel",
