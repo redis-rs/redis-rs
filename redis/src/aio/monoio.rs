@@ -13,6 +13,9 @@ use crate::types::RedisResult;
 use super::TaskHandle;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
+#[cfg(feature = "monoio-rustls-comp")]
+use crate::connection::TlsConnParams;
+
 
 // State for pending read operations
 // Note: Monoio futures are NOT Send, but we mark them as such because
@@ -244,6 +247,7 @@ async fn connect_tcp(
     Ok(stream)
 }
 
+
 /// Represents a Monoio connectable
 pub(crate) enum Monoio {
     /// Represents a TCP connection.
@@ -315,6 +319,22 @@ impl RedisRuntime for Monoio {
             .map(|con| Self::Tcp(MonoioWrapped::new(con)))?)
     }
 
+
+    #[cfg(feature = "monoio-rustls-comp")]
+    async fn connect_tcp_tls(
+        _hostname: &str,
+        _socket_addr: SocketAddr,
+        _insecure: bool,
+        _tls_params: &Option<TlsConnParams>,
+        _tcp_settings: &crate::io::tcp::TcpSettings,
+    ) -> RedisResult<Self> {
+        Err(crate::errors::RedisError::from((
+            crate::errors::ErrorKind::InvalidClientConfig,
+            "TLS support for monoio runtime is not yet implemented. \
+             monoio uses completion-based I/O which requires a custom TLS adapter. \
+             Plain TCP connections are fully supported with monoio-comp feature.",
+        )))
+    }
 
     #[cfg(unix)]
     async fn connect_unix(path: &Path) -> RedisResult<Self> {
