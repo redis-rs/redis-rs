@@ -430,11 +430,14 @@ impl Client {
             }
 
             #[cfg(feature = "monoio-comp")]
-            rt @ Runtime::Monoio => self
-                .get_multiplexed_async_connection_inner_with_timeout::<crate::aio::monoio::Monoio>(
-                    config, rt,
+            rt @ Runtime::Monoio => {
+                crate::aio::monoio_future_safety::make_send_safe(
+                    self.get_multiplexed_async_connection_inner_with_timeout::<
+                        crate::aio::monoio::Monoio,
+                    >(config, rt),
                 )
-                .await,
+                .await
+            }
         }
     }
 
@@ -585,8 +588,10 @@ impl Client {
 
             #[cfg(feature = "monoio-comp")]
             Runtime::Monoio => {
-                self.get_simple_async_connection::<crate::aio::monoio::Monoio>(dns_resolver)
-                    .await
+                crate::aio::monoio_future_safety::make_send_safe(
+                    self.get_simple_async_connection::<crate::aio::monoio::Monoio>(dns_resolver),
+                )
+                .await
             }
         }
     }

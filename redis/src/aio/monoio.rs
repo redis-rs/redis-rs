@@ -25,12 +25,14 @@ use crate::aio::TlsConnParams;
 #[cfg(feature = "monoio-rustls-comp")]
 use crate::connection::create_rustls_config;
 
+type RentFuture = Pin<Box<dyn Future<Output = (io::Result<usize>, Vec<u8>)>>>;
+
 // State for pending read operations
 // Note: Monoio futures are NOT Send, but we mark them as such because
 // they will only be polled on their bound thread (thread-per-core model)
 enum ReadState {
     Idle,
-    Reading(Pin<Box<dyn Future<Output = (io::Result<usize>, Vec<u8>)>>>),
+    Reading(RentFuture),
 }
 
 // State for pending write operations
@@ -38,7 +40,7 @@ enum ReadState {
 // they will only be polled on their bound thread (thread-per-core model)
 enum WriteState {
     Idle,
-    Writing(Pin<Box<dyn Future<Output = (io::Result<usize>, Vec<u8>)>>>),
+    Writing(RentFuture),
 }
 
 // SAFETY: These states contain monoio futures which are not Send,
@@ -121,8 +123,7 @@ where
                     let write_fut = unsafe { (*inner_ptr).write(owned_buf) };
 
                     // Box the future (not Send, but safe in thread-per-core model)
-                    let boxed_fut: Pin<Box<dyn Future<Output = _>>> =
-                        Box::pin(async move { write_fut.await });
+                    let boxed_fut: RentFuture = Box::pin(write_fut);
 
                     *this.write_state = WriteState::Writing(boxed_fut);
                     // Loop to poll the future immediately
@@ -196,8 +197,7 @@ where
                     let read_fut = unsafe { (*inner_ptr).read(owned_buf) };
 
                     // Box the future (not Send, but safe in thread-per-core model)
-                    let boxed_fut: Pin<Box<dyn Future<Output = _>>> =
-                        Box::pin(async move { read_fut.await });
+                    let boxed_fut: RentFuture = Box::pin(read_fut);
 
                     *this.read_state = ReadState::Reading(boxed_fut);
                     // Loop to poll the future immediately
@@ -260,7 +260,7 @@ pub(crate) enum Monoio {
     Unix(MonoioWrapped<monoio::net::UnixStream>),
     /// Represents a TLS TCP connection.
     #[cfg(feature = "monoio-rustls-comp")]
-    Tls(MonoioWrapped<monoio_rustls::ClientTlsStream<monoio::net::TcpStream>>),
+    Tls(Box<MonoioWrapped<monoio_rustls::ClientTlsStream<monoio::net::TcpStream>>>),
 }
 
 // SAFETY: Same reasoning as MonoioWrapped - monoio's thread-per-core model ensures
@@ -279,7 +279,7 @@ impl AsyncWrite for Monoio {
             #[cfg(unix)]
             Monoio::Unix(r) => Pin::new(r).poll_write(cx, buf),
             #[cfg(feature = "monoio-rustls-comp")]
-            Monoio::Tls(r) => Pin::new(r).poll_write(cx, buf),
+            Monoio::Tls(r) => Pin::new(r.as_mut()).poll_write(cx, buf),
         }
     }
 
@@ -289,7 +289,7 @@ impl AsyncWrite for Monoio {
             #[cfg(unix)]
             Monoio::Unix(r) => Pin::new(r).poll_flush(cx),
             #[cfg(feature = "monoio-rustls-comp")]
-            Monoio::Tls(r) => Pin::new(r).poll_flush(cx),
+            Monoio::Tls(r) => Pin::new(r.as_mut()).poll_flush(cx),
         }
     }
 
@@ -299,7 +299,7 @@ impl AsyncWrite for Monoio {
             #[cfg(unix)]
             Monoio::Unix(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(feature = "monoio-rustls-comp")]
-            Monoio::Tls(r) => Pin::new(r).poll_shutdown(cx),
+            Monoio::Tls(r) => Pin::new(r.as_mut()).poll_shutdown(cx),
         }
     }
 }
@@ -315,7 +315,7 @@ impl AsyncRead for Monoio {
             #[cfg(unix)]
             Monoio::Unix(r) => Pin::new(r).poll_read(cx, buf),
             #[cfg(feature = "monoio-rustls-comp")]
-            Monoio::Tls(r) => Pin::new(r).poll_read(cx, buf),
+            Monoio::Tls(r) => Pin::new(r.as_mut()).poll_read(cx, buf),
         }
     }
 }
@@ -348,7 +348,7 @@ impl RedisRuntime for Monoio {
         connector
             .connect(server_name, tcp_stream)
             .await
-            .map(|con| Self::Tls(MonoioWrapped::new(con)))
+            .map(|con| Self::Tls(Box::new(MonoioWrapped::new(con))))
             .map_err(|e| crate::RedisError::from(io::Error::other(e)))
     }
 
@@ -372,7 +372,7 @@ impl RedisRuntime for Monoio {
             #[cfg(unix)]
             Monoio::Unix(x) => Box::pin(x),
             #[cfg(feature = "monoio-rustls-comp")]
-            Monoio::Tls(x) => Box::pin(x),
+            Monoio::Tls(x) => Box::into_pin(x),
         }
     }
 }

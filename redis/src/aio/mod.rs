@@ -173,6 +173,11 @@ mod connection_manager;
 #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
 pub use connection_manager::*;
 mod runtime;
+#[cfg(all(
+    feature = "monoio-comp",
+    any(feature = "tokio-comp", feature = "smol-comp")
+))]
+pub use runtime::prefer_monoio;
 #[cfg(all(feature = "smol-comp", feature = "tokio-comp"))]
 pub use runtime::prefer_smol;
 #[cfg(all(feature = "tokio-comp", feature = "smol-comp"))]

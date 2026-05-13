@@ -9,3 +9,7 @@ status-level = "skip"
 [[profile.default.overrides]]
 filter = 'test(cluster_async::test_async_cluster_basic_failover)'
 slow-timeout = { period = "20s", terminate-after = 2 }
+
+[[profile.default.overrides]]
+filter = 'test(cluster)'
+threads-required = "num-test-threads"

@@ -206,7 +206,8 @@ async fn demo_pubsub() -> RedisResult<()> {
             }
         }
         println!(
-            "  ⏱️  Received 4 messages in: {:?}",
+            "  ⏱️  Received {} messages in: {:?}",
+            msg_count,
             first_msg_time.elapsed()
         );
     });
@@ -287,7 +288,8 @@ async fn demo_keyspace_notifications() -> RedisResult<()> {
             }
         }
         println!(
-            "  ⏱️  Received 6 events in: {:?}",
+            "  ⏱️  Received {} events in: {:?}",
+            event_count,
             first_event_time.elapsed()
         );
     });

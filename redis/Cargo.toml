@@ -202,10 +202,6 @@ name = "test_async"
 required-features = ["tokio-comp"]
 
 [[test]]
-name = "test_monoio_async"
-required-features = ["monoio-comp"]
-
-[[test]]
 name = "parser"
 required-features = ["aio"]
 
@@ -296,6 +292,10 @@ name = "typed"
 [[example]]
 name = "monoio-comprehensive"
 required-features = ["monoio-comp", "streams"]
+
+[[example]]
+name = "tokio-comprehensive"
+required-features = ["tokio-comp", "streams"]
 
 [[example]]
 name = "async-caching"

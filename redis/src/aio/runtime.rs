@@ -6,7 +6,7 @@ use futures_util::Future;
 // In monoio's thread-per-core model, futures are never transferred between threads,
 // so it's safe to mark them as Send + Sync even if they contain non-Send types.
 #[cfg(feature = "monoio-comp")]
-mod monoio_future_safety {
+pub(crate) mod monoio_future_safety {
     use super::*;
     use std::pin::Pin;
     use std::task::{Context, Poll};
@@ -228,15 +228,20 @@ impl Runtime {
         }
 
         cfg_if::cfg_if! {
-            if #[cfg(all(feature = "tokio-comp", feature = "smol-comp", not(feature = "monoio-comp")))] {
+            if #[cfg(all(feature = "tokio-comp", feature = "smol-comp"))] {
                 if ::tokio::runtime::Handle::try_current().is_ok() {
                     Runtime::Tokio
                 } else {
                     Runtime::Smol
                 }
-            } else if #[cfg(all(feature = "monoio-comp", any(feature = "tokio-comp", feature = "smol-comp")))] {
-                // Prefer monoio if available
-                Runtime::Monoio
+            } else if #[cfg(all(feature = "tokio-comp", feature = "monoio-comp"))] {
+                if ::tokio::runtime::Handle::try_current().is_ok() {
+                    Runtime::Tokio
+                } else {
+                    Runtime::Monoio
+                }
+            } else if #[cfg(all(feature = "smol-comp", feature = "monoio-comp"))] {
+                Runtime::Smol
             }
         }
 
