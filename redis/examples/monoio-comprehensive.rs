@@ -342,7 +342,7 @@ async fn demo_streams() -> RedisResult<()> {
 
     for StreamKey { key, ids } in reply.keys {
         println!("  Stream: {} (elapsed: {:?})", key, read_elapsed);
-        for StreamId { id, map } in ids {
+        for StreamId { id, map, .. } in ids {
             println!("    ID: {}", id);
             for (field, value) in map {
                 println!("      {}: {:?}", field, value);
@@ -369,7 +369,7 @@ async fn demo_streams() -> RedisResult<()> {
                 let elapsed = task_start.elapsed();
                 for StreamKey { key, ids } in reply.keys {
                     println!("    📨 Received new data from {} (elapsed: {:?})", key, elapsed);
-                    for StreamId { id, map } in ids {
+                    for StreamId { id, map, .. } in ids {
                         println!("      ID: {}", id);
                         for (field, value) in map {
                             println!("        {}: {:?}", field, value);

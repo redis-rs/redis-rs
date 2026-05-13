@@ -60,6 +60,10 @@ impl ServerType {
     }
 }
 
+fn redis_server_bin() -> String {
+    env::var("REDISRS_SERVER_BIN").unwrap_or_else(|_| "redis-server".to_string())
+}
+
 impl Drop for RedisServer {
     fn drop(&mut self) {
         self.stop()
@@ -158,8 +162,7 @@ impl RedisServer {
         modules: &[Module],
         spawner: F,
     ) -> RedisServer {
-        let bin = env::var("REDISRS_SERVER_BIN").unwrap_or_else(|_| "redis-server".to_string());
-        let mut redis_cmd = process::Command::new(bin);
+        let mut redis_cmd = process::Command::new(redis_server_bin());
 
         if let Some(config_path) = config_file {
             redis_cmd.arg(config_path);
@@ -325,7 +328,7 @@ impl RedisServer {
 
 fn get_major_version() -> u8 {
     let full_string = String::from_utf8(
-        process::Command::new("redis-server")
+        process::Command::new(redis_server_bin())
             .arg("-v")
             .output()
             .unwrap()

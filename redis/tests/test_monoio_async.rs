@@ -1,5 +1,6 @@
-/// Tests for Monoio async runtime support
 #![cfg(feature = "monoio-comp")]
+
+//! Tests for Monoio async runtime support
 
 use redis::{AsyncCommands, Value};
 

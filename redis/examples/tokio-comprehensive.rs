@@ -194,7 +194,11 @@ async fn demo_pubsub() -> RedisResult<()> {
                 let _payload: String = msg.get_payload().unwrap_or_default();
             }
         }
-        println!("  ⏱️  Received 4 messages in: {:?}", first_msg_time.elapsed());
+        println!(
+            "  ⏱️  Received {} messages in: {:?}",
+            msg_count,
+            first_msg_time.elapsed()
+        );
     });
 
     // Wait a moment to ensure subscription is established
@@ -263,7 +267,11 @@ async fn demo_keyspace_notifications() -> RedisResult<()> {
                 }
             }
         }
-        println!("  ⏱️  Received 6 events in: {:?}", first_event_time.elapsed());
+        println!(
+            "  ⏱️  Received {} events in: {:?}",
+            event_count,
+            first_event_time.elapsed()
+        );
     });
 
     // Wait a moment to ensure subscription is established
@@ -342,7 +350,7 @@ async fn demo_streams() -> RedisResult<()> {
 
     for StreamKey { key, ids } in reply.keys {
         println!("  Stream: {} (elapsed: {:?})", key, read_elapsed);
-        for StreamId { id, map } in ids {
+        for StreamId { id, map, .. } in ids {
             println!("    ID: {}", id);
             for (field, value) in map {
                 println!("      {}: {:?}", field, value);
@@ -369,7 +377,7 @@ async fn demo_streams() -> RedisResult<()> {
                 let elapsed = task_start.elapsed();
                 for StreamKey { key, ids } in reply.keys {
                     println!("    📨 Received new data from {} (elapsed: {:?})", key, elapsed);
-                    for StreamId { id, map } in ids {
+                    for StreamId { id, map, .. } in ids {
                         println!("      ID: {}", id);
                         for (field, value) in map {
                             println!("        {}: {:?}", field, value);
