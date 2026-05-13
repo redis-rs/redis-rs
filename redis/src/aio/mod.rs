@@ -24,6 +24,10 @@ mod monitor;
 #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 use crate::connection::TlsConnParams;
 
+/// Enables the monoio compatibility
+#[cfg(feature = "monoio-comp")]
+#[cfg_attr(docsrs, doc(cfg(feature = "monoio-comp")))]
+pub mod monoio;
 /// Enables the smol compatibility
 #[cfg(feature = "smol-comp")]
 #[cfg_attr(docsrs, doc(cfg(feature = "smol-comp")))]
@@ -32,10 +36,6 @@ pub mod smol;
 #[cfg(feature = "tokio-comp")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tokio-comp")))]
 pub mod tokio;
-/// Enables the monoio compatibility
-#[cfg(feature = "monoio-comp")]
-#[cfg_attr(docsrs, doc(cfg(feature = "monoio-comp")))]
-pub mod monoio;
 
 mod pubsub;
 pub use pubsub::{PubSub, PubSubSink, PubSubStream};

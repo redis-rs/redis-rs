@@ -28,14 +28,20 @@ async fn test_monoio_string_operations() {
         .expect("Failed to connect");
 
     // SET with expiration
-    let _: () = con.set_ex("expiring_key", "value", 10).await.expect("SET EX failed");
+    let _: () = con
+        .set_ex("expiring_key", "value", 10)
+        .await
+        .expect("SET EX failed");
 
     // GET should work
     let result: String = con.get("expiring_key").await.expect("GET failed");
     assert_eq!(result, "value");
 
     // APPEND
-    let _: () = con.append("expiring_key", "_appended").await.expect("APPEND failed");
+    let _: () = con
+        .append("expiring_key", "_appended")
+        .await
+        .expect("APPEND failed");
     let result: String = con.get("expiring_key").await.expect("GET failed");
     assert_eq!(result, "value_appended");
 
@@ -62,7 +68,10 @@ async fn test_monoio_list_operations() {
     let _: () = con.del(list_key).await.ok();
 
     // RPUSH
-    let _: () = con.rpush(list_key, &["item1", "item2", "item3"]).await.expect("RPUSH failed");
+    let _: () = con
+        .rpush(list_key, &["item1", "item2", "item3"])
+        .await
+        .expect("RPUSH failed");
 
     // LLEN
     let len: usize = con.llen(list_key).await.expect("LLEN failed");
@@ -136,7 +145,10 @@ async fn test_monoio_set_operations() {
     assert_eq!(size, 3);
 
     // SISMEMBER
-    let is_member: bool = con.sismember(set_key, "member1").await.expect("SISMEMBER failed");
+    let is_member: bool = con
+        .sismember(set_key, "member1")
+        .await
+        .expect("SISMEMBER failed");
     assert!(is_member);
 
     // SREM
@@ -160,7 +172,10 @@ async fn test_monoio_sorted_set_operations() {
 
     // ZADD
     let _: () = con
-        .zadd_multiple(zset_key, &[("member1", 1.0), ("member2", 2.0), ("member3", 3.0)])
+        .zadd_multiple(
+            zset_key,
+            &[("member1", 1.0), ("member2", 2.0), ("member3", 3.0)],
+        )
         .await
         .expect("ZADD failed");
 
@@ -222,14 +237,20 @@ async fn test_monoio_multiple_connections() {
         .expect("Failed to connect");
 
     // Use con1 to set a value
-    let _: () = con1.set("shared_key", "from_con1").await.expect("SET failed");
+    let _: () = con1
+        .set("shared_key", "from_con1")
+        .await
+        .expect("SET failed");
 
     // Use con2 to read it
     let result: String = con2.get("shared_key").await.expect("GET failed");
     assert_eq!(result, "from_con1");
 
     // Update via con2
-    let _: () = con2.set("shared_key", "from_con2").await.expect("SET failed");
+    let _: () = con2
+        .set("shared_key", "from_con2")
+        .await
+        .expect("SET failed");
 
     // Read via con1
     let result: String = con1.get("shared_key").await.expect("GET failed");

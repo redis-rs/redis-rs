@@ -10,13 +10,13 @@ mod monoio_future_safety {
     use super::*;
     use std::pin::Pin;
     use std::task::{Context, Poll};
-    
+
     // Wrapper to make monoio futures Send + Sync safe
     pub struct SendSafeFuture<F>(F);
-    
+
     impl<F: Future> Future for SendSafeFuture<F> {
         type Output = F::Output;
-        
+
         fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
             // SAFETY: We're projecting the pin to the inner future
             unsafe {
@@ -25,10 +25,10 @@ mod monoio_future_safety {
             }
         }
     }
-    
+
     unsafe impl<F> Send for SendSafeFuture<F> {}
     unsafe impl<F> Sync for SendSafeFuture<F> {}
-    
+
     pub fn make_send_safe<F: Future>(f: F) -> SendSafeFuture<F> {
         SendSafeFuture(f)
     }
@@ -36,17 +36,20 @@ mod monoio_future_safety {
 
 #[cfg(any(
     all(feature = "tokio-comp", feature = "smol-comp"),
-    all(feature = "monoio-comp", any(feature = "tokio-comp", feature = "smol-comp"))
+    all(
+        feature = "monoio-comp",
+        any(feature = "tokio-comp", feature = "smol-comp")
+    )
 ))]
 use std::sync::OnceLock;
 
+use super::RedisRuntime;
+#[cfg(feature = "monoio-comp")]
+use super::monoio as crate_monoio;
 #[cfg(feature = "smol-comp")]
 use super::smol as crate_smol;
 #[cfg(feature = "tokio-comp")]
 use super::tokio as crate_tokio;
-#[cfg(feature = "monoio-comp")]
-use super::monoio as crate_monoio;
-use super::RedisRuntime;
 use crate::errors::RedisError;
 #[cfg(feature = "smol-comp")]
 use smol_timeout::TimeoutExt;
@@ -123,13 +126,19 @@ impl SharedHandleContainer {
 
 #[cfg(any(
     all(feature = "tokio-comp", feature = "smol-comp"),
-    all(feature = "monoio-comp", any(feature = "tokio-comp", feature = "smol-comp"))
+    all(
+        feature = "monoio-comp",
+        any(feature = "tokio-comp", feature = "smol-comp")
+    )
 ))]
 static CHOSEN_RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
 #[cfg(any(
     all(feature = "tokio-comp", feature = "smol-comp"),
-    all(feature = "monoio-comp", any(feature = "tokio-comp", feature = "smol-comp"))
+    all(
+        feature = "monoio-comp",
+        any(feature = "tokio-comp", feature = "smol-comp")
+    )
 ))]
 fn set_runtime(runtime: Runtime) -> Result<(), RedisError> {
     const PREFER_RUNTIME_ERROR: &str = "Another runtime preference was already set. Please call this function before any other runtime preference is set.";
@@ -144,7 +153,10 @@ fn set_runtime(runtime: Runtime) -> Result<(), RedisError> {
 /// If the function returns `Err`, another runtime preference was already set, and won't be changed.
 /// Call this function if the application doesn't use multiple runtimes,
 /// but the crate is compiled with multiple runtimes enabled, which is a bad pattern that should be avoided.
-#[cfg(all(feature = "smol-comp", any(feature = "tokio-comp", feature = "monoio-comp")))]
+#[cfg(all(
+    feature = "smol-comp",
+    any(feature = "tokio-comp", feature = "monoio-comp")
+))]
 pub fn prefer_smol() -> Result<(), RedisError> {
     set_runtime(Runtime::Smol)
 }
@@ -154,7 +166,10 @@ pub fn prefer_smol() -> Result<(), RedisError> {
 /// If the function returns `Err`, another runtime preference was already set, and won't be changed.
 /// Call this function if the application doesn't use multiple runtimes,
 /// but the crate is compiled with multiple runtimes enabled, which is a bad pattern that should be avoided.
-#[cfg(all(feature = "tokio-comp", any(feature = "smol-comp", feature = "monoio-comp")))]
+#[cfg(all(
+    feature = "tokio-comp",
+    any(feature = "smol-comp", feature = "monoio-comp")
+))]
 pub fn prefer_tokio() -> Result<(), RedisError> {
     set_runtime(Runtime::Tokio)
 }
@@ -164,7 +179,10 @@ pub fn prefer_tokio() -> Result<(), RedisError> {
 /// If the function returns `Err`, another runtime preference was already set, and won't be changed.
 /// Call this function if the application doesn't use multiple runtimes,
 /// but the crate is compiled with multiple runtimes enabled, which is a bad pattern that should be avoided.
-#[cfg(all(feature = "monoio-comp", any(feature = "tokio-comp", feature = "smol-comp")))]
+#[cfg(all(
+    feature = "monoio-comp",
+    any(feature = "tokio-comp", feature = "smol-comp")
+))]
 pub fn prefer_monoio() -> Result<(), RedisError> {
     set_runtime(Runtime::Monoio)
 }
@@ -173,23 +191,38 @@ impl Runtime {
     pub(crate) fn locate() -> Self {
         #[cfg(any(
             all(feature = "smol-comp", feature = "tokio-comp"),
-            all(feature = "monoio-comp", any(feature = "tokio-comp", feature = "smol-comp"))
+            all(
+                feature = "monoio-comp",
+                any(feature = "tokio-comp", feature = "smol-comp")
+            )
         ))]
         if let Some(runtime) = CHOSEN_RUNTIME.get() {
             return *runtime;
         }
 
-        #[cfg(all(feature = "tokio-comp", not(feature = "smol-comp"), not(feature = "monoio-comp")))]
+        #[cfg(all(
+            feature = "tokio-comp",
+            not(feature = "smol-comp"),
+            not(feature = "monoio-comp")
+        ))]
         {
             Runtime::Tokio
         }
 
-        #[cfg(all(not(feature = "tokio-comp"), feature = "smol-comp", not(feature = "monoio-comp")))]
+        #[cfg(all(
+            not(feature = "tokio-comp"),
+            feature = "smol-comp",
+            not(feature = "monoio-comp")
+        ))]
         {
             Runtime::Smol
         }
 
-        #[cfg(all(not(feature = "tokio-comp"), not(feature = "smol-comp"), feature = "monoio-comp"))]
+        #[cfg(all(
+            not(feature = "tokio-comp"),
+            not(feature = "smol-comp"),
+            feature = "monoio-comp"
+        ))]
         {
             Runtime::Monoio
         }
@@ -207,9 +240,15 @@ impl Runtime {
             }
         }
 
-        #[cfg(all(not(feature = "tokio-comp"), not(feature = "smol-comp"), not(feature = "monoio-comp")))]
+        #[cfg(all(
+            not(feature = "tokio-comp"),
+            not(feature = "smol-comp"),
+            not(feature = "monoio-comp")
+        ))]
         {
-            compile_error!("tokio-comp, smol-comp, or monoio-comp features required for aio feature")
+            compile_error!(
+                "tokio-comp, smol-comp, or monoio-comp features required for aio feature"
+            )
         }
     }
 

@@ -430,12 +430,11 @@ impl Client {
             }
 
             #[cfg(feature = "monoio-comp")]
-            rt @ Runtime::Monoio => {
-                self.get_multiplexed_async_connection_inner_with_timeout::<crate::aio::monoio::Monoio>(
+            rt @ Runtime::Monoio => self
+                .get_multiplexed_async_connection_inner_with_timeout::<crate::aio::monoio::Monoio>(
                     config, rt,
                 )
-                .await
-            }
+                .await,
         }
     }
 

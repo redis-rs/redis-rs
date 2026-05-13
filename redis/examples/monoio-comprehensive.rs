@@ -8,12 +8,11 @@
 
 #![cfg(feature = "monoio-comp")]
 
-use redis::{
-    AsyncTypedCommands,
-    streams::{StreamId, StreamKey, StreamReadReply},
-    RedisResult,
-};
 use futures_util::StreamExt;
+use redis::{
+    AsyncTypedCommands, RedisResult,
+    streams::{StreamId, StreamKey, StreamReadReply},
+};
 use std::time::Duration;
 
 #[monoio::main(timer_enabled = true)]
@@ -57,20 +56,25 @@ async fn demo_data_types() -> RedisResult<()> {
     let _: isize = AsyncTypedCommands::incr(&mut con, "user:age", 1).await?;
     let name_updated: Option<String> = AsyncTypedCommands::get(&mut con, "user:name").await?;
     let age_updated: Option<String> = AsyncTypedCommands::get(&mut con, "user:age").await?;
-    println!("  Updated - name: {:?}, age: {:?}", name_updated, age_updated);
+    println!(
+        "  Updated - name: {:?}, age: {:?}",
+        name_updated, age_updated
+    );
 
     // Hash type
     println!("\n🔹 Hash type (HSET → HGETALL → UPDATE → HGETALL):");
     AsyncTypedCommands::hset(&mut con, "user:1000", "name", "Bob").await?;
     AsyncTypedCommands::hset(&mut con, "user:1000", "email", "bob@example.com").await?;
     AsyncTypedCommands::hset(&mut con, "user:1000", "age", "25").await?;
-    let user: std::collections::HashMap<String, String> = AsyncTypedCommands::hgetall(&mut con, "user:1000").await?;
+    let user: std::collections::HashMap<String, String> =
+        AsyncTypedCommands::hgetall(&mut con, "user:1000").await?;
     println!("  Initial: {:?}", user);
 
     // Update Hash fields
     AsyncTypedCommands::hset(&mut con, "user:1000", "email", "bob.updated@example.com").await?;
     AsyncTypedCommands::hset(&mut con, "user:1000", "status", "active").await?;
-    let user_updated: std::collections::HashMap<String, String> = AsyncTypedCommands::hgetall(&mut con, "user:1000").await?;
+    let user_updated: std::collections::HashMap<String, String> =
+        AsyncTypedCommands::hgetall(&mut con, "user:1000").await?;
     println!("  Updated: {:?}", user_updated);
 
     // Get single Hash field
@@ -102,13 +106,15 @@ async fn demo_data_types() -> RedisResult<()> {
     AsyncTypedCommands::sadd(&mut con, "tags", "rust").await?;
     AsyncTypedCommands::sadd(&mut con, "tags", "redis").await?;
     AsyncTypedCommands::sadd(&mut con, "tags", "monoio").await?;
-    let tags: std::collections::HashSet<String> = AsyncTypedCommands::smembers(&mut con, "tags").await?;
+    let tags: std::collections::HashSet<String> =
+        AsyncTypedCommands::smembers(&mut con, "tags").await?;
     println!("  Initial set: {:?}", tags);
 
     // Add and remove elements
     AsyncTypedCommands::sadd(&mut con, "tags", "async").await?;
     AsyncTypedCommands::srem(&mut con, "tags", "monoio").await?;
-    let tags_updated: std::collections::HashSet<String> = AsyncTypedCommands::smembers(&mut con, "tags").await?;
+    let tags_updated: std::collections::HashSet<String> =
+        AsyncTypedCommands::smembers(&mut con, "tags").await?;
     println!("  Updated set: {:?}", tags_updated);
 
     // Check if member exists
@@ -132,7 +138,8 @@ async fn demo_data_types() -> RedisResult<()> {
         .arg("player3")
         .query_async(&mut con)
         .await?;
-    let top_updated: Vec<String> = AsyncTypedCommands::zrevrange(&mut con, "leaderboard", 0, 2).await?;
+    let top_updated: Vec<String> =
+        AsyncTypedCommands::zrevrange(&mut con, "leaderboard", 0, 2).await?;
     println!("  Updated top 3 players: {:?}", top_updated);
 
     // Get member score
@@ -149,7 +156,8 @@ async fn demo_data_types() -> RedisResult<()> {
     println!("  user:name exists: {}", exists);
 
     // Batch delete
-    let deleted_multiple: usize = AsyncTypedCommands::del(&mut con, &["tasks", "tags", "leaderboard"]).await?;
+    let deleted_multiple: usize =
+        AsyncTypedCommands::del(&mut con, &["tasks", "tags", "leaderboard"]).await?;
     println!("  Batch delete {} keys", deleted_multiple);
 
     println!("\n✅ Data types operations completed\n");
@@ -178,7 +186,10 @@ async fn demo_pubsub() -> RedisResult<()> {
     sub_conn.subscribe("news").await?;
     sub_conn.subscribe("sports").await?;
     let subscribe_elapsed = subscribe_start.elapsed();
-    println!("  ✓ Subscribed to channels: news, sports (elapsed: {:?})", subscribe_elapsed);
+    println!(
+        "  ✓ Subscribed to channels: news, sports (elapsed: {:?})",
+        subscribe_elapsed
+    );
 
     // Start subscription task
     let sub_task = monoio::spawn(async move {
@@ -194,7 +205,10 @@ async fn demo_pubsub() -> RedisResult<()> {
                 let _payload: String = msg.get_payload().unwrap_or_default();
             }
         }
-        println!("  ⏱️  Received 4 messages in: {:?}", first_msg_time.elapsed());
+        println!(
+            "  ⏱️  Received 4 messages in: {:?}",
+            first_msg_time.elapsed()
+        );
     });
 
     // Wait a moment to ensure subscription is established
@@ -214,7 +228,10 @@ async fn demo_pubsub() -> RedisResult<()> {
     sub_task.await;
 
     let total_elapsed = start_time.elapsed();
-    println!("\n✅ Pub/Sub demo completed (total elapsed: {:?})\n", total_elapsed);
+    println!(
+        "\n✅ Pub/Sub demo completed (total elapsed: {:?})\n",
+        total_elapsed
+    );
     Ok(())
 }
 
@@ -236,7 +253,10 @@ async fn demo_keyspace_notifications() -> RedisResult<()> {
         .arg(&["SET", "notify-keyspace-events", "KEA"])
         .query_async(&mut config_conn)
         .await?;
-    println!("  ✓ Enabled keyspace notifications (elapsed: {:?})", config_start.elapsed());
+    println!(
+        "  ✓ Enabled keyspace notifications (elapsed: {:?})",
+        config_start.elapsed()
+    );
 
     // Create notification connection
     let mut notify_conn = client.get_async_pubsub().await?;
@@ -244,7 +264,10 @@ async fn demo_keyspace_notifications() -> RedisResult<()> {
     // Subscribe to keyspace events
     let subscribe_start = Instant::now();
     notify_conn.psubscribe("__keyspace@0__:*").await?;
-    println!("  ✓ Subscribed to keyspace events (elapsed: {:?})", subscribe_start.elapsed());
+    println!(
+        "  ✓ Subscribed to keyspace events (elapsed: {:?})",
+        subscribe_start.elapsed()
+    );
 
     // Start notification task
     let notify_task = monoio::spawn(async move {
@@ -263,7 +286,10 @@ async fn demo_keyspace_notifications() -> RedisResult<()> {
                 }
             }
         }
-        println!("  ⏱️  Received 6 events in: {:?}", first_event_time.elapsed());
+        println!(
+            "  ⏱️  Received 6 events in: {:?}",
+            first_event_time.elapsed()
+        );
     });
 
     // Wait a moment to ensure subscription is established
@@ -286,7 +312,10 @@ async fn demo_keyspace_notifications() -> RedisResult<()> {
     notify_task.await;
 
     let total_elapsed = start_time.elapsed();
-    println!("\n✅ Keyspace notifications demo completed (total elapsed: {:?})\n", total_elapsed);
+    println!(
+        "\n✅ Keyspace notifications demo completed (total elapsed: {:?})\n",
+        total_elapsed
+    );
     Ok(())
 }
 
@@ -314,21 +343,33 @@ async fn demo_streams() -> RedisResult<()> {
         .arg(&[stream_key, "*", "event", "login", "user", "alice"])
         .query_async(&mut con)
         .await?;
-    println!("  ✓ Added event ID: {} (elapsed: {:?})", id1, add_start.elapsed());
+    println!(
+        "  ✓ Added event ID: {} (elapsed: {:?})",
+        id1,
+        add_start.elapsed()
+    );
 
     let add2_start = Instant::now();
     let id2: String = redis::cmd("XADD")
         .arg(&[stream_key, "*", "event", "purchase", "amount", "99.99"])
         .query_async(&mut con)
         .await?;
-    println!("  ✓ Added event ID: {} (elapsed: {:?})", id2, add2_start.elapsed());
+    println!(
+        "  ✓ Added event ID: {} (elapsed: {:?})",
+        id2,
+        add2_start.elapsed()
+    );
 
     let add3_start = Instant::now();
     let id3: String = redis::cmd("XADD")
         .arg(&[stream_key, "*", "event", "logout", "user", "alice"])
         .query_async(&mut con)
         .await?;
-    println!("  ✓ Added event ID: {} (elapsed: {:?})", id3, add3_start.elapsed());
+    println!(
+        "  ✓ Added event ID: {} (elapsed: {:?})",
+        id3,
+        add3_start.elapsed()
+    );
 
     // Read stream data
     println!("\n  📖 Reading stream data...");
@@ -368,7 +409,10 @@ async fn demo_streams() -> RedisResult<()> {
             Ok(reply) => {
                 let elapsed = task_start.elapsed();
                 for StreamKey { key, ids } in reply.keys {
-                    println!("    📨 Received new data from {} (elapsed: {:?})", key, elapsed);
+                    println!(
+                        "    📨 Received new data from {} (elapsed: {:?})",
+                        key, elapsed
+                    );
                     for StreamId { id, map, .. } in ids {
                         println!("      ID: {}", id);
                         for (field, value) in map {
@@ -378,7 +422,11 @@ async fn demo_streams() -> RedisResult<()> {
                 }
             }
             Err(e) => {
-                println!("    ⏱️  Timeout or error: {:?} (elapsed: {:?})", e, task_start.elapsed());
+                println!(
+                    "    ⏱️  Timeout or error: {:?} (elapsed: {:?})",
+                    e,
+                    task_start.elapsed()
+                );
             }
         }
     });
@@ -393,14 +441,23 @@ async fn demo_streams() -> RedisResult<()> {
         .arg(&["message", "Hello from stream!"])
         .query_async(&mut add_conn)
         .await?;
-    println!("  ✓ Added new event to stream (elapsed: {:?})", add_new_start.elapsed());
+    println!(
+        "  ✓ Added new event to stream (elapsed: {:?})",
+        add_new_start.elapsed()
+    );
 
     // Wait for read task to complete
     read_task.await;
     let block_read_total = block_read_start.elapsed();
-    println!("  ⏱️  Blocking read operation total elapsed: {:?}", block_read_total);
+    println!(
+        "  ⏱️  Blocking read operation total elapsed: {:?}",
+        block_read_total
+    );
 
     let total_elapsed = start_time.elapsed();
-    println!("\n✅ Stream demo completed (total elapsed: {:?})\n", total_elapsed);
+    println!(
+        "\n✅ Stream demo completed (total elapsed: {:?})\n",
+        total_elapsed
+    );
     Ok(())
 }
