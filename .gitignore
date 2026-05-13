@@ -5,3 +5,4 @@ target
 .vscode
 .idea
 redis/dump.rdb
+*.bak
