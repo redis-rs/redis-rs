@@ -125,7 +125,7 @@ where
                     *this.write_state = WriteState::Writing(boxed_fut);
                     // Loop to poll the future immediately
                 }
-                WriteState::Writing(ref mut fut) => {
+                WriteState::Writing(fut) => {
                     // Poll the in-flight write future
                     match fut.as_mut().poll(cx) {
                         Poll::Ready((res, _buf)) => {
@@ -200,7 +200,7 @@ where
                     *this.read_state = ReadState::Reading(boxed_fut);
                     // Loop to poll the future immediately
                 }
-                ReadState::Reading(ref mut fut) => {
+                ReadState::Reading(fut) => {
                     // Poll the in-flight read future
                     match fut.as_mut().poll(cx) {
                         Poll::Ready((res, mut read_buf)) => {
