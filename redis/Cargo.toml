@@ -74,6 +74,7 @@ smol-timeout = { version = "0.6", optional = true }
 
 #only needed for monoio support
 monoio = { version = "0.2.4", optional = true, features = ["bytes"] }
+monoio-rustls = { version = "0.4", optional = true }
 
 # Only needed for native tls
 native-tls = { version = "0.2", optional = true }
@@ -132,6 +133,7 @@ tokio-comp = ["aio", "tokio/net"]
 tokio-native-tls-comp = ["tokio-comp", "tls-native-tls", "dep:tokio-native-tls"]
 tokio-rustls-comp = ["tokio-comp", "tls-rustls", "dep:tokio-rustls"]
 monoio-comp = ["aio", "dep:monoio"]
+monoio-rustls-comp = ["monoio-comp", "tls-rustls", "dep:monoio-rustls"]
 connection-manager = [
   "dep:arc-swap",
   "dep:futures-channel",

@@ -5,15 +5,23 @@ use std::{
     io,
     net::SocketAddr,
     pin::Pin,
+    sync::Arc,
     task::{self, Poll},
 };
 
+use super::TaskHandle;
 use crate::aio::{AsyncStream, RedisRuntime};
 use crate::types::RedisResult;
-use super::TaskHandle;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
+#[cfg(feature = "monoio-rustls-comp")]
+use monoio_rustls::TlsConnector;
 
+#[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
+use crate::aio::TlsConnParams;
+
+#[cfg(feature = "monoio-rustls-comp")]
+use crate::connection::create_rustls_config;
 
 // State for pending read operations
 // Note: Monoio futures are NOT Send, but we mark them as such because
@@ -137,20 +145,14 @@ where
         }
     }
 
-    fn poll_flush(
-        self: Pin<&mut Self>,
-        _cx: &mut task::Context<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
         // Monoio streams are typically auto-flushed
         // If there's a pending write, we should wait for it, but that's
         // handled by the protocol layer calling poll_write until complete
         Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(
-        self: Pin<&mut Self>,
-        _cx: &mut task::Context<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
         // Monoio doesn't have explicit shutdown in the same way
         // The connection will be closed when dropped
         Poll::Ready(Ok(()))
@@ -180,7 +182,9 @@ where
                 ReadState::Idle => {
                     // No read in progress, start a new one
                     // Reuse buffer if available and appropriately sized, otherwise allocate
-                    let owned_buf = this.read_buf.take()
+                    let owned_buf = this
+                        .read_buf
+                        .take()
                         .filter(|b| b.capacity() >= 4096 && b.capacity() <= 65536)
                         .unwrap_or_else(|| Vec::with_capacity(capacity.max(8192)));
 
@@ -245,7 +249,6 @@ async fn connect_tcp(
     Ok(stream)
 }
 
-
 /// Represents a Monoio connectable
 pub(crate) enum Monoio {
     /// Represents a TCP connection.
@@ -253,6 +256,9 @@ pub(crate) enum Monoio {
     /// Represents a Unix connection.
     #[cfg(unix)]
     Unix(MonoioWrapped<monoio::net::UnixStream>),
+    /// Represents a TLS TCP connection.
+    #[cfg(feature = "monoio-rustls-comp")]
+    Tls(MonoioWrapped<monoio_rustls::ClientTlsStream<monoio::net::TcpStream>>),
 }
 
 // SAFETY: Same reasoning as MonoioWrapped - monoio's thread-per-core model ensures
@@ -270,6 +276,8 @@ impl AsyncWrite for Monoio {
             Monoio::Tcp(r) => Pin::new(r).poll_write(cx, buf),
             #[cfg(unix)]
             Monoio::Unix(r) => Pin::new(r).poll_write(cx, buf),
+            #[cfg(feature = "monoio-rustls-comp")]
+            Monoio::Tls(r) => Pin::new(r).poll_write(cx, buf),
         }
     }
 
@@ -278,17 +286,18 @@ impl AsyncWrite for Monoio {
             Monoio::Tcp(r) => Pin::new(r).poll_flush(cx),
             #[cfg(unix)]
             Monoio::Unix(r) => Pin::new(r).poll_flush(cx),
+            #[cfg(feature = "monoio-rustls-comp")]
+            Monoio::Tls(r) => Pin::new(r).poll_flush(cx),
         }
     }
 
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut task::Context<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
         match &mut *self {
             Monoio::Tcp(r) => Pin::new(r).poll_shutdown(cx),
             #[cfg(unix)]
             Monoio::Unix(r) => Pin::new(r).poll_shutdown(cx),
+            #[cfg(feature = "monoio-rustls-comp")]
+            Monoio::Tls(r) => Pin::new(r).poll_shutdown(cx),
         }
     }
 }
@@ -303,6 +312,8 @@ impl AsyncRead for Monoio {
             Monoio::Tcp(r) => Pin::new(r).poll_read(cx, buf),
             #[cfg(unix)]
             Monoio::Unix(r) => Pin::new(r).poll_read(cx, buf),
+            #[cfg(feature = "monoio-rustls-comp")]
+            Monoio::Tls(r) => Pin::new(r).poll_read(cx, buf),
         }
     }
 }
@@ -317,6 +328,27 @@ impl RedisRuntime for Monoio {
             .map(|con| Self::Tcp(MonoioWrapped::new(con)))?)
     }
 
+    #[cfg(feature = "monoio-rustls-comp")]
+    async fn connect_tcp_tls(
+        hostname: &str,
+        socket_addr: SocketAddr,
+        insecure: bool,
+        tls_params: &Option<TlsConnParams>,
+        tcp_settings: &crate::io::tcp::TcpSettings,
+    ) -> RedisResult<Self> {
+        let tcp_stream = connect_tcp(&socket_addr, tcp_settings).await?;
+        let config = create_rustls_config(insecure, tls_params.clone())?;
+        let connector = TlsConnector::from(Arc::new(config));
+        let server_name = rustls::pki_types::ServerName::try_from(hostname)
+            .map_err(|_| crate::RedisError::from((crate::ErrorKind::Io, "invalid hostname")))?
+            .to_owned();
+
+        connector
+            .connect(server_name, tcp_stream)
+            .await
+            .map(|con| Self::Tls(MonoioWrapped::new(con)))
+            .map_err(|e| crate::RedisError::from(io::Error::other(e)))
+    }
 
     #[cfg(unix)]
     async fn connect_unix(path: &Path) -> RedisResult<Self> {
@@ -337,6 +369,8 @@ impl RedisRuntime for Monoio {
             Monoio::Tcp(x) => Box::pin(x),
             #[cfg(unix)]
             Monoio::Unix(x) => Box::pin(x),
+            #[cfg(feature = "monoio-rustls-comp")]
+            Monoio::Tls(x) => Box::pin(x),
         }
     }
 }
