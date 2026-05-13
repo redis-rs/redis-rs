@@ -202,6 +202,10 @@ name = "test_async"
 required-features = ["tokio-comp"]
 
 [[test]]
+name = "test_monoio_async"
+required-features = ["monoio-comp"]
+
+[[test]]
 name = "parser"
 required-features = ["aio"]
 

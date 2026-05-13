@@ -5,9 +5,11 @@ use std::{
     io,
     net::SocketAddr,
     pin::Pin,
-    sync::Arc,
     task::{self, Poll},
 };
+
+#[cfg(feature = "monoio-rustls-comp")]
+use std::sync::Arc;
 
 use super::TaskHandle;
 use crate::aio::{AsyncStream, RedisRuntime};
