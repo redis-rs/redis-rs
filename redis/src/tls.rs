@@ -1,8 +1,8 @@
 use std::io::Error;
 
+use rustls::RootCertStore;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use rustls::RootCertStore;
 
 use crate::connection::TlsConnParams;
 use crate::{Client, ConnectionAddr, ConnectionInfo, ErrorKind, RedisError, RedisResult};

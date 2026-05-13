@@ -4,18 +4,22 @@ mod support;
 #[cfg(test)]
 mod cluster {
     use std::sync::{
-        atomic::{self, AtomicI32, Ordering},
         Arc,
+        atomic::{self, AtomicI32, Ordering},
     };
 
     use crate::support::*;
+    use assert_matches::assert_matches;
     use redis::{
-        cluster::{cluster_pipe, ClusterClient, ClusterConnection},
+        Commands, ConnectionLike, ErrorKind, RedisError, ServerErrorKind, Value,
+        cluster::{ClusterClient, ClusterConnection, cluster_pipe},
+        cluster_read_routing::{RandomReplicaStrategy, RoundRobinReplicaStrategy},
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
-        cmd, parse_redis_value, Commands, ConnectionLike, RedisError, ServerErrorKind, Value,
+        cmd, parse_redis_value,
     };
     use redis_test::{
         cluster::{RedisCluster, RedisClusterConfiguration},
+        redis_value,
         server::use_protocol,
     };
 
@@ -110,7 +114,7 @@ mod cluster {
     fn test_cluster_read_from_replicas() {
         let cluster = TestClusterContext::new_with_config_and_builder(
             RedisClusterConfiguration::single_replica_config(),
-            |builder| builder.read_from_replicas(),
+            |builder| builder.read_routing_strategy(RandomReplicaStrategy),
         );
         let mut con = cluster.connection();
 
@@ -168,19 +172,7 @@ mod cluster {
         let _: () = connection.hset("hash", "bar", "foobar").unwrap();
         let result: Value = connection.hgetall("hash").unwrap();
 
-        assert_eq!(
-            result,
-            Value::Map(vec![
-                (
-                    Value::BulkString("foo".as_bytes().to_vec()),
-                    Value::BulkString("baz".as_bytes().to_vec())
-                ),
-                (
-                    Value::BulkString("bar".as_bytes().to_vec()),
-                    Value::BulkString("foobar".as_bytes().to_vec())
-                )
-            ])
-        );
+        assert_eq!(result, redis_value!({"foo": "baz", "bar": "foobar"}));
     }
 
     #[test]
@@ -284,16 +276,16 @@ mod cluster {
             .unwrap_err();
 
         assert_eq!(
-        err.to_string(),
-        "This command cannot be safely routed in cluster mode - Client: Command 'SCRIPT KILL' can't be executed in a cluster pipeline."
-    );
+            err.to_string(),
+            "This command cannot be safely routed in cluster mode - Client: Command 'SCRIPT KILL' can't be executed in a cluster pipeline."
+        );
 
         let err = cluster_pipe().keys("*").exec(&mut con).unwrap_err();
 
         assert_eq!(
-        err.to_string(),
-        "This command cannot be safely routed in cluster mode - Client: Command 'KEYS' can't be executed in a cluster pipeline."
-    );
+            err.to_string(),
+            "This command cannot be safely routed in cluster mode - Client: Command 'KEYS' can't be executed in a cluster pipeline."
+        );
     }
 
     #[test]
@@ -361,14 +353,10 @@ mod cluster {
             "test_cluster_can_connect_to_server_that_sends_cluster_slots_with_null_host_name";
 
         let MockEnv { mut connection, .. } = MockEnv::new(name, move |cmd: &[u8], _| {
-            if contains_slice(cmd, b"PING") {
-                Err(Ok(Value::SimpleString("OK".into())))
+            if is_connection_check(cmd) {
+                Err(Ok(redis_value!(simple:"OK")))
             } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-                Err(Ok(Value::Array(vec![Value::Array(vec![
-                    Value::Int(0),
-                    Value::Int(16383),
-                    Value::Array(vec![Value::Nil, Value::Int(6379)]),
-                ])])))
+                Err(Ok(redis_value!([[0, 16383, [nil, 6379]]])))
             } else {
                 Err(Ok(Value::Nil))
             }
@@ -380,31 +368,17 @@ mod cluster {
     }
 
     #[test]
-    fn test_cluster_can_connect_to_server_that_sends_cluster_slots_with_partial_nodes_with_unknown_host_name(
-    ) {
+    fn test_cluster_can_connect_to_server_that_sends_cluster_slots_with_partial_nodes_with_unknown_host_name()
+     {
         let name = "test_cluster_can_connect_to_server_that_sends_cluster_slots_with_partial_nodes_with_unknown_host_name";
 
         let MockEnv { mut connection, .. } = MockEnv::new(name, move |cmd: &[u8], _| {
-            if contains_slice(cmd, b"PING") {
-                Err(Ok(Value::SimpleString("OK".into())))
+            if is_connection_check(cmd) {
+                Err(Ok(redis_value!(simple:"OK")))
             } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
-                Err(Ok(Value::Array(vec![
-                    Value::Array(vec![
-                        Value::Int(0),
-                        Value::Int(7000),
-                        Value::Array(vec![
-                            Value::BulkString(name.as_bytes().to_vec()),
-                            Value::Int(6379),
-                        ]),
-                    ]),
-                    Value::Array(vec![
-                        Value::Int(7001),
-                        Value::Int(16383),
-                        Value::Array(vec![
-                            Value::BulkString("?".as_bytes().to_vec()),
-                            Value::Int(6380),
-                        ]),
-                    ]),
+                Err(Ok(redis_value!([
+                    [0, 7000, [name, 6379]],
+                    [7001, 16383, ["?", 6380]]
                 ])))
             } else {
                 Err(Ok(Value::Nil))
@@ -432,7 +406,7 @@ mod cluster {
 
                 match requests.fetch_add(1, atomic::Ordering::SeqCst) {
                     0..=4 => Err(parse_redis_value(b"-TRYAGAIN mock\r\n")),
-                    _ => Err(Ok(Value::BulkString(b"123".to_vec()))),
+                    _ => Err(Ok(redis_value!("123"))),
                 }
             },
         );
@@ -490,8 +464,8 @@ mod cluster {
             }
             started.store(true, atomic::Ordering::SeqCst);
 
-            if contains_slice(cmd, b"PING") {
-                return Err(Ok(Value::SimpleString("OK".into())));
+            if is_connection_check(cmd) {
+                return Err(Ok(redis_value!(simple:"OK")));
             }
 
             let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
@@ -500,28 +474,14 @@ mod cluster {
                 // Respond that the key exists on a node that does not yet have a connection:
                 0 => Err(parse_redis_value(b"-MOVED 123\r\n")),
                 // Respond with the new masters
-                1 => Err(Ok(Value::Array(vec![
-                    Value::Array(vec![
-                        Value::Int(0),
-                        Value::Int(1),
-                        Value::Array(vec![
-                            Value::BulkString(name.as_bytes().to_vec()),
-                            Value::Int(6379),
-                        ]),
-                    ]),
-                    Value::Array(vec![
-                        Value::Int(2),
-                        Value::Int(16383),
-                        Value::Array(vec![
-                            Value::BulkString(name.as_bytes().to_vec()),
-                            Value::Int(6380),
-                        ]),
-                    ]),
+                1 => Err(Ok(redis_value!([
+                    [0, 1, [name, 6379]],
+                    [2, 16383, [name, 6380]]
                 ]))),
                 _ => {
                     // Check that the correct node receives the request after rebuilding
                     assert_eq!(port, 6380);
-                    Err(Ok(Value::BulkString(b"123".to_vec())))
+                    Err(Ok(redis_value!("123")))
                 }
             }
         });
@@ -562,7 +522,7 @@ mod cluster {
                             }
                             2 => {
                                 assert!(contains_slice(cmd, b"GET"));
-                                Err(Ok(Value::BulkString(b"123".to_vec())))
+                                Err(Ok(redis_value!("123")))
                             }
                             _ => panic!("Node should not be called now"),
                         },
@@ -594,8 +554,8 @@ mod cluster {
             }
             started.store(true, atomic::Ordering::SeqCst);
 
-            if contains_slice(cmd, b"PING") {
-                return Err(Ok(Value::SimpleString("OK".into())));
+            if is_connection_check(cmd) {
+                return Err(Ok(redis_value!(simple:"OK")));
             }
 
             let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
@@ -613,7 +573,7 @@ mod cluster {
                 2 => {
                     assert_eq!(port, 6380);
                     assert!(contains_slice(cmd, b"GET"));
-                    Err(Ok(Value::BulkString(b"123".to_vec())))
+                    Err(Ok(redis_value!("123")))
                 }
                 _ => {
                     panic!("Unexpected request: {cmd:?}");
@@ -627,8 +587,8 @@ mod cluster {
     }
 
     #[test]
-    fn test_cluster_replica_read() {
-        let name = "test_cluster_replica_read";
+    fn test_cluster_random_replica_read() {
+        let name = "test_cluster_random_replica_read";
 
         // requests should route to replica
         let MockEnv {
@@ -638,13 +598,13 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |cmd: &[u8], port| {
                 respond_startup_with_replica(name, cmd)?;
 
                 match port {
-                    6380 => Err(Ok(Value::BulkString(b"123".to_vec()))),
+                    6380 => Err(Ok(redis_value!("123"))),
                     _ => panic!("Wrong node"),
                 }
             },
@@ -661,12 +621,12 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |cmd: &[u8], port| {
                 respond_startup_with_replica(name, cmd)?;
                 match port {
-                    6379 => Err(Ok(Value::SimpleString("OK".into()))),
+                    6379 => Err(Ok(redis_value!(simple:"OK"))),
                     _ => panic!("Wrong node"),
                 }
             },
@@ -676,7 +636,67 @@ mod cluster {
             .arg("test")
             .arg("123")
             .query::<Option<Value>>(&mut connection);
-        assert_eq!(value, Ok(Some(Value::SimpleString("OK".to_owned()))));
+        assert_eq!(value, Ok(Some(redis_value!(simple:"OK"))));
+    }
+
+    #[test]
+    fn test_cluster_round_robin_read() {
+        let name = "test_cluster_round_robin_read";
+        let ports = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let ports_clone = ports.clone();
+
+        // Two shards, each with two replicas.
+        // Shard 1 (slots 0..8192):    primary 6379, replicas 6380, 6381
+        // Shard 2 (slots 8192..16384): primary 6382, replicas 6383, 6384
+        let slots_config = vec![
+            MockSlotRange {
+                primary_port: 6379,
+                replica_ports: vec![6380, 6381],
+                slot_range: 0..8192,
+            },
+            MockSlotRange {
+                primary_port: 6382,
+                replica_ports: vec![6383, 6384],
+                slot_range: 8192..16384,
+            },
+        ];
+
+        let MockEnv {
+            mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .retries(0)
+                .read_routing_strategy(RoundRobinReplicaStrategy::new()),
+            name,
+            move |cmd: &[u8], port| {
+                respond_startup_with_replica_using_config(name, cmd, Some(slots_config.clone()))?;
+                if contains_slice(cmd, b"GET") {
+                    ports_clone.lock().unwrap().push(port);
+                    return Err(Ok(redis_value!("123")));
+                }
+                Ok(())
+            },
+        );
+
+        // "test" hashes to slot 6918 → shard 1 (replicas 6380, 6381).
+        // "{foo}test" hashes to slot 12182 → shard 2 (replicas 6383, 6384).
+        // Interleave reads across both shards and verify each shard
+        // round-robins independently.
+        for key in [
+            "test",
+            "{foo}test",
+            "test",
+            "{foo}test",
+            "test",
+            "{foo}test",
+        ] {
+            let _: Option<i32> = cmd("GET").arg(key).query(&mut connection).unwrap();
+        }
+
+        let recorded = ports.lock().unwrap().clone();
+        assert_eq!(recorded, vec![6380, 6383, 6381, 6384, 6380, 6383]);
     }
 
     #[test]
@@ -701,7 +721,7 @@ mod cluster {
                             std::io::ErrorKind::ConnectionReset,
                             "mock-io-error",
                         )))),
-                        _ => Err(Ok(Value::BulkString(b"123".to_vec()))),
+                        _ => Err(Ok(redis_value!("123"))),
                     },
                 }
             },
@@ -757,7 +777,7 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(
@@ -767,7 +787,7 @@ mod cluster {
                 )?;
                 if received_cmd == packed_cmd {
                     ports_clone.lock().unwrap().push(port);
-                    return Err(Ok(Value::SimpleString("OK".into())));
+                    return Err(Ok(redis_value!(simple:"OK")));
                 }
                 Ok(())
             },
@@ -863,7 +883,7 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -872,9 +892,7 @@ mod cluster {
                     .iter()
                     .filter_map(|expected_key| {
                         if cmd_str.contains(expected_key) {
-                            Some(Value::BulkString(
-                                format!("{expected_key}-{port}").into_bytes(),
-                            ))
+                            Some(redis_value!(format!("{expected_key}-{port}")))
                         } else {
                             None
                         }
@@ -902,21 +920,12 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
                 if port == 6381 {
-                    let results = vec![
-                        Value::BulkString("OK".as_bytes().to_vec()),
-                        Value::BulkString("QUEUED".as_bytes().to_vec()),
-                        Value::BulkString("QUEUED".as_bytes().to_vec()),
-                        Value::Array(vec![
-                            Value::BulkString("OK".as_bytes().to_vec()),
-                            Value::BulkString("bar".as_bytes().to_vec()),
-                        ]),
-                    ];
-                    return Err(Ok(Value::Array(results)));
+                    return Err(Ok(redis_value!(["OK", "QUEUED", "QUEUED", ["OK", "bar"]])));
                 }
                 Err(Err(RedisError::from(std::io::Error::new(
                     std::io::ErrorKind::ConnectionReset,
@@ -928,13 +937,7 @@ mod cluster {
         let result = connection
             .req_packed_commands(&packed_pipeline, 3, 1)
             .unwrap();
-        assert_eq!(
-            result,
-            vec![
-                Value::BulkString("OK".as_bytes().to_vec()),
-                Value::BulkString("bar".as_bytes().to_vec()),
-            ]
-        );
+        assert_eq!(result, vec![redis_value!("OK"), redis_value!("bar"),]);
     }
 
     #[test]
@@ -943,16 +946,7 @@ mod cluster {
         let mut pipeline = redis::pipe();
         pipeline.atomic().set("foo", "bar").get("foo");
         let packed_pipeline = pipeline.get_packed_pipeline();
-        let results = vec![
-            Value::BulkString("OK".as_bytes().to_vec()),
-            Value::BulkString("QUEUED".as_bytes().to_vec()),
-            Value::BulkString("QUEUED".as_bytes().to_vec()),
-            Value::Array(vec![
-                Value::BulkString("OK".as_bytes().to_vec()),
-                Value::BulkString("bar".as_bytes().to_vec()),
-            ]),
-        ];
-        let expected_result = Value::Array(results);
+        let expected_result = redis_value!(["OK", "QUEUED", "QUEUED", ["OK", "bar"]]);
         let cloned_result = expected_result.clone();
 
         let MockEnv {
@@ -962,7 +956,7 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -1003,7 +997,7 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_from_replicas(),
+                .read_routing_strategy(RandomReplicaStrategy),
             name,
             move |received_cmd: &[u8], _| {
                 respond_startup_with_replica_using_config(
@@ -1016,7 +1010,7 @@ mod cluster {
         );
 
         let res = connection.req_command(&redis::cmd("PING"));
-        assert!(res.is_ok());
+        assert_matches!(res, Ok(_));
     }
 
     #[test]
@@ -1031,11 +1025,11 @@ mod cluster {
             let result = connection
                 .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random));
             // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-            assert!(result.is_err());
+            assert_matches!(result, Err(_));
             // This will route to all nodes - different path through the code.
             let result = connection.req_packed_command(&cmd.get_packed_command());
             // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-            assert!(result.is_err());
+            assert_matches!(result, Err(_));
         }
     }
 
@@ -1055,12 +1049,12 @@ mod cluster {
         let result =
             connection.route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random));
         // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-        assert!(result.is_err());
+        assert_matches!(result, Err(_));
 
         // This will route to all nodes - different path through the code.
         let result = connection.req_packed_command(&cmd.get_packed_command());
         // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
-        assert!(result.is_err());
+        assert_matches!(result, Err(_));
 
         let _cluster = RedisCluster::new(RedisClusterConfiguration {
             ports,
@@ -1070,7 +1064,7 @@ mod cluster {
         let result = connection
             .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
             .unwrap();
-        assert_eq!(result, Value::SimpleString("PONG".to_string()));
+        assert_eq!(result, redis_value!(simple:"PONG"));
     }
 
     #[test]
@@ -1101,7 +1095,23 @@ mod cluster {
                 )),
             )
             .unwrap();
-        assert_eq!(result, Value::SimpleString("PONG".to_string()));
+        assert_eq!(result, redis_value!(simple:"PONG"));
+    }
+
+    #[test]
+    fn fail_on_empty_command() {
+        let ctx = TestClusterContext::new();
+        let mut connection = ctx.connection();
+
+        let error: RedisError = cluster_pipe().query::<String>(&mut connection).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Client);
+        assert_eq!(error.to_string(), "empty command - Client");
+
+        let error: RedisError = redis::Cmd::new()
+            .query::<String>(&mut connection)
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Client);
+        assert_eq!(error.to_string(), "empty command - Client");
     }
 
     #[cfg(feature = "tls-rustls")]
@@ -1151,12 +1161,16 @@ mod cluster {
             {
                 redis::ConnectionAddr::TcpTls { .. } => {
                     if connection.is_ok() {
-                        panic!("Must NOT be able to connect without client credentials if server accepts TLS");
+                        panic!(
+                            "Must NOT be able to connect without client credentials if server accepts TLS"
+                        );
                     }
                 }
                 _ => {
                     if let Err(e) = connection {
-                        panic!("Must be able to connect without client credentials if server does NOT accept TLS: {e:?}");
+                        panic!(
+                            "Must be able to connect without client credentials if server does NOT accept TLS: {e:?}"
+                        );
                     }
                 }
             }

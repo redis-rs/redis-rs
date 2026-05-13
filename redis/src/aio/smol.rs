@@ -18,13 +18,13 @@ use async_native_tls::{TlsConnector, TlsStream};
 #[cfg(feature = "smol-rustls-comp")]
 use crate::connection::create_rustls_config;
 #[cfg(feature = "smol-rustls-comp")]
-use futures_rustls::{client::TlsStream, TlsConnector};
+use futures_rustls::{TlsConnector, client::TlsStream};
 
 use super::TaskHandle;
 use futures_util::ready;
+use smol::net::TcpStream;
 #[cfg(unix)]
 use smol::net::unix::UnixStream;
-use smol::net::TcpStream;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 #[inline(always)]

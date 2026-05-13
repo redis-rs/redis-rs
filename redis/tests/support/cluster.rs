@@ -6,16 +6,17 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use crate::support::{build_single_client, start_tls_crypto_provider};
+use assert_matches::assert_matches;
+use redis::ConnectionInfo;
+use redis::ProtocolVersion;
 #[cfg(feature = "cluster-async")]
 use redis::aio::ConnectionLike;
 #[cfg(feature = "cluster-async")]
 use redis::cluster_async::Connect;
-use redis::ConnectionInfo;
-use redis::ProtocolVersion;
 #[cfg(feature = "tls-rustls")]
 use redis_test::cluster::ClusterType;
 use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
-use redis_test::server::{use_protocol, RedisServer};
+use redis_test::server::{RedisServer, use_protocol};
 
 #[cfg(feature = "tls-rustls")]
 use super::load_certs_from_file;
@@ -187,7 +188,7 @@ impl TestClusterContext {
 
             // subsequent unauthenticated command should fail:
             if let Ok(mut con) = client.get_connection() {
-                assert!(redis::cmd("PING").exec(&mut con).is_err());
+                assert_matches!(redis::cmd("PING").exec(&mut con), Err(_));
             }
         }
     }

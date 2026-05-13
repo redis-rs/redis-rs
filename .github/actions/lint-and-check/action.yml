@@ -1,6 +1,6 @@
 name: "Build and lint"
 inputs:
-  rust-toolchain: 
+  rust-toolchain:
     type: string,
     required: true
 

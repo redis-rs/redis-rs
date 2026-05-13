@@ -2,7 +2,7 @@ use redis::RedisResult;
 
 #[cfg(feature = "geospatial")]
 fn run() -> RedisResult<()> {
-    use redis::{geo, Commands};
+    use redis::{Commands, geo};
     use std::env;
     use std::f64;
 

@@ -9,27 +9,29 @@ mod basic {
     use assert_approx_eq::assert_approx_eq;
     use rand::distr::Alphanumeric;
     use rand::prelude::IndexedRandom;
-    use rand::{rng, Rng};
+    use rand::{Rng, rng};
 
-    use redis::ServerErrorKind;
     use redis::{
-        cmd, Client, Connection, ConnectionInfo, ConnectionLike, ControlFlow, CopyOptions,
-        ErrorKind, ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck,
-        HashFieldExpirationOptions,
+        Client, Connection, ConnectionInfo, ConnectionLike, ControlFlow, CopyOptions, ErrorKind,
+        ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, HashFieldExpirationOptions,
         IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply},
-        ProtocolVersion, PubSubCommands, PushInfo, PushKind, RedisConnectionInfo, RedisResult,
-        Role, ScanOptions, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs, TypedCommands,
-        UpdateCheck, Value, ValueType,
+        MSetOptions, ProtocolVersion, PubSubCommands, PushInfo, PushKind, RedisConnectionInfo,
+        RedisResult, Role, ScanOptions, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs,
+        TypedCommands, UpdateCheck, Value, ValueComparison, ValueType, cmd,
     };
+    use redis::{RedisError, ServerErrorKind};
+    use redis::{calculate_value_digest, is_valid_16_bytes_hex_digest};
 
     #[cfg(feature = "vector-sets")]
     use redis::vector_sets::{
         EmbeddingInput, VAddOptions, VEmbOptions, VSimOptions, VectorAddInput, VectorQuantization,
         VectorSimilaritySearchInput,
     };
+    use redis_test::redis_value;
     use redis_test::server::redis_settings;
     use redis_test::utils::get_listener_on_free_port;
 
+    use assert_matches::assert_matches;
     #[cfg(feature = "vector-sets")]
     use serde_json::json;
     use std::collections::{BTreeMap, BTreeSet};
@@ -62,7 +64,7 @@ mod basic {
             let hash_exists: bool = con.exists(&generated_hash_key).unwrap();
 
             if !hash_exists {
-                println!("Generated random testing hash key: {}", &generated_hash_key);
+                println!("Generated random testing hash key: {generated_hash_key}");
                 return generated_hash_key;
             }
         }
@@ -157,6 +159,12 @@ mod basic {
     fn test_key_type() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
+
+        // The key does not have a value
+        let none_key_type = con
+            .key_type("foo")
+            .expect("getting the type should succeed");
+        assert_eq!(none_key_type, ValueType::None);
 
         //The key is a simple value
         redis::cmd("SET").arg("foo").arg(42).exec(&mut con).unwrap();
@@ -323,10 +331,7 @@ mod basic {
         let mut con = ctx.connection();
 
         let info: redis::InfoDict = redis::cmd("INFO").query(&mut con).unwrap();
-        assert_eq!(
-            info.find(&"role"),
-            Some(&redis::Value::SimpleString("master".to_string()))
-        );
+        assert_eq!(info.find(&"role"), Some(&redis_value!(simple:"master")));
         assert_eq!(info.get("role"), Some("master".to_string()));
         assert_eq!(info.get("loading"), Some(false));
         assert!(!info.is_empty());
@@ -364,9 +369,8 @@ mod basic {
 
     #[test]
     fn test_hash_expiration() {
-        let ctx = TestContext::new();
         // Hash expiration is only supported in Redis 7.4.0 and later.
-        run_test_if_version_supported!(&(7, 4, 0));
+        let ctx = run_test_if_version_supported!(&(7, 4, 0));
 
         let mut con = ctx.connection();
         redis::cmd("HMSET")
@@ -1362,7 +1366,10 @@ mod basic {
 
         let res = pipe.exec(&mut con);
         let error_message = res.unwrap_err().to_string();
-        assert_eq!(&error_message, "Pipeline failure: [(Index 1, error: \"WRONGTYPE\": Operation against a key holding the wrong kind of value)]");
+        assert_eq!(
+            &error_message,
+            "Pipeline failure: [(Index 1, error: \"WRONGTYPE\": Operation against a key holding the wrong kind of value)]"
+        );
     }
 
     #[test]
@@ -1371,8 +1378,6 @@ mod basic {
         let mut con = ctx.connection();
 
         redis::pipe().cmd("PING").ignore().exec(&mut con).unwrap();
-
-        redis::pipe().exec(&mut con).unwrap();
     }
 
     #[test]
@@ -1572,7 +1577,7 @@ mod basic {
         redis::cmd("SET").arg(key).arg(42).exec(&mut con).unwrap();
 
         let response: (isize,) = redis::transaction(&mut con, &[key], |con, pipe| {
-            let val: isize = redis::cmd("GET").arg(key).query(con)?;
+            let val: isize = redis::cmd("GET").arg(key).query(con).unwrap();
             pipe.cmd("SET")
                 .arg(key)
                 .arg(val + 1)
@@ -1635,7 +1640,7 @@ mod basic {
             assert_eq!(
                 (
                     PushKind::Subscribe,
-                    vec![Value::BulkString("foo".as_bytes().to_vec()), Value::Int(1)]
+                    vec![redis_value!("foo"), redis_value!(1)]
                 ),
                 (kind, data)
             );
@@ -1643,10 +1648,7 @@ mod basic {
             assert_eq!(
                 (
                     PushKind::Message,
-                    vec![
-                        Value::BulkString("foo".as_bytes().to_vec()),
-                        Value::BulkString("42".as_bytes().to_vec())
-                    ]
+                    vec![redis_value!("foo"), redis_value!("42")]
                 ),
                 (kind, data)
             );
@@ -1654,10 +1656,7 @@ mod basic {
             assert_eq!(
                 (
                     PushKind::Message,
-                    vec![
-                        Value::BulkString("foo".as_bytes().to_vec()),
-                        Value::BulkString("23".as_bytes().to_vec())
-                    ]
+                    vec![redis_value!("foo"), redis_value!("23")]
                 ),
                 (kind, data)
             );
@@ -2012,7 +2011,7 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        assert!(con.set("my_key", 42).is_ok());
+        assert_matches!(con.set("my_key", 42), Ok(_));
         assert_eq!(con.get_int("my_key"), Ok(Some(42)));
 
         let (k1, k2): (i32, i32) = redis::pipe()
@@ -2035,7 +2034,7 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        assert!(con.mset(&[("key1", 1), ("key2", 2)]).is_ok());
+        assert_matches!(con.mset(&[("key1", 1), ("key2", 2)]), Ok(_));
         assert_eq!(con.mget_ints(&["key1", "key2"]), Ok(vec!(Some(1), Some(2))));
         assert_eq!(
             con.mget_ints(vec!["key1", "key2"]),
@@ -2093,7 +2092,7 @@ mod basic {
         assert_eq!(con.hincr("my_hash", "f1", 1), Ok(2.0));
         assert_eq!(con.hincr("my_hash", "f2", 1.5), Ok(3.5));
         assert_eq!(con.hexists("my_hash", "f2"), Ok(true));
-        assert!(con.hdel("my_hash", &["f1", "f2"]).is_ok());
+        assert_matches!(con.hdel("my_hash", &["f1", "f2"]), Ok(_));
         assert_eq!(con.hexists("my_hash", "f2"), Ok(false));
 
         let iter: redis::Iter<'_, (String, isize)> = con.hscan("my_hash").unwrap();
@@ -2127,7 +2126,7 @@ mod basic {
             Ok((2, 3, 4))
         );
 
-        assert!(con.lset("my_list", 0, 4).is_ok());
+        assert_matches!(con.lset("my_list", 0, 4), Ok(_));
         assert_eq!(
             redis::Commands::lrange(&mut con, "my_list", 0, 2),
             Ok((4, 3, 4))
@@ -2150,7 +2149,7 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        assert!(con.del("my_zset").is_ok());
+        assert_matches!(con.del("my_zset"), Ok(_));
         assert_eq!(con.zadd("my_zset", "one", 1), Ok(1));
         assert_eq!(con.zadd("my_zset", "two", 2), Ok(1));
 
@@ -2172,7 +2171,7 @@ mod basic {
         let map = HashMap::from([("one", 1), ("two", 2), ("three", 3)]);
 
         // Insert all pairs as entries of the hash `KEY`
-        assert!(con.del(KEY).is_ok());
+        assert_matches!(con.del(KEY), Ok(_));
         for kv in map.iter() {
             assert_eq!(con.hset(KEY, kv.0, kv.1), Ok(1));
         }
@@ -2288,21 +2287,21 @@ mod basic {
         assert_eq!(con.bit_diff(result, &keys), Ok(1));
         let diff_result: Vec<u8> = redis::Commands::get(&mut con, result).unwrap();
         assert_eq!(diff_result, vec![0x00]); // 00000000
-        assert!(con.bit_diff(result, keys[0]).is_err());
+        assert_matches!(con.bit_diff(result, keys[0]), Err(_));
 
         // BITOP DIFF1
         // DIFF1(K1, K2, K3) = ¬K1 ∧ (K2 ∨ K3) = Members of one or more of K2, K3, that are not members of K1
         assert_eq!(con.bit_diff1(result, &keys), Ok(1));
         let diff1_result: Vec<u8> = redis::Commands::get(&mut con, result).unwrap();
         assert_eq!(diff1_result, vec![0xF0]); // 11110000
-        assert!(con.bit_diff1(result, keys[0]).is_err());
+        assert_matches!(con.bit_diff1(result, keys[0]), Err(_));
 
         // BITOP ANDOR
         // ANDOR(K1, K2, K3) = K1 ∧ (K2 ∨ K3) = Members of K1 that are also members of one or more of K2, K3
         assert_eq!(con.bit_and_or(result, &keys), Ok(1));
         let and_or_result: Vec<u8> = redis::Commands::get(&mut con, result).unwrap();
         assert_eq!(and_or_result, vec![0x0F]); // 00001111
-        assert!(con.bit_and_or(result, keys[0]).is_err());
+        assert_matches!(con.bit_and_or(result, keys[0]), Err(_));
 
         // BITOP ONE
         // ONE(K1, K2, K3) =  { e | COUNT(e in K1, K2, K3) == 1 } = Members of exactly one of K1, K2, K3
@@ -2323,7 +2322,7 @@ mod basic {
 
         let ping = redis::cmd("PING").query::<String>(&mut con);
 
-        assert!(ping.is_err());
+        assert_matches!(ping, Err(_));
         eprintln!("{}", ping.unwrap_err());
         assert!(!con.is_open());
     }
@@ -2686,6 +2685,649 @@ mod basic {
     }
 
     #[test]
+    fn test_set_options_value_comparison() {
+        let empty = SetOptions::default();
+        assert_eq!(ToRedisArgs::to_redis_args(&empty).len(), 0);
+        const OLD_VALUE: &str = "old_value";
+        const DIGEST: &str = "digest";
+
+        // Test all value comparison options
+        let opts = SetOptions::default().value_comparison(ValueComparison::ifeq(OLD_VALUE));
+        assert_args!(&opts, "IFEQ", OLD_VALUE);
+        let opts = SetOptions::default().value_comparison(ValueComparison::ifne(OLD_VALUE));
+        assert_args!(&opts, "IFNE", OLD_VALUE);
+        let opts = SetOptions::default().value_comparison(ValueComparison::ifdeq(DIGEST));
+        assert_args!(&opts, "IFDEQ", DIGEST);
+        let opts = SetOptions::default().value_comparison(ValueComparison::ifdne(DIGEST));
+        assert_args!(&opts, "IFDNE", DIGEST);
+
+        // Test combinations with other parameters
+        let opts = SetOptions::default()
+            .conditional_set(ExistenceCheck::NX)
+            .value_comparison(ValueComparison::ifeq(OLD_VALUE))
+            .get(true)
+            .with_expiration(SetExpiry::PX(1000));
+        assert_args!(&opts, "NX", "IFEQ", OLD_VALUE, "GET", "PX", "1000");
+        let opts = SetOptions::default()
+            .conditional_set(ExistenceCheck::XX)
+            .value_comparison(ValueComparison::ifne(OLD_VALUE))
+            .get(true)
+            .with_expiration(SetExpiry::EX(1000));
+        assert_args!(&opts, "XX", "IFNE", OLD_VALUE, "GET", "EX", "1000");
+        let opts = SetOptions::default()
+            .conditional_set(ExistenceCheck::NX)
+            .value_comparison(ValueComparison::ifdeq(DIGEST))
+            .get(true)
+            .with_expiration(SetExpiry::PX(1000));
+        assert_args!(&opts, "NX", "IFDEQ", DIGEST, "GET", "PX", "1000");
+        let opts = SetOptions::default()
+            .conditional_set(ExistenceCheck::XX)
+            .value_comparison(ValueComparison::ifdne(DIGEST))
+            .get(true)
+            .with_expiration(SetExpiry::EX(1000));
+        assert_args!(&opts, "XX", "IFDNE", DIGEST, "GET", "EX", "1000");
+    }
+
+    /// The test validates the IFEQ value comparison option for the SET command
+    #[test]
+    fn test_set_value_comparison_value_equals() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let mut con = ctx.connection();
+
+        let key = "test_ifeq_key";
+        let non_existent_key = "test_ifeq_non_existent_key";
+        let initial_value = "initial_value";
+        let updated_value = "updated_value";
+        let non_matching_value = "non_matching_value";
+
+        // Set initial value
+        assert_eq!(con.set(key, initial_value), Ok(()));
+
+        // IFEQ with matching value should succeed and update the value
+        let result = con
+            .set_options(
+                key,
+                updated_value,
+                SetOptions::default()
+                    .value_comparison(ValueComparison::ifeq(initial_value))
+                    .get(true),
+            )
+            .unwrap();
+        // When GET is specified, the previous value is returned, regardless of the conditional (IFEQ) result
+        assert_eq!(result, Some(initial_value.to_string()));
+        // Verify that the value was updated
+        assert_eq!(con.get(key).unwrap(), Some(updated_value.to_string()));
+
+        // IFEQ with non-existent key should not create the key
+        let result = con
+            .set_options(
+                non_existent_key,
+                updated_value,
+                SetOptions::default()
+                    .value_comparison(ValueComparison::ifeq(initial_value))
+                    .get(true),
+            )
+            .unwrap();
+        assert_eq!(result, None);
+        assert!(!con.exists(non_existent_key).unwrap());
+
+        // IFEQ with non-matching value should not update the value
+        let result = con
+            .set_options(
+                key,
+                initial_value,
+                SetOptions::default()
+                    .value_comparison(ValueComparison::ifeq(non_matching_value))
+                    .get(true),
+            )
+            .unwrap();
+        // When GET is specified, the previous value is returned, regardless of the conditional (IFEQ) result
+        assert_eq!(result, Some(updated_value.to_string()));
+        // Verify that the value was not updated
+        assert_eq!(con.get(key).unwrap(), Some(updated_value.to_string()));
+    }
+
+    /// The test validates the IFNE value comparison option for the SET command
+    #[test]
+    fn test_set_value_comparison_value_not_equals() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let mut con = ctx.connection();
+
+        let key = "test_ifne_key";
+        let non_existent_key = "test_ifne_non_existent_key";
+        let initial_value = "initial_value";
+        let updated_value = "updated_value";
+        let non_matching_value = "non_matching_value";
+
+        // Set initial value
+        assert_eq!(con.set(key, initial_value), Ok(()));
+
+        // IFNE with non-matching value should succeed and update the value
+        let result = con
+            .set_options(
+                key,
+                updated_value,
+                SetOptions::default()
+                    .value_comparison(ValueComparison::ifne(non_matching_value))
+                    .get(true),
+            )
+            .unwrap();
+        // When GET is specified, the previous value is returned, regardless of the conditional (IFNE) result
+        assert_eq!(result, Some(initial_value.to_string()));
+        // Verify that the value was updated
+        assert_eq!(con.get(key).unwrap(), Some(updated_value.to_string()));
+
+        // IFNE with non-existent key should create the key
+        assert!(!con.exists(non_existent_key).unwrap());
+        let result = con
+            .set_options(
+                non_existent_key,
+                initial_value,
+                SetOptions::default()
+                    .value_comparison(ValueComparison::ifne(non_matching_value))
+                    .get(true),
+            )
+            .unwrap();
+        // When GET is specified and the key didn't exist, the result is NIL
+        assert_eq!(result, None);
+        // Verify that the key was created
+        assert_eq!(
+            con.get(non_existent_key).unwrap(),
+            Some(initial_value.to_string())
+        );
+
+        // Test IFNE with matching value should not update the value
+        let result = con
+            .set_options(
+                key,
+                initial_value,
+                SetOptions::default()
+                    .value_comparison(ValueComparison::ifne(updated_value))
+                    .get(true),
+            )
+            .unwrap();
+        // When GET is specified, the previous value is returned, regardless of the conditional (IFNE) result
+        assert_eq!(result, Some(updated_value.to_string()));
+        // Verify that the value was not updated
+        assert_eq!(con.get(key).unwrap(), Some(updated_value.to_string()));
+    }
+
+    /// The test validates the DIGEST command
+    #[test]
+    fn test_digest_command() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let mut con = ctx.connection();
+
+        let key = "test_digest_key";
+        let non_existent_key = "test_digest_non_existent_key";
+
+        let value_with_leading_zeroes_digest = "v8lf0c11xh8ymlqztfd3eeq16kfn4sspw7fqmnuuq3k3t75em5wdizgcdw7uc26nnf961u2jkfzkjytls2kwlj7626sd";
+        let leading_zeroes_digest = calculate_value_digest(value_with_leading_zeroes_digest);
+        // Validate that the 1st four bytes are all zeroes and they are not omitted
+        assert_eq!(&leading_zeroes_digest[..4], "0000");
+        assert!(is_valid_16_bytes_hex_digest(&leading_zeroes_digest));
+
+        let empty_string = String::new();
+        let empty_string_digest = calculate_value_digest(&empty_string);
+        assert!(is_valid_16_bytes_hex_digest(&empty_string_digest));
+
+        use rand::RngCore;
+        let mut rng = rand::rng();
+        let mut random_bytes = vec![0u8; 1024];
+        rng.fill_bytes(&mut random_bytes);
+        let random_bytes_digest = calculate_value_digest(&random_bytes);
+        println!("random_bytes_digest: {:?}", random_bytes_digest);
+        assert!(is_valid_16_bytes_hex_digest(&random_bytes_digest));
+
+        // Validate that the DIGEST command returns NIL when the given key doesn't exist
+        assert_eq!(con.digest(non_existent_key).unwrap(), None);
+
+        // Validate that the DIGEST command returns the same digest as the calculate_value_digest function
+        assert_eq!(con.set(key, value_with_leading_zeroes_digest), Ok(()));
+        assert_eq!(con.digest(key).unwrap(), Some(leading_zeroes_digest));
+
+        assert_eq!(con.set(key, empty_string), Ok(()));
+        assert_eq!(con.digest(key).unwrap(), Some(empty_string_digest));
+
+        assert_eq!(con.set(key, random_bytes), Ok(()));
+        assert_eq!(con.digest(key).unwrap(), Some(random_bytes_digest));
+
+        // Validate that the DIGEST command fails when the key is not a string
+        assert_matches!(con.hset_multiple(key, &[("f1", 1), ("f2", 2)]), Err(_));
+    }
+
+    /// The test validates the IFDEQ value comparison option for the SET command
+    #[test]
+    fn test_set_value_comparison_digest_equals() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let mut con = ctx.connection();
+
+        let key = "test_ifdeq_key";
+        let non_existent_key = "test_ifdeq_non_existent_key";
+        let initial_value = "initial_value";
+        let updated_value = "updated_value";
+        let non_matching_value = "non_matching_value";
+
+        // Set initial value
+        assert_eq!(con.set(key, initial_value), Ok(()));
+
+        // Calculate the digest of the initial value
+        let initial_value_digest = calculate_value_digest(initial_value);
+
+        // IFDEQ with matching digest should succeed and update the value
+        let result = con
+            .set_options(
+                key,
+                updated_value,
+                SetOptions::default()
+                    .value_comparison(ValueComparison::ifdeq(&initial_value_digest))
+                    .get(true),
+            )
+            .unwrap();
+        // When GET is specified, the previous value is returned, regardless of the conditional (IFDEQ) result
+        assert_eq!(result, Some(initial_value.to_string()));
+        // Verify that the value was updated
+        assert_eq!(con.get(key).unwrap(), Some(updated_value.to_string()));
+
+        // IFDEQ with non-existent key should not create the key
+        let result = con
+            .set_options(
+                non_existent_key,
+                updated_value,
+                SetOptions::default()
+                    .value_comparison(ValueComparison::ifdeq(&initial_value_digest))
+                    .get(true),
+            )
+            .unwrap();
+        assert_eq!(result, None);
+        assert!(!con.exists(non_existent_key).unwrap());
+
+        // IFDEQ with non-matching digest should not update the value
+        let non_matching_digest = calculate_value_digest(non_matching_value);
+        let result = con
+            .set_options(
+                key,
+                initial_value,
+                SetOptions::default()
+                    .value_comparison(ValueComparison::ifdeq(&non_matching_digest))
+                    .get(true),
+            )
+            .unwrap();
+        // When GET is specified, the previous value is returned, regardless of the conditional (IFDEQ) result
+        assert_eq!(result, Some(updated_value.to_string()));
+        // Verify that the value was not updated
+        assert_eq!(con.get(key).unwrap(), Some(updated_value.to_string()));
+    }
+
+    /// The test validates the IFDNE value comparison option for the SET command
+    #[test]
+    fn test_set_value_comparison_digest_not_equals() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let mut con = ctx.connection();
+
+        let key = "test_ifdne_key";
+        let non_existent_key = "test_ifdne_non_existent_key";
+        let initial_value = "initial_value";
+        let updated_value = "updated_value";
+        let non_matching_value = "non_matching_value";
+
+        // Set initial value
+        assert_eq!(con.set(key, initial_value), Ok(()));
+
+        // IFDNE with non-matching digest should succeed and update the value
+        let non_matching_digest = calculate_value_digest(non_matching_value);
+        let result = con
+            .set_options(
+                key,
+                updated_value,
+                SetOptions::default()
+                    .value_comparison(ValueComparison::ifdne(&non_matching_digest))
+                    .get(true),
+            )
+            .unwrap();
+        // When GET is specified, the previous value is returned, regardless of the conditional (IFDNE) result
+        assert_eq!(result, Some(initial_value.to_string()));
+        // Verify that the value was updated
+        assert_eq!(con.get(key).unwrap(), Some(updated_value.to_string()));
+
+        // IFDNE with non-existent key should create the key
+        let result = con
+            .set_options(
+                non_existent_key,
+                initial_value,
+                SetOptions::default()
+                    .value_comparison(ValueComparison::ifdne(&non_matching_digest))
+                    .get(true),
+            )
+            .unwrap();
+        // When GET is specified and the key didn't exist, the result is NIL
+        assert_eq!(result, None);
+        // Verify that the key was created
+        assert_eq!(
+            con.get(non_existent_key).unwrap(),
+            Some(initial_value.to_string())
+        );
+
+        // IFDNE with matching digest should not update the value
+
+        // Calculate the digest of the UPDATED value!
+        let updated_value_digest = calculate_value_digest(updated_value);
+
+        let result = con
+            .set_options(
+                key,
+                non_matching_value,
+                SetOptions::default()
+                    .value_comparison(ValueComparison::ifdne(&updated_value_digest))
+                    .get(true),
+            )
+            .unwrap();
+        // When GET is specified, the previous value is returned, regardless of the conditional (IFDNE) result
+        assert_eq!(result, Some(updated_value.to_string()));
+        // Verify that the value was not updated
+        assert_eq!(con.get(key).unwrap(), Some(updated_value.to_string()));
+    }
+
+    #[test]
+    fn test_del_ex() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let mut con = ctx.connection();
+
+        let key = "test_del_ex_key";
+        let non_existent_key = "test_del_ex_non_existent_key";
+        let initial_value = "initial_value";
+        let non_matching_value = "non_matching_value";
+        let initial_value_digest = calculate_value_digest(initial_value);
+        let non_matching_digest = calculate_value_digest(non_matching_value);
+
+        let value_comparisons = [
+            ValueComparison::ifeq(initial_value),
+            ValueComparison::ifne(initial_value),
+            ValueComparison::ifdeq(&initial_value_digest),
+            ValueComparison::ifdne(&initial_value_digest),
+        ];
+
+        // IFEQ tests
+        assert_eq!(con.set(key, initial_value), Ok(()));
+        // IFEQ with non-matching value should not delete the key
+        assert_eq!(
+            con.del_ex(key, ValueComparison::ifeq(non_matching_value)),
+            Ok(0)
+        );
+        assert!(con.exists(key).unwrap());
+        // IFEQ with matching value should succeed and delete the key
+        assert_eq!(con.del_ex(key, ValueComparison::ifeq(initial_value)), Ok(1));
+        assert!(!con.exists(key).unwrap());
+
+        // IFNE tests
+        assert_eq!(con.set(key, initial_value), Ok(()));
+        // IFNE with matching value should not delete the key
+        assert_eq!(con.del_ex(key, ValueComparison::ifne(initial_value)), Ok(0));
+        assert!(con.exists(key).unwrap());
+        // IFNE with non-matching value should succeed and delete the key
+        assert_eq!(
+            con.del_ex(key, ValueComparison::ifne(non_matching_value)),
+            Ok(1)
+        );
+        assert!(!con.exists(key).unwrap());
+
+        // IFDEQ tests
+        assert_eq!(con.set(key, initial_value), Ok(()));
+        // IFDEQ with non-matching digest should not delete the key
+        assert_eq!(
+            con.del_ex(key, ValueComparison::ifdeq(&non_matching_digest)),
+            Ok(0)
+        );
+        assert!(con.exists(key).unwrap());
+        // IFDEQ with matching digest should succeed and delete the key
+        assert_eq!(
+            con.del_ex(key, ValueComparison::ifdeq(&initial_value_digest)),
+            Ok(1)
+        );
+        assert!(!con.exists(key).unwrap());
+
+        // IFDNE tests
+        assert_eq!(con.set(key, initial_value), Ok(()));
+        // IFDNE with matching digest should not delete the key
+        assert_eq!(
+            con.del_ex(key, ValueComparison::ifdne(&initial_value_digest)),
+            Ok(0)
+        );
+        assert!(con.exists(key).unwrap());
+        // IFDNE with non-matching digest should succeed and delete the key
+        assert_eq!(
+            con.del_ex(key, ValueComparison::ifdne(&non_matching_digest)),
+            Ok(1)
+        );
+        assert!(!con.exists(key).unwrap());
+
+        // Verify that all comparisons work with non-existent keys and return 0
+        for value_comparison in &value_comparisons {
+            assert_eq!(
+                con.del_ex(non_existent_key, value_comparison.clone()),
+                Ok(0)
+            );
+        }
+
+        // Verify that all comparisons return an error when used with a value that is not a string
+        assert_eq!(con.hset_multiple(key, &[("f1", 1), ("f2", 2)]), Ok(()));
+        for value_comparison in &value_comparisons {
+            assert_matches!(con.del_ex(key, value_comparison.clone()), Err(_));
+        }
+    }
+
+    /// Test MSetOptions serialization to Redis arguments
+    #[test]
+    fn test_mset_options() {
+        assert_eq!(ToRedisArgs::to_redis_args(&MSetOptions::default()).len(), 0);
+
+        // Test with NX & XX options
+        let opts = MSetOptions::default().conditional_set(ExistenceCheck::NX);
+        assert_args!(&opts, "NX");
+        let opts = MSetOptions::default().conditional_set(ExistenceCheck::XX);
+        assert_args!(&opts, "XX");
+
+        // Test with expiration options
+        let opts = MSetOptions::default().with_expiration(SetExpiry::EX(60));
+        assert_args!(&opts, "EX", "60");
+        let opts = MSetOptions::default().with_expiration(SetExpiry::PX(1000));
+        assert_args!(&opts, "PX", "1000");
+        let opts = MSetOptions::default().with_expiration(SetExpiry::EXAT(1234567890));
+        assert_args!(&opts, "EXAT", "1234567890");
+        let opts = MSetOptions::default().with_expiration(SetExpiry::PXAT(1234567890000));
+        assert_args!(&opts, "PXAT", "1234567890000");
+        let opts = MSetOptions::default().with_expiration(SetExpiry::KEEPTTL);
+        assert_args!(&opts, "KEEPTTL");
+
+        // Test combinations
+        let opts = MSetOptions::default()
+            .conditional_set(ExistenceCheck::NX)
+            .with_expiration(SetExpiry::EX(60));
+        assert_args!(&opts, "NX", "EX", "60");
+
+        let opts = MSetOptions::default()
+            .conditional_set(ExistenceCheck::XX)
+            .with_expiration(SetExpiry::PX(1000));
+        assert_args!(&opts, "XX", "PX", "1000");
+
+        let opts = MSetOptions::default()
+            .conditional_set(ExistenceCheck::NX)
+            .with_expiration(SetExpiry::KEEPTTL);
+        assert_args!(&opts, "NX", "KEEPTTL");
+    }
+
+    /// Test the MSETEX command with the NX existence option
+    #[test]
+    fn test_mset_ex_nx() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let mut con = ctx.connection();
+
+        let key1 = "mset_ex_nx_key1";
+        let key2 = "mset_ex_nx_key2";
+        let key3 = "mset_ex_nx_key3";
+
+        let initial_value1 = "initial_value1";
+        let initial_value2 = "initial_value2";
+        let initial_value3 = "initial_value3";
+
+        let updated_value1 = "updated_value1";
+        let updated_value2 = "updated_value2";
+
+        let opts = MSetOptions::default().conditional_set(ExistenceCheck::NX);
+
+        // Test 1: Setting multiple keys with NX should succeed when none of them exists
+        assert!(
+            con.mset_ex(&[(key1, initial_value1), (key2, initial_value2)], opts)
+                .unwrap()
+        );
+        // Verify that the keys were set
+        assert_eq!(con.get(key1), Ok(Some(initial_value1.to_string())));
+        assert_eq!(con.get(key2), Ok(Some(initial_value2.to_string())));
+
+        // Test 2: Setting the same keys with NX should fail
+        assert!(
+            !con.mset_ex(&[(key1, updated_value1), (key2, updated_value2)], opts)
+                .unwrap()
+        );
+        // Verify that the values were not changed
+        assert_eq!(con.get(key1), Ok(Some(initial_value1.to_string())));
+        assert_eq!(con.get(key2), Ok(Some(initial_value2.to_string())));
+
+        // Test 3: Setting keys with NX should fail when there is an existing one among them
+        assert!(
+            !con.mset_ex(&[(key1, updated_value1), (key3, initial_value3)], opts)
+                .unwrap()
+        );
+        // Verify that key3 was not created
+        assert!(!con.exists(key3).unwrap());
+    }
+
+    /// Test the MSETEX command with the XX existence option
+    #[test]
+    fn test_mset_ex_xx() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let mut con = ctx.connection();
+
+        let key1 = "mset_ex_xx_key1";
+        let key2 = "mset_ex_xx_key2";
+        let key3 = "mset_ex_xx_key3";
+
+        let initial_value1 = "initial_value1";
+        let initial_value2 = "initial_value2";
+        let initial_value3 = "initial_value3";
+
+        let updated_value1 = "updated_value1";
+        let updated_value2 = "updated_value2";
+
+        // Test 1: Setting keys with XX should fail when they don't exist
+        let opts = MSetOptions::default().conditional_set(ExistenceCheck::XX);
+        assert!(
+            !con.mset_ex(&[(key1, initial_value1), (key2, initial_value2)], opts)
+                .unwrap()
+        );
+        assert!(!con.exists(key1).unwrap());
+        assert!(!con.exists(key2).unwrap());
+
+        // Create the keys with their initial values
+        let opts = opts.conditional_set(ExistenceCheck::NX);
+        assert!(
+            con.mset_ex(&[(key1, initial_value1), (key2, initial_value2)], opts)
+                .unwrap()
+        );
+
+        let opts = opts.conditional_set(ExistenceCheck::XX);
+        // Test 2: Updating existing keys with XX should succeed
+        assert!(
+            con.mset_ex(&[(key1, updated_value1), (key2, updated_value2)], opts)
+                .unwrap()
+        );
+        // Verify that the values were updated
+        assert_eq!(con.get(key1), Ok(Some(updated_value1.to_string())));
+        assert_eq!(con.get(key2), Ok(Some(updated_value2.to_string())));
+
+        // Test 3: Setting keys with XX should fail when there is a non-existing one among them
+        assert!(
+            !con.mset_ex(&[(key1, updated_value1), (key3, initial_value3)], opts)
+                .unwrap()
+        );
+
+        // Verify key1 was not changed and key3 was not created
+        assert_eq!(con.get(key1), Ok(Some(updated_value1.to_string())));
+        assert!(!con.exists(key3).unwrap());
+    }
+
+    /// Test the MSETEX command with all supported expiration options
+    #[test]
+    fn test_mset_ex_expiration_options() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let mut con = ctx.connection();
+
+        let current_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+
+        // Create a list of key-value pairs and their corresponding expiration options
+        // Note that the last two key-value pairs are used to test the KEEPTTL option
+        let key_values = [
+            ("mset_ex_exp_key1", "initial_value1"),
+            ("mset_ex_exp_key2", "initial_value2"),
+            ("mset_ex_exp_key3", "initial_value3"),
+            ("mset_ex_exp_key4", "initial_value4"),
+            ("mset_ex_exp_key5", "initial_value5"),
+            ("mset_ex_exp_key6", "initial_value6"),
+            ("mset_ex_exp_key7", "initial_value7"),
+            ("mset_ex_exp_key8", "initial_value8"),
+            ("mset_ex_exp_key9", "initial_value9"),
+            ("mset_ex_exp_key10", "initial_value10"),
+            ("mset_ex_exp_key9", "updated_value9"),
+            ("mset_ex_exp_key10", "updated_value10"),
+        ];
+
+        let existence_checks_and_expirations = [
+            (ExistenceCheck::NX, SetExpiry::EX(1)),
+            (ExistenceCheck::NX, SetExpiry::PX(1000)),
+            (
+                ExistenceCheck::NX,
+                SetExpiry::EXAT(current_timestamp.as_secs() + 1),
+            ),
+            (
+                ExistenceCheck::NX,
+                SetExpiry::PXAT(current_timestamp.as_millis() as u64 + 1000),
+            ),
+            (ExistenceCheck::NX, SetExpiry::EX(1)),
+            (ExistenceCheck::XX, SetExpiry::KEEPTTL),
+        ];
+        assert!(key_values.len() % 2 == 0);
+        assert!(key_values.len() == existence_checks_and_expirations.len() * 2);
+
+        let opts = MSetOptions::default();
+        for (j, (existence_check, expiry)) in existence_checks_and_expirations.iter().enumerate() {
+            let i = 2 * j;
+
+            let opts = opts
+                .conditional_set(*existence_check)
+                .with_expiration(*expiry);
+            assert!(
+                con.mset_ex(&[key_values[i], key_values[i + 1]], opts)
+                    .unwrap()
+            );
+            assert_eq!(
+                con.mget((key_values[i].0, key_values[i + 1].0)),
+                Ok(vec![
+                    Some(key_values[i].1.to_string()),
+                    Some(key_values[i + 1].1.to_string())
+                ])
+            );
+        }
+
+        // Wait for the keys to expire
+        sleep(Duration::from_millis(1100));
+
+        // Verify that the keys have expired
+        for key_value in &key_values {
+            assert_eq!(con.exists(key_value.0), Ok(false));
+        }
+    }
+
+    #[test]
     fn test_copy_options() {
         let empty = CopyOptions::default();
         assert_eq!(ToRedisArgs::to_redis_args(&empty).len(), 0);
@@ -2725,9 +3367,8 @@ mod basic {
 
     #[test]
     fn test_expire_time() {
-        let ctx = TestContext::new();
         // EXPIRETIME/PEXPIRETIME is available from Redis version 7.4.0
-        run_test_if_version_supported!(&(7, 4, 0));
+        let ctx = run_test_if_version_supported!(&(7, 4, 0));
 
         let mut con = ctx.connection();
 
@@ -2869,14 +3510,14 @@ mod basic {
         let redis_version = ctx.get_version();
         assert!(redis_version.0 >= 5);
 
-        assert!(con.zadd("a", "1a", 1).is_ok());
-        assert!(con.zadd("b", "2b", 2).is_ok());
-        assert!(con.zadd("c", "3c", 3).is_ok());
-        assert!(con.zadd("d", "4d", 4).is_ok());
-        assert!(con.zadd("a", "5a", 5).is_ok());
-        assert!(con.zadd("b", "6b", 6).is_ok());
-        assert!(con.zadd("c", "7c", 7).is_ok());
-        assert!(con.zadd("d", "8d", 8).is_ok());
+        assert_matches!(con.zadd("a", "1a", 1), Ok(_));
+        assert_matches!(con.zadd("b", "2b", 2), Ok(_));
+        assert_matches!(con.zadd("c", "3c", 3), Ok(_));
+        assert_matches!(con.zadd("d", "4d", 4), Ok(_));
+        assert_matches!(con.zadd("a", "5a", 5), Ok(_));
+        assert_matches!(con.zadd("b", "6b", 6), Ok(_));
+        assert_matches!(con.zadd("c", "7c", 7), Ok(_));
+        assert_matches!(con.zadd("d", "8d", 8), Ok(_));
 
         let min = con.bzpopmin("b", 0.0);
         let max = con.bzpopmax("b", 0.0);
@@ -3115,10 +3756,7 @@ mod basic {
             .vsim(key, VectorSimilaritySearchInput::Element(point_of_interest))
             .unwrap();
         if let Value::Array(results_array) = &element_search_results {
-            assert_eq!(
-                results_array[0],
-                Value::BulkString(point_of_interest.as_bytes().to_vec())
-            );
+            assert_eq!(results_array[0], redis_value!(point_of_interest));
         } else {
             panic!("Expected array result from VSIM, got {element_search_results:?}");
         }
@@ -3177,20 +3815,16 @@ mod basic {
             Value::Array(results_array) => {
                 assert_eq!(results_array.len(), elements_count * 2);
                 // Expect an exact match with the point of interest.
-                assert_eq!(
-                    results_array[0],
-                    Value::BulkString(point_of_interest.as_bytes().to_vec())
-                );
-                assert_eq!(results_array[1], Value::BulkString("1".as_bytes().to_vec()));
+                assert_eq!(results_array[0], redis_value!(point_of_interest));
+                assert_eq!(results_array[1], redis_value!("1"));
             }
             Value::Map(results_map) => {
                 assert_eq!(results_map.len(), elements_count);
                 // Find the point of interest.
-                let point_key = Value::BulkString(point_of_interest.as_bytes().to_vec());
-                let score =
-                    results_map
-                        .iter()
-                        .find_map(|(k, v)| if k == &point_key { Some(v) } else { None });
+                let point_key = redis_value!(point_of_interest);
+                let score = results_map
+                    .iter()
+                    .find_map(|(k, v)| if k == &point_key { Some(v) } else { None });
 
                 assert!(
                     score.is_some(),
@@ -3221,18 +3855,9 @@ mod basic {
 
         if let Value::Array(results_array) = &element_search_results {
             assert_eq!(results_array.len(), 3);
-            assert_eq!(
-                results_array[0],
-                Value::BulkString("pt:A".as_bytes().to_vec())
-            );
-            assert_eq!(
-                results_array[1],
-                Value::BulkString("pt:C".as_bytes().to_vec())
-            );
-            assert_eq!(
-                results_array[2],
-                Value::BulkString("pt:B".as_bytes().to_vec())
-            );
+            assert_eq!(results_array[0], redis_value!("pt:A"));
+            assert_eq!(results_array[1], redis_value!("pt:C"));
+            assert_eq!(results_array[2], redis_value!("pt:B"));
         } else {
             panic!("Expected array result from VSIM, got {element_search_results:?}");
         }
@@ -3248,14 +3873,8 @@ mod basic {
             .unwrap();
         if let Value::Array(results_array) = &element_search_results {
             assert_eq!(results_array.len(), 2);
-            assert_eq!(
-                results_array[0],
-                Value::BulkString("pt:C".as_bytes().to_vec())
-            );
-            assert_eq!(
-                results_array[1],
-                Value::BulkString("pt:B".as_bytes().to_vec())
-            );
+            assert_eq!(results_array[0], redis_value!("pt:C"));
+            assert_eq!(results_array[1], redis_value!("pt:B"));
         } else {
             panic!("Expected array result from VSIM, got {element_search_results:?}");
         }
@@ -3330,7 +3949,7 @@ mod basic {
                 assert_eq!(embeddings_array.len(), expected_embedding_response_length);
                 assert_eq!(
                     embeddings_array[0],
-                    Value::SimpleString(expected_embedding_response_quantization.to_string())
+                    redis_value!(simple:expected_embedding_response_quantization),
                 );
             } else {
                 panic!("Expected array result from VEMB RAW, got {current_point_embeddings_raw:?}");
@@ -3343,25 +3962,23 @@ mod basic {
         // Extract some properties from the response and validate that they match the expected values.
         assert_eq!(
             vector_set_information.get("quant-type"),
-            Some(&Value::SimpleString(
-                expected_embedding_response_quantization.to_string()
-            ))
+            Some(&redis_value!(simple:expected_embedding_response_quantization))
         );
         assert_eq!(
             vector_set_information.get("hnsw-m"),
-            Some(&Value::Int(max_number_of_links as i64))
+            Some(&redis_value!(max_number_of_links as i64))
         );
         assert_eq!(
             vector_set_information.get("vector-dim"),
-            Some(&Value::Int(reduction_dimension as i64))
+            Some(&redis_value!(reduction_dimension as i64))
         );
         assert_eq!(
             vector_set_information.get("size"),
-            Some(&Value::Int(points_data.len() as i64))
+            Some(&redis_value!(points_data.len() as i64))
         );
         assert_eq!(
             vector_set_information.get("attributes-count"),
-            Some(&Value::Int(1))
+            Some(&redis_value!(1))
         );
         // VINFO returns NIL for non-existent keys, which is represented as None.
         assert_eq!(con.vinfo(non_existent_key), Ok(None));
@@ -3377,8 +3994,10 @@ mod basic {
 
             for (i, layer) in layers.iter().enumerate() {
                 println!("Layer {i}: {layer:?}");
-                assert!(matches!(layer, Value::Array(_)),
-                    "[VLINKS] Expected an array result representing the links in layer {i}, got {layer:?}");
+                assert!(
+                    matches!(layer, Value::Array(_)),
+                    "[VLINKS] Expected an array result representing the links in layer {i}, got {layer:?}"
+                );
             }
         } else {
             panic!("[VLINKS] Expected an array result representing the layers, got {links:?}");
@@ -3404,8 +4023,10 @@ mod basic {
                     .zip(layers_without_scores.iter())
                     .enumerate()
                 {
-                    assert!(matches!(layer_with_scores, Value::Array(_) | Value::Map(_)),
-                        "[VLINKS WITH SCORES] Expected an array or map result representing the links in layer {i} along with their scores, got {layer_with_scores:?}");
+                    assert!(
+                        matches!(layer_with_scores, Value::Array(_) | Value::Map(_)),
+                        "[VLINKS WITH SCORES] Expected an array or map result representing the links in layer {i} along with their scores, got {layer_with_scores:?}"
+                    );
 
                     println!("Layer {i} without scores: {layer_without_scores:?}");
                     println!("Layer {i} with scores: {layer_with_scores:?}");
@@ -3433,13 +4054,17 @@ mod basic {
                             );
                         }
                         _ => {
-                            panic!("[VLINKS WITH SCORES] Unexpected format combination for layer {i}: {layer_with_scores:?} and {layer_without_scores:?}");
+                            panic!(
+                                "[VLINKS WITH SCORES] Unexpected format combination for layer {i}: {layer_with_scores:?} and {layer_without_scores:?}"
+                            );
                         }
                     }
                 }
             }
         } else {
-            panic!("[VLINKS WITH SCORES] Expected an array result representing the layers, got {links_with_scores:?}");
+            panic!(
+                "[VLINKS WITH SCORES] Expected an array result representing the layers, got {links_with_scores:?}"
+            );
         }
 
         // VRANDMEMBER testing section
@@ -3590,7 +4215,7 @@ mod basic {
                 VectorSimilaritySearchInput::Values(EmbeddingInput::Float64(&points_data[0].1)),
             )
             .unwrap();
-        assert_eq!(search_results, Value::Array(Vec::<Value>::new()));
+        assert_eq!(search_results, redis_value!([]));
 
         let search_results: Value = con
             .vsim(
@@ -3598,7 +4223,7 @@ mod basic {
                 VectorSimilaritySearchInput::Element(point_of_interest),
             )
             .unwrap();
-        assert_eq!(search_results, Value::Array(Vec::<Value>::new()));
+        assert_eq!(search_results, redis_value!([]));
 
         // VSIM returns an error for similarity searches with non-existent elements.
         let result: RedisResult<Value> = con.vsim(
@@ -3635,12 +4260,7 @@ mod basic {
             con.get_int("key_1").unwrap();
             let PushInfo { kind, data } = rx.try_recv().unwrap();
             assert_eq!(
-                (
-                    PushKind::Invalidate,
-                    vec![Value::Array(vec![Value::BulkString(
-                        "key_1".as_bytes().to_vec()
-                    )])]
-                ),
+                (PushKind::Invalidate, vec![redis_value!(["key_1"])]),
                 (kind, data)
             );
         }
@@ -3651,12 +4271,7 @@ mod basic {
         con.get_int("key_1").unwrap();
         let PushInfo { kind, data } = new_rx.try_recv().unwrap();
         assert_eq!(
-            (
-                PushKind::Invalidate,
-                vec![Value::Array(vec![Value::BulkString(
-                    "key_1".as_bytes().to_vec()
-                )])]
-            ),
+            (PushKind::Invalidate, vec![redis_value!(["key_1"])]),
             (kind, data)
         );
 
@@ -3688,7 +4303,7 @@ mod basic {
         );
         drop(ctx);
         let x: RedisResult<()> = con.set("A", "1");
-        assert!(x.is_err());
+        assert_matches!(x, Err(_));
         assert_eq!(rx.try_recv().unwrap().kind, PushKind::Disconnection);
     }
 
@@ -3729,24 +4344,21 @@ mod basic {
         assert!(
             messages.contains(&(
                 PushKind::Subscribe,
-                vec![Value::BulkString("foo".as_bytes().to_vec()), Value::Int(1)]
+                vec![redis_value!("foo"), redis_value!(1)]
             )),
             "{messages:?}"
         );
         assert!(
             messages.contains(&(
                 PushKind::PSubscribe,
-                vec![Value::BulkString("bar*".as_bytes().to_vec()), Value::Int(2)]
+                vec![redis_value!("bar*"), redis_value!(2)]
             )),
             "{messages:?}"
         );
         assert!(
             messages.contains(&(
                 PushKind::Message,
-                vec![
-                    Value::BulkString("foo".as_bytes().to_vec()),
-                    Value::BulkString("42".as_bytes().to_vec())
-                ]
+                vec![redis_value!("foo"), redis_value!("42")]
             )),
             "{messages:?}"
         );
@@ -3754,9 +4366,9 @@ mod basic {
             messages.contains(&(
                 PushKind::PMessage,
                 vec![
-                    Value::BulkString("bar*".as_bytes().to_vec()),
-                    Value::BulkString("barvaz".as_bytes().to_vec()),
-                    Value::BulkString("23".as_bytes().to_vec())
+                    redis_value!("bar*"),
+                    redis_value!("barvaz"),
+                    redis_value!("23"),
                 ]
             )),
             "{messages:?}"
@@ -3774,7 +4386,7 @@ mod basic {
         assert_eq!(
             (
                 PushKind::Unsubscribe,
-                vec![Value::BulkString("foo".as_bytes().to_vec()), Value::Int(1)]
+                vec![redis_value!("foo"), redis_value!(1)]
             ),
             (kind, data)
         );
@@ -3782,7 +4394,7 @@ mod basic {
         assert_eq!(
             (
                 PushKind::PUnsubscribe,
-                vec![Value::BulkString("bar*".as_bytes().to_vec()), Value::Int(0)]
+                vec![redis_value!("bar*"), redis_value!(0)]
             ),
             (kind, data)
         );
@@ -3840,7 +4452,7 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
         let ret = redis::cmd("ROLE").query::<Role>(&mut con).unwrap();
-        assert!(matches!(ret, Role::Primary { .. }));
+        assert_matches!(ret, Role::Primary { .. });
     }
 
     #[test]
@@ -3868,5 +4480,57 @@ mod basic {
         assert!(try_connect.is_err_and(|err| { err.is_timeout() }));
 
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn fail_on_empty_command() {
+        let ctx = TestContext::new();
+        let mut connection = ctx.connection();
+
+        let error: RedisError = redis::Pipeline::new()
+            .query::<String>(&mut connection)
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Client);
+        assert_eq!(error.to_string(), "empty command - Client");
+
+        let error: RedisError = redis::Cmd::new()
+            .query::<String>(&mut connection)
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Client);
+        assert_eq!(error.to_string(), "empty command - Client");
+    }
+
+    #[test]
+    fn test_connection_info_lib_name() {
+        // Setting the lib_name etc is only supported in Redis 7.2.0 and later.
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_7_2);
+
+        // Build a `ConnectionInfo` that sets lib_name etc
+        let redis = redis_settings().set_lib_name("redis-rs-test-basic-lib-name", "42.4711");
+        let connection_info = ctx.server.connection_info().set_redis_settings(redis);
+
+        // Grab a connection with it
+        let client = Client::open(connection_info).unwrap();
+        let mut con = client
+            .get_connection()
+            .expect("getting the connection should succeed");
+
+        // Get the current CLIENT INFO and prepare it as HashMap
+        let client_info_str: String = redis::cmd("CLIENT").arg("INFO").query(&mut con).unwrap();
+        let mut client_info = HashMap::new();
+        for pair_str in client_info_str.split(" ") {
+            let items = pair_str.splitn(2, '=').collect::<Vec<&str>>();
+            client_info.insert(items[0].trim(), items[1].trim());
+        }
+
+        // Check the reported client info
+        assert_eq!(
+            *client_info.get("lib-name").expect("lib-name should exist"),
+            "redis-rs-test-basic-lib-name"
+        );
+        assert_eq!(
+            *client_info.get("lib-ver").expect("lib-ver should exist"),
+            "42.4711"
+        );
     }
 }

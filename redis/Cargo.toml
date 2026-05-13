@@ -1,13 +1,13 @@
 [package]
 name = "redis"
-version = "1.0.0-rc.3"
+version = "1.2.1"
 keywords = ["redis", "valkey", "cluster", "sentinel", "pubsub"]
 description = "Redis driver for Rust."
 homepage = "https://github.com/redis-rs/redis-rs"
 repository = "https://github.com/redis-rs/redis-rs"
 documentation = "https://docs.rs/redis"
 license = "BSD-3-Clause"
-edition = "2021"
+edition = "2024"
 rust-version = "1.85"
 readme = "../README.md"
 
@@ -45,15 +45,13 @@ futures-util = { version = "0.3.31", default-features = false, features = [
 ], optional = true }
 pin-project-lite = { version = "0.2", optional = true }
 tokio-util = { version = "0.7", optional = true }
+async-lock = { version = "3", optional = true }
 tokio = { version = "1", features = [
-  "rt",
-  "net",
-  "time",
   "sync",
 ], optional = true }
 
 # Only needed for the connection manager
-arc-swap = { version = "1.7.1", optional = true }
+arc-swap = { version = "1.9.1", optional = true }
 futures-channel = { version = "0.3.31", optional = true }
 backon = { version = "1.6.0", optional = true, default-features = false }
 
@@ -61,7 +59,7 @@ backon = { version = "1.6.0", optional = true, default-features = false }
 r2d2 = { version = "0.8.10", optional = true }
 
 # Only needed for the bb8 feature
-bb8 = { version = "0.9.0", optional = true }
+bb8 = { version = "0.9.1", optional = true }
 
 # Only needed for cluster
 crc16 = { version = "0.4", optional = true }
@@ -90,11 +88,11 @@ futures-rustls = { version = "0.26", optional = true, default-features = false }
 
 # Needed for modules Support
 serde = { version = "1.0.219", optional = true }
-serde_json = { version = "1.0.145", optional = true }
+serde_json = { version = "1.0.149", optional = true }
 
 # Only needed for bignum Support
-rust_decimal = { version = "1.39.0", optional = true }
-bigdecimal = { version = "0.4.9", optional = true }
+rust_decimal = { version = "1.41.0", optional = true }
+bigdecimal = { version = "0.4.10", optional = true }
 num-bigint = { version = "0.4.6", optional = true }
 
 # Optional aHash support
@@ -103,16 +101,26 @@ ahash = { version = "0.8.11", optional = true }
 log = { version = "0.4", optional = true }
 
 # Optional uuid support
-uuid = { version = "1.18.1", optional = true }
+uuid = { version = "1.21.0", optional = true }
 
 # Optional hashbrown support
-hashbrown = { version = "0.16", optional = true }
+hashbrown = { version = "0.17", optional = true }
+
+# xxhash support for digest utilities
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 lru = { version = "0.16", optional = true }
 arcstr = "1.2.0"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 socket2 = { version = "0.6", features = ["all"] }
+
+# Only needed for Entra ID authentication
+azure_identity = { version = "0.31", optional = true, features = [
+  "client_certificate",
+] }
+azure_core = { version = "0.31", optional = true }
+base64 = { version = "0.22.1", optional = true }
 
 [features]
 default = ["acl", "streams", "geospatial", "script", "num-bigint"]
@@ -129,7 +137,7 @@ tls-rustls-webpki-roots = ["tls-rustls", "dep:webpki-roots"]
 smol-comp = ["aio", "dep:smol", "dep:smol-timeout", "dep:async-io"]
 smol-native-tls-comp = ["smol-comp", "dep:async-native-tls", "tls-native-tls"]
 smol-rustls-comp = ["smol-comp", "dep:futures-rustls", "tls-rustls"]
-tokio-comp = ["aio", "tokio/net"]
+tokio-comp = ["aio", "tokio/net", "tokio/rt", "tokio/time"]
 tokio-native-tls-comp = ["tokio-comp", "tls-native-tls", "dep:tokio-native-tls"]
 tokio-rustls-comp = ["tokio-comp", "tls-rustls", "dep:tokio-rustls"]
 monoio-comp = ["aio", "dep:monoio"]
@@ -142,11 +150,19 @@ connection-manager = [
 ]
 streams = []
 cluster-async = ["aio", "cluster", "dep:log"]
-sentinel = ["dep:rand"]
+sentinel = ["dep:log", "dep:rand"]
 num-bigint = ["dep:num-bigint"]
 cache-aio = ["aio", "dep:lru"]
 r2d2 = ["dep:r2d2"]
 bb8 = ["dep:bb8"]
+token-based-authentication = ["dep:futures-util", "dep:log", "dep:backon"]
+entra-id = [
+  "dep:azure_identity",
+  "dep:azure_core",
+  "dep:base64",
+  "token-based-authentication",
+  "tokio-comp",
+]
 
 # Instead of specifying "aio", use either "tokio-comp" or "smol-comp".
 aio = [
@@ -155,27 +171,31 @@ aio = [
   "dep:futures-util",
   "dep:tokio",
   "dep:tokio-util",
+  "dep:async-lock",
   "tokio-util/codec",
   "combine/tokio",
   "dep:cfg-if",
 ]
 
 [dev-dependencies]
+async-trait = "0.1"
 assert_approx_eq = "1.0"
 fnv = "1.0.5"
 futures = "0.3"
 futures-time = "3"
 criterion = "0.7"
 partial-io = { version = "0.5", features = ["tokio", "quickcheck1"] }
-quickcheck = "1.0.3"
-tokio = { workspace = true }
-tempfile = "3.23.0"
+quickcheck = "1.1.0"
+tokio = { workspace = true, features = ["macros", "io-util"] }
+tempfile = "3.24.0"
 anyhow = "1"
 redis-test = { path = "../redis-test" }
 rstest = "0.26"
 rand = "0.9"
 rustls = { version = "0.23", features = ["ring"] }
 test-macros = { path = "../test-macros" }
+assert_matches = "1.5.0"
+env_logger = "0.11.10"
 
 [[test]]
 name = "test_async"
@@ -203,6 +223,13 @@ name = "test_bignum"
 name = "test_script"
 required-features = ["script"]
 
+[[test]]
+name = "test_digest_utils"
+
+[[test]]
+name = "test_tls_cert_auth"
+required-features = ["acl", "tls-rustls", "tokio-rustls-comp", "cluster"]
+
 [[bench]]
 name = "bench_basic"
 harness = false
@@ -228,24 +255,28 @@ name = "async-multiplexed"
 required-features = ["tokio-comp"]
 
 [[example]]
+name = "acl"
+required-features = ["acl"]
+
+[[example]]
 name = "async-await"
-required-features = ["aio"]
+required-features = ["tokio-comp"]
 
 [[example]]
 name = "async-resp2-pub-sub"
-required-features = ["aio"]
+required-features = ["tokio-comp"]
 
 [[example]]
 name = "async-resp3-pub-sub"
-required-features = ["aio", "connection-manager"]
+required-features = ["tokio-comp", "connection-manager"]
 
 [[example]]
 name = "async-scan"
-required-features = ["aio"]
+required-features = ["tokio-comp"]
 
 [[example]]
 name = "async-connection-loss"
-required-features = ["connection-manager"]
+required-features = ["tokio-comp", "connection-manager"]
 
 [[example]]
 name = "streams"
@@ -253,7 +284,7 @@ required-features = ["streams"]
 
 [[example]]
 name = "async-typed"
-required-features = ["aio"]
+required-features = ["tokio-comp"]
 
 [[example]]
 name = "typed"
@@ -265,3 +296,7 @@ required-features = ["monoio-comp", "streams"]
 [[example]]
 name = "async-caching"
 required-features = ["tokio-comp", "cache-aio"]
+
+[[example]]
+name = "latency-aware-routing"
+required-features = ["cluster-async", "tokio-comp"]

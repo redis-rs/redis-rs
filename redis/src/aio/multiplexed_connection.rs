@@ -2,19 +2,26 @@ use super::{AsyncPushSender, ConnectionLike, Runtime, SharedHandleContainer, Tas
 #[cfg(feature = "cache-aio")]
 use crate::caching::{CacheManager, CacheStatistics, PrepareCacheResult};
 use crate::{
+    AsyncConnectionConfig, ProtocolVersion, PushInfo, RedisConnectionInfo, ServerError,
+    ToRedisArgs,
     aio::setup_connection,
     check_resp3, cmd,
     cmd::Cmd,
-    errors::{closed_connection_error, RedisError},
+    errors::{RedisError, closed_connection_error},
     parser::ValueCodec,
     types::{RedisFuture, RedisResult, Value},
-    AsyncConnectionConfig, ProtocolVersion, PushInfo, RedisConnectionInfo, ServerError,
-    ToRedisArgs,
 };
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, oneshot},
 };
+#[cfg(feature = "token-based-authentication")]
+use {
+    crate::errors::ErrorKind,
+    arcstr::ArcStr,
+    log::{debug, error, warn},
+};
+
 use futures_util::{
     future::{Future, FutureExt},
     ready,
@@ -300,6 +307,15 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut task::Context,
     ) -> Poll<Result<(), Self::Error>> {
+        // It is crucial that we always try to advance both the read and the write side together.
+        // If we do not, we are susceptible to TCP deadlock.
+        // Here, we do this by advancing reads and then moving on to advance writes regardless of
+        // whether the read was pending or not. This ensures that we are registered to be woken
+        // if either reads or writes become available.
+        // See https://github.com/redis-rs/redis-rs/issues/1955.
+        if matches!(self.as_mut().poll_read(cx), Poll::Ready(Err(()))) {
+            return Poll::Ready(Err(()));
+        }
         match ready!(self.as_mut().project().sink_stream.poll_ready(cx)) {
             Ok(()) => Ok(()).into(),
             Err(err) => {
@@ -357,15 +373,22 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut task::Context,
     ) -> Poll<Result<(), Self::Error>> {
-        ready!(self
-            .as_mut()
+        // It is crucial that we always try to advance both the read and the write side together.
+        // If we do not, we are susceptible to TCP deadlock.
+        // Here, we do this by advancing reads and then moving on to advance writes regardless of
+        // whether the read was pending or not. This ensures that we are registered to be woken
+        // if either reads or writes become available.
+        // See https://github.com/redis-rs/redis-rs/issues/1955.
+        if matches!(self.as_mut().poll_read(cx), Poll::Ready(Err(()))) {
+            return Poll::Ready(Err(()));
+        }
+        self.as_mut()
             .project()
             .sink_stream
             .poll_flush(cx)
             .map_err(|err| {
                 self.as_mut().send_result(Err(err));
-            }))?;
-        self.poll_read(cx)
+            })
     }
 
     fn poll_close(
@@ -385,18 +408,24 @@ where
 }
 
 impl Pipeline {
+    const DEFAULT_BUFFER_SIZE: usize = 50;
+
+    fn resolve_buffer_size(size: Option<usize>) -> usize {
+        size.unwrap_or(Self::DEFAULT_BUFFER_SIZE)
+    }
+
     fn new<T>(
         sink_stream: T,
         push_sender: Option<Arc<dyn AsyncPushSender>>,
         #[cfg(feature = "cache-aio")] cache_manager: Option<CacheManager>,
+        buffer_size: usize,
     ) -> (Self, impl Future<Output = ()>)
     where
         T: Sink<Vec<u8>, Error = RedisError>,
         T: Stream<Item = RedisResult<Value>>,
         T: Unpin + Send + 'static,
     {
-        const BUFFER_SIZE: usize = 50;
-        let (sender, mut receiver) = mpsc::channel(BUFFER_SIZE);
+        let (sender, mut receiver) = mpsc::channel(buffer_size);
 
         let sink = PipelineSink::new(
             sink_stream,
@@ -420,6 +449,10 @@ impl Pipeline {
         timeout: Option<Duration>,
         skip_response: bool,
     ) -> Result<Value, RedisError> {
+        if input.is_empty() {
+            return Err(RedisError::make_empty_command());
+        }
+
         let request = async {
             if skip_response {
                 self.sender
@@ -481,19 +514,39 @@ pub struct MultiplexedConnection {
     db: i64,
     response_timeout: Option<Duration>,
     protocol: ProtocolVersion,
+    concurrency_limiter: Option<Arc<async_lock::Semaphore>>,
     // This handle ensures that once all the clones of the connection will be dropped, the underlying task will stop.
     // This handle is only set for connection whose task was spawned by the crate, not for users who spawned their own
     // task.
     _task_handle: Option<SharedHandleContainer>,
     #[cfg(feature = "cache-aio")]
     pub(crate) cache_manager: Option<CacheManager>,
+    #[cfg(feature = "token-based-authentication")]
+    // This handle ensures that once all the clones of the connection will be dropped, the underlying task will stop.
+    // It is only set for connections that use a credentials provider for token-based authentication.
+    _credentials_subscription_task_handle: Option<SharedHandleContainer>,
 }
 
 impl Debug for MultiplexedConnection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let MultiplexedConnection {
+            pipeline,
+            db,
+            response_timeout,
+            protocol,
+            concurrency_limiter: _,
+            _task_handle,
+            #[cfg(feature = "cache-aio")]
+                cache_manager: _,
+            #[cfg(feature = "token-based-authentication")]
+                _credentials_subscription_task_handle: _,
+        } = self;
+
         f.debug_struct("MultiplexedConnection")
-            .field("pipeline", &self.pipeline)
-            .field("db", &self.db)
+            .field("pipeline", &pipeline)
+            .field("db", &db)
+            .field("response_timeout", &response_timeout)
+            .field("protocol", &protocol)
             .finish()
     }
 }
@@ -517,7 +570,7 @@ impl MultiplexedConnection {
         connection_info: &RedisConnectionInfo,
         stream: C,
         config: AsyncConnectionConfig,
-    ) -> RedisResult<(Self, impl Future<Output = ()>)>
+    ) -> RedisResult<(Self, impl Future<Output = ()> + 'static)>
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
@@ -553,9 +606,37 @@ impl MultiplexedConnection {
             })
             .transpose()?;
 
+        #[cfg(feature = "token-based-authentication")]
+        let mut connection_info = connection_info.clone();
+        #[cfg(not(feature = "token-based-authentication"))]
+        let connection_info = connection_info.clone();
+
+        #[cfg(feature = "token-based-authentication")]
+        if let Some(ref credentials_provider) = config.credentials_provider {
+            // Retrieve the initial credentials from the provider and apply them to the connection info
+            match credentials_provider.subscribe().next().await {
+                Some(Ok(credentials)) => {
+                    connection_info.username = Some(ArcStr::from(credentials.username));
+                    connection_info.password = Some(ArcStr::from(credentials.password));
+                }
+                Some(Err(err)) => {
+                    error!("Error while receiving credentials from stream: {err}");
+                    return Err(err);
+                }
+                None => {
+                    let err = RedisError::from((
+                        ErrorKind::AuthenticationFailed,
+                        "Credentials stream closed unexpectedly before yielding credentials!",
+                    ));
+                    error!("{err}");
+                    return Err(err);
+                }
+            }
+        }
+
         setup_connection(
             &mut codec,
-            connection_info,
+            &connection_info,
             #[cfg(feature = "cache-aio")]
             cache_config,
         )
@@ -572,16 +653,69 @@ impl MultiplexedConnection {
             config.push_sender,
             #[cfg(feature = "cache-aio")]
             cache_manager_opt.clone(),
+            Pipeline::resolve_buffer_size(config.pipeline_buffer_size),
         );
+
+        let concurrency_limiter = config
+            .concurrency_limit
+            .map(|n| Arc::new(async_lock::Semaphore::new(n)));
+
         let con = MultiplexedConnection {
             pipeline,
             db: connection_info.db,
             response_timeout: config.response_timeout,
             protocol: connection_info.protocol,
+            concurrency_limiter,
             _task_handle: None,
             #[cfg(feature = "cache-aio")]
             cache_manager: cache_manager_opt,
+            #[cfg(feature = "token-based-authentication")]
+            _credentials_subscription_task_handle: None,
         };
+
+        // Set up streaming credentials subscription if provider is available
+        #[cfg(feature = "token-based-authentication")]
+        if let Some(streaming_provider) = config.credentials_provider {
+            let mut inner_connection = con.clone();
+            let mut stream = streaming_provider.subscribe();
+
+            let subscription_task_handle = Runtime::locate().spawn(async move {
+                while let Some(result) = stream.next().await {
+                    match result {
+                        Ok(credentials) => {
+                            if let Err(err) = inner_connection
+                                .re_authenticate_with_credentials(&credentials)
+                                .await
+                            {
+                                if err.is_connection_dropped() {
+                                    warn!(
+                                        "Re-authentication task ended, connection is dead: {err}"
+                                    );
+                                    return;
+                                }
+                                error!("Failed to re-authenticate async connection: {err}.");
+                                return;
+                            } else {
+                                debug!("Re-authenticated async connection");
+                            }
+                        }
+                        Err(err) => {
+                            error!("Credentials stream error for async connection: {err}.");
+                        }
+                    }
+                }
+                warn!("Credentials stream ended; no further re-authentication will occur.");
+            });
+            return Ok((
+                Self {
+                    _credentials_subscription_task_handle: Some(SharedHandleContainer::new(
+                        subscription_task_handle,
+                    )),
+                    ..con
+                },
+                driver,
+            ));
+        }
 
         Ok((con, driver))
     }
@@ -600,6 +734,13 @@ impl MultiplexedConnection {
     /// Sends an already encoded (packed) command into the TCP socket and
     /// reads the single response from it.
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
+        let _permit = if cmd.skip_concurrency_limit {
+            None
+        } else if let Some(limiter) = &self.concurrency_limiter {
+            Some(limiter.acquire().await)
+        } else {
+            None
+        };
         #[cfg(feature = "cache-aio")]
         if let Some(cache_manager) = &self.cache_manager {
             match cache_manager.get_cached_cmd(cmd) {
@@ -647,10 +788,30 @@ impl MultiplexedConnection {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
+        // Try to acquire 1 permit per command in the pipeline: block on the first to guarantee
+        // progress, then grab as many more as are immediately available without blocking.
+        // This roughly reflects the pipeline's load on the server while avoiding deadlock --
+        // a large pipeline can always proceed even if it can't acquire all permits.
+        let _permits = if let Some(limiter) = &self.concurrency_limiter {
+            let mut permits = Vec::with_capacity(count.max(1));
+            permits.push(limiter.acquire().await);
+            for _ in 1..count {
+                match limiter.try_acquire() {
+                    Some(permit) => permits.push(permit),
+                    None => break,
+                }
+            }
+            permits
+        } else {
+            Vec::new()
+        };
         #[cfg(feature = "cache-aio")]
         if let Some(cache_manager) = &self.cache_manager {
             let (cacheable_pipeline, pipeline, (skipped_response_count, expected_response_count)) =
                 cache_manager.get_cached_pipeline(cmd);
+            if pipeline.is_empty() {
+                return cacheable_pipeline.resolve(cache_manager, Value::Array(Vec::new()));
+            }
             let result = self
                 .pipeline
                 .send_recv(
@@ -797,5 +958,464 @@ impl MultiplexedConnection {
         cmd.arg(channel_pattern);
         cmd.exec_async(self).await?;
         Ok(())
+    }
+}
+
+#[cfg(feature = "token-based-authentication")]
+impl MultiplexedConnection {
+    /// Re-authenticate the connection with new credentials
+    ///
+    /// This method allows existing async connections to update their authentication
+    /// when tokens are refreshed, enabling streaming credential updates.
+    async fn re_authenticate_with_credentials(
+        &mut self,
+        credentials: &crate::auth::BasicAuth,
+    ) -> RedisResult<()> {
+        let mut auth_cmd =
+            crate::connection::authenticate_cmd(Some(&credentials.username), &credentials.password);
+        auth_cmd.skip_concurrency_limit = true;
+        self.send_packed_command(&auth_cmd)
+            .await?
+            .extract_error()
+            .map(|_| ())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pipeline_resolve_buffer_size_default() {
+        assert_eq!(Pipeline::resolve_buffer_size(None), 50);
+    }
+
+    #[test]
+    fn test_pipeline_resolve_buffer_size_custom() {
+        assert_eq!(Pipeline::resolve_buffer_size(Some(100)), 100);
+    }
+
+    fn mock_conn_info() -> RedisConnectionInfo {
+        RedisConnectionInfo {
+            skip_set_lib_name: true,
+            ..Default::default()
+        }
+    }
+
+    async fn create_mock_connection(
+        concurrency_limit: usize,
+    ) -> (
+        MultiplexedConnection,
+        tokio::sync::mpsc::Receiver<()>,
+        tokio::sync::mpsc::Sender<()>,
+    ) {
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+        use tokio_util::codec::FramedRead;
+
+        let (client_half, server_half) = tokio::io::duplex(4096);
+        let (cmd_received_tx, cmd_received_rx) = tokio::sync::mpsc::channel::<()>(10);
+        let (send_response_tx, mut send_response_rx) = tokio::sync::mpsc::channel::<()>(10);
+
+        let (server_read, mut server_write) = tokio::io::split(server_half);
+
+        tokio::spawn(async move {
+            let mut reader = FramedRead::new(server_read, ValueCodec::default());
+            while let Some(Ok(_)) = reader.next().await {
+                let _ = cmd_received_tx.send(()).await;
+            }
+        });
+
+        tokio::spawn(async move {
+            while send_response_rx.recv().await.is_some() {
+                let _ = server_write.write_all(b"+OK\r\n").await;
+                let _ = server_write.flush().await;
+            }
+        });
+
+        let config = AsyncConnectionConfig::new()
+            .set_concurrency_limit(concurrency_limit)
+            .set_response_timeout(None)
+            .set_connection_timeout(None);
+
+        let (conn, driver) =
+            MultiplexedConnection::new_with_config(&mock_conn_info(), client_half, config)
+                .await
+                .unwrap();
+        tokio::spawn(driver);
+
+        (conn, cmd_received_rx, send_response_tx)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrency_limit_enforced() {
+        let (conn, mut cmd_received_rx, send_response_tx) = create_mock_connection(2).await;
+
+        let h1 = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+        let h2 = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+        let h3 = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+
+        cmd_received_rx.recv().await.unwrap();
+        cmd_received_rx.recv().await.unwrap();
+
+        let third = tokio::time::timeout(Duration::from_millis(100), cmd_received_rx.recv()).await;
+        assert!(
+            third.is_err(),
+            "3rd request should be blocked by concurrency limit"
+        );
+
+        send_response_tx.send(()).await.unwrap();
+
+        cmd_received_rx.recv().await.unwrap();
+
+        send_response_tx.send(()).await.unwrap();
+        send_response_tx.send(()).await.unwrap();
+
+        h1.await.unwrap().unwrap();
+        h2.await.unwrap().unwrap();
+        h3.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_no_limit_bypasses_concurrency_limit() {
+        let (conn, mut cmd_received_rx, send_response_tx) = create_mock_connection(1).await;
+
+        let h1 = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+
+        cmd_received_rx.recv().await.unwrap();
+
+        let h2 = tokio::spawn({
+            let mut c = conn.clone();
+            async move {
+                let mut ping = cmd("PING");
+                ping.skip_concurrency_limit = true;
+                c.send_packed_command(&ping).await
+            }
+        });
+
+        let received =
+            tokio::time::timeout(Duration::from_millis(100), cmd_received_rx.recv()).await;
+        assert!(
+            received.is_ok(),
+            "no_limit request should bypass concurrency limit"
+        );
+
+        send_response_tx.send(()).await.unwrap();
+        send_response_tx.send(()).await.unwrap();
+
+        h1.await.unwrap().unwrap();
+        h2.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_pipeline_acquires_multiple_permits() {
+        let (conn, mut cmd_received_rx, send_response_tx) = create_mock_connection(3).await;
+
+        let pipeline_handle = tokio::spawn({
+            let mut c = conn.clone();
+            async move {
+                let mut pipe = crate::Pipeline::new();
+                pipe.cmd("SET").arg("a").arg("1");
+                pipe.cmd("SET").arg("b").arg("2");
+                pipe.cmd("SET").arg("c").arg("3");
+                c.send_packed_commands(&pipe, 0, 3).await
+            }
+        });
+
+        for _ in 0..3 {
+            cmd_received_rx.recv().await.unwrap();
+        }
+
+        let single_handle = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+
+        let blocked =
+            tokio::time::timeout(Duration::from_millis(100), cmd_received_rx.recv()).await;
+        assert!(
+            blocked.is_err(),
+            "single command should be blocked while pipeline holds all permits"
+        );
+
+        for _ in 0..3 {
+            send_response_tx.send(()).await.unwrap();
+        }
+
+        cmd_received_rx.recv().await.unwrap();
+        send_response_tx.send(()).await.unwrap();
+
+        pipeline_handle.await.unwrap().unwrap();
+        single_handle.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_pipeline_proceeds_with_partial_permits() {
+        let (conn, mut cmd_received_rx, send_response_tx) = create_mock_connection(2).await;
+
+        let single_handle = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+        cmd_received_rx.recv().await.unwrap();
+
+        let pipeline_handle = tokio::spawn({
+            let mut c = conn.clone();
+            async move {
+                let mut pipe = crate::Pipeline::new();
+                for i in 0..5 {
+                    pipe.cmd("SET").arg(format!("k{i}")).arg(i);
+                }
+                c.send_packed_commands(&pipe, 0, 5).await
+            }
+        });
+
+        let received =
+            tokio::time::timeout(Duration::from_millis(100), cmd_received_rx.recv()).await;
+        assert!(
+            received.is_ok(),
+            "pipeline should proceed even with only partial permits"
+        );
+
+        for _ in 1..5 {
+            cmd_received_rx.recv().await.unwrap();
+        }
+
+        for _ in 0..6 {
+            send_response_tx.send(()).await.unwrap();
+        }
+
+        single_handle.await.unwrap().unwrap();
+        pipeline_handle.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_permit_released_on_cancellation() {
+        let (conn, mut cmd_received_rx, send_response_tx) = create_mock_connection(1).await;
+
+        let h1 = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+        cmd_received_rx.recv().await.unwrap();
+
+        // Start a second request that will block on the semaphore, then cancel it
+        let h2 = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        h2.abort();
+        let _ = h2.await;
+
+        // Complete the first request
+        send_response_tx.send(()).await.unwrap();
+        h1.await.unwrap().unwrap();
+
+        // The permit from the cancelled request should have been released,
+        // so a new request should proceed
+        let h3 = tokio::spawn({
+            let mut c = conn.clone();
+            async move { c.send_packed_command(&cmd("PING")).await }
+        });
+
+        let received =
+            tokio::time::timeout(Duration::from_millis(100), cmd_received_rx.recv()).await;
+        assert!(
+            received.is_ok(),
+            "request after cancellation should acquire the permit"
+        );
+
+        send_response_tx.send(()).await.unwrap();
+        h3.await.unwrap().unwrap();
+    }
+
+    /// Regression test for the TCP buffer deadlock reported in
+    /// <https://github.com/redis-rs/redis-rs/issues/1955>.
+    ///
+    /// # Why this can deadlock
+    ///
+    /// A TCP buffer deadlock is a property of *both* peers — neither can
+    /// produce it alone.
+    ///
+    /// **Client side (this bug):** `PipelineSink::poll_flush` polled the read
+    /// half only *after* the underlying writer's flush returned Ready. When
+    /// our TCP send buffer fills, the codec's flush is Pending, and we
+    /// returned Pending without ever registering a read waker — so response
+    /// bytes already sitting in our recv buffer were never polled. The driver
+    /// task parked indefinitely.
+    ///
+    /// **Server side:** any server that stops reading from a client's
+    /// socket while its own pending write to that client can't make
+    /// forward progress is enough to trigger the deadlock. Combined with
+    /// the client bug, both directions wedge: the client's send buffer
+    /// can't drain (server isn't reading), the server's send buffer can't
+    /// drain (client isn't reading because of the bug), and the state is
+    /// permanent.
+    ///
+    /// # What this test simulates
+    ///
+    /// `tokio::io::duplex` stands in for a TCP socket pair with tiny
+    /// kernel buffers. The mini-server is a loop that reads a request,
+    /// writes a response, repeats — awaiting the write makes the loop
+    /// stop reading the instant a write becomes Pending, which is the
+    /// general server-side behavior described above.
+    ///
+    /// The test issues a few large concurrent SETs whose request payloads
+    /// (and pretend responses) each exceed the duplex buffer in both
+    /// directions. With the bug, the client's codec backs up, the
+    /// server's writes back up, and both sides park without enough wakers
+    /// to escape — the test times out and panics. With the fix, the
+    /// driver drains responses even while the writer is back-pressured,
+    /// which keeps the duplex moving and lets the SETs complete.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_deadlock_when_writes_blocked_with_pending_response() {
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+        use tokio_util::codec::FramedRead;
+
+        // Small duplex buffer + ~4 KiB request/response sizes. The polling
+        // pathology doesn't depend on scale; a real socket would see the
+        // same shape with tens of KiB of buffer and MB-scale payloads.
+        const BUFFER_SIZE: usize = 256;
+        const PAYLOAD_SIZE: usize = 4096;
+        const REQUEST_COUNT: usize = 3;
+
+        let (client_half, server_half) = tokio::io::duplex(BUFFER_SIZE);
+        let (server_read, mut server_write) = tokio::io::split(server_half);
+
+        // Pretend response: a bulk string the same size as the request
+        // payload, so server-bound writes also exceed the duplex buffer
+        // (the server's write pends and its loop stops reading).
+        let mut response = Vec::with_capacity(PAYLOAD_SIZE + 16);
+        response.extend_from_slice(format!("${PAYLOAD_SIZE}\r\n").as_bytes());
+        response.extend(std::iter::repeat_n(b'V', PAYLOAD_SIZE));
+        response.extend_from_slice(b"\r\n");
+
+        // Mini-server: read a request, write a response, loop. Awaiting
+        // the write makes the loop stop reading the instant a write
+        // becomes Pending — the general "server stops reading once its
+        // own write is back-pressured" behavior the deadlock requires.
+        let server_task = tokio::spawn(async move {
+            let mut reader = FramedRead::new(server_read, ValueCodec::default());
+            loop {
+                match reader.next().await {
+                    Some(Ok(_)) => {}
+                    _ => return,
+                }
+                if server_write.write_all(&response).await.is_err() {
+                    return;
+                }
+            }
+        });
+
+        let config = AsyncConnectionConfig::new()
+            .set_response_timeout(None)
+            .set_connection_timeout(None);
+        let (conn, driver) =
+            MultiplexedConnection::new_with_config(&mock_conn_info(), client_half, config)
+                .await
+                .unwrap();
+        let driver_handle = tokio::spawn(driver);
+
+        // A handful of concurrent large SETs. Each request exceeds the
+        // duplex buffer (codec's flush stays backed up); each reply also
+        // exceeds the duplex buffer (server's write stays backed up). Both
+        // directions wedge.
+        let mut handles = Vec::with_capacity(REQUEST_COUNT);
+        for i in 0..REQUEST_COUNT {
+            let mut c = conn.clone();
+            handles.push(tokio::spawn(async move {
+                let mut set = cmd("SET");
+                set.arg(format!("k{i}")).arg(vec![b'X'; PAYLOAD_SIZE]);
+                c.send_packed_command(&set).await
+            }));
+        }
+
+        let join_all = async move {
+            let mut results = Vec::with_capacity(handles.len());
+            for h in handles {
+                results.push(h.await);
+            }
+            results
+        };
+
+        let outcome = tokio::time::timeout(Duration::from_secs(5), join_all).await;
+
+        // Clean up before asserting so a panic doesn't leak tasks.
+        driver_handle.abort();
+        server_task.abort();
+
+        let results = outcome.expect(
+            "DEADLOCK reproduced: client driver parked in poll_flush with no \
+             read waker registered. Server has buffered responses in the duplex \
+             and stopped reading once its own write became Pending; the client \
+             cannot send the rest of its requests because the server is no \
+             longer draining the link. Both sides wedged.",
+        );
+        for (i, res) in results.into_iter().enumerate() {
+            let join = res.unwrap_or_else(|e| panic!("SET task {i} panicked: {e}"));
+            join.unwrap_or_else(|e| panic!("SET task {i} returned an error: {e}"));
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_permit_released_on_response_timeout() {
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+        use tokio_util::codec::FramedRead;
+
+        let (client_half, server_half) = tokio::io::duplex(4096);
+        let (cmd_received_tx, mut cmd_received_rx) = tokio::sync::mpsc::channel::<()>(10);
+
+        let (server_read, mut server_write) = tokio::io::split(server_half);
+
+        tokio::spawn(async move {
+            let mut reader = FramedRead::new(server_read, ValueCodec::default());
+            while let Some(Ok(_)) = reader.next().await {
+                let _ = cmd_received_tx.send(()).await;
+            }
+        });
+
+        tokio::spawn(async move {
+            futures_util::future::pending::<()>().await;
+            let _ = server_write.write_all(b"").await;
+        });
+
+        let config = AsyncConnectionConfig::new()
+            .set_concurrency_limit(1)
+            .set_response_timeout(Some(Duration::from_millis(100)))
+            .set_connection_timeout(None);
+
+        let (conn, driver) =
+            MultiplexedConnection::new_with_config(&mock_conn_info(), client_half, config)
+                .await
+                .unwrap();
+        tokio::spawn(driver);
+
+        // First request times out since the mock never responds
+        let mut c1 = conn.clone();
+        let err = c1.send_packed_command(&cmd("PING")).await.unwrap_err();
+        assert!(err.is_io_error(), "expected IO error from timeout");
+        cmd_received_rx.recv().await.unwrap();
+
+        // Second request should acquire the permit released by the first,
+        // reach the server, and then also time out
+        let mut c2 = conn.clone();
+        let err = c2.send_packed_command(&cmd("PING")).await.unwrap_err();
+        assert!(err.is_io_error(), "expected IO error from timeout");
+        cmd_received_rx.recv().await.unwrap();
     }
 }

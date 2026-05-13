@@ -4,22 +4,26 @@
 [![crates.io](https://img.shields.io/crates/v/redis.svg)](https://crates.io/crates/redis)
 [![Chat](https://img.shields.io/discord/976380008299917365?logo=discord)](https://discord.gg/WHKcJK9AKP)
 
-Redis-rs is a high level Rust library for Redis, Valkey and any other RESP 
-(Redis Serialization Protocol) compliant DB. It provides convenient access
-to all Redis functionality through a very flexible but low-level API. It
-uses a customizable type conversion trait so that any operation can return
-results in just the type you are expecting. This makes for a very pleasant
-development experience.
+Redis-rs is a Rust library implementing a high-level client for Redis, Valkey
+and any other RESP (Redis Serialization Protocol) compliant DB server. It
+provides convenient access to all Redis functionality through a very flexible
+but low-level API. It uses a customizable type conversion trait so that any
+operation can return results in just the type you are expecting. This makes for
+a very pleasant development experience.
+
+Most Redis and ValKey version should work, but CI runs against Redis 6+
+and ValKey 7+.
 
 The crate is called `redis` and you can depend on it via cargo:
 
 ```ini
 [dependencies]
-redis = "1.0.0-rc.3"
+redis = "1"
 ```
 
 Documentation on the library can be found at
 [docs.rs/redis](https://docs.rs/redis).
+
 
 ## Basic Operation
 
@@ -34,14 +38,14 @@ implements the `FromRedisValue` trait.
 ```rust
 use redis::TypedCommands;
 
-fn fetch_an_integer() -> redis::RedisResult<isize> {
-	// connect to redis
-	let client = redis::Client::open("redis://127.0.0.1/")?;
-	let mut con = client.get_connection()?;
-	// `set` returns a `()`, so we don't need to specify the return type manually unlike in the previous example.
-	con.set("my_key", 42)?;
-	// `get_int` returns Option<isize>, as the key may not be found.
-	con.get_int("my_key").unwrap()
+fn fetch_an_integer() -> Option<isize> {
+    // connect to redis
+    let client = redis::Client::open("redis://127.0.0.1/")?;
+    let mut con = client.get_connection()?;
+    // `set` returns a `()`, so we don't need to specify the return type manually unlike in the previous example.
+    con.set("my_key", 42)?;
+    // `get_int` returns Option<isize>, as the key may not be found.
+    con.get_int("my_key").unwrap()
 }
 ```
 
@@ -73,10 +77,10 @@ To enable asynchronous clients, enable the relevant feature in your Cargo.toml,
 
 ```
 # if you use tokio
-redis = { version = "1.0.0-rc.3", features = ["tokio-comp"] }
+redis = { version = "1", features = ["tokio-comp"] }
 
 # if you use smol
-redis = { version = "1.0.0-rc.3", features = ["smol-comp"] }
+redis = { version = "1", features = ["smol-comp"] }
 ```
 
 You can then use either the `AsyncTypedCommands` or `AsyncCommands` traits. All async connections are cheap to clone, and clones can be used concurrently from multiple threads.
@@ -87,7 +91,7 @@ When using a sync connection, it is recommended to use a connection pool in orde
 disconnects or multi-threaded usage. This can be done using the `r2d2` feature.
 
 ```
-redis = { version = "1.0.0-rc.3", features = ["r2d2"] }
+redis = { version = "1", features = ["r2d2"] }
 ```
 
 For async connections, connection pooling isn't necessary, unless blocking commands are used.
@@ -109,25 +113,25 @@ Currently, `native-tls` and `rustls` are supported.
 To use `native-tls`:
 
 ```
-redis = { version = "1.0.0-rc.3", features = ["tls-native-tls"] }
+redis = { version = "1", features = ["tls-native-tls"] }
 
 # if you use tokio
-redis = { version = "1.0.0-rc.3", features = ["tokio-native-tls-comp"] }
+redis = { version = "1", features = ["tokio-native-tls-comp"] }
 
 # if you use smol
-redis = { version = "1.0.0-rc.3", features = ["smol-native-tls-comp"] }
+redis = { version = "1", features = ["smol-native-tls-comp"] }
 ```
 
 To use `rustls`:
 
 ```
-redis = { version = "1.0.0-rc.3", features = ["tls-rustls"] }
+redis = { version = "1", features = ["tls-rustls"] }
 
 # if you use tokio
-redis = { version = "1.0.0-rc.3", features = ["tokio-rustls-comp"] }
+redis = { version = "1", features = ["tokio-rustls-comp"] }
 
 # if you use smol
-redis = { version = "1.0.0-rc.3", features = ["smol-rustls-comp"] }
+redis = { version = "1", features = ["smol-rustls-comp"] }
 ```
 
 Add `rustls` to dependencies
@@ -139,7 +143,7 @@ rustls = { version = "0.23" }
 And then, before creating a connection, ensure that you install a crypto provider. For example:
 
 ```rust
-    rustls::crypto::ring::default_provider()
+    rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .expect("Failed to install rustls crypto provider");
 ```
@@ -162,11 +166,41 @@ To enable insecure mode, append `#insecure` at the end of the URL:
 let client = redis::Client::open("rediss://127.0.0.1/#insecure")?;
 ```
 
+## Token-Based Authentication with Azure Entra ID
+
+Redis-rs supports token-based authentication using Azure Entra ID, providing secure, dynamic authentication for Redis connections. This feature is particularly useful for Azure-hosted applications and enterprise environments.
+
+To enable Entra ID authentication, add the `entra-id` feature to your Cargo.toml:
+
+```toml
+redis = { version = "1", features = ["entra-id", "tokio-comp"] }
+```
+
+### Supported Authentication Flows
+
+- **DeveloperToolsCredential**: Authenticates through developer tools such as the Azure CLI.
+It tries the following credential types, in this order, stopping when one provides a token:
+* [`AzureCliCredential`]
+* [`AzureDeveloperCliCredential`]
+`DeveloperToolsCredential` uses the first credential that provides a token for all subsequent token requests. It never tries the others again.
+- **Service Principal**: `Client secret` and `certificate-based` authentication
+- **Managed Identity**: `System-assigned` or `user-assigned` managed identities
+- **Custom Credentials**: Support for any `TokenCredential` implementation
+
+### Features
+
+- **Automatic Token Refresh & Streaming of Credentials**: Seamlessly handle token expiration and stream updated credentials to prevent connection errors due to token expiration
+- **Configurable Refresh Policies**: Customizable refresh thresholds and retry behavior
+
+### Async-First Design
+- Full async/await support for non-blocking operations
+- Seamless integration with multiplexed connections
+
 ## Cluster Support
 
 Support for Redis Cluster can be enabled by enabling the `cluster` feature in your Cargo.toml:
 
-`redis = { version = "1.0.0-rc.3", features = [ "cluster"] }`
+`redis = { version = "1", features = [ "cluster"] }`
 
 Then you can simply use the `ClusterClient`, which accepts a list of available nodes. Note
 that only one node in the cluster needs to be specified when instantiating the client, though
@@ -188,7 +222,7 @@ fn fetch_an_integer() -> String {
 Async Redis Cluster support can be enabled by enabling the `cluster-async` feature, along
 with your preferred async runtime, e.g.:
 
-`redis = { version = "1.0.0-rc.3", features = [ "cluster-async", "tokio-std-comp" ] }`
+`redis = { version = "1", features = [ "cluster-async", "tokio-comp" ] }`
 
 ```rust
 use redis::cluster::ClusterClient;
@@ -207,7 +241,7 @@ async fn fetch_an_integer() -> String {
 
 Support for the RedisJSON Module can be enabled by specifying "json" as a feature in your Cargo.toml.
 
-`redis = { version = "1.0.0-rc.3", features = ["json"] }`
+`redis = { version = "1", features = ["json"] }`
 
 Then you can simply import the `JsonCommands` trait which will add the `json` commands to all Redis Connections (not to be confused with just `Commands` which only adds the default commands)
 
@@ -244,7 +278,7 @@ redis-rs tests that webassembly succesfully builds for the sync client work, but
 To test `redis` you're going to need to be able to test with the Redis Modules, to do this
 you must set the following environment variable before running the test script
 
--   `REDIS_RS_REDIS_JSON_PATH` = The absolute path to the RedisJSON module (Either `librejson.so` for Linux or `librejson.dylib` for MacOS).
+-   `REDISRS_REDIS_JSON_PATH` = The absolute path to the RedisJSON module (Either `librejson.so` for Linux or `librejson.dylib` for MacOS).
 
 -   Please refer to this [link](https://github.com/RedisJSON/RedisJSON) to access the RedisJSON module:
 
@@ -261,6 +295,8 @@ To test:
 
 Note: `make test` requires cargo-nextest installed, to learn more about it please visit [homepage of cargo-nextest](https://nexte.st/).
 
+Note: If your Redis server binary cannot be found as `redis-server` in the PATH, point the `REDISRS_SERVER_BIN` environment variable to the binary.
+
 
     $ make test
     
@@ -276,7 +312,7 @@ We encourage you to run `clippy` prior to seeking a merge for your work. The lin
 
     $ cargo clippy --all-features --all --tests --examples -- -D clippy::all -D warnings
 
-To run fuzz tests with afl, first install cargo-afl (`cargo install -f afl`),
+To run fuzz tests with afl, first install cargo-afl (`cargo install cargo-afl`),
 then run:
 
     $ make fuzz
@@ -285,3 +321,9 @@ If the fuzzer finds a crash, in order to reproduce it, run:
 
     $ cd afl/<target>/
     $ cargo run --bin reproduce -- out/crashes/<crashfile>
+
+### AI contributions
+
+This is not a firm policy, but for the time being, PRs get evaluated on their
+contents, not on who (or what) wrote them. So AI contributions are not
+prohibited.

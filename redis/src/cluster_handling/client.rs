@@ -1,20 +1,34 @@
 #[cfg(feature = "cluster-async")]
 use crate::aio::AsyncPushSender;
+#[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
+use crate::auth::StreamingCredentialsProvider;
 #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
 use crate::caching::{CacheConfig, CacheManager};
 use crate::client::DEFAULT_CONNECTION_TIMEOUT;
+use crate::cluster_handling::read_routing::{RandomReplicaStrategy, ReadRoutingStrategyFactory};
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::errors::{ErrorKind, RedisError};
-use crate::io::tcp::TcpSettings;
 #[cfg(feature = "cluster-async")]
 use crate::io::AsyncDNSResolver;
+use crate::io::tcp::TcpSettings;
 use crate::types::{ProtocolVersion, RedisResult};
-use crate::{cluster, TlsMode};
+use crate::{TlsMode, cluster};
 use arcstr::ArcStr;
 use rand::Rng;
-#[cfg(feature = "cluster-async")]
 use std::sync::Arc;
 use std::time::Duration;
+
+/// Controls the overall timeout behavior for a complete cluster request,
+/// including all internal retries, reconnections, and redirections (e.g. MOVED/ASK).
+#[cfg(feature = "cluster-async")]
+#[derive(Clone, Debug, Default)]
+enum OverallResponseTimeout {
+    /// Use the same value as `response_timeout` for the overall timeout.
+    #[default]
+    MatchResponseTimeout,
+    /// Use a specific duration, or disable the overall timeout with `None`.
+    Explicit(Option<Duration>),
+}
 
 use crate::connection::TlsConnParams;
 
@@ -22,7 +36,7 @@ use crate::connection::TlsConnParams;
 use crate::cluster_async;
 
 #[cfg(feature = "tls-rustls")]
-use crate::tls::{retrieve_tls_certificates, TlsCertificates};
+use crate::tls::{TlsCertificates, retrieve_tls_certificates};
 
 /// Parameters specific to builder, so that
 /// builder parameters may have different types
@@ -31,7 +45,7 @@ use crate::tls::{retrieve_tls_certificates, TlsCertificates};
 struct BuilderParams {
     password: Option<ArcStr>,
     username: Option<ArcStr>,
-    read_from_replicas: bool,
+    read_routing_factory: Option<Arc<dyn ReadRoutingStrategyFactory>>,
     tls: Option<TlsMode>,
     #[cfg(feature = "tls-rustls")]
     certs: Option<TlsCertificates>,
@@ -48,6 +62,12 @@ struct BuilderParams {
     async_dns_resolver: Option<Arc<dyn AsyncDNSResolver>>,
     #[cfg(feature = "cache-aio")]
     cache_config: Option<CacheConfig>,
+    #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
+    credentials_provider: Option<std::sync::Arc<dyn StreamingCredentialsProvider>>,
+    #[cfg(feature = "cluster-async")]
+    overall_response_timeout: OverallResponseTimeout,
+    #[cfg(feature = "cluster-async")]
+    connection_concurrency_limit: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -92,7 +112,7 @@ impl RetryParams {
 pub(crate) struct ClusterParams {
     pub(crate) password: Option<ArcStr>,
     pub(crate) username: Option<ArcStr>,
-    pub(crate) read_from_replicas: bool,
+    pub(crate) read_routing_factory: Option<Arc<dyn ReadRoutingStrategyFactory>>,
     /// tls indicates tls behavior of connections.
     /// When Some(TlsMode), connections use tls and verify certification depends on TlsMode.
     /// When None, connections do not use tls.
@@ -109,6 +129,12 @@ pub(crate) struct ClusterParams {
     pub(crate) async_dns_resolver: Option<Arc<dyn AsyncDNSResolver>>,
     #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
     pub(crate) cache_manager: Option<CacheManager>,
+    #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
+    pub(crate) credentials_provider: Option<std::sync::Arc<dyn StreamingCredentialsProvider>>,
+    #[cfg(feature = "cluster-async")]
+    pub(crate) overall_response_timeout: Option<Duration>,
+    #[cfg(feature = "cluster-async")]
+    pub(crate) connection_concurrency_limit: Option<usize>,
 }
 
 impl ClusterParams {
@@ -147,7 +173,7 @@ impl ClusterParams {
         Ok(Self {
             password: value.password,
             username: value.username,
-            read_from_replicas: value.read_from_replicas,
+            read_routing_factory: value.read_routing_factory,
             tls: value.tls,
             retry_params: value.retries_configuration,
             tls_params,
@@ -163,6 +189,15 @@ impl ClusterParams {
             async_dns_resolver: value.async_dns_resolver,
             #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
             cache_manager,
+            #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
+            credentials_provider: value.credentials_provider,
+            #[cfg(feature = "cluster-async")]
+            overall_response_timeout: match value.overall_response_timeout {
+                OverallResponseTimeout::MatchResponseTimeout => value.response_timeout,
+                OverallResponseTimeout::Explicit(d) => d,
+            },
+            #[cfg(feature = "cluster-async")]
+            connection_concurrency_limit: value.connection_concurrency_limit,
         })
     }
 
@@ -229,7 +264,7 @@ impl ClusterClientBuilder {
                 return Err(RedisError::from((
                     ErrorKind::InvalidClientConfig,
                     "Initial nodes can't be empty.",
-                )))
+                )));
             }
         };
 
@@ -266,8 +301,10 @@ impl ClusterClientBuilder {
         // Verify that the initial nodes match the cluster client's configuration.
         for node in &initial_nodes {
             if let ConnectionAddr::Unix(_) = node.addr {
-                return Err(RedisError::from((ErrorKind::InvalidClientConfig,
-                                             "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.")));
+                return Err(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "This library cannot use unix socket because Redis's cluster command returns only cluster's IP and port.",
+                )));
             }
 
             if password.is_some() && node.redis.password.as_deref() != password.as_deref() {
@@ -398,10 +435,68 @@ impl ClusterClientBuilder {
 
     /// Enables reading from replicas for all new connections (default is disabled).
     ///
-    /// If enabled, then read queries will go to the replica nodes & write queries will go to the
-    /// primary nodes. If there are no replica nodes, then all queries will go to the primary nodes.
+    /// Read queries will go to a random replica node and write queries will go to the
+    /// primary node. If there are no replica nodes, then all queries will go to the primary node.
+    #[deprecated(note = "Use `read_routing_strategy(RandomReplicaStrategy)` instead")]
     pub fn read_from_replicas(mut self) -> ClusterClientBuilder {
-        self.builder_params.read_from_replicas = true;
+        self.builder_params.read_routing_factory = Some(Arc::new(RandomReplicaStrategy));
+        self
+    }
+
+    /// Sets a custom `ReadRoutingStrategyFactory` for routing read commands within Shards.
+    ///
+    /// Cluster slots are assigned to a shard consisting of a primary node and zero or more
+    /// replica nodes. By default, the cluster client will route all commands to the primary
+    /// node of a shard.
+    ///
+    /// By providing a strategy factory here, you can control how read requests will be routed
+    /// within a shard. This allows the routing of reads to replicas.
+    ///
+    /// The strategy factory is responsible for producing a `ReadRoutingStrategy` each time
+    /// a new connection is created from this client.
+    ///
+    /// A blanket implementation of `ReadRoutingStrategyFactory` is provided for any
+    /// `T: ReadRoutingStrategy + Default + 'static`, so simple strategies can be passed directly.
+    /// The blanket implementation uses default to construct a new strategy for each connection.
+    ///
+    /// The `cluster_read_routing` module provides built-in simple strategies such as
+    /// `RandomReplicaStrategy` and `RoundRobinReplicaStrategy`.
+    ///
+    /// You can implement your own `ReadRoutingStrategy` using the provided traits.
+    ///
+    /// For strategies that need to maintain shared state, such as cross-connection latency tracking,
+    /// implement `ReadRoutingStrategyFactory` directly.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use redis::cluster::ClusterClientBuilder;
+    /// use redis::cluster_read_routing::{ReadRoutingStrategy, ReadCandidates};
+    /// use redis::cluster::NodeAddress;
+    ///
+    /// /// Routes reads to the first replica.
+    /// #[derive(Default)]
+    /// struct FirstReplica;
+    ///
+    /// impl ReadRoutingStrategy for FirstReplica {
+    ///     fn route_read<'a>(&self, candidates: &ReadCandidates<'a>) -> &'a NodeAddress {
+    ///         match candidates {
+    ///             ReadCandidates::AnyNode(c) => c.replicas().first(),
+    ///             ReadCandidates::ReplicasOnly(c) => c.replicas().first(),
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// let client = ClusterClientBuilder::new(vec!["redis://127.0.0.1:6379/"])
+    ///     .read_routing_strategy(FirstReplica)
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn read_routing_strategy(
+        mut self,
+        strategy: impl ReadRoutingStrategyFactory + 'static,
+    ) -> ClusterClientBuilder {
+        self.builder_params.read_routing_factory = Some(Arc::new(strategy));
         self
     }
 
@@ -416,8 +511,27 @@ impl ClusterClientBuilder {
     /// Enables timing out on slow responses.
     ///
     /// If enabled, the cluster will only wait the given time to each response from each node.
+    /// This timeout is also used as the overall response timeout (including retries) unless
+    /// overridden with [`Self::overall_response_timeout`].
     pub fn response_timeout(mut self, response_timeout: Duration) -> ClusterClientBuilder {
         self.builder_params.response_timeout = Some(response_timeout);
+        self
+    }
+
+    /// Sets the overall timeout for a complete cluster request, including all retries,
+    /// reconnections, and redirections (e.g. MOVED/ASK).
+    ///
+    /// By default this matches `response_timeout`, meaning the same duration is used both
+    /// per-attempt and overall. This can cause requests to time out when retries are needed,
+    /// since the retry must complete within whatever time remains from the original timeout.
+    ///
+    /// Set to `None` to disable the overall response timeout. Each individual attempt will
+    /// still be bounded by `response_timeout`, but the total operation can take longer when
+    /// retries occur. Set to `Some(duration)` to use a specific overall timeout independent
+    /// of `response_timeout`.
+    #[cfg(feature = "cluster-async")]
+    pub fn overall_response_timeout(mut self, timeout: Option<Duration>) -> ClusterClientBuilder {
+        self.builder_params.overall_response_timeout = OverallResponseTimeout::Explicit(timeout);
         self
     }
 
@@ -481,6 +595,44 @@ impl ClusterClientBuilder {
     #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
     pub fn cache_config(mut self, cache_config: CacheConfig) -> Self {
         self.builder_params.cache_config = Some(cache_config);
+        self
+    }
+
+    /// Sets the maximum number of outstanding requests allowed per connection to a cluster node.
+    ///
+    /// When set, each node connection will allow at most `limit` concurrent in-flight requests.
+    /// Additional requests will wait until an in-flight request completes.
+    ///
+    /// Pipelined commands try to acquire one permit per command, but will proceed with
+    /// fewer if not all are immediately available. This means a pipeline may temporarily
+    /// push the effective in-flight count above the limit.
+    ///
+    /// This is useful for preventing a large backlog of commands from building up when a node
+    /// goes offline or becomes slow. Without a limit, requests continue to queue unboundedly
+    /// on the connection. When the node is degraded, requests near the back of the queue
+    /// spend most of their time waiting behind earlier requests and are likely to hit their
+    /// response timeout before the server even processes them -- wasting work on both sides.
+    /// Setting a concurrency limit caps the number of in-flight requests per node, so
+    /// backpressure is applied earlier and fewer requests are lost to timeouts.
+    ///
+    /// By default there is no limit.
+    #[cfg(feature = "cluster-async")]
+    pub fn connection_concurrency_limit(mut self, limit: usize) -> ClusterClientBuilder {
+        self.builder_params.connection_concurrency_limit = Some(limit);
+        self
+    }
+
+    /// Sets a credentials provider for dynamic authentication (e.g., token-based authentication)
+    /// on all cluster node connections.
+    ///
+    /// Each node connection will independently subscribe to the provider and automatically
+    /// re-authenticate when new credentials are emitted.
+    #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
+    pub fn set_credentials_provider<P>(mut self, provider: P) -> ClusterClientBuilder
+    where
+        P: StreamingCredentialsProvider + 'static,
+    {
+        self.builder_params.credentials_provider = Some(std::sync::Arc::new(provider));
         self
     }
 }
@@ -571,6 +723,20 @@ impl ClusterClient {
         .await
     }
 
+    /// Creates new connections to Redis Cluster nodes with a custom config and returns a
+    /// [`cluster_async::ClusterConnection`]. The connections to the cluster nodes are done in the
+    /// background so the caller won't know if the cluster is available until the first command is sent.
+    #[cfg(feature = "cluster-async")]
+    pub fn get_pending_async_connection_with_config(
+        &self,
+        config: cluster::ClusterConfig,
+    ) -> cluster_async::ClusterConnection {
+        cluster_async::ClusterConnection::new_pending(
+            &self.initial_nodes,
+            self.cluster_params.clone().with_config(config),
+        )
+    }
+
     #[doc(hidden)]
     pub fn get_generic_connection<C>(&self) -> RedisResult<cluster::ClusterConnection<C>>
     where
@@ -601,6 +767,7 @@ impl ClusterClient {
 #[cfg(test)]
 mod tests {
     use super::{ClusterClient, ClusterClientBuilder, ConnectionInfo, IntoConnectionInfo};
+    use std::time::Duration;
 
     fn get_connection_data() -> Vec<ConnectionInfo> {
         vec![
@@ -712,5 +879,63 @@ mod tests {
     fn give_empty_initial_nodes() {
         let client = ClusterClient::new(Vec::<String>::new());
         assert!(client.is_err())
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn overall_response_timeout_defaults_to_response_timeout() {
+        let client = ClusterClientBuilder::new(get_connection_data())
+            .response_timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        assert_eq!(
+            client.cluster_params.overall_response_timeout,
+            Some(Duration::from_secs(5))
+        );
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn overall_response_timeout_can_be_disabled() {
+        let client = ClusterClientBuilder::new(get_connection_data())
+            .response_timeout(Duration::from_secs(5))
+            .overall_response_timeout(None)
+            .build()
+            .unwrap();
+        assert_eq!(client.cluster_params.overall_response_timeout, None);
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn overall_response_timeout_can_be_set_independently() {
+        let client = ClusterClientBuilder::new(get_connection_data())
+            .response_timeout(Duration::from_secs(5))
+            .overall_response_timeout(Some(Duration::from_secs(30)))
+            .build()
+            .unwrap();
+        assert_eq!(
+            client.cluster_params.overall_response_timeout,
+            Some(Duration::from_secs(30))
+        );
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn connection_concurrency_limit_default() {
+        let client = ClusterClient::new(get_connection_data()).unwrap();
+        assert_eq!(client.cluster_params.connection_concurrency_limit, None);
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn connection_concurrency_limit_custom() {
+        let client = ClusterClientBuilder::new(get_connection_data())
+            .connection_concurrency_limit(128)
+            .build()
+            .unwrap();
+        assert_eq!(
+            client.cluster_params.connection_concurrency_limit,
+            Some(128)
+        );
     }
 }

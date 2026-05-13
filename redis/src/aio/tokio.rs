@@ -20,7 +20,7 @@ use crate::connection::create_rustls_config;
 #[cfg(feature = "tokio-rustls-comp")]
 use std::sync::Arc;
 #[cfg(feature = "tokio-rustls-comp")]
-use tokio_rustls::{client::TlsStream, TlsConnector};
+use tokio_rustls::{TlsConnector, client::TlsStream};
 
 #[cfg(all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")))]
 use tokio_native_tls::TlsStream;

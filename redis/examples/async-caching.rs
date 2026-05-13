@@ -1,4 +1,4 @@
-use redis::{caching::CacheConfig, AsyncConnectionConfig};
+use redis::{AsyncConnectionConfig, caching::CacheConfig};
 
 #[tokio::main]
 async fn main() -> redis::RedisResult<()> {

@@ -1,7 +1,8 @@
 use super::ClusterConnection;
-use crate::cmd::{cmd, Cmd};
+use crate::RedisError;
+use crate::cmd::{Cmd, cmd};
 use crate::errors::ErrorKind;
-use crate::types::{from_redis_value, FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value};
+use crate::types::{FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value, from_redis_value};
 
 pub(crate) const UNROUTABLE_ERROR: (ErrorKind, &str) = (
     ErrorKind::Client,
@@ -22,7 +23,7 @@ fn is_illegal_cmd(cmd: &str) -> bool {
         "INFO" |
         "KEYS" |
         "LASTSAVE" |
-        "MGET" | "MOVE" | "MSET" | "MSETNX" |
+        "MGET" | "MOVE" | "MSET" | "MSETNX" | "MSETEX" |
         "PING" | "PUBLISH" |
         "RANDOMKEY" | "RENAME" | "RENAMENX" | "RPOPLPUSH" |
         "SAVE" | "SCAN" |
@@ -45,6 +46,7 @@ fn is_illegal_cmd(cmd: &str) -> bool {
 pub struct ClusterPipeline {
     commands: Vec<Cmd>,
     ignored_commands: HashSet<usize>,
+    ignore_errors: bool,
 }
 
 /// A cluster pipeline is almost identical to a normal [Pipeline](crate::pipeline::Pipeline), with two exceptions:
@@ -60,7 +62,7 @@ pub struct ClusterPipeline {
 /// INFO
 /// KEYS
 /// LASTSAVE
-/// MGET, MOVE, MSET, MSETNX
+/// MGET, MOVE, MSET, MSETNX, MSETEX
 /// PING, PUBLISH
 /// RANDOMKEY, RENAME, RENAMENX, RPOPLPUSH
 /// SAVE, SCAN, SCRIPT EXISTS, SCRIPT FLUSH, SCRIPT KILL, SCRIPT LOAD, SDIFF, SDIFFSTORE,
@@ -80,6 +82,7 @@ impl ClusterPipeline {
         ClusterPipeline {
             commands: Vec::with_capacity(capacity),
             ignored_commands: HashSet::new(),
+            ignore_errors: false,
         }
     }
 
@@ -118,7 +121,7 @@ impl ClusterPipeline {
         }
 
         if self.commands.is_empty() {
-            Ok(from_redis_value(Value::Array(vec![]))?)
+            Err(RedisError::make_empty_command())
         } else {
             self.compose_response(con.execute_pipeline(self)?)
         }

@@ -2,17 +2,19 @@ use std::time::Duration;
 
 #[cfg(feature = "aio")]
 use crate::aio::{AsyncPushSender, DefaultAsyncDNSResolver};
+#[cfg(feature = "token-based-authentication")]
+use crate::auth::StreamingCredentialsProvider;
 #[cfg(feature = "aio")]
 use crate::io::AsyncDNSResolver;
 use crate::{
-    connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
+    connection::{Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo, connect},
     types::{RedisResult, Value},
 };
 #[cfg(feature = "aio")]
 use std::pin::Pin;
 
 #[cfg(feature = "tls-rustls")]
-use crate::tls::{inner_build_with_tls, TlsCertificates};
+use crate::tls::{TlsCertificates, inner_build_with_tls};
 
 #[cfg(feature = "cache-aio")]
 use crate::caching::CacheConfig;
@@ -191,6 +193,11 @@ pub struct AsyncConnectionConfig {
     #[cfg(feature = "cache-aio")]
     pub(crate) cache: Option<Cache>,
     pub(crate) dns_resolver: Option<std::sync::Arc<dyn AsyncDNSResolver>>,
+    pub(crate) pipeline_buffer_size: Option<usize>,
+    pub(crate) concurrency_limit: Option<usize>,
+    /// Optional credentials provider for dynamic authentication (e.g., token-based authentication)
+    #[cfg(feature = "token-based-authentication")]
+    pub(crate) credentials_provider: Option<std::sync::Arc<dyn StreamingCredentialsProvider>>,
 }
 
 #[cfg(feature = "aio")]
@@ -203,13 +210,17 @@ impl Default for AsyncConnectionConfig {
             #[cfg(feature = "cache-aio")]
             cache: Default::default(),
             dns_resolver: Default::default(),
+            pipeline_buffer_size: None,
+            concurrency_limit: None,
+            #[cfg(feature = "token-based-authentication")]
+            credentials_provider: None,
         }
     }
 }
 
 #[cfg(feature = "aio")]
 impl AsyncConnectionConfig {
-    /// Creates a new instance of the options with nothing set
+    /// Creates a new instance of the config with all parameters set to default values.
     pub fn new() -> Self {
         Self::default()
     }
@@ -297,6 +308,87 @@ impl AsyncConnectionConfig {
         self.dns_resolver = Some(dns_resolver);
         self
     }
+
+    /// Sets the buffer size for the internal pipeline channel.
+    ///
+    /// The multiplexed connection uses an internal channel to queue Redis commands
+    /// before sending them to the server. This setting controls how many commands
+    /// can be buffered in that channel.
+    ///
+    /// When the buffer is full, callers will asynchronously wait until space becomes
+    /// available. A larger buffer allows more commands to be queued during bursts of
+    /// activity, reducing wait time for callers. However, this comes at the cost of
+    /// increased memory usage.
+    ///
+    /// The default value is 50. Consider increasing this value for high-concurrency
+    /// scenarios (e.g., web servers handling many simultaneous requests) where
+    /// buffer contention may increase overall latency and cause upstream timeouts.
+    pub fn set_pipeline_buffer_size(mut self, size: usize) -> Self {
+        self.pipeline_buffer_size = Some(size);
+        self
+    }
+
+    /// Sets the maximum number of concurrent in-flight requests on this connection.
+    ///
+    /// When set, at most `limit` requests can be awaiting a response at any given time.
+    /// Additional requests will wait until an in-flight request completes.
+    ///
+    /// Pipelined commands try to acquire one permit per command, but will proceed with
+    /// fewer if not all are immediately available. This means a pipeline may temporarily
+    /// push the effective in-flight count above the limit.
+    ///
+    /// This is useful for preventing a large backlog of commands from building up when the
+    /// server becomes slow or unresponsive. Without a limit, requests continue to queue
+    /// unboundedly. When the server is degraded, requests near the back of the queue spend
+    /// most of their time waiting behind earlier requests and are likely to hit their response
+    /// timeout before the server even processes them -- wasting work on both sides. Setting a
+    /// concurrency limit caps the number of in-flight requests, so backpressure is applied
+    /// earlier and fewer requests are lost to timeouts.
+    ///
+    /// By default there is no limit.
+    pub fn set_concurrency_limit(mut self, limit: usize) -> Self {
+        self.concurrency_limit = Some(limit);
+        self
+    }
+
+    /// Sets a credentials provider for dynamic authentication (e.g., token-based authentication).
+    ///
+    /// This is useful for authentication mechanisms that require periodic credential refresh,
+    /// such as Microsoft Entra ID (formerly Azure AD).
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # #[cfg(feature = "entra-id")]
+    /// # {
+    /// use redis::{AsyncConnectionConfig, EntraIdCredentialsProvider, RetryConfig};
+    ///
+    /// # async fn example() -> redis::RedisResult<()> {
+    /// let mut provider = EntraIdCredentialsProvider::new_developer_tools()?;
+    /// provider.start(RetryConfig::default());
+    ///
+    /// let config = AsyncConnectionConfig::new()
+    ///     .set_credentials_provider(provider);
+    /// # Ok(())
+    /// # }
+    /// # }
+    /// ```
+    #[cfg(feature = "token-based-authentication")]
+    pub fn set_credentials_provider<P>(self, provider: P) -> Self
+    where
+        P: StreamingCredentialsProvider + 'static,
+    {
+        self.set_credentials_provider_internal(std::sync::Arc::new(provider))
+    }
+
+    #[cfg(feature = "token-based-authentication")]
+    pub(crate) fn set_credentials_provider_internal(
+        mut self,
+        provider: std::sync::Arc<dyn StreamingCredentialsProvider>,
+    ) -> Self {
+        self.credentials_provider = Some(provider);
+        self
+    }
 }
 
 /// To enable async support you need to chose one of the supported runtimes and active its
@@ -368,6 +460,20 @@ impl Client {
     #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
     pub async fn get_connection_manager(&self) -> RedisResult<crate::aio::ConnectionManager> {
         crate::aio::ConnectionManager::new(self.clone()).await
+    }
+
+    /// Returns an async [`ConnectionManager`][connection-manager] from the client without establishing a connection.
+    ///
+    /// The connection will be established lazily on the first request.
+    ///
+    /// [connection-manager]: aio/struct.ConnectionManager.html
+    #[cfg(feature = "connection-manager")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
+    pub fn get_connection_manager_lazy(
+        &self,
+        config: crate::aio::ConnectionManagerConfig,
+    ) -> RedisResult<crate::aio::ConnectionManager> {
+        crate::aio::ConnectionManager::new_lazy_with_config(self.clone(), config)
     }
 
     /// Returns an async [`ConnectionManager`][connection-manager] from the client.
@@ -443,7 +549,7 @@ impl Client {
         config: &AsyncConnectionConfig,
     ) -> RedisResult<(
         crate::aio::MultiplexedConnection,
-        impl std::future::Future<Output = ()>,
+        impl std::future::Future<Output = ()> + 'static,
     )>
     where
         T: crate::aio::RedisRuntime,
@@ -568,9 +674,38 @@ impl ConnectionLike for Client {
 #[cfg(test)]
 mod test {
     use super::*;
+    use assert_matches::assert_matches;
 
     #[test]
     fn regression_293_parse_ipv6_with_interface() {
-        assert!(Client::open(("fe80::cafe:beef%eno1", 6379)).is_ok());
+        assert_matches!(Client::open(("fe80::cafe:beef%eno1", 6379)), Ok(_));
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn test_async_connection_config_pipeline_buffer_size_default() {
+        let config = AsyncConnectionConfig::new();
+        assert_eq!(config.pipeline_buffer_size, None);
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn test_async_connection_config_pipeline_buffer_size_custom() {
+        let config = AsyncConnectionConfig::new().set_pipeline_buffer_size(100);
+        assert_eq!(config.pipeline_buffer_size, Some(100));
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn test_async_connection_config_concurrency_limit_default() {
+        let config = AsyncConnectionConfig::new();
+        assert_eq!(config.concurrency_limit, None);
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn test_async_connection_config_concurrency_limit_custom() {
+        let config = AsyncConnectionConfig::new().set_concurrency_limit(128);
+        assert_eq!(config.concurrency_limit, Some(128));
     }
 }

@@ -35,7 +35,9 @@ fn main() {
 }
 
 fn demo_group_reads(client: &redis::Client) {
-    println!("\n\nDemonstrating a longer stream of data flowing\nin over time, consumed by multiple threads using XREADGROUP\n");
+    println!(
+        "\n\nDemonstrating a longer stream of data flowing\nin over time, consumed by multiple threads using XREADGROUP\n"
+    );
 
     let mut handles = vec![];
 
@@ -86,7 +88,7 @@ fn demo_group_reads(client: &redis::Client) {
 
                 // fake some expensive work
                 for StreamKey { key, ids } in read_reply.keys {
-                    for StreamId { id, map: _ } in &ids {
+                    for StreamId { id, .. } in &ids {
                         thread::sleep(Duration::from_millis(random_wait_millis(*slowness)));
                         println!(
                             "Stream {} ID {} Consumer slowness {} SysTime {}",
@@ -102,8 +104,7 @@ fn demo_group_reads(client: &redis::Client) {
 
                     // acknowledge each stream and message ID once all messages are
                     // correctly processed
-                    let id_strs: Vec<&String> =
-                        ids.iter().map(|StreamId { id, map: _ }| id).collect();
+                    let id_strs: Vec<&String> = ids.iter().map(|StreamId { id, .. }| id).collect();
                     con.xack(key, GROUP_NAME, &id_strs).expect("ack")
                 }
             }
@@ -217,7 +218,7 @@ fn read_records(client: &redis::Client) -> RedisResult<()> {
 
     for StreamKey { key, ids } in srr.keys {
         println!("Stream {key}");
-        for StreamId { id, map } in ids {
+        for StreamId { id, map, .. } in ids {
             println!("\tID {id}");
             for (n, s) in map {
                 if let Value::BulkString(bytes) = s {

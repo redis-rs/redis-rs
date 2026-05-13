@@ -1,8 +1,8 @@
-use redis::sentinel::SentinelNodeConnectionInfo;
 use redis::ConnectionAddr;
 use redis::ConnectionInfo;
 use redis::TlsMode;
-use redis_test::sentinel::{wait_for_master_server, wait_for_replica, RedisSentinelCluster};
+use redis::sentinel::SentinelNodeConnectionInfo;
+use redis_test::sentinel::{RedisSentinelCluster, wait_for_master_server, wait_for_replica};
 use redis_test::server::RedisServer;
 
 use crate::support::start_tls_crypto_provider;
@@ -81,12 +81,12 @@ impl TestSentinelContext {
         let node_conn_info = self.sentinel_node_connection_info();
         let con = self.sentinel_mut();
 
-        let r = wait_for_master_server(|| con.master_for("master1", Some(&node_conn_info)));
+        let r = wait_for_master_server(|| con.master_for("master1", Some(&node_conn_info)), None);
         if r.is_err() {
             panic!("failed waiting for sentinel master1 to be ready");
         }
 
-        let r = wait_for_replica(|| con.replica_for("master1", Some(&node_conn_info)));
+        let r = wait_for_replica(|| con.replica_for("master1", Some(&node_conn_info)), None);
         if r.is_err() {
             panic!("failed waiting for sentinel master1 replica to be ready");
         }

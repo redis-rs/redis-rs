@@ -13,12 +13,8 @@ macro_rules! invalid_type_error_inner {
 }
 
 macro_rules! invalid_type_error {
-    ($det:expr) => {{
-        fail!(crate::errors::ParsingError::from(format!("{:?}", $det)))
-    }};
-    ($v:expr, $det:expr) => {{
-        fail!(crate::errors::invalid_type_error_inner!($v, $det))
-    }};
+    ($det:expr) => {{ fail!(crate::errors::ParsingError::from(format!("{:?}", $det))) }};
+    ($v:expr, $det:expr) => {{ fail!(crate::errors::invalid_type_error_inner!($v, $det)) }};
 }
 
 pub(crate) use {invalid_type_error, invalid_type_error_inner};

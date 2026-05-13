@@ -4,7 +4,7 @@ use std::{env, fs, path::PathBuf, process};
 
 use tempfile::TempDir;
 
-use crate::utils::{build_keys_and_certs_for_tls, get_random_available_port, TlsFilePaths};
+use crate::utils::{TlsFilePaths, build_keys_and_certs_for_tls, get_random_available_port};
 
 pub fn use_protocol() -> ProtocolVersion {
     if env::var("PROTOCOL").unwrap_or_default() == "RESP3" {
@@ -16,6 +16,11 @@ pub fn use_protocol() -> ProtocolVersion {
 
 pub fn redis_settings() -> RedisConnectionInfo {
     RedisConnectionInfo::default().set_protocol(use_protocol())
+}
+
+/// Get the default host to use for TCP connections.
+pub fn get_default_host() -> String {
+    "127.0.0.1".to_string()
 }
 
 #[derive(PartialEq)]
@@ -86,13 +91,13 @@ impl RedisServer {
             ServerType::Tcp { tls } => {
                 if tls {
                     redis::ConnectionAddr::TcpTls {
-                        host: "127.0.0.1".to_string(),
+                        host: get_default_host(),
                         port,
                         insecure: true,
                         tls_params: None,
                     }
                 } else {
-                    redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), port)
+                    redis::ConnectionAddr::Tcp(get_default_host(), port)
                 }
             }
             ServerType::Unix => {
@@ -114,6 +119,7 @@ impl RedisServer {
             None,
             None,
             mtls_enabled,
+            None,
             modules,
             |cmd| {
                 cmd.spawn()
@@ -132,6 +138,7 @@ impl RedisServer {
             None,
             None,
             mtls_enabled,
+            None,
             modules,
             |cmd| {
                 cmd.spawn()
@@ -147,24 +154,45 @@ impl RedisServer {
         config_file: Option<&Path>,
         tls_paths: Option<TlsFilePaths>,
         mtls_enabled: bool,
+        cert_auth_field: Option<&str>,
         modules: &[Module],
         spawner: F,
     ) -> RedisServer {
-        let mut redis_cmd = process::Command::new("redis-server");
+        let bin = env::var("REDISRS_SERVER_BIN").unwrap_or_else(|_| "redis-server".to_string());
+        let mut redis_cmd = process::Command::new(bin);
 
         if let Some(config_path) = config_file {
             redis_cmd.arg(config_path);
         }
 
+        // Disable snapshotting
+        // This stops littering `dump.rdb` files during testing/development.
+        redis_cmd.arg("--save").arg("");
+
         // Load Redis Modules
         for module in modules {
             match module {
                 Module::Json => {
-                    redis_cmd
-                        .arg("--loadmodule")
-                        .arg(env::var("REDIS_RS_REDIS_JSON_PATH").expect(
-                        "Unable to find path to RedisJSON at REDIS_RS_REDIS_JSON_PATH, is it set?",
-                    ));
+                    // Try to pick up json module path from REDISRS_REDIS_JSON_PATH environment variable
+                    let path = match env::var("REDISRS_REDIS_JSON_PATH") {
+                        Ok(path) => path,
+                        // Falling back to legacy REDIS_RS_REDIS_JSON_PATH environment variable
+                        Err(_) => match env::var("REDIS_RS_REDIS_JSON_PATH") {
+                            Ok(path) => {
+                                eprintln!(
+                                    "Warning: Use of REDIS_RS_REDIS_JSON_PATH is deprecated. Use REDISRS_REDIS_JSON_PATH (no '_' before 'RS') instead"
+                                );
+                                path
+                            }
+                            Err(_) => {
+                                panic!(
+                                    "Unable to find path to RedisJSON at REDISRS_REDIS_JSON_PATH, is it set?"
+                                );
+                            }
+                        },
+                    };
+
+                    redis_cmd.arg("--loadmodule").arg(path);
                 }
             };
         }
@@ -219,6 +247,13 @@ impl RedisServer {
                     .arg("--bind")
                     .arg(host);
 
+                // Enable certificate-based authentication (Redis 8.6+)
+                // The cert_auth_field specifies which certificate field to use for username mapping
+                // (e.g., "CN" for Common Name)
+                if let Some(field) = cert_auth_field {
+                    redis_cmd.arg("--tls-auth-clients-user").arg(field);
+                }
+
                 // Insecure only disabled if `mtls` is enabled
                 let insecure = !mtls_enabled;
 
@@ -257,6 +292,14 @@ impl RedisServer {
 
     pub fn client_addr(&self) -> &redis::ConnectionAddr {
         &self.addr
+    }
+
+    pub fn host_and_port(&self) -> Option<(&str, u16)> {
+        match &self.addr {
+            ConnectionAddr::Tcp(host, port) => Some((host, *port)),
+            ConnectionAddr::TcpTls { host, port, .. } => Some((host, *port)),
+            _ => None,
+        }
     }
 
     pub fn connection_info(&self) -> redis::ConnectionInfo {

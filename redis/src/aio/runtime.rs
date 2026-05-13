@@ -132,8 +132,7 @@ static CHOSEN_RUNTIME: OnceLock<Runtime> = OnceLock::new();
     all(feature = "monoio-comp", any(feature = "tokio-comp", feature = "smol-comp"))
 ))]
 fn set_runtime(runtime: Runtime) -> Result<(), RedisError> {
-    const PREFER_RUNTIME_ERROR: &str =
-    "Another runtime preference was already set. Please call this function before any other runtime preference is set.";
+    const PREFER_RUNTIME_ERROR: &str = "Another runtime preference was already set. Please call this function before any other runtime preference is set.";
 
     CHOSEN_RUNTIME
         .set(runtime)

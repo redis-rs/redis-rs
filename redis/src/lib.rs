@@ -106,7 +106,6 @@
 //! * `sentinel`: enables high-level interfaces for communication with Redis sentinels (optional)
 //! * `json`: enables high-level interfaces for communication with the JSON module (optional)
 //! * `cache-aio`: enables **experimental** client side caching for MultiplexedConnection, ConnectionManager and async ClusterConnection (optional)
-//! * `disable-client-setinfo`: disables the `CLIENT SETINFO` handshake during connection initialization
 //!
 //! ## Connection Parameters
 //!
@@ -592,7 +591,8 @@ let primary = sentinel.get_async_connection().await.unwrap();
 //!
 //! * Iterators are now safe by default, without an opt out. This means that the iterators return `RedisResult<Value>` instead of `Value`. See [this PR](https://github.com/redis-rs/redis-rs/pull/1641) for background. If you previously used the "safe_iterators" feature to opt-in to this behavior, just remove the feature declaration. Otherwise you will need to adjust your usage of iterators to account for potential conversion failures.
 //! * Parsing values using [FromRedisValue] no longer returns [RedisError] on failure, in order to save the users checking for various server & client errors in such scenarios. if you rely on the error type when using this trait, you will need to adjust your error handling code. [ParsingError] should only be printed, since it does not contain any user actionable info outside of its error message.
-//! * If you used the `tcp_nodelay`, `keep-alive`, or `disable-client-setinfo` features, you'll need to set these values on the connection info you pass to the client use [ConnectionInfo::set_tcp_settings].
+//! * If you used the `tcp_nodelay` or `keep-alive` features, you'll need to set these values on the connection info you pass to the client use [ConnectionInfo::set_tcp_settings].
+//! * If you used the `disable-client-setinfo` features, you'll need to set [RedisConnectionInfo::skip_set_lib_name].
 //! * If you create [ConnectionInfo], [RedisConnectionInfo], or [sentinel::SentinelNodeConnectionInfo] objects explicitly, now you need to use the builder pattern setters instead of setting fields.
 //! * if you used `MultiplexedConnection::new_with_response_timeout`, it is replaced by [aio::MultiplexedConnection::new_with_config]. `Client::get_multiplexed_tokio_connection_with_response_timeouts`, `Client::get_multiplexed_tokio_connection`, `Client::create_multiplexed_tokio_connection_with_response_timeout`, `Client::create_multiplexed_tokio_connection` were replaced by [Client::get_multiplexed_async_connection_with_config].
 //! * If you're using `tokio::time::pause()` or otherwise manipulating time, you might need to opt out of timeouts using `AsyncConnectionConfig::new().set_connection_timeout(None).set_response_timeout(None)`.
@@ -637,22 +637,38 @@ pub use crate::client::AsyncConnectionConfig;
 pub use crate::client::Client;
 #[cfg(feature = "cache-aio")]
 pub use crate::cmd::CommandCacheConfig;
-pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter};
+pub use crate::cmd::{Arg, Cmd, Iter, cmd, pack_command, pipe};
 pub use crate::commands::{
     Commands, ControlFlow, CopyOptions, Direction, FlushAllOptions, FlushDbOptions,
-    HashFieldExpirationOptions, LposOptions, PubSubCommands, ScanOptions, SetOptions,
-    SortedSetAddOptions, TypedCommands, UpdateCheck,
+    HashFieldExpirationOptions, HotkeysCommands, LposOptions, MSetOptions, PubSubCommands,
+    ScanOptions, SetOptions, SortedSetAddOptions, TypedCommands, UpdateCheck,
+    hotkeys::{
+        HOTKEYS_COUNT_MAX, HOTKEYS_COUNT_MIN, HotKeyEntry, HotkeysOptions, HotkeysResponse,
+        SlotRange,
+    },
 };
 pub use crate::connection::{
-    parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
-    IntoConnectionInfo, Msg, PubSub, RedisConnectionInfo, TlsMode,
+    Connection, ConnectionAddr, ConnectionInfo, ConnectionLike, IntoConnectionInfo, Msg, PubSub,
+    RedisConnectionInfo, TlsMode, parse_redis_url, transaction,
 };
-pub use crate::parser::{parse_redis_value, Parser};
+pub use crate::parser::{Parser, parse_redis_value};
 pub use crate::pipeline::Pipeline;
-
 #[cfg(feature = "script")]
 #[cfg_attr(docsrs, doc(cfg(feature = "script")))]
 pub use crate::script::{Script, ScriptInvocation};
+#[cfg(feature = "token-based-authentication")]
+pub use crate::{
+    auth::{BasicAuth, StreamingCredentialsProvider},
+    auth_management::{RetryConfig, TokenRefreshConfig},
+};
+#[cfg(feature = "entra-id")]
+pub use {
+    crate::entra_id::{ClientCertificate, EntraIdCredentialsProvider, REDIS_SCOPE_DEFAULT},
+    azure_identity::{
+        ClientCertificateCredentialOptions, ClientSecretCredentialOptions,
+        DeveloperToolsCredentialOptions, ManagedIdentityCredentialOptions, UserAssignedId,
+    },
+};
 
 // preserve grouping and order
 #[rustfmt::skip]
@@ -675,11 +691,12 @@ pub use crate::types::{
     Role,
     ReplicaInfo,
     IntegerReplyOrNoOp,
-	ValueType,
+    ValueType,
     RedisResult,
     RedisWrite,
     ToRedisArgs,
     ToSingleRedisArg,
+    ValueComparison,
 
     // low level values
     Value,
@@ -688,9 +705,12 @@ pub use crate::types::{
     ProtocolVersion,
     PushInfo,
 };
+
+pub use crate::types::{calculate_value_digest, is_valid_16_bytes_hex_digest};
+
 pub use crate::errors::{
-    make_extension_error, ErrorKind, ParsingError, RedisError, RetryMethod, ServerError,
-    ServerErrorKind,
+    ErrorKind, ParsingError, RedisError, RetryMethod, ServerError, ServerErrorKind,
+    make_extension_error,
 };
 
 #[cfg(feature = "aio")]
@@ -719,6 +739,10 @@ pub use crate::commands::JsonCommands;
 #[cfg_attr(docsrs, doc(cfg(all(feature = "json", feature = "aio"))))]
 pub use crate::commands::JsonAsyncCommands;
 
+#[cfg(feature = "aio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
+pub use crate::commands::AsyncHotkeysCommands;
+
 #[cfg(feature = "vector-sets")]
 #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
 pub use crate::commands::vector_sets;
@@ -741,6 +765,11 @@ pub use cluster_handling::sync_connection as cluster;
 #[cfg(feature = "cluster")]
 #[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
 pub use cluster_handling::routing as cluster_routing;
+
+/// Pluggable read routing strategies for cluster connections.
+#[cfg(feature = "cluster")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cluster")))]
+pub use cluster_handling::read_routing as cluster_read_routing;
 
 #[cfg(feature = "r2d2")]
 #[cfg_attr(docsrs, doc(cfg(feature = "r2d2")))]
@@ -772,6 +801,17 @@ pub use crate::tls::{ClientTlsConfig, TlsCertificates};
 #[cfg(feature = "cache-aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
 pub mod caching;
+
+#[cfg(feature = "entra-id")]
+#[cfg_attr(docsrs, doc(cfg(feature = "entra-id")))]
+pub mod entra_id;
+
+#[cfg(feature = "token-based-authentication")]
+#[cfg_attr(docsrs, doc(cfg(feature = "token-based-authentication")))]
+pub mod auth;
+#[cfg(feature = "token-based-authentication")]
+#[cfg_attr(docsrs, doc(cfg(feature = "token-based-authentication")))]
+pub mod auth_management;
 
 mod client;
 mod cmd;

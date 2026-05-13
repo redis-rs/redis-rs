@@ -7,19 +7,19 @@ use crate::errors::{ParsingError, RedisError, Repr, ServerError, ServerErrorKind
 use crate::types::{PushKind, RedisResult, Value, VerbatimFormat};
 
 use combine::{
-    any,
+    ParseError, Parser as _, any,
     error::StreamError,
     opaque,
     parser::{
         byte::{crlf, take_until_bytes},
-        combinator::{any_send_sync_partial_state, AnySendSyncPartialState},
+        combinator::{AnySendSyncPartialState, any_send_sync_partial_state},
         range::{recognize, take},
     },
     stream::{
-        decoder::{self, Decoder},
         PointerOffset, RangeStream, StreamErrorFor,
+        decoder::{self, Decoder},
     },
-    unexpected_any, ParseError, Parser as _,
+    unexpected_any,
 };
 
 const MAX_RECURSE_DEPTH: usize = 100;
@@ -45,7 +45,7 @@ fn err_parser(line: &str) -> ServerError {
             return ServerError(Repr::Extension {
                 code: code.into(),
                 detail: pieces.next().map(|str| str.into()),
-            })
+            });
         }
     };
     let detail = pieces.next().map(|str| str.into());
@@ -480,6 +480,7 @@ pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
 mod tests {
     use super::*;
     use crate::errors::ErrorKind;
+    use assert_matches::assert_matches;
 
     #[cfg(feature = "aio")]
     #[test]
@@ -605,9 +606,9 @@ mod tests {
         let val = parse_redis_value(b"#f\r\n").unwrap();
         assert_eq!(val, Value::Boolean(false));
         let val = parse_redis_value(b"#x\r\n");
-        assert!(val.is_err());
+        assert_matches!(val, Err(_));
         let val = parse_redis_value(b"#\r\n");
-        assert!(val.is_err());
+        assert_matches!(val, Err(_));
     }
 
     #[test]
@@ -680,7 +681,7 @@ mod tests {
             ba.extend(end);
             match parse_redis_value(&ba) {
                 Ok(_) => panic!("Expected ParseError"),
-                Err(e) => assert!(matches!(e.kind(), ErrorKind::Parse)),
+                Err(e) => assert_matches!(e.kind(), ErrorKind::Parse),
             }
         }
     }
@@ -702,7 +703,7 @@ mod tests {
         ba.extend(end);
         match parse_redis_value(&ba) {
             Ok(_) => panic!("Expected ParseError"),
-            Err(e) => assert!(matches!(e.kind(), ErrorKind::Parse)),
+            Err(e) => assert_matches!(e.kind(), ErrorKind::Parse),
         }
     }
 }

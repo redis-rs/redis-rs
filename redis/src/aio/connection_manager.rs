@@ -2,6 +2,7 @@ use super::{AsyncPushSender, HandleContainer, RedisFuture};
 #[cfg(feature = "cache-aio")]
 use crate::caching::CacheManager;
 use crate::{
+    AsyncConnectionConfig, Client, Cmd, Pipeline, PushInfo, PushKind, ToRedisArgs,
     aio::{ConnectionLike, MultiplexedConnection, Runtime},
     check_resp3,
     client::{DEFAULT_CONNECTION_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT},
@@ -9,16 +10,15 @@ use crate::{
     errors::RedisError,
     subscription_tracker::{SubscriptionAction, SubscriptionTracker},
     types::{RedisResult, Value},
-    AsyncConnectionConfig, Client, Cmd, Pipeline, PushInfo, PushKind, ToRedisArgs,
 };
 use arc_swap::ArcSwap;
 use backon::{ExponentialBuilder, Retryable};
 use futures_channel::oneshot;
-use futures_util::future::{self, BoxFuture, FutureExt, Shared};
+use futures_util::future::{BoxFuture, FutureExt, Shared};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::Mutex;
+use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 type OptionalPushSender = Option<Arc<dyn AsyncPushSender>>;
 
@@ -44,6 +44,10 @@ pub struct ConnectionManagerConfig {
     resubscribe_automatically: bool,
     #[cfg(feature = "cache-aio")]
     pub(crate) cache_config: Option<crate::caching::CacheConfig>,
+    pipeline_buffer_size: Option<usize>,
+    /// Optional credentials provider for dynamic authentication (e.g., token-based authentication)
+    #[cfg(feature = "token-based-authentication")]
+    credentials_provider: Option<std::sync::Arc<dyn crate::auth::StreamingCredentialsProvider>>,
 }
 
 impl std::fmt::Debug for ConnectionManagerConfig {
@@ -59,6 +63,9 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             resubscribe_automatically,
             #[cfg(feature = "cache-aio")]
             cache_config,
+            pipeline_buffer_size,
+            #[cfg(feature = "token-based-authentication")]
+            credentials_provider,
         } = &self;
         let mut str = f.debug_struct("ConnectionManagerConfig");
         str.field("exponent_base", &exponent_base)
@@ -68,6 +75,7 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             .field("response_timeout", &response_timeout)
             .field("connection_timeout", &connection_timeout)
             .field("resubscribe_automatically", &resubscribe_automatically)
+            .field("pipeline_buffer_size", &pipeline_buffer_size)
             .field(
                 "push_sender",
                 if push_sender.is_some() {
@@ -79,6 +87,16 @@ impl std::fmt::Debug for ConnectionManagerConfig {
 
         #[cfg(feature = "cache-aio")]
         str.field("cache_config", &cache_config);
+
+        #[cfg(feature = "token-based-authentication")]
+        str.field(
+            "credentials_provider",
+            if credentials_provider.is_some() {
+                &"set"
+            } else {
+                &"not set"
+            },
+        );
 
         str.finish()
     }
@@ -224,6 +242,55 @@ impl ConnectionManagerConfig {
             ..self
         }
     }
+
+    /// Sets the buffer size for the internal pipeline channel.
+    ///
+    /// The multiplexed connection uses an internal channel to queue Redis commands
+    /// before sending them to the server. This setting controls how many commands
+    /// can be buffered in that channel.
+    ///
+    /// When the buffer is full, callers will asynchronously wait until space becomes
+    /// available. A larger buffer allows more commands to be queued during bursts of
+    /// activity, reducing wait time for callers. However, this comes at the cost of
+    /// increased memory usage.
+    ///
+    /// The default value is 50. Consider increasing this value for high-concurrency
+    /// scenarios (e.g., web servers handling many simultaneous requests) where
+    /// buffer contention may increase overall latency and cause upstream timeouts.
+    pub fn set_pipeline_buffer_size(mut self, size: usize) -> Self {
+        self.pipeline_buffer_size = Some(size);
+        self
+    }
+
+    /// Sets a credentials provider for dynamic authentication.
+    ///
+    /// This is useful for token-based authentication where credentials need to be
+    /// refreshed periodically (e.g., Azure Entra ID tokens).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # #[cfg(feature = "entra-id")]
+    /// # async fn example() -> redis::RedisResult<()> {
+    /// use redis::aio::ConnectionManagerConfig;
+    /// use redis::{EntraIdCredentialsProvider, RetryConfig};
+    ///
+    /// let mut provider = EntraIdCredentialsProvider::new_developer_tools()?;
+    /// provider.start(RetryConfig::default());
+    ///
+    /// let config = ConnectionManagerConfig::new()
+    ///     .set_credentials_provider(provider);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "token-based-authentication")]
+    pub fn set_credentials_provider<P>(mut self, provider: P) -> Self
+    where
+        P: crate::auth::StreamingCredentialsProvider + 'static,
+    {
+        self.credentials_provider = Some(std::sync::Arc::new(provider));
+        self
+    }
 }
 
 impl Default for ConnectionManagerConfig {
@@ -239,6 +306,9 @@ impl Default for ConnectionManagerConfig {
             resubscribe_automatically: false,
             #[cfg(feature = "cache-aio")]
             cache_config: None,
+            pipeline_buffer_size: None,
+            #[cfg(feature = "token-based-authentication")]
+            credentials_provider: None,
         }
     }
 }
@@ -307,7 +377,7 @@ type SharedRedisFuture<T> = Shared<BoxFuture<'static, RedisResult<T>>>;
 /// Handle a command result. If the connection was dropped, reconnect.
 macro_rules! reconnect_if_dropped {
     ($self:expr, $result:expr, $current:expr) => {
-        if let Err(ref e) = $result {
+        if let Err(e) = $result {
             if e.is_unrecoverable_error() {
                 Self::reconnect(Arc::downgrade(&$self.0), $current);
             }
@@ -335,7 +405,6 @@ impl ConnectionManager {
     /// the Tokio executor.
     pub async fn new(client: Client) -> RedisResult<Self> {
         let config = ConnectionManagerConfig::new();
-
         Self::new_with_config(client, config).await
     }
 
@@ -354,7 +423,27 @@ impl ConnectionManager {
         client: Client,
         config: ConnectionManagerConfig,
     ) -> RedisResult<Self> {
-        // Create a MultiplexedConnection and wait for it to be established
+        // Create the lazy connection manager
+        let manager = Self::new_lazy_with_config(client, config)?;
+
+        // Trigger the connection by loading and awaiting it
+        let guard = manager.0.connection.load();
+        (**guard).clone().await.map_err(|e| e.clone())?;
+
+        Ok(manager)
+    }
+
+    /// Creates a `ConnectionManager` with config without establishing a connection.
+    ///
+    /// The connection will be established lazily on the first request.
+    /// This is a synchronous function that returns immediately.
+    ///
+    /// This requires the `connection-manager` feature, which will also pull in
+    /// the Tokio executor.
+    pub fn new_lazy_with_config(
+        client: Client,
+        config: ConnectionManagerConfig,
+    ) -> RedisResult<Self> {
         let runtime = Runtime::locate();
 
         if config.resubscribe_automatically && config.push_sender.is_none() {
@@ -373,6 +462,7 @@ impl ConnectionManager {
         let mut connection_config = AsyncConnectionConfig::new()
             .set_connection_timeout(config.connection_timeout)
             .set_response_timeout(config.response_timeout);
+        connection_config.pipeline_buffer_size = config.pipeline_buffer_size;
 
         #[cfg(feature = "cache-aio")]
         let cache_manager = config
@@ -382,6 +472,11 @@ impl ConnectionManager {
         #[cfg(feature = "cache-aio")]
         if let Some(cache_manager) = cache_manager.as_ref() {
             connection_config = connection_config.set_cache_manager(cache_manager.clone());
+        }
+
+        #[cfg(feature = "token-based-authentication")]
+        if let Some(credentials_provider) = config.credentials_provider {
+            connection_config.credentials_provider = Some(credentials_provider);
         }
 
         let (oneshot_sender, oneshot_receiver) = oneshot::channel();
@@ -409,17 +504,32 @@ impl ConnectionManager {
                 connection_config.set_push_sender_internal(Arc::new(internal_sender));
         }
 
-        let connection =
-            Self::new_connection(&client, retry_strategy, &connection_config, None).await?;
         let subscription_tracker = if config.resubscribe_automatically {
             Some(Mutex::new(SubscriptionTracker::default()))
         } else {
             None
         };
 
+        let client_clone = client.clone();
+        let retry_strategy_clone = retry_strategy;
+        let connection_config_clone = connection_config.clone();
+
+        // Create a lazy connection future that will be resolved on first use
+        let lazy_connection: SharedRedisFuture<MultiplexedConnection> = async move {
+            Self::new_connection(
+                &client_clone,
+                retry_strategy_clone,
+                &connection_config_clone,
+                None,
+            )
+            .await
+        }
+        .boxed()
+        .shared();
+
         let new_self = Self(Arc::new(Internals {
             client,
-            connection: ArcSwap::from_pointee(future::ok(connection).boxed().shared()),
+            connection: ArcSwap::from_pointee(lazy_connection),
             runtime,
             retry_strategy,
             connection_config,
@@ -708,5 +818,42 @@ impl ConnectionLike for ConnectionManager {
 
     fn get_db(&self) -> i64 {
         self.0.client.connection_info().redis.db
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_connection_manager_config_pipeline_buffer_size_default() {
+        let config = ConnectionManagerConfig::new();
+        assert_eq!(config.pipeline_buffer_size, None);
+    }
+
+    #[test]
+    fn test_connection_manager_config_pipeline_buffer_size_custom() {
+        let config = ConnectionManagerConfig::new().set_pipeline_buffer_size(100);
+        assert_eq!(config.pipeline_buffer_size, Some(100));
+    }
+
+    #[test]
+    fn test_lazy_connection_manager_with_config() {
+        // Test that lazy connection manager can be created with custom config
+        let client = Client::open("redis://127.0.0.1/").unwrap();
+        let config = ConnectionManagerConfig::new()
+            .set_pipeline_buffer_size(100)
+            .set_number_of_retries(3);
+        let result = ConnectionManager::new_lazy_with_config(client, config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_lazy_connection_manager_rejects_invalid_config() {
+        // Test that lazy connection manager rejects invalid configuration
+        let client = Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
+        let config = ConnectionManagerConfig::new().set_automatic_resubscription(); // This requires a push sender
+        let result = ConnectionManager::new_lazy_with_config(client, config);
+        assert_matches::assert_matches!(result, Err(err) if err.kind() == crate::ErrorKind::Client);
     }
 }

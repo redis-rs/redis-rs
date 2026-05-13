@@ -1,18 +1,22 @@
 //! This module provides the functionality to refresh and calculate the cluster topology for Redis Cluster.
 
+use std::collections::HashSet;
+
 use arcstr::ArcStr;
 
-use super::slot_map::Slot;
-use crate::{connection::is_wildcard_address, RedisResult, Value};
+use super::NodeAddress;
+use super::slot_map::SlotRange;
+use crate::{RedisResult, Value, connection::is_wildcard_address};
 
 // Parse slot data from raw redis value.
 pub(crate) fn parse_slots(
     raw_slot_resp: Value,
     // The DNS address of the node from which `raw_slot_resp` was received.
     addr_of_answering_node: &str,
-) -> RedisResult<Vec<Slot>> {
+) -> RedisResult<Vec<SlotRange>> {
     // Parse response.
     let mut slots = Vec::with_capacity(2);
+    let mut hosts = HashSet::<ArcStr>::new();
 
     if let Value::Array(items) = raw_slot_resp {
         let mut iter = items.into_iter();
@@ -33,7 +37,7 @@ pub(crate) fn parse_slots(
                 continue;
             };
 
-            let try_to_address = |node: Value| {
+            let mut try_to_address = |node: Value| {
                 let Value::Array(node) = node else {
                     return None;
                 };
@@ -66,7 +70,16 @@ pub(crate) fn parse_slots(
                 } else {
                     return None;
                 };
-                Some(format!("{hostname}:{port}").into())
+                // if the hostname was already seen, we'll prefer to take it, in order to reduce fragmentation
+                let hostname = match hosts.get(hostname.as_ref()) {
+                    Some(host) => host.clone(),
+                    None => {
+                        let hostname: ArcStr = hostname.into();
+                        hosts.insert(hostname.clone());
+                        hostname
+                    }
+                };
+                Some(NodeAddress::new(hostname, port))
             };
 
             let mut iterator = item.into_iter().skip(2);
@@ -80,9 +93,9 @@ pub(crate) fn parse_slots(
             let Some(primary) = primary else {
                 continue;
             };
-            let replicas: Vec<ArcStr> = iterator.filter_map(try_to_address).collect();
+            let replicas: Vec<NodeAddress> = iterator.filter_map(try_to_address).collect();
 
-            slots.push(Slot::new(start, end, primary, replicas));
+            slots.push(SlotRange::new(start, end, primary, replicas));
         }
     }
 

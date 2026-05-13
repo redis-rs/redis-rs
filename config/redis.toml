@@ -99,6 +99,16 @@ require = ["smol-rustls-comp"]
 when = ["tls-rustls-webpki-roots", "tokio-comp"]
 require = ["tokio-rustls-comp"]
 
+# ------------------------------------------------------------------------
+# Entra ID integration (requires Tokio-based async + TLS compatibility)
+# ------------------------------------------------------------------------
+
+# Entra ID is Tokio-only; forbid Smol-based TLS runtimes
+[[rule]]
+when = "entra-id"
+require = ["tokio-comp"]
+forbid = ["smol-rustls-comp", "OR", "smol-native-tls-comp"]
+
 # The users are expected to use only one connection pool.
 [[rule]]
 when = "r2d2"
@@ -114,10 +124,10 @@ forbid = "hashbrown"
 when = "rust_decimal"
 forbid = "bigdecimal"
 
-# This feature can't run by itself
+# These features can't run by themselves
 [[rule]]
 when = true
-forbid = "aio"
+forbid = ["aio", "OR", "token-based-authentication"]
 
 # If you're using the library with sentinel or targeting connection manager, you probably don't want cluster connections
 [[rule]]

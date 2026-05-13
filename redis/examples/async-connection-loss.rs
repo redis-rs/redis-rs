@@ -11,8 +11,8 @@ use std::process;
 use std::time::{Duration, Instant};
 
 use futures::future;
-use redis::aio::ConnectionLike;
 use redis::RedisResult;
+use redis::aio::ConnectionLike;
 use tokio::time::interval;
 
 enum Mode {

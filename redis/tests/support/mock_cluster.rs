@@ -5,14 +5,14 @@ use std::{
 };
 
 use redis::{
-    cluster::{self, ClusterClient, ClusterClientBuilder},
     FromRedisValue, ServerErrorKind,
+    cluster::{self, ClusterClient, ClusterClientBuilder},
 };
 
 use redis::{IntoConnectionInfo, RedisResult, Value};
 
 #[cfg(feature = "cluster-async")]
-use redis::{aio, cluster_async, RedisFuture};
+use redis::{RedisFuture, aio, cluster_async};
 
 #[cfg(feature = "cluster-async")]
 use futures::future;
@@ -105,8 +105,12 @@ pub fn contains_slice(xs: &[u8], ys: &[u8]) -> bool {
     false
 }
 
+pub fn is_connection_check(cmd: &[u8]) -> bool {
+    contains_slice(cmd, b"READONLY") || contains_slice(cmd, b"PING")
+}
+
 pub fn respond_startup(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>> {
-    if contains_slice(cmd, b"PING") {
+    if is_connection_check(cmd) {
         Err(Ok(Value::SimpleString("OK".into())))
     } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
         Err(Ok(Value::Array(vec![Value::Array(vec![
@@ -117,8 +121,6 @@ pub fn respond_startup(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>>
                 Value::Int(6379),
             ]),
         ])])))
-    } else if contains_slice(cmd, b"READONLY") {
-        Err(Ok(Value::SimpleString("OK".into())))
     } else {
         Ok(())
     }
@@ -171,36 +173,30 @@ pub fn respond_startup_with_replica_using_config(
             slot_range: (8192..16383),
         },
     ]);
-    if contains_slice(cmd, b"PING") {
+    if is_connection_check(cmd) {
         Err(Ok(Value::SimpleString("OK".into())))
     } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
         let slots = slots_config
             .into_iter()
             .map(|slot_config| {
-                let replicas = slot_config
-                    .replica_ports
-                    .into_iter()
-                    .flat_map(|replica_port| {
-                        vec![
-                            Value::BulkString(name.as_bytes().to_vec()),
-                            Value::Int(replica_port as i64),
-                        ]
-                    })
-                    .collect();
-                Value::Array(vec![
+                let mut entry = vec![
                     Value::Int(slot_config.slot_range.start as i64),
                     Value::Int(slot_config.slot_range.end as i64),
                     Value::Array(vec![
                         Value::BulkString(name.as_bytes().to_vec()),
                         Value::Int(slot_config.primary_port as i64),
                     ]),
-                    Value::Array(replicas),
-                ])
+                ];
+                for replica_port in slot_config.replica_ports {
+                    entry.push(Value::Array(vec![
+                        Value::BulkString(name.as_bytes().to_vec()),
+                        Value::Int(replica_port as i64),
+                    ]));
+                }
+                Value::Array(entry)
             })
             .collect();
         Err(Ok(Value::Array(slots)))
-    } else if contains_slice(cmd, b"READONLY") {
-        Err(Ok(Value::SimpleString("OK".into())))
     } else {
         Ok(())
     }

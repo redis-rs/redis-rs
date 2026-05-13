@@ -1,8 +1,8 @@
 #[cfg(feature = "aio")]
 use futures_util::{
+    Stream, StreamExt,
     future::BoxFuture,
     task::{Context, Poll},
-    Stream, StreamExt,
 };
 #[cfg(feature = "aio")]
 use std::pin::Pin;
@@ -11,8 +11,8 @@ use std::time::Duration;
 use std::{fmt, io, io::Write};
 
 use crate::pipeline::Pipeline;
-use crate::types::{from_redis_value, FromRedisValue, RedisResult, RedisWrite, ToRedisArgs};
-use crate::{connection::ConnectionLike, ParsingError};
+use crate::types::{FromRedisValue, RedisResult, RedisWrite, ToRedisArgs, from_redis_value};
+use crate::{ParsingError, connection::ConnectionLike};
 
 /// An argument to a redis command
 #[derive(Clone, PartialEq, Debug)]
@@ -38,7 +38,7 @@ pub enum Arg<D> {
 /// ```
 #[cfg(feature = "cache-aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CommandCacheConfig {
     pub(crate) enable_cache: bool,
     pub(crate) client_side_ttl: Option<Duration>,
@@ -83,8 +83,25 @@ pub struct Cmd {
     cursor: Option<u64>,
     // If it's true command's response won't be read from socket. Useful for Pub/Sub.
     no_response: bool,
+    pub(crate) skip_concurrency_limit: bool,
     #[cfg(feature = "cache-aio")]
     cache: Option<CommandCacheConfig>,
+}
+
+impl std::fmt::Debug for Cmd {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut debug_struct = f.debug_struct("Cmd");
+        debug_struct
+            .field("data", &String::from_utf8_lossy(&self.data).as_ref())
+            .field("args", &self.args)
+            .field("cursor", &self.cursor)
+            .field("no_response", &self.no_response);
+
+        #[cfg(feature = "cache-aio")]
+        debug_struct.field("cache", &self.cache);
+
+        debug_struct.finish()
+    }
 }
 
 /// Represents a redis iterator.
@@ -403,7 +420,9 @@ impl RedisWrite for Cmd {
             }
 
             unsafe fn advance_mut(&mut self, cnt: usize) {
-                self.0.data.advance_mut(cnt);
+                unsafe {
+                    self.0.data.advance_mut(cnt);
+                }
             }
 
             fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {
@@ -472,6 +491,7 @@ impl Cmd {
             args: vec![],
             cursor: None,
             no_response: false,
+            skip_concurrency_limit: false,
             #[cfg(feature = "cache-aio")]
             cache: None,
         }
@@ -484,6 +504,7 @@ impl Cmd {
             args: Vec::with_capacity(arg_count),
             cursor: None,
             no_response: false,
+            skip_concurrency_limit: false,
             #[cfg(feature = "cache-aio")]
             cache: None,
         }
@@ -519,6 +540,7 @@ impl Cmd {
         self.args.clear();
         self.cursor = None;
         self.no_response = false;
+        self.skip_concurrency_limit = false;
         #[cfg(feature = "cache-aio")]
         {
             self.cache = None;
@@ -583,6 +605,9 @@ impl Cmd {
     #[inline]
     pub fn get_packed_command(&self) -> Vec<u8> {
         let mut cmd = Vec::new();
+        if self.is_empty() {
+            return cmd;
+        }
         self.write_packed_command(&mut cmd);
         cmd
     }
@@ -801,6 +826,10 @@ impl Cmd {
     pub(crate) fn get_cache_config(&self) -> &Option<CommandCacheConfig> {
         &self.cache
     }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.args.is_empty()
+    }
 }
 
 /// Shortcut function to creating a command with a single argument.
@@ -931,7 +960,7 @@ mod tests {
         // Everything should be reset, but the capacity should still be there
         assert!(cmd.data.is_empty());
         assert!(cmd.data.capacity() > 0);
-        assert!(cmd.args.is_empty());
+        assert!(cmd.is_empty());
         assert!(cmd.args.capacity() > 0);
         assert_eq!(cmd.cursor, None);
         assert!(!cmd.no_response);
@@ -951,7 +980,7 @@ mod tests {
         // Everything should be reset, but the capacity should still be there
         assert!(cmd.data.is_empty());
         assert!(cmd.data.capacity() > 0);
-        assert!(cmd.args.is_empty());
+        assert!(cmd.is_empty());
         assert!(cmd.args.capacity() > 0);
         assert_eq!(cmd.cursor, None);
         assert!(!cmd.no_response);

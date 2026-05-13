@@ -2,13 +2,12 @@
 
 use crate::support::*;
 use futures_time::task::sleep;
+use redis::CommandCacheConfig;
 #[cfg(feature = "cluster-async")]
 use redis::cluster_routing::*;
-use redis::{caching::CacheConfig, AsyncCommands, RedisError};
-use redis::{CommandCacheConfig, RedisResult};
+use redis::{AsyncCommands, RedisError, caching::CacheConfig};
 #[cfg(feature = "json")]
 use redis_test::server::Module;
-use rstest::rstest;
 #[cfg(feature = "json")]
 use serde_json::json;
 use std::collections::HashMap;
@@ -36,10 +35,10 @@ macro_rules! assert_invalidate {
 
 // Basic testing should work with both CacheMode::All and CacheMode::OptIn if commands has called cache()
 #[async_test]
-async fn test_cache_basic(test_with_optin: bool) -> RedisResult<()> {
+async fn test_cache_basic(test_with_optin: bool) {
     let ctx = TestContext::new();
     if !ctx.protocol.supports_resp3() {
-        return Ok(());
+        return;
     }
 
     let cache_config = if test_with_optin {
@@ -47,7 +46,10 @@ async fn test_cache_basic(test_with_optin: bool) -> RedisResult<()> {
     } else {
         CacheConfig::default()
     };
-    let mut con = ctx.async_connection_with_cache_config(cache_config).await?;
+    let mut con = ctx
+        .async_connection_with_cache_config(cache_config)
+        .await
+        .unwrap();
     let val: Option<String> = get_cmd("GET", test_with_optin)
         .arg("key_1")
         .query_async(&mut con)
@@ -88,17 +90,16 @@ async fn test_cache_basic(test_with_optin: bool) -> RedisResult<()> {
     assert_hit!(&con, 1);
     assert_miss!(&con, 2);
     assert_invalidate!(&con, 1);
-    Ok::<_, RedisError>(())
 }
 
 #[async_test]
-async fn cache_mget() -> RedisResult<()> {
+async fn cache_mget() {
     let ctx = TestContext::new();
     if !ctx.protocol.supports_resp3() {
-        return Ok(());
+        return;
     }
 
-    let mut con = ctx.async_connection_with_cache().await?;
+    let mut con = ctx.async_connection_with_cache().await.unwrap();
     // Caching must work with both MGET and GET
     let _: () = get_pipe(true)
         .cmd("SET")
@@ -110,13 +111,15 @@ async fn cache_mget() -> RedisResult<()> {
         .arg(43)
         .ignore()
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
 
     let res1: Vec<Option<String>> = redis::cmd("MGET")
         .arg("key_1")
         .arg("key_2")
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
     assert_hit!(&con, 0);
     assert_miss!(&con, 2);
     assert_eq!(res1, vec![Some("41".to_string()), None]);
@@ -126,7 +129,8 @@ async fn cache_mget() -> RedisResult<()> {
         .arg("key_3")
         .arg("key_2")
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
     assert_hit!(&con, 2);
     assert_miss!(&con, 3);
     assert_eq!(
@@ -134,25 +138,31 @@ async fn cache_mget() -> RedisResult<()> {
         vec![Some("41".to_string()), Some("43".to_string()), None]
     );
 
-    let _: Option<String> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
+    let _: Option<String> = redis::cmd("GET")
+        .arg("key_1")
+        .query_async(&mut con)
+        .await
+        .unwrap();
     assert_hit!(&con, 3);
     assert_miss!(&con, 3);
-    Ok::<_, RedisError>(())
 }
 
 #[cfg(feature = "json")]
 #[async_test]
-async fn module_cache_json_get_mget() -> RedisResult<()> {
-    let ctx = TestContext::with_modules(&[Module::Json], false);
+async fn module_cache_json_get_mget() {
+    let ctx = TestContext::with_modules(&[Module::Json]);
     if !ctx.protocol.supports_resp3() {
-        return Ok(());
+        return;
     }
 
     let cache_config = CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn);
-    let mut con = ctx.async_connection_with_cache_config(cache_config).await?;
+    let mut con = ctx
+        .async_connection_with_cache_config(cache_config)
+        .await
+        .unwrap();
 
-    let value_1 = serde_json::to_string(&json!({"value":41i64}))?;
-    let value_3 = serde_json::to_string(&json!({"value":43i64}))?;
+    let value_1 = serde_json::to_string(&json!({"value":41i64})).unwrap();
+    let value_3 = serde_json::to_string(&json!({"value":43i64})).unwrap();
 
     let _: () = get_pipe(true)
         .cmd("JSON.SET")
@@ -166,13 +176,15 @@ async fn module_cache_json_get_mget() -> RedisResult<()> {
         .arg(value_3.clone())
         .ignore()
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
 
     let res1: Vec<Option<String>> = get_cmd("JSON.MGET", true)
         .arg(&["key_1", "key_2"])
         .arg(".")
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
 
     assert_eq!(res1.len(), 2);
     assert_eq!(res1, vec![Some(value_1.clone()), None]);
@@ -185,7 +197,8 @@ async fn module_cache_json_get_mget() -> RedisResult<()> {
         .arg("key_2")
         .arg(".")
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
 
     assert_eq!(res2.len(), 3);
     assert_eq!(res2, vec![Some(value_1.clone()), Some(value_3), None]);
@@ -196,28 +209,30 @@ async fn module_cache_json_get_mget() -> RedisResult<()> {
         .arg("key_1")
         .arg(".")
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
 
     assert_eq!(res3, Some(value_1.clone()));
     assert_hit!(&con, 3);
     assert_miss!(&con, 3);
-
-    Ok::<_, RedisError>(())
 }
 
 #[cfg(feature = "json")]
 #[async_test]
-async fn module_cache_json_get_mget_different_paths() -> RedisResult<()> {
-    let ctx = TestContext::with_modules(&[Module::Json], false);
+async fn module_cache_json_get_mget_different_paths() {
+    let ctx = TestContext::with_modules(&[Module::Json]);
     if !ctx.protocol.supports_resp3() {
-        return Ok(());
+        return;
     }
 
     let cache_config = CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn);
-    let mut con = ctx.async_connection_with_cache_config(cache_config).await?;
+    let mut con = ctx
+        .async_connection_with_cache_config(cache_config)
+        .await
+        .unwrap();
 
-    let value_1 = serde_json::to_string(&json!({"value":41i64, "id":1i8}))?;
-    let value_3 = serde_json::to_string(&json!({"value":43i64, "id":3i8}))?;
+    let value_1 = serde_json::to_string(&json!({"value":41i64, "id":1i8})).unwrap();
+    let value_3 = serde_json::to_string(&json!({"value":43i64, "id":3i8})).unwrap();
 
     let _: () = get_pipe(true)
         .cmd("JSON.SET")
@@ -231,13 +246,15 @@ async fn module_cache_json_get_mget_different_paths() -> RedisResult<()> {
         .arg(value_3.clone())
         .ignore()
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
 
     let res1: Vec<Option<i64>> = get_cmd("JSON.MGET", true)
         .arg(&["key_1", "key_2"])
         .arg(".value")
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
 
     assert_eq!(res1.len(), 2);
     assert_eq!(res1, vec![Some(41), None]);
@@ -248,7 +265,8 @@ async fn module_cache_json_get_mget_different_paths() -> RedisResult<()> {
         .arg(&["key_1", "key_2"])
         .arg(".value")
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
 
     assert_eq!(res2.len(), 2);
     assert_eq!(res2, vec![Some(41), None]);
@@ -259,7 +277,8 @@ async fn module_cache_json_get_mget_different_paths() -> RedisResult<()> {
         .arg(&["key_1", "key_3"])
         .arg(".id")
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
 
     assert_eq!(res3.len(), 2);
     assert_eq!(res3, vec![Some(1), Some(3)]);
@@ -270,7 +289,8 @@ async fn module_cache_json_get_mget_different_paths() -> RedisResult<()> {
         .arg(&["key_2", "key_3"])
         .arg(".id")
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
 
     assert_eq!(res4.len(), 2);
     assert_eq!(res4, vec![None, Some(3)]);
@@ -281,7 +301,8 @@ async fn module_cache_json_get_mget_different_paths() -> RedisResult<()> {
         .arg("key_1")
         .arg(".value")
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
 
     assert_eq!(res5, Some(41));
     assert_hit!(&con, 4);
@@ -291,7 +312,8 @@ async fn module_cache_json_get_mget_different_paths() -> RedisResult<()> {
         .arg("key_1")
         .arg(".value")
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
 
     assert_eq!(res6, Some(41));
     assert_hit!(&con, 5);
@@ -301,43 +323,41 @@ async fn module_cache_json_get_mget_different_paths() -> RedisResult<()> {
         .arg("key_1")
         .arg(".id")
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
 
     assert_eq!(res7, Some(1));
     assert_hit!(&con, 6);
     assert_miss!(&con, 5);
-
-    Ok::<_, RedisError>(())
 }
 
 #[async_test]
-async fn cache_is_not_target_type_dependent() -> RedisResult<()> {
+async fn cache_is_not_target_type_dependent() {
     let ctx = TestContext::new();
     if !ctx.protocol.supports_resp3() {
-        return Ok(());
+        return;
     }
 
-    let mut con = ctx.async_connection_with_cache().await?;
-    let _: () = con.set("KEY", "77").await?;
-    let x: u32 = con.get("KEY").await?;
+    let mut con = ctx.async_connection_with_cache().await.unwrap();
+    let _: () = con.set("KEY", "77").await.unwrap();
+    let x: u32 = con.get("KEY").await.unwrap();
     assert_eq!(x, 77);
-    let x: String = con.get("KEY").await?;
+    let x: String = con.get("KEY").await.unwrap();
     assert_eq!(x, "77");
-    let x: u8 = con.get("KEY").await?;
+    let x: u8 = con.get("KEY").await.unwrap();
     assert_eq!(x, 77);
     assert_hit!(&con, 2);
     assert_miss!(&con, 1);
-    Ok::<_, RedisError>(())
 }
 
 #[async_test]
-async fn test_cache_with_pipeline(atomic: bool) -> RedisResult<()> {
+async fn test_cache_with_pipeline(atomic: bool) {
     let ctx = TestContext::new();
     if !ctx.protocol.supports_resp3() {
-        return Ok(());
+        return;
     }
 
-    let mut con = ctx.async_connection_with_cache().await?;
+    let mut con = ctx.async_connection_with_cache().await.unwrap();
     // Test cache for both atomic and non-atomic Pipeline and mix MGET,GET,ignore in the pipeline.
     let (mget_k1_k2,): ((i32, i32),) = get_pipe(atomic)
         .cmd("SET")
@@ -351,7 +371,8 @@ async fn test_cache_with_pipeline(atomic: bool) -> RedisResult<()> {
         .cmd("MGET")
         .arg(&["key_1", "key_2"])
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
 
     assert_eq!(mget_k1_k2, (41, 42));
     // There are 2 miss for key_1, key_2 used with MGET
@@ -366,27 +387,29 @@ async fn test_cache_with_pipeline(atomic: bool) -> RedisResult<()> {
         .cmd("GET")
         .arg("key_doesnt_exists")
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
 
     assert_eq!(k1, 41);
     assert_eq!(mget_k1_k2, (41, 42));
     assert_eq!(k_unknown, Option::None);
     assert_hit!(&con, 3);
     assert_miss!(&con, 3);
-
-    Ok::<_, RedisError>(())
 }
 
 #[async_test]
-async fn cache_basic_partial_opt_in() -> RedisResult<()> {
+async fn cache_basic_partial_opt_in() {
     // In OptIn mode cache must not be utilized without explicit per command configuration.
     let ctx = TestContext::new();
     if !ctx.protocol.supports_resp3() {
-        return Ok(());
+        return;
     }
 
     let cache_config = CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn);
-    let mut con = ctx.async_connection_with_cache_config(cache_config).await?;
+    let mut con = ctx
+        .async_connection_with_cache_config(cache_config)
+        .await
+        .unwrap();
     let val: Option<String> = redis::cmd("GET")
         .arg("key_1")
         .query_async(&mut con)
@@ -438,19 +461,21 @@ async fn cache_basic_partial_opt_in() -> RedisResult<()> {
     assert_hit!(&con, 1);
     assert_miss!(&con, 1);
     assert_invalidate!(&con, 0);
-    Ok::<_, RedisError>(())
 }
 
 #[async_test]
-async fn test_cache_pipeline_partial_opt_in(atomic: bool) -> RedisResult<()> {
+async fn test_cache_pipeline_partial_opt_in(atomic: bool) {
     // In OptIn mode cache must not be utilized without explicit per command configuration.
     let ctx = TestContext::new();
     if !ctx.protocol.supports_resp3() {
-        return Ok(());
+        return;
     }
 
     let cache_config = CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn);
-    let mut con = ctx.async_connection_with_cache_config(cache_config).await?;
+    let mut con = ctx
+        .async_connection_with_cache_config(cache_config)
+        .await
+        .unwrap();
     // Test cache for both atomic and non-atomic Pipeline and mix MGET,GET,ignore in the pipeline.
     let (mget_k1_k2,): ((i32, i32),) = get_pipe(atomic)
         .cmd("SET")
@@ -464,7 +489,8 @@ async fn test_cache_pipeline_partial_opt_in(atomic: bool) -> RedisResult<()> {
         .cmd("MGET")
         .arg(&["key_1", "key_2"])
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
 
     assert_eq!(mget_k1_k2, (42, 43));
     // Since CacheMode::OptIn is enabled, so there should be no miss or hit
@@ -481,7 +507,8 @@ async fn test_cache_pipeline_partial_opt_in(atomic: bool) -> RedisResult<()> {
             .cmd("GET")
             .arg("key_doesnt_exists")
             .query_async(&mut con)
-            .await?;
+            .await
+            .unwrap();
 
         assert_eq!(mget_k1_k2, (42, 43));
         assert_eq!(k1, 42);
@@ -490,15 +517,13 @@ async fn test_cache_pipeline_partial_opt_in(atomic: bool) -> RedisResult<()> {
     // Only MGET should be use cache path, since pipeline used twice there should be one miss and one hit.
     assert_hit!(&con, 2);
     assert_miss!(&con, 2);
-
-    Ok::<_, RedisError>(())
 }
 
 #[async_test]
-async fn test_cache_different_commands(test_with_opt_in: bool) -> RedisResult<()> {
+async fn test_cache_different_commands(test_with_opt_in: bool) {
     let ctx = TestContext::new();
     if !ctx.protocol.supports_resp3() {
-        return Ok(());
+        return;
     }
 
     let cache_config = if test_with_opt_in {
@@ -506,7 +531,10 @@ async fn test_cache_different_commands(test_with_opt_in: bool) -> RedisResult<()
     } else {
         CacheConfig::default()
     };
-    let mut con = ctx.async_connection_with_cache_config(cache_config).await?;
+    let mut con = ctx
+        .async_connection_with_cache_config(cache_config)
+        .await
+        .unwrap();
     let _: () = get_cmd("HSET", test_with_opt_in)
         .arg("user")
         .arg("health")
@@ -552,17 +580,14 @@ async fn test_cache_different_commands(test_with_opt_in: bool) -> RedisResult<()
     assert_eq!(val.get("health"), Some(100).as_ref());
     assert_hit!(&con, 1);
     assert_miss!(&con, 3);
-    Ok::<_, RedisError>(())
 }
 
 #[cfg(feature = "connection-manager")]
 #[async_test]
-async fn test_connection_manager_maintains_statistics_after_crashes(
-    test_with_optin: bool,
-) -> RedisResult<()> {
+async fn test_connection_manager_maintains_statistics_after_crashes(test_with_optin: bool) {
     let ctx = TestContext::new();
     if !ctx.protocol.supports_resp3() {
-        return Ok(());
+        return;
     }
 
     let cache_config = if test_with_optin {
@@ -613,27 +638,33 @@ async fn test_connection_manager_maintains_statistics_after_crashes(
     // The key should've been invalidated after the disconnect
     assert_hit!(&manager, 1);
     assert_miss!(&manager, 2);
-
-    Ok(())
 }
 
 #[cfg(feature = "cluster-async")]
 #[async_test]
-async fn cache_async_cluster_reconnect_all_nodes() -> RedisResult<()> {
+async fn cache_async_cluster_reconnect_all_nodes() {
     let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
         builder.cache_config(CacheConfig::default())
     });
     if !ctx.protocol.supports_resp3() {
-        return Ok(());
+        return;
     }
 
     let mut con = ctx.async_connection().await;
-    let val: Option<String> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
+    let val: Option<String> = redis::cmd("GET")
+        .arg("key_1")
+        .query_async(&mut con)
+        .await
+        .unwrap();
     assert_eq!(val, None);
     assert_hit!(&con, 0);
     assert_miss!(&con, 1);
 
-    let val: Option<String> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
+    let val: Option<String> = redis::cmd("GET")
+        .arg("key_1")
+        .query_async(&mut con)
+        .await
+        .unwrap();
     assert_eq!(val, None);
     // key_1's value should be returned from cache even if it doesn't exist in server yet.
     assert_hit!(&con, 1);
@@ -647,7 +678,8 @@ async fn cache_async_cluster_reconnect_all_nodes() -> RedisResult<()> {
                 None,
             )),
         )
-        .await?;
+        .await
+        .unwrap();
     // send ping so connections knows they have been disconnected
     let _ = con
         .route_command(
@@ -659,35 +691,39 @@ async fn cache_async_cluster_reconnect_all_nodes() -> RedisResult<()> {
         )
         .await;
 
-    let val: Option<String> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
+    let val: Option<String> = redis::cmd("GET")
+        .arg("key_1")
+        .query_async(&mut con)
+        .await
+        .unwrap();
     assert_eq!(val, None);
     // key_1 must be invalidated because a disconnection happened in cluster connection.
     assert_hit!(&con, 1);
     assert_miss!(&con, 2);
     assert_invalidate!(&con, 1);
-    Ok::<_, RedisError>(())
 }
 
 #[cfg(feature = "cluster-async")]
 #[async_test]
-async fn cache_async_cluster_mget() -> RedisResult<()> {
+async fn cache_async_cluster_mget() {
     let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
         builder.cache_config(CacheConfig::default())
     });
     if !ctx.protocol.supports_resp3() {
-        return Ok(());
+        return;
     }
 
     let mut con = ctx.async_connection().await;
 
-    let _: redis::Value = con.set("key_1", 41).await?;
-    let _: redis::Value = con.set("key_3", 43).await?;
+    let _: redis::Value = con.set("key_1", 41).await.unwrap();
+    let _: redis::Value = con.set("key_3", 43).await.unwrap();
 
     let res1: Vec<Option<String>> = redis::cmd("MGET")
         .arg("key_1")
         .arg("key_2")
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
     assert_hit!(&con, 0);
     assert_miss!(&con, 2);
     assert_eq!(res1, vec![Some("41".to_string()), None]);
@@ -697,7 +733,8 @@ async fn cache_async_cluster_mget() -> RedisResult<()> {
         .arg("key_3")
         .arg("key_2")
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
     assert_hit!(&con, 2);
     assert_miss!(&con, 3);
     assert_eq!(
@@ -705,10 +742,13 @@ async fn cache_async_cluster_mget() -> RedisResult<()> {
         vec![Some("41".to_string()), Some("43".to_string()), None]
     );
 
-    let _: Option<String> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
+    let _: Option<String> = redis::cmd("GET")
+        .arg("key_1")
+        .query_async(&mut con)
+        .await
+        .unwrap();
     assert_hit!(&con, 3);
     assert_miss!(&con, 3);
-    Ok::<_, RedisError>(())
 }
 
 // Support function for testing pipelines
@@ -724,17 +764,17 @@ fn get_pipe(atomic: bool) -> redis::Pipeline {
 
 #[cfg(feature = "cluster-async")]
 #[async_test]
-async fn test_cache_async_cluster_slot_change(migrate: bool) -> RedisResult<()> {
+async fn test_cache_async_cluster_slot_change(migrate: bool) {
     let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
         builder.cache_config(CacheConfig::default())
     });
     if !ctx.protocol.supports_resp3() {
-        return Ok(());
+        return;
     }
-    if !migrate && TestContext::new().get_version().0 == 6 {
-        // Redis 6.x won't invalidate data when migrate doesn't happen.
-        // This case can be removed when support for 6.x is dropped.
-        return Ok(());
+    // When not `migrate`, this test relies on Redis commit 8945067 which was included beginning
+    // with Redis 7.2
+    if !migrate {
+        run_test_if_version_supported!(&REDIS_VERSION_CE_7_2);
     }
 
     struct NodeData {
@@ -758,15 +798,24 @@ async fn test_cache_async_cluster_slot_change(migrate: bool) -> RedisResult<()> 
         .arg("key_1")
         .arg(77)
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
 
-    let val: usize = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
+    let val: usize = redis::cmd("GET")
+        .arg("key_1")
+        .query_async(&mut con)
+        .await
+        .unwrap();
     assert_eq!(val, 77);
     assert_hit!(&con, 0);
     assert_miss!(&con, 1);
     assert_invalidate!(&con, 0);
 
-    let val: usize = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
+    let val: usize = redis::cmd("GET")
+        .arg("key_1")
+        .query_async(&mut con)
+        .await
+        .unwrap();
     assert_eq!(val, 77);
     assert_hit!(&con, 1);
     assert_miss!(&con, 1);
@@ -774,7 +823,8 @@ async fn test_cache_async_cluster_slot_change(migrate: bool) -> RedisResult<()> 
     let nodes_str: String = redis::cmd("CLUSTER")
         .arg("NODES")
         .query_async(&mut con)
-        .await?;
+        .await
+        .unwrap();
 
     let node_slot_data: Vec<_> = nodes_str
         .split("\n")
@@ -815,7 +865,8 @@ async fn test_cache_async_cluster_slot_change(migrate: bool) -> RedisResult<()> 
             .to_owned(),
         new_slot_owner.get_singe_route(),
     )
-    .await?;
+    .await
+    .unwrap();
 
     con.route_command(
         redis::cmd("CLUSTER")
@@ -826,7 +877,8 @@ async fn test_cache_async_cluster_slot_change(migrate: bool) -> RedisResult<()> 
             .to_owned(),
         old_slot_owner.get_singe_route(),
     )
-    .await?;
+    .await
+    .unwrap();
 
     if migrate {
         con.route_command(
@@ -839,7 +891,8 @@ async fn test_cache_async_cluster_slot_change(migrate: bool) -> RedisResult<()> 
                 .to_owned(),
             old_slot_owner.get_singe_route(),
         )
-        .await?;
+        .await
+        .unwrap();
         sleep(Duration::from_millis(50).into()).await;
         // Migrating should invalidate
         assert_invalidate!(&con, 1);
@@ -858,7 +911,8 @@ async fn test_cache_async_cluster_slot_change(migrate: bool) -> RedisResult<()> 
             .take(),
         new_slot_owner.get_singe_route(),
     )
-    .await?;
+    .await
+    .unwrap();
 
     con.route_command(
         redis::cmd("CLUSTER")
@@ -869,10 +923,15 @@ async fn test_cache_async_cluster_slot_change(migrate: bool) -> RedisResult<()> 
             .take(),
         old_slot_owner.get_singe_route(),
     )
-    .await?;
+    .await
+    .unwrap();
 
     assert_miss!(&con, 1);
-    let val: Option<usize> = redis::cmd("GET").arg("key_1").query_async(&mut con).await?;
+    let val: Option<usize> = redis::cmd("GET")
+        .arg("key_1")
+        .query_async(&mut con)
+        .await
+        .unwrap();
     // Without migration, key itself won't be copied over
     if migrate {
         assert_eq!(val, Some(77))
@@ -884,7 +943,6 @@ async fn test_cache_async_cluster_slot_change(migrate: bool) -> RedisResult<()> 
     // `MOVED` error from server
     assert_miss!(&con, 3);
     assert_invalidate!(&con, 1);
-    Ok::<_, RedisError>(())
 }
 
 // Support function for testing cases where CacheMode::All == CacheMode::OptIn
@@ -894,4 +952,98 @@ fn get_cmd(name: &str, enable_opt_in: bool) -> redis::Cmd {
         cmd.set_cache_config(CommandCacheConfig::new().set_enable_cache(true));
     }
     cmd
+}
+
+#[async_test]
+async fn test_readonly_commands_with_patterns_are_not_cached() {
+    let ctx = TestContext::new();
+    if !ctx.protocol.supports_resp3() {
+        return;
+    }
+
+    let mut con = ctx
+        .async_connection_with_cache_config(CacheConfig::new())
+        .await
+        .unwrap();
+    let cmd = redis::cmd("KEYS").arg("foo*").take();
+    let _: () = cmd.query_async(&mut con).await.unwrap();
+    let _: () = cmd.query_async(&mut con).await.unwrap();
+
+    assert_hit!(&con, 0);
+    assert_miss!(&con, 0);
+}
+
+#[async_test]
+async fn test_bitcount_is_handled_correctly() {
+    let ctx = TestContext::new();
+    if !ctx.protocol.supports_resp3() {
+        return;
+    }
+
+    let mut con = ctx
+        .async_connection_with_cache_config(CacheConfig::new())
+        .await
+        .unwrap();
+    () = redis::cmd("set")
+        .arg("foo")
+        .arg("bar")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    let val: u32 = redis::cmd("BITCOUNT")
+        .arg("foo")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, 10);
+    let val: u32 = redis::cmd("BITCOUNT")
+        .arg("foo")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, 10);
+
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 1);
+    assert_invalidate!(&con, 0);
+
+    () = redis::cmd("set")
+        .arg("foo")
+        .arg("brrrrR")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    sleep(Duration::from_millis(10).into()).await; // Give time for push message to be received after invalidating key_1.
+
+    let val: u32 = redis::cmd("BITCOUNT")
+        .arg("foo")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, 22);
+
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 2);
+    assert_invalidate!(&con, 1);
+}
+
+#[async_test]
+async fn test_that_a_pipeline_with_all_commands_cached_does_not_hang() {
+    let ctx = TestContext::new();
+    if !ctx.protocol.supports_resp3() {
+        return;
+    }
+    let mut con = ctx
+        .async_connection_with_cache_config(CacheConfig::new())
+        .await
+        .unwrap();
+
+    let mut pipeline = redis::pipe();
+    pipeline.get("foobar");
+    let _: Vec<Option<String>> = pipeline.query_async(&mut con).await.unwrap();
+    // because the pipeline runs twice without any change, the second run should be fully cached, and nothing should be sent to the server
+    let _: Vec<Option<String>> = pipeline.query_async(&mut con).await.unwrap();
+
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 1);
 }

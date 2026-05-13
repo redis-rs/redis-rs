@@ -1,7 +1,7 @@
 use crate::types::{RedisResult, Value};
 use crate::{
-    aio::Runtime, cmd, errors::closed_connection_error, errors::RedisError, from_redis_value,
-    parser::ValueCodec, FromRedisValue, Msg, RedisConnectionInfo, ToRedisArgs,
+    FromRedisValue, Msg, RedisConnectionInfo, ToRedisArgs, aio::Runtime, cmd, errors::RedisError,
+    errors::closed_connection_error, from_redis_value, parser::ValueCodec,
 };
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -17,11 +17,11 @@ use pin_project_lite::pin_project;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::{self, Poll};
-use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::unbounded_channel;
 use tokio_util::codec::Decoder;
 
-use super::{setup_connection, SharedHandleContainer};
+use super::{SharedHandleContainer, setup_connection};
 
 // A signal that a un/subscribe request has completed.
 type RequestResultSender = oneshot::Sender<RedisResult<Value>>;
@@ -204,14 +204,15 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut task::Context,
     ) -> Poll<Result<(), Self::Error>> {
-        ready!(self
-            .as_mut()
-            .project()
-            .sink_stream
-            .poll_flush(cx)
-            .map_err(|err| {
-                let _ = self.as_mut().handle_message(Err(err));
-            }))?;
+        ready!(
+            self.as_mut()
+                .project()
+                .sink_stream
+                .poll_flush(cx)
+                .map_err(|err| {
+                    let _ = self.as_mut().handle_message(Err(err));
+                })
+        )?;
         self.poll_read(cx)
     }
 

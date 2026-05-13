@@ -1,8 +1,8 @@
 #![cfg(feature = "cluster")]
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion};
-use futures_util::{stream, TryStreamExt};
+use criterion::{Criterion, criterion_group, criterion_main};
+use futures_util::{TryStreamExt, stream};
 use redis::RedisError;
 
 use redis_test::cluster::RedisClusterConfiguration;

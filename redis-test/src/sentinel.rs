@@ -5,13 +5,102 @@ use tempfile::TempDir;
 
 use crate::{
     server::{Module, RedisServer},
-    utils::{build_keys_and_certs_for_tls, get_random_available_port, TlsFilePaths},
+    utils::{TlsFilePaths, build_keys_and_certs_for_tls, get_random_available_port},
 };
 
 pub struct RedisSentinelCluster {
     pub servers: Vec<RedisServer>,
     pub sentinel_servers: Vec<RedisServer>,
     pub folders: Vec<TempDir>,
+}
+
+impl RedisSentinelCluster {
+    pub fn log_sentinel_state_via_cli(&self, master_name: &str) {
+        use std::process::Command;
+
+        if let Some(sentinel) = self.sentinel_servers.first() {
+            if let Some((_, port)) = sentinel.host_and_port() {
+                println!("\n=== Querying sentinel state via redis-cli ===");
+
+                let output = Command::new("redis-cli")
+                    .args(["-p", &port.to_string(), "SENTINEL", "MASTERS"])
+                    .output();
+
+                match output {
+                    Ok(result) => {
+                        println!("SENTINEL MASTERS output:");
+                        println!("{}", String::from_utf8_lossy(&result.stdout));
+                        if !result.stderr.is_empty() {
+                            println!("stderr: {}", String::from_utf8_lossy(&result.stderr));
+                        }
+                    }
+                    Err(e) => println!("Failed to execute redis-cli SENTINEL MASTERS: {}", e),
+                }
+
+                let output = Command::new("redis-cli")
+                    .args(["-p", &port.to_string(), "SENTINEL", "SLAVES", master_name])
+                    .output();
+
+                match output {
+                    Ok(result) => {
+                        println!("\nSENTINEL SLAVES {} output:", master_name);
+                        println!("{}", String::from_utf8_lossy(&result.stdout));
+                        if !result.stderr.is_empty() {
+                            println!("stderr: {}", String::from_utf8_lossy(&result.stderr));
+                        }
+                    }
+                    Err(e) => println!("Failed to execute redis-cli SENTINEL SLAVES: {}", e),
+                }
+
+                let output = Command::new("redis-cli")
+                    .args([
+                        "-p",
+                        &port.to_string(),
+                        "SENTINEL",
+                        "GET-MASTER-ADDR-BY-NAME",
+                        master_name,
+                    ])
+                    .output();
+
+                match output {
+                    Ok(result) => {
+                        println!("\nSENTINEL GET-MASTER-ADDR-BY-NAME {} output:", master_name);
+                        println!("{}", String::from_utf8_lossy(&result.stdout));
+                        if !result.stderr.is_empty() {
+                            println!("stderr: {}", String::from_utf8_lossy(&result.stderr));
+                        }
+                    }
+                    Err(e) => println!(
+                        "Failed to execute redis-cli SENTINEL GET-MASTER-ADDR-BY-NAME: {}",
+                        e
+                    ),
+                }
+
+                println!("=== End sentinel state ===\n");
+            }
+        }
+    }
+
+    pub fn log_redis_state_via_cli(&self, port: u16) {
+        use std::process::Command;
+
+        let output = Command::new("redis-cli")
+            .args(["-p", &port.to_string(), "ROLE"])
+            .output();
+
+        match output {
+            Ok(result) => {
+                println!(
+                    "Redis 127.0.0.1:{port} ROLE output: {}",
+                    String::from_utf8_lossy(&result.stdout)
+                );
+                if !result.stderr.is_empty() {
+                    println!("stderr: {}", String::from_utf8_lossy(&result.stderr));
+                }
+            }
+            Err(e) => println!("Failed to execute redis-cli ROLE on port {}: {}", port, e),
+        }
+    }
 }
 
 const MTLS_NOT_ENABLED: bool = false;
@@ -36,11 +125,11 @@ fn spawn_master_server(
         None,
         Some(tlspaths.clone()),
         MTLS_NOT_ENABLED,
+        None, // cert_auth_field - not used in sentinel tests
         modules,
         |cmd| {
             // Minimize startup delay
             cmd.arg("--repl-diskless-sync-delay").arg("0");
-            cmd.arg("--appendonly").arg("yes");
             if let ConnectionAddr::TcpTls { .. } = get_addr(port) {
                 cmd.arg("--tls-replication").arg("yes");
             }
@@ -65,6 +154,7 @@ fn spawn_replica_server(
         Some(&config_file_path),
         Some(tlspaths.clone()),
         MTLS_NOT_ENABLED,
+        None, // cert_auth_field - not used in sentinel tests
         modules,
         |cmd| {
             cmd.arg("--replicaof")
@@ -73,7 +163,6 @@ fn spawn_replica_server(
             if let ConnectionAddr::TcpTls { .. } = get_addr(port) {
                 cmd.arg("--tls-replication").arg("yes");
             }
-            cmd.arg("--appendonly").arg("yes");
             cmd.current_dir(dir.path());
             cmd.spawn().unwrap()
         },
@@ -102,10 +191,10 @@ fn spawn_sentinel_server(
         Some(&config_file_path),
         Some(tlspaths.clone()),
         MTLS_NOT_ENABLED,
+        None, // cert_auth_field - not used in sentinel tests
         modules,
         |cmd| {
             cmd.arg("--sentinel");
-            cmd.arg("--appendonly").arg("yes");
             if let ConnectionAddr::TcpTls { .. } = get_addr(port) {
                 cmd.arg("--tls-replication").arg("yes");
             }
@@ -119,23 +208,30 @@ pub struct SentinelError;
 
 pub fn wait_for_master_server(
     mut get_client_fn: impl FnMut() -> RedisResult<Client>,
+    cluster: Option<&RedisSentinelCluster>,
 ) -> Result<(), SentinelError> {
     let rolecmd = redis::cmd("ROLE");
     for _ in 0..100 {
         let master_client = get_client_fn();
-        match master_client {
+        match &master_client {
             Ok(client) => match client.get_connection() {
                 Ok(mut conn) => {
                     let r: Vec<redis::Value> = rolecmd.query(&mut conn).unwrap();
                     let role = String::from_redis_value_ref(r.first().unwrap()).unwrap();
                     if role.starts_with("master") {
+                        println!("found master");
                         return Ok(());
                     } else {
                         println!("failed check for master role - current role: {r:?}")
                     }
                 }
                 Err(err) => {
-                    println!("failed to get master connection: {err:?}",)
+                    println!("failed to get master connection: {err:?}");
+                    if let Some(cluster) = cluster {
+                        if let ConnectionAddr::Tcp(_, port) = client.get_connection_info().addr() {
+                            cluster.log_redis_state_via_cli(*port);
+                        }
+                    }
                 }
             },
             Err(err) => {
@@ -151,24 +247,31 @@ pub fn wait_for_master_server(
 
 pub fn wait_for_replica(
     mut get_client_fn: impl FnMut() -> RedisResult<Client>,
+    cluster: Option<&RedisSentinelCluster>,
 ) -> Result<(), SentinelError> {
     let rolecmd = redis::cmd("ROLE");
-    for _ in 0..200 {
+    for i in 0..300 {
         let replica_client = get_client_fn();
-        match replica_client {
+        match &replica_client {
             Ok(client) => match client.get_connection() {
                 Ok(mut conn) => {
                     let r: Vec<redis::Value> = rolecmd.query(&mut conn).unwrap();
                     let role = String::from_redis_value_ref(r.first().unwrap()).unwrap();
                     let state = String::from_redis_value_ref(r.get(3).unwrap()).unwrap();
                     if role.starts_with("slave") && state == "connected" {
+                        println!("found replica");
                         return Ok(());
                     } else {
                         println!("failed check for replica role - current role: {r:?}")
                     }
                 }
                 Err(err) => {
-                    println!("failed to get replica connection: {err:?}")
+                    println!("failed to get replica connection: {err:?}");
+                    if let Some(cluster) = cluster {
+                        if let ConnectionAddr::Tcp(_, port) = client.get_connection_info().addr() {
+                            cluster.log_redis_state_via_cli(*port);
+                        }
+                    }
                 }
             },
             Err(err) => {
@@ -176,29 +279,33 @@ pub fn wait_for_replica(
             }
         }
 
-        sleep(Duration::from_millis(25));
+        let delay = if i < 100 { 25 } else { 50 };
+        sleep(Duration::from_millis(delay));
     }
 
     Err(SentinelError)
 }
 
-fn wait_for_replicas_to_sync(servers: &[RedisServer], masters: u16) {
+fn wait_for_replicas_to_sync(cluster: &RedisSentinelCluster, masters: u16) {
+    let servers = &cluster.servers;
     let cluster_size = servers.len() / (masters as usize);
     let clusters = servers.len() / cluster_size;
     let replicas = cluster_size - 1;
 
     for cluster_index in 0..clusters {
         let master_addr = servers[cluster_index * cluster_size].connection_info();
-        let r = wait_for_master_server(|| redis::Client::open(master_addr.clone()));
+        let r = wait_for_master_server(|| redis::Client::open(master_addr.clone()), Some(cluster));
         if r.is_err() {
+            cluster.log_sentinel_state_via_cli(&format!("master{}", cluster_index));
             panic!("failed waiting for master to be ready");
         }
 
         for replica_index in 0..replicas {
             let replica_addr =
                 servers[(cluster_index * cluster_size) + 1 + replica_index].connection_info();
-            let r = wait_for_replica(|| redis::Client::open(replica_addr.clone()));
+            let r = wait_for_replica(|| redis::Client::open(replica_addr.clone()), Some(cluster));
             if r.is_err() {
+                cluster.log_sentinel_state_via_cli(&format!("master{}", cluster_index));
                 panic!("failed waiting for replica to be ready and in sync");
             }
         }
@@ -261,9 +368,6 @@ impl RedisSentinelCluster {
             }
         }
 
-        // Wait for replicas to sync so that the sentinels discover them on the first try
-        wait_for_replicas_to_sync(&servers, masters);
-
         let mut sentinel_servers = vec![];
         for _ in 0..sentinels {
             let port = available_ports.pop().unwrap();
@@ -282,11 +386,16 @@ impl RedisSentinelCluster {
             folders.push(tempdir);
         }
 
-        RedisSentinelCluster {
+        let cluster = RedisSentinelCluster {
             servers,
             sentinel_servers,
             folders,
-        }
+        };
+
+        // Wait for replicas to sync so that the sentinels discover them on the first try
+        wait_for_replicas_to_sync(&cluster, masters);
+
+        cluster
     }
 
     pub fn stop(&mut self) {

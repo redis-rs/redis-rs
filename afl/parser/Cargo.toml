@@ -2,7 +2,7 @@
 name = "fuzz-target-parser"
 version = "0.1.0"
 authors = ["redis-rs developers"]
-edition = "2018"
+edition = "2024"
 
 [[bin]]
 name = "fuzz-target"
@@ -13,5 +13,5 @@ name = "reproduce"
 path = "src/reproduce.rs"
 
 [dependencies]
-afl = "0.15"
+afl = "0.17"
 redis = { path = "../../redis" }

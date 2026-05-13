@@ -2,11 +2,14 @@
 
 #[cfg(feature = "aio")]
 use futures::Future;
+use redis::{
+    Commands, ConnectionAddr, ErrorKind, InfoDict, Pipeline, ProtocolVersion, RedisResult,
+    ServerErrorKind, Value,
+};
 #[cfg(feature = "aio")]
 use redis::{aio, cmd};
-use redis::{Commands, ConnectionAddr, InfoDict, Pipeline, ProtocolVersion, RedisResult, Value};
-use redis_test::server::{use_protocol, Module, RedisServer};
-use redis_test::utils::{get_random_available_port, TlsFilePaths};
+use redis_test::server::{Module, RedisServer, use_protocol};
+use redis_test::utils::{TlsFilePaths, get_random_available_port};
 #[cfg(feature = "tls-rustls")]
 use std::{
     fs::File,
@@ -22,7 +25,7 @@ use redis::{ClientTlsConfig, TlsCertificates};
 pub fn current_thread_runtime() -> tokio::runtime::Runtime {
     let mut builder = tokio::runtime::Builder::new_current_thread();
 
-    #[cfg(feature = "aio")]
+    #[cfg(feature = "tokio-comp")]
     builder.enable_io();
 
     builder.enable_time();
@@ -43,7 +46,7 @@ pub enum RuntimeType {
 #[cfg(feature = "aio")]
 pub fn block_on_all<F, V>(f: F, runtime: RuntimeType) -> F::Output
 where
-    F: Future<Output = RedisResult<V>>,
+    F: Future<Output = V>,
 {
     use std::panic;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -62,7 +65,7 @@ where
     let check_future = futures_util::FutureExt::fuse(async {
         loop {
             if CHECK.load(Ordering::Relaxed) {
-                return Err((redis::ErrorKind::Io, "panic was caught").into());
+                return;
             }
             futures_time::task::sleep(futures_time::time::Duration::from_millis(1)).await;
         }
@@ -71,7 +74,7 @@ where
     futures::pin_mut!(f, check_future);
 
     let f = async move {
-        futures::select! {res = f => res, err = check_future => err}
+        futures::select! {res = f => Ok(res), err = check_future => Err(err)}
     };
 
     let res = match runtime {
@@ -86,7 +89,7 @@ where
         panic!("Internal thread panicked");
     }
 
-    res
+    res.unwrap()
 }
 
 #[cfg(feature = "tokio-comp")]
@@ -148,20 +151,67 @@ pub(crate) fn start_tls_crypto_provider() {
 
 impl TestContext {
     pub fn new() -> TestContext {
-        TestContext::with_modules(&[], false)
+        TestContext::with_modules(&[])
     }
 
     #[cfg(feature = "tls-rustls")]
     pub fn new_with_mtls() -> TestContext {
-        Self::with_modules(&[], true)
+        Self::with_modules_and_tls(&[], true, None)
+    }
+
+    #[cfg(feature = "tls-rustls")]
+    pub fn new_with_cert_auth(tls_files: TlsFilePaths) -> TestContext {
+        Self::new_with_cert_auth_field(tls_files, "CN")
+    }
+
+    #[cfg(feature = "tls-rustls")]
+    pub fn new_with_cert_auth_field(tls_files: TlsFilePaths, cert_field: &str) -> TestContext {
+        start_tls_crypto_provider();
+        let redis_port = get_random_available_port();
+        let addr = RedisServer::get_addr(redis_port);
+
+        // TLS certificate-based authentication requires TLS connection.
+        let addr = match addr {
+            ConnectionAddr::Tcp(host, port) => ConnectionAddr::TcpTls {
+                host,
+                port,
+                insecure: true,
+                tls_params: None,
+            },
+            ConnectionAddr::TcpTls { .. } => addr, // Already TLS
+            ConnectionAddr::Unix(_) => {
+                // Unix sockets don't support TLS - fall back to TCP+TLS
+                // Use the same default host that get_addr() would use for TCP
+                ConnectionAddr::TcpTls {
+                    host: redis_test::server::get_default_host(),
+                    port: redis_port,
+                    insecure: true,
+                    tls_params: None,
+                }
+            }
+            _ => {
+                panic!(
+                    "Unsupported ConnectionAddr variant for cert-based authentication: {:?}",
+                    addr
+                )
+            }
+        };
+
+        Self::with_modules_addr_tls_and_cert_auth(
+            &[],
+            true,
+            addr,
+            Some(tls_files),
+            Some(cert_field),
+        )
     }
 
     pub fn with_tls(tls_files: TlsFilePaths, mtls_enabled: bool) -> TestContext {
         Self::with_modules_and_tls(&[], mtls_enabled, Some(tls_files))
     }
 
-    pub fn with_modules(modules: &[Module], mtls_enabled: bool) -> TestContext {
-        Self::with_modules_and_tls(modules, mtls_enabled, None)
+    pub fn with_modules(modules: &[Module]) -> TestContext {
+        Self::with_modules_and_tls(modules, false, None)
     }
 
     pub fn new_with_addr(addr: ConnectionAddr) -> Self {
@@ -185,11 +235,22 @@ impl TestContext {
         addr: ConnectionAddr,
         tls_files: Option<TlsFilePaths>,
     ) -> Self {
+        Self::with_modules_addr_tls_and_cert_auth(modules, mtls_enabled, addr, tls_files, None)
+    }
+
+    fn with_modules_addr_tls_and_cert_auth(
+        modules: &[Module],
+        mtls_enabled: bool,
+        addr: ConnectionAddr,
+        tls_files: Option<TlsFilePaths>,
+        cert_auth_field: Option<&str>,
+    ) -> Self {
         let server = RedisServer::new_with_addr_tls_modules_and_spawner(
             addr,
             None,
             tls_files,
             mtls_enabled,
+            cert_auth_field,
             modules,
             |cmd| {
                 cmd.spawn()
@@ -229,7 +290,34 @@ impl TestContext {
                 }
             }
         }
-        con.flushdb::<()>().unwrap();
+
+        // Redis may still be loading its dataset after accepting connections,
+        // especially with TLS where the handshake completes before Redis is fully ready.
+        // Retry flushdb if the BusyLoading error is returned to allow time for initialization.
+        let mut flush_retries = 0;
+        loop {
+            match con.flushdb::<()>() {
+                Ok(_) => break,
+                Err(err)
+                    if matches!(err.kind(), ErrorKind::Server(ServerErrorKind::BusyLoading)) =>
+                {
+                    sleep(millisecond);
+                    flush_retries += 1;
+                    if flush_retries > 10000 {
+                        panic!(
+                            "Redis is still loading after too many retries, last error: {err}, logfile: {:?}",
+                            server.log_file_contents()
+                        );
+                    }
+                }
+                Err(err) => {
+                    panic!(
+                        "Failed to flush database: {err}, logfile: {:?}",
+                        server.log_file_contents()
+                    );
+                }
+            }
+        }
 
         TestContext {
             server,
@@ -297,9 +385,9 @@ fn encode_iter<W>(values: &[Value], writer: &mut W, prefix: &str) -> io::Result<
 where
     W: io::Write,
 {
-    write!(writer, "{}{}\r\n", prefix, values.len())?;
+    write!(writer, "{}{}\r\n", prefix, values.len()).unwrap();
     for val in values.iter() {
-        encode_value(val, writer)?;
+        encode_value(val, writer).unwrap();
     }
     Ok(())
 }
@@ -307,10 +395,10 @@ fn encode_map<W>(values: &[(Value, Value)], writer: &mut W, prefix: &str) -> io:
 where
     W: io::Write,
 {
-    write!(writer, "{}{}\r\n", prefix, values.len())?;
+    write!(writer, "{}{}\r\n", prefix, values.len()).unwrap();
     for (k, v) in values.iter() {
-        encode_value(k, writer)?;
-        encode_value(v, writer)?;
+        encode_value(k, writer).unwrap();
+        encode_value(v, writer).unwrap();
     }
     Ok(())
 }
@@ -323,8 +411,8 @@ where
         Value::Nil => write!(writer, "$-1\r\n"),
         Value::Int(val) => write!(writer, ":{val}\r\n"),
         Value::BulkString(ref val) => {
-            write!(writer, "${}\r\n", val.len())?;
-            writer.write_all(val)?;
+            write!(writer, "${}\r\n", val.len()).unwrap();
+            writer.write_all(val).unwrap();
             writer.write_all(b"\r\n")
         }
         Value::Array(ref values) => encode_iter(values, writer, "*"),
@@ -335,8 +423,8 @@ where
             ref data,
             ref attributes,
         } => {
-            encode_map(attributes, writer, "|")?;
-            encode_value(data, writer)?;
+            encode_map(attributes, writer, "|").unwrap();
+            encode_value(data, writer).unwrap();
             Ok(())
         }
         Value::Set(ref values) => encode_iter(values, writer, "~"),
@@ -360,17 +448,17 @@ where
             return write!(writer, "({val}\r\n");
             #[cfg(not(feature = "num-bigint"))]
             {
-                write!(writer, "(")?;
+                write!(writer, "(").unwrap();
                 for byte in val {
-                    write!(writer, "{byte}")?;
+                    write!(writer, "{byte}").unwrap();
                 }
                 write!(writer, "\r\n")
             }
         }
         Value::Push { ref kind, ref data } => {
-            write!(writer, ">{}\r\n+{kind}\r\n", data.len() + 1)?;
+            write!(writer, ">{}\r\n+{kind}\r\n", data.len() + 1).unwrap();
             for val in data.iter() {
-                encode_value(val, writer)?;
+                encode_value(val, writer).unwrap();
             }
             Ok(())
         }
@@ -399,6 +487,40 @@ fn get_version(conn: &mut impl redis::ConnectionLike) -> Version {
     parse_version(info)
 }
 
+/// Get the Redis server version by running `redis-server --version`.
+/// Returns `None` if the binary is not available.
+pub fn get_redis_binary_version() -> Option<Version> {
+    use std::process::Command;
+
+    let binary = std::env::var("REDISRS_SERVER_BIN").unwrap_or_else(|_| "redis-server".to_string());
+
+    let output = match Command::new(&binary).arg("--version").output() {
+        Ok(output) => output,
+        Err(_) => {
+            eprintln!("Failed to execute redis-server --version");
+            return None;
+        }
+    };
+
+    let full_string =
+        String::from_utf8(output.stdout).expect("Invalid UTF-8 in redis-server version output");
+
+    let version_str = full_string
+        .split_whitespace()
+        .find(|s| s.starts_with("v="))
+        .and_then(|s| s.strip_prefix("v="))
+        .expect("Could not find version in redis-server output");
+
+    let versions: Vec<u16> = version_str
+        .split('.')
+        .take(3)
+        .map(|v| v.parse::<u16>().expect("Failed to parse version number"))
+        .collect();
+
+    assert_eq!(versions.len(), 3, "Expected version format x.y.z");
+    Some((versions[0], versions[1], versions[2]))
+}
+
 pub fn is_major_version(expected_version: u16, version: Version) -> bool {
     expected_version <= version.0
 }
@@ -409,8 +531,12 @@ pub fn is_version(expected_major_minor: (u16, u16), version: Version) -> bool {
 }
 
 // Redis version constants for version-gated tests
+pub const REDIS_VERSION_CE_7_0: Version = (7, 0, 0);
+pub const REDIS_VERSION_CE_7_2: Version = (7, 2, 0);
 pub const REDIS_VERSION_CE_8_0: Version = (8, 0, 0);
 pub const REDIS_VERSION_CE_8_2: Version = (8, 1, 240);
+pub const REDIS_VERSION_CE_8_4: Version = (8, 3, 224);
+pub const REDIS_VERSION_CE_8_6: Version = (8, 6, 0);
 
 /// Macro to run tests only if the Redis version meets the minimum requirement.
 /// If the version is insufficient, the test is skipped with a message.
@@ -430,6 +556,42 @@ macro_rules! run_test_if_version_supported {
     }};
 }
 
+/// Macro to run tests only if the version of the Redis binary meets the minimum requirement.
+/// If the binary is not available or the version is insufficient, the test is skipped with a message.
+///
+/// # Example
+/// ```rust,no_run
+/// #[test]
+/// fn test_redis_8_6_feature() {
+///     run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_6);
+///     // Only now create the expensive test context
+///     let ctx = TestContext::new_with_cert_auth(tls_files);
+///     // ...
+/// }
+/// ```
+#[macro_export]
+macro_rules! run_test_if_redis_binary_version_supported {
+    ($minimum_required_version:expr) => {{
+        match $crate::get_redis_binary_version() {
+            None => {
+                eprintln!(
+                    "Skipping the test because the Redis binary was not found."
+                );
+                return;
+            }
+            Some(redis_version) => {
+                if redis_version < *$minimum_required_version {
+                    eprintln!(
+                        "Skipping the test because the current version of Redis {:?} doesn't match the minimum required version {:?}.",
+                        redis_version, $minimum_required_version
+                    );
+                    return;
+                }
+            }
+        }
+    }};
+}
+
 #[cfg(feature = "tls-rustls")]
 fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> TlsCertificates {
     let ca_file = File::open(&tls_file_paths.ca_crt).expect("Cannot open CA cert file");
@@ -438,17 +600,17 @@ fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> TlsCertificates {
         .read_to_end(&mut root_cert_vec)
         .expect("Unable to read CA cert file");
 
-    let cert_file = File::open(&tls_file_paths.redis_crt).expect("cannot open private cert file");
+    let cert_file = File::open(&tls_file_paths.redis_crt).expect("Cannot open cert file");
     let mut client_cert_vec = Vec::new();
     BufReader::new(cert_file)
         .read_to_end(&mut client_cert_vec)
-        .expect("Unable to read client cert file");
+        .expect("Unable to read cert file");
 
-    let key_file = File::open(&tls_file_paths.redis_key).expect("Cannot open private key file");
+    let key_file = File::open(&tls_file_paths.redis_key).expect("Cannot open key file");
     let mut client_key_vec = Vec::new();
     BufReader::new(key_file)
         .read_to_end(&mut client_key_vec)
-        .expect("Unable to read client key file");
+        .expect("Unable to read key file");
 
     TlsCertificates {
         client_tls: Some(ClientTlsConfig {
@@ -479,6 +641,45 @@ pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
     }
 }
 
+#[cfg(feature = "tls-rustls")]
+pub(crate) fn build_single_client_with_separate_client_cert<T: redis::IntoConnectionInfo>(
+    connection_info: T,
+    tls_file_params: &TlsFilePaths,
+    client_cert_paths: &redis_test::utils::ClientCertPaths,
+) -> RedisResult<redis::Client> {
+    // Load CA cert for server verification
+    let ca_file = File::open(&tls_file_params.ca_crt).expect("Cannot open CA cert file");
+    let mut root_cert_vec = Vec::new();
+    BufReader::new(ca_file)
+        .read_to_end(&mut root_cert_vec)
+        .expect("Unable to read CA cert file");
+
+    // Load client cert and key for mTLS authentication
+    let cert_file =
+        File::open(&client_cert_paths.client_crt).expect("Cannot open client cert file");
+    let mut client_cert_vec = Vec::new();
+    BufReader::new(cert_file)
+        .read_to_end(&mut client_cert_vec)
+        .expect("Unable to read client cert file");
+
+    let key_file = File::open(&client_cert_paths.client_key).expect("Cannot open client key file");
+    let mut client_key_vec = Vec::new();
+    BufReader::new(key_file)
+        .read_to_end(&mut client_key_vec)
+        .expect("Unable to read client key file");
+
+    redis::Client::build_with_tls(
+        connection_info,
+        TlsCertificates {
+            client_tls: Some(ClientTlsConfig {
+                client_cert: client_cert_vec,
+                client_key: client_key_vec,
+            }),
+            root_cert: Some(root_cert_vec),
+        },
+    )
+}
+
 #[cfg(not(feature = "tls-rustls"))]
 pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
     connection_info: T,
@@ -491,10 +692,10 @@ pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
 #[cfg(feature = "tls-rustls")]
 pub(crate) mod mtls_test {
     use super::*;
-    use redis::{cluster::ClusterClient, ConnectionInfo, IntoConnectionInfo, RedisError};
+    use redis::{ConnectionInfo, IntoConnectionInfo, RedisError, cluster::ClusterClient};
 
     fn clean_node_info(nodes: &[ConnectionInfo]) -> Vec<ConnectionInfo> {
-        let nodes = nodes
+        nodes
             .iter()
             .map(|node| match node.addr() {
                 redis::ConnectionAddr::TcpTls { host, port, .. } => redis::ConnectionAddr::TcpTls {
@@ -507,8 +708,7 @@ pub(crate) mod mtls_test {
                 .unwrap(),
                 _ => node.clone(),
             })
-            .collect();
-        nodes
+            .collect()
     }
 
     pub(crate) fn create_cluster_client_from_cluster(
@@ -555,7 +755,11 @@ pub async fn kill_client_async(
     conn_to_kill: &mut impl aio::ConnectionLike,
     client: &redis::Client,
 ) -> RedisResult<()> {
-    let info: String = cmd("CLIENT").arg("INFO").query_async(conn_to_kill).await?;
+    let info: String = cmd("CLIENT")
+        .arg("INFO")
+        .query_async(conn_to_kill)
+        .await
+        .unwrap();
     let id = info.split_once(' ').unwrap().0;
     assert!(id.contains("id="));
     let client_to_kill_id = id.split_once("id=").unwrap().1;
@@ -570,4 +774,21 @@ pub async fn kill_client_async(
         .unwrap();
 
     Ok(())
+}
+
+pub fn spawn<T>(fut: impl std::future::Future<Output = T> + Send + Sync + 'static)
+where
+    T: Send + 'static,
+{
+    match tokio::runtime::Handle::try_current() {
+        Ok(tokio_runtime) => {
+            tokio_runtime.spawn(fut);
+        }
+        Err(_) => {
+            #[cfg(feature = "smol-comp")]
+            smol::spawn(fut).detach();
+            #[cfg(not(feature = "smol-comp"))]
+            unreachable!()
+        }
+    }
 }

@@ -47,6 +47,35 @@ pub enum SetExpiry {
     KEEPTTL,
 }
 
+impl ToRedisArgs for SetExpiry {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            SetExpiry::EX(secs) => {
+                out.write_arg(b"EX");
+                out.write_arg(format!("{secs}").as_bytes());
+            }
+            SetExpiry::PX(millis) => {
+                out.write_arg(b"PX");
+                out.write_arg(format!("{millis}").as_bytes());
+            }
+            SetExpiry::EXAT(unix_time) => {
+                out.write_arg(b"EXAT");
+                out.write_arg(format!("{unix_time}").as_bytes());
+            }
+            SetExpiry::PXAT(unix_time) => {
+                out.write_arg(b"PXAT");
+                out.write_arg(format!("{unix_time}").as_bytes());
+            }
+            SetExpiry::KEEPTTL => {
+                out.write_arg(b"KEEPTTL");
+            }
+        }
+    }
+}
+
 /// Helper enum that is used to define existence checks
 #[derive(Clone, Copy)]
 #[non_exhaustive]
@@ -57,6 +86,22 @@ pub enum ExistenceCheck {
     XX,
 }
 
+impl ToRedisArgs for ExistenceCheck {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            ExistenceCheck::NX => {
+                out.write_arg(b"NX");
+            }
+            ExistenceCheck::XX => {
+                out.write_arg(b"XX");
+            }
+        }
+    }
+}
+
 /// Helper enum that is used to define field existence checks
 #[derive(Clone, Copy)]
 #[non_exhaustive]
@@ -65,6 +110,18 @@ pub enum FieldExistenceCheck {
     FNX,
     /// FXX -- Only set the fields if all already exist.
     FXX,
+}
+
+impl ToRedisArgs for FieldExistenceCheck {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            FieldExistenceCheck::FNX => out.write_arg(b"FNX"),
+            FieldExistenceCheck::FXX => out.write_arg(b"FXX"),
+        }
+    }
 }
 
 /// Helper enum that is used in some situations to describe
@@ -138,6 +195,108 @@ pub enum Value {
     },
     /// Represents an error message from the server
     ServerError(ServerError),
+}
+
+/// Helper enum that is used to define comparisons between values and their digests
+///
+/// # Example
+/// ```rust
+/// use redis::ValueComparison;
+///
+/// // Create comparisons using constructor methods
+/// let eq_comparison = ValueComparison::ifeq("my_value");
+/// let ne_comparison = ValueComparison::ifne("other_value");
+/// let deq_comparison = ValueComparison::ifdeq("digest_hash");
+/// let dne_comparison = ValueComparison::ifdne("other_digest");
+/// ```
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub enum ValueComparison {
+    /// Value is equal
+    IFEQ(String),
+    /// Value is not equal
+    IFNE(String),
+    /// Value's digest is equal
+    IFDEQ(String),
+    /// Value's digest is not equal
+    IFDNE(String),
+}
+
+impl ValueComparison {
+    /// Create a new IFEQ (if equal) comparison
+    ///
+    /// Performs the operation only if the key's current value is equal to the provided value.
+    ///
+    /// For SET: Sets the key only if its current value matches. Non-existent keys are not created.
+    /// For DEL_EX: Deletes the key only if its current value matches. Non-existent keys are ignored.
+    pub fn ifeq(value: impl ToSingleRedisArg) -> Self {
+        ValueComparison::IFEQ(Self::arg_to_string(value))
+    }
+
+    /// Create a new IFNE (if not equal) comparison
+    ///
+    /// Performs the operation only if the key's current value is not equal to the provided value.
+    ///
+    /// For SET: Sets the key only if its current value doesn't match. Non-existent keys are created.
+    /// For DEL_EX: Deletes the key only if its current value doesn't match. Non-existent keys are ignored.
+    pub fn ifne(value: impl ToSingleRedisArg) -> Self {
+        ValueComparison::IFNE(Self::arg_to_string(value))
+    }
+
+    /// Create a new IFDEQ (if digest equal) comparison
+    ///
+    /// Performs the operation only if the digest of the key's current value is equal to the provided digest.
+    ///
+    /// For SET: Sets the key only if its current value's digest matches. Non-existent keys are not created.
+    /// For DEL_EX: Deletes the key only if its current value's digest matches. Non-existent keys are ignored.
+    ///
+    /// Use [`calculate_value_digest`] to compute the digest of a value.
+    pub fn ifdeq(digest: impl ToSingleRedisArg) -> Self {
+        ValueComparison::IFDEQ(Self::arg_to_string(digest))
+    }
+
+    /// Create a new IFDNE (if digest not equal) comparison
+    ///
+    /// Performs the operation only if the digest of the key's current value is not equal to the provided digest.
+    ///
+    /// For SET: Sets the key only if its current value's digest doesn't match. Non-existent keys are created.
+    /// For DEL_EX: Deletes the key only if its current value's digest doesn't match. Non-existent keys are ignored.
+    ///
+    /// Use [`calculate_value_digest`] to compute the digest of a value.
+    pub fn ifdne(digest: impl ToSingleRedisArg) -> Self {
+        ValueComparison::IFDNE(Self::arg_to_string(digest))
+    }
+
+    fn arg_to_string(value: impl ToSingleRedisArg) -> String {
+        let args = value.to_redis_args();
+        String::from_utf8_lossy(&args[0]).into_owned()
+    }
+}
+
+impl ToRedisArgs for ValueComparison {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            ValueComparison::IFEQ(value) => {
+                out.write_arg(b"IFEQ");
+                out.write_arg(value.as_bytes());
+            }
+            ValueComparison::IFNE(value) => {
+                out.write_arg(b"IFNE");
+                out.write_arg(value.as_bytes());
+            }
+            ValueComparison::IFDEQ(digest) => {
+                out.write_arg(b"IFDEQ");
+                out.write_arg(digest.as_bytes());
+            }
+            ValueComparison::IFDNE(digest) => {
+                out.write_arg(b"IFDNE");
+                out.write_arg(digest.as_bytes());
+            }
+        }
+    }
 }
 
 /// `VerbatimString`'s format types defined by spec
@@ -793,7 +952,9 @@ pub trait RedisWrite {
             }
 
             unsafe fn advance_mut(&mut self, cnt: usize) {
-                self.buf.advance_mut(cnt);
+                unsafe {
+                    self.buf.advance_mut(cnt);
+                }
             }
 
             fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {
@@ -1263,24 +1424,24 @@ macro_rules! impl_to_redis_args_for_set {
 
 impl_to_redis_args_for_set!(
     for <T, S> std::collections::HashSet<T, S>,
-    where (T: ToRedisArgs + Hash + Eq)
+    where (T: ToRedisArgs)
 );
 
 impl_to_redis_args_for_set!(
     for <T> std::collections::BTreeSet<T>,
-    where (T: ToRedisArgs + Hash + Eq + Ord)
+    where (T: ToRedisArgs)
 );
 
 #[cfg(feature = "hashbrown")]
 impl_to_redis_args_for_set!(
     for <T, S> hashbrown::HashSet<T, S>,
-    where (T: ToRedisArgs + Hash + Eq)
+    where (T: ToRedisArgs)
 );
 
 #[cfg(feature = "ahash")]
 impl_to_redis_args_for_set!(
     for <T, S> ahash::AHashSet<T, S>,
-    where (T: ToRedisArgs + Hash + Eq)
+    where (T: ToRedisArgs)
 );
 
 /// @note: Redis cannot store empty maps so the application has to
@@ -1318,25 +1479,25 @@ macro_rules! impl_to_redis_args_for_map {
 
 impl_to_redis_args_for_map!(
     for <K, V, S> std::collections::HashMap<K, V, S>,
-    where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
+    where (K: ToRedisArgs, V: ToRedisArgs)
 );
 
 impl_to_redis_args_for_map!(
     /// this flattens BTreeMap into something that goes well with HMSET
     for <K, V> std::collections::BTreeMap<K, V>,
-    where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
+    where (K: ToRedisArgs, V: ToRedisArgs)
 );
 
 #[cfg(feature = "hashbrown")]
 impl_to_redis_args_for_map!(
     for <K, V, S> hashbrown::HashMap<K, V, S>,
-    where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
+    where (K: ToRedisArgs, V: ToRedisArgs)
 );
 
 #[cfg(feature = "ahash")]
 impl_to_redis_args_for_map!(
     for <K, V, S> ahash::AHashMap<K, V, S>,
-    where (K: ToRedisArgs + Hash + Eq + Ord, V: ToRedisArgs)
+    where (K: ToRedisArgs, V: ToRedisArgs)
 );
 
 macro_rules! to_redis_args_for_tuple {
@@ -1792,8 +1953,8 @@ macro_rules! from_vec_from_redis_value {
                         ),
                     },
                     Value::Array(items) => FromRedisValue::from_redis_value_refs(items).map($convert),
-                    Value::Set(ref items) => FromRedisValue::from_redis_value_refs(items).map($convert),
-                    Value::Map(ref items) => {
+                    Value::Set(items) => FromRedisValue::from_redis_value_refs(items).map($convert),
+                    Value::Map(items) => {
                         let mut n: Vec<T> = vec![];
                         for item in items {
                             match FromRedisValue::from_redis_value_ref(&Value::Map(vec![item.clone()])) {
@@ -1889,7 +2050,7 @@ impl_from_redis_value_for_map!(
 
 impl_from_redis_value_for_map!(
     for <K, V> std::collections::BTreeMap<K, V>,
-    where (K: FromRedisValue + Eq + Hash + Ord, V: FromRedisValue)
+    where (K: FromRedisValue + Eq + Ord, V: FromRedisValue)
 );
 
 #[cfg(feature = "hashbrown")]
@@ -1940,7 +2101,7 @@ impl_from_redis_value_for_set!(
 
 impl_from_redis_value_for_set!(
     for <T> std::collections::BTreeSet<T>,
-    where (T: FromRedisValue + Eq + Ord)
+    where (T: FromRedisValue + Ord)
 );
 
 #[cfg(feature = "hashbrown")]
@@ -2273,6 +2434,44 @@ pub fn from_redis_value<T: FromRedisValue>(v: Value) -> Result<T, ParsingError> 
     FromRedisValue::from_redis_value(v)
 }
 
+/// Calculates a digest/hash of the given value for use with Redis value comparison operations.
+/// This function uses the XXH3 algorithm, which is the same algorithm used by Redis for its DIGEST command.
+/// The resulting digest can be used with `ValueComparison::IFDEQ` and `ValueComparison::IFDNE`.
+///
+/// # Example
+/// ```rust
+/// use redis::{calculate_value_digest, ValueComparison, SetOptions};
+///
+/// let value = "my_value";
+/// let digest = calculate_value_digest(value);
+///
+/// // Use the digest in a value comparison
+/// let opts = SetOptions::default()
+///     .value_comparison(ValueComparison::ifdeq(&digest));
+/// ```
+pub fn calculate_value_digest<T: ToRedisArgs>(value: T) -> String {
+    use xxhash_rust::xxh3::xxh3_64;
+
+    // Convert the value to Redis args format (bytes)
+    let args = value.to_redis_args();
+
+    // For consistency with Redis behavior, hash the concatenated bytes
+    // of all arguments, similar to how Redis would serialize the value
+    let mut combined_bytes = Vec::new();
+    for arg in args {
+        combined_bytes.extend_from_slice(&arg);
+    }
+
+    // Calculate XXH3 hash (64-bit) and format as hexadecimal string
+    let hash = xxh3_64(&combined_bytes);
+    format!("{:016x}", hash)
+}
+
+/// Validates that the given string is a valid 16-byte hex digest.
+pub fn is_valid_16_bytes_hex_digest(s: &str) -> bool {
+    s.len() == 16 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 /// Enum representing the communication protocol with the server.
 ///
 /// This enum represents the types of data that the server can send to the client,
@@ -2349,6 +2548,8 @@ pub(crate) type SyncPushSender = std::sync::mpsc::Sender<PushInfo>;
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ValueType {
+    /// Key does not have a value
+    None,
     /// Generally returned by anything that returns a single element. [Redis Docs](https://redis.io/docs/latest/develop/data-types/strings/)
     String,
     /// A list of String values. [Redis Docs](https://redis.io/docs/latest/develop/data-types/lists/)
@@ -2361,6 +2562,26 @@ pub enum ValueType {
     Hash,
     /// A Redis Stream. [Redis Docs](https://redis.io/docs/latest/develop/data-types/stream)
     Stream,
+    /// A vector set. [Redis Docs](https://redis.io/docs/latest/develop/data-types/vector-sets/)
+    VectorSet,
+    /// A RedisJSON value. [Redis Docs](https://redis.io/docs/latest/develop/data-types/json/)
+    JSON,
+    /// A Bloom filter from Redis' module. [Redis Docs](https://redis.io/docs/latest/develop/data-types/probabilistic/bloom-filter/)
+    BloomFilterRedis,
+    /// A Cuckoo filter. [Redis Docs](https://redis.io/docs/latest/develop/data-types/probabilistic/cuckoo-filter/)
+    CuckooFilter,
+    /// A Count-min. [Redis Docs](https://redis.io/docs/latest/develop/data-types/probabilistic/count-min-sketch/)
+    CountMin,
+    /// A t-Digest. [Redis Docs](https://redis.io/docs/latest/develop/data-types/probabilistic/t-digest/)
+    TDigest,
+    /// A Top-K. [Redis Docs](https://redis.io/docs/latest/develop/data-types/probabilistic/top-k/)
+    TopK,
+    /// A time series. [Redis Docs](https://redis.io/docs/latest/develop/data-types/timeseries/)
+    TimeSeries,
+    /// A Trie. [Redis Docs](https://redis.io/docs/latest/develop/ai/search-and-query/advanced-concepts/autocomplete/)
+    Trie,
+    /// A Bloom filter from Valkey's module. [ValKey Docs](https://valkey.io/topics/bloomfilters/)
+    BloomFilterValKey,
     /// Any other value type not explicitly defined in [Redis Docs](https://redis.io/docs/latest/commands/type/)
     Unknown(String),
 }
@@ -2368,12 +2589,29 @@ pub enum ValueType {
 impl<T: AsRef<str>> From<T> for ValueType {
     fn from(s: T) -> Self {
         match s.as_ref() {
+            "none" => ValueType::None,
             "string" => ValueType::String,
             "list" => ValueType::List,
             "set" => ValueType::Set,
             "zset" => ValueType::ZSet,
             "hash" => ValueType::Hash,
             "stream" => ValueType::Stream,
+            "vectorset" => ValueType::VectorSet,
+            // JSON module
+            "ReJSON-RL" => ValueType::JSON,
+            // Bloom module (Redis)
+            "CMSk-TYPE" => ValueType::CountMin,
+            "MBbloom--" => ValueType::BloomFilterRedis,
+            "MBbloomCF" => ValueType::CuckooFilter,
+            "TDIS-TYPE" => ValueType::TDigest,
+            "TopK-TYPE" => ValueType::TopK,
+            // Search module
+            "trietype0" => ValueType::Trie,
+            // Timeseries module
+            "TSDB-TYPE" => ValueType::TimeSeries,
+            // Bloom module (ValKey)
+            "bloomfltr" => ValueType::BloomFilterValKey,
+            // Fallback
             s => ValueType::Unknown(s.to_string()),
         }
     }
@@ -2382,12 +2620,29 @@ impl<T: AsRef<str>> From<T> for ValueType {
 impl From<ValueType> for String {
     fn from(v: ValueType) -> Self {
         match v {
+            ValueType::None => "none".to_string(),
             ValueType::String => "string".to_string(),
             ValueType::List => "list".to_string(),
             ValueType::Set => "set".to_string(),
             ValueType::ZSet => "zset".to_string(),
             ValueType::Hash => "hash".to_string(),
             ValueType::Stream => "stream".to_string(),
+            ValueType::VectorSet => "vectorset".to_string(),
+            // JSON module
+            ValueType::JSON => "ReJSON-RL".to_string(),
+            // Bloom module (Redis)
+            ValueType::BloomFilterRedis => "MBbloom--".to_string(),
+            ValueType::CuckooFilter => "MBbloomCF".to_string(),
+            ValueType::TDigest => "TDIS-TYPE".to_string(),
+            ValueType::TopK => "TopK-TYPE".to_string(),
+            ValueType::CountMin => "CMSk-TYPE".to_string(),
+            // Search module
+            ValueType::Trie => "trietype0".to_string(),
+            // Timeseries module
+            ValueType::TimeSeries => "TSDB-TYPE".to_string(),
+            // Bloom module (ValKey)
+            ValueType::BloomFilterValKey => "bloomfltr".to_string(),
+            // Fallback
             ValueType::Unknown(s) => s,
         }
     }

@@ -1,6 +1,6 @@
 //! Defines types to use with the geospatial commands.
 
-use crate::errors::{invalid_type_error, ParsingError};
+use crate::errors::{ParsingError, invalid_type_error};
 use crate::types::{FromRedisValue, RedisWrite, ToRedisArgs, ToSingleRedisArg, Value};
 
 /// Units used by [`geo_dist`][1] and [`geo_radius`][2].
@@ -15,7 +15,7 @@ pub enum Unit {
     Kilometers,
     /// Represents miles.
     Miles,
-    /// Represents feed.
+    /// Represents feet.
     Feet,
 }
 
@@ -248,12 +248,8 @@ impl ToRedisArgs for RadiusOptions {
             RadiusOrder::Desc => n += 1,
             _ => {}
         };
-        if self.store.is_some() {
-            n += 1 + self.store.as_ref().unwrap().len();
-        }
-        if self.store_dist.is_some() {
-            n += 1 + self.store_dist.as_ref().unwrap().len();
-        }
+        n += 1 + self.store.as_ref().map(|v| v.len()).unwrap_or(0);
+        n += 1 + self.store_dist.as_ref().map(|v| v.len()).unwrap_or(0);
         n
     }
 }

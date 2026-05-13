@@ -1,6 +1,6 @@
-use arcstr::ArcStr;
 use rand::Rng;
 
+use super::NodeAddress;
 use crate::cluster_handling::slot_map::SLOT_SIZE;
 use crate::cmd::{Arg, Cmd};
 use crate::commands::is_readonly_cmd;
@@ -10,24 +10,10 @@ use std::borrow::Cow;
 use std::cmp::min;
 use std::collections::HashMap;
 
-fn slot(key: &[u8]) -> u16 {
-    crc16::State::<crc16::XMODEM>::calculate(key) % SLOT_SIZE
-}
-
-/// Returns the slot that matches `key`.
-pub(crate) fn get_slot(key: &[u8]) -> u16 {
-    let key = match get_hashtag(key) {
-        Some(tag) => tag,
-        None => key,
-    };
-
-    slot(key)
-}
-
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) enum Redirect {
-    Moved(ArcStr),
-    Ask(ArcStr),
+    Moved(NodeAddress),
+    Ask(NodeAddress),
 }
 
 /// Logical bitwise aggregating operators.
@@ -441,11 +427,10 @@ pub(crate) fn combine_and_sort_array_results(
 }
 
 fn get_route(is_readonly: bool, key: &[u8]) -> Route {
-    let slot = get_slot(key);
     if is_readonly {
-        Route::new(slot, SlotAddr::ReplicaOptional)
+        Route::with_key(key, SlotAddr::ReplicaOptional)
     } else {
-        Route::new(slot, SlotAddr::Master)
+        Route::with_key(key, SlotAddr::Master)
     }
 }
 
@@ -530,7 +515,7 @@ where
                 {
                     // Last key reached; add the path argument index for each route and break
                     let path_idx = curr_arg_idx + 1;
-                    for (_, arg_indices) in routes.iter_mut() {
+                    for arg_indices in routes.values_mut() {
                         arg_indices.push(path_idx);
                     }
                     break;
@@ -838,16 +823,17 @@ impl RoutingInfo {
                     .map(|key| RoutingInfo::for_key(cmd, key))
             }
 
-            RouteBy::SecondArgSlot => r
-                .arg_idx(2)
-                .and_then(|arg| std::str::from_utf8(arg).ok())
-                .and_then(|slot| slot.parse::<u16>().ok())
-                .map(|slot| {
-                    RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route::new(
-                        slot,
-                        SlotAddr::Master,
-                    )))
-                }),
+            RouteBy::SecondArgSlot => {
+                r.arg_idx(2)
+                    .and_then(|arg| std::str::from_utf8(arg).ok())
+                    .and_then(|slot| slot.parse::<u16>().ok())
+                    .and_then(Slot::new)
+                    .map(|slot| {
+                        RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(
+                            Route::with_slot(slot, SlotAddr::Master),
+                        ))
+                    })
+            }
 
             RouteBy::FirstKey => match r.arg_idx(1) {
                 Some(key) => Some(RoutingInfo::for_key(cmd, key)),
@@ -919,7 +905,7 @@ impl Routable for Value {
     fn arg_idx(&self, idx: usize) -> Option<&[u8]> {
         match self {
             Value::Array(args) => match args.get(idx) {
-                Some(Value::BulkString(ref data)) => Some(&data[..]),
+                Some(Value::BulkString(data)) => Some(&data[..]),
                 _ => None,
             },
             _ => None,
@@ -934,26 +920,6 @@ impl Routable for Value {
             }),
             _ => None,
         }
-    }
-}
-
-#[derive(Debug, Hash, Clone)]
-pub(crate) struct Slot {
-    pub(crate) start: u16,
-    pub(crate) end: u16,
-    pub(crate) master: String,
-    pub(crate) replicas: Vec<String>,
-}
-
-impl Slot {
-    #[allow(dead_code)] // used in tests
-    pub(crate) fn master(&self) -> &str {
-        self.master.as_str()
-    }
-
-    #[allow(dead_code)] // used in tests
-    pub(crate) fn replicas(&self) -> Vec<String> {
-        self.replicas.clone()
     }
 }
 
@@ -978,8 +944,24 @@ pub struct Route(u16, SlotAddr);
 
 impl Route {
     /// Returns a new Route.
+    ///
+    /// Since this function allows creating route for non-existing slot,
+    /// it's recommended to use [`with_slot`] instead.
+    ///
+    /// [`with_slot`]: Self::with_slot
     pub fn new(slot: u16, slot_addr: SlotAddr) -> Self {
+        // TODO: Deprecate and remove this function in the future release
         Self(slot, slot_addr)
+    }
+
+    /// Creates Route for specified slot and SlotAddr
+    pub fn with_slot(slot: Slot, slot_addr: SlotAddr) -> Self {
+        Self(slot.0, slot_addr)
+    }
+
+    /// Craetes Route for specified key and SlotAddr
+    pub fn with_key(key: impl AsRef<[u8]>, slot_addr: SlotAddr) -> Self {
+        Self::with_slot(Slot::for_key(key), slot_addr)
     }
 
     /// Returns the slot number of the route.
@@ -994,14 +976,45 @@ impl Route {
 
     /// Returns a new Route for a random primary node
     pub(crate) fn new_random_primary() -> Self {
-        Self::new(random_slot(), SlotAddr::Master)
+        Self::with_slot(Slot::new_random(), SlotAddr::Master)
     }
 }
 
-/// Choose a random slot from `0..SLOT_SIZE` (excluding)
-fn random_slot() -> u16 {
-    let mut rng = rand::rng();
-    rng.random_range(0..SLOT_SIZE)
+/// Defines the valid redis key slot.
+// Type invariant: Slot.0 must be 0..SLOT_SIZE (inclusive lower bound, exclusive upper bound)
+#[derive(Eq, PartialEq, Clone, Copy, Debug, Hash)]
+pub struct Slot(u16);
+
+impl Slot {
+    /// Creates new slot with precomputed slot number
+    ///
+    /// Returns None if the slot number is out of bounds.
+    pub const fn new(slot: u16) -> Option<Self> {
+        if slot < SLOT_SIZE {
+            Some(Self(slot))
+        } else {
+            None
+        }
+    }
+
+    /// Computes slot number for the specified key
+    pub fn for_key(key: impl AsRef<[u8]>) -> Self {
+        // prevent
+        fn impl_(key: &[u8]) -> Slot {
+            Slot(
+                crc16::State::<crc16::XMODEM>::calculate(get_hashtag(key).unwrap_or(key))
+                    % SLOT_SIZE,
+            )
+        }
+
+        impl_(key.as_ref())
+    }
+
+    /// Choose a random slot from `0..SLOT_SIZE` (excluding)
+    pub(crate) fn new_random() -> Self {
+        let mut rng = rand::rng();
+        Self(rng.random_range(0..SLOT_SIZE))
+    }
 }
 
 fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
@@ -1016,11 +1029,11 @@ fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
 #[cfg(test)]
 mod tests_routing {
     use super::{
-        command_for_multi_slot_indices, AggregateOp, MultiSlotArgPattern, MultipleNodeRoutingInfo,
-        ResponsePolicy, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr,
+        AggregateOp, MultiSlotArgPattern, MultipleNodeRoutingInfo, ResponsePolicy, Route,
+        RoutingInfo, SingleNodeRoutingInfo, SlotAddr, command_for_multi_slot_indices,
     };
-    use crate::cluster_routing::slot;
-    use crate::{cmd, parser::parse_redis_value, Value};
+    use crate::{Value, cmd, parser::parse_redis_value};
+    use assert_matches::assert_matches;
     use core::panic;
 
     #[test]
@@ -1169,7 +1182,7 @@ mod tests_routing {
         assert_eq!(
             RoutingInfo::for_routable(cmd("FCALL").arg("foo").arg(1).arg("mykey")),
             Some(RoutingInfo::SingleNode(
-                SingleNodeRoutingInfo::SpecificNode(Route::new(slot(b"mykey"), SlotAddr::Master))
+                SingleNodeRoutingInfo::SpecificNode(Route::with_key(b"mykey", SlotAddr::Master))
             ))
         );
 
@@ -1180,7 +1193,7 @@ mod tests_routing {
                     .arg(1)
                     .arg("foo"),
                 Some(RoutingInfo::SingleNode(
-                    SingleNodeRoutingInfo::SpecificNode(Route::new(slot(b"foo"), SlotAddr::Master)),
+                    SingleNodeRoutingInfo::SpecificNode(Route::with_key(b"foo", SlotAddr::Master)),
                 )),
             ),
             (
@@ -1191,8 +1204,8 @@ mod tests_routing {
                     .arg("$")
                     .arg("MKSTREAM"),
                 Some(RoutingInfo::SingleNode(
-                    SingleNodeRoutingInfo::SpecificNode(Route::new(
-                        slot(b"mystream"),
+                    SingleNodeRoutingInfo::SpecificNode(Route::with_key(
+                        b"mystream",
                         SlotAddr::Master,
                     )),
                 )),
@@ -1200,8 +1213,8 @@ mod tests_routing {
             (
                 cmd("XINFO").arg("GROUPS").arg("foo"),
                 Some(RoutingInfo::SingleNode(
-                    SingleNodeRoutingInfo::SpecificNode(Route::new(
-                        slot(b"foo"),
+                    SingleNodeRoutingInfo::SpecificNode(Route::with_key(
+                        b"foo",
                         SlotAddr::ReplicaOptional,
                     )),
                 )),
@@ -1214,8 +1227,8 @@ mod tests_routing {
                     .arg("STREAMS")
                     .arg("mystream"),
                 Some(RoutingInfo::SingleNode(
-                    SingleNodeRoutingInfo::SpecificNode(Route::new(
-                        slot(b"mystream"),
+                    SingleNodeRoutingInfo::SpecificNode(Route::with_key(
+                        b"mystream",
                         SlotAddr::Master,
                     )),
                 )),
@@ -1230,8 +1243,8 @@ mod tests_routing {
                     .arg("0-0")
                     .arg("0-0"),
                 Some(RoutingInfo::SingleNode(
-                    SingleNodeRoutingInfo::SpecificNode(Route::new(
-                        slot(b"mystream"),
+                    SingleNodeRoutingInfo::SpecificNode(Route::with_key(
+                        b"mystream",
                         SlotAddr::ReplicaOptional,
                     )),
                 )),
@@ -1248,24 +1261,24 @@ mod tests_routing {
 
     #[test]
     fn test_slot_for_packed_cmd() {
-        assert!(matches!(RoutingInfo::for_routable(&parse_redis_value(&[
+        assert_matches!(RoutingInfo::for_routable(&parse_redis_value(&[
                 42, 50, 13, 10, 36, 54, 13, 10, 69, 88, 73, 83, 84, 83, 13, 10, 36, 49, 54, 13, 10,
                 244, 93, 23, 40, 126, 127, 253, 33, 89, 47, 185, 204, 171, 249, 96, 139, 13, 10
-            ]).unwrap()), Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route(slot, SlotAddr::ReplicaOptional)))) if slot == 964));
+            ]).unwrap()), Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route(slot, SlotAddr::ReplicaOptional)))) if slot == 964);
 
-        assert!(matches!(RoutingInfo::for_routable(&parse_redis_value(&[
+        assert_matches!(RoutingInfo::for_routable(&parse_redis_value(&[
                 42, 54, 13, 10, 36, 51, 13, 10, 83, 69, 84, 13, 10, 36, 49, 54, 13, 10, 36, 241,
                 197, 111, 180, 254, 5, 175, 143, 146, 171, 39, 172, 23, 164, 145, 13, 10, 36, 52,
                 13, 10, 116, 114, 117, 101, 13, 10, 36, 50, 13, 10, 78, 88, 13, 10, 36, 50, 13, 10,
                 80, 88, 13, 10, 36, 55, 13, 10, 49, 56, 48, 48, 48, 48, 48, 13, 10
-            ]).unwrap()), Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route(slot, SlotAddr::Master)))) if slot == 8352));
+            ]).unwrap()), Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route(slot, SlotAddr::Master)))) if slot == 8352);
 
-        assert!(matches!(RoutingInfo::for_routable(&parse_redis_value(&[
+        assert_matches!(RoutingInfo::for_routable(&parse_redis_value(&[
                 42, 54, 13, 10, 36, 51, 13, 10, 83, 69, 84, 13, 10, 36, 49, 54, 13, 10, 169, 233,
                 247, 59, 50, 247, 100, 232, 123, 140, 2, 101, 125, 221, 66, 170, 13, 10, 36, 52,
                 13, 10, 116, 114, 117, 101, 13, 10, 36, 50, 13, 10, 78, 88, 13, 10, 36, 50, 13, 10,
                 80, 88, 13, 10, 36, 55, 13, 10, 49, 56, 48, 48, 48, 48, 48, 13, 10
-            ]).unwrap()), Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route(slot, SlotAddr::Master)))) if slot == 5210));
+            ]).unwrap()), Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route(slot, SlotAddr::Master)))) if slot == 5210);
     }
 
     #[test]
@@ -1570,6 +1583,6 @@ mod tests_routing {
 
         let input = vec![Value::Int(5)];
         let result = super::combine_map_results(input);
-        assert!(result.is_err());
+        assert_matches!(result, Err(_));
     }
 }

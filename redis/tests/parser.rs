@@ -6,8 +6,8 @@ use {
         ready,
         task::{self, Poll},
     },
-    partial_io::{quickcheck_types::GenWouldBlock, quickcheck_types::PartialWithErrors, PartialOp},
-    quickcheck::{quickcheck, Gen},
+    partial_io::{PartialOp, quickcheck_types::GenWouldBlock, quickcheck_types::PartialWithErrors},
+    quickcheck::{Gen, quickcheck},
     tokio::io::{AsyncRead, ReadBuf},
 };
 

@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Bencher, Criterion, Throughput};
+use criterion::{Bencher, Criterion, Throughput, criterion_group, criterion_main};
 use futures::{prelude::*, stream};
 use redis::{RedisError, Value};
 
