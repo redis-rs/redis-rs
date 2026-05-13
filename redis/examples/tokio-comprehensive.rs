@@ -1,10 +1,10 @@
-//! 使用 tokio 运行时的 Redis 综合示例
+//! Comprehensive Redis example using the tokio runtime.
 //!
-//! 演示 Redis 的四大核心功能：
-//! 1. 保存/删除/查询各种数据类型（String, Hash, List, Set, Sorted Set）
-//! 2. Pub/Sub 发布与接收数据
-//! 3. Keyspace 监听数据变化
-//! 4. Stream 收取数据流
+//! Demonstrates the four major Redis features:
+//! 1. Saving/deleting/querying various data types (String, Hash, List, Set, Sorted Set)
+//! 2. Pub/Sub publishing and receiving messages
+//! 3. Keyspace notification listening for key changes
+//! 4. Stream data collection
 
 #![cfg(feature = "tokio-comp")]
 
@@ -18,263 +18,259 @@ use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> RedisResult<()> {
-    println!("🚀 Redis Tokio 综合示例\n");
+    println!("🚀 Redis Tokio Comprehensive Example\n");
 
-    // 1. 演示各种数据类型的操作
+    // 1. Demonstrate various data types operations
     demo_data_types().await?;
 
-    // 2. 演示 Pub/Sub
+    // 2. Demonstrate Pub/Sub
     demo_pubsub().await?;
 
-    // 3. 演示 Keyspace 监听
+    // 3. Demonstrate Keyspace notifications
     demo_keyspace_notifications().await?;
 
-    // 4. 演示 Stream
+    // 4. Demonstrate Streams
     demo_streams().await?;
 
-    println!("\n✅ 所有示例完成！");
+    println!("\n✅ All examples completed!");
     Ok(())
 }
 
-/// 1. 演示各种数据类型的保存/删除/查询
+/// 1. Demonstrate saving/deleting/querying various data types
 async fn demo_data_types() -> RedisResult<()> {
-    println!("📦 1. 数据类型操作演示");
+    println!("📦 1. Data Types Operations");
     println!("{}", "=".repeat(50));
 
     let client = redis::Client::open("redis://127.0.0.1/")?;
     let mut con = client.get_multiplexed_async_connection().await?;
 
-    // String 类型
-    println!("\n🔹 String 类型 (SET → GET → UPDATE → GET):");
+    // String type
+    println!("\n🔹 String type (SET → GET → UPDATE → GET):");
     AsyncTypedCommands::set(&mut con, "user:name", "Alice").await?;
     AsyncTypedCommands::set(&mut con, "user:age", 30).await?;
     let name: Option<String> = AsyncTypedCommands::get(&mut con, "user:name").await?;
     let age: Option<String> = AsyncTypedCommands::get(&mut con, "user:age").await?;
-    println!("  初始值 - name: {:?}, age: {:?}", name, age);
+    println!("  Initial - name: {:?}, age: {:?}", name, age);
 
-    // 更新
+    // Update
     AsyncTypedCommands::set(&mut con, "user:name", "Alice Smith").await?;
-    let _: isize = AsyncTypedCommands::incr(&mut con, "user:age", 1).await?; // age + 1
+    let _: isize = AsyncTypedCommands::incr(&mut con, "user:age", 1).await?;
     let name_updated: Option<String> = AsyncTypedCommands::get(&mut con, "user:name").await?;
     let age_updated: Option<String> = AsyncTypedCommands::get(&mut con, "user:age").await?;
-    println!("  更新后 - name: {:?}, age: {:?}", name_updated, age_updated);
+    println!("  Updated - name: {:?}, age: {:?}", name_updated, age_updated);
 
-    // Hash 类型
-    println!("\n🔹 Hash 类型 (HSET → HGETALL → UPDATE → HGETALL):");
+    // Hash type
+    println!("\n🔹 Hash type (HSET → HGETALL → UPDATE → HGETALL):");
     AsyncTypedCommands::hset(&mut con, "user:1000", "name", "Bob").await?;
     AsyncTypedCommands::hset(&mut con, "user:1000", "email", "bob@example.com").await?;
     AsyncTypedCommands::hset(&mut con, "user:1000", "age", "25").await?;
     let user: std::collections::HashMap<String, String> = AsyncTypedCommands::hgetall(&mut con, "user:1000").await?;
-    println!("  初始值: {:?}", user);
+    println!("  Initial: {:?}", user);
 
-    // 更新 Hash 字段
+    // Update Hash fields
     AsyncTypedCommands::hset(&mut con, "user:1000", "email", "bob.updated@example.com").await?;
-    AsyncTypedCommands::hset(&mut con, "user:1000", "status", "active").await?; // 新增字段
+    AsyncTypedCommands::hset(&mut con, "user:1000", "status", "active").await?;
     let user_updated: std::collections::HashMap<String, String> = AsyncTypedCommands::hgetall(&mut con, "user:1000").await?;
-    println!("  更新后: {:?}", user_updated);
+    println!("  Updated: {:?}", user_updated);
 
-    // 获取单个 Hash 字段
+    // Get single Hash field
     let email: Option<String> = AsyncTypedCommands::hget(&mut con, "user:1000", "email").await?;
     println!("  HGET email: {:?}", email);
 
-    // List 类型
-    println!("\n🔹 List 类型 (RPUSH → LRANGE → LPUSH → LRANGE):");
+    // List type
+    println!("\n🔹 List type (RPUSH → LRANGE → LPUSH → LRANGE):");
     AsyncTypedCommands::del(&mut con, "tasks").await?;
     AsyncTypedCommands::rpush(&mut con, "tasks", "task1").await?;
     AsyncTypedCommands::rpush(&mut con, "tasks", "task2").await?;
     AsyncTypedCommands::rpush(&mut con, "tasks", "task3").await?;
     let tasks: Vec<String> = AsyncTypedCommands::lrange(&mut con, "tasks", 0, -1).await?;
-    println!("  初始列表: {:?}", tasks);
+    println!("  Initial list: {:?}", tasks);
 
-    // 从左侧插入和从右侧移除
+    // Insert from left and remove from right
     AsyncTypedCommands::lpush(&mut con, "tasks", "urgent_task").await?;
-    let _popped: Option<String> = AsyncTypedCommands::rpop(&mut con, "tasks", None).await?; // 移除最后一个
+    let _popped: Option<String> = AsyncTypedCommands::rpop(&mut con, "tasks", None).await?;
     let tasks_updated: Vec<String> = AsyncTypedCommands::lrange(&mut con, "tasks", 0, -1).await?;
-    println!("  更新后列表: {:?}", tasks_updated);
+    println!("  Updated list: {:?}", tasks_updated);
 
-    // 获取列表长度
+    // Get list length
     let len: usize = AsyncTypedCommands::llen(&mut con, "tasks").await?;
-    println!("  列表长度: {}", len);
+    println!("  List length: {}", len);
 
-    // Set 类型
-    println!("\n🔹 Set 类型 (SADD → SMEMBERS → UPDATE → SMEMBERS):");
+    // Set type
+    println!("\n🔹 Set type (SADD → SMEMBERS → UPDATE → SMEMBERS):");
     AsyncTypedCommands::del(&mut con, "tags").await?;
     AsyncTypedCommands::sadd(&mut con, "tags", "rust").await?;
     AsyncTypedCommands::sadd(&mut con, "tags", "redis").await?;
     AsyncTypedCommands::sadd(&mut con, "tags", "tokio").await?;
     let tags: std::collections::HashSet<String> = AsyncTypedCommands::smembers(&mut con, "tags").await?;
-    println!("  初始集合: {:?}", tags);
+    println!("  Initial set: {:?}", tags);
 
-    // 添加和删除元素
+    // Add and remove elements
     AsyncTypedCommands::sadd(&mut con, "tags", "async").await?;
     AsyncTypedCommands::srem(&mut con, "tags", "tokio").await?;
     let tags_updated: std::collections::HashSet<String> = AsyncTypedCommands::smembers(&mut con, "tags").await?;
-    println!("  更新后集合: {:?}", tags_updated);
+    println!("  Updated set: {:?}", tags_updated);
 
-    // 检查成员是否存在
+    // Check if member exists
     let exists: bool = AsyncTypedCommands::sismember(&mut con, "tags", "rust").await?;
-    println!("  'rust' 存在于集合中: {}", exists);
+    println!("  'rust' is in set: {}", exists);
 
-    // Sorted Set 类型
-    println!("\n🔹 Sorted Set 类型 (ZADD → ZREVRANGE → UPDATE → ZREVRANGE):");
+    // Sorted Set type
+    println!("\n🔹 Sorted Set type (ZADD → ZREVRANGE → UPDATE → ZREVRANGE):");
     AsyncTypedCommands::del(&mut con, "leaderboard").await?;
     AsyncTypedCommands::zadd(&mut con, "leaderboard", "player1", 100).await?;
     AsyncTypedCommands::zadd(&mut con, "leaderboard", "player2", 200).await?;
     AsyncTypedCommands::zadd(&mut con, "leaderboard", "player3", 150).await?;
     let top: Vec<String> = AsyncTypedCommands::zrevrange(&mut con, "leaderboard", 0, 2).await?;
-    println!("  初始排行榜前3名: {:?}", top);
+    println!("  Initial top 3 players: {:?}", top);
 
-    // 更新分数
-    AsyncTypedCommands::zadd(&mut con, "leaderboard", "player1", 250).await?; // player1 score = 250
+    // Update scores
+    AsyncTypedCommands::zadd(&mut con, "leaderboard", "player1", 250).await?;
     let _: f64 = redis::cmd("ZINCRBY")
         .arg("leaderboard")
         .arg(50)
         .arg("player3")
         .query_async(&mut con)
-        .await?; // player3 score + 50
+        .await?;
     let top_updated: Vec<String> = AsyncTypedCommands::zrevrange(&mut con, "leaderboard", 0, 2).await?;
-    println!("  更新后排行榜前3名: {:?}", top_updated);
+    println!("  Updated top 3 players: {:?}", top_updated);
 
-    // 获取成员分数
+    // Get member score
     let score: Option<f64> = AsyncTypedCommands::zscore(&mut con, "leaderboard", "player1").await?;
-    println!("  player1 分数: {:?}", score);
+    println!("  player1 score: {:?}", score);
 
-    // 删除操作
-    println!("\n🔹 删除操作:");
+    // Delete operations
+    println!("\n🔹 Delete operations:");
     let deleted: usize = AsyncTypedCommands::del(&mut con, "user:name").await?;
     println!("  DEL user:name: {} key deleted", deleted);
 
-    // 验证删除
+    // Verify deletion
     let exists: bool = AsyncTypedCommands::exists(&mut con, "user:name").await?;
-    println!("  user:name 是否存在: {}", exists);
+    println!("  user:name exists: {}", exists);
 
-    // 批量删除
+    // Batch delete
     let deleted_multiple: usize = AsyncTypedCommands::del(&mut con, &["tasks", "tags", "leaderboard"]).await?;
-    println!("  批量删除 {} 个键", deleted_multiple);
+    println!("  Batch delete {} keys", deleted_multiple);
 
-    println!("\n✅ 数据类型操作完成\n");
+    println!("\n✅ Data types operations completed\n");
     Ok(())
 }
 
-/// 2. 演示 Pub/Sub 发布与接收
+/// 2. Demonstrate Pub/Sub publishing and receiving
 async fn demo_pubsub() -> RedisResult<()> {
     use std::time::Instant;
 
-    println!("📢 2. Pub/Sub 演示");
+    println!("📢 2. Pub/Sub Demo");
     println!("{}", "=".repeat(50));
 
     let start_time = Instant::now();
 
     let client = redis::Client::open("redis://127.0.0.1/")?;
 
-    // 创建发布连接
+    // Create publisher connection
     let mut pub_conn = client.get_multiplexed_async_connection().await?;
 
-    // 创建订阅连接
+    // Create subscriber connection
     let mut sub_conn = client.get_async_pubsub().await?;
 
-    // 订阅频道
+    // Subscribe to channels
     let subscribe_start = Instant::now();
     sub_conn.subscribe("news").await?;
     sub_conn.subscribe("sports").await?;
     let subscribe_elapsed = subscribe_start.elapsed();
-    println!("  ✓ 已订阅频道: news, sports (耗时: {:?})", subscribe_elapsed);
+    println!("  ✓ Subscribed to channels: news, sports (elapsed: {:?})", subscribe_elapsed);
 
-    // 启动订阅任务 - on_message() 会 move sub_conn
+    // Start subscription task
     let sub_task = tokio::spawn(async move {
         let mut stream = sub_conn.on_message();
-        println!("\n  📥 开始接收消息...");
+        println!("\n  📥 Starting to receive messages...");
         let mut msg_count = 0;
         let first_msg_time = Instant::now();
         for _ in 0..4 {
             if let Some(msg) = stream.next().await {
                 msg_count += 1;
-                let elapsed = first_msg_time.elapsed();
-                let channel: String = msg.get_channel_name().to_string();
-                let payload: String = msg.get_payload().unwrap_or_default();
-                // println!("  📨 [+{:?}] 收到消息 #{} [{}]: {}", elapsed, msg_count, channel, payload);
+                let _elapsed = first_msg_time.elapsed();
+                let _channel: String = msg.get_channel_name().to_string();
+                let _payload: String = msg.get_payload().unwrap_or_default();
             }
         }
-        println!("  ⏱️  接收 4 条消息总耗时: {:?}", first_msg_time.elapsed());
+        println!("  ⏱️  Received 4 messages in: {:?}", first_msg_time.elapsed());
     });
 
-    // 等待一下确保订阅已建立（只需要很短的时间）
-    tokio::time::sleep(Duration::from_micros(100)).await;  // 100微秒，而非100毫秒
+    // Wait a moment to ensure subscription is established
+    tokio::time::sleep(Duration::from_millis(10)).await;
 
-    // 发布消息
-    println!("\n  📤 发布消息...");
+    // Publish messages
+    println!("\n  📤 Publishing messages...");
     let publish_start = Instant::now();
     AsyncTypedCommands::publish(&mut pub_conn, "news", "Breaking: Redis with Tokio!").await?;
     AsyncTypedCommands::publish(&mut pub_conn, "sports", "Game starts at 8pm").await?;
     AsyncTypedCommands::publish(&mut pub_conn, "news", "Latest update available").await?;
     AsyncTypedCommands::publish(&mut pub_conn, "sports", "Final score: 3-1").await?;
     let publish_elapsed = publish_start.elapsed();
-    println!("  ⏱️  发布 4 条消息耗时: {:?}", publish_elapsed);
+    println!("  ⏱️  Published 4 messages in: {:?}", publish_elapsed);
 
-    // 等待订阅任务完成
-    sub_task.await.unwrap();
+    // Wait for subscription task to complete
+    sub_task.await.ok();
 
     let total_elapsed = start_time.elapsed();
-    println!("\n✅ Pub/Sub 演示完成 (总耗时: {:?})\n", total_elapsed);
+    println!("\n✅ Pub/Sub demo completed (total elapsed: {:?})\n", total_elapsed);
     Ok(())
 }
 
-/// 3. 演示 Keyspace 监听数据变化
+/// 3. Demonstrate Keyspace notification listening
 async fn demo_keyspace_notifications() -> RedisResult<()> {
     use std::time::Instant;
 
-    println!("🔔 3. Keyspace 监听演示");
+    println!("🔔 3. Keyspace Notifications Demo");
     println!("{}", "=".repeat(50));
 
     let start_time = Instant::now();
 
     let client = redis::Client::open("redis://127.0.0.1/")?;
 
-    // 启用 keyspace notifications（需要在 Redis 配置中设置，这里假设已启用）
-    // CONFIG SET notify-keyspace-events KEA
+    // Enable keyspace notifications
     let mut config_conn = client.get_multiplexed_async_connection().await?;
     let config_start = Instant::now();
     let _: () = redis::cmd("CONFIG")
         .arg(&["SET", "notify-keyspace-events", "KEA"])
         .query_async(&mut config_conn)
         .await?;
-    println!("  ✓ 已启用 keyspace notifications (耗时: {:?})", config_start.elapsed());
+    println!("  ✓ Enabled keyspace notifications (elapsed: {:?})", config_start.elapsed());
 
-    // 创建监听连接
+    // Create notification connection
     let mut notify_conn = client.get_async_pubsub().await?;
 
-    // 订阅 keyspace 事件
-    // __keyspace@0__:* 监听所有键空间事件
+    // Subscribe to keyspace events
     let subscribe_start = Instant::now();
     notify_conn.psubscribe("__keyspace@0__:*").await?;
-    println!("  ✓ 已订阅 keyspace 事件 (耗时: {:?})", subscribe_start.elapsed());
+    println!("  ✓ Subscribed to keyspace events (elapsed: {:?})", subscribe_start.elapsed());
 
-    // 启动监听任务 - on_message() 会 move notify_conn
+    // Start notification task
     let notify_task = tokio::spawn(async move {
         let mut stream = notify_conn.on_message();
-        println!("\n  👂 开始监听 keyspace 事件...");
+        println!("\n  👂 Starting to listen for keyspace events...");
         let mut event_count = 0;
         let first_event_time = Instant::now();
         for _ in 0..6 {
             if let Some(msg) = stream.next().await {
                 event_count += 1;
-                let elapsed = first_event_time.elapsed();
+                let _elapsed = first_event_time.elapsed();
                 let channel: String = msg.get_channel_name().to_string();
-                let payload: String = msg.get_payload().unwrap_or_default();
-                // 解析键名（从 __keyspace@0__:keyname 中提取）
-                if let Some(key) = channel.strip_prefix("__keyspace@0__:") {
-                    // println!("  🔔 [+{:?}] 事件 #{} - 键 '{}' 发生事件: {}", elapsed, event_count, key, payload);
+                let _payload: String = msg.get_payload().unwrap_or_default();
+                if let Some(_key) = channel.strip_prefix("__keyspace@0__:") {
+                    // Key event notification
                 }
             }
         }
-        println!("  ⏱️  接收 6 个事件总耗时: {:?}", first_event_time.elapsed());
+        println!("  ⏱️  Received 6 events in: {:?}", first_event_time.elapsed());
     });
 
-    // 等待一下确保订阅已建立（只需要很短的时间）
-    tokio::time::sleep(Duration::from_micros(100)).await;  // 100微秒，而非100毫秒
+    // Wait a moment to ensure subscription is established
+    tokio::time::sleep(Duration::from_millis(10)).await;
 
-    // 执行一些操作触发事件
-    println!("\n  🔧 执行操作触发事件...");
+    // Perform operations to trigger events
+    println!("\n  🔧 Performing operations to trigger events...");
     let mut op_conn = client.get_multiplexed_async_connection().await?;
     let ops_start = Instant::now();
     AsyncTypedCommands::set(&mut op_conn, "monitored:key1", "value1").await?;
@@ -284,21 +280,21 @@ async fn demo_keyspace_notifications() -> RedisResult<()> {
     AsyncTypedCommands::expire(&mut op_conn, "monitored:key2", 10).await?;
     AsyncTypedCommands::set(&mut op_conn, "monitored:key3", "value3").await?;
     let ops_elapsed = ops_start.elapsed();
-    println!("  ⏱️  执行 6 个操作耗时: {:?}", ops_elapsed);
+    println!("  ⏱️  Performed 6 operations in: {:?}", ops_elapsed);
 
-    // 等待监听任务完成
-    notify_task.await.unwrap();
+    // Wait for notification task to complete
+    notify_task.await.ok();
 
     let total_elapsed = start_time.elapsed();
-    println!("\n✅ Keyspace 监听演示完成 (总耗时: {:?})\n", total_elapsed);
+    println!("\n✅ Keyspace notifications demo completed (total elapsed: {:?})\n", total_elapsed);
     Ok(())
 }
 
-/// 4. 演示 Stream 数据流
+/// 4. Demonstrate Stream operations
 async fn demo_streams() -> RedisResult<()> {
     use std::time::Instant;
 
-    println!("🌊 4. Stream 数据流演示");
+    println!("🌊 4. Stream Data Demo");
     println!("{}", "=".repeat(50));
 
     let start_time = Instant::now();
@@ -308,34 +304,34 @@ async fn demo_streams() -> RedisResult<()> {
 
     let stream_key = "events:stream";
 
-    // 清理旧数据
+    // Clean up old data
     let _: usize = AsyncTypedCommands::del(&mut con, stream_key).await?;
 
-    // 添加数据到 stream
-    println!("\n  📝 添加数据到 stream...");
+    // Add data to stream
+    println!("\n  📝 Adding data to stream...");
     let add_start = Instant::now();
     let id1: String = redis::cmd("XADD")
         .arg(&[stream_key, "*", "event", "login", "user", "alice"])
         .query_async(&mut con)
         .await?;
-    println!("  ✓ 添加事件 ID: {} (耗时: {:?})", id1, add_start.elapsed());
+    println!("  ✓ Added event ID: {} (elapsed: {:?})", id1, add_start.elapsed());
 
     let add2_start = Instant::now();
     let id2: String = redis::cmd("XADD")
         .arg(&[stream_key, "*", "event", "purchase", "amount", "99.99"])
         .query_async(&mut con)
         .await?;
-    println!("  ✓ 添加事件 ID: {} (耗时: {:?})", id2, add2_start.elapsed());
+    println!("  ✓ Added event ID: {} (elapsed: {:?})", id2, add2_start.elapsed());
 
     let add3_start = Instant::now();
     let id3: String = redis::cmd("XADD")
         .arg(&[stream_key, "*", "event", "logout", "user", "alice"])
         .query_async(&mut con)
         .await?;
-    println!("  ✓ 添加事件 ID: {} (耗时: {:?})", id3, add3_start.elapsed());
+    println!("  ✓ Added event ID: {} (elapsed: {:?})", id3, add3_start.elapsed());
 
-    // 读取 stream 数据
-    println!("\n  📖 读取 stream 数据...");
+    // Read stream data
+    println!("\n  📖 Reading stream data...");
     let read_start = Instant::now();
     let reply: StreamReadReply = redis::cmd("XREAD")
         .arg(&["COUNT", "10"])
@@ -345,7 +341,7 @@ async fn demo_streams() -> RedisResult<()> {
     let read_elapsed = read_start.elapsed();
 
     for StreamKey { key, ids } in reply.keys {
-        println!("  Stream: {} (读取耗时: {:?})", key, read_elapsed);
+        println!("  Stream: {} (elapsed: {:?})", key, read_elapsed);
         for StreamId { id, map } in ids {
             println!("    ID: {}", id);
             for (field, value) in map {
@@ -354,8 +350,8 @@ async fn demo_streams() -> RedisResult<()> {
         }
     }
 
-    // 阻塞读取新数据
-    println!("\n  ⏳ 阻塞读取新数据（5秒超时）...");
+    // Blocking read for new data
+    println!("\n  ⏳ Blocking read for new data (5 second timeout)...");
     let mut read_conn = client.get_multiplexed_async_connection().await?;
     let stream_key_clone = stream_key.to_string();
     let block_read_start = Instant::now();
@@ -372,7 +368,7 @@ async fn demo_streams() -> RedisResult<()> {
             Ok(reply) => {
                 let elapsed = task_start.elapsed();
                 for StreamKey { key, ids } in reply.keys {
-                    println!("    📨 收到新数据 from {} (等待耗时: {:?})", key, elapsed);
+                    println!("    📨 Received new data from {} (elapsed: {:?})", key, elapsed);
                     for StreamId { id, map } in ids {
                         println!("      ID: {}", id);
                         for (field, value) in map {
@@ -382,12 +378,12 @@ async fn demo_streams() -> RedisResult<()> {
                 }
             }
             Err(e) => {
-                println!("    ⏱️  超时或错误: {:?} (耗时: {:?})", e, task_start.elapsed());
+                println!("    ⏱️  Timeout or error: {:?} (elapsed: {:?})", e, task_start.elapsed());
             }
         }
     });
 
-    // 等待一小段时间然后添加新数据（让阻塞读取先启动）
+    // Wait a moment before adding new data to allow blocking read to start
     tokio::time::sleep(Duration::from_millis(100)).await;
     let mut add_conn = client.get_multiplexed_async_connection().await?;
     let add_new_start = Instant::now();
@@ -397,14 +393,14 @@ async fn demo_streams() -> RedisResult<()> {
         .arg(&["message", "Hello from stream!"])
         .query_async(&mut add_conn)
         .await?;
-    println!("  ✓ 已添加新事件到 stream (耗时: {:?})", add_new_start.elapsed());
+    println!("  ✓ Added new event to stream (elapsed: {:?})", add_new_start.elapsed());
 
-    // 等待读取任务完成
-    read_task.await.unwrap();
+    // Wait for read task to complete
+    read_task.await.ok();
     let block_read_total = block_read_start.elapsed();
-    println!("  ⏱️  阻塞读取操作总耗时: {:?}", block_read_total);
+    println!("  ⏱️  Blocking read operation total elapsed: {:?}", block_read_total);
 
     let total_elapsed = start_time.elapsed();
-    println!("\n✅ Stream 演示完成 (总耗时: {:?})\n", total_elapsed);
+    println!("\n✅ Stream demo completed (total elapsed: {:?})\n", total_elapsed);
     Ok(())
 }
