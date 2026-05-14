@@ -521,18 +521,20 @@ mod basic_async {
             .unwrap();
     }
 
-    #[async_test]
+    #[async_test(no_monoio)]
     async fn async_scanning(mut con: impl ConnectionLike + Send) {
         let mut unseen = std::collections::HashSet::new();
 
-        for x in 0..100 {
-            redis::cmd("SADD")
-                .arg("foo")
-                .arg(x)
-                .exec_async(&mut con)
-                .await
-                .unwrap();
+        for x in 0..1000 {
             unseen.insert(x);
+        }
+        for chunk_start in (0..1000).step_by(100) {
+            let mut sadd = redis::cmd("SADD");
+            sadd.arg("foo");
+            for x in chunk_start..chunk_start + 100 {
+                sadd.arg(x);
+            }
+            sadd.exec_async(&mut con).await.unwrap();
         }
 
         let mut iter = redis::cmd("SSCAN")
@@ -553,19 +555,21 @@ mod basic_async {
         assert!(unseen.is_empty());
     }
 
-    #[async_test]
+    #[async_test(no_monoio)]
     async fn async_scanning_iterative(mut con: impl ConnectionLike + Send) {
         let mut unseen = std::collections::HashSet::new();
 
-        for x in 0..100 {
+        for x in 0..1000 {
             let key_name = format!("key.{x}");
-            redis::cmd("SET")
-                .arg(key_name.clone())
-                .arg("foo")
-                .exec_async(&mut con)
-                .await
-                .unwrap();
             unseen.insert(key_name.clone());
+        }
+        for chunk_start in (0..1000).step_by(100) {
+            let mut pipe = redis::pipe();
+            for x in chunk_start..chunk_start + 100 {
+                let key_name = format!("key.{x}");
+                pipe.cmd("SET").arg(key_name).arg("foo");
+            }
+            pipe.exec_async(&mut con).await.unwrap();
         }
 
         let mut iter = redis::cmd("SCAN")
@@ -589,19 +593,21 @@ mod basic_async {
         assert!(unseen.is_empty());
     }
 
-    #[async_test]
+    #[async_test(no_monoio)]
     async fn async_scanning_stream(mut con: impl ConnectionLike + Sync + Send) {
         let mut unseen = std::collections::HashSet::new();
 
-        for x in 0..100 {
+        for x in 0..1000 {
             let key_name = format!("key.{x}");
-            redis::cmd("SET")
-                .arg(key_name.clone())
-                .arg("foo")
-                .exec_async(&mut con)
-                .await
-                .unwrap();
             unseen.insert(key_name.clone());
+        }
+        for chunk_start in (0..1000).step_by(100) {
+            let mut pipe = redis::pipe();
+            for x in chunk_start..chunk_start + 100 {
+                let key_name = format!("key.{x}");
+                pipe.cmd("SET").arg(key_name).arg("foo");
+            }
+            pipe.exec_async(&mut con).await.unwrap();
         }
 
         let mut iter = redis::cmd("SCAN")
