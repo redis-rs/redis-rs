@@ -45,6 +45,7 @@ pub struct ConnectionManagerConfig {
     #[cfg(feature = "cache-aio")]
     pub(crate) cache_config: Option<crate::caching::CacheConfig>,
     pipeline_buffer_size: Option<usize>,
+    concurrency_limit: Option<usize>,
     /// Optional credentials provider for dynamic authentication (e.g., token-based authentication)
     #[cfg(feature = "token-based-authentication")]
     credentials_provider: Option<std::sync::Arc<dyn crate::auth::StreamingCredentialsProvider>>,
@@ -64,6 +65,7 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             #[cfg(feature = "cache-aio")]
             cache_config,
             pipeline_buffer_size,
+            concurrency_limit,
             #[cfg(feature = "token-based-authentication")]
             credentials_provider,
         } = &self;
@@ -76,6 +78,7 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             .field("connection_timeout", &connection_timeout)
             .field("resubscribe_automatically", &resubscribe_automatically)
             .field("pipeline_buffer_size", &pipeline_buffer_size)
+            .field("concurrency_limit", &concurrency_limit)
             .field(
                 "push_sender",
                 if push_sender.is_some() {
@@ -262,6 +265,14 @@ impl ConnectionManagerConfig {
         self
     }
 
+    /// Sets the maximum number of concurrent in-flight requests on this connection.
+    ///
+    /// See [`AsyncConnectionConfig::set_concurrency_limit`] for full semantics.
+    pub fn set_concurrency_limit(mut self, limit: usize) -> Self {
+        self.concurrency_limit = Some(limit);
+        self
+    }
+
     /// Sets a credentials provider for dynamic authentication.
     ///
     /// This is useful for token-based authentication where credentials need to be
@@ -307,6 +318,7 @@ impl Default for ConnectionManagerConfig {
             #[cfg(feature = "cache-aio")]
             cache_config: None,
             pipeline_buffer_size: None,
+            concurrency_limit: None,
             #[cfg(feature = "token-based-authentication")]
             credentials_provider: None,
         }
@@ -463,6 +475,7 @@ impl ConnectionManager {
             .set_connection_timeout(config.connection_timeout)
             .set_response_timeout(config.response_timeout);
         connection_config.pipeline_buffer_size = config.pipeline_buffer_size;
+        connection_config.concurrency_limit = config.concurrency_limit;
 
         #[cfg(feature = "cache-aio")]
         let cache_manager = config
@@ -838,11 +851,24 @@ mod tests {
     }
 
     #[test]
+    fn test_connection_manager_config_concurrency_limit_default() {
+        let config = ConnectionManagerConfig::new();
+        assert_eq!(config.concurrency_limit, None);
+    }
+
+    #[test]
+    fn test_connection_manager_config_concurrency_limit_custom() {
+        let config = ConnectionManagerConfig::new().set_concurrency_limit(128);
+        assert_eq!(config.concurrency_limit, Some(128));
+    }
+
+    #[test]
     fn test_lazy_connection_manager_with_config() {
         // Test that lazy connection manager can be created with custom config
         let client = Client::open("redis://127.0.0.1/").unwrap();
         let config = ConnectionManagerConfig::new()
             .set_pipeline_buffer_size(100)
+            .set_concurrency_limit(128)
             .set_number_of_retries(3);
         let result = ConnectionManager::new_lazy_with_config(client, config);
         assert!(result.is_ok());
