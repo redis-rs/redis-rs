@@ -15,8 +15,14 @@ use redis::{
 };
 use std::time::Duration;
 
-#[monoio::main(timer_enabled = true)]
-async fn main() -> RedisResult<()> {
+fn main() -> RedisResult<()> {
+    monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_timer()
+        .build()?
+        .block_on(async_main())
+}
+
+async fn async_main() -> RedisResult<()> {
     println!("🚀 Redis Monoio Comprehensive Example\n");
 
     // 1. Demonstrate various data types operations
