@@ -1519,6 +1519,49 @@ impl FromRedisValue for XDelExStatusCode {
     }
 }
 
+/// Mode for the [`xnack`] command.
+///
+/// Selects how the server adjusts the per-message delivery counter when a
+/// consumer NACKs (negatively acknowledges) one or more pending messages.
+/// See [`xnack`] for the full PEL semantics (re-ordering, ownership reset).
+///
+/// [`xnack`]: ../trait.Commands.html#method.xnack
+#[cfg(feature = "streams")]
+#[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StreamNackMode {
+    /// The consumer is NACKing due to internal errors or shutdown,
+    /// not because the message itself is problematic.
+    /// The delivery counter of each specified message is decremented by 1.
+    Silent,
+    /// The message causes problems for this consumer but may succeed for other consumers.
+    /// The delivery counter is left unchanged.
+    Fail,
+    /// The message is malformed/poison-pill/suspected-malicious.
+    /// The delivery counter is pinned to a sentinel value (`i64::MAX`) that
+    /// survives subsequent re-deliveries, so the message remains identifiable
+    /// as previously-FATAL for downstream tooling.
+    Fatal,
+}
+
+#[cfg(feature = "streams")]
+impl ToRedisArgs for StreamNackMode {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        match self {
+            StreamNackMode::Silent => out.write_arg(b"SILENT"),
+            StreamNackMode::Fail => out.write_arg(b"FAIL"),
+            StreamNackMode::Fatal => out.write_arg(b"FATAL"),
+        };
+    }
+}
+
+#[cfg(feature = "streams")]
+impl ToSingleRedisArg for StreamNackMode {}
+
 /// Status codes returned by the `XACKDEL` command
 #[cfg(feature = "streams")]
 #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
