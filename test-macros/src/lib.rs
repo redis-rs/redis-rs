@@ -2,12 +2,34 @@ use proc_macro::TokenStream;
 use quote::quote;
 
 #[proc_macro_attribute]
-pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
+pub fn async_test(attr: TokenStream, input: TokenStream) -> TokenStream {
+    let run_monoio = if attr.is_empty() {
+        false
+    } else {
+        let ident = syn::parse_macro_input!(attr as syn::Ident);
+        if ident == "monoio" {
+            true
+        } else {
+            return syn::Error::new_spanned(ident, "Unsupported async_test attribute argument")
+                .to_compile_error()
+                .into();
+        }
+    };
     let item = syn::parse_macro_input!(input as syn::ItemFn);
 
     let function_name = item.sig.ident.clone();
     let test_function_name =
         syn::Ident::new(&format!("test_{}", function_name), function_name.span());
+    let monoio_case = run_monoio.then(|| {
+        quote! {
+            #[cfg_attr(feature = "monoio-comp", case::monoio(RuntimeType::Monoio))]
+        }
+    });
+    let support_monoio_case = run_monoio.then(|| {
+        quote! {
+            #[cfg_attr(feature = "monoio-comp", case::monoio(support::RuntimeType::Monoio))]
+        }
+    });
 
     let final_code = if item.sig.inputs.len() == 1 {
         let Some(syn::FnArg::Typed(pat_type)) = item.sig.inputs.last() else {
@@ -40,6 +62,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
                 #[rstest::rstest]
                 #[cfg_attr(feature = "tokio-comp", case::tokio(support::RuntimeType::Tokio))]
                 #[cfg_attr(feature = "smol-comp", case::smol(support::RuntimeType::Smol))]
+                #support_monoio_case
                 fn #test_multiplexed_connection_function_name (#[case]runtime: support::RuntimeType) {
                     let ctx = TestContext::new();
                     support::block_on_all(async move {
@@ -51,6 +74,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
                 #[rstest::rstest]
                 #[cfg_attr(feature = "tokio-comp", case::tokio(support::RuntimeType::Tokio))]
                 #[cfg_attr(feature = "smol-comp", case::smol(support::RuntimeType::Smol))]
+                #support_monoio_case
                 #[cfg(feature = "connection-manager")]
                 fn #test_connection_manager_function_name (#[case]runtime: support::RuntimeType) {
                     let ctx = TestContext::new();
@@ -67,6 +91,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
                 #[rstest::rstest]
                 #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
                 #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+                #monoio_case
                 fn #test_function_name (#[case]runtime: RuntimeType, #[values(true, false)] arg: bool) {
                     block_on_all(#function_name (arg), runtime);
                 }
@@ -86,6 +111,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
             #[rstest::rstest]
             #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
             #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+            #monoio_case
             fn #test_function_name (#[case]runtime: RuntimeType) {
                 block_on_all(#function_name (), runtime);
             }

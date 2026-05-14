@@ -55,7 +55,7 @@ mod basic_async {
         );
     }
 
-    #[async_test]
+    #[async_test(monoio)]
     async fn args(mut con: impl ConnectionLike) {
         redis::cmd("SET")
             .arg("key1")

@@ -41,6 +41,8 @@ pub enum RuntimeType {
     Tokio,
     #[cfg(feature = "smol-comp")]
     Smol,
+    #[cfg(feature = "monoio-comp")]
+    Monoio,
 }
 
 #[cfg(feature = "aio")]
@@ -89,6 +91,8 @@ where
         RuntimeType::Tokio => block_on_all_using_tokio(f),
         #[cfg(feature = "smol-comp")]
         RuntimeType::Smol => block_on_all_using_smol(f),
+        #[cfg(feature = "monoio-comp")]
+        RuntimeType::Monoio => block_on_all_using_monoio(f),
     }));
 
     panic::set_hook(previous_hook);
@@ -109,7 +113,7 @@ fn block_on_all_using_tokio<F>(f: F) -> F::Output
 where
     F: Future,
 {
-    #[cfg(feature = "smol-comp")]
+    #[cfg(any(feature = "smol-comp", feature = "monoio-comp"))]
     redis::aio::prefer_tokio().unwrap();
     current_thread_runtime().block_on(f)
 }
@@ -119,9 +123,24 @@ fn block_on_all_using_smol<F>(f: F) -> F::Output
 where
     F: Future,
 {
-    #[cfg(feature = "tokio-comp")]
+    #[cfg(any(feature = "tokio-comp", feature = "monoio-comp"))]
     redis::aio::prefer_smol().unwrap();
     smol::block_on(f)
+}
+
+#[cfg(feature = "monoio-comp")]
+fn block_on_all_using_monoio<F>(f: F) -> F::Output
+where
+    F: Future,
+{
+    #[cfg(any(feature = "tokio-comp", feature = "smol-comp"))]
+    redis::aio::prefer_monoio().unwrap();
+
+    monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(f)
 }
 
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]

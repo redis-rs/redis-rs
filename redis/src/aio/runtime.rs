@@ -54,7 +54,7 @@ use crate::errors::RedisError;
 #[cfg(feature = "smol-comp")]
 use smol_timeout::TimeoutExt;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Runtime {
     #[cfg(feature = "tokio-comp")]
     Tokio,
@@ -142,6 +142,13 @@ static CHOSEN_RUNTIME: OnceLock<Runtime> = OnceLock::new();
 ))]
 fn set_runtime(runtime: Runtime) -> Result<(), RedisError> {
     const PREFER_RUNTIME_ERROR: &str = "Another runtime preference was already set. Please call this function before any other runtime preference is set.";
+
+    if CHOSEN_RUNTIME
+        .get()
+        .is_some_and(|chosen| *chosen == runtime)
+    {
+        return Ok(());
+    }
 
     CHOSEN_RUNTIME
         .set(runtime)
