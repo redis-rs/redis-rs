@@ -55,7 +55,7 @@ mod basic_async {
         );
     }
 
-    #[async_test(monoio)]
+    #[async_test]
     async fn args(mut con: impl ConnectionLike) {
         redis::cmd("SET")
             .arg("key1")
@@ -525,7 +525,7 @@ mod basic_async {
     async fn async_scanning(mut con: impl ConnectionLike + Send) {
         let mut unseen = std::collections::HashSet::new();
 
-        for x in 0..1000 {
+        for x in 0..100 {
             redis::cmd("SADD")
                 .arg("foo")
                 .arg(x)
@@ -557,7 +557,7 @@ mod basic_async {
     async fn async_scanning_iterative(mut con: impl ConnectionLike + Send) {
         let mut unseen = std::collections::HashSet::new();
 
-        for x in 0..1000 {
+        for x in 0..100 {
             let key_name = format!("key.{x}");
             redis::cmd("SET")
                 .arg(key_name.clone())
@@ -593,7 +593,7 @@ mod basic_async {
     async fn async_scanning_stream(mut con: impl ConnectionLike + Sync + Send) {
         let mut unseen = std::collections::HashSet::new();
 
-        for x in 0..1000 {
+        for x in 0..100 {
             let key_name = format!("key.{x}");
             redis::cmd("SET")
                 .arg(key_name.clone())

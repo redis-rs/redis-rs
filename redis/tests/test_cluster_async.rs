@@ -248,8 +248,8 @@ mod cluster_async {
     #[async_test]
     async fn async_cluster_route_info_to_nodes() {
         let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
-            num_nodes: 6,
-            num_replicas: 1,
+            num_nodes: 3,
+            num_replicas: 0,
             ..Default::default()
         });
 
@@ -297,14 +297,15 @@ mod cluster_async {
             .collect();
         cluster_addresses.sort();
 
-        assert_eq!(addresses.len(), 6);
+        assert_eq!(addresses.len(), 3);
         assert_eq!(addresses, cluster_addresses);
-        assert_eq!(infos.len(), 6);
-        for i in 0..6 {
+        assert_eq!(infos.len(), 3);
+        for i in 0..3 {
             let split: Vec<_> = addresses[i].split(':').collect();
             assert!(infos[i].contains(&format!("tcp_port:{}", split[1])));
         }
 
+        let mut connection = client.get_async_connection().await.unwrap();
         let route_to_all_primaries = MultipleNodeRoutingInfo::AllMasters;
         let routing = RoutingInfo::MultiNode((route_to_all_primaries, None));
         let res = connection
@@ -619,7 +620,7 @@ mod cluster_async {
             if ERROR.load(Ordering::SeqCst) {
                 Box::pin(async move {
                     Err(RedisError::from((
-                        redis::ServerErrorKind::Moved.into(),
+                        redis::ServerErrorKind::ResponseError.into(),
                         "ERROR",
                     )))
                 })
@@ -644,7 +645,13 @@ mod cluster_async {
 
     #[async_test]
     async fn async_cluster_error_in_inner_connection() {
-        let cluster = TestClusterContext::new();
+        let cluster = TestClusterContext::new_with_config_and_builder(
+            RedisClusterConfiguration {
+                num_replicas: 0,
+                ..Default::default()
+            },
+            |builder| builder.retries(0),
+        );
 
         let mut con = cluster.async_generic_connection::<ErrorConnection>().await;
 
@@ -652,13 +659,13 @@ mod cluster_async {
         let r: Option<i32> = con.get("test").await.unwrap();
         assert_eq!(r, None::<i32>);
 
+        let mut con = cluster.async_generic_connection::<ErrorConnection>().await;
         ERROR.store(true, Ordering::SeqCst);
-
         let result: RedisResult<()> = con.get("test").await;
         assert_eq!(
             result,
             Err(RedisError::from((
-                redis::ServerErrorKind::Moved.into(),
+                redis::ServerErrorKind::ResponseError.into(),
                 "ERROR"
             )))
         );

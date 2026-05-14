@@ -14,6 +14,7 @@ use std::sync::Arc;
 use super::TaskHandle;
 use crate::aio::{AsyncStream, RedisRuntime};
 use crate::types::RedisResult;
+use futures_util::future::{AbortHandle, Abortable};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 #[cfg(feature = "monoio-rustls-comp")]
@@ -360,10 +361,11 @@ impl RedisRuntime for Monoio {
     }
 
     fn spawn(f: impl Future<Output = ()> + Send + 'static) -> TaskHandle {
-        // Monoio's spawn doesn't return a handle we can use
-        // Tasks are managed by the runtime automatically
-        monoio::spawn(f);
-        TaskHandle::Monoio(())
+        let (abort_handle, abort_registration) = AbortHandle::new_pair();
+        monoio::spawn(async move {
+            let _ = Abortable::new(f, abort_registration).await;
+        });
+        TaskHandle::Monoio(abort_handle)
     }
 
     fn boxed(self) -> Pin<Box<dyn AsyncStream + Send + Sync>> {

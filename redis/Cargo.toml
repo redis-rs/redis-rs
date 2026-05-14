@@ -71,7 +71,7 @@ async-io = { version = "2", optional = true }
 smol-timeout = { version = "0.6", optional = true }
 
 #only needed for monoio support
-monoio = { version = "0.2.4", optional = true, features = ["bytes"] }
+monoio = { version = "0.2.4", optional = true, features = ["bytes", "sync"] }
 monoio-rustls = { version = "0.4", optional = true }
 
 # Only needed for native tls

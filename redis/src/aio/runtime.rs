@@ -70,7 +70,7 @@ pub(crate) enum TaskHandle {
     #[cfg(feature = "smol-comp")]
     Smol(smol::Task<()>),
     #[cfg(feature = "monoio-comp")]
-    Monoio(()), // Monoio uses thread-per-core, tasks are managed by runtime
+    Monoio(futures_util::future::AbortHandle),
 }
 
 impl TaskHandle {
@@ -80,9 +80,7 @@ impl TaskHandle {
             #[cfg(feature = "smol-comp")]
             TaskHandle::Smol(task) => task.detach(),
             #[cfg(feature = "monoio-comp")]
-            TaskHandle::Monoio(_) => {
-                // Monoio tasks are automatically managed by the runtime
-            }
+            TaskHandle::Monoio(_) => {}
             #[cfg(feature = "tokio-comp")]
             _ => {}
         }
@@ -106,9 +104,7 @@ impl Drop for HandleContainer {
             #[cfg(feature = "smol-comp")]
             Some(TaskHandle::Smol(task)) => drop(task),
             #[cfg(feature = "monoio-comp")]
-            Some(TaskHandle::Monoio(_)) => {
-                // Monoio tasks are automatically cleaned up by the runtime
-            }
+            Some(TaskHandle::Monoio(handle)) => handle.abort(),
         }
     }
 }
