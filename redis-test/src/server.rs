@@ -29,11 +29,25 @@ enum ServerType {
     Unix,
 }
 
+/// Represents a module that can be loaded into the Redis server.
 #[non_exhaustive]
 pub enum Module {
     Json,
 }
 
+/// A standalone Redis server instance for testing.
+///
+/// `RedisServer` manages the lifecycle of a Redis process, including startup,
+/// configuration, and shutdown.
+///
+/// # Example
+/// ```rust,no_run
+/// use redis_test::server::RedisServer;
+///
+/// let server = RedisServer::new();
+/// let info = server.connection_info();
+/// // Connect to the server using `info`...
+/// ```
 pub struct RedisServer {
     pub process: process::Child,
     pub tempdir: tempfile::TempDir,

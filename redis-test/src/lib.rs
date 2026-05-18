@@ -1,10 +1,18 @@
 //! Testing support
 //!
-//! This module provides `MockRedisConnection` which implements ConnectionLike and can be
-//! used in the same place as any other type that behaves like a Redis connection. This is useful
-//! for writing unit tests without needing a Redis server.
+//! This crate provides utilities for testing Redis clients and applications:
 //!
-//! # Example
+//! * **Mock Connections**: `MockRedisConnection` implements `ConnectionLike` and can be
+//!   used in the same place as any other type that behaves like a Redis connection. This is useful
+//!   for writing unit tests without needing a real Redis server.
+//! * **Standalone Servers**: [`server::RedisServer`] provides an easy way to spin up
+//!   and manage a real local Redis instance for integration tests.
+//! * **Clusters**: [`cluster::RedisCluster`] provides functionality to spawn and configure
+//!   a local Redis cluster with multiple nodes and replicas.
+//! * **Sentinels**: [`sentinel::RedisSentinelCluster`] provides functionality to spawn
+//!   and configure a local Redis sentinel cluster.
+//!
+//! # Example (Mock Connection)
 //!
 //! ```rust
 //! use redis::{ConnectionLike, RedisError};

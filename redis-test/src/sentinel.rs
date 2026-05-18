@@ -8,6 +8,22 @@ use crate::{
     utils::{TlsFilePaths, build_keys_and_certs_for_tls, get_random_available_port},
 };
 
+/// A mock Redis Sentinel cluster for testing.
+///
+/// `RedisSentinelCluster` spawns multiple Redis instances configured as masters
+/// and replicas, along with Sentinel instances to monitor them.
+///
+/// # Example
+/// ```rust,no_run
+/// use redis_test::sentinel::RedisSentinelCluster;
+///
+/// let cluster = RedisSentinelCluster::new(1, 1, 3);
+///
+/// // Get the connection addresses of the sentinels and connect to the primary node
+/// let sentinel_addresses: Vec<_> = cluster.sentinel_servers.iter().map(|s| s.connection_info()).collect();
+/// let mut sentinel_client = redis::sentinel::SentinelClient::build(sentinel_addresses, String::from("master0"), None, redis::sentinel::SentinelServerType::Master).unwrap();
+/// let mut connection = sentinel_client.get_connection().unwrap();
+/// ```
 pub struct RedisSentinelCluster {
     pub servers: Vec<RedisServer>,
     pub sentinel_servers: Vec<RedisServer>,
