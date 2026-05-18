@@ -7,6 +7,7 @@ use crate::{
     utils::{TlsFilePaths, build_keys_and_certs_for_tls_ext, get_random_available_port},
 };
 
+/// Configuration for creating a Redis Cluster.
 pub struct RedisClusterConfiguration {
     pub num_nodes: u16,
     pub num_replicas: u16,
@@ -41,6 +42,7 @@ impl Default for RedisClusterConfiguration {
     }
 }
 
+/// Indicates the connection type for the cluster (TCP or TCP with TLS).
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum ClusterType {
@@ -89,6 +91,23 @@ fn port_in_use(addr: &str) -> bool {
     socket.connect(&socket_addr.into()).is_ok()
 }
 
+/// A mock Redis Cluster for testing.
+///
+/// `RedisCluster` spawns multiple `RedisServer` instances and configures them as a cluster.
+/// It provides methods to start, stop, and interact with the servers.
+///
+/// # Example
+/// ```rust,no_run
+/// use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
+///
+/// let config = RedisClusterConfiguration::default();
+/// let cluster = RedisCluster::new(config);
+///
+/// // Get the connection details of the nodes and connect
+/// let addresses: Vec<_> = cluster.servers.iter().map(|s| s.connection_info()).collect();
+/// let client = redis::cluster::ClusterClient::new(addresses).unwrap();
+/// let mut connection = client.get_connection().unwrap();
+/// ```
 pub struct RedisCluster {
     pub servers: Vec<RedisServer>,
     pub folders: Vec<TempDir>,

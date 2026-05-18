@@ -269,7 +269,14 @@ be an empty `Vec`. If you want to handle deserialization and `Vec` unwrapping au
 you can use the `Json` wrapper from the
 [redis-macros](https://github.com/daniel7grant/redis-macros/#json-wrapper-with-redisjson) crate.
 
-## Webassembly Support
+## Testing
+ 
+ The [`redis-test`](https://docs.rs/redis-test) crate provides tools for testing Redis clients.
+ It includes a `MockRedisConnection` for unit testing without a real Redis server,
+ as well as helpers like `RedisCluster` and `RedisSentinelCluster` to easily spin up
+ local Redis clusters and Sentinels for integration tests.
+ 
+ ## Webassembly Support
 
 redis-rs tests that webassembly succesfully builds for the sync client work, but today async support isn't enabled, and the webassembly builds aren't tested against a database.
 
