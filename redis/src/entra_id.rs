@@ -687,7 +687,12 @@ impl std::fmt::Debug for EntraIdCredentialsProvider {
 
 impl Drop for EntraIdCredentialsProvider {
     fn drop(&mut self) {
-        self.stop();
+        // Only stop the background task when the last arc reference is dropped, 
+        // ensuring that clones of EntraIdCredentialsProvider can be dropped 
+        // without ending the refresh service.
+        if Arc::strong_count(&self.credential_provider) == 1 {
+            self.stop();
+        }
     }
 }
 
