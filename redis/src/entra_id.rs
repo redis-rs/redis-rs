@@ -621,6 +621,10 @@ impl EntraIdCredentialsProvider {
     }
 
     /// Create a new provider with a custom credential implementation
+    ///
+    /// The background task started by [EntraIdCredentialsProvider::start] will
+    /// not be automatically stopped on drop if a copy of the provided
+    /// `Arc<dyn TokenCredential>` is live elsewhere in the program.
     pub fn new_with_credential(
         credential_provider: Arc<dyn TokenCredential + Send + Sync>,
         scopes: Vec<String>,
@@ -687,10 +691,13 @@ impl std::fmt::Debug for EntraIdCredentialsProvider {
 
 impl Drop for EntraIdCredentialsProvider {
     fn drop(&mut self) {
-        // Only stop the background task when the last arc reference is dropped, 
-        // ensuring that clones of EntraIdCredentialsProvider can be dropped 
-        // without ending the refresh service.
-        if Arc::strong_count(&self.credential_provider) == 1 {
+        // The count must be less than 2, because the provider itself holds one copy,
+        // while the background loop, which may be running, may hold another.
+        //
+        // If the EntraIdCredentialsProvider was created using the new_with_credential()
+        // constructor with an externally provided Arc, the count may be higher.
+        // In which case it is expected that the stop associated function is called manually.
+        if Arc::strong_count(&self.credential_provider) <= 2 {
             self.stop();
         }
     }
@@ -926,7 +933,15 @@ mod entra_id_mock_tests {
         mock_credential: MockTokenCredential,
         scopes: Vec<String>,
     ) -> EntraIdCredentialsProvider {
-        EntraIdCredentialsProvider::new_with_credential(Arc::new(mock_credential), scopes).unwrap()
+        create_arc_mock_entra_id_credentials_provider(Arc::new(mock_credential), scopes)
+    }
+
+    /// Helper to create a mock EntraIdCredentialsProvider from an Arc-wrapped MockTokenCredential
+    fn create_arc_mock_entra_id_credentials_provider(
+        mock_credential: Arc<MockTokenCredential>,
+        scopes: Vec<String>,
+    ) -> EntraIdCredentialsProvider {
+        EntraIdCredentialsProvider::new_with_credential(mock_credential, scopes).unwrap()
     }
 
     #[tokio::test]
@@ -1154,7 +1169,7 @@ mod entra_id_mock_tests {
     }
 
     #[tokio::test]
-    async fn test_mock_provider_cleanup() {
+    async fn test_mock_provider_with_running_background_task_cleanup() {
         init_logger();
         let mock_credential = MockTokenCredential::success();
 
@@ -1163,12 +1178,125 @@ mod entra_id_mock_tests {
             vec![REDIS_SCOPE_DEFAULT.to_string()],
         );
 
+        assert!(
+            provider.background_handle.lock().unwrap().is_none(),
+            "Background task should not be running before start() is called"
+        );
+
         provider.start(RetryConfig::default());
+
+        let background_handle_ref = provider.background_handle.clone();
+        assert!(
+            background_handle_ref.lock().unwrap().is_some(),
+            "Background task should be running after start() is called"
+        );
+
         // Wait for the background task to start
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         drop(provider);
         // Wait for the background task to stop
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        // Test passes if no panic occurs during cleanup
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        assert!(
+            background_handle_ref.lock().unwrap().is_none(),
+            "Background task should be stopped after provider is dropped"
+        )
+    }
+
+    /// This test captures a facet of the credential provider's Drop impl,
+    /// where if the provider is dropped while running a background task and
+    /// a clone of the credential is live elsewhere, the background task will
+    /// not be cleaned up.
+    #[tokio::test]
+    async fn test_mock_provider_with_duplicated_credential_task_cleanup() {
+        init_logger();
+        let mock_credential = MockTokenCredential::success();
+        let mock_credential_arc = Arc::new(mock_credential);
+        let mut provider = create_arc_mock_entra_id_credentials_provider(
+            mock_credential_arc.clone(),
+            vec![REDIS_SCOPE_DEFAULT.to_string()],
+        );
+
+        let count = Arc::strong_count(&mock_credential_arc);
+        assert_eq!(
+            count, 2,
+            "Expected strong count to be 2 (one for the provider, one for the test variable), but got {count}"
+        );
+
+        provider.start(RetryConfig::default());
+
+        // Wait for the background task to start
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let count = Arc::strong_count(&mock_credential_arc);
+        assert_eq!(
+            count, 3,
+            "Expected strong count to be 3 (one for the provider, one for the test variable, one for the background task), but got {count}"
+        );
+
+        let background_handle_ref = provider.background_handle.clone();
+
+        drop(provider);
+        // Wait for the background task to stop
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        assert!(
+            background_handle_ref.lock().unwrap().is_some(),
+            "Background task is expected to still be running after provider is dropped"
+        );
+        let count = Arc::strong_count(&mock_credential_arc);
+        assert_eq!(
+            count, 2,
+            "Expected strong count to be 2 (one for the orphaned background task, one for the test variable), but got {count}"
+        );
+    }
+
+    /// Establishes that the background task can be restarted after being stopped,
+    /// and that it can be stopped again after restart via drop.
+    #[tokio::test]
+    async fn test_mock_provider_restarted_background_task() {
+        init_logger();
+        let mock_credential = MockTokenCredential::success();
+        let mut provider = create_mock_entra_id_credentials_provider(
+            mock_credential,
+            vec![REDIS_SCOPE_DEFAULT.to_string()],
+        );
+
+        provider.start(RetryConfig::default());
+
+        // Wait for the background task to start
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let background_handle_ref = provider.background_handle.clone();
+        let count = Arc::strong_count(&provider.credential_provider);
+        assert_eq!(
+            count, 2,
+            "Expected strong count to be 2 (one for the provider, one for the background task), but got {count}"
+        );
+
+        provider.stop();
+        // Wait for the background task to stop
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        assert!(
+            background_handle_ref.lock().unwrap().is_none(),
+            "Background task is expected to be stopped after provider is stopped"
+        );
+
+        // restart the background task
+        provider.start(RetryConfig::default());
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(
+            background_handle_ref.lock().unwrap().is_some(),
+            "Background task is expected to be running after provider has been restarted"
+        );
+
+        std::mem::drop(provider);
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        assert!(
+            background_handle_ref.lock().unwrap().is_none(),
+            "Background task is expected to be stopped after provider has been dropped"
+        );
     }
 }
