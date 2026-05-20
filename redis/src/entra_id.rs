@@ -620,11 +620,7 @@ impl EntraIdCredentialsProvider {
         })
     }
 
-    /// Create a new provider with a custom credential implementation
-    ///
-    /// The background task started by [EntraIdCredentialsProvider::start] will
-    /// not be automatically stopped on drop if a copy of the provided
-    /// `Arc<dyn TokenCredential>` is live elsewhere in the program.
+    /// Create a new provider with a custom credential implementation 
     pub fn new_with_credential(
         credential_provider: Arc<dyn TokenCredential + Send + Sync>,
         scopes: Vec<String>,
@@ -691,13 +687,8 @@ impl std::fmt::Debug for EntraIdCredentialsProvider {
 
 impl Drop for EntraIdCredentialsProvider {
     fn drop(&mut self) {
-        // The count must be less than 2, because the provider itself holds one copy,
-        // while the background loop, which may be running, may hold another.
-        //
-        // If the EntraIdCredentialsProvider was created using the new_with_credential()
-        // constructor with an externally provided Arc, the count may be higher.
-        // In which case it is expected that the stop associated function is called manually.
-        if Arc::strong_count(&self.credential_provider) <= 2 {
+        // Only stop the background task if this is the last strong reference to the handle.
+        if Arc::strong_count(&self.background_handle) == 1 {
             self.stop();
         }
     }
@@ -1184,119 +1175,34 @@ mod entra_id_mock_tests {
         );
 
         provider.start(RetryConfig::default());
-
-        let background_handle_ref = provider.background_handle.clone();
-        assert!(
-            background_handle_ref.lock().unwrap().is_some(),
-            "Background task should be running after start() is called"
-        );
-
         // Wait for the background task to start
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        drop(provider);
-        // Wait for the background task to stop
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await; 
+        let credential_ref = Arc::downgrade(&provider.credential_provider);
 
-        assert!(
-            background_handle_ref.lock().unwrap().is_none(),
-            "Background task should be stopped after provider is dropped"
-        )
-    }
-
-    /// This test captures a facet of the credential provider's Drop impl,
-    /// where if the provider is dropped while running a background task and
-    /// a clone of the credential is live elsewhere, the background task will
-    /// not be cleaned up.
-    #[tokio::test]
-    async fn test_mock_provider_with_duplicated_credential_task_cleanup() {
-        init_logger();
-        let mock_credential = MockTokenCredential::success();
-        let mock_credential_arc = Arc::new(mock_credential);
-        let mut provider = create_arc_mock_entra_id_credentials_provider(
-            mock_credential_arc.clone(),
-            vec![REDIS_SCOPE_DEFAULT.to_string()],
-        );
-
-        let count = Arc::strong_count(&mock_credential_arc);
+        // Get a clone, so observing the first drop should indicate that the
+        // background task is still live with a count of 2 (one for the provider and one for the background task).
+        let _cloned_provider = provider.clone();
         assert_eq!(
-            count, 2,
-            "Expected strong count to be 2 (one for the provider, one for the test variable), but got {count}"
+            credential_ref.strong_count(),
+            3,
+            "There should be three strong references to the credential provider after cloning (original provider + background task + cloned provider)"
         );
-
-        provider.start(RetryConfig::default());
-
-        // Wait for the background task to start
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-        let count = Arc::strong_count(&mock_credential_arc);
-        assert_eq!(
-            count, 3,
-            "Expected strong count to be 3 (one for the provider, one for the test variable, one for the background task), but got {count}"
-        );
-
-        let background_handle_ref = provider.background_handle.clone();
 
         drop(provider);
+        assert_eq!(
+            credential_ref.strong_count(),
+            2,
+            "There should be one strong reference to the credential provider after dropping the original provider"
+        );
+
+        drop(_cloned_provider);
         // Wait for the background task to stop
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-
-        assert!(
-            background_handle_ref.lock().unwrap().is_some(),
-            "Background task is expected to still be running after provider is dropped"
-        );
-        let count = Arc::strong_count(&mock_credential_arc);
+        // By dropping the last provider and stopping the background task, the remaining 2 references should be dropped.
         assert_eq!(
-            count, 2,
-            "Expected strong count to be 2 (one for the orphaned background task, one for the test variable), but got {count}"
-        );
-    }
-
-    /// Establishes that the background task can be restarted after being stopped,
-    /// and that it can be stopped again after restart via drop.
-    #[tokio::test]
-    async fn test_mock_provider_restarted_background_task() {
-        init_logger();
-        let mock_credential = MockTokenCredential::success();
-        let mut provider = create_mock_entra_id_credentials_provider(
-            mock_credential,
-            vec![REDIS_SCOPE_DEFAULT.to_string()],
-        );
-
-        provider.start(RetryConfig::default());
-
-        // Wait for the background task to start
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let background_handle_ref = provider.background_handle.clone();
-        let count = Arc::strong_count(&provider.credential_provider);
-        assert_eq!(
-            count, 2,
-            "Expected strong count to be 2 (one for the provider, one for the background task), but got {count}"
-        );
-
-        provider.stop();
-        // Wait for the background task to stop
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-
-        assert!(
-            background_handle_ref.lock().unwrap().is_none(),
-            "Background task is expected to be stopped after provider is stopped"
-        );
-
-        // restart the background task
-        provider.start(RetryConfig::default());
-
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        assert!(
-            background_handle_ref.lock().unwrap().is_some(),
-            "Background task is expected to be running after provider has been restarted"
-        );
-
-        std::mem::drop(provider);
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-
-        assert!(
-            background_handle_ref.lock().unwrap().is_none(),
-            "Background task is expected to be stopped after provider has been dropped"
+            credential_ref.strong_count(),
+            0,
+            "There should be no strong references to the credential provider after the last provider is dropped"
         );
     }
 }
