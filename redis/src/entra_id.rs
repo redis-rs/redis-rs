@@ -620,7 +620,7 @@ impl EntraIdCredentialsProvider {
         })
     }
 
-    /// Create a new provider with a custom credential implementation 
+    /// Create a new provider with a custom credential implementation
     pub fn new_with_credential(
         credential_provider: Arc<dyn TokenCredential + Send + Sync>,
         scopes: Vec<String>,
@@ -1176,7 +1176,7 @@ mod entra_id_mock_tests {
 
         provider.start(RetryConfig::default());
         // Wait for the background task to start
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await; 
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         let credential_ref = Arc::downgrade(&provider.credential_provider);
 
         // Get a clone, so observing the first drop should indicate that the
