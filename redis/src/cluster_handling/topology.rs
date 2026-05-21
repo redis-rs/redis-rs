@@ -8,11 +8,18 @@ use super::NodeAddress;
 use super::slot_map::SlotRange;
 use crate::{RedisResult, Value, connection::is_wildcard_address};
 
+/// A predicate that decides which replicas should be kept in the topology.
+///
+/// Returning `true` keeps the replica; `false` drops it. Primaries are never
+/// passed to this predicate (filtering a primary would break slot routing).
+pub(crate) type ReplicaFilter = dyn Fn(&super::NodeAddress) -> bool + Send + Sync;
+
 // Parse slot data from raw redis value.
 pub(crate) fn parse_slots(
     raw_slot_resp: Value,
     // The DNS address of the node from which `raw_slot_resp` was received.
     addr_of_answering_node: &str,
+    replica_filter: Option<&ReplicaFilter>,
 ) -> RedisResult<Vec<SlotRange>> {
     // Parse response.
     let mut slots = Vec::with_capacity(2);
@@ -93,7 +100,10 @@ pub(crate) fn parse_slots(
             let Some(primary) = primary else {
                 continue;
             };
-            let replicas: Vec<NodeAddress> = iterator.filter_map(try_to_address).collect();
+            let replicas: Vec<NodeAddress> = iterator
+                .filter_map(try_to_address)
+                .filter(|addr| replica_filter.is_none_or(|f| f(addr)))
+                .collect();
 
             slots.push(SlotRange::new(start, end, primary, replicas));
         }
@@ -129,7 +139,7 @@ mod tests {
     fn parse_slots_returns_slots_with_host_name_if_missing() {
         let view = Value::Array(vec![slot_value(0, 4000, "", 6379)]);
 
-        let slots = parse_slots(view, "node").unwrap();
+        let slots = parse_slots(view, "node", None).unwrap();
         assert_eq!(slots[0].master, "node:6379");
     }
 
@@ -141,12 +151,45 @@ mod tests {
             100,
             vec![("0.0.0.0", 7000)],
         )]);
-        let slots = parse_slots(view, "answer.host").unwrap();
+        let slots = parse_slots(view, "answer.host", None).unwrap();
         assert_eq!(slots[0].master, "answer.host:7000");
 
         // IPv6 wildcard :: similarly falls back to answering node
         let view_v6 = Value::Array(vec![slot_value_with_replicas(200, 300, vec![("::", 7001)])]);
-        let slots_v6 = parse_slots(view_v6, "answer6.host").unwrap();
+        let slots_v6 = parse_slots(view_v6, "answer6.host", None).unwrap();
         assert_eq!(slots_v6[0].master, "answer6.host:7001");
+    }
+
+    #[test]
+    fn parse_slots_applies_replica_filter() {
+        // Shard: primary "p:6379" + replicas "r1:6379", "r2:6379", "r3:6379"
+        let view = Value::Array(vec![slot_value_with_replicas(
+            0,
+            100,
+            vec![("p", 6379), ("r1", 6379), ("r2", 6379), ("r3", 6379)],
+        )]);
+
+        // Keep only "r2" — primary must pass through untouched.
+        let keep_r2 = |addr: &NodeAddress| addr.host() == "r2";
+        let slots = parse_slots(view, "answer", Some(&keep_r2)).unwrap();
+
+        assert_eq!(slots[0].master, "p:6379");
+        assert_eq!(slots[0].replicas.len(), 1);
+        assert_eq!(slots[0].replicas[0], "r2:6379");
+    }
+
+    #[test]
+    fn parse_slots_filter_dropping_all_replicas_leaves_primary() {
+        let view = Value::Array(vec![slot_value_with_replicas(
+            0,
+            100,
+            vec![("p", 6379), ("r1", 6379), ("r2", 6379)],
+        )]);
+
+        let drop_all = |_addr: &NodeAddress| false;
+        let slots = parse_slots(view, "answer", Some(&drop_all)).unwrap();
+
+        assert_eq!(slots[0].master, "p:6379");
+        assert!(slots[0].replicas.is_empty());
     }
 }

@@ -906,7 +906,11 @@ where
                     .req_packed_command(&slot_refresh_cmd)
                     .await
                     .and_then(|value| value.extract_error())?;
-                let v: Vec<SlotRange> = parse_slots(value, addr.host())?;
+                let v: Vec<SlotRange> = parse_slots(
+                    value,
+                    addr.host(),
+                    self.cluster_params.replica_filter.as_deref(),
+                )?;
                 build_slot_map(slots, v)
             }
             .await;
