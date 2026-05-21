@@ -50,6 +50,16 @@ impl TcpSettings {
         }
     }
 
+    /// Set the SO_LINGER time on this socket.
+    ///
+    /// By default, lingering is disabled and sockets will remain in the background
+    /// after being closed. Setting linger to `Duration::ZERO` will disable lingering
+    /// and cause sockets to no longer wait in the TIME-WAIT state (at the cost of causing
+    /// unusual behavior if connecting to non-local-hosts where packets may be ordered).
+    /// Setting linger to a non-zero value will cause close/shutdown to wait for
+    /// reordered packets. This option may not do anything depending on your operating
+    /// system and its configuration; please consult your friendly neighborhood netadmin.
+    /// For more information, see the socket(7) man page.
     pub fn set_linger_time(self, linger: Duration) -> Self {
         Self {
             linger_time: Some(linger),
