@@ -8,18 +8,12 @@ use super::NodeAddress;
 use super::slot_map::SlotRange;
 use crate::{RedisResult, Value, connection::is_wildcard_address};
 
-/// A predicate that decides which replicas should be kept in the topology.
-///
-/// Returning `true` keeps the replica; `false` drops it. Primaries are never
-/// passed to this predicate (filtering a primary would break slot routing).
-pub(crate) type ReplicaFilter = dyn Fn(&super::NodeAddress) -> bool + Send + Sync;
-
 // Parse slot data from raw redis value.
 pub(crate) fn parse_slots(
     raw_slot_resp: Value,
     // The DNS address of the node from which `raw_slot_resp` was received.
     addr_of_answering_node: &str,
-    replica_filter: Option<&ReplicaFilter>,
+    replica_filter: Option<&super::client::ReplicaFilter>,
 ) -> RedisResult<Vec<SlotRange>> {
     // Parse response.
     let mut slots = Vec::with_capacity(2);

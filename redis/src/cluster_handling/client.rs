@@ -7,6 +7,12 @@ use crate::caching::{CacheConfig, CacheManager};
 use crate::client::DEFAULT_CONNECTION_TIMEOUT;
 use crate::cluster_handling::NodeAddress;
 use crate::cluster_handling::read_routing::{RandomReplicaStrategy, ReadRoutingStrategyFactory};
+
+/// A predicate that decides which replicas a `ClusterClient` connects to.
+///
+/// Returning `true` keeps the replica; `false` drops it before it enters the
+/// slot map. See [`ClusterClientBuilder::replica_filter`].
+pub type ReplicaFilter = dyn Fn(&NodeAddress) -> bool + Send + Sync;
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::errors::{ErrorKind, RedisError};
 #[cfg(feature = "cluster-async")]
@@ -47,7 +53,7 @@ struct BuilderParams {
     password: Option<ArcStr>,
     username: Option<ArcStr>,
     read_routing_factory: Option<Arc<dyn ReadRoutingStrategyFactory>>,
-    replica_filter: Option<Arc<dyn Fn(&NodeAddress) -> bool + Send + Sync>>,
+    replica_filter: Option<Arc<ReplicaFilter>>,
     tls: Option<TlsMode>,
     #[cfg(feature = "tls-rustls")]
     certs: Option<TlsCertificates>,
@@ -115,7 +121,7 @@ pub(crate) struct ClusterParams {
     pub(crate) password: Option<ArcStr>,
     pub(crate) username: Option<ArcStr>,
     pub(crate) read_routing_factory: Option<Arc<dyn ReadRoutingStrategyFactory>>,
-    pub(crate) replica_filter: Option<Arc<dyn Fn(&NodeAddress) -> bool + Send + Sync>>,
+    pub(crate) replica_filter: Option<Arc<ReplicaFilter>>,
     /// tls indicates tls behavior of connections.
     /// When Some(TlsMode), connections use tls and verify certification depends on TlsMode.
     /// When None, connections do not use tls.
