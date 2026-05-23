@@ -888,15 +888,16 @@ where
                             });
                         }
                         RetryMethod::MovedRedirect => {
-                            // Refresh slots.
                             self.refresh_slots()?;
                             // Request again.
                             redirected = err.redirect_node().and_then(|(node, _slot)| {
                                 NodeAddress::try_from(node).ok().map(Redirect::Moved)
                             });
                         }
+                        RetryMethod::ReadOnlyRedirect => {
+                            self.refresh_slots()?;
+                        }
                         RetryMethod::WaitAndRetry => {
-                            // Sleep and retry.
                             let sleep_time = self
                                 .cluster_params
                                 .retry_params

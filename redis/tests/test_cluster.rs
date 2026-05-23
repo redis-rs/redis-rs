@@ -743,14 +743,14 @@ mod cluster {
                 // Error twice with io-error, ensure connection is reestablished w/out calling
                 // other node (i.e., not doing a full slot rebuild)
                 completed.fetch_add(1, Ordering::SeqCst);
-                Err(Err((ServerErrorKind::ReadOnly.into(), "").into()))
+                Err(Err((ServerErrorKind::ExecAbort.into(), "").into()))
             }
         });
 
         let result = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
 
         assert!(
-            matches!(&result, Err(err) if err.kind() == ServerErrorKind::ReadOnly.into()),
+            matches!(&result, Err(err) if err.kind() == ServerErrorKind::ExecAbort.into()),
             "{result:?}",
         );
         assert_eq!(completed.load(Ordering::SeqCst), 1);

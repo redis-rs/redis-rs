@@ -61,6 +61,7 @@ impl ServerErrorKind {
         match self {
             Self::Moved => RetryMethod::MovedRedirect,
             Self::Ask => RetryMethod::AskRedirect,
+            Self::ReadOnly => RetryMethod::ReadOnlyRedirect,
 
             Self::TryAgain => RetryMethod::WaitAndRetry,
             Self::MasterDown => RetryMethod::WaitAndRetry,
@@ -68,7 +69,6 @@ impl ServerErrorKind {
             Self::BusyLoading => RetryMethod::WaitAndRetry,
 
             Self::ResponseError => RetryMethod::NoRetry,
-            Self::ReadOnly => RetryMethod::NoRetry,
             Self::ExecAbort => RetryMethod::NoRetry,
             Self::NoScript => RetryMethod::NoRetry,
             Self::CrossSlot => RetryMethod::NoRetry,

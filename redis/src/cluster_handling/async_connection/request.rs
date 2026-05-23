@@ -262,6 +262,18 @@ pub(crate) fn choose_response<C>(
             });
             (retry, PollFlushAction::RebuildSlots)
         }
+        (_, RetryMethod::ReadOnlyRedirect) => {
+            // TODO: we should have a mechanism to redirect directly to primary, but that requires mapping a connection to its shard
+            let retry = retry_or_send!(|mut request: PendingRequest<C>| {
+                request.cmd.reset_routing();
+                Retry::AfterSleep {
+                    request,
+                    sleep_duration,
+                }
+            });
+
+            (retry, PollFlushAction::RebuildSlots)
+        }
 
         (_, RetryMethod::WaitAndRetry) => (
             retry_or_send!(|request: PendingRequest<C>| {
