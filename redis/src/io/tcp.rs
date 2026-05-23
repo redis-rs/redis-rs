@@ -1,6 +1,5 @@
 use std::{io, net::TcpStream};
 
-#[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
 use std::time::Duration;
 
 #[cfg(not(target_family = "wasm"))]
@@ -12,6 +11,7 @@ pub struct TcpSettings {
     nodelay: bool,
     #[cfg(not(target_family = "wasm"))]
     keepalive: Option<socket2::TcpKeepalive>,
+    linger_time: Option<Duration>,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     user_timeout: Option<Duration>,
 }
@@ -50,6 +50,23 @@ impl TcpSettings {
         }
     }
 
+    /// Set the SO_LINGER time on this socket.
+    ///
+    /// By default, lingering is disabled and sockets will remain in the background
+    /// after being closed. Setting linger to `Duration::ZERO` will disable lingering
+    /// and cause sockets to no longer wait in the TIME-WAIT state (at the cost of causing
+    /// unusual behavior if connecting to non-local-hosts where packets may be ordered).
+    /// Setting linger to a non-zero value will cause close/shutdown to wait for
+    /// reordered packets. This option may not do anything depending on your operating
+    /// system and its configuration; please consult your friendly neighborhood netadmin.
+    /// For more information, see the socket(7) man page.
+    pub fn set_linger_time(self, linger: Duration) -> Self {
+        Self {
+            linger_time: Some(linger),
+            ..self
+        }
+    }
+
     /// Set the value of the `TCP_USER_TIMEOUT` option on this socket.
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     pub fn set_user_timeout(self, user_timeout: Duration) -> Self {
@@ -67,6 +84,7 @@ impl Default for TcpSettings {
             nodelay: false,
             #[cfg(not(target_family = "wasm"))]
             keepalive: None,
+            linger_time: None,
             #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
             user_timeout: None,
         }
@@ -83,6 +101,9 @@ pub(crate) fn stream_with_settings(
         let socket2: socket2::Socket = socket.into();
         if let Some(keepalive) = &settings.keepalive {
             socket2.set_tcp_keepalive(keepalive)?;
+        }
+        if let Some(linger) = &settings.linger_time {
+            socket2.set_linger(Some(*linger))?;
         }
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         socket2.set_tcp_user_timeout(settings.user_timeout)?;
