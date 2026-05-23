@@ -3623,13 +3623,12 @@ mod basic {
 
         let key = "test_points";
 
-        let points_data: Vec<(&'static str, [f64; 2])> = vec![
-            ("pt:A", [1.0, 1.0]),
-            ("pt:B", [-1.0, -1.0]),
-            ("pt:C", [-1.0, 1.0]),
-            ("pt:D", [1.0, -1.0]),
-            ("pt:E", [1.0, 0.0]),
-        ];
+        let points_data: Vec<(&'static str, [f32; 4])> = vec![
+            ("pt:A", [1.0f32, 1.0, 0.5, 0.25]),
+            ("pt:B", [-1.0f32, -1.0, -0.5, -0.25]),
+            ("pt:C", [-1.0f32, 1.0, -0.5, 0.25]),
+            ("pt:D", [1.0f32, -1.0, 0.5, -0.25]),
+            ("pt:E", [1.0f32, 0.0, 0.5, 0.0]),
 
         // Add the point vectors to a set.
         for (name, coordinates) in &points_data {
