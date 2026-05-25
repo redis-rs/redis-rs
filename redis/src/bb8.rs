@@ -4,6 +4,9 @@ use crate::{Client, Cmd, RedisError};
 #[cfg(feature = "cluster-async")]
 use crate::{cluster::ClusterClient, cluster_async::ClusterConnection};
 
+#[cfg(all(feature = "bb8", feature = "tokio-comp", feature = "sentinel"))]
+use crate::sentinel::AsyncLockedSentinelClient;
+
 macro_rules! impl_bb8_manage_connection {
     ($client:ty, $connectioin:ty, $get_conn:expr) => {
         impl bb8::ManageConnection for $client {
@@ -42,6 +45,9 @@ impl_bb8_manage_connection!(
     ClusterClient::get_async_connection
 );
 
-// TODO: support bb8 for sentinel client which required
-// [`crate::sentinel::LockedSentinelClient`] implement async method of
-// `get_multiplexed_async_connection`.
+#[cfg(all(feature = "bb8", feature = "tokio-comp", feature = "sentinel"))]
+impl_bb8_manage_connection!(
+    AsyncLockedSentinelClient,
+    MultiplexedConnection,
+    AsyncLockedSentinelClient::get_async_connection
+);

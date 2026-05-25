@@ -1093,6 +1093,30 @@ impl LockedSentinelClient {
     }
 }
 
+#[cfg(all(feature = "bb8", feature = "tokio-comp", feature = "sentinel"))]
+use tokio::sync::Mutex as TokioMutex;
+
+/// AsyncLockedSentinelClient is a wrapper around SentinelClient usable in bb8.
+// [internal comment]: bb8 is based on r2d2 so it came with the same constrainst
+// this was added since SentinelClient requires &mut ref for get_connection()
+// and we can't use it like this inside the r2d2 Manager, which requires a shared reference.
+#[cfg(all(feature = "bb8", feature = "tokio-comp", feature = "sentinel"))]
+pub struct AsyncLockedSentinelClient(pub(crate) TokioMutex<SentinelClient>);
+
+#[cfg(all(feature = "bb8", feature = "tokio-comp", feature = "sentinel"))]
+impl AsyncLockedSentinelClient {
+    /// new creates a AsyncLockedSentinelClient by wrapping a new tokio Mutex around the SentinelClient
+    pub fn new(client: SentinelClient) -> Self {
+        Self(TokioMutex::new(client))
+    }
+
+    /// get_async_connection is the override for AsyncLockedSentinelClient to make it possible to
+    /// use get_async_connection with bb8 macro.
+    pub async fn get_async_connection(&self) -> RedisResult<MultiplexedConnection> {
+        self.0.lock().await.get_async_connection().await
+    }
+}
+
 /// A utility wrapping `Sentinel` with an interface similar to [Client].
 ///
 /// Uses the Sentinel type internally. This is a utility to help make it easier
