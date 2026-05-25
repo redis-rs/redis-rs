@@ -1227,3 +1227,76 @@ pub mod pool_tests {
         assert!(try_conn.is_some());
     }
 }
+
+#[cfg(feature = "tokio-comp")]
+pub mod bb8_pool_tests {
+    use super::*;
+    use bb8::Pool;
+    use redis::sentinel::AsyncLockedSentinelClient;
+    use std::collections::HashSet;
+
+    fn parse_client_info(value: &str) -> HashMap<&str, &str> {
+        let info_map: std::collections::HashMap<&str, &str> = value
+            .split(" ")
+            .filter_map(|line| line.split_once('='))
+            .collect();
+        info_map
+    }
+
+    #[tokio::test]
+    async fn test_sentinel_client() {
+        let master_name = "master1";
+        let context = TestSentinelContext::new(2, 3, 3);
+        let master_client = SentinelClient::build(
+            context.sentinels_connection_info().clone(),
+            String::from(master_name),
+            Some(context.sentinel_node_connection_info()),
+            redis::sentinel::SentinelServerType::Master,
+        )
+        .unwrap();
+
+        let pool = Pool::builder()
+            .max_size(5)
+            .connection_timeout(Duration::from_secs(3))
+            .build(AsyncLockedSentinelClient::new(master_client))
+            .await
+            .unwrap();
+
+        let mut conns = Vec::new();
+        for i in 0..5 {
+            let conn = pool.get().await.unwrap();
+            assert_eq!(pool.state().connections, i + 1);
+            conns.push(conn);
+        }
+
+        // since max_size is 5 and we haven't freed any connection this try should fail
+        let try_conn = pool.get().await;
+        assert!(try_conn.is_err());
+
+        let mut client_id_set = HashSet::new();
+
+        for mut conn in conns {
+            let client_info_str: String = redis::cmd("CLIENT")
+                .arg("INFO")
+                .query_async(&mut *conn)
+                .await
+                .unwrap();
+
+            let client_info_parsed = parse_client_info(client_info_str.as_str());
+
+            // assert if all connections have different IDs
+            assert!(client_id_set.insert(client_info_parsed.get("id").unwrap().to_string()));
+
+            let info: String = redis::cmd("INFO")
+                .arg("REPLICATION")
+                .query_async(&mut *conn)
+                .await
+                .unwrap();
+            assert_is_master_role(info)
+        }
+
+        // since previous connections are freed, this should work
+        let try_conn = pool.get().await;
+        assert!(try_conn.is_ok());
+    }
+}
