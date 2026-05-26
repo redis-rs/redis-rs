@@ -3,12 +3,10 @@ use quote::quote;
 
 #[proc_macro_attribute]
 pub fn async_test(attr: TokenStream, input: TokenStream) -> TokenStream {
-    let no_monoio = if !attr.is_empty() {
+    let no_response_timeout = if !attr.is_empty() {
         let ident = syn::parse_macro_input!(attr as syn::Ident);
-        if ident == "no_monoio" {
+        if ident == "no_response_timeout" {
             true
-        } else if ident == "monoio" {
-            false
         } else {
             return syn::Error::new_spanned(ident, "Unsupported async_test attribute argument")
                 .to_compile_error()
@@ -47,11 +45,32 @@ pub fn async_test(attr: TokenStream, input: TokenStream) -> TokenStream {
                 &format!("test_connection_manager_{}", function_name),
                 function_name.span(),
             );
-            let monoio_case = if no_monoio {
-                quote! {}
+            let multiplexed_connection = if no_response_timeout {
+                quote! {
+                    ctx.client
+                        .get_multiplexed_async_connection_with_config(
+                            &redis::AsyncConnectionConfig::new().set_response_timeout(None),
+                        )
+                        .await
+                        .unwrap()
+                }
             } else {
                 quote! {
-                    #[cfg_attr(feature = "monoio-comp", case::monoio(support::RuntimeType::Monoio))]
+                    ctx.async_connection().await.unwrap()
+                }
+            };
+            let connection_manager = if no_response_timeout {
+                quote! {
+                    ctx.client
+                        .get_connection_manager_with_config(
+                            redis::aio::ConnectionManagerConfig::new().set_response_timeout(None),
+                        )
+                        .await
+                        .unwrap()
+                }
+            } else {
+                quote! {
+                    ctx.client.get_connection_manager().await.unwrap()
                 }
             };
 
@@ -61,11 +80,11 @@ pub fn async_test(attr: TokenStream, input: TokenStream) -> TokenStream {
                 #[rstest::rstest]
                 #[cfg_attr(feature = "tokio-comp", case::tokio(support::RuntimeType::Tokio))]
                 #[cfg_attr(feature = "smol-comp", case::smol(support::RuntimeType::Smol))]
-                #monoio_case
+                #[cfg_attr(feature = "monoio-comp", case::monoio(support::RuntimeType::Monoio))]
                 fn #test_multiplexed_connection_function_name (#[case]runtime: support::RuntimeType) {
                     let ctx = TestContext::new();
                     support::block_on_all(async move {
-                        let conn = ctx.async_connection().await.unwrap();
+                        let conn = #multiplexed_connection;
                         #function_name (conn).await
                     }, runtime);
                 }
@@ -73,12 +92,12 @@ pub fn async_test(attr: TokenStream, input: TokenStream) -> TokenStream {
                 #[rstest::rstest]
                 #[cfg_attr(feature = "tokio-comp", case::tokio(support::RuntimeType::Tokio))]
                 #[cfg_attr(feature = "smol-comp", case::smol(support::RuntimeType::Smol))]
-                #monoio_case
+                #[cfg_attr(feature = "monoio-comp", case::monoio(support::RuntimeType::Monoio))]
                 #[cfg(feature = "connection-manager")]
                 fn #test_connection_manager_function_name (#[case]runtime: support::RuntimeType) {
                     let ctx = TestContext::new();
                     support::block_on_all(async move {
-                        let conn = ctx.client.get_connection_manager().await.unwrap();
+                        let conn = #connection_manager;
                         #function_name (conn).await
                     }, runtime);
                 }

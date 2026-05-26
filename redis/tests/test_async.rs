@@ -521,7 +521,7 @@ mod basic_async {
             .unwrap();
     }
 
-    #[async_test(no_monoio)]
+    #[async_test(no_response_timeout)]
     async fn async_scanning(mut con: impl ConnectionLike + Send) {
         let mut unseen = std::collections::HashSet::new();
 
@@ -555,7 +555,7 @@ mod basic_async {
         assert!(unseen.is_empty());
     }
 
-    #[async_test(no_monoio)]
+    #[async_test(no_response_timeout)]
     async fn async_scanning_iterative(mut con: impl ConnectionLike + Send) {
         let mut unseen = std::collections::HashSet::new();
 
@@ -593,7 +593,7 @@ mod basic_async {
         assert!(unseen.is_empty());
     }
 
-    #[async_test(no_monoio)]
+    #[async_test(no_response_timeout)]
     async fn async_scanning_stream(mut con: impl ConnectionLike + Sync + Send) {
         let mut unseen = std::collections::HashSet::new();
 

@@ -63,6 +63,8 @@ pin_project_lite::pin_project! {
         inner: T,
         // State machine for in-flight read operation
         read_state: ReadState,
+        // Bytes returned by a previous monoio read that did not fit in the caller's ReadBuf.
+        pending_read: Option<(Vec<u8>, usize, usize)>,
         // State machine for in-flight write operation
         write_state: WriteState,
         // Reusable buffer for reads to avoid allocations
@@ -75,6 +77,7 @@ impl<T> MonoioWrapped<T> {
         Self {
             inner,
             read_state: ReadState::Idle,
+            pending_read: None,
             write_state: WriteState::Idle,
             read_buf: None,
         }
@@ -178,6 +181,24 @@ where
             return Poll::Ready(Ok(()));
         }
 
+        if let Some((mut pending, pos, len)) = self.as_mut().project().pending_read.take() {
+            let to_copy = (len - pos).min(buf.remaining());
+            buf.put_slice(&pending[pos..pos + to_copy]);
+            let pos = pos + to_copy;
+
+            let this = self.as_mut().project();
+            if pos < len {
+                *this.pending_read = Some((pending, pos, len));
+            } else {
+                pending.clear();
+                if pending.capacity() >= 4096 && pending.capacity() <= 65536 {
+                    *this.read_buf = Some(pending);
+                }
+            }
+
+            return Poll::Ready(Ok(()));
+        }
+
         loop {
             // Get a fresh projection each iteration
             let this = self.as_mut().project();
@@ -209,11 +230,14 @@ where
                         Poll::Ready((res, mut read_buf)) => {
                             let n = res?;
 
-                            if n > 0 {
+                            let to_copy = if n > 0 {
                                 // Copy data to the caller's buffer
                                 let to_copy = n.min(buf.remaining());
                                 buf.put_slice(&read_buf[..to_copy]);
-                            }
+                                to_copy
+                            } else {
+                                0
+                            };
 
                             // Get a fresh projection to modify state
                             let this = self.as_mut().project();
@@ -221,10 +245,14 @@ where
                             // Reset state
                             *this.read_state = ReadState::Idle;
 
-                            // Store buffer for reuse if it's a reasonable size
-                            read_buf.clear();
-                            if read_buf.capacity() >= 4096 && read_buf.capacity() <= 65536 {
-                                *this.read_buf = Some(read_buf);
+                            if to_copy < n {
+                                *this.pending_read = Some((read_buf, to_copy, n));
+                            } else {
+                                // Store buffer for reuse if it's a reasonable size
+                                read_buf.clear();
+                                if read_buf.capacity() >= 4096 && read_buf.capacity() <= 65536 {
+                                    *this.read_buf = Some(read_buf);
+                                }
                             }
 
                             return Poll::Ready(Ok(()));
