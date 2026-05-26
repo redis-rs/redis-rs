@@ -223,7 +223,7 @@ impl AsyncPushSender for std::sync::mpsc::Sender<PushInfo> {
 
 impl<T> AsyncPushSender for std::sync::Arc<T>
 where
-    T: AsyncPushSender,
+    T: AsyncPushSender + ?Sized,
 {
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         self.as_ref().send(info)
