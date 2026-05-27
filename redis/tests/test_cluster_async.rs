@@ -248,8 +248,8 @@ mod cluster_async {
     #[async_test]
     async fn async_cluster_route_info_to_nodes() {
         let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
-            num_nodes: 3,
-            num_replicas: 0,
+            num_nodes: 6,
+            num_replicas: 1,
             ..Default::default()
         });
 
@@ -297,10 +297,10 @@ mod cluster_async {
             .collect();
         cluster_addresses.sort();
 
-        assert_eq!(addresses.len(), 3);
+        assert_eq!(addresses.len(), cluster_addresses.len());
         assert_eq!(addresses, cluster_addresses);
-        assert_eq!(infos.len(), 3);
-        for i in 0..3 {
+        assert_eq!(infos.len(), addresses.len());
+        for i in 0..addresses.len() {
             let split: Vec<_> = addresses[i].split(':').collect();
             assert!(infos[i].contains(&format!("tcp_port:{}", split[1])));
         }

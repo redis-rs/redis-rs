@@ -154,6 +154,57 @@ mod basic_async {
         };
     }
 
+    #[cfg(all(feature = "monoio-comp", feature = "tokio-comp"))]
+    #[test]
+    fn monoio_multiplexed_connection_can_be_used_from_other_threads() {
+        block_on_all(
+            async {
+                let ctx = TestContext::new();
+                let conn = ctx.client.get_multiplexed_async_connection().await.unwrap();
+                let (tx, mut rx) = futures::channel::mpsc::unbounded();
+                let mut handles = Vec::new();
+
+                for thread_id in 0..4 {
+                    let mut conn = conn.clone();
+                    let tx = tx.clone();
+                    handles.push(std::thread::spawn(move || {
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            current_thread_runtime().block_on(async move {
+                                for i in 0..25 {
+                                    let key = format!("monoio-cross-thread-{thread_id}-{i}");
+                                    let _: () = cmd("SET")
+                                        .arg(&key)
+                                        .arg(i)
+                                        .query_async(&mut conn)
+                                        .await
+                                        .unwrap();
+                                    let value: usize =
+                                        cmd("GET").arg(&key).query_async(&mut conn).await.unwrap();
+                                    assert_eq!(value, i);
+                                }
+                            });
+                        }))
+                        .map_err(|_| "thread panicked");
+                        tx.unbounded_send(result).unwrap();
+                    }));
+                }
+                drop(tx);
+
+                let mut completed_threads = 0;
+                while let Some(result) = rx.next().await {
+                    result.unwrap();
+                    completed_threads += 1;
+                }
+                assert_eq!(completed_threads, handles.len());
+
+                for handle in handles {
+                    handle.join().unwrap();
+                }
+            },
+            RuntimeType::Monoio,
+        );
+    }
+
     #[async_test]
     async fn can_authenticate_with_username_and_password() {
         let ctx = TestContext::new();

@@ -2,16 +2,16 @@ use std::{io, sync::Arc, time::Duration};
 
 use futures_util::Future;
 
-// Helper to make monoio futures Send + Sync safe
-// In monoio's thread-per-core model, futures are never transferred between threads,
-// so it's safe to mark them as Send + Sync even if they contain non-Send types.
+// Helper to make monoio futures Send safe while they are driven inside a monoio runtime.
+// Public redis-rs handles may be moved across threads, but the non-Send monoio I/O
+// futures stay inside the spawned driver task on the runtime thread.
 #[cfg(feature = "monoio-comp")]
 pub(crate) mod monoio_future_safety {
     use super::*;
     use std::pin::Pin;
     use std::task::{Context, Poll};
 
-    // Wrapper to make monoio futures Send + Sync safe
+    // Wrapper to make monoio futures Send safe
     pub struct SendSafeFuture<F>(F);
 
     impl<F: Future> Future for SendSafeFuture<F> {
@@ -27,7 +27,6 @@ pub(crate) mod monoio_future_safety {
     }
 
     unsafe impl<F> Send for SendSafeFuture<F> {}
-    unsafe impl<F> Sync for SendSafeFuture<F> {}
 
     pub fn make_send_safe<F: Future>(f: F) -> SendSafeFuture<F> {
         SendSafeFuture(f)
@@ -285,15 +284,12 @@ impl Runtime {
             #[cfg(feature = "smol-comp")]
             Runtime::Smol => future.timeout(duration).await.ok_or(Elapsed(())),
             #[cfg(feature = "monoio-comp")]
-            Runtime::Monoio => {
-                // Monoio's timeout returns a Future that contains non-Send types,
-                // but in thread-per-core model, this is safe because tasks never transfer.
-                // SAFETY: In monoio's thread-per-core model, the timeout future
-                // is only polled on the same thread, so it's safe to treat as Send.
-                monoio_future_safety::make_send_safe(monoio::time::timeout(duration, future))
-                    .await
-                    .map_err(|_| Elapsed(()))
-            }
+            Runtime::Monoio => futures_time::future::FutureExt::timeout(
+                future,
+                futures_time::time::Duration::from(duration),
+            )
+            .await
+            .map_err(|_| Elapsed(())),
         }
     }
 
