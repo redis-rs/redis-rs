@@ -165,7 +165,7 @@ entra-id = [
   "tokio-comp",
 ]
 
-# Instead of specifying "aio", use either "tokio-comp" or "smol-comp".
+# Instead of specifying "aio", use "tokio-comp", "smol-comp", or "monoio-comp".
 aio = [
   "bytes",
   "dep:pin-project-lite",

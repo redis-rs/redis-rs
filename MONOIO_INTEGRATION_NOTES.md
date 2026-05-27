@@ -45,7 +45,7 @@ Uses `monoio-rustls` for TLS connections, avoiding a dependency on tokio. The im
 
 The `Runtime::locate()` function now:
 - Detects monoio availability
-- Prefers monoio over tokio/smol when multiple runtimes are available
+- Supports monoio alongside tokio and smol in multi-runtime builds
 - Supports `prefer_monoio()` function for explicit selection
 
 ## Connection Types Supported
@@ -68,8 +68,8 @@ cargo run --example monoio-comprehensive --features monoio-comp,streams
 
 ## Known Limitations
 
-1. **Multi-runtime compilation:** When monoio is compiled alongside tokio/smol, it is preferred. Use `prefer_tokio()` or `prefer_smol()` to override if needed.
-2. **Task spawning:** Monoio's spawn returns no handle, so `TaskHandle::Monoio(())` is used for task management.
+1. **Multi-runtime compilation:** When monoio is compiled alongside tokio or smol, use `prefer_monoio()`, `prefer_tokio()`, or `prefer_smol()` to choose the runtime explicitly if automatic runtime detection is not sufficient.
+2. **Task spawning:** Monoio's spawn returns no join handle, so redis-rs wraps spawned tasks in an abortable future and stores the abort handle.
 
 ## Future Improvements
 
