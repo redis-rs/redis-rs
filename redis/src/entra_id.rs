@@ -276,12 +276,21 @@ pub struct ClientCertificate {
 type Subscriptions = Vec<Sender<RedisResult<BasicAuth>>>;
 type SharedSubscriptions = Arc<Mutex<Subscriptions>>;
 
+struct TaskAborter {
+    handle: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for TaskAborter {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
 /// Entra ID credentials provider that uses Azure Identity for authentication
 #[derive(Clone)]
 pub struct EntraIdCredentialsProvider {
     credential_provider: Arc<dyn TokenCredential + Send + Sync>,
     scopes: Vec<String>,
-    background_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    background_handle: Arc<Mutex<Option<TaskAborter>>>,
     subscribers: SharedSubscriptions,
     current_credentials: Arc<RwLock<Option<BasicAuth>>>,
 }
@@ -393,7 +402,7 @@ impl EntraIdCredentialsProvider {
         let credential_provider_arc = Arc::clone(&self.credential_provider);
         let scopes = self.scopes.clone();
 
-        *self.background_handle.lock().unwrap() = Some(tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let scopes: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
             let mut next_sleep_duration;
             let mut username = "default".to_string();
@@ -451,14 +460,9 @@ impl EntraIdCredentialsProvider {
                 ))
                 .await;
             }
-        }));
-    }
+        });
 
-    /// Stop the background refresh service
-    fn stop(&mut self) {
-        if let Some(handle) = self.background_handle.lock().unwrap().take() {
-            handle.abort();
-        }
+        *self.background_handle.lock().unwrap() = Some(TaskAborter { handle });
     }
 
     /// Create a new provider using the DeveloperToolsCredential
@@ -682,15 +686,6 @@ impl std::fmt::Debug for EntraIdCredentialsProvider {
             .field("scopes", &self.scopes)
             .field("credential", &"<TokenCredential>")
             .finish()
-    }
-}
-
-impl Drop for EntraIdCredentialsProvider {
-    fn drop(&mut self) {
-        // Only stop the background task if this is the last strong reference to the handle.
-        if Arc::strong_count(&self.background_handle) == 1 {
-            self.stop();
-        }
     }
 }
 
