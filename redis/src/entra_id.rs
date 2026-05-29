@@ -1154,6 +1154,8 @@ mod entra_id_mock_tests {
         );
     }
 
+    /// This test asserts that the EntraIdCredentialsProvider can be cloned and
+    /// dropped without stopping the background task until all instances are dropped.
     #[tokio::test]
     async fn test_mock_provider_with_running_background_task_cleanup() {
         init_logger();
@@ -1172,32 +1174,36 @@ mod entra_id_mock_tests {
         provider.start(RetryConfig::default());
         // Wait for the background task to start
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let credential_ref = Arc::downgrade(&provider.credential_provider);
+        // Because the credential_provider is copied into the background task,
+        // it can be used to track if the background task is still running.
+        let credential_provider_ref = Arc::downgrade(&provider.credential_provider);
 
-        // Get a clone, so observing the first drop should indicate that the
-        // background task is still live with a count of 2 (one for the provider and one for the background task).
         let _cloned_provider = provider.clone();
         assert_eq!(
-            credential_ref.strong_count(),
+            credential_provider_ref.strong_count(),
             3,
-            "There should be three strong references to the credential provider after cloning (original provider + background task + cloned provider)"
+            "There should be three strong references to the credential provider after cloning (original EntraIdCredentialsProvider + background task + cloned EntraIdCredentialsProvider)"
         );
 
+        // After dropping the original EntraIdCredentialsProvider, there should still have two instances:
+        // One for the cloned EntraIdCredentialsProvider and one for the background task.
+        // This asserts that dropping a single EntraIdCredentialsProvider does not stop the background task.
         drop(provider);
         assert_eq!(
-            credential_ref.strong_count(),
+            credential_provider_ref.strong_count(),
             2,
-            "There should be one strong reference to the credential provider after dropping the original provider"
+            "There should be two strong references to the credential provider after dropping the original EntraIdCredentialsProvider"
         );
 
+        // By dropping the last EntraIdCredentialsProvider, it should trigger the background task to stop,
+        // causing the remaining 2 instances of the credential_provider to be dropped.
         drop(_cloned_provider);
         // Wait for the background task to stop
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-        // By dropping the last provider and stopping the background task, the remaining 2 references should be dropped.
         assert_eq!(
-            credential_ref.strong_count(),
+            credential_provider_ref.strong_count(),
             0,
-            "There should be no strong references to the credential provider after the last provider is dropped"
+            "There should be no strong references to the credential provider after the last EntraIdCredentialsProvider is dropped"
         );
     }
 }
