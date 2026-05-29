@@ -1,3 +1,14 @@
+### 1.2.2 (2026-05-29)
+
+* Linter fixes ([#2075](https://github.com/redis-rs/redis-rs/pull/2075) by @StefanPalashev)
+* Add TLS certificate-based authentication support ([#2044](https://github.com/redis-rs/redis-rs/pull/2044) by @StefanPalashev)
+* add changelog entries for backports ([#2077](https://github.com/redis-rs/redis-rs/pull/2077) by @WaffleLapkin)
+* Add support for the HOTKEYS commands ([#2061](https://github.com/redis-rs/redis-rs/pull/2061) by @StefanPalashev)
+* add `set_concurrency_limit` to `ConnectionManagerConfig` ([#2080](https://github.com/redis-rs/redis-rs/pull/2080) by @jiangzhe)
+* add support for setting SO_LINGER on redis sockets ([#2086](https://github.com/redis-rs/redis-rs/pull/2086) by @svix-jbrown)
+* Support bb8 pool for sentinel client ([#2087](https://github.com/redis-rs/redis-rs/pull/2087) by @banthony42)
+* add ?Sized bound to impl AsyncPushSender for std::sync::Arc<T> ([#2091](https://github.com/redis-rs/redis-rs/pull/2091) by @anatawa12)
+
 ### 1.2.1 (2026-05-03)
 
 #### Changes & Bug fixes

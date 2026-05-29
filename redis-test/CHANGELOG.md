@@ -1,3 +1,7 @@
+### 1.0.4 (2026-05-29)
+
+* Improve the redis-test documentation and make it more accessible ([#2082](https://github.com/redis-rs/redis-rs/pull/2082) by @nihohit)
+
 ### 1.0.3 (2026-04-04)
 
 * Track redis 1.2.0 release
