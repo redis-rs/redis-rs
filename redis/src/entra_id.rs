@@ -276,12 +276,21 @@ pub struct ClientCertificate {
 type Subscriptions = Vec<Sender<RedisResult<BasicAuth>>>;
 type SharedSubscriptions = Arc<Mutex<Subscriptions>>;
 
+struct TaskAborter {
+    handle: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for TaskAborter {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
 /// Entra ID credentials provider that uses Azure Identity for authentication
 #[derive(Clone)]
 pub struct EntraIdCredentialsProvider {
     credential_provider: Arc<dyn TokenCredential + Send + Sync>,
     scopes: Vec<String>,
-    background_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    background_handle: Arc<Mutex<Option<TaskAborter>>>,
     subscribers: SharedSubscriptions,
     current_credentials: Arc<RwLock<Option<BasicAuth>>>,
 }
@@ -393,7 +402,7 @@ impl EntraIdCredentialsProvider {
         let credential_provider_arc = Arc::clone(&self.credential_provider);
         let scopes = self.scopes.clone();
 
-        *self.background_handle.lock().unwrap() = Some(tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let scopes: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
             let mut next_sleep_duration;
             let mut username = "default".to_string();
@@ -451,14 +460,9 @@ impl EntraIdCredentialsProvider {
                 ))
                 .await;
             }
-        }));
-    }
+        });
 
-    /// Stop the background refresh service
-    fn stop(&mut self) {
-        if let Some(handle) = self.background_handle.lock().unwrap().take() {
-            handle.abort();
-        }
+        *self.background_handle.lock().unwrap() = Some(TaskAborter { handle });
     }
 
     /// Create a new provider using the DeveloperToolsCredential
@@ -682,12 +686,6 @@ impl std::fmt::Debug for EntraIdCredentialsProvider {
             .field("scopes", &self.scopes)
             .field("credential", &"<TokenCredential>")
             .finish()
-    }
-}
-
-impl Drop for EntraIdCredentialsProvider {
-    fn drop(&mut self) {
-        self.stop();
     }
 }
 
@@ -921,7 +919,15 @@ mod entra_id_mock_tests {
         mock_credential: MockTokenCredential,
         scopes: Vec<String>,
     ) -> EntraIdCredentialsProvider {
-        EntraIdCredentialsProvider::new_with_credential(Arc::new(mock_credential), scopes).unwrap()
+        create_arc_mock_entra_id_credentials_provider(Arc::new(mock_credential), scopes)
+    }
+
+    /// Helper to create a mock EntraIdCredentialsProvider from an Arc-wrapped MockTokenCredential
+    fn create_arc_mock_entra_id_credentials_provider(
+        mock_credential: Arc<MockTokenCredential>,
+        scopes: Vec<String>,
+    ) -> EntraIdCredentialsProvider {
+        EntraIdCredentialsProvider::new_with_credential(mock_credential, scopes).unwrap()
     }
 
     #[tokio::test]
@@ -1148,8 +1154,10 @@ mod entra_id_mock_tests {
         );
     }
 
+    /// This test asserts that the EntraIdCredentialsProvider can be cloned and
+    /// dropped without stopping the background task until all instances are dropped.
     #[tokio::test]
-    async fn test_mock_provider_cleanup() {
+    async fn test_mock_provider_with_running_background_task_cleanup() {
         init_logger();
         let mock_credential = MockTokenCredential::success();
 
@@ -1158,12 +1166,44 @@ mod entra_id_mock_tests {
             vec![REDIS_SCOPE_DEFAULT.to_string()],
         );
 
+        assert!(
+            provider.background_handle.lock().unwrap().is_none(),
+            "Background task should not be running before start() is called"
+        );
+
         provider.start(RetryConfig::default());
         // Wait for the background task to start
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        // Because the credential_provider is copied into the background task,
+        // it can be used to track if the background task is still running.
+        let credential_provider_ref = Arc::downgrade(&provider.credential_provider);
+
+        let _cloned_provider = provider.clone();
+        assert_eq!(
+            credential_provider_ref.strong_count(),
+            3,
+            "There should be three strong references to the credential provider after cloning (original EntraIdCredentialsProvider + background task + cloned EntraIdCredentialsProvider)"
+        );
+
+        // After dropping the original EntraIdCredentialsProvider, there should still have two instances:
+        // One for the cloned EntraIdCredentialsProvider and one for the background task.
+        // This asserts that dropping a single EntraIdCredentialsProvider does not stop the background task.
         drop(provider);
+        assert_eq!(
+            credential_provider_ref.strong_count(),
+            2,
+            "There should be two strong references to the credential provider after dropping the original EntraIdCredentialsProvider"
+        );
+
+        // By dropping the last EntraIdCredentialsProvider, it should trigger the background task to stop,
+        // causing the remaining 2 instances of the credential_provider to be dropped.
+        drop(_cloned_provider);
         // Wait for the background task to stop
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        // Test passes if no panic occurs during cleanup
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        assert_eq!(
+            credential_provider_ref.strong_count(),
+            0,
+            "There should be no strong references to the credential provider after the last EntraIdCredentialsProvider is dropped"
+        );
     }
 }

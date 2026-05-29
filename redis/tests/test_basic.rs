@@ -3889,12 +3889,12 @@ mod basic {
         let key = "test_points_for_auxiliary_commands";
         let non_existent_key = "non_existent_key";
 
-        let points_data: Vec<(&'static str, [f32; 2])> = vec![
-            ("pt:A", [1.0f32, 1.0]),
-            ("pt:B", [-1.0f32, -1.0]),
-            ("pt:C", [-1.0f32, 1.0]),
-            ("pt:D", [1.0f32, -1.0]),
-            ("pt:E", [1.0f32, 0.0]),
+        let points_data: Vec<(&'static str, [f32; 4])> = vec![
+            ("pt:A", [1.0f32, 1.0, 0.5, 0.25]),
+            ("pt:B", [-1.0f32, -1.0, -0.5, -0.25]),
+            ("pt:C", [-1.0f32, 1.0, -0.5, 0.25]),
+            ("pt:D", [1.0f32, -1.0, 0.5, -0.25]),
+            ("pt:E", [1.0f32, 0.0, 0.5, 0.0]),
         ];
 
         let point_of_interest = "pt:A";
