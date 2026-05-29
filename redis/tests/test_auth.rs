@@ -187,7 +187,7 @@ mod entra_id_tests {
             let mut con = client.get_async_connection().await.unwrap();
 
             for i in 0..10 {
-                let key = format!("{}{}", test_key, i);
+                let key = format!("{test_key}{i}");
                 redis::cmd("SET")
                     .arg(&key)
                     .arg(42i32)

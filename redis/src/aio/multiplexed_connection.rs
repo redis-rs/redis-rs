@@ -239,15 +239,13 @@ where
                 if *skipped_response_count > 0 {
                     // server errors in skipped values are still counted for errors in transactions, since they're errors that will cause the transaction to fail,
                     // and we only skip values in transaction.
-                    if *is_transaction {
-                        if let ErrorOrErrors::Errors(errs) = error_or_errors {
-                            match result {
-                                Ok(Value::ServerError(err)) => {
-                                    errs.push((*seen_responses - 2, err)); // - 1 to offset the early increment, and -1 to offset the added MULTI call.
-                                }
-                                Err(err) => *error_or_errors = ErrorOrErrors::FirstError(err),
-                                _ => {}
+                    if *is_transaction && let ErrorOrErrors::Errors(errs) = error_or_errors {
+                        match result {
+                            Ok(Value::ServerError(err)) => {
+                                errs.push((*seen_responses - 2, err)); // - 1 to offset the early increment, and -1 to offset the added MULTI call.
                             }
+                            Err(err) => *error_or_errors = ErrorOrErrors::FirstError(err),
+                            _ => {}
                         }
                     }
 

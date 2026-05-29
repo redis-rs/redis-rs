@@ -483,16 +483,16 @@ where
         *connections = nodes
             .into_iter()
             .filter_map(|addr| {
-                if let Some(mut conn) = connections.remove(addr) {
-                    if conn.check_connection() {
-                        return Some((addr.clone(), conn));
-                    }
+                if let Some(mut conn) = connections.remove(addr)
+                    && conn.check_connection()
+                {
+                    return Some((addr.clone(), conn));
                 }
 
-                if let Ok(mut conn) = self.connect(addr) {
-                    if conn.check_connection() {
-                        return Some((addr.clone(), conn));
-                    }
+                if let Ok(mut conn) = self.connect(addr)
+                    && conn.check_connection()
+                {
+                    return Some((addr.clone(), conn));
                 }
 
                 None
@@ -867,10 +867,10 @@ where
                     {
                         for node in &self.initial_nodes {
                             let addr = NodeAddress::try_from(&node.addr)?;
-                            if let Ok(mut conn) = self.connect(&addr) {
-                                if conn.check_connection() {
-                                    self.connections.borrow_mut().insert(addr, conn);
-                                }
+                            if let Ok(mut conn) = self.connect(&addr)
+                                && conn.check_connection()
+                            {
+                                self.connections.borrow_mut().insert(addr, conn);
                             }
                         }
                         self.refresh_slots()?;
@@ -907,10 +907,10 @@ where
                             if *self.auto_reconnect.borrow() {
                                 // if the connection is no longer valid, we should remove it.
                                 self.connections.borrow_mut().remove(&addr);
-                                if let Ok(mut conn) = self.connect(&addr) {
-                                    if conn.check_connection() {
-                                        self.connections.borrow_mut().insert(addr, conn);
-                                    }
+                                if let Ok(mut conn) = self.connect(&addr)
+                                    && conn.check_connection()
+                                {
+                                    self.connections.borrow_mut().insert(addr, conn);
                                 }
                             }
                         }
@@ -920,12 +920,11 @@ where
                         RetryMethod::RetryImmediately => {}
                         RetryMethod::ReconnectFromInitialConnections => {
                             // TODO - implement reconnect from initial connections
-                            if *self.auto_reconnect.borrow() {
-                                if let Ok(mut conn) = self.connect(&addr) {
-                                    if conn.check_connection() {
-                                        self.connections.borrow_mut().insert(addr, conn);
-                                    }
-                                }
+                            if *self.auto_reconnect.borrow()
+                                && let Ok(mut conn) = self.connect(&addr)
+                                && conn.check_connection()
+                            {
+                                self.connections.borrow_mut().insert(addr, conn);
                             }
                         }
                     }

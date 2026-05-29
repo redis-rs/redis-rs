@@ -18,7 +18,7 @@ fn log_connection_error(
     sentinel: &ConnectionInfo,
     error: &RedisError,
 ) {
-    println!("Connection error: {:?}", error);
+    println!("Connection error: {error:?}");
     if let ConnectionAddr::Tcp(_, port) = sentinel.addr() {
         context.cluster.log_redis_state_via_cli(*port);
     }

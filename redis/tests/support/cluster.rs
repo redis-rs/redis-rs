@@ -103,10 +103,10 @@ impl TestClusterContext {
             .use_protocol(use_protocol());
 
         #[cfg(feature = "tls-rustls")]
-        if mtls_enabled || (ClusterType::get_intended() == ClusterType::TcpTls && !tls_insecure) {
-            if let Some(tls_file_paths) = &cluster.tls_paths {
-                builder = builder.certs(load_certs_from_file(tls_file_paths));
-            }
+        if (mtls_enabled || (ClusterType::get_intended() == ClusterType::TcpTls && !tls_insecure))
+            && let Some(tls_file_paths) = &cluster.tls_paths
+        {
+            builder = builder.certs(load_certs_from_file(tls_file_paths));
         }
 
         builder = initializer(builder);

@@ -177,8 +177,8 @@ pub fn build_client_cert_with_custom_cn(
     ca_crt: &PathBuf,
     ca_key: &PathBuf,
 ) -> ClientCertPaths {
-    let client_crt = tempdir.path().join(format!("{}.crt", common_name));
-    let client_key = tempdir.path().join(format!("{}.key", common_name));
+    let client_crt = tempdir.path().join(format!("{common_name}.crt"));
+    let client_key = tempdir.path().join(format!("{common_name}.key"));
     let ca_serial = tempdir.path().join("ca.txt");
 
     // Generate client private key
@@ -213,7 +213,7 @@ pub fn build_client_cert_with_custom_cn(
         .arg("-new")
         .arg("-sha256")
         .arg("-subj")
-        .arg(format!("/O=Redis Test/CN={}", common_name))
+        .arg(format!("/O=Redis Test/CN={common_name}"))
         .arg("-key")
         .arg(&client_key)
         .stdout(process::Stdio::piped())

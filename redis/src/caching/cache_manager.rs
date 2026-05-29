@@ -75,14 +75,12 @@ impl CacheManager {
     }
 
     pub(crate) fn handle_push_value(&self, kind: &PushKind, data: &[Value]) {
-        if kind == &PushKind::Invalidate {
-            if let Some(Value::Array(redis_key)) = data.first() {
-                if let Some(redis_key) = redis_key.first() {
-                    if let Ok(redis_key) = FromRedisValue::from_redis_value_ref(redis_key) {
-                        self.lru.invalidate(&redis_key)
-                    }
-                }
-            }
+        if kind == &PushKind::Invalidate
+            && let Some(Value::Array(redis_key)) = data.first()
+            && let Some(redis_key) = redis_key.first()
+            && let Ok(redis_key) = FromRedisValue::from_redis_value_ref(redis_key)
+        {
+            self.lru.invalidate(&redis_key)
         }
     }
 

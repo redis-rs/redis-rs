@@ -190,10 +190,7 @@ impl TestContext {
                 }
             }
             _ => {
-                panic!(
-                    "Unsupported ConnectionAddr variant for cert-based authentication: {:?}",
-                    addr
-                )
+                panic!("Unsupported ConnectionAddr variant for cert-based authentication: {addr:?}")
             }
         };
 

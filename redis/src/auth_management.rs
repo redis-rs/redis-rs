@@ -123,15 +123,15 @@ pub(crate) mod credentials_management_utils {
         let payload_str = String::from_utf8(payload_bytes)
             .map_err(|e| format!("Payload is not valid UTF-8: {e}"))?;
 
-        if let Some(oid_claim_start_idx) = payload_str.find("\"oid\"") {
-            if let Some(colon_idx) = payload_str[oid_claim_start_idx..].find(':') {
-                let oid_value_str = payload_str[oid_claim_start_idx + colon_idx + 1..].trim_start();
+        if let Some(oid_claim_start_idx) = payload_str.find("\"oid\"")
+            && let Some(colon_idx) = payload_str[oid_claim_start_idx..].find(':')
+        {
+            let oid_value_str = payload_str[oid_claim_start_idx + colon_idx + 1..].trim_start();
 
-                if let Some(stripped_oid_value) = oid_value_str.strip_prefix('"') {
-                    if let Some(end_quote) = stripped_oid_value.find('"') {
-                        return Ok(stripped_oid_value[..end_quote].to_string());
-                    }
-                }
+            if let Some(stripped_oid_value) = oid_value_str.strip_prefix('"')
+                && let Some(end_quote) = stripped_oid_value.find('"')
+            {
+                return Ok(stripped_oid_value[..end_quote].to_string());
             }
         }
 

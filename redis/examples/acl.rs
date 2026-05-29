@@ -87,9 +87,9 @@ fn run() -> RedisResult<()> {
         // Password
         Rule::AddPass(password.to_string()),
         // Add default queue pattern - uses hashtag {DEFAULT_QUEUE_NAME} for Redis cluster routing
-        Rule::Pattern(format!("asynq:{{{}}}:*", DEFAULT_QUEUE_NAME)),
+        Rule::Pattern(format!("asynq:{{{DEFAULT_QUEUE_NAME}}}:*")),
         // Add tenant-specific key patterns
-        Rule::Pattern(format!("asynq:{{{}:*", username)),
+        Rule::Pattern(format!("asynq:{{{username}:*")),
         // Add default key patterns
         Rule::Pattern("asynq:queues".to_string()),
         Rule::Pattern("asynq:servers:*".to_string()),
@@ -105,7 +105,7 @@ fn run() -> RedisResult<()> {
     // Each Rule is converted to its Redis representation automatically
     conn.acl_setuser_rules(username, &rules)?;
     let tenant_user = conn.acl_getuser(username);
-    println!("{:?}", tenant_user);
+    println!("{tenant_user:?}");
     let sample_rule = vec![
         Rule::On,
         Rule::ResetChannels,
@@ -117,7 +117,7 @@ fn run() -> RedisResult<()> {
     ];
     conn.acl_setuser_rules("sample", &sample_rule)?;
     let sample_user = conn.acl_getuser("sample");
-    println!("{:?}", sample_user);
+    println!("{sample_user:?}");
     conn.acl_deluser(&[username, "sample"])?;
     Ok(())
 }

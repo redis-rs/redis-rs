@@ -205,9 +205,9 @@ fn test_acl_info() {
         // Password
         Rule::AddPass(password.to_string()),
         // Add default queue pattern - uses hashtag {DEFAULT_QUEUE_NAME} for Redis cluster routing
-        Rule::Pattern(format!("asynq:{{{}}}:*", DEFAULT_QUEUE_NAME)),
+        Rule::Pattern(format!("asynq:{{{DEFAULT_QUEUE_NAME}}}:*")),
         // Add tenant-specific key patterns
-        Rule::Pattern(format!("asynq:{{{}:*", username)),
+        Rule::Pattern(format!("asynq:{{{username}:*")),
         // Add default key patterns
         Rule::Pattern("asynq:queues".to_string()),
         Rule::Pattern("asynq:servers:*".to_string()),
@@ -348,9 +348,8 @@ mod token_based_authentication_acl_tests {
     const OID_CLAIM_VALUE: &str = "12345678-9abc-def-1234-56789abcdef0";
     const TOKEN_SIGNATURE: &str = "signature";
 
-    static MOCKED_TOKEN: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-        format!("mock_jwt_token.{}.{}", TOKEN_PAYLOAD, TOKEN_SIGNATURE)
-    });
+    static MOCKED_TOKEN: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(|| format!("mock_jwt_token.{TOKEN_PAYLOAD}.{TOKEN_SIGNATURE}"));
 
     const DEFAULT_USER: &str = "default";
     const TEST_USER: &str = "test";
@@ -547,7 +546,7 @@ mod token_based_authentication_acl_tests {
                             *current = Some(credentials.clone());
                         }
 
-                        println!("Mock provider: Providing credentials: {:?}", credentials);
+                        println!("Mock provider: Providing credentials: {credentials:?}");
                         Ok(credentials)
                     };
 
@@ -744,7 +743,7 @@ mod token_based_authentication_acl_tests {
 
         // Test that operations can still be performed after the first rotation
         let users: Vec<String> = users_cmd.query_async(&mut con).await.unwrap();
-        println!("Users after first rotation: {:?}", users);
+        println!("Users after first rotation: {users:?}");
 
         // Wait for another rotation
         println!("Waiting for second token rotation...");
@@ -758,7 +757,7 @@ mod token_based_authentication_acl_tests {
 
         // Test that operations can still be performed after the second rotation
         let users: Vec<String> = users_cmd.query_async(&mut con).await.unwrap();
-        println!("Users after second rotation: {:?}", users);
+        println!("Users after second rotation: {users:?}");
 
         println!("Token rotation test completed successfully!");
     }
