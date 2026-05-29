@@ -7,7 +7,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
 
     let function_name = item.sig.ident.clone();
     let test_function_name =
-        syn::Ident::new(&format!("test_{}", function_name), function_name.span());
+        syn::Ident::new(&format!("test_{function_name}"), function_name.span());
 
     let final_code = if item.sig.inputs.len() == 1 {
         let Some(syn::FnArg::Typed(pat_type)) = item.sig.inputs.last() else {
@@ -26,11 +26,11 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
 
         if is_connection {
             let test_multiplexed_connection_function_name = syn::Ident::new(
-                &format!("test_multiplexed_connection_{}", function_name),
+                &format!("test_multiplexed_connection_{function_name}"),
                 function_name.span(),
             );
             let test_connection_manager_function_name = syn::Ident::new(
-                &format!("test_connection_manager_{}", function_name),
+                &format!("test_connection_manager_{function_name}"),
                 function_name.span(),
             );
 

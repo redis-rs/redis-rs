@@ -2876,7 +2876,7 @@ mod basic {
         let mut random_bytes = vec![0u8; 1024];
         rng.fill_bytes(&mut random_bytes);
         let random_bytes_digest = calculate_value_digest(&random_bytes);
-        println!("random_bytes_digest: {:?}", random_bytes_digest);
+        println!("random_bytes_digest: {random_bytes_digest:?}");
         assert!(is_valid_16_bytes_hex_digest(&random_bytes_digest));
 
         // Validate that the DIGEST command returns NIL when the given key doesn't exist
@@ -3295,7 +3295,7 @@ mod basic {
             (ExistenceCheck::NX, SetExpiry::EX(1)),
             (ExistenceCheck::XX, SetExpiry::KEEPTTL),
         ];
-        assert!(key_values.len() % 2 == 0);
+        assert!(key_values.len().is_multiple_of(2));
         assert!(key_values.len() == existence_checks_and_expirations.len() * 2);
 
         let opts = MSetOptions::default();

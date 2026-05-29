@@ -2464,7 +2464,7 @@ pub fn calculate_value_digest<T: ToRedisArgs>(value: T) -> String {
 
     // Calculate XXH3 hash (64-bit) and format as hexadecimal string
     let hash = xxh3_64(&combined_bytes);
-    format!("{:016x}", hash)
+    format!("{hash:016x}")
 }
 
 /// Validates that the given string is a valid 16-byte hex digest.

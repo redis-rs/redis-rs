@@ -705,15 +705,13 @@ where
                 conn.req_packed_command(&cmd)
                     .await
                     .inspect(|res| {
-                        if !matches!(res, Value::ServerError(_)) {
-                            if let Some(tracker) = &self.subscription_tracker {
-                                if let Some((action, args)) =
-                                    SubscriptionTracker::to_request(cmd.as_ref())
-                                {
-                                    let mut tracker = tracker.lock().unwrap();
-                                    tracker.update_with_request(action, args);
-                                }
-                            }
+                        if !matches!(res, Value::ServerError(_))
+                            && let Some(tracker) = &self.subscription_tracker
+                            && let Some((action, args)) =
+                                SubscriptionTracker::to_request(cmd.as_ref())
+                        {
+                            let mut tracker = tracker.lock().unwrap();
+                            tracker.update_with_request(action, args);
                         }
                     })
                     .map(Response::Single),

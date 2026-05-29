@@ -114,16 +114,16 @@ where
 
         match result {
             Ok(Value::Array(value)) => {
-                if let Some(Value::BulkString(kind)) = value.first() {
-                    if matches!(
+                if let Some(Value::BulkString(kind)) = value.first()
+                    && matches!(
                         kind.as_slice(),
                         b"subscribe" | b"psubscribe" | b"unsubscribe" | b"punsubscribe" | b"pong"
-                    ) {
-                        if let Some(entry) = self_.in_flight.pop_front() {
-                            let _ = entry.send(Ok(Value::Array(value)));
-                        };
-                        return Ok(());
-                    }
+                    )
+                {
+                    if let Some(entry) = self_.in_flight.pop_front() {
+                        let _ = entry.send(Ok(Value::Array(value)));
+                    };
+                    return Ok(());
                 }
 
                 if let Some(msg) = Msg::from_owned_value(Value::Array(value)) {

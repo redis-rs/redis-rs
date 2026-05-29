@@ -108,22 +108,22 @@ impl ShardedLRU {
         epoch: usize,
     ) {
         let mut lru_cache = self.get_shard(redis_key);
-        if let Some(ch) = lru_cache.peek_mut(redis_key) {
-            if ch.epoch == epoch {
-                for entry in &mut ch.value_list {
-                    if entry.cmd == cmd_key {
-                        entry.value = value;
-                        ch.expire_time = expire_time;
-                        return;
-                    }
+        if let Some(ch) = lru_cache.peek_mut(redis_key)
+            && ch.epoch == epoch
+        {
+            for entry in &mut ch.value_list {
+                if entry.cmd == cmd_key {
+                    entry.value = value;
+                    ch.expire_time = expire_time;
+                    return;
                 }
-                ch.value_list.push(CacheCmdEntry {
-                    cmd: cmd_key.to_vec(),
-                    value,
-                });
-                ch.expire_time = expire_time;
-                return;
             }
+            ch.value_list.push(CacheCmdEntry {
+                cmd: cmd_key.to_vec(),
+                value,
+            });
+            ch.expire_time = expire_time;
+            return;
         }
         let _ = lru_cache.push(
             redis_key.to_vec(),

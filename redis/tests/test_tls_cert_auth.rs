@@ -121,7 +121,7 @@ fn test_tls_certificate_authentication_with_matching_acl_user() {
         ],
     );
 
-    assert!(result.is_ok(), "Failed to create ACL user: {:?}", result);
+    assert!(result.is_ok(), "Failed to create ACL user: {result:?}");
 
     // Verify that the user was created.
     let users: Vec<String> = setup_conn.acl_users().expect("Failed to get ACL users");

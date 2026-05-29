@@ -797,14 +797,14 @@ mod entra_id_mock_tests {
     const OID_CLAIM_VALUE: &str = "12345678-9abc-def-1234-56789abcdef0";
 
     static MOCKED_TOKEN: LazyLock<String> =
-        LazyLock::new(|| format!("mock_jwt_token.{}.{}", TOKEN_PAYLOAD, TOKEN_SIGNATURE));
+        LazyLock::new(|| format!("mock_jwt_token.{TOKEN_PAYLOAD}.{TOKEN_SIGNATURE}"));
 
     static MOCKED_TOKEN_1: LazyLock<String> =
-        LazyLock::new(|| format!("mock_jwt_token1.{}.{}", TOKEN_PAYLOAD, TOKEN_SIGNATURE));
+        LazyLock::new(|| format!("mock_jwt_token1.{TOKEN_PAYLOAD}.{TOKEN_SIGNATURE}"));
     static MOCKED_TOKEN_2: LazyLock<String> =
-        LazyLock::new(|| format!("mock_jwt_token2.{}.{}", TOKEN_PAYLOAD, TOKEN_SIGNATURE));
+        LazyLock::new(|| format!("mock_jwt_token2.{TOKEN_PAYLOAD}.{TOKEN_SIGNATURE}"));
     static MOCKED_TOKEN_3: LazyLock<String> =
-        LazyLock::new(|| format!("mock_jwt_token3.{}.{}", TOKEN_PAYLOAD, TOKEN_SIGNATURE));
+        LazyLock::new(|| format!("mock_jwt_token3.{TOKEN_PAYLOAD}.{TOKEN_SIGNATURE}"));
 
     /// Mock TokenCredential that simulates Azure Identity behavior
     #[derive(Debug)]

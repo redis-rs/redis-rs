@@ -1741,17 +1741,16 @@ impl Connection {
 
             match resp {
                 Value::Push { kind, data } => {
-                    if data.len() >= 2 {
-                        if let Value::Int(num) = data[1] {
-                            if resp3_is_pub_sub_state_cleared(
-                                &mut received_unsub,
-                                &mut received_punsub,
-                                &kind,
-                                num as isize,
-                            ) {
-                                break;
-                            }
-                        }
+                    if data.len() >= 2
+                        && let Value::Int(num) = data[1]
+                        && resp3_is_pub_sub_state_cleared(
+                            &mut received_unsub,
+                            &mut received_punsub,
+                            &kind,
+                            num as isize,
+                        )
+                    {
+                        break;
                     }
                 }
                 Value::ServerError(err) => {
@@ -1903,12 +1902,11 @@ impl Connection {
             return Err(RedisError::make_empty_command());
         }
         let result = self.con.send_bytes(bytes);
-        if self.protocol.supports_resp3() {
-            if let Err(e) = &result {
-                if e.is_connection_dropped() {
-                    self.send_disconnect();
-                }
-            }
+        if self.protocol.supports_resp3()
+            && let Err(e) = &result
+            && e.is_connection_dropped()
+        {
+            self.send_disconnect();
         }
         result
     }
@@ -2452,14 +2450,14 @@ pub fn no_sub_err_is_pub_sub_state_cleared(
 
 /// Common logic for checking real cause of hello3 command error
 pub fn get_resp3_hello_command_error(err: RedisError) -> RedisError {
-    if let Some(detail) = err.detail() {
-        if detail.starts_with("unknown command `HELLO`") {
-            return (
-                ErrorKind::RESP3NotSupported,
-                "Redis Server doesn't support HELLO command therefore resp3 cannot be used",
-            )
-                .into();
-        }
+    if let Some(detail) = err.detail()
+        && detail.starts_with("unknown command `HELLO`")
+    {
+        return (
+            ErrorKind::RESP3NotSupported,
+            "Redis Server doesn't support HELLO command therefore resp3 cannot be used",
+        )
+            .into();
     }
     err
 }

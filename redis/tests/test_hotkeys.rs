@@ -334,10 +334,7 @@ mod hotkeys_cluster {
             redis::Cmd::new().arg("INFO").query(&mut direct).unwrap();
         let version = parse_version(server_info);
         if version < REDIS_VERSION_CE_8_6 {
-            eprintln!(
-                "Skipping: Redis version {version:?} < {:?}",
-                REDIS_VERSION_CE_8_6
-            );
+            eprintln!("Skipping: Redis version {version:?} < {REDIS_VERSION_CE_8_6:?}");
             return None;
         }
 
