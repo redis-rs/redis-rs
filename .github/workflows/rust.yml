@@ -9,6 +9,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   REDISRS_REDIS_JSON_PATH: "/tmp/librejson.so"
+  REDISRS_REDIS_SEARCH_PATH: "/tmp/redisearch.so"
 
 concurrency:
   group: "${{ github.workflow }}-${{ github.head_ref || github.run_id || github.ref }}"
@@ -33,8 +34,8 @@ jobs:
             {  db-org: redis, db-name: redis, db-version: 6.2.21 },
             {  db-org: redis, db-name: redis, db-version: 7.0.15, json-module-version: v2.6.22 },
             {  db-org: redis, db-name: redis, db-version: 7.4.8, json-module-version: v2.6.22 },
-            {  db-org: redis, db-name: redis, db-version: 8.0.6, json-module-version: bundled },
-            {  db-org: redis, db-name: redis, db-version: 8.6.2, json-module-version: bundled },
+            {  db-org: redis, db-name: redis, db-version: 8.0.6, json-module-version: bundled, search-module-version: bundled },
+            {  db-org: redis, db-name: redis, db-version: 8.6.2, json-module-version: bundled, search-module-version: bundled },
             {  db-org: valkey-io, db-name: valkey, db-version: 7.2.12, json-module-version: v2.6.22 },
             {  db-org: valkey-io, db-name: valkey, db-version: 8.0.7, json-module-version: v2.6.22 },
             # Skipping ValKey 8.1 as it's too similar to 8.0
@@ -64,6 +65,11 @@ jobs:
         if: matrix.config.json-module-version == 'bundled'
         run: |
           cp "$HOME/db/rejson.so" "$REDISRS_REDIS_JSON_PATH"
+
+      - name: Copy bundled RediSearch into place
+        if: matrix.config.search-module-version == 'bundled'
+        run: |
+          cp "$HOME/db/redisearch.so" "$REDISRS_REDIS_SEARCH_PATH"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain/@master
@@ -100,49 +106,86 @@ jobs:
           rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
           rm -rf ./__ci/redis-json
 
-      - name: Verify RedisJSON module
-        if: matrix.config.json-module-version != ''
+      - name: Verify Redis modules
+        if: matrix.config.json-module-version != '' || matrix.config.search-module-version != ''
         run: |
-          if [ ! -f "${{ env.REDISRS_REDIS_JSON_PATH }}" ]; then
-            echo "ERROR: RedisJSON module not found at ${{ env.REDISRS_REDIS_JSON_PATH }}"
-            exit 1
-          fi
-          ls -lh "${{ env.REDISRS_REDIS_JSON_PATH }}"
+          verify_module() {
+            local MODULE_NAME="$1"
+            local MODULE_PATH="$2"
+            local TEST_PORT="$3"
+            shift 3  # Remove first 3 args and leave the command args
+            local TEST_LOG="/tmp/redis-${MODULE_NAME}-test.log"
 
-          # Test that Redis can load the module
-          echo "Testing Redis server with module..."
-          TEST_PORT=16379
-          TEST_LOG="/tmp/redis-module-test.log"
-          redis-server --port $TEST_PORT --loadmodule "${{ env.REDISRS_REDIS_JSON_PATH }}" \
-            --logfile "$TEST_LOG" --daemonize yes || {
-            echo "ERROR: Failed to start Redis with module"
-            cat "$TEST_LOG"
-            exit 1
+            echo "========================================="
+            echo "Verifying ${MODULE_NAME} module"
+            echo "========================================="
+
+            if [ ! -f "$MODULE_PATH" ]; then
+              echo "ERROR: ${MODULE_NAME} module not found at $MODULE_PATH"
+              return 1
+            fi
+            ls -lh "$MODULE_PATH"
+
+            echo "Testing Redis server with ${MODULE_NAME} module..."
+            redis-server --port $TEST_PORT --loadmodule "$MODULE_PATH" \
+              --logfile "$TEST_LOG" --daemonize yes || {
+              echo "ERROR: Failed to start Redis with ${MODULE_NAME} module"
+              cat "$TEST_LOG"
+              return 1
+            }
+
+            sleep 2
+
+            if redis-cli -p $TEST_PORT PING > /dev/null 2>&1; then
+              echo "Redis server started successfully"
+
+              # Test module-specific command
+              if redis-cli -p $TEST_PORT "$@"; then
+                echo "${MODULE_NAME} commands are working"
+                echo "Loaded modules:"
+                redis-cli -p $TEST_PORT --no-raw MODULE LIST
+                redis-cli -p $TEST_PORT SHUTDOWN NOSAVE
+                return 0
+              else
+                echo "ERROR: ${MODULE_NAME} commands not working"
+                cat "$TEST_LOG"
+                redis-cli -p $TEST_PORT SHUTDOWN NOSAVE
+                return 1
+              fi
+            else
+              echo "ERROR: Redis server not responding"
+              cat "$TEST_LOG"
+              return 1
+            fi
           }
 
-          sleep 2
-
-          if redis-cli -p $TEST_PORT PING; then
-            echo "Redis server started successfully"
-            redis-cli -p $TEST_PORT JSON.SET test \$ '{"test":1}' || {
-              echo "ERROR: JSON commands not working"
-              cat "$TEST_LOG"
-              redis-cli -p $TEST_PORT SHUTDOWN NOSAVE
-              exit 1
-            }
-            echo "JSON commands are working"
-            echo "Loaded modules:"
-            redis-cli -p $TEST_PORT --no-raw MODULE LIST
-            redis-cli -p $TEST_PORT SHUTDOWN NOSAVE
-          else
-            echo "ERROR: Redis server not responding"
-            cat "$TEST_LOG"
-            exit 1
+          # Verify RedisJSON if configured
+          if [ -n "${{ matrix.config.json-module-version }}" ]; then
+            verify_module "RedisJSON" \
+              "${{ env.REDISRS_REDIS_JSON_PATH }}" \
+              16379 \
+              JSON.SET test '$' '{"test":1}' || exit 1
           fi
 
-      - name: Run module-specific tests
+          # Verify RediSearch if configured
+          if [ -n "${{ matrix.config.search-module-version }}" ]; then
+            verify_module "RediSearch" \
+              "${{ env.REDISRS_REDIS_SEARCH_PATH }}" \
+              16380 \
+              FT.CREATE testidx ON HASH SCHEMA title TEXT || exit 1
+          fi
+
+          echo "========================================="
+          echo "All module verifications passed"
+          echo "========================================="
+
+      - name: Run JSON module tests
         if: matrix.config.json-module-version != ''
-        run: make test-module
+        run: make test-module-json
+
+      - name: Run Search module tests
+        if: matrix.config.search-module-version != ''
+        run: make test-module-search
 
       - name: Cache RedisJSON
         if: matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
