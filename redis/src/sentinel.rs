@@ -1251,8 +1251,8 @@ impl SentinelClient {
     }
 }
 
-/// To enable async support you need to chose one of the supported runtimes and active its
-/// corresponding feature: `tokio-comp` or `smol-comp`
+/// To enable async support you need to choose one of the supported runtimes and activate its
+/// corresponding feature: `tokio-comp`, `smol-comp`, or `monoio-comp`.
 #[cfg(feature = "aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 impl SentinelClient {

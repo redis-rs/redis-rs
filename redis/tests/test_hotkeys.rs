@@ -152,6 +152,7 @@ mod hotkeys {
 
         assert!(con.hotkeys_start(metric.options()).is_ok());
         setup_test_keys_and_make_hot_keys(&mut con);
+        sleep(Duration::from_millis(1));
 
         let result = con.hotkeys_get().unwrap().unwrap();
 
@@ -731,6 +732,7 @@ mod async_hotkeys {
 
                 assert!(con.hotkeys_start(metric.options()).await.is_ok());
                 setup_test_keys_and_make_hot_keys(&mut con).await;
+                futures_time::task::sleep(Duration::from_millis(1).into()).await;
 
                 let result = con.hotkeys_get().await.unwrap().unwrap();
                 assert!(result.tracking_active);

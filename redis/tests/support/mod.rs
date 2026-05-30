@@ -41,6 +41,8 @@ pub enum RuntimeType {
     Tokio,
     #[cfg(feature = "smol-comp")]
     Smol,
+    #[cfg(feature = "monoio-comp")]
+    Monoio,
 }
 
 #[cfg(feature = "aio")]
@@ -49,13 +51,20 @@ where
     F: Future<Output = V>,
 {
     use std::panic;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     static CHECK: AtomicBool = AtomicBool::new(false);
+    static PANIC_HOOK_LOCK: Mutex<()> = Mutex::new(());
 
     // TODO - this solution is purely single threaded, and won't work on multiple threads at the same time.
     // This is needed because Tokio's Runtime silently ignores panics - https://users.rust-lang.org/t/tokio-runtime-what-happens-when-a-thread-panics/95819
     // Once Tokio stabilizes the `unhandled_panic` field on the runtime builder, it should be used instead.
+    let _panic_hook_guard = PANIC_HOOK_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    CHECK.store(false, Ordering::Relaxed);
+    let previous_hook = panic::take_hook();
     panic::set_hook(Box::new(|panic| {
         println!("Panic: {panic}");
         CHECK.store(true, Ordering::Relaxed);
@@ -77,15 +86,22 @@ where
         futures::select! {res = f => Ok(res), err = check_future => Err(err)}
     };
 
-    let res = match runtime {
+    let res = panic::catch_unwind(panic::AssertUnwindSafe(|| match runtime {
         #[cfg(feature = "tokio-comp")]
         RuntimeType::Tokio => block_on_all_using_tokio(f),
         #[cfg(feature = "smol-comp")]
         RuntimeType::Smol => block_on_all_using_smol(f),
-    };
+        #[cfg(feature = "monoio-comp")]
+        RuntimeType::Monoio => block_on_all_using_monoio(f),
+    }));
 
-    let _ = panic::take_hook();
-    if CHECK.swap(false, Ordering::Relaxed) {
+    panic::set_hook(previous_hook);
+    let internal_thread_panicked = CHECK.swap(false, Ordering::Relaxed);
+    let res = match res {
+        Ok(res) => res,
+        Err(panic) => panic::resume_unwind(panic),
+    };
+    if internal_thread_panicked {
         panic!("Internal thread panicked");
     }
 
@@ -97,7 +113,7 @@ fn block_on_all_using_tokio<F>(f: F) -> F::Output
 where
     F: Future,
 {
-    #[cfg(feature = "smol-comp")]
+    #[cfg(any(feature = "smol-comp", feature = "monoio-comp"))]
     redis::aio::prefer_tokio().unwrap();
     current_thread_runtime().block_on(f)
 }
@@ -107,9 +123,24 @@ fn block_on_all_using_smol<F>(f: F) -> F::Output
 where
     F: Future,
 {
-    #[cfg(feature = "tokio-comp")]
+    #[cfg(any(feature = "tokio-comp", feature = "monoio-comp"))]
     redis::aio::prefer_smol().unwrap();
     smol::block_on(f)
+}
+
+#[cfg(feature = "monoio-comp")]
+fn block_on_all_using_monoio<F>(f: F) -> F::Output
+where
+    F: Future,
+{
+    #[cfg(any(feature = "tokio-comp", feature = "smol-comp"))]
+    redis::aio::prefer_monoio().unwrap();
+
+    monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(f)
 }
 
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]

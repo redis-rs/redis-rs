@@ -73,7 +73,8 @@ you can implement the `FromRedisValue` and `ToRedisArgs` traits, or derive it wi
 ## Async support
 
 To enable asynchronous clients, enable the relevant feature in your Cargo.toml,
-`tokio-comp` for tokio users, `smol-comp` for smol users.
+`tokio-comp` for tokio users, `smol-comp` for smol users, or `monoio-comp`
+for monoio users.
 
 ```
 # if you use tokio
@@ -81,6 +82,9 @@ redis = { version = "1", features = ["tokio-comp"] }
 
 # if you use smol
 redis = { version = "1", features = ["smol-comp"] }
+
+# if you use monoio
+redis = { version = "1", features = ["monoio-comp"] }
 ```
 
 You can then use either the `AsyncTypedCommands` or `AsyncCommands` traits. All async connections are cheap to clone, and clones can be used concurrently from multiple threads.
@@ -132,6 +136,9 @@ redis = { version = "1", features = ["tokio-rustls-comp"] }
 
 # if you use smol
 redis = { version = "1", features = ["smol-rustls-comp"] }
+
+# if you use monoio
+redis = { version = "1", features = ["monoio-rustls-comp"] }
 ```
 
 Add `rustls` to dependencies
@@ -223,6 +230,8 @@ Async Redis Cluster support can be enabled by enabling the `cluster-async` featu
 with your preferred async runtime, e.g.:
 
 `redis = { version = "1", features = [ "cluster-async", "tokio-comp" ] }`
+
+For smol or monoio, replace `tokio-comp` with `smol-comp` or `monoio-comp`.
 
 ```rust
 use redis::cluster::ClusterClient;

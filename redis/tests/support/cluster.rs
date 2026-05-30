@@ -4,6 +4,8 @@
 use std::convert::identity;
 use std::thread::sleep;
 use std::time::Duration;
+#[cfg(feature = "cluster-async")]
+use futures_time;
 
 use crate::support::{build_single_client, start_tls_crypto_provider};
 use assert_matches::assert_matches;
@@ -128,6 +130,14 @@ impl TestClusterContext {
 
     #[cfg(feature = "cluster-async")]
     pub async fn async_connection(&self) -> redis::cluster_async::ClusterConnection {
+        // Retry with backoff: under heavy parallel test load the 1-second TCP-connect
+        // timeout can fire before local Redis nodes respond.
+        for _ in 0..5 {
+            if let Ok(conn) = self.client.get_async_connection().await {
+                return conn;
+            }
+            futures_time::task::sleep(futures_time::time::Duration::from_millis(200)).await;
+        }
         self.client.get_async_connection().await.unwrap()
     }
     #[cfg(feature = "cluster-async")]
