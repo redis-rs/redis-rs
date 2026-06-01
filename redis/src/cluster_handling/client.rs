@@ -14,7 +14,7 @@ use crate::io::tcp::TcpSettings;
 use crate::types::{ProtocolVersion, RedisResult};
 use crate::{TlsMode, cluster};
 use arcstr::ArcStr;
-use rand::Rng;
+use rand::RngExt;
 use std::sync::Arc;
 use std::time::Duration;
 

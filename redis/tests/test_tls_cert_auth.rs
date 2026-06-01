@@ -84,7 +84,7 @@ fn create_cert_auth_context_with_username(username: &str) -> CertAuthTestContext
 
 /// Generate a random username for testing
 fn generate_random_username() -> String {
-    use rand::Rng;
+    use rand::RngExt;
     format!("testcertuser{}", rand::rng().random_range(10000..99999))
 }
 

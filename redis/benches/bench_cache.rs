@@ -7,7 +7,7 @@ use support::*;
 mod support;
 
 use rand::{
-    Rng,
+    RngExt,
     distr::{Bernoulli, Distribution},
 };
 use redis::caching::CacheConfig;

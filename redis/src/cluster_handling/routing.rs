@@ -1,4 +1,4 @@
-use rand::Rng;
+use rand::RngExt;
 
 use super::NodeAddress;
 use crate::cluster_handling::slot_map::SLOT_SIZE;
