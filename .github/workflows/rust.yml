@@ -34,9 +34,7 @@ jobs:
             {  db-org: redis, db-name: redis, db-version: 7.0.15, json-module-version: v2.6.22 },
             {  db-org: redis, db-name: redis, db-version: 7.4.9, json-module-version: v2.6.22 },
             {  db-org: redis, db-name: redis, db-version: 8.0.6, json-module-version: bundled },
-            # Although Redis 8.6.3 is available, we lock at 8.6.2 for now, as 8.6.3+ reliably breaks
-            # tests locally and also for CI (see #2095)
-            {  db-org: redis, db-name: redis, db-version: 8.6.2, json-module-version: bundled },
+            {  db-org: redis, db-name: redis, db-version: 8.8.0, json-module-version: bundled },
             {  db-org: valkey-io, db-name: valkey, db-version: 7.2.12, json-module-version: v2.6.22 },
             {  db-org: valkey-io, db-name: valkey, db-version: 8.0.7, json-module-version: v2.6.22 },
             # Skipping ValKey 8.1 as it's too similar to 8.0

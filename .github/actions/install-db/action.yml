@@ -46,7 +46,16 @@ runs:
         cd "${{ inputs.db-name }}-${{ inputs.db-version }}"
 
         # Build the db (with modules, if possible)
-        BUILD_TLS=yes BUILD_WITH_MODULES=yes make
+        # BUILD_TLS=yes -- enables built-in TLS support for Redis
+        # BUILD_WITH_MODULES=yes -- builds bundles modules for Redis
+        # LTO=0 -- disables link-time optimization for redisearch
+        #   LTO got enabled starting with redisearch 8.8, but relies on
+        #   `rustc`'s `clang` using the same major version as the system
+        #   `clang`. This does not hold for us.
+        #   On 2026-06-01, `ubuntu-latest` is ubuntu 24.04, which uses
+        #   `clang` 18, but `rustc`'s `clang` is 21. So LTO builds would fail
+        #   and we keep LTO disabled (as before).
+        BUILD_TLS=yes BUILD_WITH_MODULES=yes LTO=0 make
 
         # Copy the built executables out
         mv -v "src/${{ inputs.db-name }}-server" "$HOME/db/redis-server"
