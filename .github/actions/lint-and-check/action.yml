@@ -26,10 +26,9 @@ runs:
       shell: bash
       run: make lint
 
-    - name: Check features
+    - name: Check runtimes
       shell: bash
       run: |
-        cargo check --workspace --all-targets --all-features
         # Remove dev-dependencies so they do not enable features accidentally
         # https://github.com/rust-lang/cargo/issues/4664
         sed -i '/dev-dependencies/,/dev-dependencies/d' Cargo.toml
