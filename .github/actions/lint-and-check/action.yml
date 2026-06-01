@@ -16,20 +16,19 @@ runs:
 
     - name: Build default
       shell: bash
-      run: RUSTFLAGS="-D warnings" cargo build --locked -p redis
+      run: make build
 
     - name: Build all features
       shell: bash
       run: RUSTFLAGS="-D warnings" cargo build --locked -p redis --all-features
 
-    - run: cargo clippy --all-features --all-targets -- -D warnings
-      name: clippy
+    - name: Lint
       shell: bash
+      run: make lint
 
-    - name: Check features
+    - name: Check runtimes
       shell: bash
       run: |
-        cargo check --workspace --all-targets --all-features
         # Remove dev-dependencies so they do not enable features accidentally
         # https://github.com/rust-lang/cargo/issues/4664
         sed -i '/dev-dependencies/,/dev-dependencies/d' Cargo.toml

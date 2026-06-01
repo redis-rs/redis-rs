@@ -223,8 +223,8 @@ jobs:
         with:
           rust-toolchain: ${{ matrix.config.toolchain }}
 
-      - run: cargo fmt --all -- --check
-        name: fmt
+      - name: Check formatting
+        run: make style-check
 
       - name: doc
         run: cargo doc --all-features --no-deps --document-private-items
