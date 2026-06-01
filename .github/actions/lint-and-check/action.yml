@@ -22,9 +22,9 @@ runs:
       shell: bash
       run: RUSTFLAGS="-D warnings" cargo build --locked -p redis --all-features
 
-    - run: cargo clippy --all-features --all-targets -- -D warnings
-      name: clippy
+    - name: Lint
       shell: bash
+      run: make lint
 
     - name: Check features
       shell: bash
