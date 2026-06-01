@@ -16,7 +16,7 @@ runs:
 
     - name: Build default
       shell: bash
-      run: RUSTFLAGS="-D warnings" cargo build --locked -p redis
+      run: make build
 
     - name: Build all features
       shell: bash
