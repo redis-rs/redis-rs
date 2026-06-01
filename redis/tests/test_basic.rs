@@ -9,7 +9,7 @@ mod basic {
     use assert_approx_eq::assert_approx_eq;
     use rand::distr::Alphanumeric;
     use rand::prelude::IndexedRandom;
-    use rand::{Rng, rng};
+    use rand::{RngExt, rng};
 
     use redis::{
         Client, Connection, ConnectionInfo, ConnectionLike, ControlFlow, CopyOptions, ErrorKind,
@@ -2871,7 +2871,7 @@ mod basic {
         let empty_string_digest = calculate_value_digest(&empty_string);
         assert!(is_valid_16_bytes_hex_digest(&empty_string_digest));
 
-        use rand::RngCore;
+        use rand::Rng;
         let mut rng = rand::rng();
         let mut random_bytes = vec![0u8; 1024];
         rng.fill_bytes(&mut random_bytes);

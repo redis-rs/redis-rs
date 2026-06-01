@@ -128,7 +128,7 @@ use arcstr::ArcStr;
 #[cfg(feature = "aio")]
 use futures_util::StreamExt;
 use log::warn;
-use rand::Rng;
+use rand::RngExt;
 #[cfg(feature = "r2d2")]
 use std::sync::Mutex;
 use std::{collections::HashMap, num::NonZeroUsize};
