@@ -38,13 +38,6 @@ mod cluster_async {
 
     use crate::support::*;
 
-    fn broken_pipe_error() -> RedisError {
-        RedisError::from(std::io::Error::new(
-            std::io::ErrorKind::BrokenPipe,
-            "mock-io-error",
-        ))
-    }
-
     async fn smoke_test_connection(mut connection: impl redis::aio::ConnectionLike) {
         cmd("SET")
             .arg("test")
@@ -1125,6 +1118,7 @@ mod cluster_async {
             name,
             {
                 move |cmd: &[u8], port| {
+                    println!("cmd: {} port: {port}", String::from_utf8_lossy(cmd));
                     respond_startup_two_nodes(name, cmd)?;
                     // Error twice with io-error, ensure connection is reestablished w/out calling
                     // other node (i.e., not doing a full slot rebuild)
@@ -1951,32 +1945,165 @@ mod cluster_async {
     }
 
     #[test]
-    fn test_async_cluster_io_error() {
-        let name = "node";
-        let completed = Arc::new(AtomicI32::new(0));
+    fn test_async_cluster_io_error_without_fallback_errors() {
+        let name = "test_async_cluster_io_error_without_fallback_errors";
         let MockEnv {
             runtime,
             async_connection: mut connection,
             handler: _handler,
             ..
         } = MockEnv::with_client_builder(
-            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(2),
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
             name,
-            move |cmd: &[u8], port| {
-                respond_startup_two_nodes(name, cmd)?;
-                // Error twice with io-error, ensure connection is reestablished w/out calling
-                // other node (i.e., not doing a full slot rebuild)
-                match port {
-                    6380 => panic!("Node should not be called"),
-                    _ => match completed.fetch_add(1, Ordering::SeqCst) {
-                        0..=1 => Err(Err(RedisError::from(std::io::Error::new(
-                            std::io::ErrorKind::ConnectionReset,
-                            "mock-io-error",
-                        )))),
-                        _ => Err(Ok(redis_value!("123"))),
-                    },
-                }
-            },
+            MockCluster::new(name, respond_startup_two_nodes)
+                .with(
+                    node(6379)
+                        .respond_startup_calls()
+                        .then_broken_pipe_error()
+                        .forever(),
+                )
+                .with(node(6380).respond_startup_calls())
+                .into_handler(),
+        );
+
+        let first = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<Option<i32>>(&mut connection),
+        );
+        assert_eq!(
+            first.unwrap_err().kind(),
+            ErrorKind::Io,
+            "first call should surface the underlying io error",
+        );
+
+        let second = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<Option<i32>>(&mut connection),
+        );
+        assert_eq!(
+            second.unwrap_err().kind(),
+            ErrorKind::SingleShardConnectionNotFound,
+            "with no in-shard fallback the call should fail with SingleShardConnectionNotFound",
+        );
+    }
+
+    #[test]
+    fn test_async_cluster_io_error_recovers_via_repair() {
+        let name = "test_async_cluster_io_error_recovers_via_repair";
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
+            name,
+            MockCluster::new(name, respond_startup_two_nodes)
+                .with(
+                    node(6379)
+                        .respond_startup_calls()
+                        .then_broken_pipe_error()
+                        .then_value(redis_value!("123"))
+                        .forever(),
+                )
+                .with(node(6380).respond_startup_calls())
+                .into_handler(),
+        );
+
+        let first = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<Option<i32>>(&mut connection),
+        );
+        assert_eq!(
+            first.unwrap_err().kind(),
+            ErrorKind::Io,
+            "first call should surface the underlying connection reset",
+        );
+
+        let second = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<Option<i32>>(&mut connection),
+        );
+        assert_eq!(second, Ok(Some(123)));
+    }
+
+    #[test]
+    fn test_async_cluster_reconnect_does_not_stall_healthy_shard() {
+        let name = "test_async_cluster_reconnect_does_not_stall_healthy_shard";
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
+            name,
+            MockCluster::new(name, respond_startup_two_nodes)
+                .with(
+                    node(6379)
+                        .respond_startup_calls()
+                        .then_broken_pipe_error()
+                        .forever(),
+                )
+                .with(
+                    node(6380)
+                        .respond_startup_calls()
+                        .then_value(redis_value!("123"))
+                        .forever(),
+                )
+                .into_handler(),
+        );
+
+        let downed = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<Option<i32>>(&mut connection),
+        );
+        assert_eq!(downed.unwrap_err().kind(), ErrorKind::Io);
+
+        let healthy = runtime.block_on(
+            cmd("GET")
+                .arg("foo")
+                .query_async::<Option<i32>>(&mut connection)
+                .timeout(futures_time::time::Duration::from_secs(5)),
+        );
+        assert_eq!(
+            healthy.expect("healthy shard stalled behind the dead shard's reconnect"),
+            Ok(Some(123)),
+        );
+    }
+
+    #[test]
+    fn test_async_cluster_read_routes_around_dead_replica() {
+        let name = "test_async_cluster_read_routes_around_dead_replica";
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .retries(1)
+                .read_routing_strategy(RandomReplicaStrategy),
+            name,
+            MockCluster::new(name, respond_startup_with_replica)
+                .with(
+                    node(6380)
+                        .respond_startup_calls()
+                        .then_broken_pipe_error()
+                        .forever(),
+                )
+                .with(
+                    node(6379)
+                        .respond_startup_calls()
+                        .then_value(redis_value!("123"))
+                        .forever(),
+                )
+                .into_handler(),
         );
 
         let value = runtime.block_on(
@@ -1984,7 +2111,6 @@ mod cluster_async {
                 .arg("test")
                 .query_async::<Option<i32>>(&mut connection),
         );
-
         assert_eq!(value, Ok(Some(123)));
     }
 
