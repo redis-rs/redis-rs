@@ -105,7 +105,7 @@ hashbrown = { version = "0.17", optional = true }
 # xxhash support for digest utilities
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
-lru = { version = "0.16", optional = true }
+lru = { version = "0.18", optional = true }
 arcstr = "1.2.0"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
