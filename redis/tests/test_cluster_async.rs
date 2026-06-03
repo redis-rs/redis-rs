@@ -748,6 +748,72 @@ mod cluster_async {
     }
 
     #[test]
+    fn test_async_cluster_readonly_error_refreshes_slots_and_retries() {
+        // Simulates a failover: a write lands on a node that has been demoted to a replica,
+        // which returns READONLY. The client should refresh its (stale) slot map and retry
+        // against the slot's new owner, rather than surfacing the error.
+        let name = "readonly_refreshes_slots";
+
+        let requests = atomic::AtomicUsize::new(0);
+        let started = atomic::AtomicBool::new(false);
+        let refreshed = Arc::new(atomic::AtomicBool::new(false));
+        let refreshed_clone = refreshed.clone();
+
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::new(name, move |cmd: &[u8], port| {
+            if !started.load(atomic::Ordering::SeqCst) {
+                respond_startup(name, cmd)?;
+            }
+            started.store(true, atomic::Ordering::SeqCst);
+
+            if is_connection_check(cmd) {
+                return Err(Ok(redis_value!(simple:"OK")));
+            }
+
+            let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
+
+            match i {
+                // The write hits the demoted (now read-only) node.
+                0 => Err(parse_redis_value(
+                    b"-READONLY You can't write against a read only replica.\r\n",
+                )),
+                _ => {
+                    if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
+                        // The READONLY error should trigger exactly one slot refresh.
+                        assert!(!refreshed.swap(true, Ordering::SeqCst));
+                        Err(Ok(redis_value!([
+                            [0, 1, [name, 6379]],
+                            [2, 16383, [name, 6380]]
+                        ])))
+                    } else {
+                        // After refreshing, the slot's owner is the newly promoted primary.
+                        assert_eq!(port, 6380);
+                        assert!(contains_slice(cmd, b"SET"), "{:?}", std::str::from_utf8(cmd));
+                        Err(Ok(Value::Okay))
+                    }
+                }
+            }
+        });
+
+        let value = runtime.block_on(
+            cmd("SET")
+                .arg("test")
+                .arg("value")
+                .query_async::<Value>(&mut connection),
+        );
+
+        assert_eq!(value, Ok(Value::Okay));
+        assert!(
+            refreshed_clone.load(Ordering::SeqCst),
+            "slots should be refreshed"
+        );
+    }
+
+    #[test]
     fn test_async_cluster_tryagain_exhaust_retries() {
         let name = "tryagain_exhaust_retries";
 
@@ -2001,10 +2067,10 @@ mod cluster_async {
             let completed = completed.clone();
             move |cmd: &[u8], _| {
                 respond_startup_two_nodes(name, cmd)?;
-                // Error twice with io-error, ensure connection is reestablished w/out calling
-                // other node (i.e., not doing a full slot rebuild)
+                // A genuinely non-retryable server error should be surfaced immediately,
+                // without any retry or slot rebuild.
                 completed.fetch_add(1, Ordering::SeqCst);
-                Err(Err((ServerErrorKind::ReadOnly.into(), "").into()))
+                Err(Err((ServerErrorKind::ResponseError.into(), "").into()))
             }
         });
 
@@ -2014,7 +2080,7 @@ mod cluster_async {
                 .query_async::<Option<i32>>(&mut connection),
         );
 
-        assert_matches!(&result, Err(err) if err.kind() == ServerErrorKind::ReadOnly.into());
+        assert_matches!(&result, Err(err) if err.kind() == ServerErrorKind::ResponseError.into());
         assert_eq!(completed.load(Ordering::SeqCst), 1);
     }
 

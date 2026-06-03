@@ -740,17 +740,17 @@ mod cluster {
             let completed = completed.clone();
             move |cmd: &[u8], _| {
                 respond_startup_two_nodes(name, cmd)?;
-                // Error twice with io-error, ensure connection is reestablished w/out calling
-                // other node (i.e., not doing a full slot rebuild)
+                // A genuinely non-retryable server error should be surfaced immediately,
+                // without any retry or slot rebuild.
                 completed.fetch_add(1, Ordering::SeqCst);
-                Err(Err((ServerErrorKind::ReadOnly.into(), "").into()))
+                Err(Err((ServerErrorKind::ResponseError.into(), "").into()))
             }
         });
 
         let result = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
 
         assert!(
-            matches!(&result, Err(err) if err.kind() == ServerErrorKind::ReadOnly.into()),
+            matches!(&result, Err(err) if err.kind() == ServerErrorKind::ResponseError.into()),
             "{result:?}",
         );
         assert_eq!(completed.load(Ordering::SeqCst), 1);
