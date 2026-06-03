@@ -792,7 +792,11 @@ mod cluster_async {
                     } else {
                         // After refreshing, the slot's owner is the newly promoted primary.
                         assert_eq!(port, 6380);
-                        assert!(contains_slice(cmd, b"SET"), "{:?}", std::str::from_utf8(cmd));
+                        assert!(
+                            contains_slice(cmd, b"SET"),
+                            "{:?}",
+                            std::str::from_utf8(cmd)
+                        );
                         Err(Ok(Value::Okay))
                     }
                 }
