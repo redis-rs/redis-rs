@@ -3052,7 +3052,13 @@ assert_eq!(invok_2_res, 5);
     /// BF.EXISTS <key> <item>
     /// ```
     ///
+    /// # Caveats
+    ///
+    /// If `key` is not a Bloom filter, Redis' module yields `Ok(false)` as if `item` was missing,
+    /// while Valkey yields a `WRONGKEY` error.
+    ///
     /// [Redis Docs](https://redis.io/commands/BF.EXISTS)
+    /// [Valkey Docs](https://valkey.io/commands/bf.exists/)
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_exists<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, value: V) -> (bool) {
@@ -3163,7 +3169,14 @@ assert_eq!(invok_2_res, 5);
     /// BF.MEXISTS <key> <item1> <item2> ...
     /// ```
     ///
+    /// # Caveats
+    ///
+    /// If `key` is not a Bloom filter, Redis' module yields an array of `false`s as if all items
+    /// were missing (although its documentation as of 2026-04-16 claims to raise an error), while
+    /// Valkey yields a `WRONGKEY` error.
+    ///
     /// [Redis Docs](https://redis.io/commands/BF.MEXISTS)
+    /// [Valkey Docs](https://valkey.io/commands/bf.mexists/)
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_mexists<K: ToSingleRedisArg, V: ToRedisArgs>(key: K, items: &'a [V]) -> (Vec<bool>) {

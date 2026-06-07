@@ -36,10 +36,11 @@ jobs:
             {  db-org: redis, db-name: redis, db-version: 7.4.9, json-module-version: v2.6.22 },
             {  db-org: redis, db-name: redis, db-version: 8.0.6, json-module-version: bundled, bloom-module-version: bundled },
             {  db-org: redis, db-name: redis, db-version: 8.8.0, json-module-version: bundled, bloom-module-version: bundled },
+            # valkey-bloom has some quirks with Valkey <8.1, so we only test it on >=8.1
             {  db-org: valkey-io, db-name: valkey, db-version: 7.2.13, json-module-version: v2.6.22 },
             {  db-org: valkey-io, db-name: valkey, db-version: 8.0.9, json-module-version: v2.6.22 },
             # Skipping ValKey 8.1 as it's too similar to 8.0
-            {  db-org: valkey-io, db-name: valkey, db-version: 9.0.4, json-module-version: v2.6.22 },
+            {  db-org: valkey-io, db-name: valkey, db-version: 9.0.4, json-module-version: v2.6.22, bloom-module-version: "valkey-bloom:1.0.1" },
             # Skipping ValKey 9.1 as it's too similar to 9.0
           ]
 
@@ -151,6 +152,37 @@ jobs:
         if: matrix.config.json-module-version != ''
         run: make test-module-json
 
+      - name: Load Valkey Bloom module from cache
+        if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:')
+        id: cache-valkey-bloom
+        uses: actions/cache@v5
+        with:
+          path: |
+            /tmp/valkey-bloom/target/release/libvalkey_bloom.so
+          key: ${{ runner.os }}-valkey-bloom-${{ matrix.config.bloom-module-version }}
+
+      - name: Build Valkey Bloom repo
+        if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:') && steps.cache-valkey-bloom.cache-hit != 'true'
+        env:
+          VALKEY_BLOOM: ${{matrix.config.bloom-module-version}}
+        shell: bash
+        run: |
+          # Fetch and unpack valkey-bloom's code
+          cd /tmp
+          wget "https://github.com/valkey-io/valkey-bloom/archive/refs/tags/${VALKEY_BLOOM#*:}.tar.gz"
+          tar -xzvf "${VALKEY_BLOOM#*:}.tar.gz"
+          rm -rf "valkey-bloom"
+          mv "valkey-bloom-${VALKEY_BLOOM#*:}" "valkey-bloom"
+
+          # Build it
+          cd "valkey-bloom"
+          RUSTFLAGS="-D warnings" cargo build --all --all-targets  --release
+
+      - name: Copy Valkey Bloom into place
+        if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:')
+        run: |
+          cp /tmp/valkey-bloom/target/release/libvalkey_bloom.so "$REDISRS_REDIS_BLOOM_PATH"
+
       - name: Run RedisBloom tests
         if: matrix.config.bloom-module-version != ''
         run: make test-module-bloom
@@ -180,6 +212,20 @@ jobs:
           db-org: ${{ matrix.config.db-org }}
           db-name: ${{ matrix.config.db-name }}
           db-version: ${{ matrix.config.db-version }}
+
+      - name: Load Valkey Bloom module from cache
+        if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:')
+        id: cache-valkey-bloom
+        uses: actions/cache@v5
+        with:
+          path: |
+            /tmp/valkey-bloom/target/release/libvalkey_bloom.so
+          key: ${{ runner.os }}-valkey-bloom-${{ matrix.config.bloom-module-version }}
+
+      - name: Copy Valkey Bloom into place
+        if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:')
+        run: |
+          cp /tmp/valkey-bloom/target/release/libvalkey_bloom.so "$REDISRS_REDIS_BLOOM_PATH"
 
       - name: Copy bundled RedisBloom into place
         if: matrix.config.bloom-module-version == 'bundled'
