@@ -202,18 +202,6 @@ impl TestClusterContext {
         }
     }
 
-    /// Gets the Redis version of the first server in the cluster
-    ///
-    /// # Panics
-    ///
-    /// As this function is only meant to be used during testing, it panics upon any issues.
-    pub fn get_version(&self) -> super::Version {
-        let server = self.cluster.servers.first().unwrap();
-        let mut conn = self.build_single_client_connection(server).unwrap();
-
-        super::get_version(&mut conn)
-    }
-
     pub fn get_ports(&self) -> Vec<u16> {
         self.nodes
             .iter()
@@ -225,5 +213,14 @@ impl TestClusterContext {
                 }
             })
             .collect()
+    }
+}
+
+impl super::TestContextVersioning for TestClusterContext {
+    fn get_version(&self) -> super::Version {
+        let server = self.cluster.servers.first().unwrap();
+        let mut conn = self.build_single_client_connection(server).unwrap();
+
+        super::get_version(&mut conn)
     }
 }
