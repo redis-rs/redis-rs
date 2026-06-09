@@ -623,19 +623,23 @@ impl<T: FromRedisValue> FromRedisValue for RedisResult<T> {
 #[cfg(feature = "aio")]
 pub type RedisFuture<'a, T> = futures_util::future::BoxFuture<'a, RedisResult<T>>;
 
-/// An info dictionary type.
-#[derive(Debug, Clone)]
-pub struct InfoDict {
-    map: HashMap<String, Value>,
-}
-
+/// An info dictionary type for `INFO`s response.
+///
 /// This type provides convenient access to key/value data returned by
-/// the "INFO" command.  It acts like a regular mapping but also has
+/// the `INFO` command.  It acts like a regular mapping but also has
 /// a convenience method `get` which can return data in the appropriate
 /// type.
 ///
 /// For instance this can be used to query the server for the role it's
 /// in (master, slave) etc:
+///
+/// # Caveats
+///
+/// As this struct internally uses a [`HashMap`], it only collects the last value for each key, if
+/// they occur multiple times. So if a key occurs multiple times (e.g.: `module`), this struct holds
+/// only its last value.
+///
+/// # Examples
 ///
 /// ```rust,no_run
 /// # fn do_something() -> redis::RedisResult<()> {
@@ -645,6 +649,11 @@ pub struct InfoDict {
 /// let role : Option<String> = info.get("role");
 /// # Ok(()) }
 /// ```
+#[derive(Debug, Clone)]
+pub struct InfoDict {
+    map: HashMap<String, Value>,
+}
+
 impl InfoDict {
     /// Creates a new info dictionary from a string in the response of
     /// the INFO command.  Each line is a key, value pair with the
