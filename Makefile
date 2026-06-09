@@ -73,6 +73,12 @@ lint:
 	@rustup component add clippy 2> /dev/null
 	cargo clippy --workspace --all-targets --all-features -- -D clippy::all -D warnings
 
+fix:
+	@rustup component add rustfmt 2> /dev/null
+	@rustup component add clippy 2> /dev/null
+	cargo fmt --all
+	cargo clippy --workspace --all-targets --all-features --fix --allow-dirty --allow-staged -- -D clippy::all -D warnings
+
 fuzz:
 	cd afl/parser/ && \
 	cargo afl build --bin fuzz-target && \
