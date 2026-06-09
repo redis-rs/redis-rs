@@ -6,9 +6,10 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use crate::support::{build_single_client, start_tls_crypto_provider};
-use assert_matches::assert_matches;
+use redis::Connection;
 use redis::ConnectionInfo;
 use redis::ProtocolVersion;
+use redis::RedisResult;
 #[cfg(feature = "cluster-async")]
 use redis::aio::ConnectionLike;
 #[cfg(feature = "cluster-async")]
@@ -169,16 +170,24 @@ impl TestClusterContext {
         panic!("failed waiting for cluster to be ready");
     }
 
+    /// Gets a single direct connection to the given server
+    ///
+    /// # Arguments
+    ///
+    /// * `server` - The server to connect to
+    pub fn build_single_client_connection(&self, server: &RedisServer) -> RedisResult<Connection> {
+        let client = build_single_client(
+            server.connection_info(),
+            &self.cluster.tls_paths,
+            self.mtls_enabled,
+        )?;
+
+        client.get_connection()
+    }
+
     pub fn disable_default_user(&self) {
         for server in &self.cluster.servers {
-            let client = build_single_client(
-                server.connection_info(),
-                &self.cluster.tls_paths,
-                self.mtls_enabled,
-            )
-            .unwrap();
-
-            let mut con = client.get_connection().unwrap();
+            let mut con = self.build_single_client_connection(server).unwrap();
             redis::cmd("ACL")
                 .arg("SETUSER")
                 .arg("default")
@@ -187,14 +196,21 @@ impl TestClusterContext {
                 .unwrap();
 
             // subsequent unauthenticated command should fail:
-            if let Ok(mut con) = client.get_connection() {
-                assert_matches!(redis::cmd("PING").exec(&mut con), Err(_));
+            if let Ok(mut con) = self.build_single_client_connection(server) {
+                redis::cmd("PING").exec(&mut con).unwrap_err();
             }
         }
     }
 
+    /// Gets the Redis version of the first server in the cluster
+    ///
+    /// # Panics
+    ///
+    /// As this function is only meant to be used during testing, it panics upon any issues.
     pub fn get_version(&self) -> super::Version {
-        let mut conn = self.connection();
+        let server = self.cluster.servers.first().unwrap();
+        let mut conn = self.build_single_client_connection(server).unwrap();
+
         super::get_version(&mut conn)
     }
 
