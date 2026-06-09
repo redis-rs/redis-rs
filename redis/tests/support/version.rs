@@ -62,6 +62,16 @@ pub fn get_redis_binary_version() -> Option<Version> {
     Some((versions[0], versions[1], versions[2]))
 }
 
+/// Server version extraction and matching
+pub trait TestContextVersioning {
+    /// Gets the Redis version for the first server in the context
+    ///
+    /// # Panics
+    ///
+    /// As this function is only meant to be used during testing, it panics upon any issues.
+    fn get_version(&self) -> Version;
+}
+
 /// Macro to run tests only if the Redis version meets the minimum requirement.
 /// If the version is insufficient, the test is skipped with a message.
 #[macro_export]

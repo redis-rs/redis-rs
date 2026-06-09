@@ -375,8 +375,10 @@ impl TestContext {
                 .await
         }
     }
+}
 
-    pub fn get_version(&self) -> Version {
+impl TestContextVersioning for TestContext {
+    fn get_version(&self) -> Version {
         let mut conn = self.connection();
         get_version(&mut conn)
     }
