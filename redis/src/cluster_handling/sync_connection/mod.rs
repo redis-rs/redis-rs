@@ -903,6 +903,17 @@ where
                                 .wait_time_for_retry(retries);
                             thread::sleep(sleep_time);
                         }
+                        RetryMethod::RefreshSlotsAndRetry => {
+                            // Stale slot map (e.g. READONLY after failover). Sleep first to give
+                            // the cluster time to converge, then refresh so the retry (by slot,
+                            // hence `redirected` stays None) routes on the freshest topology.
+                            let sleep_time = self
+                                .cluster_params
+                                .retry_params
+                                .wait_time_for_retry(retries);
+                            thread::sleep(sleep_time);
+                            self.refresh_slots()?;
+                        }
                         RetryMethod::Reconnect => {
                             if *self.auto_reconnect.borrow() {
                                 // if the connection is no longer valid, we should remove it.
