@@ -2424,10 +2424,7 @@ mod cluster_async {
     mod pubsub {
         use super::*;
 
-        /// Yields `true` iff Redis is at least version 7
-        fn check_if_supports_redis_7(ctx: &TestClusterContext) -> bool {
-            ctx.get_version() >= REDIS_VERSION_CE_7_0
-        }
+        use crate::skip_if_context_does_not_support;
 
         async fn subscribe_to_channels(
             pubsub_conn: &mut ClusterConnection,
@@ -2534,7 +2531,7 @@ mod cluster_async {
 
             let (mut publish_conn, mut pubsub_conn) =
                 join!(ctx.async_connection(), ctx.async_connection());
-            let supports_redis_7 = check_if_supports_redis_7(&ctx);
+            let supports_redis_7 = ctx.supports(&REDIS_VERSION_CE_7_0);
 
             subscribe_to_channels(&mut pubsub_conn, &mut rx, supports_redis_7).await;
 
@@ -2553,7 +2550,7 @@ mod cluster_async {
                 ctx.async_connection_with_config(config.clone()),
                 ctx.async_connection_with_config(config)
             );
-            let supports_redis_7 = check_if_supports_redis_7(&ctx);
+            let supports_redis_7 = ctx.supports(&REDIS_VERSION_CE_7_0);
 
             subscribe_to_channels(&mut pubsub_conn, &mut rx, supports_redis_7).await;
 
@@ -2565,12 +2562,9 @@ mod cluster_async {
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
                 builder.use_protocol(ProtocolVersion::RESP3)
             });
+            skip_if_context_does_not_support!(ctx, &REDIS_VERSION_CE_7_0);
 
             let mut pubsub_conn = ctx.async_connection().await;
-            if !check_if_supports_redis_7(&ctx) {
-                return;
-            }
-
             let _: () = pubsub_conn.ssubscribe("foo").await.unwrap();
 
             let res = cmd("pubsub")
@@ -2593,7 +2587,7 @@ mod cluster_async {
 
             let (mut publish_conn, mut pubsub_conn) =
                 join!(ctx.async_connection(), ctx.async_connection());
-            let supports_redis_7 = check_if_supports_redis_7(&ctx);
+            let supports_redis_7 = ctx.supports(&REDIS_VERSION_CE_7_0);
 
             let _: () = pubsub_conn.subscribe("regular-phonewave").await.unwrap();
             let push = get_push(&mut rx).await;
@@ -2682,7 +2676,7 @@ mod cluster_async {
             });
 
             let mut pubsub_conn = ctx.async_connection().await;
-            let supports_redis_7 = check_if_supports_redis_7(&ctx);
+            let supports_redis_7 = ctx.supports(&REDIS_VERSION_CE_7_0);
 
             subscribe_to_channels(&mut pubsub_conn, &mut rx, supports_redis_7).await;
 
@@ -2708,7 +2702,7 @@ mod cluster_async {
             });
 
             let mut pubsub_conn = ctx.async_connection().await;
-            let supports_redis_7 = check_if_supports_redis_7(&ctx);
+            let supports_redis_7 = ctx.supports(&REDIS_VERSION_CE_7_0);
 
             let _: () = pubsub_conn
                 .subscribe(&[
@@ -2836,7 +2830,7 @@ mod cluster_async {
 
             let (mut publish_conn, mut pubsub_conn) =
                 join!(ctx.async_connection(), ctx.async_connection());
-            let supports_redis_7 = check_if_supports_redis_7(&ctx);
+            let supports_redis_7 = ctx.supports(&REDIS_VERSION_CE_7_0);
 
             subscribe_to_channels(&mut pubsub_conn, &mut rx, supports_redis_7).await;
 
