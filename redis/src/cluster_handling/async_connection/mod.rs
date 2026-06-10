@@ -873,10 +873,10 @@ where
             .slot_addr_for_route(&route, self.routing_strategy.as_deref())
             .cloned();
 
-        if let Some(ref addr) = preferred {
-            if let Some(conn) = read_guard.0.get(addr).and_then(ConnState::connected) {
-                return Ok((addr.clone(), conn));
-            }
+        if let Some(ref addr) = preferred
+            && let Some(conn) = read_guard.0.get(addr).and_then(ConnState::connected)
+        {
+            return Ok((addr.clone(), conn));
         }
 
         for cand in read_guard.1.shard_fallback_addrs(&route) {
