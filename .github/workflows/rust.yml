@@ -297,7 +297,7 @@ jobs:
 
   windows-build:
     needs: [lint, build-and-test, examples]
-    runs-on: windows-latest
+    runs-on: windows-2022  # Locked to `2022` because of #2124
     steps:
       - name: Checkout
         uses: actions/checkout@v6
