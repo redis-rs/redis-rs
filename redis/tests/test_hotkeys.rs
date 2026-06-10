@@ -317,8 +317,7 @@ mod hotkeys_cluster {
     /// Returns `(cluster_ctx, primary_info, hot_key, target_slot)`.
     ///
     /// The version check is performed via a direct standalone connection to a single
-    /// primary; `TestClusterContext::get_version()` would broadcast `INFO` to every
-    /// node and fail to parse the multi-node map response.
+    /// primary
     fn setup_cluster_and_target(
         protocol: ProtocolVersion,
     ) -> Option<(TestClusterContext, ConnectionInfo, String, u16)> {
@@ -330,9 +329,7 @@ mod hotkeys_cluster {
         let port = port_of(info.addr());
         let mut direct = direct_connection(info.clone(), protocol);
 
-        let server_info: redis::InfoDict =
-            redis::Cmd::new().arg("INFO").query(&mut direct).unwrap();
-        let version = parse_version(server_info);
+        let version = cluster_ctx.get_version();
         if version < REDIS_VERSION_CE_8_6 {
             eprintln!("Skipping: Redis version {version:?} < {REDIS_VERSION_CE_8_6:?}");
             return None;

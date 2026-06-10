@@ -518,15 +518,6 @@ pub fn get_redis_binary_version() -> Option<Version> {
     Some((versions[0], versions[1], versions[2]))
 }
 
-pub fn is_major_version(expected_version: u16, version: Version) -> bool {
-    expected_version <= version.0
-}
-
-pub fn is_version(expected_major_minor: (u16, u16), version: Version) -> bool {
-    expected_major_minor.0 < version.0
-        || (expected_major_minor.0 == version.0 && expected_major_minor.1 <= version.1)
-}
-
 // Redis version constants for version-gated tests
 pub const REDIS_VERSION_CE_7_0: Version = (7, 0, 0);
 pub const REDIS_VERSION_CE_7_2: Version = (7, 2, 0);
