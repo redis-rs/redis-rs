@@ -70,6 +70,32 @@ pub trait TestContextVersioning {
     ///
     /// As this function is only meant to be used during testing, it panics upon any issues.
     fn get_version(&self) -> Version;
+
+    /// Returns whether the context's server has at least the given Redis version
+    fn supports(&self, version: &Version) -> bool {
+        self.get_version() >= *version
+    }
+}
+
+/// Skips the current test if it does not support the given Redis version
+///
+/// # Arguments
+///
+/// * `$ctx` - The context the test uses for its servers
+/// * `$minimum_required_version` - The minimum required Redis version
+/// * `$ret` - (Optional. Default: `()`) The value to return to skip the test
+#[macro_export]
+macro_rules! skip_if_context_does_not_support {
+    ($ctx:expr, $minimum_required_version:expr) => {{
+        $crate::skip_if_context_does_not_support!($ctx, $minimum_required_version, ())
+    }};
+    ($ctx:expr, $minimum_required_version:expr, $ret:expr) => {{
+        if !$ctx.supports($minimum_required_version) {
+            eprintln!("Skipping the test because the current version of Redis doesn't match the minimum required version {:?}.",
+            $minimum_required_version);
+            return $ret;
+        }
+    }};
 }
 
 /// Macro to run tests only if the Redis version meets the minimum requirement.
@@ -78,13 +104,8 @@ pub trait TestContextVersioning {
 macro_rules! run_test_if_version_supported {
     ($minimum_required_version:expr) => {{
         let ctx = $crate::support::TestContext::new();
-        let redis_version = ctx.get_version();
 
-        if redis_version < *$minimum_required_version {
-            eprintln!("Skipping the test because the current version of Redis {:?} doesn't match the minimum required version {:?}.",
-            redis_version, $minimum_required_version);
-            return;
-        }
+        $crate::skip_if_context_does_not_support!(ctx, $minimum_required_version);
 
         ctx
     }};
@@ -125,3 +146,7 @@ macro_rules! run_test_if_redis_binary_version_supported {
         }
     }};
 }
+
+// As this module is included in many integration tests, adding unit tests here would also (re)run
+// them during each of those intregration tests. Hence, we move out unit tests of this module into
+// `test_support.rs`
