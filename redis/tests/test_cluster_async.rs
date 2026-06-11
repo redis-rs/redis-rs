@@ -1,4 +1,5 @@
 #![cfg(feature = "cluster-async")]
+#[macro_use]
 mod support;
 
 #[cfg(test)]
@@ -37,7 +38,6 @@ mod cluster_async {
     use tokio::{join, sync::mpsc::UnboundedReceiver};
 
     use crate::support::*;
-    use crate::{run_test_if_engine_is_valkey, run_test_if_redis_binary_version_supported};
 
     fn broken_pipe_error() -> RedisError {
         RedisError::from(std::io::Error::new(
@@ -72,8 +72,7 @@ mod cluster_async {
 
     #[async_test]
     async fn test_async_cluster_numbered_database() {
-        run_test_if_engine_is_valkey!();
-        run_test_if_redis_binary_version_supported!(VALKEY_VERSION_CE_9_0);
+        run_test_if_version_supported!(VALKEY_VERSION_CE_9_0);
 
         let cluster = TestClusterContext::new_with_config_and_builder(
             RedisClusterConfiguration {
@@ -2479,8 +2478,6 @@ mod cluster_async {
 
     mod pubsub {
         use super::*;
-
-        use crate::skip_if_context_does_not_support;
 
         async fn subscribe_to_channels(
             pubsub_conn: &mut ClusterConnection,
