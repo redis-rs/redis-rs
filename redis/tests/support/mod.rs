@@ -521,6 +521,7 @@ pub fn get_redis_binary_version() -> Option<Version> {
 // Redis version constants for version-gated tests
 pub const REDIS_VERSION_CE_7_0: Version = (7, 0, 0);
 pub const REDIS_VERSION_CE_7_2: Version = (7, 2, 0);
+pub const REDIS_VERSION_CE_7_4: Version = (7, 4, 0);
 pub const REDIS_VERSION_CE_8_0: Version = (8, 0, 0);
 pub const REDIS_VERSION_CE_8_2: Version = (8, 1, 240);
 pub const REDIS_VERSION_CE_8_4: Version = (8, 3, 224);
