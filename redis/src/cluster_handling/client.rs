@@ -5,7 +5,14 @@ use crate::auth::StreamingCredentialsProvider;
 #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
 use crate::caching::{CacheConfig, CacheManager};
 use crate::client::DEFAULT_CONNECTION_TIMEOUT;
+use crate::cluster_handling::NodeAddress;
 use crate::cluster_handling::read_routing::{RandomReplicaStrategy, ReadRoutingStrategyFactory};
+
+/// A predicate that decides which replicas a `ClusterClient` connects to.
+///
+/// Returning `true` keeps the replica; `false` drops it before it enters the
+/// slot map. See [`ClusterClientBuilder::replica_filter`].
+pub type ReplicaFilter = dyn Fn(&NodeAddress) -> bool + Send + Sync;
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::errors::{ErrorKind, RedisError};
 #[cfg(feature = "cluster-async")]
@@ -46,6 +53,7 @@ struct BuilderParams {
     password: Option<ArcStr>,
     username: Option<ArcStr>,
     read_routing_factory: Option<Arc<dyn ReadRoutingStrategyFactory>>,
+    replica_filter: Option<Arc<ReplicaFilter>>,
     tls: Option<TlsMode>,
     #[cfg(feature = "tls-rustls")]
     certs: Option<TlsCertificates>,
@@ -113,6 +121,7 @@ pub(crate) struct ClusterParams {
     pub(crate) password: Option<ArcStr>,
     pub(crate) username: Option<ArcStr>,
     pub(crate) read_routing_factory: Option<Arc<dyn ReadRoutingStrategyFactory>>,
+    pub(crate) replica_filter: Option<Arc<ReplicaFilter>>,
     /// tls indicates tls behavior of connections.
     /// When Some(TlsMode), connections use tls and verify certification depends on TlsMode.
     /// When None, connections do not use tls.
@@ -174,6 +183,7 @@ impl ClusterParams {
             password: value.password,
             username: value.username,
             read_routing_factory: value.read_routing_factory,
+            replica_filter: value.replica_filter,
             tls: value.tls,
             retry_params: value.retries_configuration,
             tls_params,
@@ -497,6 +507,55 @@ impl ClusterClientBuilder {
         strategy: impl ReadRoutingStrategyFactory + 'static,
     ) -> ClusterClientBuilder {
         self.builder_params.read_routing_factory = Some(Arc::new(strategy));
+        self
+    }
+
+    /// Restricts which replicas this client connects to.
+    ///
+    /// By default, `ClusterClient` opens a TCP connection to every node returned by
+    /// `CLUSTER SLOTS` — the primary plus every replica of every shard. For
+    /// deployments with many replicas per shard, this can overwhelm the cluster as
+    /// each application instance multiplies the connection fan-out.
+    ///
+    /// The supplied predicate is called once per replica each time the topology is
+    /// (re)discovered. Returning `true` keeps the replica; returning `false` drops
+    /// it before the slot map is built, so the client never opens a connection to
+    /// it and the [`ReadRoutingStrategy`](crate::cluster_read_routing::ReadRoutingStrategy)
+    /// never sees it. Primaries are never passed to the filter.
+    ///
+    /// If the filter drops every replica of a shard, reads for that shard fall back
+    /// to the primary, just as if the shard had no replicas.
+    ///
+    /// To deterministically partition replicas across multiple client instances
+    /// without coordination, hash the [`NodeAddress`] and assign by modulo:
+    ///
+    /// ```rust,no_run
+    /// use redis::cluster::{ClusterClientBuilder, NodeAddress};
+    /// use std::hash::{BuildHasher, Hasher, RandomState};
+    ///
+    /// // This instance owns shard 2 of 4.
+    /// let shard_id: u64 = 2;
+    /// let shard_count: u64 = 4;
+    /// let hasher = RandomState::new();
+    ///
+    /// let client = ClusterClientBuilder::new(vec!["redis://127.0.0.1:6379/"])
+    ///     .replica_filter(move |addr: &NodeAddress| {
+    ///         let mut h = hasher.build_hasher();
+    ///         h.write(addr.host().as_bytes());
+    ///         h.write_u16(addr.port());
+    ///         h.finish() % shard_count == shard_id
+    ///     })
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    ///
+    /// Note: use a stable hasher (not `RandomState`) if you need the same client
+    /// to pick the same replicas across restarts.
+    pub fn replica_filter<F>(mut self, filter: F) -> ClusterClientBuilder
+    where
+        F: Fn(&NodeAddress) -> bool + Send + Sync + 'static,
+    {
+        self.builder_params.replica_filter = Some(Arc::new(filter));
         self
     }
 
@@ -924,6 +983,29 @@ mod tests {
     fn connection_concurrency_limit_default() {
         let client = ClusterClient::new(get_connection_data()).unwrap();
         assert_eq!(client.cluster_params.connection_concurrency_limit, None);
+    }
+
+    #[test]
+    fn replica_filter_default_is_none() {
+        let client = ClusterClient::new(get_connection_data()).unwrap();
+        assert!(client.cluster_params.replica_filter.is_none());
+    }
+
+    #[test]
+    fn replica_filter_is_stored() {
+        let client = ClusterClientBuilder::new(get_connection_data())
+            .replica_filter(|addr| addr.port() == 6379)
+            .build()
+            .unwrap();
+        let filter = client
+            .cluster_params
+            .replica_filter
+            .as_ref()
+            .expect("filter should be set");
+        let kept = super::NodeAddress::new("h", 6379);
+        let dropped = super::NodeAddress::new("h", 6380);
+        assert!(filter(&kept));
+        assert!(!filter(&dropped));
     }
 
     #[cfg(feature = "cluster-async")]

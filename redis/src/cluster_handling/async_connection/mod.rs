@@ -904,7 +904,11 @@ where
                     .req_packed_command(&slot_refresh_cmd)
                     .await
                     .and_then(|value| value.extract_error())?;
-                let v: Vec<SlotRange> = parse_slots(value, addr.host())?;
+                let v: Vec<SlotRange> = parse_slots(
+                    value,
+                    addr.host(),
+                    self.cluster_params.replica_filter.as_deref(),
+                )?;
                 build_slot_map(slots, v)
             }
             .await;
@@ -1543,12 +1547,11 @@ where
             return Err(err);
         }
     };
-    // If READONLY is sent to primary nodes, it will have no effect.
-    // We set this unconditionally, because we don't know whether we'll be making read calls
-    // to replicas. (We allow overriding routing per-call)
-    let mut readonly_cmd = cmd("READONLY");
-    readonly_cmd.skip_concurrency_limit = true;
-    conn.req_packed_command(&readonly_cmd).await?;
+    if params.read_routing_factory.is_some() {
+        let mut readonly_cmd = cmd("READONLY");
+        readonly_cmd.skip_concurrency_limit = true;
+        conn.req_packed_command(&readonly_cmd).await?;
+    }
     Ok(conn)
 }
 
