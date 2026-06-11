@@ -21,6 +21,90 @@ pub type Version = (u32, u32, u32);
 /// Software component name along with its version
 pub type Component<'a> = (&'a str, Version);
 
+/// Matcher for [`Component`]s
+pub struct ComponentMatcher<'a> {
+    conjunctive_parts: Vec<Vec<Component<'a>>>,
+}
+
+impl<'a> ComponentMatcher<'a> {
+    /// Checks if this matcher matches the given available components
+    ///
+    /// # Arguments
+    ///
+    /// * `available_components` - The available components to check against
+    pub fn matches(&self, available_components: &AvailableComponents) -> bool {
+        self.conjunctive_parts.iter().all(|disjunctive_parts| {
+            disjunctive_parts
+                .iter()
+                .any(|component| available_components.supports(*component))
+        })
+    }
+}
+
+/// Matcher for a single [`Component`]
+impl<'a> From<Component<'a>> for ComponentMatcher<'a> {
+    fn from(value: Component<'a>) -> Self {
+        Self {
+            conjunctive_parts: vec![vec![value]],
+        }
+    }
+}
+
+/// Disjuntive (`OR`) matcher for a list of [`Component`]s
+///
+/// If any of the given components are supported, it's a match.
+impl<'a> From<&[Component<'a>]> for ComponentMatcher<'a> {
+    fn from(value: &[Component<'a>]) -> Self {
+        Self {
+            conjunctive_parts: vec![value.to_vec()],
+        }
+    }
+}
+
+/// Conjunctive (`AND`) matcher for a list of disjunctively (`OR`) matched lists of [`Component`]s
+///
+/// If all elements have at least one supported subelement, it's a match.
+impl<'a> From<&[&[Component<'a>]]> for ComponentMatcher<'a> {
+    fn from(value: &[&[Component<'a>]]) -> Self {
+        Self {
+            conjunctive_parts: value
+                .iter()
+                .map(|disjunctive_part| disjunctive_part.to_vec())
+                .collect(),
+        }
+    }
+}
+
+/// Macros to provide array implementations for matchers' slice implementations
+///
+/// Rust can auto-coerce array to slices. But with generic arguments, this
+/// array-to-slice-auto-coercion does not kick in. So one would have to convert manually. To avoid
+/// this for the common cases, this macro implements coercing `From`s. for a given array length
+///
+/// # Arguments
+///
+/// * `$n` - The array lengths to implement coercing `From`s for.
+macro_rules! matcher_array_impls {
+    ($n:expr) => {
+        impl<'a> From<[Component<'a>; $n]> for ComponentMatcher<'a> {
+            fn from(value: [Component<'a>; $n]) -> Self {
+                let coerced_value: &[Component<'a>] = &value;
+                Self::from(coerced_value)
+            }
+        }
+
+        impl<'a> From<[&[Component<'a>]; $n]> for ComponentMatcher<'a> {
+            fn from(value: [&[Component<'a>]; $n]) -> Self {
+                let coerced_value: &[&[Component<'a>]] = &value;
+                Self::from(coerced_value)
+            }
+        }
+    };
+}
+matcher_array_impls!(1);
+matcher_array_impls!(2);
+matcher_array_impls!(3);
+
 #[derive(Clone)]
 pub struct AvailableComponents {
     /// The available components' versions by their name
@@ -246,8 +330,10 @@ pub trait TestContextVersioning {
     fn get_available_components(&self) -> AvailableComponents;
 
     /// Returns whether the context's server has the given component in at least the given version
-    fn supports(&self, component: Component) -> bool {
-        self.get_available_components().supports(component)
+    fn supports<'a, T: Into<ComponentMatcher<'a>>>(&self, into_matcher: T) -> bool {
+        into_matcher
+            .into()
+            .matches(&self.get_available_components())
     }
 }
 
