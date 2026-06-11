@@ -3026,3 +3026,396 @@ mod idempotency_tests {
         );
     }
 }
+
+mod xnack_tests {
+    use super::*;
+    use rstest::rstest;
+
+    const GROUP: &str = "xnack_group";
+    const CONSUMER: &str = "xnack_consumer1";
+    const CONSUMER2: &str = "xnack_consumer2";
+    const NON_EXISTENT_MESSAGE_ID: &str = "9999999-0";
+
+    // Create a stream with `n` entries delivered to `consumer` and return the list of delivered ids.
+    fn xnack_setup_pending(
+        con: &mut Connection,
+        stream: &str,
+        group: &str,
+        consumer: &str,
+        n: i32,
+    ) -> Vec<String> {
+        con.xgroup_create_mkstream(stream, group, "$").unwrap();
+        xadd_keyrange(con, stream, 0, n);
+        let reply = con
+            .xread_options(
+                &[stream],
+                &[">"],
+                &StreamReadOptions::default()
+                    .group(group, consumer)
+                    .count(n as usize),
+            )
+            .unwrap()
+            .unwrap();
+        reply.keys[0].ids.iter().map(|s| s.id.clone()).collect()
+    }
+
+    // Read the delivery counter for the given id from the group's PEL.
+    fn pel_times_delivered(con: &mut Connection, stream: &str, group: &str, id: &str) -> usize {
+        let reply = con.xpending_count(stream, group, "-", "+", 100).unwrap();
+        reply
+            .ids
+            .into_iter()
+            .find(|e| e.id == id)
+            .unwrap_or_else(|| panic!("id {id} not present in PEL"))
+            .times_delivered
+    }
+
+    #[test]
+    fn test_xnack_basic_returns_count_of_nacked_messages() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_8);
+        let mut con = ctx.connection();
+
+        let stream = "test_xnack_basic";
+        let ids = xnack_setup_pending(&mut con, stream, GROUP, CONSUMER, 3);
+
+        let nacked = con
+            .xnack(stream, GROUP, StreamNackMode::Fail, &ids)
+            .unwrap();
+        assert_eq!(nacked, 3);
+    }
+
+    #[rstest]
+    #[case(StreamNackMode::Silent)]
+    #[case(StreamNackMode::Fail)]
+    #[case(StreamNackMode::Fatal)]
+    fn test_xnack_marks_message_as_unowned(#[case] mode: StreamNackMode) {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_8);
+        let mut con = ctx.connection();
+
+        let stream = "test_xnack_unowned";
+        let ids = xnack_setup_pending(&mut con, stream, GROUP, CONSUMER, 3);
+
+        con.xnack(stream, GROUP, mode, &ids).unwrap();
+
+        // After NACK the messages remain in the PEL but are unowned, so their last consumer should be an empty string.
+        let reply = con.xpending_count(stream, GROUP, "-", "+", 3).unwrap();
+        assert_eq!(reply.ids.len(), 3);
+        for entry in &reply.ids {
+            assert_eq!(entry.consumer, "");
+        }
+    }
+
+    #[test]
+    fn test_xnack_silent_decrements_delivery_counter() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_8);
+        let mut con = ctx.connection();
+
+        let stream = "test_xnack_silent_counter";
+        let ids = xnack_setup_pending(&mut con, stream, GROUP, CONSUMER, 1);
+        let id = &ids[0];
+
+        // After the initial XREADGROUP the delivery counter is 1.
+        assert_eq!(pel_times_delivered(&mut con, stream, GROUP, id), 1);
+
+        // Verify that a SILENT NACK decrements the counter.
+        con.xnack(stream, GROUP, StreamNackMode::Silent, &[id.as_str()])
+            .unwrap();
+        assert_eq!(pel_times_delivered(&mut con, stream, GROUP, id), 0);
+
+        // Re-delivering via XREADGROUP CLAIM increments the counter back to 1.
+        let reply = con
+            .xread_options(
+                &[stream],
+                &[">"],
+                &StreamReadOptions::default()
+                    .group(GROUP, CONSUMER2)
+                    .claim(0),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(reply.keys[0].ids.len(), 1);
+        assert_eq!(pel_times_delivered(&mut con, stream, GROUP, id), 1);
+    }
+
+    #[test]
+    fn test_xnack_fail_keeps_delivery_counter() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_8);
+        let mut con = ctx.connection();
+
+        let stream = "test_xnack_fail_counter";
+        let ids = xnack_setup_pending(&mut con, stream, GROUP, CONSUMER, 1);
+        let id = &ids[0];
+        let initial_delivery_counter = pel_times_delivered(&mut con, stream, GROUP, id);
+        assert_eq!(initial_delivery_counter, 1);
+
+        // Verify that FAIL leaves the delivery counter unchanged.
+        con.xnack(stream, GROUP, StreamNackMode::Fail, &[id.as_str()])
+            .unwrap();
+        let delivery_counter_after_nack = pel_times_delivered(&mut con, stream, GROUP, id);
+        assert_eq!(delivery_counter_after_nack, initial_delivery_counter);
+
+        // Re-delivery increments the delivery counter.
+        let reply = con
+            .xread_options(
+                &[stream],
+                &[">"],
+                &StreamReadOptions::default()
+                    .group(GROUP, CONSUMER2)
+                    .claim(0),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(reply.keys[0].ids.len(), 1);
+        // Verify that the delivery counter was further incremented.
+        let delivery_counter_after_redelivery = pel_times_delivered(&mut con, stream, GROUP, id);
+        assert!(delivery_counter_after_redelivery > delivery_counter_after_nack);
+        assert_ne!(delivery_counter_after_redelivery, i64::MAX as usize);
+    }
+
+    #[test]
+    fn test_xnack_fatal_marks_delivery_counter_as_sentinel() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_8);
+        let mut con = ctx.connection();
+
+        let stream = "test_xnack_fatal_counter";
+        let ids = xnack_setup_pending(&mut con, stream, GROUP, CONSUMER, 1);
+        let id = &ids[0];
+
+        // After a FATAL XNACK, the server pins the delivery counter to a sentinel (i64::MAX)
+        // so it remains identifiable as "previously fatal" even after subsequent re-deliveries.
+        con.xnack(stream, GROUP, StreamNackMode::Fatal, &[id.as_str()])
+            .unwrap();
+        let sentinel = i64::MAX as usize;
+        assert_eq!(pel_times_delivered(&mut con, stream, GROUP, id), sentinel);
+
+        // Verify that even after a re-delivery the delivery counter remains pinned.
+        let reply = con
+            .xread_options(
+                &[stream],
+                &[">"],
+                &StreamReadOptions::default()
+                    .group(GROUP, CONSUMER2)
+                    .claim(0),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(reply.keys[0].ids.len(), 1);
+        assert_eq!(pel_times_delivered(&mut con, stream, GROUP, id), sentinel);
+    }
+
+    #[test]
+    fn test_xnack_prioritized_at_pel_head_when_claiming() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_8);
+        let mut con = ctx.connection();
+
+        let stream = "test_xnack_priority";
+        // Deliver 4 entries to the consumer, which should all sit in the PEL in stream order.
+        let ids = xnack_setup_pending(&mut con, stream, GROUP, CONSUMER, 4);
+
+        // NACK the 3rd entry.
+        // NACKed messages are placed at the head of the PEL (FIFO over NACKed messages, then idle pending messages).
+        let nacked_id = ids[2].clone();
+        con.xnack(stream, GROUP, StreamNackMode::Fail, &[nacked_id.as_str()])
+            .unwrap();
+
+        // Sleep so the remaining (non-NACKed) entries qualify under min-idle-time.
+        sleep(Duration::from_millis(5));
+
+        // Verify that the NACKed message is delivered first followed by the older idle pending entries.
+        let reply = con
+            .xread_options(
+                &[stream],
+                &[">"],
+                &StreamReadOptions::default()
+                    .group(GROUP, CONSUMER2)
+                    .claim(3)
+                    .count(4),
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(reply.keys[0].ids.len(), 4);
+        assert_eq!(
+            reply.keys[0].ids[0].id, nacked_id,
+            "NACKed message should be delivered first"
+        );
+    }
+
+    #[test]
+    fn test_xnack_ignores_unknown_ids_and_returns_zero() {
+        use StreamNackMode::*;
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_8);
+        let mut con = ctx.connection();
+
+        let stream = "test_xnack_on_an_unknown_id";
+        xnack_setup_pending(&mut con, stream, GROUP, CONSUMER, 1);
+
+        // The following id is not in the group's PEL as it was never delivered to any consumer so it should be ignored.
+        assert_eq!(
+            con.xnack(stream, GROUP, Fail, &[NON_EXISTENT_MESSAGE_ID])
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn test_xnack_only_affects_known_ids() {
+        use StreamNackMode::*;
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_8);
+        let mut con = ctx.connection();
+
+        let stream = "test_xnack_only_affects_known_ids";
+        let ids = xnack_setup_pending(&mut con, stream, GROUP, CONSUMER, 2);
+
+        // Verify that only the real ids are nacked.
+        let identifiers = vec![ids[0].as_str(), NON_EXISTENT_MESSAGE_ID, ids[1].as_str()];
+        assert_eq!(con.xnack(stream, GROUP, Fail, &identifiers).unwrap(), 2);
+    }
+
+    #[test]
+    fn test_xnack_nonexistent_stream_errors() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_8);
+        let mut con = ctx.connection();
+
+        let result = con.xnack(
+            "non_existent_stream",
+            GROUP,
+            StreamNackMode::Fail,
+            &[NON_EXISTENT_MESSAGE_ID],
+        );
+
+        assert!(
+            result.is_err(),
+            "XNACK on a non-existent stream must error, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_xnack_nonexistent_group_errors() {
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_8);
+        let mut con = ctx.connection();
+
+        let stream = "test_xnack_nogroup";
+        con.xadd(stream, "*", &[("key", "val")]).unwrap();
+        let result = con.xnack(
+            stream,
+            "missing_group",
+            StreamNackMode::Fail,
+            &[NON_EXISTENT_MESSAGE_ID],
+        );
+        assert!(
+            result.is_err(),
+            "XNACK on a missing group must error, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_xnack_idempotent_double_nack() {
+        use StreamNackMode::*;
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_8);
+        let mut con = ctx.connection();
+
+        let stream = "test_xnack_double";
+        let ids = xnack_setup_pending(&mut con, stream, GROUP, CONSUMER, 1);
+
+        let first = con.xnack(stream, GROUP, Fail, &[ids[0].as_str()]).unwrap();
+        let second = con.xnack(stream, GROUP, Fail, &[ids[0].as_str()]).unwrap();
+        assert_eq!(first, 1);
+        assert_eq!(second, 1);
+    }
+
+    #[test]
+    fn test_xnack_fifo_ordering_among_multiple_nacked_messages() {
+        use StreamNackMode::*;
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_8);
+        let mut con = ctx.connection();
+
+        /*
+        Stream entries are delivered in stream order. NACK two of them in a non-stream order (3rd, then 1st).
+        On re-delivery the NACKed entries should come out in NACK order (FIFO), followed by the remaining idle pending entries in stream order.
+        */
+        let stream = "test_xnack_fifo";
+        let delivered = xnack_setup_pending(&mut con, stream, GROUP, CONSUMER, 4);
+
+        con.xnack(stream, GROUP, Fail, &[delivered[2].as_str()])
+            .unwrap();
+        con.xnack(stream, GROUP, Fail, &[delivered[0].as_str()])
+            .unwrap();
+
+        // Sleep so the remaining (non-NACKed) entries qualify under min-idle-time.
+        sleep(Duration::from_millis(5));
+
+        let reply = con
+            .xread_options(
+                &[stream],
+                &[">"],
+                &StreamReadOptions::default()
+                    .group(GROUP, CONSUMER2)
+                    .claim(3)
+                    .count(4),
+            )
+            .unwrap()
+            .unwrap();
+
+        let order: Vec<&str> = reply.keys[0].ids.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(
+            order,
+            vec![
+                delivered[2].as_str(), // tier 1: NACK FIFO, NACKed first
+                delivered[0].as_str(), // tier 1: NACK FIFO, NACKed second
+                delivered[1].as_str(), // tier 2: idle pending in stream order
+                delivered[3].as_str(), // tier 2: idle pending in stream order
+            ],
+        );
+    }
+
+    #[test]
+    fn test_xnack_three_tier_delivery_order() {
+        use StreamNackMode::*;
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_8);
+        let mut con = ctx.connection();
+
+        // Tier 1: a delivered and NACKed entry.
+        // Tier 2: a delivered entry, which is not NACKed.
+        // Tier 3: entries past the group's last-delivered-id, which were never delivered.
+        let stream = "test_xnack_three_tiers";
+        let delivered = xnack_setup_pending(&mut con, stream, GROUP, CONSUMER, 2);
+        con.xnack(stream, GROUP, Fail, &[delivered[0].as_str()])
+            .unwrap();
+
+        // Sleep to make the second entry qualify under min-idle-time.
+        sleep(Duration::from_millis(5));
+        let new_a: String = con.xadd(stream, "*", &[("key", "v2")]).unwrap().unwrap();
+        let new_b: String = con.xadd(stream, "*", &[("key", "v3")]).unwrap().unwrap();
+
+        let reply = con
+            .xread_options(
+                &[stream],
+                &[">"],
+                &StreamReadOptions::default()
+                    .group(GROUP, CONSUMER2)
+                    .claim(3)
+                    .count(10),
+            )
+            .unwrap()
+            .unwrap();
+
+        let order: Vec<&str> = reply.keys[0].ids.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(
+            order,
+            vec![
+                delivered[0].as_str(), // tier 1: NACKed
+                delivered[1].as_str(), // tier 2: idle pending
+                new_a.as_str(),        // tier 3 (entry after last-delivered-id): never delivered
+                new_b.as_str(),        // tier 3 (entry after last-delivered-id): never delivered
+            ],
+        );
+        // Tier 1 entries have a delivered_count > 0.
+        assert!(reply.keys[0].ids[0].delivered_count.unwrap() > 0);
+        // Tier 2 entries have a delivered_count > 0.
+        assert!(reply.keys[0].ids[1].delivered_count.unwrap() > 0);
+        // Tier 3 entries should have delivered_count = 0.
+        assert_eq!(reply.keys[0].ids[2].delivered_count, Some(0));
+        assert_eq!(reply.keys[0].ids[3].delivered_count, Some(0));
+    }
+}
