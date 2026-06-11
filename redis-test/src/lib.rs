@@ -37,6 +37,7 @@ pub mod server;
 pub mod utils;
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
 use redis::{
@@ -478,6 +479,52 @@ impl AioConnectionLike for MockRedisConnection {
     fn get_db(&self) -> i64 {
         0
     }
+}
+
+/// Asserts that the given [`RedisResult`] is an `Err` with a given error code.
+///
+/// # Arguments
+///
+/// * `redis_result` - The result to check.
+/// * `expected_code` - The error code that `redis_result` has to have.
+///
+/// # Panics
+///
+/// Panics unless `redis_result` is `Err` with `expected_code` as error code.
+pub fn assert_redis_result_err_code_eq<T: Debug>(
+    redis_result: RedisResult<T>,
+    expected_code: &str,
+) {
+    assert_eq!(
+        redis_result
+            .expect_err("RedisResult did not fail")
+            .code()
+            .expect("RedisError should have a code"),
+        expected_code,
+        "RedisError codes do not match"
+    );
+}
+
+/// Asserts that the given [`RedisResult`] is an `Err` with details containing the given search expression.
+///
+/// # Arguments
+///
+/// * `redis_result` - The result to check.
+/// * `search_expr` - The search expression that `redis_result`'s details has to have.
+///
+/// # Panics
+///
+/// Panics unless `redis_result` is `Err` with details that contain `search_expr`.
+pub fn assert_redis_result_err_detail_contains<T: Debug>(
+    redis_result: RedisResult<T>,
+    search_expr: &str,
+) {
+    let error = redis_result.expect_err("RedisResult did not fail");
+    let error_detail = error.detail().expect("RedisError should have details");
+    assert!(
+        error_detail.contains(search_expr),
+        "'{search_expr}' not found in '{error_detail}'",
+    );
 }
 
 #[cfg(test)]

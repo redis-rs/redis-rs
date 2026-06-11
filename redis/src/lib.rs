@@ -90,6 +90,7 @@
 //! if so desired.  Some of them are turned on by default.
 //!
 //! * `acl`: enables acl support (enabled by default)
+//! * `bloom`: enables support for the Bloom filter module (optional)
 //! * `tokio-comp`: enables support for async usage with the Tokio runtime (optional)
 //! * `smol-comp`: enables support for async usage with the Smol runtime (optional)
 //! * `geospatial`: enables geospatial support (enabled by default)
@@ -737,6 +738,10 @@ pub use commands::acl;
 #[cfg(feature = "aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 pub mod aio;
+
+#[cfg(feature = "bloom")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
+pub mod bloom;
 
 #[cfg(feature = "json")]
 #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
