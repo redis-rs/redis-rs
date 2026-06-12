@@ -302,6 +302,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Fix PATH to prioritize MSVC linker
+        shell: powershell
+        run: |
+          # Remove Git's usr/bin from PATH to avoid conflicts with MSVC link.exe
+          $path = [Environment]::GetEnvironmentVariable('PATH', 'Process')
+          $newPath = ($path -split ';' | Where-Object { $_ -notlike '*Git\usr\bin*' }) -join ';'
+          echo "PATH=$newPath" >> $env:GITHUB_ENV
+          # Verify we're using the correct link.exe
+          Get-Command link.exe | Select-Object -ExpandProperty Source
+
+      - name: Setup CMake and Ninja
+        uses: lukka/get-cmake@latest
+
       - name: Install OpenSSL
         shell: powershell
         run: |
