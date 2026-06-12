@@ -118,6 +118,13 @@ azure_identity = { version = "0.31", optional = true, features = [
 azure_core = { version = "0.31", optional = true }
 base64 = { version = "0.22.1", optional = true }
 
+# Because of `time v0.3.48` is breaking `cargo-semver-checks` in CI 
+# (#2135), we need to pin `time` to `0.3.47` for the time being.
+#
+# As `cargo-semver-checks` is bringing in this package directly, fixing 
+# in the main workspace `Cargo.toml` will not do, and we pin it here.
+time = "=0.3.47"
+
 [features]
 default = ["acl", "streams", "geospatial", "script", "num-bigint"]
 acl = []
@@ -190,6 +197,7 @@ rustls = { version = "0.23", features = ["ring"] }
 test-macros = { path = "../test-macros" }
 assert_matches = "1.5.0"
 env_logger = "0.11.10"
+time = "=0.3.47" # See explanation in the `dependencies` section's `time`
 
 [[test]]
 name = "test_async"
