@@ -30,6 +30,19 @@ pub struct MockConnection {
     pub port: u16,
 }
 
+impl MockConnection {
+    fn execute_cmd(&self, cmd: &redis::Cmd) -> RedisResult<Value> {
+        self.execute_buffered_cmd(&cmd.get_packed_command())
+    }
+
+    fn execute_buffered_cmd(&self, cmd: &[u8]) -> RedisResult<Value> {
+        let cmd_str = String::from_utf8_lossy(cmd);
+        let port = self.port;
+        println!("Cmd: `{cmd_str}` port: `{port}`");
+        (self.handler)(cmd, self.port).expect_err("Handler did not specify a response")
+    }
+}
+
 #[cfg(feature = "cluster-async")]
 impl cluster_async::Connect for MockConnection {
     fn connect_with_config<'a, T>(
@@ -205,10 +218,7 @@ pub fn respond_startup_with_replica_using_config(
 #[cfg(feature = "cluster-async")]
 impl aio::ConnectionLike for MockConnection {
     fn req_packed_command<'a>(&'a mut self, cmd: &'a redis::Cmd) -> RedisFuture<'a, Value> {
-        Box::pin(future::ready(
-            (self.handler)(&cmd.get_packed_command(), self.port)
-                .expect_err("Handler did not specify a response"),
-        ))
+        Box::pin(future::ready(self.execute_cmd(cmd)))
     }
 
     fn req_packed_commands<'a>(
@@ -220,10 +230,7 @@ impl aio::ConnectionLike for MockConnection {
         Box::pin(future::ready(
             pipeline
                 .cmd_iter()
-                .map(|cmd| {
-                    (self.handler)(&cmd.get_packed_command(), self.port)
-                        .expect_err("Handler did not specify a response")
-                })
+                .map(|cmd| self.execute_cmd(cmd))
                 .collect(),
         ))
     }
@@ -235,7 +242,7 @@ impl aio::ConnectionLike for MockConnection {
 
 impl redis::ConnectionLike for MockConnection {
     fn req_packed_command(&mut self, cmd: &[u8]) -> RedisResult<Value> {
-        (self.handler)(cmd, self.port).expect_err("Handler did not specify a response")
+        self.execute_buffered_cmd(cmd)
     }
 
     fn req_packed_commands(
@@ -244,7 +251,7 @@ impl redis::ConnectionLike for MockConnection {
         offset: usize,
         _count: usize,
     ) -> RedisResult<Vec<Value>> {
-        let res = (self.handler)(cmd, self.port).expect_err("Handler did not specify a response");
+        let res = self.execute_buffered_cmd(cmd);
         match res {
             Err(err) => Err(err),
             Ok(res) => {
