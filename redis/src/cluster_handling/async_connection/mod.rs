@@ -946,32 +946,65 @@ where
         Ok(conn)
     }
 
+    async fn query_slots(conn: &mut C, addr: &NodeAddress, slots: &mut SlotMap) -> RedisResult<()> {
+        let mut slot_refresh_cmd = slot_cmd();
+        slot_refresh_cmd.skip_concurrency_limit = true;
+        let value = conn
+            .req_packed_command(&slot_refresh_cmd)
+            .await
+            .and_then(|value| value.extract_error())?;
+        let v: Vec<SlotRange> = parse_slots(value, addr.host())?;
+        build_slot_map(slots, v)
+    }
+
     // Query a node to discover slot-> master mappings.
     async fn refresh_slots(self) -> RedisResult<()> {
         let mut write_guard = self.conn_lock.write().await;
         let (connections, slots) = &mut *write_guard;
 
-        let mut result = Ok(());
+        let mut found = false;
+        let mut last_err = None;
+
+        // First pass is to query previously-known good connections for the new slots.
         for (addr, state) in &mut *connections {
             let ConnState::Connected(conn) = state else {
                 continue;
             };
-            result = async {
-                let mut slot_refresh_cmd = slot_cmd();
-                slot_refresh_cmd.skip_concurrency_limit = true;
-                let value = conn
-                    .req_packed_command(&slot_refresh_cmd)
-                    .await
-                    .and_then(|value| value.extract_error())?;
-                let v: Vec<SlotRange> = parse_slots(value, addr.host())?;
-                build_slot_map(slots, v)
-            }
-            .await;
-            if result.is_ok() {
-                break;
+            match Self::query_slots(conn, addr, slots).await {
+                Ok(()) => {
+                    found = true;
+                    break;
+                }
+                Err(err) => last_err = Some(err),
             }
         }
-        result?;
+
+        // Second pass is to attempt to repair connections on-demand as we iterate thru each one.
+        if !found {
+            for (addr, state) in &mut *connections {
+                let prev = std::mem::replace(state, ConnState::Connecting).into_conn();
+                match get_or_create_conn(addr, prev, &self.cluster_params).await {
+                    Ok(mut conn) => {
+                        let res = Self::query_slots(&mut conn, addr, slots).await;
+                        *state = ConnState::Connected(conn);
+                        match res {
+                            Ok(()) => {
+                                found = true;
+                                break;
+                            }
+                            Err(err) => last_err = Some(err),
+                        }
+                    }
+                    Err(err) => last_err = Some(err),
+                }
+            }
+        }
+
+        if !found {
+            return Err(last_err.unwrap_or_else(|| {
+                (ErrorKind::ClusterConnectionNotFound, "No connections found").into()
+            }));
+        }
 
         if let Some(ref strategy) = self.routing_strategy {
             strategy.on_topology_changed(slots.topology());
