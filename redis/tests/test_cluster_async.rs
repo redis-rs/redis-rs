@@ -1118,7 +1118,6 @@ mod cluster_async {
             name,
             {
                 move |cmd: &[u8], port| {
-                    println!("cmd: {} port: {port}", String::from_utf8_lossy(cmd));
                     respond_startup_two_nodes(name, cmd)?;
                     // Error twice with io-error, ensure connection is reestablished w/out calling
                     // other node (i.e., not doing a full slot rebuild)

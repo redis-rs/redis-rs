@@ -473,15 +473,20 @@ impl<C> ConnState<C> {
 }
 
 fn mark_reconnecting<C>(connections: &mut ConnectionMap<C>, addr: NodeAddress) {
-    let state = match connections.remove(&addr) {
-        Some(ConnState::Connected(conn)) => {
-            log::warn!("ClusterConnInner: connection to {addr:?} lost; repairing in background");
-            ConnState::Reconnecting(conn)
-        }
-        Some(ConnState::Reconnecting(conn)) => ConnState::Reconnecting(conn),
-        Some(ConnState::Connecting) | None => ConnState::Connecting,
-    };
-    connections.insert(addr, state);
+    connections
+        .entry(addr.clone())
+        .and_modify(|state| {
+            *state = match std::mem::replace(state, ConnState::Connecting) {
+                ConnState::Connected(conn) => {
+                    log::warn!(
+                        "ClusterConnInner: connection to {addr:?} lost; repairing in background"
+                    );
+                    ConnState::Reconnecting(conn)
+                }
+                other => other,
+            };
+        })
+        .or_insert(ConnState::Connecting);
 }
 
 /// This is the internal representation of an async Redis Cluster connection. It stores the
@@ -844,6 +849,8 @@ where
         route: InternalSingleNodeRouting<C>,
     ) -> RedisResult<(NodeAddress, C)> {
         let route = match route {
+            InternalSingleNodeRouting::Random => return self.random_connection().await,
+            InternalSingleNodeRouting::SpecificNode(route) => route,
             InternalSingleNodeRouting::Connection { identifier, conn } => {
                 return Ok((identifier, conn));
             }
@@ -863,8 +870,6 @@ where
                         .into()),
                 };
             }
-            InternalSingleNodeRouting::Random => return self.random_connection().await,
-            InternalSingleNodeRouting::SpecificNode(route) => route,
         };
 
         let read_guard = self.conn_lock.read().await;
@@ -879,13 +884,19 @@ where
             return Ok((addr.clone(), conn));
         }
 
-        for cand in read_guard.1.shard_fallback_addrs(&route) {
-            if preferred.as_ref() == Some(&cand) {
-                continue;
-            }
-            if let Some(conn) = read_guard.0.get(&cand).and_then(ConnState::connected) {
-                return Ok((cand, conn));
-            }
+        let fallback = read_guard
+            .1
+            .shard_fallback_addrs(&route)
+            .into_iter()
+            .find_map(|candidate| {
+                read_guard
+                    .0
+                    .get(&candidate)
+                    .and_then(ConnState::connected)
+                    .map(|conn| (candidate, conn))
+            });
+        if let Some(found) = fallback {
+            return Ok(found);
         }
 
         Err((
