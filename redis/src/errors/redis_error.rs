@@ -235,6 +235,8 @@ pub enum RetryMethod {
     MovedRedirect,
     /// Reconnect the initial connection to the master cluster, this is only relevant for clusters.
     ReconnectFromInitialConnections,
+    /// A write request was sent to a readonly replica,
+    ReadOnlyRedirect,
 }
 
 /// Indicates a general failure in the library.
@@ -399,6 +401,7 @@ impl RedisError {
             RetryMethod::WaitAndRetry => false,
             RetryMethod::AskRedirect => false,
             RetryMethod::MovedRedirect => false,
+            RetryMethod::ReadOnlyRedirect => false,
         }
     }
 
