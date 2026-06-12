@@ -370,7 +370,7 @@ mod basic {
     #[test]
     fn test_hash_expiration() {
         // Hash expiration is only supported in Redis 7.4.0 and later.
-        let ctx = run_test_if_version_supported!(&(7, 4, 0));
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_7_4);
 
         let mut con = ctx.connection();
         redis::cmd("HMSET")
@@ -3368,7 +3368,7 @@ mod basic {
     #[test]
     fn test_expire_time() {
         // EXPIRETIME/PEXPIRETIME is available from Redis version 7.4.0
-        let ctx = run_test_if_version_supported!(&(7, 4, 0));
+        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_7_4);
 
         let mut con = ctx.connection();
 
@@ -3503,13 +3503,6 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        // setup version & input data followed by assertions that take into account Redis version
-        // BZPOPMIN & BZPOPMAX are available from Redis version 5.0.0
-        // BZMPOP is available from Redis version 7.0.0
-
-        let redis_version = ctx.get_version();
-        assert!(redis_version.0 >= 5);
-
         assert_matches!(con.zadd("a", "1a", 1), Ok(_));
         assert_matches!(con.zadd("b", "2b", 2), Ok(_));
         assert_matches!(con.zadd("c", "3c", 3), Ok(_));
@@ -3531,7 +3524,8 @@ mod basic {
             (String::from("b"), String::from("6b"), 6.0)
         );
 
-        if redis_version.0 >= 7 {
+        // BZMPOP is available from Redis version 7.0.0
+        if ctx.supports(&REDIS_VERSION_CE_7_0) {
             let min = con.bzmpop_min(0.0, vec!["a", "b", "c", "d"].as_slice(), 1);
             let max = con.bzmpop_max(0.0, vec!["a", "b", "c", "d"].as_slice(), 1);
 

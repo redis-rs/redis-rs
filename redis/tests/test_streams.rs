@@ -2290,7 +2290,7 @@ fn test_xautoclaim_invalid_pel_entries_claiming_full_entries() {
         .unwrap();
     assert_eq!(reply.claimed, claimed_entries);
 
-    if ctx.get_version().0 > 6 {
+    if ctx.supports(&REDIS_VERSION_CE_7_0) {
         assert_eq!(
             reply.deleted_ids,
             vec![claim.id.clone(), claim_1.id.clone()]
@@ -2344,7 +2344,7 @@ fn test_xautoclaim_invalid_pel_entries_claiming_just_ids() {
     std::mem::take(&mut claimed_entries[0].map);
     std::mem::take(&mut claimed_entries[1].map);
 
-    if ctx.get_version().0 > 6 {
+    if ctx.supports(&REDIS_VERSION_CE_7_0) {
         assert_eq!(reply.claimed, claimed_entries);
         assert_eq!(
             reply.deleted_ids,
