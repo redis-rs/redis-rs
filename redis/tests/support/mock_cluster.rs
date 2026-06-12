@@ -9,7 +9,7 @@ use redis::{
     cluster::{self, ClusterClient, ClusterClientBuilder},
 };
 
-use redis::{IntoConnectionInfo, RedisResult, Value};
+use redis::{IntoConnectionInfo, RedisError, RedisResult, Value};
 
 #[cfg(feature = "cluster-async")]
 use redis::{RedisFuture, aio, cluster_async};
@@ -199,6 +199,150 @@ pub fn respond_startup_with_replica_using_config(
         Err(Ok(Value::Array(slots)))
     } else {
         Ok(())
+    }
+}
+
+pub fn broken_pipe_error() -> RedisError {
+    RedisError::from(std::io::Error::new(
+        std::io::ErrorKind::BrokenPipe,
+        "mock-io-error",
+    ))
+}
+
+#[derive(Clone)]
+enum DataReply {
+    Value(Value),
+    BrokenPipe,
+}
+
+// Declarative behaviour for one mock node, built fluently, e.g.
+// `node(6379).respond_startup_calls().then_broken_pipe_error().forever()`.
+//
+// Handshake commands (`CLUSTER SLOTS`/`READONLY`/`PING`) are answered by the
+// cluster's startup responder in an order-independent way; only *data* commands
+// consume the scripted replies, and they do so in order.
+pub struct NodeBehavior {
+    port: u16,
+    answers_startup: bool,
+    script: Vec<DataReply>,
+    repeat_last: bool,
+}
+
+pub fn node(port: u16) -> NodeBehavior {
+    NodeBehavior {
+        port,
+        answers_startup: false,
+        script: Vec::new(),
+        repeat_last: false,
+    }
+}
+
+impl NodeBehavior {
+    pub fn respond_startup_calls(mut self) -> Self {
+        self.answers_startup = true;
+        self
+    }
+
+    pub fn then_broken_pipe_error(mut self) -> Self {
+        self.script.push(DataReply::BrokenPipe);
+        self
+    }
+
+    pub fn then_value(mut self, value: Value) -> Self {
+        self.script.push(DataReply::Value(value));
+        self
+    }
+
+    pub fn forever(mut self) -> Self {
+        self.repeat_last = true;
+        self
+    }
+}
+
+struct NodeRuntime {
+    behavior: NodeBehavior,
+    cursor: usize,
+    dead: bool,
+}
+
+pub struct MockCluster {
+    name: String,
+    startup: fn(&str, &[u8]) -> Result<(), RedisResult<Value>>,
+    nodes: Vec<NodeBehavior>,
+}
+
+impl MockCluster {
+    pub fn new(name: &str, startup: fn(&str, &[u8]) -> Result<(), RedisResult<Value>>) -> Self {
+        Self {
+            name: name.to_string(),
+            startup,
+            nodes: Vec::new(),
+        }
+    }
+
+    pub fn with(mut self, node: NodeBehavior) -> Self {
+        self.nodes.push(node);
+        self
+    }
+
+    pub fn into_handler(
+        self,
+    ) -> impl Fn(&[u8], u16) -> Result<(), RedisResult<Value>> + Send + Sync + 'static {
+        let name = self.name;
+        let startup = self.startup;
+        let runtimes: HashMap<u16, NodeRuntime> = self
+            .nodes
+            .into_iter()
+            .map(|behavior| {
+                let port = behavior.port;
+                (
+                    port,
+                    NodeRuntime {
+                        behavior,
+                        cursor: 0,
+                        dead: false,
+                    },
+                )
+            })
+            .collect();
+        let state = Arc::new(std::sync::Mutex::new(runtimes));
+
+        move |cmd: &[u8], port| {
+            let mut guard = state.lock().unwrap();
+            let Some(node) = guard.get_mut(&port) else {
+                (startup)(&name, cmd)?;
+                panic!("unexpected data command on unscripted node {port}");
+            };
+
+            if node.dead {
+                return Err(Err(broken_pipe_error()));
+            }
+
+            if node.behavior.answers_startup {
+                (startup)(&name, cmd)?;
+            }
+
+            let len = node.behavior.script.len();
+            if node.cursor >= len {
+                if node.behavior.repeat_last && len > 0 {
+                    node.cursor = len - 1;
+                } else {
+                    panic!("unexpected data command on node {port} (no scripted reply)");
+                }
+            }
+            let is_last = node.cursor == len - 1;
+            let reply = node.behavior.script[node.cursor].clone();
+            node.cursor += 1;
+            match reply {
+                DataReply::Value(value) => Err(Ok(value)),
+                DataReply::BrokenPipe => {
+                    if node.behavior.repeat_last && is_last {
+                        node.dead = true;
+                    }
+                    Err(Err(broken_pipe_error()))
+                }
+            }
+        }
     }
 }
 
