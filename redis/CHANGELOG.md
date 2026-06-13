@@ -1,3 +1,26 @@
+### 1.2.3 (2026-06-13)
+
+#### Changes & Bug fixes
+
+* Only stop EntraIdCredentialsProvider task on last Arc instance drop ([#2084](https://github.com/redis-rs/redis-rs/pull/2084) by @hgzimmerman)
+* docs: Straighten out documentation of `InfoType` ([#2121](https://github.com/redis-rs/redis-rs/pull/2121) by @somechris)
+
+#### CI & operational improvements
+
+* ci: Bump Redis patch versions ([#2093](https://github.com/redis-rs/redis-rs/pull/2093) by @somechris)
+* tests: Stop inflating dimensions during vector set dimension reduction ([#2099](https://github.com/redis-rs/redis-rs/pull/2099) by @somechris)
+* ci: Bump Redis 8.6.2 to Redis 8.8.0 ([#2100](https://github.com/redis-rs/redis-rs/pull/2100) by @somechris)
+* ci: Bump Valkey to 7.2.13, 8.0.9, and 9.0.4 ([#2102](https://github.com/redis-rs/redis-rs/pull/2102) by @somechris)
+* Bump rand from 0.9.3 to 0.10.1 ([#2101](https://github.com/redis-rs/redis-rs/pull/2101) by @somechris)
+* ci: Use targets from Makefile instead of duplicating commands ([#2103](https://github.com/redis-rs/redis-rs/pull/2103) by @somechris)
+* Makefile: Drop noop `e` from module test selector ([#2116](https://github.com/redis-rs/redis-rs/pull/2116) by @somechris)
+* Makefile: Add `fix` target to fix automatically fixable linting issues ([#2122](https://github.com/redis-rs/redis-rs/pull/2122) by @somechris)
+* CI: Lock windows build to `windows-2022` runner ([#2127](https://github.com/redis-rs/redis-rs/pull/2127) by @somechris)
+* tests: Clean up getting versions ([#2123](https://github.com/redis-rs/redis-rs/pull/2123) by @somechris)
+* doc: Add some coding conventions ([#2129](https://github.com/redis-rs/redis-rs/pull/2129) by @somechris)
+* Add logs for mock cluster calls. ([#2133](https://github.com/redis-rs/redis-rs/pull/2133) by @nihohit)
+
+
 ### 1.2.2 (2026-05-29)
 
 * Linter fixes ([#2075](https://github.com/redis-rs/redis-rs/pull/2075) by @StefanPalashev)
