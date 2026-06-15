@@ -1954,15 +1954,27 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
             name,
-            MockCluster::new(name, respond_startup_two_nodes)
-                .with(
-                    node(6379)
-                        .respond_startup_calls()
-                        .then_broken_pipe_error()
-                        .forever(),
-                )
-                .with(node(6380).respond_startup_calls())
-                .into_handler(),
+            {
+                // 6379 and 6380 are the two primaries.
+                // Both respond to the initial handshake.
+                // 6379 becomes unresponsive after the handshake.
+                let dead = Arc::new(AtomicBool::new(false));
+                move |cmd: &[u8], port| match port {
+                    6379 => {
+                        if dead.load(Ordering::SeqCst) {
+                            return Err(Err(broken_pipe_error()));
+                        }
+                        respond_startup_two_nodes(name, cmd)?;
+                        dead.store(true, Ordering::SeqCst);
+                        Err(Err(broken_pipe_error()))
+                    }
+                    6380 => {
+                        respond_startup_two_nodes(name, cmd)?;
+                        panic!("Node should not be called");
+                    }
+                    _ => panic!("unexpected port {port}"),
+                }
+            },
         );
 
         let first = runtime.block_on(
@@ -1999,16 +2011,22 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
             name,
-            MockCluster::new(name, respond_startup_two_nodes)
-                .with(
-                    node(6379)
-                        .respond_startup_calls()
-                        .then_broken_pipe_error()
-                        .then_value(redis_value!("123"))
-                        .forever(),
-                )
-                .with(node(6380).respond_startup_calls())
-                .into_handler(),
+            {
+                let completed = Arc::new(AtomicI32::new(0));
+                move |cmd: &[u8], port| {
+                    respond_startup_two_nodes(name, cmd)?;
+                    // 6379 and 6380 are the two primaries.
+                    // 6379 fails the first data command, then recovers.
+                    match port {
+                        6379 => match completed.fetch_add(1, Ordering::SeqCst) {
+                            0 => Err(Err(broken_pipe_error())),
+                            _ => Err(Ok(redis_value!("123"))),
+                        },
+                        6380 => panic!("Node should not be called"),
+                        _ => panic!("unexpected port {port}"),
+                    }
+                }
+            },
         );
 
         let first = runtime.block_on(
@@ -2041,20 +2059,17 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
             name,
-            MockCluster::new(name, respond_startup_two_nodes)
-                .with(
-                    node(6379)
-                        .respond_startup_calls()
-                        .then_broken_pipe_error()
-                        .forever(),
-                )
-                .with(
-                    node(6380)
-                        .respond_startup_calls()
-                        .then_value(redis_value!("123"))
-                        .forever(),
-                )
-                .into_handler(),
+            move |cmd: &[u8], port| {
+                respond_startup_two_nodes(name, cmd)?;
+                // 6379 and 6380 are the two primaries.
+                // "test" key goes to 6379, which is permanently down after the handshake.
+                // "foo" key goes to 6380.
+                match port {
+                    6379 => Err(Err(broken_pipe_error())),
+                    6380 => Err(Ok(redis_value!("123"))),
+                    _ => panic!("unexpected port {port}"),
+                }
+            },
         );
 
         let downed = runtime.block_on(
@@ -2089,20 +2104,32 @@ mod cluster_async {
                 .retries(1)
                 .read_routing_strategy(RandomReplicaStrategy),
             name,
-            MockCluster::new(name, respond_startup_with_replica)
-                .with(
-                    node(6380)
-                        .respond_startup_calls()
-                        .then_broken_pipe_error()
-                        .forever(),
-                )
-                .with(
-                    node(6379)
-                        .respond_startup_calls()
-                        .then_value(redis_value!("123"))
-                        .forever(),
-                )
-                .into_handler(),
+            {
+                // There are two shards: [6379, 6380] and [6381, 6382].
+                // The primary (6379) is always healthy.
+                // The replica (6380) is dead after the initial handshake.
+                let dead = Arc::new(AtomicBool::new(false));
+                move |cmd: &[u8], port| match port {
+                    6379 => {
+                        respond_startup_with_replica(name, cmd)?;
+                        Err(Ok(redis_value!("123")))
+                    }
+                    6380 => {
+                        if dead.load(Ordering::SeqCst) {
+                            return Err(Err(broken_pipe_error()));
+                        }
+                        respond_startup_with_replica(name, cmd)?;
+                        dead.store(true, Ordering::SeqCst);
+                        Err(Err(broken_pipe_error()))
+                    }
+                    // No data commands should be routed to the second shard.
+                    // Initial handshake is okay.
+                    _ => {
+                        respond_startup_with_replica(name, cmd)?;
+                        panic!("Node {port} should not be called");
+                    }
+                }
+            },
         );
 
         let value = runtime.block_on(
