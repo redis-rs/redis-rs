@@ -291,6 +291,8 @@ you must set the following environment variable before running the test script
 
 <!-- As support for modules are added later, it would be wise to update this list -->
 
+Make sure to read the [coding conventions](CODING_CONVENTIONS.md).
+
 If you want to develop on the library there are a few commands provided
 by the makefile:
 

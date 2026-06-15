@@ -2506,16 +2506,8 @@ mod cluster_async {
     mod pubsub {
         use super::*;
 
-        async fn check_if_redis_6(conn: &mut ClusterConnection) -> bool {
-            let response = conn
-                .route_command(
-                    cmd("INFO").arg("server").to_owned(),
-                    RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random),
-                )
-                .await
-                .unwrap();
-            let info = from_redis_value::<InfoDict>(response).unwrap();
-            parse_version(info).0 == 6
+        fn check_if_redis_6(ctx: &TestClusterContext) -> bool {
+            ctx.get_version().0 == 6
         }
 
         async fn subscribe_to_channels(
@@ -2623,7 +2615,7 @@ mod cluster_async {
 
             let (mut publish_conn, mut pubsub_conn) =
                 join!(ctx.async_connection(), ctx.async_connection());
-            let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
+            let is_redis_6 = check_if_redis_6(&ctx);
 
             subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await;
 
@@ -2642,7 +2634,7 @@ mod cluster_async {
                 ctx.async_connection_with_config(config.clone()),
                 ctx.async_connection_with_config(config)
             );
-            let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
+            let is_redis_6 = check_if_redis_6(&ctx);
 
             subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await;
 
@@ -2656,7 +2648,7 @@ mod cluster_async {
             });
 
             let mut pubsub_conn = ctx.async_connection().await;
-            if check_if_redis_6(&mut pubsub_conn).await {
+            if check_if_redis_6(&ctx) {
                 return;
             }
 
@@ -2682,7 +2674,7 @@ mod cluster_async {
 
             let (mut publish_conn, mut pubsub_conn) =
                 join!(ctx.async_connection(), ctx.async_connection());
-            let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
+            let is_redis_6 = check_if_redis_6(&ctx);
 
             let _: () = pubsub_conn.subscribe("regular-phonewave").await.unwrap();
             let push = get_push(&mut rx).await;
@@ -2771,7 +2763,7 @@ mod cluster_async {
             });
 
             let mut pubsub_conn = ctx.async_connection().await;
-            let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
+            let is_redis_6 = check_if_redis_6(&ctx);
 
             subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await;
 
@@ -2797,7 +2789,7 @@ mod cluster_async {
             });
 
             let mut pubsub_conn = ctx.async_connection().await;
-            let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
+            let is_redis_6 = check_if_redis_6(&ctx);
 
             let _: () = pubsub_conn
                 .subscribe(&[
@@ -2925,7 +2917,7 @@ mod cluster_async {
 
             let (mut publish_conn, mut pubsub_conn) =
                 join!(ctx.async_connection(), ctx.async_connection());
-            let is_redis_6 = check_if_redis_6(&mut pubsub_conn).await;
+            let is_redis_6 = check_if_redis_6(&ctx);
 
             subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await;
 
