@@ -48,11 +48,11 @@ fn test_ft_create_with_an_empty_index_name() {
     );
 }
 
-#[test]
-fn test_simple_ft_create() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
-    let mut con = ctx.connection();
-    let index_name = "index";
+fn run_simple_ft_create<C, F>(con: &mut C, index_name: &str, mut on_created: F)
+where
+    C: redis::ConnectionLike,
+    F: FnMut(&str),
+{
     let options = CreateOptions::new();
     let schema = schema! {
         TEXT_FIELD_NAME => SchemaTextField::new()
@@ -62,10 +62,17 @@ fn test_simple_ft_create() {
         con.ft_create(index_name, &options, &schema),
         Ok("OK".to_string())
     );
+    on_created(index_name);
     assert!(
         con.ft_create::<_, String>(index_name, &options, &schema)
             .is_err()
     );
+}
+
+#[test]
+fn test_simple_ft_create() {
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
+    run_simple_ft_create(&mut ctx.connection(), "index", |_| {});
 }
 
 #[test]
@@ -127,11 +134,11 @@ fn test_ft_create_create_options() {
     }
 }
 
-#[test]
-fn test_ft_create_schema_text_field() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
-    let mut con = ctx.connection();
-
+fn run_ft_create_schema_text_field<C, F>(con: &mut C, mut on_created: F)
+where
+    C: redis::ConnectionLike,
+    F: FnMut(&str),
+{
     type SchemaTextFieldModifier = fn(SchemaTextField) -> SchemaTextField;
     let field_modifiers: Vec<(&'static str, SchemaTextFieldModifier)> = vec![
         // Common modifiers
@@ -162,6 +169,7 @@ fn test_ft_create_schema_text_field() {
             con.ft_create(&index_name, &CreateOptions::new(), &schema),
             Ok("OK".to_string())
         );
+        on_created(&index_name);
     }
 
     // Test each mutually exclusive modifier individually
@@ -174,6 +182,7 @@ fn test_ft_create_schema_text_field() {
             con.ft_create(&index_name, &CreateOptions::new(), &schema),
             Ok("OK".to_string())
         );
+        on_created(&index_name);
     }
 
     // Test all combinations of field modifiers that are not mutually exclusive
@@ -188,6 +197,7 @@ fn test_ft_create_schema_text_field() {
             con.ft_create(&combined_index_name, &CreateOptions::new(), &schema),
             Ok("OK".to_string())
         );
+        on_created(&combined_index_name);
     }
 
     // After all of the modifiers above have been applied, add each of the mutually exclusive modifiers individually
@@ -200,6 +210,7 @@ fn test_ft_create_schema_text_field() {
             con.ft_create(&combined_index_name, &CreateOptions::new(), &schema),
             Ok("OK".to_string())
         );
+        on_created(&combined_index_name);
     }
     // Test that mutually exclusive modifiers are mutually exclusive indeed
     assert_no_index_and_index_missing_exclusivity_for_field(
@@ -215,10 +226,16 @@ fn test_ft_create_schema_text_field() {
 }
 
 #[test]
-fn test_ft_create_schema_tag_field() {
+fn test_ft_create_schema_text_field() {
     let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
-    let mut con = ctx.connection();
+    run_ft_create_schema_text_field(&mut ctx.connection(), |_| {});
+}
 
+fn run_ft_create_schema_tag_field<C, F>(con: &mut C, mut on_created: F)
+where
+    C: redis::ConnectionLike,
+    F: FnMut(&str),
+{
     type SchemaTagFieldModifier = fn(SchemaTagField) -> SchemaTagField;
     let field_modifiers: Vec<(&'static str, SchemaTagFieldModifier)> = vec![
         // Common modifiers
@@ -248,6 +265,7 @@ fn test_ft_create_schema_tag_field() {
             con.ft_create(&index_name, &CreateOptions::new(), &schema),
             Ok("OK".to_string())
         );
+        on_created(&index_name);
     }
 
     // Test each mutually exclusive modifier individually
@@ -260,6 +278,7 @@ fn test_ft_create_schema_tag_field() {
             con.ft_create(&index_name, &CreateOptions::new(), &schema),
             Ok("OK".to_string())
         );
+        on_created(&index_name);
     }
 
     // Test all combinations of field modifiers that are not mutually exclusive
@@ -274,6 +293,7 @@ fn test_ft_create_schema_tag_field() {
             con.ft_create(&combined_index_name, &CreateOptions::new(), &schema),
             Ok("OK".to_string())
         );
+        on_created(&combined_index_name);
     }
 
     // After all of the modifiers above have been applied, add each of the mutually exclusive modifiers individually
@@ -286,6 +306,7 @@ fn test_ft_create_schema_tag_field() {
             con.ft_create(&combined_index_name, &CreateOptions::new(), &schema),
             Ok("OK".to_string())
         );
+        on_created(&combined_index_name);
     }
     // Test that mutually exclusive modifiers are mutually exclusive indeed
     assert_no_index_and_index_missing_exclusivity_for_field(
@@ -301,10 +322,16 @@ fn test_ft_create_schema_tag_field() {
 }
 
 #[test]
-fn test_ft_create_schema_numeric_field() {
+fn test_ft_create_schema_tag_field() {
     let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
-    let mut con = ctx.connection();
+    run_ft_create_schema_tag_field(&mut ctx.connection(), |_| {});
+}
 
+fn run_ft_create_schema_numeric_field<C, F>(con: &mut C, mut on_created: F)
+where
+    C: redis::ConnectionLike,
+    F: FnMut(&str),
+{
     type SchemaNumericFieldModifier = fn(SchemaNumericField) -> SchemaNumericField;
     let field_modifiers: Vec<(&'static str, SchemaNumericFieldModifier)> = vec![
         // Common modifiers
@@ -329,6 +356,7 @@ fn test_ft_create_schema_numeric_field() {
             con.ft_create(&index_name, &CreateOptions::new(), &schema),
             Ok("OK".to_string())
         );
+        on_created(&index_name);
     }
 
     // Test each mutually exclusive modifier individually
@@ -341,6 +369,7 @@ fn test_ft_create_schema_numeric_field() {
             con.ft_create(&index_name, &CreateOptions::new(), &schema),
             Ok("OK".to_string())
         );
+        on_created(&index_name);
     }
 
     // Test all combinations of field modifiers that are not mutually exclusive
@@ -355,6 +384,7 @@ fn test_ft_create_schema_numeric_field() {
             con.ft_create(&combined_index_name, &CreateOptions::new(), &schema),
             Ok("OK".to_string())
         );
+        on_created(&combined_index_name);
     }
 
     // After all of the modifiers above have been applied, add each of the mutually exclusive modifiers individually
@@ -367,6 +397,7 @@ fn test_ft_create_schema_numeric_field() {
             con.ft_create(&combined_index_name, &CreateOptions::new(), &schema),
             Ok("OK".to_string())
         );
+        on_created(&combined_index_name);
     }
     // Test that mutually exclusive modifiers are mutually exclusive indeed
     assert_no_index_and_index_missing_exclusivity_for_field(
@@ -382,10 +413,16 @@ fn test_ft_create_schema_numeric_field() {
 }
 
 #[test]
-fn test_ft_create_schema_geo_field() {
+fn test_ft_create_schema_numeric_field() {
     let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
-    let mut con = ctx.connection();
+    run_ft_create_schema_numeric_field(&mut ctx.connection(), |_| {});
+}
 
+fn run_ft_create_schema_geo_field<C, F>(con: &mut C, mut on_created: F)
+where
+    C: redis::ConnectionLike,
+    F: FnMut(&str),
+{
     type SchemaGeoFieldModifier = fn(SchemaGeoField) -> SchemaGeoField;
     let field_modifiers: Vec<(&'static str, SchemaGeoFieldModifier)> = vec![
         // Common modifiers
@@ -410,6 +447,7 @@ fn test_ft_create_schema_geo_field() {
             con.ft_create(&index_name, &CreateOptions::new(), &schema),
             Ok("OK".to_string())
         );
+        on_created(&index_name);
     }
 
     // Test each mutually exclusive modifier individually
@@ -422,6 +460,7 @@ fn test_ft_create_schema_geo_field() {
             con.ft_create(&index_name, &CreateOptions::new(), &schema),
             Ok("OK".to_string())
         );
+        on_created(&index_name);
     }
 
     // Test all combinations of field modifiers that are not mutually exclusive
@@ -436,6 +475,7 @@ fn test_ft_create_schema_geo_field() {
             con.ft_create(&combined_index_name, &CreateOptions::new(), &schema),
             Ok("OK".to_string())
         );
+        on_created(&combined_index_name);
     }
 
     // After all of the modifiers above have been applied, add each of the mutually exclusive modifiers individually
@@ -448,6 +488,7 @@ fn test_ft_create_schema_geo_field() {
             con.ft_create(&combined_index_name, &CreateOptions::new(), &schema),
             Ok("OK".to_string())
         );
+        on_created(&combined_index_name);
     }
     // Test that mutually exclusive modifiers are mutually exclusive indeed
     assert_no_index_and_index_missing_exclusivity_for_field(
@@ -462,13 +503,19 @@ fn test_ft_create_schema_geo_field() {
     );
 }
 
+#[test]
+fn test_ft_create_schema_geo_field() {
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
+    run_ft_create_schema_geo_field(&mut ctx.connection(), |_| {});
+}
+
 type VectorFieldModifier = fn(VectorField) -> VectorField;
 
-#[test]
-fn test_ft_create_schema_flat_vector_field() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
-    let mut con = ctx.connection();
-
+fn run_ft_create_schema_flat_vector_field<C, F>(con: &mut C, mut on_created: F)
+where
+    C: redis::ConnectionLike,
+    F: FnMut(&str),
+{
     const DIM: u32 = 128;
 
     type FlatVectorFieldBuilderModifier = fn(FlatVectorFieldBuilder) -> FlatVectorFieldBuilder;
@@ -509,6 +556,7 @@ fn test_ft_create_schema_flat_vector_field() {
                     con.ft_create(&index_name, &CreateOptions::new(), &schema),
                     Ok("OK".to_string())
                 );
+                on_created(&index_name);
             }
 
             // 2. Test each common field modifier individually
@@ -521,6 +569,7 @@ fn test_ft_create_schema_flat_vector_field() {
                     con.ft_create(&index_name, &CreateOptions::new(), &schema),
                     Ok("OK".to_string())
                 );
+                on_created(&index_name);
             }
 
             // 3. Test all builder modifiers combined progressively
@@ -535,6 +584,7 @@ fn test_ft_create_schema_flat_vector_field() {
                     con.ft_create(&index_name, &CreateOptions::new(), &schema),
                     Ok("OK".to_string())
                 );
+                on_created(&index_name);
             }
 
             // 4. Test all builder modifiers + each field modifier
@@ -547,6 +597,7 @@ fn test_ft_create_schema_flat_vector_field() {
                     con.ft_create(&index_name, &CreateOptions::new(), &schema),
                     Ok("OK".to_string())
                 );
+                on_created(&index_name);
             }
 
             // 5. Test all builder modifiers + all field modifiers combined progressively
@@ -561,16 +612,23 @@ fn test_ft_create_schema_flat_vector_field() {
                     con.ft_create(&index_name, &CreateOptions::new(), &schema),
                     Ok("OK".to_string())
                 );
+                on_created(&index_name);
             }
         }
     }
 }
 
 #[test]
-fn test_ft_create_schema_hnsw_vector_field() {
+fn test_ft_create_schema_flat_vector_field() {
     let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
-    let mut con = ctx.connection();
+    run_ft_create_schema_flat_vector_field(&mut ctx.connection(), |_| {});
+}
 
+fn run_ft_create_schema_hnsw_vector_field<C, F>(con: &mut C, mut on_created: F)
+where
+    C: redis::ConnectionLike,
+    F: FnMut(&str),
+{
     const DIM: u32 = 128;
 
     type HnswVectorFieldBuilderModifier = fn(HnswVectorFieldBuilder) -> HnswVectorFieldBuilder;
@@ -615,6 +673,7 @@ fn test_ft_create_schema_hnsw_vector_field() {
                     con.ft_create(&index_name, &CreateOptions::new(), &schema),
                     Ok("OK".to_string())
                 );
+                on_created(&index_name);
             }
 
             // 2. Test each common field modifier individually
@@ -627,6 +686,7 @@ fn test_ft_create_schema_hnsw_vector_field() {
                     con.ft_create(&index_name, &CreateOptions::new(), &schema),
                     Ok("OK".to_string())
                 );
+                on_created(&index_name);
             }
 
             // 3. Test all builder modifiers combined progressively
@@ -641,6 +701,7 @@ fn test_ft_create_schema_hnsw_vector_field() {
                     con.ft_create(&index_name, &CreateOptions::new(), &schema),
                     Ok("OK".to_string())
                 );
+                on_created(&index_name);
             }
 
             // 4. Test all builder modifiers + each field modifier
@@ -653,6 +714,7 @@ fn test_ft_create_schema_hnsw_vector_field() {
                     con.ft_create(&index_name, &CreateOptions::new(), &schema),
                     Ok("OK".to_string())
                 );
+                on_created(&index_name);
             }
 
             // 5. Test all builder modifiers + all field modifiers combined progressively
@@ -667,17 +729,23 @@ fn test_ft_create_schema_hnsw_vector_field() {
                     con.ft_create(&index_name, &CreateOptions::new(), &schema),
                     Ok("OK".to_string())
                 );
+                on_created(&index_name);
             }
         }
     }
 }
 
 #[test]
-fn test_ft_create_schema_vamana_vector_field() {
-    // The VAMANA index was introduced in Redis 8.2
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2, &[Module::Search]);
-    let mut con = ctx.connection();
+fn test_ft_create_schema_hnsw_vector_field() {
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
+    run_ft_create_schema_hnsw_vector_field(&mut ctx.connection(), |_| {});
+}
 
+fn run_ft_create_schema_vamana_vector_field<C, F>(con: &mut C, mut on_created: F)
+where
+    C: redis::ConnectionLike,
+    F: FnMut(&str),
+{
     const DIM: u32 = 128;
 
     // Common field modifiers (applied after .build()) - not mutually exclusive
@@ -766,6 +834,7 @@ fn test_ft_create_schema_vamana_vector_field() {
                         con.ft_create(&index_name, &CreateOptions::new(), &schema),
                         Ok("OK".to_string())
                     );
+                    on_created(&index_name);
                 }
 
                 // 2. Test each common field modifier individually
@@ -778,6 +847,7 @@ fn test_ft_create_schema_vamana_vector_field() {
                         con.ft_create(&index_name, &CreateOptions::new(), &schema),
                         Ok("OK".to_string())
                     );
+                    on_created(&index_name);
                 }
 
                 // 3. Test all builder modifiers combined progressively
@@ -792,6 +862,7 @@ fn test_ft_create_schema_vamana_vector_field() {
                         con.ft_create(&index_name, &CreateOptions::new(), &schema),
                         Ok("OK".to_string())
                     );
+                    on_created(&index_name);
                 }
 
                 // 4. Test all builder modifiers + each field modifier
@@ -804,6 +875,7 @@ fn test_ft_create_schema_vamana_vector_field() {
                         con.ft_create(&index_name, &CreateOptions::new(), &schema),
                         Ok("OK".to_string())
                     );
+                    on_created(&index_name);
                 }
 
                 // 5. Test all builder modifiers + all field modifiers combined progressively
@@ -819,6 +891,7 @@ fn test_ft_create_schema_vamana_vector_field() {
                         con.ft_create(&index_name, &CreateOptions::new(), &schema),
                         Ok("OK".to_string())
                     );
+                    on_created(&index_name);
                 }
             }
         }
@@ -826,10 +899,17 @@ fn test_ft_create_schema_vamana_vector_field() {
 }
 
 #[test]
-fn test_ft_create_schema_geoshape_field() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
-    let mut con = ctx.connection();
+fn test_ft_create_schema_vamana_vector_field() {
+    // The VAMANA index was introduced in Redis 8.2
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2, &[Module::Search]);
+    run_ft_create_schema_vamana_vector_field(&mut ctx.connection(), |_| {});
+}
 
+fn run_ft_create_schema_geoshape_field<C, F>(con: &mut C, mut on_created: F)
+where
+    C: redis::ConnectionLike,
+    F: FnMut(&str),
+{
     type SchemaGeoShapeFieldModifier = fn(SchemaGeoShapeField) -> SchemaGeoShapeField;
     let field_modifiers: Vec<(&'static str, SchemaGeoShapeFieldModifier)> = vec![
         // Common modifiers
@@ -854,6 +934,7 @@ fn test_ft_create_schema_geoshape_field() {
                 con.ft_create(&index_name, &CreateOptions::new(), &schema),
                 Ok("OK".to_string())
             );
+            on_created(&index_name);
         }
 
         // Test each mutually exclusive modifier individually
@@ -866,6 +947,7 @@ fn test_ft_create_schema_geoshape_field() {
                 con.ft_create(&index_name, &CreateOptions::new(), &schema),
                 Ok("OK".to_string())
             );
+            on_created(&index_name);
         }
 
         // Test all modifiers that are not mutually exclusive
@@ -881,6 +963,7 @@ fn test_ft_create_schema_geoshape_field() {
             con.ft_create(&combined_index_name, &CreateOptions::new(), &schema),
             Ok("OK".to_string())
         );
+        on_created(&combined_index_name);
 
         // After all of the modifiers above have been applied, add each of the mutually exclusive modifiers individually
         for (suffix, modifier) in &mutually_exclusive_common_modifiers {
@@ -893,6 +976,7 @@ fn test_ft_create_schema_geoshape_field() {
                 con.ft_create(&combined_index_name, &CreateOptions::new(), &schema),
                 Ok("OK".to_string())
             );
+            on_created(&combined_index_name);
         }
 
         // Test that mutually exclusive modifiers are mutually exclusive indeed
@@ -906,5 +990,220 @@ fn test_ft_create_schema_geoshape_field() {
             ),
             GEOSHAPE_FIELD_NAME,
         );
+    }
+}
+
+#[test]
+fn test_ft_create_schema_geoshape_field() {
+    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
+    run_ft_create_schema_geoshape_field(&mut ctx.connection(), |_| {});
+}
+
+#[cfg(feature = "cluster")]
+mod cluster {
+    use super::*;
+    use redis_test::cluster::RedisClusterConfiguration;
+
+    /// Build a 3-primary cluster with the search module loaded on every node.
+    fn setup_cluster_with_search_module() -> TestClusterContext {
+        let ctx = TestClusterContext::new_with_config(RedisClusterConfiguration {
+            num_nodes: 3,
+            modules: vec![Module::Search],
+            ..Default::default()
+        });
+        ctx.wait_for_cluster_up();
+        wait_for_search_shard_connections(&ctx);
+        ctx
+    }
+
+    /// Wait until every primary's outbound RediSearch shard connection pool is fully established.
+    /// Otherwise, FT.CREATE commands issued during the brief post-bootstrap window may succeed on the originating primary
+    /// while replication to one or more peers is silently dropped.
+    fn wait_for_search_shard_connections(ctx: &TestClusterContext) {
+        const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+        const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
+        let mut connections: Vec<(redis::ConnectionAddr, redis::Connection)> = ctx
+            .cluster
+            .iter_servers()
+            .map(|server| {
+                (
+                    server.client_addr().clone(),
+                    redis::Client::open(server.connection_info())
+                        .unwrap()
+                        .get_connection()
+                        .unwrap(),
+                )
+            })
+            .collect();
+        let expected_peers = connections.len();
+
+        let deadline = std::time::Instant::now() + TIMEOUT;
+        loop {
+            let mut pending: Option<(redis::ConnectionAddr, Vec<(String, Vec<String>)>)> = None;
+            for (addr, con) in &mut connections {
+                let states: Vec<(String, Vec<String>)> = redis::cmd("_FT.DEBUG")
+                    .arg("SHARD_CONNECTION_STATES")
+                    .query(con)
+                    .unwrap();
+                let ready = states.len() == expected_peers
+                    && states.iter().all(|(_, conns)| {
+                        !conns.is_empty() && conns.iter().all(|s| s == "Connected")
+                    });
+                if !ready {
+                    pending = Some((addr.clone(), states));
+                    break;
+                }
+            }
+            if pending.is_none() {
+                return;
+            }
+            if std::time::Instant::now() >= deadline {
+                let (addr, states) = pending.unwrap();
+                panic!(
+                    "shard connections never converged on {addr:?} within {TIMEOUT:?}; current states: {states:?}",
+                );
+            }
+            std::thread::sleep(POLL_INTERVAL);
+        }
+    }
+
+    /// Maintains one direct connection per primary, allowing each node to be polled
+    /// without incurring the cost of reconnecting for every index check.
+    struct PrimaryConnections {
+        cons: Vec<(redis::ConnectionAddr, redis::Connection)>,
+    }
+
+    impl PrimaryConnections {
+        fn from_cluster(ctx: &TestClusterContext) -> Self {
+            let cons = ctx
+                .cluster
+                .iter_servers()
+                .map(|server| {
+                    let addr = server.client_addr().clone();
+                    let con = redis::Client::open(server.connection_info())
+                        .unwrap()
+                        .get_connection()
+                        .unwrap();
+                    (addr, con)
+                })
+                .collect();
+            Self { cons }
+        }
+
+        /// Poll each primary directly with `FT._LIST` until it reports `index_name`.
+        /// RediSearch propagates a successful `FT.CREATE` to peer primaries via internal `_FT.CREATE` calls.
+        /// A successful `FT.CREATE` only confirms that the command was accepted by the originating primary.
+        /// This check waits until every primary reports the index locally, ensuring that index creation has propagated cluster-wide.
+        fn assert_index_propagated(&mut self, index_name: &str) {
+            const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
+            const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
+            for (addr, con) in &mut self.cons {
+                let deadline = std::time::Instant::now() + TIMEOUT;
+                loop {
+                    let indexes: Vec<String> = redis::cmd("FT._LIST").query(con).unwrap();
+                    if indexes.iter().any(|name| name == index_name) {
+                        break;
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        panic!(
+                            "index {index_name:?} never propagated to {addr:?} within {TIMEOUT:?}; got {indexes:?}",
+                        );
+                    }
+                    std::thread::sleep(POLL_INTERVAL);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_simple_ft_create() {
+        run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_0);
+        let ctx = setup_cluster_with_search_module();
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_simple_ft_create(&mut ctx.connection(), "index", |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_ft_create_schema_text_field() {
+        run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_0);
+        let ctx = setup_cluster_with_search_module();
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_text_field(&mut ctx.connection(), |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_ft_create_schema_tag_field() {
+        run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_0);
+        let ctx = setup_cluster_with_search_module();
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_tag_field(&mut ctx.connection(), |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_ft_create_schema_numeric_field() {
+        run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_0);
+        let ctx = setup_cluster_with_search_module();
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_numeric_field(&mut ctx.connection(), |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_ft_create_schema_geo_field() {
+        run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_0);
+        let ctx = setup_cluster_with_search_module();
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_geo_field(&mut ctx.connection(), |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_ft_create_schema_geoshape_field() {
+        run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_0);
+        let ctx = setup_cluster_with_search_module();
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_geoshape_field(&mut ctx.connection(), |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_ft_create_schema_flat_vector_field() {
+        run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_0);
+        let ctx = setup_cluster_with_search_module();
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_flat_vector_field(&mut ctx.connection(), |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_ft_create_schema_hnsw_vector_field() {
+        run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_0);
+        let ctx = setup_cluster_with_search_module();
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_hnsw_vector_field(&mut ctx.connection(), |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_ft_create_schema_vamana_vector_field() {
+        // The VAMANA index was introduced in Redis 8.2.
+        run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_2);
+        let ctx = setup_cluster_with_search_module();
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_vamana_vector_field(&mut ctx.connection(), |name| {
+            primaries.assert_index_propagated(name);
+        });
     }
 }
