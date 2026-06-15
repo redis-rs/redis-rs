@@ -1944,6 +1944,44 @@ mod cluster_async {
     }
 
     #[test]
+    fn test_async_cluster_io_error() {
+        let name = "test_async_cluster_io_error";
+        let completed = Arc::new(AtomicI32::new(0));
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(2),
+            name,
+            move |cmd: &[u8], port| {
+                respond_startup_two_nodes(name, cmd)?;
+                // Error twice with io-error, ensure connection is reestablished w/out calling
+                // other node (i.e., not doing a full slot rebuild)
+                match port {
+                    6380 => panic!("Node should not be called"),
+                    _ => match completed.fetch_add(1, Ordering::SeqCst) {
+                        0..=1 => Err(Err(RedisError::from(std::io::Error::new(
+                            std::io::ErrorKind::ConnectionReset,
+                            "mock-io-error",
+                        )))),
+                        _ => Err(Ok(redis_value!("123"))),
+                    },
+                }
+            },
+        );
+
+        let value = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<Option<i32>>(&mut connection),
+        );
+
+        assert_eq!(value, Ok(Some(123)));
+    }
+
+    #[test]
     fn test_async_cluster_io_error_without_fallback_errors() {
         let name = "test_async_cluster_io_error_without_fallback_errors";
         let MockEnv {
