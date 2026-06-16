@@ -895,8 +895,15 @@ where
                     .and_then(ConnState::connected)
                     .map(|conn| (candidate, conn))
             });
+        drop(read_guard);
         if let Some(found) = fallback {
             return Ok(found);
+        }
+
+        if let Some(ref addr) = preferred
+            && let Ok(conn) = self.connect_check_and_add(addr).await
+        {
+            return Ok((addr.clone(), conn));
         }
 
         Err((
