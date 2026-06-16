@@ -2567,7 +2567,7 @@ mod basic {
         assert_eq!(con.object_refcount("object_key_str").unwrap().unwrap(), 1);
 
         // Needed for OBJECT FREQ and can't be set before object_idletime
-        // since that will break getting the idletime before idletime adjuts
+        // since that will break getting the idletime before idletime adjusts
         redis::cmd("CONFIG")
             .arg("SET")
             .arg(b"maxmemory-policy")

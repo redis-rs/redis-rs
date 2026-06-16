@@ -1,8 +1,7 @@
 #![cfg(feature = "json")]
 
-use redis::{
-    Commands, ExistenceCheck, FphaInput, FphaType, JsonCommands, JsonSetOptions, ValueType,
-};
+use redis::json::{FphaType, JsonSetOptions};
+use redis::{Commands, ExistenceCheck, JsonCommands, ValueType};
 use std::assert_eq;
 use std::collections::HashMap;
 use std::f32::consts::PI;
@@ -547,8 +546,12 @@ fn test_module_json_set_options_json_value() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    let opts = JsonSetOptions::json(&json!({"a": 1, "b": [2, 3]})).unwrap();
-    let set_result: RedisResult<bool> = con.json_set_options(TEST_KEY, "$", &opts);
+    let set_result: RedisResult<bool> = con.json_set_options(
+        TEST_KEY,
+        "$",
+        &json!({"a": 1, "b": [2, 3]}),
+        &JsonSetOptions::default(),
+    );
     assert_eq!(set_result, Ok(true));
 
     let get_result: RedisResult<String> = con.json_get(TEST_KEY, "$");
@@ -560,39 +563,32 @@ fn test_module_json_set_options_nx_xx() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
+    let opts_xx = JsonSetOptions::default().conditional_set(ExistenceCheck::XX);
+    let opts_nx = JsonSetOptions::default().conditional_set(ExistenceCheck::NX);
+
     // XX on a missing key should not create the key.
-    let opts_xx = JsonSetOptions::json(&json!({"v": 0}))
-        .unwrap()
-        .conditional_set(ExistenceCheck::XX);
-    let _: RedisResult<redis::Value> = con.json_set_options(TEST_KEY, "$", &opts_xx);
+    let _: RedisResult<redis::Value> =
+        con.json_set_options(TEST_KEY, "$", &json!({"v": 0}), &opts_xx);
     let key_exists: RedisResult<bool> = con.exists(TEST_KEY);
     assert_eq!(key_exists, Ok(false));
 
     // NX on a fresh key should succeed.
-    let opts_nx = JsonSetOptions::json(&json!({"v": 1}))
-        .unwrap()
-        .conditional_set(ExistenceCheck::NX);
     assert_eq!(
-        con.json_set_options::<_, _, bool>(TEST_KEY, "$", &opts_nx),
+        con.json_set_options::<_, _, _, bool>(TEST_KEY, "$", &json!({"v": 1}), &opts_nx),
         Ok(true),
     );
     let key_exists: RedisResult<bool> = con.exists(TEST_KEY);
     assert_eq!(key_exists, Ok(true));
 
     // NX again must be a no-op because the key exists.
-    let opts_nx = JsonSetOptions::json(&json!({"v": 999}))
-        .unwrap()
-        .conditional_set(ExistenceCheck::NX);
-    let _: RedisResult<redis::Value> = con.json_set_options(TEST_KEY, "$", &opts_nx);
+    let _: RedisResult<redis::Value> =
+        con.json_set_options(TEST_KEY, "$", &json!({"v": 999}), &opts_nx);
     let get_result: RedisResult<String> = con.json_get(TEST_KEY, "$.v");
     assert_eq!(get_result, Ok("[1]".to_string()));
 
     // XX on the existing key should succeed and overwrite the value.
-    let opts_xx = JsonSetOptions::json(&json!({"v": 2}))
-        .unwrap()
-        .conditional_set(ExistenceCheck::XX);
     assert_eq!(
-        con.json_set_options::<_, _, bool>(TEST_KEY, "$", &opts_xx),
+        con.json_set_options::<_, _, _, bool>(TEST_KEY, "$", &json!({"v": 2}), &opts_xx),
         Ok(true),
     );
     let get_result: RedisResult<String> = con.json_get(TEST_KEY, "$.v");
@@ -605,17 +601,21 @@ fn test_module_json_set_options_nx_xx() {
 // The `FPHA <TYPE>` token is a storage hint that asks the server to pack the array internally as bf16/fp16/fp32/fp64 lanes.
 // Round-trip via `JSON.GET` returns the array as a JSON array of numbers.
 #[rstest::rstest]
-#[case::fp32(FphaInput::Fp32(&[1.0_f32, 2.0, -3.5]))]
-#[case::fp64(FphaInput::Fp64(&[1.0_f64, 2.0, -3.5]))]
-#[case::bf16(FphaInput::Bf16(&[1.0_f32, 2.0, -3.5]))]
-#[case::fp16(FphaInput::Fp16(&[1.0_f32, 2.0, -3.5]))]
-fn test_module_json_set_fpha_roundtrip(#[case] input: FphaInput<'static>) {
+#[case::fp32(FphaType::Fp32)]
+#[case::fp64(FphaType::Fp64)]
+#[case::bf16(FphaType::Bf16)]
+#[case::fp16(FphaType::Fp16)]
+fn test_module_json_set_fpha_roundtrip(#[case] fpha_type: FphaType) {
     let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
     let mut con = ctx.connection();
 
-    let opts = JsonSetOptions::fpha(input).unwrap();
     assert_eq!(
-        con.json_set_options::<_, _, bool>(TEST_KEY, "$", &opts),
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &[1.0_f32, 2.0, -3.5],
+            &JsonSetOptions::default().fpha(fpha_type)
+        ),
         Ok(true),
     );
 
@@ -628,9 +628,13 @@ fn test_module_json_set_fpha_empty_payload() {
     let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
     let mut con = ctx.connection();
 
-    let opts = JsonSetOptions::fpha(FphaInput::Fp32(&[])).unwrap();
     assert_eq!(
-        con.json_set_options::<_, _, bool>(TEST_KEY, "$", &opts),
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &[0_f32; 0],
+            &JsonSetOptions::default().fpha(FphaType::Fp32)
+        ),
         Ok(true),
     );
 
@@ -644,21 +648,19 @@ fn test_module_json_set_fpha_with_existence_check() {
     let mut con = ctx.connection();
 
     // XX against a missing key must not create it.
-    let lanes = [1.0_f32];
-    let opts_xx = JsonSetOptions::fpha(FphaInput::Fp32(&lanes))
-        .unwrap()
+    let opts_xx = JsonSetOptions::default()
+        .fpha(FphaType::Fp32)
         .conditional_set(ExistenceCheck::XX);
-    let _: RedisResult<redis::Value> = con.json_set_options(TEST_KEY, "$", &opts_xx);
+    let _: RedisResult<redis::Value> = con.json_set_options(TEST_KEY, "$", &[1.0_f32], &opts_xx);
     let key_exists: RedisResult<bool> = con.exists(TEST_KEY);
     assert_eq!(key_exists, Ok(false));
 
     // NX on the same missing key creates it.
-    let lanes = [1.0_f32, 2.0, 3.0];
-    let opts_nx = JsonSetOptions::fpha(FphaInput::Fp32(&lanes))
-        .unwrap()
+    let opts_nx = JsonSetOptions::default()
+        .fpha(FphaType::Fp32)
         .conditional_set(ExistenceCheck::NX);
     assert_eq!(
-        con.json_set_options::<_, _, bool>(TEST_KEY, "$", &opts_nx),
+        con.json_set_options::<_, _, _, bool>(TEST_KEY, "$", &[1.0_f32, 2.0, 3.0], &opts_nx),
         Ok(true),
     );
     let get_result: RedisResult<String> = con.json_get(TEST_KEY, "$");
@@ -672,12 +674,16 @@ fn test_module_json_set_fpha_fp16_overflow() {
     let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
     let mut con = ctx.connection();
 
-    let lanes = [70000.0_f32];
-    let opts = JsonSetOptions::fpha(FphaInput::Fp16(&lanes)).unwrap();
-    let set_result: RedisResult<redis::Value> = con.json_set_options(TEST_KEY, "$", &opts);
+    let set_result: RedisResult<redis::Value> = con.json_set_options(
+        TEST_KEY,
+        "$",
+        &[70000.0_f32],
+        &JsonSetOptions::default().fpha(FphaType::Fp16),
+    );
+    let error = set_result.unwrap_err();
     assert!(
-        set_result.is_err(),
-        "expected server error, got {set_result:?}"
+        error.to_string().contains("out of range for F16"),
+        "unexpected error message: {error}",
     );
 
     let key_exists: RedisResult<bool> = con.exists(TEST_KEY);
@@ -693,9 +699,12 @@ fn test_module_json_set_fpha_fp16_partial_overflow() {
     let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
     let mut con = ctx.connection();
 
-    let lanes = [1.0_f32, 2.0, 70000.0, 3.0];
-    let opts = JsonSetOptions::fpha(FphaInput::Fp16(&lanes)).unwrap();
-    let set_result: RedisResult<redis::Value> = con.json_set_options(TEST_KEY, "$", &opts);
+    let set_result: RedisResult<redis::Value> = con.json_set_options(
+        TEST_KEY,
+        "$",
+        &[1.0_f32, 2.0, 70000.0, 3.0],
+        &JsonSetOptions::default().fpha(FphaType::Fp16),
+    );
     assert!(
         set_result.is_err(),
         "expected server error, got {set_result:?}"
@@ -711,10 +720,13 @@ fn test_module_json_set_fpha_fp16_max_boundary() {
     let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
     let mut con = ctx.connection();
 
-    let lanes = [65504.0_f32];
-    let opts = JsonSetOptions::fpha(FphaInput::Fp16(&lanes)).unwrap();
     assert_eq!(
-        con.json_set_options::<_, _, bool>(TEST_KEY, "$", &opts),
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &[65504.0_f32],
+            &JsonSetOptions::default().fpha(FphaType::Fp16)
+        ),
         Ok(true),
     );
 
@@ -728,10 +740,13 @@ fn test_module_json_set_fpha_fp32_max_boundary() {
     let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
     let mut con = ctx.connection();
 
-    let lanes = [3.4e38_f32];
-    let opts = JsonSetOptions::fpha(FphaInput::Fp32(&lanes)).unwrap();
     assert_eq!(
-        con.json_set_options::<_, _, bool>(TEST_KEY, "$", &opts),
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &[3.4e38_f32],
+            &JsonSetOptions::default().fpha(FphaType::Fp32)
+        ),
         Ok(true),
     );
 
@@ -746,10 +761,13 @@ fn test_module_json_set_fpha_bf16_above_fp16_range() {
     let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
     let mut con = ctx.connection();
 
-    let lanes = [1048576.0_f32];
-    let opts = JsonSetOptions::fpha(FphaInput::Bf16(&lanes)).unwrap();
     assert_eq!(
-        con.json_set_options::<_, _, bool>(TEST_KEY, "$", &opts),
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &[1048576.0_f32],
+            &JsonSetOptions::default().fpha(FphaType::Bf16)
+        ),
         Ok(true),
     );
 
@@ -764,10 +782,13 @@ fn test_module_json_set_fpha_fp32_scientific_notation() {
     let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
     let mut con = ctx.connection();
 
-    let lanes = [1e-10_f32, 6.022e23_f32];
-    let opts = JsonSetOptions::fpha(FphaInput::Fp32(&lanes)).unwrap();
     assert_eq!(
-        con.json_set_options::<_, _, bool>(TEST_KEY, "$", &opts),
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &[1e-10_f32, 6.022e23_f32],
+            &JsonSetOptions::default().fpha(FphaType::Fp32)
+        ),
         Ok(true),
     );
 
@@ -785,10 +806,13 @@ fn test_module_json_set_fpha_bf16_truncation() {
     let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
     let mut con = ctx.connection();
 
-    let lanes = [100.7_f32, PI];
-    let opts = JsonSetOptions::fpha(FphaInput::Bf16(&lanes)).unwrap();
     assert_eq!(
-        con.json_set_options::<_, _, bool>(TEST_KEY, "$", &opts),
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &[100.7_f32, PI],
+            &JsonSetOptions::default().fpha(FphaType::Bf16)
+        ),
         Ok(true),
     );
 
@@ -803,10 +827,13 @@ fn test_module_json_set_fpha_fp16_truncation() {
     let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
     let mut con = ctx.connection();
 
-    let lanes = [1.0009766_f32, PI];
-    let opts = JsonSetOptions::fpha(FphaInput::Fp16(&lanes)).unwrap();
     assert_eq!(
-        con.json_set_options::<_, _, bool>(TEST_KEY, "$", &opts),
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &[1.0009766_f32, PI],
+            &JsonSetOptions::default().fpha(FphaType::Fp16)
+        ),
         Ok(true),
     );
 
@@ -814,18 +841,22 @@ fn test_module_json_set_fpha_fp16_truncation() {
     assert_eq!(get_result, Ok("[[1.001,3.14]]".to_string()));
 }
 
-// `JsonSetOptions::fpha_serialize` accepts arbitrary serializable values.
+// The FPHA hint applies to any serializable value, not just flat slices.
 // A 2-D matrix exercises the docs' "all FP arrays in value" wording - the hint is applied to every inner array.
 // With BF16, 100.7 snaps to 100.5 and pi snaps to 3.14 within their respective inner arrays.
 #[test]
-fn test_module_json_set_fpha_serialize_matrix() {
+fn test_module_json_set_fpha_matrix() {
     let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
     let mut con = ctx.connection();
 
     let matrix: &[&[f32]] = &[&[1.0, 100.7], &[PI, 4.0]];
-    let opts = JsonSetOptions::fpha_serialize(matrix, FphaType::Bf16).unwrap();
     assert_eq!(
-        con.json_set_options::<_, _, bool>(TEST_KEY, "$", &opts),
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &matrix,
+            &JsonSetOptions::default().fpha(FphaType::Bf16)
+        ),
         Ok(true),
     );
 
@@ -835,14 +866,17 @@ fn test_module_json_set_fpha_serialize_matrix() {
 
 // An object holding multiple FP-array fields gets the storage hint applied to each field independently.
 #[test]
-fn test_module_json_set_fpha_serialize_object_with_array_fields() {
+fn test_module_json_set_fpha_object_with_array_fields() {
     let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
     let mut con = ctx.connection();
 
-    let value = serde_json::json!({"weights": [1.0, 2.0, 3.0], "bias": [0.5, 0.25]});
-    let opts = JsonSetOptions::fpha_serialize(&value, FphaType::Fp16).unwrap();
     assert_eq!(
-        con.json_set_options::<_, _, bool>(TEST_KEY, "$", &opts),
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &serde_json::json!({"weights": [1.0, 2.0, 3.0], "bias": [0.5, 0.25]}),
+            &JsonSetOptions::default().fpha(FphaType::Fp16)
+        ),
         Ok(true),
     );
 
@@ -860,13 +894,17 @@ fn test_module_json_set_fpha_serialize_object_with_array_fields() {
 
 // Verify that a single out-of-range value causes the entire command to fail without modifying the key, even when the offending value appears in a nested array.
 #[test]
-fn test_module_json_set_fpha_serialize_nested_partial_overflow() {
+fn test_module_json_set_fpha_nested_partial_overflow() {
     let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
     let mut con = ctx.connection();
 
     let matrix: &[&[f32]] = &[&[1.0, 2.0], &[70000.0, 3.0]];
-    let opts = JsonSetOptions::fpha_serialize(matrix, FphaType::Fp16).unwrap();
-    let set_result: RedisResult<redis::Value> = con.json_set_options(TEST_KEY, "$", &opts);
+    let set_result: RedisResult<redis::Value> = con.json_set_options(
+        TEST_KEY,
+        "$",
+        &matrix,
+        &JsonSetOptions::default().fpha(FphaType::Fp16),
+    );
     assert!(
         set_result.is_err(),
         "expected server error, got {set_result:?}"
@@ -878,13 +916,17 @@ fn test_module_json_set_fpha_serialize_nested_partial_overflow() {
 
 // A scalar (not an array) is also a valid FPHA payload server-side.
 #[test]
-fn test_module_json_set_fpha_serialize_scalar() {
+fn test_module_json_set_fpha_scalar() {
     let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
     let mut con = ctx.connection();
 
-    let opts = JsonSetOptions::fpha_serialize(&1.5_f32, FphaType::Fp32).unwrap();
     assert_eq!(
-        con.json_set_options::<_, _, bool>(TEST_KEY, "$", &opts),
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &1.5_f32,
+            &JsonSetOptions::default().fpha(FphaType::Fp32)
+        ),
         Ok(true),
     );
 
