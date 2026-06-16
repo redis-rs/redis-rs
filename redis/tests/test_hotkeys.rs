@@ -69,7 +69,7 @@ mod hotkeys {
     #[case(ProtocolVersion::RESP2)]
     #[case(ProtocolVersion::RESP3)]
     fn test_hotkeys_state_machine_behavior(#[case] protocol: ProtocolVersion) {
-        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_6);
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
         let mut con = setup_connection_with_protocol(&ctx, protocol);
 
         println!("Starting test_hotkeys_state_machine_behavior - Protocol: {protocol:?}");
@@ -145,7 +145,7 @@ mod hotkeys {
     #[case(ProtocolVersion::RESP2, Metric::All)]
     #[case(ProtocolVersion::RESP3, Metric::All)]
     fn test_hotkeys_with_metric(#[case] protocol: ProtocolVersion, #[case] metric: Metric) {
-        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_6);
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
         let mut con = setup_connection_with_protocol(&ctx, protocol);
 
         println!("Starting test_hotkeys_with_metric - Metric: {metric}, Protocol: {protocol:?}");
@@ -171,7 +171,7 @@ mod hotkeys {
     #[case(ProtocolVersion::RESP2)]
     #[case(ProtocolVersion::RESP3)]
     fn test_hotkeys_options_with_duration_and_count(#[case] protocol: ProtocolVersion) {
-        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_6);
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
         let mut con = setup_connection_with_protocol(&ctx, protocol);
 
         println!("Starting test_hotkeys_options_with_duration_and_count - Protocol: {protocol:?}");
@@ -203,7 +203,7 @@ mod hotkeys {
     #[case(ProtocolVersion::RESP2)]
     #[case(ProtocolVersion::RESP3)]
     fn test_hotkeys_options_with_sample_ratio(#[case] protocol: ProtocolVersion) {
-        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_6);
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
         let mut con = setup_connection_with_protocol(&ctx, protocol);
 
         println!("Starting test_hotkeys_options_with_sample_ratio - Protocol: {protocol:?}");
@@ -223,7 +223,7 @@ mod hotkeys {
     #[case(ProtocolVersion::RESP2)]
     #[case(ProtocolVersion::RESP3)]
     fn test_hotkeys_start_with_slots_on_standalone_errors(#[case] protocol: ProtocolVersion) {
-        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_6);
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
         let mut con = setup_connection_with_protocol(&ctx, protocol);
 
         println!(
@@ -329,7 +329,7 @@ mod hotkeys_cluster {
         let port = port_of(info.addr());
         let mut direct = direct_connection(info.clone(), protocol);
 
-        skip_if_context_does_not_support!(cluster_ctx, REDIS_VERSION_CE_8_6, None);
+        skip_if_context_does_not_support!(cluster_ctx, REDIS_CE_8_6, None);
 
         let (range_start, range_end) = first_owned_slot_range(&mut direct, port);
         let (hot_key, target_slot) = find_key_in_range(&mut direct, range_start, range_end);
@@ -634,7 +634,7 @@ mod async_hotkeys {
         #[case] runtime: RuntimeType,
         #[values(ProtocolVersion::RESP2, ProtocolVersion::RESP3)] protocol: ProtocolVersion,
     ) {
-        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_6);
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
 
         println!("Starting test_hotkeys_state_machine_behavior_async - Protocol: {protocol:?}");
 
@@ -712,7 +712,7 @@ mod async_hotkeys {
         #[values(ProtocolVersion::RESP2, ProtocolVersion::RESP3)] protocol: ProtocolVersion,
         #[values(Metric::Cpu, Metric::Net, Metric::All)] metric: Metric,
     ) {
-        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_6);
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
 
         println!(
             "Starting test_hotkeys_with_metric_async - Metric: {metric}, Protocol: {protocol:?}"
@@ -748,7 +748,7 @@ mod async_hotkeys {
         #[case] runtime: RuntimeType,
         #[values(ProtocolVersion::RESP2, ProtocolVersion::RESP3)] protocol: ProtocolVersion,
     ) {
-        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_6);
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
 
         println!(
             "Starting test_hotkeys_options_with_duration_and_count_async - Protocol: {protocol:?}"
@@ -792,7 +792,7 @@ mod async_hotkeys {
         #[case] runtime: RuntimeType,
         #[values(ProtocolVersion::RESP2, ProtocolVersion::RESP3)] protocol: ProtocolVersion,
     ) {
-        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_6);
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
 
         println!("Starting test_hotkeys_options_with_sample_ratio_async - Protocol: {protocol:?}");
 
@@ -824,7 +824,7 @@ mod async_hotkeys {
         #[case] runtime: RuntimeType,
         #[values(ProtocolVersion::RESP2, ProtocolVersion::RESP3)] protocol: ProtocolVersion,
     ) {
-        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_6);
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
 
         println!(
             "Starting test_hotkeys_start_with_slots_on_standalone_errors_async - \

@@ -52,7 +52,7 @@ mod cluster {
 
     #[test]
     fn test_cluster_numbered_database() {
-        run_test_if_version_supported!(VALKEY_VERSION_CE_9_0);
+        run_test_if_version_supported!(VALKEY_9_0);
 
         let cluster = TestClusterContext::new_with_config_and_builder(
             RedisClusterConfiguration {
