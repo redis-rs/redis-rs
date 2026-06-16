@@ -55,6 +55,7 @@ struct BuilderParams {
     connection_timeout: Option<Duration>,
     response_timeout: Option<Duration>,
     protocol: Option<ProtocolVersion>,
+    database_id: Option<i64>,
     #[cfg(feature = "cluster-async")]
     async_push_sender: Option<Arc<dyn AsyncPushSender>>,
     pub(crate) tcp_settings: TcpSettings,
@@ -122,6 +123,12 @@ pub(crate) struct ClusterParams {
     pub(crate) connection_timeout: Duration,
     pub(crate) response_timeout: Option<Duration>,
     pub(crate) protocol: Option<ProtocolVersion>,
+    /// Index of the logical database each cluster connection should `SELECT`.
+    ///
+    /// Defaults to `0`. Note that selecting a non-zero database in cluster mode
+    /// requires a server that supports multiple databases in cluster mode;
+    /// otherwise the connection handshake will fail.
+    pub(crate) database_id: i64,
     #[cfg(feature = "cluster-async")]
     pub(crate) async_push_sender: Option<Arc<dyn AsyncPushSender>>,
     pub(crate) tcp_settings: TcpSettings,
@@ -182,6 +189,7 @@ impl ClusterParams {
                 .unwrap_or(DEFAULT_CONNECTION_TIMEOUT.unwrap()),
             response_timeout: value.response_timeout,
             protocol: value.protocol,
+            database_id: value.database_id.unwrap_or(0),
             #[cfg(feature = "cluster-async")]
             async_push_sender: value.async_push_sender,
             tcp_settings: value.tcp_settings,
@@ -268,6 +276,7 @@ impl ClusterClientBuilder {
             }
         };
 
+        let explicit_database_id = self.builder_params.database_id;
         let mut cluster_params = ClusterParams::from(self.builder_params)?;
         let password = if cluster_params.password.is_none() {
             cluster_params
@@ -297,6 +306,15 @@ impl ClusterClientBuilder {
         } else {
             None
         };
+        // An explicit builder value (even 0) takes precedence. Otherwise inherit the
+        // database from the first node's URL (e.g. `redis://host:6379/4`); when
+        // inherited, all initial nodes must agree.
+        let database_id = if explicit_database_id.is_some() {
+            None
+        } else {
+            cluster_params.database_id = first_node.redis.db;
+            Some(cluster_params.database_id)
+        };
 
         // Verify that the initial nodes match the cluster client's configuration.
         for node in &initial_nodes {
@@ -324,6 +342,14 @@ impl ClusterClientBuilder {
                 return Err(RedisError::from((
                     ErrorKind::InvalidClientConfig,
                     "Cannot use different protocol among initial nodes.",
+                )));
+            }
+            if let Some(database_id) = database_id
+                && node.redis.db != database_id
+            {
+                return Err(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "Cannot use different database among initial nodes.",
                 )));
             }
 
@@ -538,6 +564,23 @@ impl ClusterClientBuilder {
     /// Sets the protocol with which the client should communicate with the server.
     pub fn use_protocol(mut self, protocol: ProtocolVersion) -> ClusterClientBuilder {
         self.builder_params.protocol = Some(protocol);
+        self
+    }
+
+    /// Sets the logical database that every cluster connection should `SELECT`.
+    ///
+    /// Defaults to `0`. If left unset, the database is inherited from the first
+    /// node's URL (e.g. `redis://127.0.0.1:6379/4`), in which case all initial
+    /// nodes must specify the same database.
+    ///
+    /// The selected database is reapplied automatically whenever a connection is
+    /// (re)established, including after reconnects.
+    ///
+    /// Note that selecting a non-zero database in cluster mode requires a server that
+    /// supports multiple databases in cluster mode; otherwise the connection handshake
+    /// wil fail.
+    pub fn database_id(mut self, database_id: i64) -> ClusterClientBuilder {
+        self.builder_params.database_id = Some(database_id);
         self
     }
 
@@ -879,6 +922,68 @@ mod tests {
     fn give_empty_initial_nodes() {
         let client = ClusterClient::new(Vec::<String>::new());
         assert!(client.is_err())
+    }
+
+    #[test]
+    fn database_id_defaults_to_zero() {
+        let client = ClusterClient::new(get_connection_data()).unwrap();
+        assert_eq!(client.cluster_params.database_id, 0);
+    }
+
+    #[test]
+    fn give_database_id_by_method() {
+        let client = ClusterClientBuilder::new(get_connection_data())
+            .database_id(4)
+            .build()
+            .unwrap();
+        assert_eq!(client.cluster_params.database_id, 4);
+    }
+
+    #[test]
+    fn give_database_id_by_initial_nodes() {
+        let client = ClusterClient::new(vec![
+            "redis://127.0.0.1:6379/4",
+            "redis://127.0.0.1:6378/4",
+            "redis://127.0.0.1:6377/4",
+        ])
+        .unwrap();
+        assert_eq!(client.cluster_params.database_id, 4);
+    }
+
+    #[test]
+    fn give_database_id_by_method_overrides_initial_nodes() {
+        let client = ClusterClientBuilder::new(vec![
+            "redis://127.0.0.1:6379/2",
+            "redis://127.0.0.1:6378/2",
+            "redis://127.0.0.1:6377/2",
+        ])
+        .database_id(7)
+        .build()
+        .unwrap();
+        assert_eq!(client.cluster_params.database_id, 7);
+    }
+
+    #[test]
+    fn explicit_database_id_zero_overrides_initial_nodes() {
+        let client = ClusterClientBuilder::new(vec![
+            "redis://127.0.0.1:6379/4",
+            "redis://127.0.0.1:6378/4",
+            "redis://127.0.0.1:6377/4",
+        ])
+        .database_id(0)
+        .build()
+        .unwrap();
+        assert_eq!(client.cluster_params.database_id, 0);
+    }
+
+    #[test]
+    fn fail_if_received_different_database_between_initial_nodes() {
+        let result = ClusterClient::new(vec![
+            "redis://127.0.0.1:6379/4",
+            "redis://127.0.0.1:6378/5",
+            "redis://127.0.0.1:6377/4",
+        ]);
+        assert!(result.is_err());
     }
 
     #[cfg(feature = "cluster-async")]
