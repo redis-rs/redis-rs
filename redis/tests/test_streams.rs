@@ -794,6 +794,7 @@ fn test_xclaim_last_id() {
 
 #[test]
 fn test_xreadgroup_with_claim_option() {
+    // `XREADGROUP` option `CLAIM` is only supported in Redis 8.4+ (but not Valkey<=9.1)
     let ctx = run_test_if_version_supported!(REDIS_CE_8_4);
     let mut con = ctx.connection();
 
@@ -895,6 +896,7 @@ fn test_xreadgroup_with_claim_option() {
 
 #[test]
 fn test_xreadgroup_claim_with_idle_and_incoming_messages() {
+    // `XREADGROUP` option `CLAIM` is only supported in Redis 8.4+ (but not Valkey<=9.1)
     let ctx = run_test_if_version_supported!(REDIS_CE_8_4);
     let mut con = ctx.connection();
 
@@ -1026,6 +1028,7 @@ fn test_xreadgroup_claim_with_idle_and_incoming_messages() {
 
 #[test]
 fn test_xreadgroup_claim_multiple_streams() {
+    // `XREADGROUP` option `CLAIM` is only supported in Redis 8.4+ (but not Valkey<=9.1)
     let ctx = run_test_if_version_supported!(REDIS_CE_8_4);
     let mut con = ctx.connection();
 
@@ -1121,6 +1124,7 @@ fn test_xdel() {
 
 #[test]
 fn test_xadd_options_deletion_policy_keepref() {
+    // `XADD` mode `KEEPREF` is only supported in Redis 8.2+ (but not Valkey<=9.1)
     let ctx = run_test_if_version_supported!(REDIS_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
@@ -1206,6 +1210,7 @@ fn test_xadd_options_deletion_policy_keepref() {
 
 #[test]
 fn test_xadd_options_deletion_policy_delref() {
+    // `XADD` mode `DELREF` is only supported in Redis 8.2+ (but not Valkey<=9.1)
     let ctx = run_test_if_version_supported!(REDIS_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
@@ -1291,6 +1296,7 @@ fn test_xadd_options_deletion_policy_delref() {
 
 #[test]
 fn test_xadd_options_deletion_policy_acked() {
+    // `XADD` mode `ACKED` is only supported in Redis 8.2+ (but not Valkey<=9.1)
     let ctx = run_test_if_version_supported!(REDIS_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
@@ -1379,6 +1385,7 @@ fn test_xadd_options_deletion_policy_acked() {
 
 #[test]
 fn test_xtrim_options_deletion_policy_keepref() {
+    // `XTRIM` mode `KEEPREF` is only supported in Redis 8.2+ (but not Valkey<=9.1)
     let ctx = run_test_if_version_supported!(REDIS_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
@@ -1450,6 +1457,7 @@ fn test_xtrim_options_deletion_policy_keepref() {
 
 #[test]
 fn test_xtrim_options_deletion_policy_delref() {
+    // `XTRIM` mode `DELREF` is only supported in Redis 8.2+ (but not Valkey<=9.1)
     let ctx = run_test_if_version_supported!(REDIS_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
@@ -1521,6 +1529,7 @@ fn test_xtrim_options_deletion_policy_delref() {
 
 #[test]
 fn test_xtrim_options_deletion_policy_acked() {
+    // `XTRIM` mode `ACKED` is only supported in Redis 8.2+ (but not Valkey<=9.1)
     let ctx = run_test_if_version_supported!(REDIS_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
@@ -1592,6 +1601,7 @@ fn test_xtrim_options_deletion_policy_acked() {
 
 #[test]
 fn test_xdel_ex() {
+    // `XDELEX` is only supported in Redis 8.2+ (but not Valkey<=9.1)
     let ctx = run_test_if_version_supported!(REDIS_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
@@ -1792,6 +1802,7 @@ fn test_xdel_ex() {
 
 #[test]
 fn test_xack_del() {
+    // `XACKDEL` is only supported in Redis 8.2+ (but not Valkey<=9.1)
     let ctx = run_test_if_version_supported!(REDIS_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
@@ -2394,6 +2405,7 @@ mod idempotency_tests {
     #[test]
     fn test_xadd_idempotency_manual_mode() {
         // Test IDMP (manual mode) - prevents messages with the same PID and IID from being added to the stream.
+        // Stream idempotency is only supported in Redis 8.6+ (but not Valkey<=9.1)
         let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
         let mut con = ctx.connection();
 
@@ -2475,6 +2487,7 @@ mod idempotency_tests {
     #[test]
     fn test_xadd_idempotency_automatic_mode() {
         // Test IDMPAUTO (automatic mode) - prevents messages with the same PID and content from being added to the stream.
+        // Stream idempotency is only supported in Redis 8.6+ (but not Valkey<=9.1)
         let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
         let mut con = ctx.connection();
 
@@ -2544,6 +2557,7 @@ mod idempotency_tests {
     #[test]
     fn test_xadd_idempotency_with_other_options() {
         // Test that idempotency works correctly with other XADD options
+        // Stream idempotency is only supported in Redis 8.6+ (but not Valkey<=9.1)
         let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
         let mut con = ctx.connection();
 
@@ -2695,6 +2709,7 @@ mod idempotency_tests {
 
     #[test]
     fn test_xcfgset() {
+        // `XCFGSET` is only supported in Redis 8.6+ (but not Valkey<=9.1)
         let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
         let mut con = ctx.connection();
 
@@ -2784,6 +2799,7 @@ mod idempotency_tests {
 
     #[test]
     fn test_xcfgset_with_idempotent_messages() {
+        // `XCFGSET` is only supported in Redis 8.6+ (but not Valkey<=9.1)
         let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
         let mut con = ctx.connection();
 
@@ -2889,6 +2905,7 @@ mod idempotency_tests {
 
     #[test]
     fn test_xcfgset_idempotency_behavior() {
+        // `XCFGSET` is only supported in Redis 8.6+ (but not Valkey<=9.1)
         let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
         let mut con = ctx.connection();
 
