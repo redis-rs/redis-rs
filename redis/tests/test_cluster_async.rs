@@ -2354,14 +2354,15 @@ mod cluster_async {
     mod pubsub {
         use super::*;
 
-        fn check_if_redis_6(ctx: &TestClusterContext) -> bool {
-            ctx.get_version().0 == 6
+        /// Yields `true` iff Redis is at least version 7
+        fn check_if_supports_redis_7(ctx: &TestClusterContext) -> bool {
+            ctx.get_version() >= REDIS_VERSION_CE_7_0
         }
 
         async fn subscribe_to_channels(
             pubsub_conn: &mut ClusterConnection,
             rx: &mut UnboundedReceiver<PushInfo>,
-            is_redis_6: bool,
+            supports_redis_7: bool,
         ) {
             let _: () = pubsub_conn.subscribe("regular-phonewave").await.unwrap();
             let push: PushInfo = get_push(rx).await;
@@ -2383,7 +2384,7 @@ mod cluster_async {
                 }
             );
 
-            if !is_redis_6 {
+            if supports_redis_7 {
                 let _: () = pubsub_conn.ssubscribe("sphonewave").await.unwrap();
                 let push = get_push(rx).await;
                 assert_eq!(
@@ -2407,7 +2408,7 @@ mod cluster_async {
         async fn check_publishing(
             publish_conn: &mut ClusterConnection,
             rx: &mut UnboundedReceiver<PushInfo>,
-            is_redis_6: bool,
+            supports_redis_7: bool,
         ) {
             let _: () = publish_conn
                 .publish("regular-phonewave", "banana")
@@ -2439,7 +2440,7 @@ mod cluster_async {
                 }
             );
 
-            if !is_redis_6 {
+            if supports_redis_7 {
                 let _: () = publish_conn.spublish("sphonewave", "banana").await.unwrap();
                 let push = get_push(rx).await;
                 assert_eq!(
@@ -2463,11 +2464,11 @@ mod cluster_async {
 
             let (mut publish_conn, mut pubsub_conn) =
                 join!(ctx.async_connection(), ctx.async_connection());
-            let is_redis_6 = check_if_redis_6(&ctx);
+            let supports_redis_7 = check_if_supports_redis_7(&ctx);
 
-            subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await;
+            subscribe_to_channels(&mut pubsub_conn, &mut rx, supports_redis_7).await;
 
-            check_publishing(&mut publish_conn, &mut rx, is_redis_6).await;
+            check_publishing(&mut publish_conn, &mut rx, supports_redis_7).await;
         }
 
         #[async_test]
@@ -2482,11 +2483,11 @@ mod cluster_async {
                 ctx.async_connection_with_config(config.clone()),
                 ctx.async_connection_with_config(config)
             );
-            let is_redis_6 = check_if_redis_6(&ctx);
+            let supports_redis_7 = check_if_supports_redis_7(&ctx);
 
-            subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await;
+            subscribe_to_channels(&mut pubsub_conn, &mut rx, supports_redis_7).await;
 
-            check_publishing(&mut publish_conn, &mut rx, is_redis_6).await;
+            check_publishing(&mut publish_conn, &mut rx, supports_redis_7).await;
         }
 
         #[async_test]
@@ -2496,7 +2497,7 @@ mod cluster_async {
             });
 
             let mut pubsub_conn = ctx.async_connection().await;
-            if check_if_redis_6(&ctx) {
+            if !check_if_supports_redis_7(&ctx) {
                 return;
             }
 
@@ -2522,7 +2523,7 @@ mod cluster_async {
 
             let (mut publish_conn, mut pubsub_conn) =
                 join!(ctx.async_connection(), ctx.async_connection());
-            let is_redis_6 = check_if_redis_6(&ctx);
+            let supports_redis_7 = check_if_supports_redis_7(&ctx);
 
             let _: () = pubsub_conn.subscribe("regular-phonewave").await.unwrap();
             let push = get_push(&mut rx).await;
@@ -2562,7 +2563,7 @@ mod cluster_async {
                 }
             );
 
-            if !is_redis_6 {
+            if supports_redis_7 {
                 let _: () = pubsub_conn.ssubscribe("sphonewave").await.unwrap();
                 let push = get_push(&mut rx).await;
                 assert_eq!(
@@ -2591,7 +2592,7 @@ mod cluster_async {
                 .publish("phonewave-pattern", "banana")
                 .await
                 .unwrap();
-            if !is_redis_6 {
+            if supports_redis_7 {
                 let _: () = publish_conn.spublish("sphonewave", "banana").await.unwrap();
             }
 
@@ -2611,9 +2612,9 @@ mod cluster_async {
             });
 
             let mut pubsub_conn = ctx.async_connection().await;
-            let is_redis_6 = check_if_redis_6(&ctx);
+            let supports_redis_7 = check_if_supports_redis_7(&ctx);
 
-            subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await;
+            subscribe_to_channels(&mut pubsub_conn, &mut rx, supports_redis_7).await;
 
             drop(rx);
 
@@ -2637,7 +2638,7 @@ mod cluster_async {
             });
 
             let mut pubsub_conn = ctx.async_connection().await;
-            let is_redis_6 = check_if_redis_6(&ctx);
+            let supports_redis_7 = check_if_supports_redis_7(&ctx);
 
             let _: () = pubsub_conn
                 .subscribe(&[
@@ -2707,7 +2708,7 @@ mod cluster_async {
                     }
                 );
             }
-            if !is_redis_6 {
+            if supports_redis_7 {
                 // we use the curly braces in order to avoid cross slots errors.
                 let _: () = pubsub_conn
                     .ssubscribe(&["{sphonewave}1", "{sphonewave}2", "{sphonewave}3"])
@@ -2765,9 +2766,9 @@ mod cluster_async {
 
             let (mut publish_conn, mut pubsub_conn) =
                 join!(ctx.async_connection(), ctx.async_connection());
-            let is_redis_6 = check_if_redis_6(&ctx);
+            let supports_redis_7 = check_if_supports_redis_7(&ctx);
 
-            subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await;
+            subscribe_to_channels(&mut pubsub_conn, &mut rx, supports_redis_7).await;
 
             println!("dropped");
             drop(ctx);
@@ -2812,7 +2813,7 @@ mod cluster_async {
             let mut pushes = Vec::new();
             pushes.push(get_push(&mut rx).await);
             pushes.push(get_push(&mut rx).await);
-            if !is_redis_6 {
+            if supports_redis_7 {
                 pushes.push(get_push(&mut rx).await);
             }
             // we expect only 3 resubscriptions.
@@ -2826,14 +2827,14 @@ mod cluster_async {
                 data: vec![redis_value!("phonewave*"), redis_value!(2)]
             }));
 
-            if !is_redis_6 {
+            if supports_redis_7 {
                 assert!(pushes.contains(&PushInfo {
                     kind: PushKind::SSubscribe,
                     data: vec![redis_value!("sphonewave"), redis_value!(1)]
                 }));
             }
 
-            check_publishing(&mut publish_conn, &mut rx, is_redis_6).await;
+            check_publishing(&mut publish_conn, &mut rx, supports_redis_7).await;
         }
 
         #[async_test]
