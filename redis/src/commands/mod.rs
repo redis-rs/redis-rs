@@ -21,10 +21,10 @@ mod macros;
 
 #[cfg(feature = "json")]
 #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-mod json;
+pub mod json;
 
 #[cfg(feature = "json")]
-pub use json::{FphaInput, FphaType, JsonCommands, JsonSetOptions};
+pub use json::JsonCommands;
 
 #[cfg(all(feature = "json", feature = "aio"))]
 pub use json::JsonAsyncCommands;

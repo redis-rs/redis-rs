@@ -14,6 +14,7 @@ pub const REDIS_CE_8_4: Component = ("redis", (8, 3, 224));
 pub const REDIS_CE_8_6: Component = ("redis", (8, 6, 0));
 pub const REDIS_CE_8_8: Component = ("redis", (8, 8, 0));
 
+pub const REDIS_JSON_8_8: Component = ("ReJSON", (8, 8, 0));
 pub const REDIS_BLOOM_ANY: Component = ("redis:bf", (0, 0, 0));
 
 // Valkey forked off at Redis 7.2.4 and still reports its Redis version 7.2.4. So tests that run
