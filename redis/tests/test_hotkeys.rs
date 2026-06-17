@@ -329,11 +329,7 @@ mod hotkeys_cluster {
         let port = port_of(info.addr());
         let mut direct = direct_connection(info.clone(), protocol);
 
-        let version = cluster_ctx.get_version();
-        if version < REDIS_VERSION_CE_8_6 {
-            eprintln!("Skipping: Redis version {version:?} < {REDIS_VERSION_CE_8_6:?}");
-            return None;
-        }
+        skip_if_context_does_not_support!(cluster_ctx, &REDIS_VERSION_CE_8_6, None);
 
         let (range_start, range_end) = first_owned_slot_range(&mut direct, port);
         let (hot_key, target_slot) = find_key_in_range(&mut direct, range_start, range_end);
