@@ -9,6 +9,7 @@ mod cluster {
     };
 
     use crate::support::*;
+    use crate::{run_test_if_engine_is_valkey, run_test_if_redis_binary_version_supported};
     use assert_matches::assert_matches;
     use redis::{
         Commands, ConnectionLike, ErrorKind, RedisError, ServerErrorKind, Value,
@@ -46,6 +47,54 @@ mod cluster {
     fn test_cluster_basics() {
         let cluster = TestClusterContext::new();
         smoke_test_connection(cluster.connection());
+    }
+
+    #[test]
+    fn test_cluster_numbered_database() {
+        run_test_if_engine_is_valkey!();
+        run_test_if_redis_binary_version_supported!(&VALKEY_VERSION_CE_9_0);
+
+        let cluster = TestClusterContext::new_with_config_and_builder(
+            RedisClusterConfiguration {
+                cluster_databases: Some(16),
+                tls_insecure: false,
+                ..Default::default()
+            },
+            |builder| builder.database_id(4),
+        );
+
+        let mut con_db4 = cluster.connection();
+        redis::cmd("SET")
+            .arg("foo")
+            .arg("bar")
+            .exec(&mut con_db4)
+            .unwrap();
+        assert_eq!(
+            redis::cmd("GET").arg("foo").query(&mut con_db4),
+            Ok("bar".to_string())
+        );
+
+        // Switch to db0, assert that 'foo' does not exist (it is on db4).
+        let mut con_db0 = cluster
+            .new_client_with_builder(|builder| builder.database_id(0))
+            .get_connection()
+            .unwrap();
+        assert_eq!(
+            redis::cmd("EXISTS").arg("foo").query(&mut con_db0),
+            Ok(false)
+        );
+
+        // Terminate the connection, verify that on reconnect we are on the same db4.
+        con_db4
+            .route_command(
+                &redis::cmd("QUIT"),
+                RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
+            )
+            .unwrap();
+        assert_eq!(
+            redis::cmd("GET").arg("foo").query(&mut con_db4),
+            Ok("bar".to_string())
+        );
     }
 
     #[cfg(feature = "tls-rustls")]

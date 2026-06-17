@@ -37,6 +37,7 @@ mod cluster_async {
     use tokio::{join, sync::mpsc::UnboundedReceiver};
 
     use crate::support::*;
+    use crate::{run_test_if_engine_is_valkey, run_test_if_redis_binary_version_supported};
 
     fn broken_pipe_error() -> RedisError {
         RedisError::from(std::io::Error::new(
@@ -67,6 +68,63 @@ mod cluster_async {
 
         let connection = cluster.async_connection().await;
         smoke_test_connection(connection).await;
+    }
+
+    #[async_test]
+    async fn test_async_cluster_numbered_database() {
+        run_test_if_engine_is_valkey!();
+        run_test_if_redis_binary_version_supported!(&VALKEY_VERSION_CE_9_0);
+
+        let cluster = TestClusterContext::new_with_config_and_builder(
+            RedisClusterConfiguration {
+                cluster_databases: Some(16),
+                tls_insecure: false,
+                ..Default::default()
+            },
+            |builder| builder.database_id(4),
+        );
+
+        let mut con_db4 = cluster.async_connection().await;
+        redis::cmd("SET")
+            .arg("foo")
+            .arg("bar")
+            .exec_async(&mut con_db4)
+            .await
+            .unwrap();
+        let value: String = redis::cmd("GET")
+            .arg("foo")
+            .query_async(&mut con_db4)
+            .await
+            .unwrap();
+        assert_eq!(value, "bar");
+
+        // Switch to db0, assert that 'foo' does not exist (it is on db4).
+        let mut con_db0 = cluster
+            .new_client_with_builder(|builder| builder.database_id(0))
+            .get_async_connection()
+            .await
+            .unwrap();
+        let exists: bool = redis::cmd("EXISTS")
+            .arg("foo")
+            .query_async(&mut con_db0)
+            .await
+            .unwrap();
+        assert!(!exists, "key (foo) written to db4 must not be visible on db0");
+
+        // Terminate the connection, verify that on reconnect we are on the same db4.
+        con_db4
+            .route_command(
+                redis::cmd("QUIT"),
+                RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
+            )
+            .await
+            .unwrap();
+        let value_after_reconnect: String = redis::cmd("GET")
+            .arg("foo")
+            .query_async(&mut con_db4)
+            .await
+            .unwrap();
+        assert_eq!(value_after_reconnect, "bar");
     }
 
     #[async_test]

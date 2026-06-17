@@ -526,6 +526,19 @@ pub const REDIS_VERSION_CE_8_0: Version = (8, 0, 0);
 pub const REDIS_VERSION_CE_8_2: Version = (8, 1, 240);
 pub const REDIS_VERSION_CE_8_4: Version = (8, 3, 224);
 pub const REDIS_VERSION_CE_8_6: Version = (8, 6, 0);
+pub const VALKEY_VERSION_CE_9_0: Version = (9, 0, 0);
+
+pub fn is_valkey_binary() -> bool {
+    use std::process::Command;
+
+    let binary = std::env::var("REDISRS_SERVER_BIN").unwrap_or_else(|_| "redis-server".to_string());
+    match Command::new(&binary).arg("--version").output() {
+        Ok(output) => String::from_utf8_lossy(&output.stdout)
+            .to_lowercase()
+            .contains("valkey"),
+        Err(_) => false,
+    }
+}
 
 /// Macro to run tests only if the Redis version meets the minimum requirement.
 /// If the version is insufficient, the test is skipped with a message.
@@ -561,7 +574,7 @@ macro_rules! run_test_if_version_supported {
 #[macro_export]
 macro_rules! run_test_if_redis_binary_version_supported {
     ($minimum_required_version:expr) => {{
-        match $crate::get_redis_binary_version() {
+        match $crate::support::get_redis_binary_version() {
             None => {
                 eprintln!(
                     "Skipping the test because the Redis binary was not found."
@@ -577,6 +590,17 @@ macro_rules! run_test_if_redis_binary_version_supported {
                     return;
                 }
             }
+        }
+    }};
+}
+
+/// Macro to run a test only if the server binary is Valkey, skipping it otherwise.
+#[macro_export]
+macro_rules! run_test_if_engine_is_valkey {
+    () => {{
+        if !$crate::support::is_valkey_binary() {
+            eprintln!("Skipping the test because the server binary is not Valkey.");
+            return;
         }
     }};
 }
