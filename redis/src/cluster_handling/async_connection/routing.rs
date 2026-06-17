@@ -97,8 +97,8 @@ impl<C> From<SingleNodeRoutingInfo> for InternalSingleNodeRouting<C> {
 }
 
 pub(super) fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Option<Route>> {
-    fn route_for_command(cmd: &Cmd) -> Option<Route> {
-        match RoutingInfo::for_routable(cmd) {
+    fn route_for_command(cmd: &Cmd) -> RedisResult<Option<Route>> {
+        Ok(match RoutingInfo::for_routable(cmd)? {
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => None,
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
                 Some(route)
@@ -109,16 +109,16 @@ pub(super) fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Opti
                 Some(Route::new_random_primary())
             }
             None => None,
-        }
+        })
     }
 
     // Find first specific slot and send to it. There's no need to check If later commands
     // should be routed to a different slot, since the server will return an error indicating this.
     pipeline.cmd_iter().map(route_for_command).try_fold(
         None,
-        |chosen_route, next_cmd_route| match (chosen_route, next_cmd_route) {
-            (None, _) => Ok(next_cmd_route),
-            (_, None) => Ok(chosen_route),
+        |chosen_route, next| match (chosen_route, next?) {
+            (None, next_cmd_route) => Ok(next_cmd_route),
+            (chosen_route, None) => Ok(chosen_route),
             (Some(chosen_route), Some(next_cmd_route)) => {
                 if chosen_route.slot() != next_cmd_route.slot() {
                     Err((

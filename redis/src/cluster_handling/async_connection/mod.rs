@@ -966,6 +966,8 @@ where
         // we send request per cmd, instead of sending the pipe together, in order to send each command to the relevant node, instead of all together to a single node.
         let requests = subscription_pipe.into_cmd_iter().map(|cmd| {
             let routing = RoutingInfo::for_routable(&cmd)
+                .ok()
+                .flatten()
                 .unwrap_or(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
                 .into();
             PendingRequest {
@@ -1462,8 +1464,12 @@ where
     C: ConnectionLike + Send + Clone + Unpin + Sync + Connect + 'static,
 {
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
-        let routing = RoutingInfo::for_routable(cmd)
-            .unwrap_or(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random));
+        let routing = match RoutingInfo::for_routable(cmd) {
+            Ok(routing) => {
+                routing.unwrap_or(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+            }
+            Err(err) => return Box::pin(async move { Err(err) }),
+        };
         self.route_command(cmd.clone(), routing).boxed()
     }
 
