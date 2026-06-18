@@ -494,6 +494,19 @@ impl Pipeline {
     }
 }
 
+/// Semaphore plus the `limit` it was created with, so the limit stays readable.
+#[derive(Clone)]
+struct ConcurrencyLimiter {
+    limit: usize,
+    semaphore: Arc<async_lock::Semaphore>,
+}
+
+/// Permits a single pipeline can hold: capped at the connection `limit`.
+/// At least one is always acquired.
+fn permit_vec_capacity(count: usize, limit: usize) -> usize {
+    count.min(limit).max(1)
+}
+
 /// A connection object which can be cloned, allowing requests to be be sent concurrently
 /// on the same underlying connection (tcp/unix socket).
 ///
@@ -512,7 +525,7 @@ pub struct MultiplexedConnection {
     db: i64,
     response_timeout: Option<Duration>,
     protocol: ProtocolVersion,
-    concurrency_limiter: Option<Arc<async_lock::Semaphore>>,
+    concurrency_limiter: Option<ConcurrencyLimiter>,
     // This handle ensures that once all the clones of the connection will be dropped, the underlying task will stop.
     // This handle is only set for connection whose task was spawned by the crate, not for users who spawned their own
     // task.
@@ -654,9 +667,10 @@ impl MultiplexedConnection {
             Pipeline::resolve_buffer_size(config.pipeline_buffer_size),
         );
 
-        let concurrency_limiter = config
-            .concurrency_limit
-            .map(|n| Arc::new(async_lock::Semaphore::new(n)));
+        let concurrency_limiter = config.concurrency_limit.map(|n| ConcurrencyLimiter {
+            limit: n,
+            semaphore: Arc::new(async_lock::Semaphore::new(n)),
+        });
 
         let con = MultiplexedConnection {
             pipeline,
@@ -735,7 +749,7 @@ impl MultiplexedConnection {
         let _permit = if cmd.skip_concurrency_limit {
             None
         } else if let Some(limiter) = &self.concurrency_limiter {
-            Some(limiter.acquire().await)
+            Some(limiter.semaphore.acquire().await)
         } else {
             None
         };
@@ -791,10 +805,11 @@ impl MultiplexedConnection {
         // This roughly reflects the pipeline's load on the server while avoiding deadlock --
         // a large pipeline can always proceed even if it can't acquire all permits.
         let _permits = if let Some(limiter) = &self.concurrency_limiter {
-            let mut permits = Vec::with_capacity(count.max(1));
-            permits.push(limiter.acquire().await);
-            for _ in 1..count {
-                match limiter.try_acquire() {
+            let capacity = permit_vec_capacity(count, limiter.limit);
+            let mut permits = Vec::with_capacity(capacity);
+            permits.push(limiter.semaphore.acquire().await);
+            for _ in 1..capacity {
+                match limiter.semaphore.try_acquire() {
                     Some(permit) => permits.push(permit),
                     None => break,
                 }
@@ -991,6 +1006,16 @@ mod tests {
     #[test]
     fn test_pipeline_resolve_buffer_size_custom() {
         assert_eq!(Pipeline::resolve_buffer_size(Some(100)), 100);
+    }
+
+    #[test]
+    fn test_permit_vec_capacity_is_bounded_by_limit() {
+        // Capacity tracks the limit, never the (unbounded) pipeline length.
+        assert_eq!(permit_vec_capacity(1_000_000, 4), 4);
+        assert_eq!(permit_vec_capacity(10, 10), 10);
+        assert_eq!(permit_vec_capacity(2, 4), 2);
+        assert_eq!(permit_vec_capacity(0, 4), 1);
+        assert_eq!(permit_vec_capacity(5, 0), 1);
     }
 
     fn mock_conn_info() -> RedisConnectionInfo {
