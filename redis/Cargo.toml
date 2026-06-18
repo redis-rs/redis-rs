@@ -46,7 +46,7 @@ futures-util = { version = "0.3.31", default-features = false, features = [
 pin-project-lite = { version = "0.2", optional = true }
 tokio-util = { version = "0.7", optional = true }
 async-lock = { version = "3", optional = true }
-tokio = { version = "1", features = [
+tokio = { version = "1.51", features = [
   "sync",
 ], optional = true }
 

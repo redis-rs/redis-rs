@@ -85,6 +85,60 @@ redis = { version = "1", features = ["smol-comp"] }
 
 You can then use either the `AsyncTypedCommands` or `AsyncCommands` traits. All async connections are cheap to clone, and clones can be used concurrently from multiple threads.
 
+`tokio-comp` now requires Tokio 1.51+ (for `wasm32-wasip2` support).
+
+## WebAssembly (wasm32-wasip2)
+
+Async Redis clients can be built for the `wasm32-wasip2` target using the
+existing `tokio-comp` feature. This relies on
+[Tokio's wasm32-wasip2 networking support](https://github.com/tokio-rs/tokio/pull/7933)
+(Tokio 1.51+).
+
+### Requirements
+
+- Rust with the `wasm32-wasip2` target installed (`rustup target add wasm32-wasip2`)
+- Tokio 1.51 or newer
+- `RUSTFLAGS="--cfg tokio_unstable"` at build time (required by Tokio for WASIp2 until stabilized)
+- A `current_thread` Tokio runtime in your application (WASIp2 is single-threaded)
+- A WASM host that grants network access (e.g. `wasmtime -S inherit-network`)
+
+### Build
+
+```bash
+rustup target add wasm32-wasip2
+cargo update -p tokio   # ensure Tokio 1.51+
+RUSTFLAGS="--cfg tokio_unstable" cargo build -p redis \
+  --target wasm32-wasip2 \
+  --no-default-features \
+  --features tokio-comp
+```
+
+### Minimal example
+
+```rust
+use redis::AsyncCommands;
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> redis::RedisResult<()> {
+    let client = redis::Client::open("redis://127.0.0.1/")?;
+    let mut con = client.get_multiplexed_async_connection().await?;
+    let pong: String = redis::cmd("PING").query_async(&mut con).await?;
+    println!("{pong}");
+    Ok(())
+}
+```
+
+### Run
+
+With a local Redis server running:
+
+```bash
+RUSTFLAGS="--cfg tokio_unstable" cargo build --release --target wasm32-wasip2
+wasmtime -S inherit-network target/wasm32-wasip2/release/your-app.wasm
+```
+
+This uses the standard `tokio-comp` code path — no redis-rs-specific WASI transport layer.
+
 ## Connection Pooling
 
 When using a sync connection, it is recommended to use a connection pool in order to handle
