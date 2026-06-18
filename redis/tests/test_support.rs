@@ -35,7 +35,7 @@ fn support_exact_match() {
     let mock = MockTestContext::new((42, 4711, 23));
 
     // Check for support
-    assert!(mock.supports(&(42, 4711, 23)));
+    assert!(mock.supports((42, 4711, 23)));
 }
 
 /// Tries to assure that `support` correctly handles a smaller major number
@@ -45,7 +45,7 @@ fn support_major_smaller() {
     let mock = MockTestContext::new((42, 4711, 23));
 
     // Check for support
-    assert!(mock.supports(&(41, 4712, 24)));
+    assert!(mock.supports((41, 4712, 24)));
 }
 
 /// Tries to assure that `support` correctly handles a bigger major number
@@ -55,7 +55,7 @@ fn support_major_bigger() {
     let mock = MockTestContext::new((42, 4711, 23));
 
     // Check for support
-    assert!(!mock.supports(&(43, 4710, 22)));
+    assert!(!mock.supports((43, 4710, 22)));
 }
 
 /// Tries to assure that `support` correctly handles a matching major but bigger minor number
@@ -65,7 +65,7 @@ fn support_major_match_minor_smaller() {
     let mock = MockTestContext::new((42, 4711, 23));
 
     // Check for support
-    assert!(mock.supports(&(42, 4710, 24)));
+    assert!(mock.supports((42, 4710, 24)));
 }
 
 /// Tries to assure that `support` correctly handles a matching major but smaller minor number
@@ -75,7 +75,7 @@ fn support_major_match_minor_bigger() {
     let mock = MockTestContext::new((42, 4711, 23));
 
     // Check for support
-    assert!(!mock.supports(&(42, 4712, 22)));
+    assert!(!mock.supports((42, 4712, 22)));
 }
 
 /// Tries to assure that `support` correctly handles a matching major and minor but bigger patch number
@@ -85,7 +85,7 @@ fn support_major_match_minor_match_patch_smaller() {
     let mock = MockTestContext::new((42, 4711, 23));
 
     // Check for support
-    assert!(mock.supports(&(42, 4711, 22)));
+    assert!(mock.supports((42, 4711, 22)));
 }
 
 /// Tries to assure that `support` correctly handles a matching major and minor but smaller patch number
@@ -95,5 +95,5 @@ fn support_major_match_minor_match_patch_bigger() {
     let mock = MockTestContext::new((42, 4711, 23));
 
     // Check for support
-    assert!(!mock.supports(&(42, 4711, 24)));
+    assert!(!mock.supports((42, 4711, 24)));
 }

@@ -94,7 +94,7 @@ fn test_tls_certificate_authentication_with_matching_acl_user() {
     // based on the Common Name (CN) field in the client's TLS certificate.
 
     // Check Redis binary version before creating the test context.
-    run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_6);
+    run_test_if_redis_binary_version_supported!(REDIS_VERSION_CE_8_6);
 
     // Generate a random username for the test.
     let test_username = generate_random_username();
@@ -173,7 +173,7 @@ fn test_tls_certificate_authentication_no_matching_user() {
     // any existing ACL user, Redis falls back to the "default" user.
 
     // Check Redis binary version before creating the test context.
-    run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_6);
+    run_test_if_redis_binary_version_supported!(REDIS_VERSION_CE_8_6);
 
     // Generate a random username (that won't have a corresponding ACL user).
     let test_username = generate_random_username();
