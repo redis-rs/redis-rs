@@ -12,6 +12,7 @@ pub const REDIS_VERSION_CE_8_0: Component = ("redis", (8, 0, 0));
 pub const REDIS_VERSION_CE_8_2: Component = ("redis", (8, 1, 240));
 pub const REDIS_VERSION_CE_8_4: Component = ("redis", (8, 3, 224));
 pub const REDIS_VERSION_CE_8_6: Component = ("redis", (8, 6, 0));
+pub const REDIS_VERSION_CE_8_8: Component = ("redis", (8, 8, 0));
 /// Numbered databases in cluster mode were introduced in Valkey 9.0.
 pub const VALKEY_VERSION_CE_9_0: Component = ("valkey", (9, 0, 0));
 
