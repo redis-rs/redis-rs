@@ -125,10 +125,11 @@ pub(crate) struct ClusterParams {
     pub(crate) protocol: Option<ProtocolVersion>,
     /// Index of the logical database each cluster connection should `SELECT`.
     ///
-    /// Defaults to `0`. Note that selecting a non-zero database in cluster mode
-    /// requires a server that supports multiple databases in cluster mode;
-    /// otherwise the connection handshake will fail.
-    pub(crate) database_id: i64,
+    /// `None` means unset, in which case the database is inherited from the
+    /// initial nodes' URLs. Note that selecting a non-zero
+    /// database in cluster mode requires a server that supports multiple databases
+    /// in cluster mode; otherwise the connection handshake will fail.
+    pub(crate) database_id: Option<i64>,
     #[cfg(feature = "cluster-async")]
     pub(crate) async_push_sender: Option<Arc<dyn AsyncPushSender>>,
     pub(crate) tcp_settings: TcpSettings,
@@ -189,7 +190,7 @@ impl ClusterParams {
                 .unwrap_or(DEFAULT_CONNECTION_TIMEOUT.unwrap()),
             response_timeout: value.response_timeout,
             protocol: value.protocol,
-            database_id: value.database_id.unwrap_or(0),
+            database_id: value.database_id,
             #[cfg(feature = "cluster-async")]
             async_push_sender: value.async_push_sender,
             tcp_settings: value.tcp_settings,
@@ -276,7 +277,6 @@ impl ClusterClientBuilder {
             }
         };
 
-        let explicit_database_id = self.builder_params.database_id;
         let mut cluster_params = ClusterParams::from(self.builder_params)?;
         let password = if cluster_params.password.is_none() {
             cluster_params
@@ -306,14 +306,11 @@ impl ClusterClientBuilder {
         } else {
             None
         };
-        // An explicit builder value (even 0) takes precedence. Otherwise inherit the
-        // database from the first node's URL (e.g. `redis://host:6379/4`); when
-        // inherited, all initial nodes must agree.
-        let database_id = if explicit_database_id.is_some() {
-            None
+        let database_id_from_url = if cluster_params.database_id.is_none() {
+            cluster_params.database_id = Some(first_node.redis.db);
+            cluster_params.database_id
         } else {
-            cluster_params.database_id = first_node.redis.db;
-            Some(cluster_params.database_id)
+            None
         };
 
         // Verify that the initial nodes match the cluster client's configuration.
@@ -344,13 +341,26 @@ impl ClusterClientBuilder {
                     "Cannot use different protocol among initial nodes.",
                 )));
             }
-            if let Some(database_id) = database_id
-                && node.redis.db != database_id
-            {
-                return Err(RedisError::from((
-                    ErrorKind::InvalidClientConfig,
-                    "Cannot use different database among initial nodes.",
-                )));
+            match database_id_from_url {
+                Some(database_id_from_url) => {
+                    if node.redis.db != database_id_from_url {
+                        return Err(RedisError::from((
+                            ErrorKind::InvalidClientConfig,
+                            "Cannot use different database among initial nodes.",
+                        )));
+                    }
+                }
+                None => {
+                    if let Some(explicit_database_id) = cluster_params.database_id
+                        && node.redis.db != 0
+                        && node.redis.db != explicit_database_id
+                    {
+                        return Err(RedisError::from((
+                            ErrorKind::InvalidClientConfig,
+                            "Cannot use a database_id that conflicts with the database of an initial node.",
+                        )));
+                    }
+                }
             }
 
             if tls.is_some() && node.addr.tls_mode() != tls {
@@ -567,18 +577,18 @@ impl ClusterClientBuilder {
         self
     }
 
-    /// Sets the logical database that every cluster connection should `SELECT`.
+    /// Sets the numbered database for the cluster client.
     ///
-    /// Defaults to `0`. If left unset, the database is inherited from the first
+    /// If left unset, the database is inherited from the first
     /// node's URL (e.g. `redis://127.0.0.1:6379/4`), in which case all initial
-    /// nodes must specify the same database.
+    /// nodes must specify the same database. If set, it must not conflict with a
+    /// database carried by any initial node's URL.
     ///
-    /// The selected database is reapplied automatically whenever a connection is
-    /// (re)established, including after reconnects.
+    /// The selected database is reapplied automatically after reconnects.
     ///
     /// Note that selecting a non-zero database in cluster mode requires a server that
     /// supports multiple databases in cluster mode; otherwise the connection handshake
-    /// wil fail.
+    /// will fail.
     pub fn database_id(mut self, database_id: i64) -> ClusterClientBuilder {
         self.builder_params.database_id = Some(database_id);
         self
@@ -927,7 +937,7 @@ mod tests {
     #[test]
     fn database_id_defaults_to_zero() {
         let client = ClusterClient::new(get_connection_data()).unwrap();
-        assert_eq!(client.cluster_params.database_id, 0);
+        assert_eq!(client.cluster_params.database_id, Some(0));
     }
 
     #[test]
@@ -936,7 +946,7 @@ mod tests {
             .database_id(4)
             .build()
             .unwrap();
-        assert_eq!(client.cluster_params.database_id, 4);
+        assert_eq!(client.cluster_params.database_id, Some(4));
     }
 
     #[test]
@@ -947,33 +957,57 @@ mod tests {
             "redis://127.0.0.1:6377/4",
         ])
         .unwrap();
-        assert_eq!(client.cluster_params.database_id, 4);
+        assert_eq!(client.cluster_params.database_id, Some(4));
     }
 
     #[test]
-    fn give_database_id_by_method_overrides_initial_nodes() {
-        let client = ClusterClientBuilder::new(vec![
+    fn fail_if_database_id_method_conflicts_with_initial_nodes() {
+        let result = ClusterClientBuilder::new(vec![
             "redis://127.0.0.1:6379/2",
             "redis://127.0.0.1:6378/2",
             "redis://127.0.0.1:6377/2",
         ])
         .database_id(7)
-        .build()
-        .unwrap();
-        assert_eq!(client.cluster_params.database_id, 7);
+        .build();
+        assert!(result.is_err());
     }
 
     #[test]
-    fn explicit_database_id_zero_overrides_initial_nodes() {
-        let client = ClusterClientBuilder::new(vec![
+    fn fail_if_explicit_database_id_zero_conflicts_with_initial_nodes() {
+        let result = ClusterClientBuilder::new(vec![
             "redis://127.0.0.1:6379/4",
             "redis://127.0.0.1:6378/4",
             "redis://127.0.0.1:6377/4",
         ])
         .database_id(0)
+        .build();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn give_database_id_by_method_matching_initial_nodes() {
+        let client = ClusterClientBuilder::new(vec![
+            "redis://127.0.0.1:6379/4",
+            "redis://127.0.0.1:6378/4",
+            "redis://127.0.0.1:6377/4",
+        ])
+        .database_id(4)
         .build()
         .unwrap();
-        assert_eq!(client.cluster_params.database_id, 0);
+        assert_eq!(client.cluster_params.database_id, Some(4));
+    }
+
+    #[test]
+    fn give_database_id_zero_by_method_matching_initial_nodes() {
+        let client = ClusterClientBuilder::new(vec![
+            "redis://127.0.0.1:6379/0",
+            "redis://127.0.0.1:6378/0",
+            "redis://127.0.0.1:6377/0",
+        ])
+        .database_id(0)
+        .build()
+        .unwrap();
+        assert_eq!(client.cluster_params.database_id, Some(0));
     }
 
     #[test]

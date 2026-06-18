@@ -84,50 +84,44 @@ mod cluster_async {
             |builder| builder.database_id(4),
         );
 
-        let mut con_db4 = cluster.async_connection().await;
-        redis::cmd("SET")
-            .arg("foo")
-            .arg("bar")
-            .exec_async(&mut con_db4)
-            .await
-            .unwrap();
-        let value: String = redis::cmd("GET")
-            .arg("foo")
-            .query_async(&mut con_db4)
-            .await
-            .unwrap();
-        assert_eq!(value, "bar");
+        let mut con = cluster.async_connection().await;
 
-        // Switch to db0, assert that 'foo' does not exist (it is on db4).
-        let mut con_db0 = cluster
-            .new_client_with_builder(|builder| builder.database_id(0))
-            .get_async_connection()
-            .await
-            .unwrap();
-        let exists: bool = redis::cmd("EXISTS")
-            .arg("foo")
-            .query_async(&mut con_db0)
-            .await
-            .unwrap();
-        assert!(
-            !exists,
-            "key (foo) written to db4 must not be visible on db0"
-        );
+        assert_all_nodes_on_db(&mut con, 4).await;
 
-        // Terminate the connection, verify that on reconnect we are on the same db4.
-        con_db4
+        // Terminate the connections, verify that on reconnect we are still on db4.
+        con.route_command(
+            redis::cmd("QUIT"),
+            RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
+        )
+        .await
+        .unwrap();
+        assert_all_nodes_on_db(&mut con, 4).await;
+    }
+
+    async fn assert_all_nodes_on_db(con: &mut ClusterConnection, expected_db: u32) {
+        let value = con
             .route_command(
-                redis::cmd("QUIT"),
+                cmd("CLIENT").arg("INFO").take(),
                 RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
             )
             .await
             .unwrap();
-        let value_after_reconnect: String = redis::cmd("GET")
-            .arg("foo")
-            .query_async(&mut con_db4)
-            .await
-            .unwrap();
-        assert_eq!(value_after_reconnect, "bar");
+        let client_info_results: HashMap<String, String> = from_redis_value(value).unwrap();
+        assert!(
+            !client_info_results.is_empty(),
+            "expected CLIENT INFO from at least one node"
+        );
+        for (node, info) in &client_info_results {
+            let db = info
+                .split(' ')
+                .find_map(|kv| kv.strip_prefix("db="))
+                .unwrap_or_else(|| panic!("CLIENT INFO from {node} missing db field: {info}"));
+            assert_eq!(
+                db,
+                expected_db.to_string(),
+                "node {node} should be on db{expected_db}, got: {info}"
+            );
+        }
     }
 
     #[async_test]
