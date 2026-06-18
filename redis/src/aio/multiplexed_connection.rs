@@ -7,7 +7,7 @@ use crate::{
     aio::setup_connection,
     check_resp3, cmd,
     cmd::Cmd,
-    errors::{RedisError, closed_connection_error},
+    errors::{ErrorKind, RedisError, closed_connection_error},
     parser::ValueCodec,
     types::{RedisFuture, RedisResult, Value},
 };
@@ -17,7 +17,6 @@ use ::tokio::{
 };
 #[cfg(feature = "token-based-authentication")]
 use {
-    crate::errors::ErrorKind,
     arcstr::ArcStr,
     log::{debug, error, warn},
 };
@@ -495,7 +494,7 @@ impl Pipeline {
 }
 
 /// Semaphore plus the `limit` it was created with, so the limit stays readable.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ConcurrencyLimiter {
     limit: usize,
     semaphore: Arc<async_lock::Semaphore>,
@@ -505,6 +504,21 @@ struct ConcurrencyLimiter {
 /// At least one is always acquired.
 fn permit_vec_capacity(count: usize, limit: usize) -> usize {
     count.min(limit).max(1)
+}
+
+/// Builds the optional concurrency limiter from the configured limit. A limit of `0` is rejected.
+fn build_concurrency_limiter(limit: Option<usize>) -> RedisResult<Option<ConcurrencyLimiter>> {
+    match limit {
+        Some(0) => Err(RedisError::from((
+            ErrorKind::InvalidClientConfig,
+            "concurrency limit must be greater than 0",
+        ))),
+        Some(n) => Ok(Some(ConcurrencyLimiter {
+            limit: n,
+            semaphore: Arc::new(async_lock::Semaphore::new(n)),
+        })),
+        None => Ok(None),
+    }
 }
 
 /// A connection object which can be cloned, allowing requests to be be sent concurrently
@@ -667,10 +681,7 @@ impl MultiplexedConnection {
             Pipeline::resolve_buffer_size(config.pipeline_buffer_size),
         );
 
-        let concurrency_limiter = config.concurrency_limit.map(|n| ConcurrencyLimiter {
-            limit: n,
-            semaphore: Arc::new(async_lock::Semaphore::new(n)),
-        });
+        let concurrency_limiter = build_concurrency_limiter(config.concurrency_limit)?;
 
         let con = MultiplexedConnection {
             pipeline,
@@ -1016,6 +1027,20 @@ mod tests {
         assert_eq!(permit_vec_capacity(2, 4), 2);
         assert_eq!(permit_vec_capacity(0, 4), 1);
         assert_eq!(permit_vec_capacity(5, 0), 1);
+    }
+
+    #[test]
+    fn test_build_concurrency_limiter_rejects_zero() {
+        // A zero-permit semaphore would deadlock every command on acquire.
+        let err = build_concurrency_limiter(Some(0)).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidClientConfig);
+    }
+
+    #[test]
+    fn test_build_concurrency_limiter_allows_none_and_positive() {
+        assert!(build_concurrency_limiter(None).unwrap().is_none());
+        let limiter = build_concurrency_limiter(Some(4)).unwrap().unwrap();
+        assert_eq!(limiter.limit, 4);
     }
 
     fn mock_conn_info() -> RedisConnectionInfo {
