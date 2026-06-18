@@ -72,8 +72,8 @@ pub trait TestContextVersioning {
     fn get_version(&self) -> Version;
 
     /// Returns whether the context's server has at least the given Redis version
-    fn supports(&self, version: &Version) -> bool {
-        self.get_version() >= *version
+    fn supports(&self, version: Version) -> bool {
+        self.get_version() >= version
     }
 }
 
@@ -118,7 +118,7 @@ macro_rules! run_test_if_version_supported {
 /// ```rust,no_run
 /// #[test]
 /// fn test_redis_8_6_feature() {
-///     run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_6);
+///     run_test_if_redis_binary_version_supported!(REDIS_VERSION_CE_8_6);
 ///     // Only now create the expensive test context
 ///     let ctx = TestContext::new_with_cert_auth(tls_files);
 ///     // ...
@@ -135,7 +135,7 @@ macro_rules! run_test_if_redis_binary_version_supported {
                 return;
             }
             Some(redis_version) => {
-                if redis_version < *$minimum_required_version {
+                if redis_version < $minimum_required_version {
                     eprintln!(
                         "Skipping the test because the current version of Redis {:?} doesn't match the minimum required version {:?}.",
                         redis_version, $minimum_required_version
