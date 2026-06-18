@@ -306,7 +306,7 @@ impl ClusterClientBuilder {
         } else {
             None
         };
-        let database_id_from_url = if cluster_params.database_id.is_none() {
+        let database_id = if cluster_params.database_id.is_none() {
             cluster_params.database_id = Some(first_node.redis.db);
             cluster_params.database_id
         } else {
@@ -341,15 +341,17 @@ impl ClusterClientBuilder {
                     "Cannot use different protocol among initial nodes.",
                 )));
             }
-            match database_id_from_url {
-                Some(database_id_from_url) => {
-                    if node.redis.db != database_id_from_url {
+            match database_id {
+                // database_id is derived from the first_node's url.
+                Some(database_id) => {
+                    if node.redis.db != database_id {
                         return Err(RedisError::from((
                             ErrorKind::InvalidClientConfig,
                             "Cannot use different database among initial nodes.",
                         )));
                     }
                 }
+                // database_id is explicitly set.
                 None => {
                     if let Some(explicit_database_id) = cluster_params.database_id
                         && node.redis.db != 0
