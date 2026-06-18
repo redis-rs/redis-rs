@@ -794,7 +794,7 @@ fn test_xclaim_last_id() {
 
 #[test]
 fn test_xreadgroup_with_claim_option() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_4);
     let mut con = ctx.connection();
 
     let stream_name = "test_stream";
@@ -895,7 +895,7 @@ fn test_xreadgroup_with_claim_option() {
 
 #[test]
 fn test_xreadgroup_claim_with_idle_and_incoming_messages() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_4);
     let mut con = ctx.connection();
 
     let stream_name = "test_stream_claim_with_idle_and_incoming_messages";
@@ -1026,7 +1026,7 @@ fn test_xreadgroup_claim_with_idle_and_incoming_messages() {
 
 #[test]
 fn test_xreadgroup_claim_multiple_streams() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_4);
     let mut con = ctx.connection();
 
     let stream1 = "test_stream_claim_multi_1";
@@ -1121,7 +1121,7 @@ fn test_xdel() {
 
 #[test]
 fn test_xadd_options_deletion_policy_keepref() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
 
@@ -1206,7 +1206,7 @@ fn test_xadd_options_deletion_policy_keepref() {
 
 #[test]
 fn test_xadd_options_deletion_policy_delref() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
 
@@ -1291,7 +1291,7 @@ fn test_xadd_options_deletion_policy_delref() {
 
 #[test]
 fn test_xadd_options_deletion_policy_acked() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
 
@@ -1379,7 +1379,7 @@ fn test_xadd_options_deletion_policy_acked() {
 
 #[test]
 fn test_xtrim_options_deletion_policy_keepref() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
 
@@ -1450,7 +1450,7 @@ fn test_xtrim_options_deletion_policy_keepref() {
 
 #[test]
 fn test_xtrim_options_deletion_policy_delref() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
 
@@ -1521,7 +1521,7 @@ fn test_xtrim_options_deletion_policy_delref() {
 
 #[test]
 fn test_xtrim_options_deletion_policy_acked() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
 
@@ -1592,7 +1592,7 @@ fn test_xtrim_options_deletion_policy_acked() {
 
 #[test]
 fn test_xdel_ex() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
 
@@ -1792,7 +1792,7 @@ fn test_xdel_ex() {
 
 #[test]
 fn test_xack_del() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
 
@@ -2290,7 +2290,7 @@ fn test_xautoclaim_invalid_pel_entries_claiming_full_entries() {
         .unwrap();
     assert_eq!(reply.claimed, claimed_entries);
 
-    if ctx.supports(&REDIS_VERSION_CE_7_0) {
+    if ctx.supports(REDIS_VERSION_CE_7_0) {
         assert_eq!(
             reply.deleted_ids,
             vec![claim.id.clone(), claim_1.id.clone()]
@@ -2344,7 +2344,7 @@ fn test_xautoclaim_invalid_pel_entries_claiming_just_ids() {
     std::mem::take(&mut claimed_entries[0].map);
     std::mem::take(&mut claimed_entries[1].map);
 
-    if ctx.supports(&REDIS_VERSION_CE_7_0) {
+    if ctx.supports(REDIS_VERSION_CE_7_0) {
         assert_eq!(reply.claimed, claimed_entries);
         assert_eq!(
             reply.deleted_ids,
@@ -2394,7 +2394,7 @@ mod idempotency_tests {
     #[test]
     fn test_xadd_idempotency_manual_mode() {
         // Test IDMP (manual mode) - prevents messages with the same PID and IID from being added to the stream.
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_6);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_6);
         let mut con = ctx.connection();
 
         const STREAM_NAME: &str = "test_idmp_stream";
@@ -2475,7 +2475,7 @@ mod idempotency_tests {
     #[test]
     fn test_xadd_idempotency_automatic_mode() {
         // Test IDMPAUTO (automatic mode) - prevents messages with the same PID and content from being added to the stream.
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_6);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_6);
         let mut con = ctx.connection();
 
         const STREAM_NAME: &str = "test_idmpauto_stream";
@@ -2544,7 +2544,7 @@ mod idempotency_tests {
     #[test]
     fn test_xadd_idempotency_with_other_options() {
         // Test that idempotency works correctly with other XADD options
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_6);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_6);
         let mut con = ctx.connection();
 
         const STREAM_NAME: &str = "test_idmp_combined_options_stream";
@@ -2695,7 +2695,7 @@ mod idempotency_tests {
 
     #[test]
     fn test_xcfgset() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_6);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_6);
         let mut con = ctx.connection();
 
         const STREAM_NAME: &str = "test_xcfgset_stream";
@@ -2784,7 +2784,7 @@ mod idempotency_tests {
 
     #[test]
     fn test_xcfgset_with_idempotent_messages() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_6);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_6);
         let mut con = ctx.connection();
 
         const STREAM_NAME: &str = "test_xcfgset_with_idempotent_messages_stream";
@@ -2889,7 +2889,7 @@ mod idempotency_tests {
 
     #[test]
     fn test_xcfgset_idempotency_behavior() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_6);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_6);
         let mut con = ctx.connection();
 
         const STREAM_NAME: &str = "test_xcfgset_behavior_stream";

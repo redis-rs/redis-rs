@@ -370,7 +370,7 @@ mod basic {
     #[test]
     fn test_hash_expiration() {
         // Hash expiration is only supported in Redis 7.4.0 and later.
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_7_4);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_7_4);
 
         let mut con = ctx.connection();
         redis::cmd("HMSET")
@@ -484,7 +484,7 @@ mod basic {
     /// 5. Attempting to delete a field from a non-existing hash results in a NIL response.
     #[test]
     fn test_hget_del() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_0);
         let mut con = ctx.connection();
         // Create a hash with multiple fields and values that will be used for testing
         assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
@@ -561,7 +561,7 @@ mod basic {
     /// 6. Attempting to retrieve a field from a non-existing hash returns in a NIL response.
     #[test]
     fn test_hget_ex() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_0);
         let mut con = ctx.connection();
         // Create a hash with multiple fields and values that will be used for testing
         assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
@@ -680,7 +680,7 @@ mod basic {
     /// as well as removing an existing expiration using the PERSIST option.
     #[test]
     fn test_hget_ex_field_expiration_options() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_0);
         let mut con = ctx.connection();
         // Create a hash with multiple fields and values that will be used for testing
         assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
@@ -775,7 +775,7 @@ mod basic {
     ///        and verifies that their values have been modified and the fields are set to expire.
     #[test]
     fn test_hset_ex() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_0);
         let mut con = ctx.connection();
 
         let generated_hash_key = generate_random_testing_hash_key(&mut con);
@@ -961,7 +961,7 @@ mod basic {
     /// as well as keeping an existing expiration using the KEEPTTL option.
     #[test]
     fn test_hsetex_field_expiration_options() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_0);
         let mut con = ctx.connection();
         // Create a hash with multiple fields and values that will be used for testing
         assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
@@ -1023,7 +1023,7 @@ mod basic {
 
     #[test]
     fn test_hsetex_can_update_the_expiration_of_a_field_that_has_already_been_set_to_expire() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_0);
         let mut con = ctx.connection();
         // Create a hash with multiple fields and values that will be used for testing
         assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
@@ -2207,7 +2207,7 @@ mod basic {
 
     #[test]
     fn test_bit_operations() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_2);
         let mut con = ctx.connection();
 
         fn perform_bitwise_operation<F>(str1: &str, str2: &str, op: F) -> String
@@ -2731,7 +2731,7 @@ mod basic {
     /// The test validates the IFEQ value comparison option for the SET command
     #[test]
     fn test_set_value_comparison_value_equals() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_4);
         let mut con = ctx.connection();
 
         let key = "test_ifeq_key";
@@ -2790,7 +2790,7 @@ mod basic {
     /// The test validates the IFNE value comparison option for the SET command
     #[test]
     fn test_set_value_comparison_value_not_equals() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_4);
         let mut con = ctx.connection();
 
         let key = "test_ifne_key";
@@ -2855,7 +2855,7 @@ mod basic {
     /// The test validates the DIGEST command
     #[test]
     fn test_digest_command() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_4);
         let mut con = ctx.connection();
 
         let key = "test_digest_key";
@@ -2899,7 +2899,7 @@ mod basic {
     /// The test validates the IFDEQ value comparison option for the SET command
     #[test]
     fn test_set_value_comparison_digest_equals() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_4);
         let mut con = ctx.connection();
 
         let key = "test_ifdeq_key";
@@ -2962,7 +2962,7 @@ mod basic {
     /// The test validates the IFDNE value comparison option for the SET command
     #[test]
     fn test_set_value_comparison_digest_not_equals() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_4);
         let mut con = ctx.connection();
 
         let key = "test_ifdne_key";
@@ -3030,7 +3030,7 @@ mod basic {
 
     #[test]
     fn test_del_ex() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_4);
         let mut con = ctx.connection();
 
         let key = "test_del_ex_key";
@@ -3159,7 +3159,7 @@ mod basic {
     /// Test the MSETEX command with the NX existence option
     #[test]
     fn test_mset_ex_nx() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_4);
         let mut con = ctx.connection();
 
         let key1 = "mset_ex_nx_key1";
@@ -3205,7 +3205,7 @@ mod basic {
     /// Test the MSETEX command with the XX existence option
     #[test]
     fn test_mset_ex_xx() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_4);
         let mut con = ctx.connection();
 
         let key1 = "mset_ex_xx_key1";
@@ -3259,7 +3259,7 @@ mod basic {
     /// Test the MSETEX command with all supported expiration options
     #[test]
     fn test_mset_ex_expiration_options() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_4);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_4);
         let mut con = ctx.connection();
 
         let current_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
@@ -3368,7 +3368,7 @@ mod basic {
     #[test]
     fn test_expire_time() {
         // EXPIRETIME/PEXPIRETIME is available from Redis version 7.4.0
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_7_4);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_7_4);
 
         let mut con = ctx.connection();
 
@@ -3525,7 +3525,7 @@ mod basic {
         );
 
         // BZMPOP is available from Redis version 7.0.0
-        if ctx.supports(&REDIS_VERSION_CE_7_0) {
+        if ctx.supports(REDIS_VERSION_CE_7_0) {
             let min = con.bzmpop_min(0.0, vec!["a", "b", "c", "d"].as_slice(), 1);
             let max = con.bzmpop_max(0.0, vec!["a", "b", "c", "d"].as_slice(), 1);
 
@@ -3612,7 +3612,7 @@ mod basic {
     #[test]
     #[cfg(feature = "vector-sets")]
     fn test_vector_sets_basic_operations() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_0);
         let mut con = ctx.connection();
 
         let key = "test_points";
@@ -3696,7 +3696,7 @@ mod basic {
     #[test]
     #[cfg(feature = "vector-sets")]
     fn test_vector_sets_similarity_search() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_0);
         let mut con = ctx.connection();
 
         let key = "test_points_for_similarity_search";
@@ -3877,7 +3877,7 @@ mod basic {
     #[test]
     #[cfg(feature = "vector-sets")]
     fn test_vector_sets_auxiliary_commands() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_0);
         let mut con = ctx.connection();
 
         let key = "test_points_for_auxiliary_commands";
@@ -4108,7 +4108,7 @@ mod basic {
     #[test]
     #[cfg(feature = "vector-sets")]
     fn test_vector_sets_edge_cases() {
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_0);
         let mut con = ctx.connection();
 
         let non_existent_key = "non_existent_key";
@@ -4498,7 +4498,7 @@ mod basic {
     #[test]
     fn test_connection_info_lib_name() {
         // Setting the lib_name etc is only supported in Redis 7.2.0 and later.
-        let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_7_2);
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_7_2);
 
         // Build a `ConnectionInfo` that sets lib_name etc
         let redis = redis_settings().set_lib_name("redis-rs-test-basic-lib-name", "42.4711");
