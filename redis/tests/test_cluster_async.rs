@@ -109,7 +109,10 @@ mod cluster_async {
             .query_async(&mut con_db0)
             .await
             .unwrap();
-        assert!(!exists, "key (foo) written to db4 must not be visible on db0");
+        assert!(
+            !exists,
+            "key (foo) written to db4 must not be visible on db0"
+        );
 
         // Terminate the connection, verify that on reconnect we are on the same db4.
         con_db4

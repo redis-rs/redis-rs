@@ -199,7 +199,8 @@ impl RedisCluster {
                         .arg("--aclfile")
                         .arg(&acl_path);
                     if let Some(num_databases) = cluster_databases {
-                        cmd.arg("--cluster-databases").arg(num_databases.to_string());
+                        cmd.arg("--cluster-databases")
+                            .arg(num_databases.to_string());
                     }
                     if is_tls {
                         cmd.arg("--tls-cluster").arg("yes");
