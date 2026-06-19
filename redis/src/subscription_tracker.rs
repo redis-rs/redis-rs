@@ -3,7 +3,7 @@
 use core::str;
 use std::collections::HashSet;
 
-use crate::{Arg, Cmd, Pipeline};
+use crate::{Arg, Pipeline};
 
 #[derive(Default)]
 pub(crate) struct SubscriptionTracker {
@@ -36,10 +36,9 @@ impl SubscriptionAction {
 }
 
 impl SubscriptionTracker {
-    pub(crate) fn to_request(
-        cmd: &Cmd,
+    pub(crate) fn to_request<'a>(
+        mut args_iter: impl Iterator<Item = Arg<&'a [u8]>>,
     ) -> Option<(SubscriptionAction, impl Iterator<Item = Vec<u8>>)> {
-        let mut args_iter = cmd.args_iter();
         let first_arg = args_iter.next()?;
 
         let first_arg = match first_arg {
@@ -100,8 +99,8 @@ impl SubscriptionTracker {
     }
 
     #[cfg(test)]
-    fn update_with_cmd<'a>(&'a mut self, cmd: &'a Cmd) {
-        if let Some((action, args)) = Self::to_request(cmd) {
+    fn update_with_cmd<'a>(&'a mut self, cmd: &'a crate::Cmd) {
+        if let Some((action, args)) = Self::to_request(cmd.args_iter()) {
             self.update_with_request(action, args);
         }
     }

@@ -2,17 +2,36 @@
 
 #[cfg(feature = "cache-aio")]
 use crate::cmd::CommandCacheConfig;
-use crate::cmd::{Cmd, cmd, cmd_len};
+use crate::cmd::{Arg, Cmd, CmdRef, args_len, write_command};
 use crate::connection::ConnectionLike;
 use crate::errors::ErrorKind;
-use crate::types::{FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value, from_redis_value};
+use crate::types::{FromRedisValue, RedisResult, ToRedisArgs, Value, from_redis_value};
+
+/// Per-command metadata in a flattened pipeline.
+///
+/// The command's arguments are `args[args_start..next.args_start]` and its argument bytes are
+/// `data[data_start..next.data_start]`, where `next` is the following command's record (or the
+/// buffer ends for the last command). Keeping a small record per command — rather than the
+/// boundary in the hot `args` buffer — allows O(1) jumps between commands while keeping each
+/// `args` entry as small as a standalone `Cmd`'s.
+#[derive(Clone, Debug)]
+pub(crate) struct CommandRecord {
+    pub(crate) args_start: usize,
+    pub(crate) data_start: usize,
+    pub(crate) cursor: Option<u64>,
+    pub(crate) ignored: bool,
+    pub(crate) no_response: bool,
+    #[cfg(feature = "cache-aio")]
+    pub(crate) cache: Option<CommandCacheConfig>,
+}
 
 /// Represents a redis command pipeline.
 #[derive(Clone, Debug)]
 pub struct Pipeline {
-    pub(crate) commands: Vec<Cmd>,
+    pub(crate) data: Vec<u8>,
+    pub(crate) args: Vec<Arg<usize>>,
+    pub(crate) commands: Vec<CommandRecord>,
     pub(crate) transaction_mode: bool,
-    pub(crate) ignored_commands: HashSet<usize>,
     pub(crate) ignore_errors: bool,
 }
 
@@ -40,16 +59,17 @@ pub struct Pipeline {
 impl Pipeline {
     /// Creates an empty pipeline.  For consistency with the `cmd`
     /// api a `pipe` function is provided as alias.
+    ///
+    /// To pre-allocate the internal buffers when you have a size estimate, chain the
+    /// [`reserve_for_commands`](Self::reserve_for_commands),
+    /// [`reserve_for_args`](Self::reserve_for_args), and
+    /// [`reserve_for_data`](Self::reserve_for_data) methods.
     pub fn new() -> Pipeline {
-        Self::with_capacity(0)
-    }
-
-    /// Creates an empty pipeline with pre-allocated capacity.
-    pub fn with_capacity(capacity: usize) -> Pipeline {
         Pipeline {
-            commands: Vec::with_capacity(capacity),
+            data: Vec::new(),
+            args: Vec::new(),
+            commands: Vec::new(),
             transaction_mode: false,
-            ignored_commands: HashSet::new(),
             ignore_errors: false,
         }
     }
@@ -130,7 +150,22 @@ impl Pipeline {
 
     /// Returns the encoded pipeline commands.
     pub fn get_packed_pipeline(&self) -> Vec<u8> {
-        encode_pipeline(&self.commands, self.transaction_mode)
+        encode_pipeline(self, self.transaction_mode)
+    }
+
+    /// Returns the `(args, data_start, cursor)` for the command at `idx`, used by the encoder to
+    /// walk the flat buffers directly.
+    fn command_parts(&self, idx: usize) -> (&[Arg<usize>], usize, u64) {
+        let record = &self.commands[idx];
+        let args_end = self
+            .commands
+            .get(idx + 1)
+            .map_or(self.args.len(), |r| r.args_start);
+        (
+            &self.args[record.args_start..args_end],
+            record.data_start,
+            record.cursor.unwrap_or(0),
+        )
     }
 
     /// Returns the number of commands currently queued by the usr in the pipeline.
@@ -183,17 +218,9 @@ impl Pipeline {
         }
 
         let response = if self.transaction_mode {
-            con.req_packed_commands(
-                &encode_pipeline(&self.commands, true),
-                self.commands.len() + 1,
-                1,
-            )?
+            con.req_packed_commands(&encode_pipeline(self, true), self.len() + 1, 1)?
         } else {
-            con.req_packed_commands(
-                &encode_pipeline(&self.commands, false),
-                0,
-                self.commands.len(),
-            )?
+            con.req_packed_commands(&encode_pipeline(self, false), 0, self.len())?
         };
 
         self.complete_request(response)
@@ -207,11 +234,9 @@ impl Pipeline {
         con: &mut impl crate::aio::ConnectionLike,
     ) -> RedisResult<T> {
         let response = if self.transaction_mode {
-            con.req_packed_commands(self, self.commands.len() + 1, 1)
-                .await?
+            con.req_packed_commands(self, self.len() + 1, 1).await?
         } else {
-            con.req_packed_commands(self, 0, self.commands.len())
-                .await?
+            con.req_packed_commands(self, 0, self.len()).await?
         };
 
         self.complete_request(response)
@@ -258,31 +283,59 @@ impl Pipeline {
     }
 }
 
-fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
+fn encode_pipeline(pipe: &Pipeline, atomic: bool) -> Vec<u8> {
     let mut rv = vec![];
-    write_pipeline(&mut rv, cmds, atomic);
+    write_pipeline(&mut rv, pipe, atomic);
     rv
 }
 
-fn write_pipeline(rv: &mut Vec<u8>, cmds: &[Cmd], atomic: bool) {
-    let cmds_len = cmds.iter().map(cmd_len).sum();
+// Pre-encoded RESP frames for the transaction wrapper. These are constant, so there's no need
+// to build (and allocate) `Cmd`s just to encode them.
+const PACKED_MULTI: &[u8] = b"*1\r\n$5\r\nMULTI\r\n";
+const PACKED_EXEC: &[u8] = b"*1\r\n$4\r\nEXEC\r\n";
+
+/// Builds an iterator over a single command's arguments, slicing directly into the pipeline's
+/// shared `data` buffer using absolute offsets. Unlike [`CmdRef::args_iter`], this needs no
+/// per-argument rebasing, which keeps the hot encode path tight.
+fn command_args_iter<'a>(
+    data: &'a [u8],
+    args: &'a [Arg<usize>],
+    data_start: usize,
+) -> impl Clone + ExactSizeIterator<Item = Arg<&'a [u8]>> {
+    let mut prev = data_start;
+    args.iter().map(move |arg| match *arg {
+        Arg::Simple(end) => {
+            let arg = Arg::Simple(&data[prev..end]);
+            prev = end;
+            arg
+        }
+        Arg::Cursor => Arg::Cursor,
+    })
+}
+
+fn write_pipeline(rv: &mut Vec<u8>, pipe: &Pipeline, atomic: bool) {
+    let cmds_len: usize = (0..pipe.commands.len())
+        .map(|idx| {
+            let (args, data_start, cursor) = pipe.command_parts(idx);
+            args_len(command_args_iter(&pipe.data, args, data_start), cursor)
+        })
+        .sum();
+
+    let write_commands = |rv: &mut Vec<u8>| {
+        for idx in 0..pipe.commands.len() {
+            let (args, data_start, cursor) = pipe.command_parts(idx);
+            write_command(rv, command_args_iter(&pipe.data, args, data_start), cursor).unwrap();
+        }
+    };
 
     if atomic {
-        let multi = cmd("MULTI");
-        let exec = cmd("EXEC");
-        rv.reserve(cmd_len(&multi) + cmd_len(&exec) + cmds_len);
-
-        multi.write_packed_command_preallocated(rv);
-        for cmd in cmds {
-            cmd.write_packed_command_preallocated(rv);
-        }
-        exec.write_packed_command_preallocated(rv);
+        rv.reserve(PACKED_MULTI.len() + PACKED_EXEC.len() + cmds_len);
+        rv.extend_from_slice(PACKED_MULTI);
+        write_commands(rv);
+        rv.extend_from_slice(PACKED_EXEC);
     } else {
         rv.reserve(cmds_len);
-
-        for cmd in cmds {
-            cmd.write_packed_command_preallocated(rv);
-        }
+        write_commands(rv);
     }
 }
 
@@ -290,10 +343,39 @@ fn write_pipeline(rv: &mut Vec<u8>, cmds: &[Cmd], atomic: bool) {
 macro_rules! implement_pipeline_commands {
     ($struct_name:ident) => {
         impl $struct_name {
-            /// Adds a command to the cluster pipeline.
+            /// Pushes a new, empty command record. Subsequent arguments written through
+            /// [`RedisWrite`](crate::RedisWrite) belong to it until the next command starts.
+            #[inline]
+            fn start_command(&mut self) {
+                self.commands.push($crate::pipeline::CommandRecord {
+                    args_start: self.args.len(),
+                    data_start: self.data.len(),
+                    cursor: None,
+                    ignored: false,
+                    no_response: false,
+                    #[cfg(feature = "cache-aio")]
+                    cache: None,
+                });
+            }
+
+            /// Adds a command to the pipeline.
             #[inline]
             pub fn add_command(&mut self, cmd: Cmd) -> &mut Self {
-                self.commands.push(cmd);
+                self.start_command();
+                for arg in cmd.args_iter() {
+                    match arg {
+                        Arg::Simple(bytes) => $crate::types::RedisWrite::write_arg(self, bytes),
+                        Arg::Cursor => self.args.push(Arg::Cursor),
+                    }
+                }
+                if let Some(record) = self.commands.last_mut() {
+                    record.cursor = cmd.cursor_value();
+                    record.no_response = cmd.is_no_response();
+                    #[cfg(feature = "cache-aio")]
+                    {
+                        record.cache = cmd.get_cache_config().clone();
+                    }
+                }
                 self
             }
 
@@ -301,12 +383,62 @@ macro_rules! implement_pipeline_commands {
             /// available to add more arguments to that command.
             #[inline]
             pub fn cmd(&mut self, name: &str) -> &mut Self {
-                self.add_command(cmd(name))
+                self.start_command();
+                $crate::types::RedisWrite::write_arg(self, name.as_bytes());
+                self
             }
 
             /// Returns an iterator over all the commands currently in this pipeline
-            pub fn cmd_iter(&self) -> impl Iterator<Item = &Cmd> {
-                self.commands.iter()
+            pub fn cmd_iter(&self) -> impl Iterator<Item = CmdRef<'_>> {
+                (0..self.commands.len()).map(move |idx| self.command_ref(idx))
+            }
+
+            /// Reserves capacity for at least `additional` more commands.
+            ///
+            /// This is a hint for pre-allocation; the pipeline grows automatically as needed.
+            #[inline]
+            pub fn reserve_for_commands(&mut self, additional: usize) -> &mut Self {
+                self.commands.reserve(additional);
+                self
+            }
+
+            /// Reserves capacity for at least `additional` more arguments, counted across all
+            /// commands.
+            ///
+            /// This is a hint for pre-allocation; the pipeline grows automatically as needed.
+            #[inline]
+            pub fn reserve_for_args(&mut self, additional: usize) -> &mut Self {
+                self.args.reserve(additional);
+                self
+            }
+
+            /// Reserves capacity for at least `additional` more argument bytes, counted across all
+            /// commands.
+            ///
+            /// This is a hint for pre-allocation; the pipeline grows automatically as needed.
+            #[inline]
+            pub fn reserve_for_data(&mut self, additional: usize) -> &mut Self {
+                self.data.reserve(additional);
+                self
+            }
+
+            /// Builds a borrowed view of the command at `idx`.
+            #[inline]
+            fn command_ref(&self, idx: usize) -> CmdRef<'_> {
+                let record = &self.commands[idx];
+                let next = self.commands.get(idx + 1);
+                let args_end = next.map_or(self.args.len(), |r| r.args_start);
+                let data_end = next.map_or(self.data.len(), |r| r.data_start);
+                CmdRef::new(
+                    &self.data[record.data_start..data_end],
+                    &self.args[record.args_start..args_end],
+                    record.data_start,
+                    record.cursor,
+                    record.no_response,
+                    record.ignored,
+                    #[cfg(feature = "cache-aio")]
+                    &record.cache,
+                )
             }
 
             /// Instructs the pipeline to ignore the return value of this command.
@@ -318,10 +450,9 @@ macro_rules! implement_pipeline_commands {
             /// so that the user could retrace which command failed.
             #[inline]
             pub fn ignore(&mut self) -> &mut Self {
-                match self.commands.len() {
-                    0 => true,
-                    x => self.ignored_commands.insert(x - 1),
-                };
+                if let Some(record) = self.commands.last_mut() {
+                    record.ignored = true;
+                }
                 self
             }
 
@@ -331,10 +462,8 @@ macro_rules! implement_pipeline_commands {
             /// Note that this function fails the task if executed on an empty pipeline.
             #[inline]
             pub fn arg<T: ToRedisArgs>(&mut self, arg: T) -> &mut Self {
-                {
-                    let cmd = self.get_last_command();
-                    cmd.arg(arg);
-                }
+                assert!(!self.commands.is_empty(), "No command on stack");
+                arg.write_redis_args(self);
                 self
             }
 
@@ -344,24 +473,20 @@ macro_rules! implement_pipeline_commands {
             /// amount of memory released/reallocated.
             #[inline]
             pub fn clear(&mut self) {
+                self.data.clear();
+                self.args.clear();
                 self.commands.clear();
-                self.ignored_commands.clear();
-            }
-
-            #[inline]
-            fn get_last_command(&mut self) -> &mut Cmd {
-                let idx = match self.commands.len() {
-                    0 => panic!("No command on stack"),
-                    x => x - 1,
-                };
-                &mut self.commands[idx]
             }
 
             fn filter_ignored_results(&self, resp: Vec<Value>) -> Vec<Value> {
                 resp.into_iter()
                     .enumerate()
                     .filter_map(|(index, result)| {
-                        (!self.ignored_commands.contains(&index)).then(|| result)
+                        let ignored = self
+                            .commands
+                            .get(index)
+                            .is_some_and(|record| record.ignored);
+                        (!ignored).then_some(result)
                     })
                     .collect()
             }
@@ -392,6 +517,51 @@ macro_rules! implement_pipeline_commands {
             }
         }
 
+        impl $crate::types::RedisWrite for $struct_name {
+            fn write_arg(&mut self, arg: &[u8]) {
+                self.data.extend_from_slice(arg);
+                self.args.push(Arg::Simple(self.data.len()));
+            }
+
+            fn write_arg_fmt(&mut self, arg: impl std::fmt::Display) {
+                use std::io::Write as _;
+                write!(self.data, "{arg}").unwrap();
+                self.args.push(Arg::Simple(self.data.len()));
+            }
+
+            fn writer_for_next_arg(&mut self) -> impl std::io::Write + '_ {
+                struct PipelineArgGuard<'a>(&'a mut $struct_name);
+                impl Drop for PipelineArgGuard<'_> {
+                    fn drop(&mut self) {
+                        self.0.args.push(Arg::Simple(self.0.data.len()));
+                    }
+                }
+                impl std::io::Write for PipelineArgGuard<'_> {
+                    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                        self.0.data.extend_from_slice(buf);
+                        Ok(buf.len())
+                    }
+
+                    fn flush(&mut self) -> std::io::Result<()> {
+                        Ok(())
+                    }
+                }
+
+                PipelineArgGuard(self)
+            }
+
+            fn reserve_space_for_args(&mut self, additional: impl IntoIterator<Item = usize>) {
+                let mut capacity = 0;
+                let mut args = 0;
+                for add in additional {
+                    capacity += add;
+                    args += 1;
+                }
+                self.data.reserve(capacity);
+                self.args.reserve(args);
+            }
+        }
+
         impl Default for $struct_name {
             fn default() -> Self {
                 Self::new()
@@ -408,14 +578,39 @@ impl Pipeline {
     #[cfg(feature = "cache-aio")]
     #[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
     pub fn set_cache_config(&mut self, command_cache_config: CommandCacheConfig) -> &mut Self {
-        let cmd = self.get_last_command();
-        cmd.set_cache_config(command_cache_config);
+        if let Some(record) = self.commands.last_mut() {
+            record.cache = Some(command_cache_config);
+        }
+        self
+    }
+
+    /// Appends a command from a borrowed [`CmdRef`] without allocating an intermediate [`Cmd`].
+    ///
+    /// This is the borrowing counterpart of [`add_command`](Self::add_command), used by the
+    /// caching layer to repack commands it inspected as `CmdRef`s.
+    #[cfg(feature = "cache-aio")]
+    pub(crate) fn add_command_ref(&mut self, cmd: CmdRef<'_>) -> &mut Self {
+        self.start_command();
+        for arg in cmd.args_iter() {
+            match arg {
+                Arg::Simple(bytes) => crate::types::RedisWrite::write_arg(self, bytes),
+                Arg::Cursor => self.args.push(Arg::Cursor),
+            }
+        }
+        if let Some(record) = self.commands.last_mut() {
+            record.cursor = cmd.cursor();
+            record.no_response = cmd.is_no_response();
+            record.cache = cmd.get_cache_config().clone();
+        }
         self
     }
 
     #[cfg(feature = "cluster-async")]
     pub(crate) fn into_cmd_iter(self) -> impl Iterator<Item = Cmd> {
-        self.commands.into_iter()
+        self.cmd_iter()
+            .map(|cmd| cmd.to_cmd())
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 }
 
