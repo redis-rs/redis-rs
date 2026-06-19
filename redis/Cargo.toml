@@ -46,7 +46,7 @@ futures-util = { version = "0.3.31", default-features = false, features = [
 pin-project-lite = { version = "0.2", optional = true }
 tokio-util = { version = "0.7", optional = true }
 async-lock = { version = "3", optional = true }
-tokio = { version = "1.51", features = [
+tokio = { version = "1", features = [
   "sync",
 ], optional = true }
 
@@ -110,6 +110,9 @@ arcstr = "1.2.0"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 socket2 = { version = "0.6", features = ["all"] }
+
+[target.'cfg(all(target_os = "wasi", target_env = "p2"))'.dependencies]
+tokio = { version = "1.51", features = ["sync"] }
 
 # Only needed for Entra ID authentication
 azure_identity = { version = "0.31", optional = true, features = [

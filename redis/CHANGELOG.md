@@ -2,7 +2,7 @@
 
 #### Changes & Bug fixes
 
-* `tokio-comp` now requires Tokio 1.51+ (for `wasm32-wasip2` support).
+* When building for `wasm32-wasip2`, `tokio-comp` requires Tokio 1.51+.
 
 #### CI & operational improvements
 
