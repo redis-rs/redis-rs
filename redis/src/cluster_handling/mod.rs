@@ -159,10 +159,18 @@ pub(crate) fn get_connection_info(
     node: &NodeAddress,
     cluster_params: &ClusterParams,
 ) -> ConnectionInfo {
+    let mapped = cluster_params
+        .node_address_map
+        .as_ref()
+        .and_then(|map| map.get(node));
+    let (host, port) = match mapped {
+        Some(addr) => (addr.host().to_string(), addr.port()),
+        None => (node.host().to_string(), node.port()),
+    };
     ConnectionInfo {
         addr: get_connection_addr(
-            node.host().to_string(),
-            node.port(),
+            host,
+            port,
             cluster_params.tls,
             cluster_params.tls_params.clone(),
         ),

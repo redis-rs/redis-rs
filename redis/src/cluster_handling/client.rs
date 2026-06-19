@@ -6,6 +6,7 @@ use crate::auth::StreamingCredentialsProvider;
 use crate::caching::{CacheConfig, CacheManager};
 use crate::client::DEFAULT_CONNECTION_TIMEOUT;
 use crate::cluster_handling::read_routing::{RandomReplicaStrategy, ReadRoutingStrategyFactory};
+use crate::cluster_handling::NodeAddress;
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::errors::{ErrorKind, RedisError};
 #[cfg(feature = "cluster-async")]
@@ -15,6 +16,7 @@ use crate::types::{ProtocolVersion, RedisResult};
 use crate::{TlsMode, cluster};
 use arcstr::ArcStr;
 use rand::RngExt;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -71,6 +73,7 @@ struct BuilderParams {
     connection_concurrency_limit: Option<usize>,
     #[cfg(feature = "cluster-async")]
     write_backpressure_boundary: Option<usize>,
+    node_address_map: Option<HashMap<NodeAddress, NodeAddress>>,
 }
 
 #[derive(Clone)]
@@ -159,6 +162,7 @@ pub(crate) struct ClusterParams {
     pub(crate) connection_concurrency_limit: Option<usize>,
     #[cfg(feature = "cluster-async")]
     pub(crate) write_backpressure_boundary: Option<usize>,
+    pub(crate) node_address_map: Option<HashMap<NodeAddress, NodeAddress>>,
 }
 
 impl ClusterParams {
@@ -225,6 +229,7 @@ impl ClusterParams {
             connection_concurrency_limit: value.connection_concurrency_limit,
             #[cfg(feature = "cluster-async")]
             write_backpressure_boundary: value.write_backpressure_boundary,
+            node_address_map: value.node_address_map,
         })
     }
 
@@ -634,6 +639,25 @@ impl ClusterClientBuilder {
     /// Set the behavior of the underlying TCP connections.
     pub fn tcp_settings(mut self, tcp_settings: TcpSettings) -> ClusterClientBuilder {
         self.builder_params.tcp_settings = tcp_settings;
+        self
+    }
+
+    /// Sets a node address map for remapping cluster node addresses.
+    ///
+    /// In TLS-enabled clusters, nodes may advertise IP addresses via `CLUSTER SLOTS`,
+    /// but TLS certificates are issued for domain names. This causes TLS verification
+    /// to fail because the certificate's Subject Alternative Names don't include
+    /// the IP address.
+    ///
+    /// The node address map lets you provide a mapping from the IP-based addresses
+    /// returned by `CLUSTER SLOTS` to the hostnames that match the TLS certificates.
+    /// The mapping is applied at connection time only — the internal slot map retains
+    /// the original addresses so that `MOVED`/`ASK` redirects continue to work.
+    pub fn node_address_map(
+        mut self,
+        map: HashMap<NodeAddress, NodeAddress>,
+    ) -> ClusterClientBuilder {
+        self.builder_params.node_address_map = Some(map);
         self
     }
 
