@@ -5,7 +5,7 @@ use std::convert::identity;
 use std::thread::sleep;
 use std::time::Duration;
 
-use crate::support::{build_single_client, start_tls_crypto_provider};
+use crate::support::{AvailableComponents, build_single_client, start_tls_crypto_provider};
 use redis::Connection;
 use redis::ConnectionInfo;
 use redis::ProtocolVersion;
@@ -236,10 +236,10 @@ impl TestClusterContext {
 }
 
 impl super::TestContextVersioning for TestClusterContext {
-    fn get_version(&self) -> super::Version {
+    fn get_available_components(&self) -> AvailableComponents {
         let server = self.cluster.servers.first().unwrap();
         let mut conn = self.build_single_client_connection(server).unwrap();
 
-        super::get_version(&mut conn)
+        AvailableComponents::from(&mut conn)
     }
 }

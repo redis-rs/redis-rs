@@ -378,9 +378,9 @@ impl TestContext {
 }
 
 impl TestContextVersioning for TestContext {
-    fn get_version(&self) -> Version {
+    fn get_available_components(&self) -> AvailableComponents {
         let mut conn = self.connection();
-        get_version(&mut conn)
+        AvailableComponents::from(&mut conn)
     }
 }
 
