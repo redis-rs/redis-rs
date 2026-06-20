@@ -16,6 +16,12 @@ pub struct RedisClusterConfiguration {
     pub mtls_enabled: bool,
     pub ports: Vec<u16>,
     pub certs_with_ip_alts: bool,
+    /// Number of logical databases each node should expose (`--cluster-databases`).
+    ///
+    /// `None` leaves the server default (`1`, i.e. only database `0`). Setting a
+    /// value greater than `1` requires a server that supports numbered databases
+    /// in cluster mode (Valkey 9.0+); older servers fail to start with this flag.
+    pub cluster_databases: Option<u16>,
 }
 
 impl RedisClusterConfiguration {
@@ -38,6 +44,7 @@ impl Default for RedisClusterConfiguration {
             mtls_enabled: false,
             ports: vec![],
             certs_with_ip_alts: true,
+            cluster_databases: None,
         }
     }
 }
@@ -132,6 +139,7 @@ impl RedisCluster {
             mtls_enabled,
             ports,
             certs_with_ip_alts,
+            cluster_databases,
         } = configuration;
 
         let optional_ports = if ports.is_empty() {
@@ -190,6 +198,10 @@ impl RedisCluster {
                         .arg("5000")
                         .arg("--aclfile")
                         .arg(&acl_path);
+                    if let Some(num_databases) = cluster_databases {
+                        cmd.arg("--cluster-databases")
+                            .arg(num_databases.to_string());
+                    }
                     if is_tls {
                         cmd.arg("--tls-cluster").arg("yes");
                         if replicas > 0 {

@@ -123,6 +123,25 @@ impl TestClusterContext {
         }
     }
 
+    /// Builds an additional cluster client against the same cluster.
+    pub fn new_client_with_builder<F>(&self, initializer: F) -> redis::cluster::ClusterClient
+    where
+        F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
+    {
+        #[allow(unused_mut)]
+        let mut builder = redis::cluster::ClusterClientBuilder::new(self.nodes.clone())
+            .use_protocol(self.protocol);
+
+        #[cfg(feature = "tls-rustls")]
+        if (self.mtls_enabled || ClusterType::get_intended() == ClusterType::TcpTls)
+            && let Some(tls_file_paths) = &self.cluster.tls_paths
+        {
+            builder = builder.certs(load_certs_from_file(tls_file_paths));
+        }
+
+        initializer(builder).build().unwrap()
+    }
+
     pub fn connection(&self) -> redis::cluster::ClusterConnection {
         self.client.get_connection().unwrap()
     }

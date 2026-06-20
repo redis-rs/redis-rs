@@ -3,19 +3,21 @@ mod support;
 
 #[cfg(test)]
 mod cluster {
+    use std::collections::HashMap;
     use std::sync::{
         Arc,
         atomic::{self, AtomicI32, Ordering},
     };
 
     use crate::support::*;
+    use crate::{run_test_if_engine_is_valkey, run_test_if_redis_binary_version_supported};
     use assert_matches::assert_matches;
     use redis::{
         Commands, ConnectionLike, ErrorKind, RedisError, ServerErrorKind, Value,
         cluster::{ClusterClient, ClusterConnection, cluster_pipe},
         cluster_read_routing::{RandomReplicaStrategy, RoundRobinReplicaStrategy},
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
-        cmd, parse_redis_value,
+        cmd, from_redis_value, parse_redis_value,
     };
     use redis_test::{
         cluster::{RedisCluster, RedisClusterConfiguration},
@@ -46,6 +48,60 @@ mod cluster {
     fn test_cluster_basics() {
         let cluster = TestClusterContext::new();
         smoke_test_connection(cluster.connection());
+    }
+
+    #[test]
+    fn test_cluster_numbered_database() {
+        run_test_if_engine_is_valkey!();
+        run_test_if_redis_binary_version_supported!(VALKEY_VERSION_CE_9_0);
+
+        let cluster = TestClusterContext::new_with_config_and_builder(
+            RedisClusterConfiguration {
+                cluster_databases: Some(16),
+                tls_insecure: false,
+                ..Default::default()
+            },
+            |builder| builder.database_id(4),
+        );
+
+        let mut con = cluster.connection();
+
+        assert_all_nodes_on_db(&mut con, 4);
+
+        // Terminate the connections, verify that on reconnect we are still on db4.
+        con.route_command(
+            &redis::cmd("QUIT"),
+            RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
+        )
+        .unwrap();
+
+        assert_all_nodes_on_db(&mut con, 4);
+    }
+
+    fn assert_all_nodes_on_db(con: &mut ClusterConnection, expected_db: u32) {
+        let cmd = redis::cmd("CLIENT").arg("INFO").take();
+        let value = con
+            .route_command(
+                &cmd,
+                RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
+            )
+            .unwrap();
+        let client_info_results: HashMap<String, String> = from_redis_value(value).unwrap();
+        assert!(
+            !client_info_results.is_empty(),
+            "expected CLIENT INFO from at least one node"
+        );
+        for (node, info) in &client_info_results {
+            let db = info
+                .split(' ')
+                .find_map(|kv| kv.strip_prefix("db="))
+                .unwrap_or_else(|| panic!("CLIENT INFO from {node} missing db field: {info}"));
+            assert_eq!(
+                db,
+                expected_db.to_string(),
+                "node {node} should be on db{expected_db}, got: {info}"
+            );
+        }
     }
 
     #[cfg(feature = "tls-rustls")]

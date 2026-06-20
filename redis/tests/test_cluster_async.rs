@@ -37,6 +37,7 @@ mod cluster_async {
     use tokio::{join, sync::mpsc::UnboundedReceiver};
 
     use crate::support::*;
+    use crate::{run_test_if_engine_is_valkey, run_test_if_redis_binary_version_supported};
 
     fn broken_pipe_error() -> RedisError {
         RedisError::from(std::io::Error::new(
@@ -67,6 +68,60 @@ mod cluster_async {
 
         let connection = cluster.async_connection().await;
         smoke_test_connection(connection).await;
+    }
+
+    #[async_test]
+    async fn test_async_cluster_numbered_database() {
+        run_test_if_engine_is_valkey!();
+        run_test_if_redis_binary_version_supported!(VALKEY_VERSION_CE_9_0);
+
+        let cluster = TestClusterContext::new_with_config_and_builder(
+            RedisClusterConfiguration {
+                cluster_databases: Some(16),
+                tls_insecure: false,
+                ..Default::default()
+            },
+            |builder| builder.database_id(4),
+        );
+
+        let mut con = cluster.async_connection().await;
+
+        assert_all_nodes_on_db(&mut con, 4).await;
+
+        // Terminate the connections, verify that on reconnect we are still on db4.
+        con.route_command(
+            redis::cmd("QUIT"),
+            RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
+        )
+        .await
+        .unwrap();
+        assert_all_nodes_on_db(&mut con, 4).await;
+    }
+
+    async fn assert_all_nodes_on_db(con: &mut ClusterConnection, expected_db: u32) {
+        let value = con
+            .route_command(
+                cmd("CLIENT").arg("INFO").take(),
+                RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
+            )
+            .await
+            .unwrap();
+        let client_info_results: HashMap<String, String> = from_redis_value(value).unwrap();
+        assert!(
+            !client_info_results.is_empty(),
+            "expected CLIENT INFO from at least one node"
+        );
+        for (node, info) in &client_info_results {
+            let db = info
+                .split(' ')
+                .find_map(|kv| kv.strip_prefix("db="))
+                .unwrap_or_else(|| panic!("CLIENT INFO from {node} missing db field: {info}"));
+            assert_eq!(
+                db,
+                expected_db.to_string(),
+                "node {node} should be on db{expected_db}, got: {info}"
+            );
+        }
     }
 
     #[async_test]

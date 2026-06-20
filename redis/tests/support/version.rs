@@ -12,6 +12,8 @@ pub const REDIS_VERSION_CE_8_0: Component = ("redis", (8, 0, 0));
 pub const REDIS_VERSION_CE_8_2: Component = ("redis", (8, 1, 240));
 pub const REDIS_VERSION_CE_8_4: Component = ("redis", (8, 3, 224));
 pub const REDIS_VERSION_CE_8_6: Component = ("redis", (8, 6, 0));
+/// Numbered databases in cluster mode were introduced in Valkey 9.0.
+pub const VALKEY_VERSION_CE_9_0: Component = ("valkey", (9, 0, 0));
 
 /// Version of a software component
 pub type Version = (u32, u32, u32);
@@ -217,6 +219,23 @@ pub fn get_redis_binary_version() -> Option<Version> {
     Some((versions[0], versions[1], versions[2]))
 }
 
+/// Returns `true` if the server binary is Valkey (as opposed to Redis).
+///
+/// Inspects the `redis-server --version` output rather than a running server,
+/// so it can gate a test before any server is started. Returns `false` if the
+/// binary cannot be located.
+pub fn is_valkey_binary() -> bool {
+    use std::process::Command;
+
+    let binary = std::env::var("REDISRS_SERVER_BIN").unwrap_or_else(|_| "redis-server".to_string());
+    match Command::new(&binary).arg("--version").output() {
+        Ok(output) => String::from_utf8_lossy(&output.stdout)
+            .to_lowercase()
+            .contains("valkey"),
+        Err(_) => false,
+    }
+}
+
 /// Server version extraction and matching
 pub trait TestContextVersioning {
     /// Gets the components for the first server in the context
@@ -287,7 +306,7 @@ macro_rules! run_test_if_version_supported {
 #[macro_export]
 macro_rules! run_test_if_redis_binary_version_supported {
     ($minimum_required_version:expr) => {{
-        match $crate::get_redis_binary_version() {
+        match $crate::support::get_redis_binary_version() {
             None => {
                 eprintln!(
                     "Skipping the test because the Redis binary was not found."
@@ -303,6 +322,19 @@ macro_rules! run_test_if_redis_binary_version_supported {
                     return;
                 }
             }
+        }
+    }};
+}
+
+/// Macro to run a test only if the server binary is Valkey, skipping it otherwise.
+///
+/// Inspects the binary (not a running server), so it never starts a server.
+#[macro_export]
+macro_rules! run_test_if_engine_is_valkey {
+    () => {{
+        if !$crate::support::is_valkey_binary() {
+            eprintln!("Skipping the test because the server binary is not Valkey.");
+            return;
         }
     }};
 }
