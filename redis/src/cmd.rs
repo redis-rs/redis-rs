@@ -24,6 +24,158 @@ pub enum Arg<D> {
     Cursor,
 }
 
+/// A lightweight, borrowed view of a single command.
+///
+/// `CmdRef` is the item type yielded by [`Pipeline::cmd_iter`](crate::Pipeline::cmd_iter).
+/// It borrows directly into the pipeline's shared buffers, so iterating the commands of a
+/// pipeline performs no per-command allocation. It can also be created from a standalone
+/// [`Cmd`], which lets internal machinery treat both uniformly.
+///
+/// The type is intentionally opaque: it exposes a curated set of read-only accessors so that
+/// the underlying storage can evolve without breaking callers.
+#[derive(Clone, Copy, Debug)]
+pub struct CmdRef<'a> {
+    // The contiguous argument bytes belonging to this command.
+    data: &'a [u8],
+    // This command's args. `Arg::Simple` offsets are absolute into the buffer that `data` is a
+    // slice of; `data_start` records where `data` begins within it.
+    args: &'a [Arg<usize>],
+    data_start: usize,
+    cursor: Option<u64>,
+    no_response: bool,
+    ignored: bool,
+    #[cfg(feature = "cache-aio")]
+    cache: &'a Option<CommandCacheConfig>,
+}
+
+impl<'a> CmdRef<'a> {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        data: &'a [u8],
+        args: &'a [Arg<usize>],
+        data_start: usize,
+        cursor: Option<u64>,
+        no_response: bool,
+        ignored: bool,
+        #[cfg(feature = "cache-aio")] cache: &'a Option<CommandCacheConfig>,
+    ) -> Self {
+        CmdRef {
+            data,
+            args,
+            data_start,
+            cursor,
+            no_response,
+            ignored,
+            #[cfg(feature = "cache-aio")]
+            cache,
+        }
+    }
+
+    /// Creates a view borrowing from a standalone [`Cmd`].
+    #[cfg(feature = "cache-aio")]
+    pub(crate) fn from_cmd(cmd: &'a Cmd) -> Self {
+        CmdRef {
+            data: &cmd.data,
+            args: &cmd.args,
+            data_start: 0,
+            cursor: cmd.cursor,
+            no_response: cmd.no_response,
+            ignored: false,
+            #[cfg(feature = "cache-aio")]
+            cache: &cmd.cache,
+        }
+    }
+
+    /// Returns an iterator over the arguments in this command (including the command name itself).
+    pub fn args_iter(&self) -> impl Clone + ExactSizeIterator<Item = Arg<&'a [u8]>> + use<'a> {
+        let data = self.data;
+        let base = self.data_start;
+        let args = self.args;
+        let mut prev = 0;
+        args.iter().map(move |arg| match *arg {
+            Arg::Simple(end) => {
+                let arg = Arg::Simple(&data[prev..end - base]);
+                prev = end - base;
+                arg
+            }
+            Arg::Cursor => Arg::Cursor,
+        })
+    }
+
+    /// Returns a reference to the data for the argument at `idx`.
+    pub fn arg_idx(&self, idx: usize) -> Option<&'a [u8]> {
+        match self.args_iter().nth(idx)? {
+            Arg::Simple(bytes) => Some(bytes),
+            Arg::Cursor => None,
+        }
+    }
+
+    /// Returns this command's contiguous argument bytes.
+    pub fn data(&self) -> &'a [u8] {
+        self.data
+    }
+
+    /// Returns the command's cursor value, if it is in scan mode.
+    pub fn cursor(&self) -> Option<u64> {
+        self.cursor
+    }
+
+    /// Check whether the command's result will be waited for.
+    pub fn is_no_response(&self) -> bool {
+        self.no_response
+    }
+
+    /// Returns `true` if this command's result is ignored within the pipeline.
+    pub fn is_ignored(&self) -> bool {
+        self.ignored
+    }
+
+    #[cfg(feature = "cache-aio")]
+    pub(crate) fn get_cache_config(&self) -> &'a Option<CommandCacheConfig> {
+        self.cache
+    }
+
+    #[cfg(feature = "cache-aio")]
+    pub(crate) fn encoded_len(&self) -> usize {
+        args_len(self.args_iter(), self.cursor.unwrap_or(0))
+    }
+
+    /// Returns the packed command as a byte vector.
+    pub fn get_packed_command(&self) -> Vec<u8> {
+        let mut cmd = Vec::new();
+        if self.args.is_empty() {
+            return cmd;
+        }
+        self.write_packed_command(&mut cmd);
+        cmd
+    }
+
+    /// Writes the packed command to `dst`, appending to it.
+    pub fn write_packed_command(&self, dst: &mut Vec<u8>) {
+        write_command_to_vec(dst, self.args_iter(), self.cursor.unwrap_or(0))
+    }
+
+    /// Reconstructs an owned [`Cmd`] from this view.
+    pub fn to_cmd(self) -> Cmd {
+        let mut cmd = Cmd::with_capacity(self.args.len(), self.data.len());
+        cmd.data.extend_from_slice(self.data);
+        let base = self.data_start;
+        for arg in self.args {
+            match *arg {
+                Arg::Simple(end) => cmd.args.push(Arg::Simple(end - base)),
+                Arg::Cursor => cmd.args.push(Arg::Cursor),
+            }
+        }
+        cmd.cursor = self.cursor;
+        cmd.no_response = self.no_response;
+        #[cfg(feature = "cache-aio")]
+        {
+            cmd.cache = self.cache.clone();
+        }
+        cmd
+    }
+}
+
 /// CommandCacheConfig is used to define caching behaviour of individual commands.
 /// # Example
 /// ```rust
@@ -295,7 +447,7 @@ fn bulklen(len: usize) -> usize {
     1 + countdigits(len) + 2 + len + 2
 }
 
-fn args_len<'a, I>(args: I, cursor: u64) -> usize
+pub(crate) fn args_len<'a, I>(args: I, cursor: u64) -> usize
 where
     I: IntoIterator<Item = Arg<&'a [u8]>> + ExactSizeIterator,
 {
@@ -309,6 +461,7 @@ where
     totlen
 }
 
+#[cfg(test)]
 pub(crate) fn cmd_len(cmd: &Cmd) -> usize {
     args_len(cmd.args_iter(), cmd.cursor.unwrap_or(0))
 }
@@ -333,7 +486,11 @@ where
     write_command(cmd, args, cursor).unwrap()
 }
 
-fn write_command<'a, I>(cmd: &mut (impl ?Sized + Write), args: I, cursor: u64) -> io::Result<()>
+pub(crate) fn write_command<'a, I>(
+    cmd: &mut (impl ?Sized + Write),
+    args: I,
+    cursor: u64,
+) -> io::Result<()>
 where
     I: IntoIterator<Item = Arg<&'a [u8]>> + Clone + ExactSizeIterator,
 {
@@ -624,14 +781,14 @@ impl Cmd {
         write_command_to_vec(dst, self.args_iter(), self.cursor.unwrap_or(0))
     }
 
-    pub(crate) fn write_packed_command_preallocated(&self, cmd: &mut Vec<u8>) {
-        write_command(cmd, self.args_iter(), self.cursor.unwrap_or(0)).unwrap()
-    }
-
     /// Returns true if the command is in scan mode.
     #[inline]
     pub fn in_scan_mode(&self) -> bool {
         self.cursor.is_some()
+    }
+
+    pub(crate) fn cursor_value(&self) -> Option<u64> {
+        self.cursor
     }
 
     /// Sends the command as query to the connection and converts the
@@ -773,7 +930,7 @@ impl Cmd {
     }
 
     // Get a reference to the argument at `idx`
-    #[cfg(any(feature = "cluster", feature = "cache-aio"))]
+    #[cfg(feature = "cluster")]
     pub(crate) fn arg_idx(&self, idx: usize) -> Option<&[u8]> {
         if idx >= self.args.len() {
             return None;

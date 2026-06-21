@@ -1,4 +1,4 @@
-use crate::{Cmd, ErrorKind, Pipeline, RedisError, RedisResult, Value};
+use crate::{Cmd, ErrorKind, Pipeline, RedisError, RedisResult, Value, cmd::CmdRef};
 use std::{iter::zip, time::Instant};
 
 use super::{CacheManager, CacheMode, PrepareCacheResult};
@@ -49,7 +49,7 @@ impl CacheablePipeline<'_> {
 pub(crate) struct SingleCachedCommand<'a> {
     pub(crate) redis_key: &'a [u8],
     pub(crate) cmd_key: &'a [u8],
-    pub(crate) cmd: &'a Cmd,
+    pub(crate) cmd: CmdRef<'a>,
     pub(crate) client_side_expire: Instant,
 }
 
@@ -144,7 +144,7 @@ impl CacheableCommand<'_> {
         match self {
             CacheableCommand::Single(scc) => {
                 pipeline.add_command(Cmd::pttl(scc.redis_key));
-                pipeline.add_command(scc.cmd.clone());
+                pipeline.add_command_ref(scc.cmd);
             }
             CacheableCommand::Multiple {
                 command_name,

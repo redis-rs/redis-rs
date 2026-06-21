@@ -398,7 +398,8 @@ where
     }
 
     pub(crate) fn execute_pipeline(&mut self, pipe: &ClusterPipeline) -> RedisResult<Vec<Value>> {
-        self.send_recv_and_retry_cmds(pipe.commands())
+        let cmds: Vec<Cmd> = pipe.cmd_iter().map(|cmd| cmd.to_cmd()).collect();
+        self.send_recv_and_retry_cmds(&cmds)
     }
 
     /// Returns the connection status.

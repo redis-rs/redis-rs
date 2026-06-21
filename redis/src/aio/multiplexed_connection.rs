@@ -741,7 +741,7 @@ impl MultiplexedConnection {
         };
         #[cfg(feature = "cache-aio")]
         if let Some(cache_manager) = &self.cache_manager {
-            match cache_manager.get_cached_cmd(cmd) {
+            match cache_manager.get_cached_cmd(crate::cmd::CmdRef::from_cmd(cmd)) {
                 PrepareCacheResult::Cached(value) => return Ok(value),
                 PrepareCacheResult::NotCached(cacheable_command) => {
                     let mut pipeline = crate::Pipeline::new();
@@ -753,7 +753,7 @@ impl MultiplexedConnection {
                             pipeline.get_packed_pipeline(),
                             Some(PipelineResponseExpectation {
                                 skipped_response_count: 0,
-                                expected_response_count: pipeline.commands.len(),
+                                expected_response_count: pipeline.len(),
                                 is_transaction: false,
                                 seen_responses: 0,
                             }),
