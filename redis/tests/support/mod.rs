@@ -474,7 +474,7 @@ where
 }
 
 #[cfg(feature = "tls-rustls")]
-fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> TlsCertificates {
+pub fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> TlsCertificates {
     let ca_file = File::open(&tls_file_paths.ca_crt).expect("Cannot open CA cert file");
     let mut root_cert_vec = Vec::new();
     BufReader::new(ca_file)
