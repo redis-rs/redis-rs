@@ -231,6 +231,10 @@ name = "test_tls_cert_auth"
 required-features = ["acl", "tls-rustls", "tokio-rustls-comp", "cluster"]
 
 [[bench]]
+name = "bench_pipeline_build"
+harness = false
+
+[[bench]]
 name = "bench_basic"
 harness = false
 required-features = ["tokio-comp"]

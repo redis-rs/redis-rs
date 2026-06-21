@@ -2484,8 +2484,7 @@ mod tests {
             .0;
 
             let actual_packed_cmds = pipeline
-                .commands
-                .iter()
+                .cmd_iter()
                 .map(|c| c.get_packed_command())
                 .collect::<Vec<_>>();
 

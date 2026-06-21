@@ -2,7 +2,7 @@ use rand::RngExt;
 
 use super::NodeAddress;
 use crate::cluster_handling::slot_map::SLOT_SIZE;
-use crate::cmd::{Arg, Cmd};
+use crate::cmd::{Arg, Cmd, CmdRef};
 use crate::commands::is_readonly_cmd;
 use crate::types::Value;
 use crate::{ErrorKind, RedisError, RedisResult};
@@ -891,6 +891,19 @@ pub(crate) trait Routable {
 impl Routable for Cmd {
     fn arg_idx(&self, idx: usize) -> Option<&[u8]> {
         self.arg_idx(idx)
+    }
+
+    fn position(&self, candidate: &[u8]) -> Option<usize> {
+        self.args_iter().position(|a| match a {
+            Arg::Simple(d) => d.eq_ignore_ascii_case(candidate),
+            _ => false,
+        })
+    }
+}
+
+impl Routable for CmdRef<'_> {
+    fn arg_idx(&self, idx: usize) -> Option<&[u8]> {
+        CmdRef::arg_idx(self, idx)
     }
 
     fn position(&self, candidate: &[u8]) -> Option<usize> {

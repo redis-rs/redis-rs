@@ -1,8 +1,9 @@
 use super::ClusterConnection;
 use crate::RedisError;
-use crate::cmd::{Cmd, cmd};
+use crate::cmd::{Arg, Cmd, CmdRef};
 use crate::errors::ErrorKind;
-use crate::types::{FromRedisValue, HashSet, RedisResult, ToRedisArgs, Value, from_redis_value};
+use crate::pipeline::CommandRecord;
+use crate::types::{FromRedisValue, RedisResult, ToRedisArgs, Value, from_redis_value};
 
 pub(crate) const UNROUTABLE_ERROR: (ErrorKind, &str) = (
     ErrorKind::Client,
@@ -44,8 +45,9 @@ fn is_illegal_cmd(cmd: &str) -> bool {
 /// Represents a Redis Cluster command pipeline.
 #[derive(Clone)]
 pub struct ClusterPipeline {
-    commands: Vec<Cmd>,
-    ignored_commands: HashSet<usize>,
+    data: Vec<u8>,
+    args: Vec<Arg<usize>>,
+    commands: Vec<CommandRecord>,
     ignore_errors: bool,
 }
 
@@ -73,21 +75,18 @@ pub struct ClusterPipeline {
 /// ```
 impl ClusterPipeline {
     /// Create an empty pipeline.
+    ///
+    /// To pre-allocate the internal buffers when you have a size estimate, chain the
+    /// [`reserve_for_commands`](Self::reserve_for_commands),
+    /// [`reserve_for_args`](Self::reserve_for_args), and
+    /// [`reserve_for_data`](Self::reserve_for_data) methods.
     pub fn new() -> ClusterPipeline {
-        Self::with_capacity(0)
-    }
-
-    /// Creates an empty pipeline with pre-allocated capacity.
-    pub fn with_capacity(capacity: usize) -> ClusterPipeline {
         ClusterPipeline {
-            commands: Vec::with_capacity(capacity),
-            ignored_commands: HashSet::new(),
+            data: Vec::new(),
+            args: Vec::new(),
+            commands: Vec::new(),
             ignore_errors: false,
         }
-    }
-
-    pub(crate) fn commands(&self) -> &Vec<Cmd> {
-        &self.commands
     }
 
     /// Executes the pipeline and fetches the return values:
@@ -105,7 +104,7 @@ impl ClusterPipeline {
     /// ```
     #[inline]
     pub fn query<T: FromRedisValue>(&self, con: &mut ClusterConnection) -> RedisResult<T> {
-        for cmd in &self.commands {
+        for cmd in self.cmd_iter() {
             let cmd_name = std::str::from_utf8(cmd.arg_idx(0).unwrap_or(b""))
                 .unwrap_or("")
                 .trim()

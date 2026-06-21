@@ -708,7 +708,7 @@ where
                         if !matches!(res, Value::ServerError(_))
                             && let Some(tracker) = &self.subscription_tracker
                             && let Some((action, args)) =
-                                SubscriptionTracker::to_request(cmd.as_ref())
+                                SubscriptionTracker::to_request(cmd.as_ref().args_iter())
                         {
                             let mut tracker = tracker.lock().unwrap();
                             tracker.update_with_request(action, args);
@@ -752,7 +752,7 @@ where
                                 if matches!(res[index], Value::ServerError(_)) {
                                     None
                                 } else {
-                                    SubscriptionTracker::to_request(cmd)
+                                    SubscriptionTracker::to_request(cmd.args_iter())
                                 }
                             })
                             .peekable();

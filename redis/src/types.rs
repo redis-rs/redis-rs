@@ -1,11 +1,11 @@
 use crate::errors::ParsingError;
 #[cfg(feature = "ahash")]
-pub(crate) use ahash::{AHashMap as HashMap, AHashSet as HashSet};
+pub(crate) use ahash::AHashMap as HashMap;
 #[cfg(feature = "num-bigint")]
 use num_bigint::BigInt;
 use std::borrow::Cow;
 #[cfg(not(feature = "ahash"))]
-pub(crate) use std::collections::{HashMap, HashSet};
+pub(crate) use std::collections::HashMap;
 use std::default::Default;
 use std::ffi::CString;
 use std::fmt;

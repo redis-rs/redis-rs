@@ -1,7 +1,7 @@
 use super::cmd::{CacheableCommand, CacheablePipeline, MultipleCachedCommandPart};
 use super::sharded_lru::*;
 use super::{CacheConfig, CacheMode, CacheStatistics};
-use crate::cmd::{Cmd, cmd_len};
+use crate::cmd::CmdRef;
 use crate::{FromRedisValue, Pipeline, PushKind, Value};
 use std::cmp::min;
 use std::ops::Add;
@@ -84,7 +84,7 @@ impl CacheManager {
         }
     }
 
-    pub(crate) fn get_cached_cmd<'a>(&self, cmd: &'a Cmd) -> PrepareCacheResult<'a> {
+    pub(crate) fn get_cached_cmd<'a>(&self, cmd: CmdRef<'a>) -> PrepareCacheResult<'a> {
         match self.cache_config.mode {
             CacheMode::All => self.get_cached_cmd_inner(cmd),
             CacheMode::OptIn => {
@@ -101,7 +101,7 @@ impl CacheManager {
         }
     }
 
-    fn calculate_expiration_time(&self, cmd: &Cmd) -> Instant {
+    fn calculate_expiration_time(&self, cmd: CmdRef<'_>) -> Instant {
         let client_side_ttl = cmd
             .get_cache_config()
             .as_ref()
@@ -126,7 +126,7 @@ impl CacheManager {
         }
     }
 
-    fn extract_simple_arguments<'a>(&self, cmd: &'a Cmd) -> Vec<&'a [u8]> {
+    fn extract_simple_arguments<'a>(&self, cmd: CmdRef<'a>) -> Vec<&'a [u8]> {
         cmd.args_iter()
             .skip(1) // Skip the command name
             .filter_map(|arg| match arg {
@@ -138,7 +138,7 @@ impl CacheManager {
 
     fn process_multi_key_arguments<'a>(
         &self,
-        cmd: &'a Cmd,
+        cmd: CmdRef<'a>,
         is_json_command: bool,
         single_command_name: &[u8],
         commands: &mut Vec<(usize, MultipleCachedCommandPart<'a>)>,
@@ -177,7 +177,7 @@ impl CacheManager {
 
     fn handle_multi_key_command<'a>(
         &self,
-        cmd: &'a Cmd,
+        cmd: CmdRef<'a>,
         command_name_str: &'a str,
         single_command_name: &[u8],
         client_side_expire: Instant,
@@ -212,7 +212,7 @@ impl CacheManager {
 
     fn handle_single_key_command<'a>(
         &self,
-        cmd: &'a Cmd,
+        cmd: CmdRef<'a>,
         client_side_expire: Instant,
     ) -> PrepareCacheResult<'a> {
         let redis_key = match cmd.arg_idx(1) {
@@ -220,7 +220,7 @@ impl CacheManager {
             None => return PrepareCacheResult::NotCacheable,
         };
 
-        let cmd_key = cmd.data.as_slice();
+        let cmd_key = cmd.data();
 
         if let Some(value) = self.get(redis_key, cmd_key) {
             return PrepareCacheResult::Cached(value);
@@ -241,8 +241,8 @@ impl CacheManager {
     /// If there isn't enough information in cache but Cmd is cacheable then packs enough information
     /// into CacheableCommand and returns PrepareCacheResult::NotCached.
     /// If Cmd doesn't support client side caching then it returns PrepareCacheResult::NotCacheable.
-    fn get_cached_cmd_inner<'a>(&self, cmd: &'a Cmd) -> PrepareCacheResult<'a> {
-        if cmd_len(cmd) < 2 {
+    fn get_cached_cmd_inner<'a>(&self, cmd: CmdRef<'a>) -> PrepareCacheResult<'a> {
+        if cmd.encoded_len() < 2 {
             return PrepareCacheResult::NotCacheable;
         }
 
@@ -279,10 +279,10 @@ impl CacheManager {
         let transaction_mode = requested_pipeline.transaction_mode;
         let mut packed_pipeline = Pipeline::new();
 
-        for (idx, cmd) in requested_pipeline.commands.iter().enumerate() {
-            if requested_pipeline.ignored_commands.contains(&idx) {
+        for cmd in requested_pipeline.cmd_iter() {
+            if cmd.is_ignored() {
                 commands.push(PrepareCacheResult::Ignored);
-                packed_pipeline.add_command(cmd.clone());
+                packed_pipeline.add_command_ref(cmd);
                 continue;
             }
             let cacheable_command = self.get_cached_cmd(cmd);
@@ -293,7 +293,7 @@ impl CacheManager {
                 }
                 PrepareCacheResult::NotCacheable => {
                     // It must be added to packed_pipeline manually, since it's not packed via pack_command.
-                    packed_pipeline.add_command(cmd.clone());
+                    packed_pipeline.add_command_ref(cmd);
                 }
                 // PrepareCacheResult::Ignored shouldn't return by get_cached_cmd
                 _ => panic!("Unexpected result is given from get_cached_cmd"),
@@ -303,9 +303,9 @@ impl CacheManager {
 
         let pipeline_response_counts = if transaction_mode {
             packed_pipeline.atomic();
-            (packed_pipeline.commands.len() + 1, 1)
+            (packed_pipeline.len() + 1, 1)
         } else {
-            (0, packed_pipeline.commands.len())
+            (0, packed_pipeline.len())
         };
         let cp = CacheablePipeline {
             commands,
