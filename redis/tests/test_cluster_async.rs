@@ -513,6 +513,55 @@ mod cluster_async {
         smoke_test_connection(connection).await;
     }
 
+    #[cfg(feature = "tls-rustls")]
+    #[async_test]
+    async fn async_cluster_node_address_map_fixes_tls_hostname_mismatch() {
+        use redis_test::cluster::ClusterType;
+
+        if ClusterType::get_intended() != ClusterType::TcpTls {
+            return;
+        }
+
+        // Certs issued for "localhost" only (no IP SAN), so connecting via
+        // 127.0.0.1 will fail TLS verification without node_address_map.
+        let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
+            tls_insecure: false,
+            certs_with_ip_alts: false,
+            dns_hostname: Some("localhost".to_string()),
+            ..Default::default()
+        });
+
+        assert!(cluster.client.get_async_connection().await.is_err());
+
+        let mut address_map = HashMap::new();
+        for server in cluster.cluster.iter_servers() {
+            if let Some((host, port)) = server.host_and_port() {
+                address_map.insert(
+                    redis::cluster::NodeAddress::new(host, port),
+                    redis::cluster::NodeAddress::new("localhost", port),
+                );
+            }
+        }
+
+        let initial_nodes: Vec<redis::ConnectionInfo> = cluster
+            .cluster
+            .iter_servers()
+            .map(|s| s.connection_info())
+            .collect();
+
+        let mut builder = ClusterClient::builder(initial_nodes)
+            .use_protocol(use_protocol())
+            .node_address_map(address_map);
+
+        if let Some(tls_file_paths) = &cluster.cluster.tls_paths {
+            builder = builder.certs(load_certs_from_file(tls_file_paths));
+        }
+
+        let client = builder.build().unwrap();
+        let connection = client.get_async_connection().await.unwrap();
+        smoke_test_connection(connection).await;
+    }
+
     #[async_test]
     async fn test_async_cluster_basic_failover() {
         test_failover(
