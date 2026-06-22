@@ -2328,6 +2328,104 @@ mod basic {
     }
 
     #[test]
+    fn test_zinterstore() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        // Shared members (one, two) have different scores in each set so that
+        // SUM, MIN and MAX each produce distinct, obvious results.
+        con.zadd_multiple("zset1", &[(1, "one"), (2, "two"), (4, "four")])
+            .unwrap();
+        con.zadd_multiple("zset2", &[(5, "one"), (6, "two"), (3, "three")])
+            .unwrap();
+
+        // zinterstore (SUM):
+        // one: 1 + 5 = 6
+        // two: 2 + 6 = 8
+        assert_eq!(con.zinterstore("out", &["zset1", "zset2"]), Ok(2));
+        assert_eq!(
+            con.zrange_withscores("out", 0, -1),
+            Ok(vec![("one".to_string(), 6.0), ("two".to_string(), 8.0)])
+        );
+
+        // zinterstore_min:
+        // one: min(1, 5) = 1
+        // two: min(2, 6) = 2
+        assert_eq!(con.zinterstore_min("out", &["zset1", "zset2"]), Ok(2));
+        assert_eq!(
+            con.zrange_withscores("out", 0, -1),
+            Ok(vec![("one".to_string(), 1.0), ("two".to_string(), 2.0)])
+        );
+
+        // zinterstore_max:
+        // one: max(1, 5) = 5
+        // two: max(2, 6) = 6
+        assert_eq!(con.zinterstore_max("out", &["zset1", "zset2"]), Ok(2));
+        assert_eq!(
+            con.zrange_withscores("out", 0, -1),
+            Ok(vec![("one".to_string(), 5.0), ("two".to_string(), 6.0)])
+        );
+    }
+
+    #[test]
+    fn test_zunionstore() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        // Shared members (one, two) have different scores in each set so that
+        // SUM, MIN and MAX each produce distinct, obvious results.
+        con.zadd_multiple("zset1", &[(1, "one"), (2, "two"), (4, "four")])
+            .unwrap();
+        con.zadd_multiple("zset2", &[(5, "one"), (6, "two"), (3, "three")])
+            .unwrap();
+
+        // zunionstore (SUM):
+        // one: 1 + 5 = 6
+        // two: 2 + 6 = 8
+        // three = 3, four = 4
+        assert_eq!(con.zunionstore("out", &["zset1", "zset2"]), Ok(4));
+        assert_eq!(
+            con.zrange_withscores("out", 0, -1),
+            Ok(vec![
+                ("three".to_string(), 3.0),
+                ("four".to_string(), 4.0),
+                ("one".to_string(), 6.0),
+                ("two".to_string(), 8.0)
+            ])
+        );
+
+        // zunionstore_min:
+        // one: min(1, 5) = 1
+        // two: min(2, 6) = 2
+        // three = 3, four = 4
+        assert_eq!(con.zunionstore_min("out", &["zset1", "zset2"]), Ok(4));
+        assert_eq!(
+            con.zrange_withscores("out", 0, -1),
+            Ok(vec![
+                ("one".to_string(), 1.0),
+                ("two".to_string(), 2.0),
+                ("three".to_string(), 3.0),
+                ("four".to_string(), 4.0)
+            ])
+        );
+
+        // zunionstore_max:
+        // one: max(1, 5) = 5
+        // two: max(2, 6) = 6
+        // three = 3, four = 4
+        assert_eq!(con.zunionstore_max("out", &["zset1", "zset2"]), Ok(4));
+        assert_eq!(
+            con.zrange_withscores("out", 0, -1),
+            Ok(vec![
+                ("three".to_string(), 3.0),
+                ("four".to_string(), 4.0),
+                ("one".to_string(), 5.0),
+                ("two".to_string(), 6.0)
+            ])
+        );
+    }
+
+    #[test]
     fn test_zinterstore_weights() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
@@ -2433,6 +2531,278 @@ mod basic {
                 ("two".to_string(), 6.0),
                 ("three".to_string(), 9.0)
             ])
+        );
+    }
+
+    #[test]
+    fn test_zinterstore_zunionstore_count() {
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8);
+        let mut con = ctx.connection();
+
+        con.zadd_multiple("s1", &[(1, "foo"), (1, "bar")]).unwrap();
+        con.zadd_multiple("s2", &[(2, "foo"), (2, "bar")]).unwrap();
+        con.zadd_multiple("s3", &[(3, "foo")]).unwrap();
+
+        // When using COUNT with no weights, the score is the number of input sets containing the element.
+        // For the union, foo is in all 3 sets and bar in 2.
+        assert_eq!(con.zunionstore_count("t1", &["s1", "s2", "s3"]), Ok(2));
+        assert_eq!(
+            con.zrange_withscores("t1", 0, -1),
+            Ok(vec![("bar".to_string(), 2.0), ("foo".to_string(), 3.0)])
+        );
+
+        // For the intersection, only foo is present and it is in all 3 sets.
+        assert_eq!(con.zinterstore_count("t1", &["s1", "s2", "s3"]), Ok(1));
+        assert_eq!(
+            con.zrange_withscores("t1", 0, -1),
+            Ok(vec![("foo".to_string(), 3.0)])
+        );
+
+        // When using COUNT with weights, the score is the sum of the weights of the input sets containing the element, ignoring the original scores.
+        assert_eq!(
+            con.zunionstore_count_weights("t1", &[("s1", 10), ("s2", 5), ("s3", 3)]),
+            Ok(2)
+        );
+        assert_eq!(
+            con.zrange_withscores("t1", 0, -1),
+            Ok(vec![("bar".to_string(), 15.0), ("foo".to_string(), 18.0)])
+        );
+
+        assert_eq!(
+            con.zinterstore_count_weights("t1", &[("s1", 10), ("s2", 5), ("s3", 3)]),
+            Ok(1)
+        );
+        assert_eq!(
+            con.zrange_withscores("t1", 0, -1),
+            Ok(vec![("foo".to_string(), 18.0)])
+        );
+    }
+
+    #[test]
+    fn test_zinter_zunion() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        // Shared members (one, two) have different scores in each set so that
+        // SUM, MIN and MAX each produce distinct, obvious results.
+        con.zadd_multiple("zset1", &[(1, "one"), (2, "two"), (4, "four")])
+            .unwrap();
+        con.zadd_multiple("zset2", &[(5, "one"), (6, "two"), (3, "three")])
+            .unwrap();
+
+        // ZINTER (intersection = {one, two})
+        // The intersection is always {one, two} and one always scores below two so the order is stable across aggregators.
+        assert_eq!(
+            con.zinter(&["zset1", "zset2"]),
+            Ok(vec!["one".to_string(), "two".to_string()])
+        );
+        assert_eq!(
+            con.zinter_min(&["zset1", "zset2"]),
+            Ok(vec!["one".to_string(), "two".to_string()])
+        );
+        assert_eq!(
+            con.zinter_max(&["zset1", "zset2"]),
+            Ok(vec!["one".to_string(), "two".to_string()])
+        );
+        assert_eq!(
+            con.zinter_weights(&[("zset1", 2), ("zset2", 3)]),
+            Ok(vec!["one".to_string(), "two".to_string()])
+        );
+        assert_eq!(
+            con.zinter_min_weights(&[("zset1", 2), ("zset2", 3)]),
+            Ok(vec!["one".to_string(), "two".to_string()])
+        );
+        assert_eq!(
+            con.zinter_max_weights(&[("zset1", 2), ("zset2", 3)]),
+            Ok(vec!["one".to_string(), "two".to_string()])
+        );
+        // With scores:
+        assert_eq!(
+            con.zinter_withscores(&["zset1", "zset2"]),
+            Ok(vec![("one".to_string(), 6.0), ("two".to_string(), 8.0)])
+        );
+        assert_eq!(
+            con.zinter_min_withscores(&["zset1", "zset2"]),
+            Ok(vec![("one".to_string(), 1.0), ("two".to_string(), 2.0)])
+        );
+        assert_eq!(
+            con.zinter_max_withscores(&["zset1", "zset2"]),
+            Ok(vec![("one".to_string(), 5.0), ("two".to_string(), 6.0)])
+        );
+        // Weights multiply each set's score before aggregating:
+        // one = (1 * 2) + (5 * 3)
+        // two = (2 * 2) + (6 * 3)
+        assert_eq!(
+            con.zinter_weights_withscores(&[("zset1", 2), ("zset2", 3)]),
+            Ok(vec![("one".to_string(), 17.0), ("two".to_string(), 22.0)])
+        );
+        assert_eq!(
+            con.zinter_min_weights_withscores(&[("zset1", 2), ("zset2", 3)]),
+            Ok(vec![("one".to_string(), 2.0), ("two".to_string(), 4.0)])
+        );
+        assert_eq!(
+            con.zinter_max_weights_withscores(&[("zset1", 2), ("zset2", 3)]),
+            Ok(vec![("one".to_string(), 15.0), ("two".to_string(), 18.0)])
+        );
+
+        // ZUNION (union = {one, two, three, four})
+        // Members only (ordered by resulting score, ties broken lexically).
+        assert_eq!(
+            con.zunion(&["zset1", "zset2"]),
+            Ok(vec![
+                "three".to_string(),
+                "four".to_string(),
+                "one".to_string(),
+                "two".to_string()
+            ])
+        );
+        assert_eq!(
+            con.zunion_min(&["zset1", "zset2"]),
+            Ok(vec![
+                "one".to_string(),
+                "two".to_string(),
+                "three".to_string(),
+                "four".to_string()
+            ])
+        );
+        assert_eq!(
+            con.zunion_max(&["zset1", "zset2"]),
+            Ok(vec![
+                "three".to_string(),
+                "four".to_string(),
+                "one".to_string(),
+                "two".to_string()
+            ])
+        );
+        assert_eq!(
+            con.zunion_weights(&[("zset1", 2), ("zset2", 3)]),
+            Ok(vec![
+                "four".to_string(),
+                "three".to_string(),
+                "one".to_string(),
+                "two".to_string()
+            ])
+        );
+        assert_eq!(
+            con.zunion_min_weights(&[("zset1", 2), ("zset2", 3)]),
+            Ok(vec![
+                "one".to_string(),
+                "two".to_string(),
+                "four".to_string(),
+                "three".to_string()
+            ])
+        );
+        assert_eq!(
+            con.zunion_max_weights(&[("zset1", 2), ("zset2", 3)]),
+            Ok(vec![
+                "four".to_string(),
+                "three".to_string(),
+                "one".to_string(),
+                "two".to_string()
+            ])
+        );
+        // With scores:
+        assert_eq!(
+            con.zunion_withscores(&["zset1", "zset2"]),
+            Ok(vec![
+                ("three".to_string(), 3.0),
+                ("four".to_string(), 4.0),
+                ("one".to_string(), 6.0),
+                ("two".to_string(), 8.0)
+            ])
+        );
+        assert_eq!(
+            con.zunion_min_withscores(&["zset1", "zset2"]),
+            Ok(vec![
+                ("one".to_string(), 1.0),
+                ("two".to_string(), 2.0),
+                ("three".to_string(), 3.0),
+                ("four".to_string(), 4.0)
+            ])
+        );
+        assert_eq!(
+            con.zunion_max_withscores(&["zset1", "zset2"]),
+            Ok(vec![
+                ("three".to_string(), 3.0),
+                ("four".to_string(), 4.0),
+                ("one".to_string(), 5.0),
+                ("two".to_string(), 6.0)
+            ])
+        );
+        assert_eq!(
+            con.zunion_weights_withscores(&[("zset1", 2), ("zset2", 3)]),
+            Ok(vec![
+                ("four".to_string(), 8.0),
+                ("three".to_string(), 9.0),
+                ("one".to_string(), 17.0),
+                ("two".to_string(), 22.0)
+            ])
+        );
+        assert_eq!(
+            con.zunion_min_weights_withscores(&[("zset1", 2), ("zset2", 3)]),
+            Ok(vec![
+                ("one".to_string(), 2.0),
+                ("two".to_string(), 4.0),
+                ("four".to_string(), 8.0),
+                ("three".to_string(), 9.0)
+            ])
+        );
+        assert_eq!(
+            con.zunion_max_weights_withscores(&[("zset1", 2), ("zset2", 3)]),
+            Ok(vec![
+                ("four".to_string(), 8.0),
+                ("three".to_string(), 9.0),
+                ("one".to_string(), 15.0),
+                ("two".to_string(), 18.0)
+            ])
+        );
+    }
+
+    #[test]
+    fn test_zinter_zunion_count() {
+        let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8);
+        let mut con = ctx.connection();
+
+        con.zadd_multiple("s1", &[(1, "foo"), (1, "bar")]).unwrap();
+        con.zadd_multiple("s2", &[(2, "foo"), (2, "bar")]).unwrap();
+        con.zadd_multiple("s3", &[(3, "foo")]).unwrap();
+
+        // COUNT with no weights = number of input sets containing the element.
+        assert_eq!(
+            con.zunion_count(&["s1", "s2", "s3"]),
+            Ok(vec!["bar".to_string(), "foo".to_string()])
+        );
+        assert_eq!(
+            con.zinter_count(&["s1", "s2", "s3"]),
+            Ok(vec!["foo".to_string()])
+        );
+        // With scores.
+        assert_eq!(
+            con.zunion_count_withscores(&["s1", "s2", "s3"]),
+            Ok(vec![("bar".to_string(), 2.0), ("foo".to_string(), 3.0)])
+        );
+        assert_eq!(
+            con.zinter_count_withscores(&["s1", "s2", "s3"]),
+            Ok(vec![("foo".to_string(), 3.0)])
+        );
+
+        // COUNT with weights = sum of weights of the sets containing the element.
+        assert_eq!(
+            con.zunion_count_weights(&[("s1", 10), ("s2", 5), ("s3", 3)]),
+            Ok(vec!["bar".to_string(), "foo".to_string()])
+        );
+        assert_eq!(
+            con.zinter_count_weights(&[("s1", 10), ("s2", 5), ("s3", 3)]),
+            Ok(vec!["foo".to_string()])
+        );
+        // With scores.
+        assert_eq!(
+            con.zunion_count_weights_withscores(&[("s1", 10), ("s2", 5), ("s3", 3)]),
+            Ok(vec![("bar".to_string(), 15.0), ("foo".to_string(), 18.0)])
+        );
+        assert_eq!(
+            con.zinter_count_weights_withscores(&[("s1", 10), ("s2", 5), ("s3", 3)]),
+            Ok(vec![("foo".to_string(), 18.0)])
         );
     }
 

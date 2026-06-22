@@ -1148,6 +1148,138 @@ implement_commands! {
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MAX").arg("WEIGHTS").arg(weights).take()
     }
 
+    /// Intersect multiple sorted sets and store the resulting sorted set in a new key using COUNT as aggregation function.
+    /// Unlike the other aggregators, COUNT ignores the input scores:
+    /// the score of each element is set to the number of input sets that contain it (which, for an intersection, is the number of input sets).
+    ///
+    /// Requires Redis 8.8 or later.
+    /// [Redis Docs](https://redis.io/commands/ZINTERSTORE)
+    fn zinterstore_count<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K) -> (usize) {
+        cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("COUNT").take()
+    }
+
+    /// [`Commands::zinterstore_count`], but with the ability to specify a weight for each sorted set by pairing one with each key in a tuple.
+    /// The score of each element is set to the sum of the weights of the input sets that contain it.
+    ///
+    /// Requires Redis 8.8 or later.
+    /// [Redis Docs](https://redis.io/commands/ZINTERSTORE)
+    fn zinterstore_count_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) -> (usize) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
+        cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("COUNT").arg("WEIGHTS").arg(weights).take()
+    }
+
+    /// Intersect multiple sorted sets and return the resulting members using SUM as the aggregation function.
+    /// [Redis Docs](https://redis.io/commands/ZINTER)
+    fn zinter<K: ToRedisArgs>(keys: K) -> (Vec<String>) {
+        cmd("ZINTER").arg(keys.num_of_args()).arg(keys).take()
+    }
+
+    /// Intersect multiple sorted sets and return the resulting members using MIN as the aggregation function.
+    /// [Redis Docs](https://redis.io/commands/ZINTER)
+    fn zinter_min<K: ToRedisArgs>(keys: K) -> (Vec<String>) {
+        cmd("ZINTER").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MIN").take()
+    }
+
+    /// Intersect multiple sorted sets and return the resulting members using MAX as the aggregation function.
+    /// [Redis Docs](https://redis.io/commands/ZINTER)
+    fn zinter_max<K: ToRedisArgs>(keys: K) -> (Vec<String>) {
+        cmd("ZINTER").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MAX").take()
+    }
+
+    /// Intersect multiple sorted sets and return the resulting members using COUNT as the aggregation function.
+    ///
+    /// Requires Redis 8.8 or later.
+    /// [Redis Docs](https://redis.io/commands/ZINTER)
+    fn zinter_count<K: ToRedisArgs>(keys: K) -> (Vec<String>) {
+        cmd("ZINTER").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("COUNT").take()
+    }
+
+    /// [`Commands::zinter`], but with the ability to specify a multiplication factor for each sorted set by pairing one with each key in a tuple.
+    /// [Redis Docs](https://redis.io/commands/ZINTER)
+    fn zinter_weights<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)]) -> (Vec<String>) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
+        cmd("ZINTER").arg(keys.num_of_args()).arg(keys).arg("WEIGHTS").arg(weights).take()
+    }
+
+    /// [`Commands::zinter_min`], but with the ability to specify a multiplication factor for each sorted set by pairing one with each key in a tuple.
+    /// [Redis Docs](https://redis.io/commands/ZINTER)
+    fn zinter_min_weights<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)]) -> (Vec<String>) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
+        cmd("ZINTER").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MIN").arg("WEIGHTS").arg(weights).take()
+    }
+
+    /// [`Commands::zinter_max`], but with the ability to specify a multiplication factor for each sorted set by pairing one with each key in a tuple.
+    /// [Redis Docs](https://redis.io/commands/ZINTER)
+    fn zinter_max_weights<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)]) -> (Vec<String>) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
+        cmd("ZINTER").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MAX").arg("WEIGHTS").arg(weights).take()
+    }
+
+    /// [`Commands::zinter_count`], but with the ability to specify a weight for each sorted set by pairing one with each key in a tuple.
+    ///
+    /// Requires Redis 8.8 or later.
+    /// [Redis Docs](https://redis.io/commands/ZINTER)
+    fn zinter_count_weights<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)]) -> (Vec<String>) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
+        cmd("ZINTER").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("COUNT").arg("WEIGHTS").arg(weights).take()
+    }
+
+    /// [`Commands::zinter`], but additionally returns the score of each member.
+    /// [Redis Docs](https://redis.io/commands/ZINTER)
+    fn zinter_withscores<K: ToRedisArgs>(keys: K) -> (Vec<(String, f64)>) {
+        cmd("ZINTER").arg(keys.num_of_args()).arg(keys).arg("WITHSCORES").take()
+    }
+
+    /// [`Commands::zinter_min`], but additionally returns the score of each member.
+    /// [Redis Docs](https://redis.io/commands/ZINTER)
+    fn zinter_min_withscores<K: ToRedisArgs>(keys: K) -> (Vec<(String, f64)>) {
+        cmd("ZINTER").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MIN").arg("WITHSCORES").take()
+    }
+
+    /// [`Commands::zinter_max`], but additionally returns the score of each member.
+    /// [Redis Docs](https://redis.io/commands/ZINTER)
+    fn zinter_max_withscores<K: ToRedisArgs>(keys: K) -> (Vec<(String, f64)>) {
+        cmd("ZINTER").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MAX").arg("WITHSCORES").take()
+    }
+
+    /// [`Commands::zinter_count`], but additionally returns the score of each member.
+    ///
+    /// Requires Redis 8.8 or later.
+    /// [Redis Docs](https://redis.io/commands/ZINTER)
+    fn zinter_count_withscores<K: ToRedisArgs>(keys: K) -> (Vec<(String, f64)>) {
+        cmd("ZINTER").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("COUNT").arg("WITHSCORES").take()
+    }
+
+    /// [`Commands::zinter_weights`], but additionally returns the score of each member.
+    /// [Redis Docs](https://redis.io/commands/ZINTER)
+    fn zinter_weights_withscores<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)]) -> (Vec<(String, f64)>) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
+        cmd("ZINTER").arg(keys.num_of_args()).arg(keys).arg("WEIGHTS").arg(weights).arg("WITHSCORES").take()
+    }
+
+    /// [`Commands::zinter_min_weights`], but additionally returns the score of each member.
+    /// [Redis Docs](https://redis.io/commands/ZINTER)
+    fn zinter_min_weights_withscores<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)]) -> (Vec<(String, f64)>) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
+        cmd("ZINTER").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MIN").arg("WEIGHTS").arg(weights).arg("WITHSCORES").take()
+    }
+
+    /// [`Commands::zinter_max_weights`], but additionally returns the score of each member.
+    /// [Redis Docs](https://redis.io/commands/ZINTER)
+    fn zinter_max_weights_withscores<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)]) -> (Vec<(String, f64)>) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
+        cmd("ZINTER").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MAX").arg("WEIGHTS").arg(weights).arg("WITHSCORES").take()
+    }
+
+    /// [`Commands::zinter_count_weights`], but additionally returns the score of each member.
+    ///
+    /// Requires Redis 8.8 or later.
+    /// [Redis Docs](https://redis.io/commands/ZINTER)
+    fn zinter_count_weights_withscores<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)]) -> (Vec<(String, f64)>) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
+        cmd("ZINTER").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("COUNT").arg("WEIGHTS").arg(weights).arg("WITHSCORES").take()
+    }
+
     /// Count the number of members in a sorted set between a given lexicographical range.
     /// [Redis Docs](https://redis.io/commands/ZLEXCOUNT)
     fn zlexcount<K: ToSingleRedisArg, M: ToSingleRedisArg, MM: ToSingleRedisArg>(key: K, min: M, max: MM) -> (usize) {
@@ -1424,6 +1556,138 @@ implement_commands! {
     fn zunionstore_max_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) -> (usize) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MAX").arg("WEIGHTS").arg(weights).take()
+    }
+
+    /// Union multiple sorted sets and store the resulting sorted set in a new key using COUNT as the aggregation function.
+    /// Unlike the other aggregators, COUNT ignores the input scores:
+    /// the score of each element is set to the number of input sets that contain it.
+    ///
+    /// Requires Redis 8.8 or later.
+    /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
+    fn zunionstore_count<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K) -> (usize) {
+        cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("COUNT").take()
+    }
+
+    /// [`Commands::zunionstore_count`], but with the ability to specify a weight for each sorted set by pairing one with each key in a tuple.
+    /// The score of each element is set to the sum of the weights of the input sets that contain it.
+    ///
+    /// Requires Redis 8.8 or later.
+    /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
+    fn zunionstore_count_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) -> (usize) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
+        cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("COUNT").arg("WEIGHTS").arg(weights).take()
+    }
+
+    /// Union multiple sorted sets and return the resulting members using SUM as the aggregation function.
+    /// [Redis Docs](https://redis.io/commands/ZUNION)
+    fn zunion<K: ToRedisArgs>(keys: K) -> (Vec<String>) {
+        cmd("ZUNION").arg(keys.num_of_args()).arg(keys).take()
+    }
+
+    /// Union multiple sorted sets and return the resulting members using MIN as the aggregation function.
+    /// [Redis Docs](https://redis.io/commands/ZUNION)
+    fn zunion_min<K: ToRedisArgs>(keys: K) -> (Vec<String>) {
+        cmd("ZUNION").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MIN").take()
+    }
+
+    /// Union multiple sorted sets and return the resulting members using MAX as the aggregation function.
+    /// [Redis Docs](https://redis.io/commands/ZUNION)
+    fn zunion_max<K: ToRedisArgs>(keys: K) -> (Vec<String>) {
+        cmd("ZUNION").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MAX").take()
+    }
+
+    /// Union multiple sorted sets and return the resulting members using COUNT as the aggregation function.
+    ///
+    /// Requires Redis 8.8 or later.
+    /// [Redis Docs](https://redis.io/commands/ZUNION)
+    fn zunion_count<K: ToRedisArgs>(keys: K) -> (Vec<String>) {
+        cmd("ZUNION").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("COUNT").take()
+    }
+
+    /// [`Commands::zunion`], but with the ability to specify a multiplication factor for each sorted set by pairing one with each key in a tuple.
+    /// [Redis Docs](https://redis.io/commands/ZUNION)
+    fn zunion_weights<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)]) -> (Vec<String>) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
+        cmd("ZUNION").arg(keys.num_of_args()).arg(keys).arg("WEIGHTS").arg(weights).take()
+    }
+
+    /// [`Commands::zunion_min`], but with the ability to specify a multiplication factor for each sorted set by pairing one with each key in a tuple.
+    /// [Redis Docs](https://redis.io/commands/ZUNION)
+    fn zunion_min_weights<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)]) -> (Vec<String>) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
+        cmd("ZUNION").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MIN").arg("WEIGHTS").arg(weights).take()
+    }
+
+    /// [`Commands::zunion_max`], but with the ability to specify a multiplication factor for each sorted set by pairing one with each key in a tuple.
+    /// [Redis Docs](https://redis.io/commands/ZUNION)
+    fn zunion_max_weights<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)]) -> (Vec<String>) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
+        cmd("ZUNION").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MAX").arg("WEIGHTS").arg(weights).take()
+    }
+
+    /// [`Commands::zunion_count`], but with the ability to specify a weight for each sorted set by pairing one with each key in a tuple.
+    ///
+    /// Requires Redis 8.8 or later.
+    /// [Redis Docs](https://redis.io/commands/ZUNION)
+    fn zunion_count_weights<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)]) -> (Vec<String>) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
+        cmd("ZUNION").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("COUNT").arg("WEIGHTS").arg(weights).take()
+    }
+
+    /// [`Commands::zunion`], but additionally returns the score of each member.
+    /// [Redis Docs](https://redis.io/commands/ZUNION)
+    fn zunion_withscores<K: ToRedisArgs>(keys: K) -> (Vec<(String, f64)>) {
+        cmd("ZUNION").arg(keys.num_of_args()).arg(keys).arg("WITHSCORES").take()
+    }
+
+    /// [`Commands::zunion_min`], but additionally returns the score of each member.
+    /// [Redis Docs](https://redis.io/commands/ZUNION)
+    fn zunion_min_withscores<K: ToRedisArgs>(keys: K) -> (Vec<(String, f64)>) {
+        cmd("ZUNION").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MIN").arg("WITHSCORES").take()
+    }
+
+    /// [`Commands::zunion_max`], but additionally returns the score of each member.
+    /// [Redis Docs](https://redis.io/commands/ZUNION)
+    fn zunion_max_withscores<K: ToRedisArgs>(keys: K) -> (Vec<(String, f64)>) {
+        cmd("ZUNION").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MAX").arg("WITHSCORES").take()
+    }
+
+    /// [`Commands::zunion_count`], but additionally returns the score of each member.
+    ///
+    /// Requires Redis 8.8 or later.
+    /// [Redis Docs](https://redis.io/commands/ZUNION)
+    fn zunion_count_withscores<K: ToRedisArgs>(keys: K) -> (Vec<(String, f64)>) {
+        cmd("ZUNION").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("COUNT").arg("WITHSCORES").take()
+    }
+
+    /// [`Commands::zunion_weights`], but additionally returns the score of each member.
+    /// [Redis Docs](https://redis.io/commands/ZUNION)
+    fn zunion_weights_withscores<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)]) -> (Vec<(String, f64)>) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
+        cmd("ZUNION").arg(keys.num_of_args()).arg(keys).arg("WEIGHTS").arg(weights).arg("WITHSCORES").take()
+    }
+
+    /// [`Commands::zunion_min_weights`], but additionally returns the score of each member.
+    /// [Redis Docs](https://redis.io/commands/ZUNION)
+    fn zunion_min_weights_withscores<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)]) -> (Vec<(String, f64)>) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
+        cmd("ZUNION").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MIN").arg("WEIGHTS").arg(weights).arg("WITHSCORES").take()
+    }
+
+    /// [`Commands::zunion_max_weights`], but additionally returns the score of each member.
+    /// [Redis Docs](https://redis.io/commands/ZUNION)
+    fn zunion_max_weights_withscores<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)]) -> (Vec<(String, f64)>) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
+        cmd("ZUNION").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MAX").arg("WEIGHTS").arg(weights).arg("WITHSCORES").take()
+    }
+
+    /// [`Commands::zunion_count_weights`], but additionally returns the score of each member.
+    ///
+    /// Requires Redis 8.8 or later.
+    /// [Redis Docs](https://redis.io/commands/ZUNION)
+    fn zunion_count_weights_withscores<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)]) -> (Vec<(String, f64)>) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
+        cmd("ZUNION").arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("COUNT").arg("WEIGHTS").arg(weights).arg("WITHSCORES").take()
     }
 
     // vector set commands
