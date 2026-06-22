@@ -113,6 +113,69 @@ fn ctx_supports_major_match_minor_match_patch_bigger() {
     assert!(!mock.supports(("foo", (42, 4711, 24))));
 }
 
+/// Tries to assure that `support` correctly handles a disjunctive match
+#[test]
+fn ctx_supports_disjunctive() {
+    // The context to check with
+    let mock = MockTestContext::new("bar_version: 42.4711.23");
+
+    // Check for support when `bar` is `42.0.0` (matches)
+    assert!(mock.supports([
+        ("foo", (23, 23, 23)),
+        ("bar", (42, 0, 0)),
+        ("baz", (42, 42, 42)),
+    ]));
+
+    // Check for support when `bar` is `43.0.0` (too high)
+    assert!(!mock.supports([
+        ("foo", (23, 23, 23)),
+        ("bar", (43, 0, 0)),
+        ("baz", (42, 42, 42)),
+    ]));
+
+    // Check for support when `bar` is missing
+    assert!(!mock.supports([("foo", (23, 23, 23)), ("baz", (42, 42, 42)),]));
+}
+
+/// Tries to assure that `support` correctly handles a conjunctive match
+#[test]
+fn ctx_supports_conjunctive() {
+    // The context to check with
+    let input = r#"
+foo_version: 42.0.0
+bar_version: 4711.0.0
+baz_version: 23.0.0
+"#;
+    let mock = MockTestContext::new(input);
+
+    // Check for successful support
+    assert!(mock.supports([
+        &[
+            ("foo", (43, 0, 0)),  // does not match (too high)
+            ("bar", (151, 0, 0))  // matches
+        ][..],
+        &[("baz", (23, 0, 0))], // matches
+    ]));
+
+    // Check for failing support (first disjunctive fails)
+    assert!(!mock.supports([
+        &[
+            ("foo", (43, 0, 0)),   // does not match (too high)
+            ("bar", (4712, 0, 0))  // does not match (too high)
+        ][..],
+        &[("baz", (23, 0, 0))], // matches
+    ]));
+
+    // Check for failing support (second disjunctive fails)
+    assert!(!mock.supports([
+        &[
+            ("foo", (43, 0, 0)),  // does not match (too high)
+            ("bar", (151, 0, 0))  // matches
+        ][..],
+        &[("baz", (151, 0, 0))][..], // does not match (too high)
+    ]));
+}
+
 /// Tries to assure that the current server allows to parse the versions
 #[test]
 fn ctx_live_test_server() {
