@@ -1,14 +1,3 @@
-### Unreleased
-
-#### Changes & Bug fixes
-
-* When building for `wasm32-wasip2`, `tokio-comp` requires Tokio 1.51+.
-
-#### CI & operational improvements
-
-* docs: Document building redis-rs on `wasm32-wasip2` with `tokio-comp`.
-* ci: Add compile smoke test for `wasm32-wasip2` with `tokio-comp`.
-
 ### 1.2.4 (2026-06-19)
 
 #### Changes & Bug fixes
