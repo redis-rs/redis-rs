@@ -1,8 +1,10 @@
 #![cfg(feature = "json")]
 
-use redis::{Commands, JsonCommands, ValueType};
+use redis::json::{FphaType, JsonSetOptions};
+use redis::{Commands, ExistenceCheck, JsonCommands, ValueType};
 use std::assert_eq;
 use std::collections::HashMap;
+use std::f32::consts::PI;
 
 use redis::{
     ErrorKind, RedisResult,
@@ -537,4 +539,397 @@ fn test_module_json_type() {
     // Checking the type of the key as a whole
     let key_type: RedisResult<ValueType> = con.key_type(TEST_KEY);
     assert_eq!(key_type, Ok(ValueType::JSON));
+}
+
+#[test]
+fn test_module_json_set_options_json_value() {
+    let ctx = TestContext::with_modules(&[Module::Json]);
+    let mut con = ctx.connection();
+
+    let set_result: RedisResult<bool> = con.json_set_options(
+        TEST_KEY,
+        "$",
+        &json!({"a": 1, "b": [2, 3]}),
+        &JsonSetOptions::default(),
+    );
+    assert_eq!(set_result, Ok(true));
+
+    let get_result: RedisResult<String> = con.json_get(TEST_KEY, "$");
+    assert_eq!(get_result, Ok(r#"[{"a":1,"b":[2,3]}]"#.to_string()));
+}
+
+#[test]
+fn test_module_json_set_options_nx_xx() {
+    let ctx = TestContext::with_modules(&[Module::Json]);
+    let mut con = ctx.connection();
+
+    let opts_xx = JsonSetOptions::default().conditional_set(ExistenceCheck::XX);
+    let opts_nx = JsonSetOptions::default().conditional_set(ExistenceCheck::NX);
+
+    // XX on a missing key should not create the key.
+    let _: RedisResult<redis::Value> =
+        con.json_set_options(TEST_KEY, "$", &json!({"v": 0}), &opts_xx);
+    let key_exists: RedisResult<bool> = con.exists(TEST_KEY);
+    assert_eq!(key_exists, Ok(false));
+
+    // NX on a fresh key should succeed.
+    assert_eq!(
+        con.json_set_options::<_, _, _, bool>(TEST_KEY, "$", &json!({"v": 1}), &opts_nx),
+        Ok(true),
+    );
+    let key_exists: RedisResult<bool> = con.exists(TEST_KEY);
+    assert_eq!(key_exists, Ok(true));
+
+    // NX again must be a no-op because the key exists.
+    let _: RedisResult<redis::Value> =
+        con.json_set_options(TEST_KEY, "$", &json!({"v": 999}), &opts_nx);
+    let get_result: RedisResult<String> = con.json_get(TEST_KEY, "$.v");
+    assert_eq!(get_result, Ok("[1]".to_string()));
+
+    // XX on the existing key should succeed and overwrite the value.
+    assert_eq!(
+        con.json_set_options::<_, _, _, bool>(TEST_KEY, "$", &json!({"v": 2}), &opts_xx),
+        Ok(true),
+    );
+    let get_result: RedisResult<String> = con.json_get(TEST_KEY, "$.v");
+    assert_eq!(get_result, Ok("[2]".to_string()));
+}
+
+// FPHA integration tests.
+
+// The value travels as a JSON array of numbers.
+// The `FPHA <TYPE>` token is a storage hint that asks the server to pack the array internally as bf16/fp16/fp32/fp64 lanes.
+// Round-trip via `JSON.GET` returns the array as a JSON array of numbers.
+#[rstest::rstest]
+#[case::fp32(FphaType::Fp32)]
+#[case::fp64(FphaType::Fp64)]
+#[case::bf16(FphaType::Bf16)]
+#[case::fp16(FphaType::Fp16)]
+fn test_module_json_set_fpha_roundtrip(#[case] fpha_type: FphaType) {
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
+    let mut con = ctx.connection();
+
+    assert_eq!(
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &[1.0_f32, 2.0, -3.5],
+            &JsonSetOptions::default().fpha(fpha_type)
+        ),
+        Ok(true),
+    );
+
+    let get_result: RedisResult<String> = con.json_get(TEST_KEY, "$");
+    assert_eq!(get_result, Ok("[[1.0,2.0,-3.5]]".to_string()));
+}
+
+#[test]
+fn test_module_json_set_fpha_empty_payload() {
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
+    let mut con = ctx.connection();
+
+    assert_eq!(
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &[0_f32; 0],
+            &JsonSetOptions::default().fpha(FphaType::Fp32)
+        ),
+        Ok(true),
+    );
+
+    let get_result: RedisResult<String> = con.json_get(TEST_KEY, "$");
+    assert_eq!(get_result, Ok("[[]]".to_string()));
+}
+
+#[test]
+fn test_module_json_set_fpha_with_existence_check() {
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
+    let mut con = ctx.connection();
+
+    // XX against a missing key must not create it.
+    let opts_xx = JsonSetOptions::default()
+        .fpha(FphaType::Fp32)
+        .conditional_set(ExistenceCheck::XX);
+    let _: RedisResult<redis::Value> = con.json_set_options(TEST_KEY, "$", &[1.0_f32], &opts_xx);
+    let key_exists: RedisResult<bool> = con.exists(TEST_KEY);
+    assert_eq!(key_exists, Ok(false));
+
+    // NX on the same missing key creates it.
+    let opts_nx = JsonSetOptions::default()
+        .fpha(FphaType::Fp32)
+        .conditional_set(ExistenceCheck::NX);
+    assert_eq!(
+        con.json_set_options::<_, _, _, bool>(TEST_KEY, "$", &[1.0_f32, 2.0, 3.0], &opts_nx),
+        Ok(true),
+    );
+    let get_result: RedisResult<String> = con.json_get(TEST_KEY, "$");
+    assert_eq!(get_result, Ok("[[1.0,2.0,3.0]]".to_string()));
+}
+
+// FP16 storage range is ±65504.
+// A value outside that range must be rejected by the server with an out-of-range error.
+#[test]
+fn test_module_json_set_fpha_fp16_overflow() {
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
+    let mut con = ctx.connection();
+
+    let set_result: RedisResult<redis::Value> = con.json_set_options(
+        TEST_KEY,
+        "$",
+        &[70000.0_f32],
+        &JsonSetOptions::default().fpha(FphaType::Fp16),
+    );
+    let error = set_result.unwrap_err();
+    assert!(
+        error.to_string().contains("out of range for F16"),
+        "unexpected error message: {error}",
+    );
+
+    let key_exists: RedisResult<bool> = con.exists(TEST_KEY);
+    assert_eq!(key_exists, Ok(false));
+}
+
+// Per the FPHA docs:
+// "If at least one value in the FP array does not fit the FPHA type, the command errors."
+
+// Verify that a single out-of-range element in an otherwise valid payload rejects the whole command and leaves the key untouched.
+#[test]
+fn test_module_json_set_fpha_fp16_partial_overflow() {
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
+    let mut con = ctx.connection();
+
+    let set_result: RedisResult<redis::Value> = con.json_set_options(
+        TEST_KEY,
+        "$",
+        &[1.0_f32, 2.0, 70000.0, 3.0],
+        &JsonSetOptions::default().fpha(FphaType::Fp16),
+    );
+    assert!(
+        set_result.is_err(),
+        "expected server error, got {set_result:?}"
+    );
+
+    let key_exists: RedisResult<bool> = con.exists(TEST_KEY);
+    assert_eq!(key_exists, Ok(false));
+}
+
+// 65504 is the largest finite value representable in IEEE-754 binary16.
+#[test]
+fn test_module_json_set_fpha_fp16_max_boundary() {
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
+    let mut con = ctx.connection();
+
+    assert_eq!(
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &[65504.0_f32],
+            &JsonSetOptions::default().fpha(FphaType::Fp16)
+        ),
+        Ok(true),
+    );
+
+    let get_result: RedisResult<String> = con.json_get(TEST_KEY, "$");
+    assert_eq!(get_result, Ok("[[65504.0]]".to_string()));
+}
+
+// 3.4e38 is near the largest finite value representable in IEEE-754 binary32.
+#[test]
+fn test_module_json_set_fpha_fp32_max_boundary() {
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
+    let mut con = ctx.connection();
+
+    assert_eq!(
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &[3.4e38_f32],
+            &JsonSetOptions::default().fpha(FphaType::Fp32)
+        ),
+        Ok(true),
+    );
+
+    let get_result: RedisResult<String> = con.json_get(TEST_KEY, "$");
+    assert_eq!(get_result, Ok("[[3.4e38]]".to_string()));
+}
+
+// 2^20 (= 1048576) is exactly representable in bf16 and well above FP16's ±65504 limit.
+// The same value would be rejected under FPHA FP16 but under FPHA BF16 it round-trips losslessly.
+#[test]
+fn test_module_json_set_fpha_bf16_above_fp16_range() {
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
+    let mut con = ctx.connection();
+
+    assert_eq!(
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &[1048576.0_f32],
+            &JsonSetOptions::default().fpha(FphaType::Bf16)
+        ),
+        Ok(true),
+    );
+
+    let get_result: RedisResult<String> = con.json_get(TEST_KEY, "$");
+    assert_eq!(get_result, Ok("[[1048576.0]]".to_string()));
+}
+
+// Values that serde_json emits in scientific notation must be accepted by the server and round-tripped back as scientific notation.
+// Note: serde emits `6.022e+23` while the server omits the `+`.
+#[test]
+fn test_module_json_set_fpha_fp32_scientific_notation() {
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
+    let mut con = ctx.connection();
+
+    assert_eq!(
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &[1e-10_f32, 6.022e23_f32],
+            &JsonSetOptions::default().fpha(FphaType::Fp32)
+        ),
+        Ok(true),
+    );
+
+    let get_result: RedisResult<String> = con.json_get(TEST_KEY, "$");
+    assert_eq!(get_result, Ok("[[1e-10,6.022e23]]".to_string()));
+}
+
+// Demonstrate the lossy nature of FPHA BF16 storage.
+
+// bf16 has a 7-bit mantissa.
+// Around 100 its step size is 0.5, so 100.7 snaps to 100.5
+// pi (3.1415927) snaps to 3.14.
+#[test]
+fn test_module_json_set_fpha_bf16_truncation() {
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
+    let mut con = ctx.connection();
+
+    assert_eq!(
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &[100.7_f32, PI],
+            &JsonSetOptions::default().fpha(FphaType::Bf16)
+        ),
+        Ok(true),
+    );
+
+    let get_result: RedisResult<String> = con.json_get(TEST_KEY, "$");
+    assert_eq!(get_result, Ok("[[100.5,3.14]]".to_string()));
+}
+
+// fp16 has a 10-bit mantissa, so it preserves more precision than bf16.
+// Around 1.0 its step size is ~0.001, which snaps 1.0009766 to 1.001, pi still snaps to 3.14.
+#[test]
+fn test_module_json_set_fpha_fp16_truncation() {
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
+    let mut con = ctx.connection();
+
+    assert_eq!(
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &[1.0009766_f32, PI],
+            &JsonSetOptions::default().fpha(FphaType::Fp16)
+        ),
+        Ok(true),
+    );
+
+    let get_result: RedisResult<String> = con.json_get(TEST_KEY, "$");
+    assert_eq!(get_result, Ok("[[1.001,3.14]]".to_string()));
+}
+
+// The FPHA hint applies to any serializable value, not just flat slices.
+// A 2-D matrix exercises the docs' "all FP arrays in value" wording - the hint is applied to every inner array.
+// With BF16, 100.7 snaps to 100.5 and pi snaps to 3.14 within their respective inner arrays.
+#[test]
+fn test_module_json_set_fpha_matrix() {
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
+    let mut con = ctx.connection();
+
+    let matrix: &[&[f32]] = &[&[1.0, 100.7], &[PI, 4.0]];
+    assert_eq!(
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &matrix,
+            &JsonSetOptions::default().fpha(FphaType::Bf16)
+        ),
+        Ok(true),
+    );
+
+    let get_result: RedisResult<String> = con.json_get(TEST_KEY, "$");
+    assert_eq!(get_result, Ok("[[[1.0,100.5],[3.14,4.0]]]".to_string()));
+}
+
+// An object holding multiple FP-array fields gets the storage hint applied to each field independently.
+#[test]
+fn test_module_json_set_fpha_object_with_array_fields() {
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
+    let mut con = ctx.connection();
+
+    assert_eq!(
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &serde_json::json!({"weights": [1.0, 2.0, 3.0], "bias": [0.5, 0.25]}),
+            &JsonSetOptions::default().fpha(FphaType::Fp16)
+        ),
+        Ok(true),
+    );
+
+    // `serde_json::Value::Object` is a BTreeMap, so keys serialize in
+    // alphabetical order (`bias` before `weights`) regardless of input order.
+    let get_result: RedisResult<String> = con.json_get(TEST_KEY, "$");
+    assert_eq!(
+        get_result,
+        Ok(r#"[{"bias":[0.5,0.25],"weights":[1.0,2.0,3.0]}]"#.to_string()),
+    );
+}
+
+// Per the FPHA docs:
+// "If at least one value in the FP array does not fit the FPHA type, the command errors."
+
+// Verify that a single out-of-range value causes the entire command to fail without modifying the key, even when the offending value appears in a nested array.
+#[test]
+fn test_module_json_set_fpha_nested_partial_overflow() {
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
+    let mut con = ctx.connection();
+
+    let matrix: &[&[f32]] = &[&[1.0, 2.0], &[70000.0, 3.0]];
+    let set_result: RedisResult<redis::Value> = con.json_set_options(
+        TEST_KEY,
+        "$",
+        &matrix,
+        &JsonSetOptions::default().fpha(FphaType::Fp16),
+    );
+    assert!(
+        set_result.is_err(),
+        "expected server error, got {set_result:?}"
+    );
+
+    let key_exists: RedisResult<bool> = con.exists(TEST_KEY);
+    assert_eq!(key_exists, Ok(false));
+}
+
+// A scalar (not an array) is also a valid FPHA payload server-side.
+#[test]
+fn test_module_json_set_fpha_scalar() {
+    let ctx = run_test_if_version_supported!(REDIS_VERSION_CE_8_8, &[Module::Json]);
+    let mut con = ctx.connection();
+
+    assert_eq!(
+        con.json_set_options::<_, _, _, bool>(
+            TEST_KEY,
+            "$",
+            &1.5_f32,
+            &JsonSetOptions::default().fpha(FphaType::Fp32)
+        ),
+        Ok(true),
+    );
+
+    let get_result: RedisResult<String> = con.json_get(TEST_KEY, "$");
+    assert_eq!(get_result, Ok("[1.5]".to_string()));
 }
