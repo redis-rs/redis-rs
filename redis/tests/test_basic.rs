@@ -2546,7 +2546,37 @@ mod basic {
     }
 
     #[test]
-    fn test_object_commands() {
+    fn test_object_freq_command() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        con.set("object_key_str", "object_value_str").unwrap();
+
+        // Needed for OBJECT FREQ and can't be set before object_idletime
+        // since that will break getting the idletime before idletime adjuts
+        redis::cmd("CONFIG")
+            .arg("SET")
+            .arg(b"maxmemory-policy")
+            .arg("allkeys-lfu")
+            .exec(&mut con)
+            .unwrap();
+
+        // give the redis server's background tracking algorithm time to recalculate values
+        thread::sleep(Duration::from_millis(5));
+
+        con.get("object_key_str").unwrap();
+        // since maxmemory-policy changed, freq should reset to 1 since we only called
+        // get after that
+        assert_eq!(con.object_freq("object_key_str").unwrap().unwrap(), 1);
+
+        con.get("object_key_str").unwrap();
+        // since maxmemory-policy changed, freq should reset to 1 since we only called
+        // get after that
+        assert_eq!(con.object_freq("object_key_str").unwrap().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_object_idletime_command() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
@@ -2565,20 +2595,6 @@ mod basic {
 
         assert!(con.object_idletime("object_key_str").unwrap().unwrap() <= 1);
         assert_eq!(con.object_refcount("object_key_str").unwrap().unwrap(), 1);
-
-        // Needed for OBJECT FREQ and can't be set before object_idletime
-        // since that will break getting the idletime before idletime adjuts
-        redis::cmd("CONFIG")
-            .arg("SET")
-            .arg(b"maxmemory-policy")
-            .arg("allkeys-lfu")
-            .exec(&mut con)
-            .unwrap();
-
-        con.get("object_key_str").unwrap();
-        // since maxmemory-policy changed, freq should reset to 1 since we only called
-        // get after that
-        assert_eq!(con.object_freq("object_key_str").unwrap().unwrap(), 1);
     }
 
     #[test]
