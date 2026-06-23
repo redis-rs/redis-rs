@@ -111,15 +111,15 @@ arcstr = "1.2.0"
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 socket2 = { version = "0.6", features = ["all"] }
 
-[target.'cfg(all(target_os = "wasi", target_env = "p2"))'.dependencies]
-tokio = { version = "1.51", features = ["sync"], optional = true }
-
 # Only needed for Entra ID authentication
 azure_identity = { version = "0.31", optional = true, features = [
   "client_certificate",
 ] }
 azure_core = { version = "0.31", optional = true }
 base64 = { version = "0.22.1", optional = true }
+
+[target.'cfg(all(target_os = "wasi", target_env = "p2"))'.dependencies]
+tokio = { version = "1.51", features = ["sync"], optional = true }
 
 [features]
 default = ["acl", "streams", "geospatial", "script", "num-bigint"]
