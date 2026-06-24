@@ -263,6 +263,19 @@ pub(crate) fn choose_response<C>(
             (retry, PollFlushAction::RebuildSlots)
         }
 
+        (_, RetryMethod::RefreshSlotsAndRetry) => {
+            let retry = retry_or_send!(|mut request: PendingRequest<C>| {
+                // No redirect address is available (e.g. READONLY), so re-route by slot
+                // against the refreshed topology.
+                request.cmd.reset_routing();
+                Retry::AfterSleep {
+                    request,
+                    sleep_duration,
+                }
+            });
+            (retry, PollFlushAction::RebuildSlots)
+        }
+
         (_, RetryMethod::WaitAndRetry) => (
             retry_or_send!(|request: PendingRequest<C>| {
                 Retry::AfterSleep {
@@ -432,6 +445,35 @@ mod tests {
         let (retry, next) = choose_response(result, request, &retry_params);
 
         assert_eq!(receiver.try_recv(), Ok(Err(to_err(&err_string))));
+        assert!(retry.is_none());
+        assert_eq!(next, PollFlushAction::RebuildSlots);
+    }
+
+    #[test]
+    fn should_refresh_slots_and_retry_on_readonly_error_if_retries_remain() {
+        let err_string = "-READONLY You can't write against a read only replica.\r\n";
+        let err = || single_result(err_string);
+        let (request, mut receiver) = request_and_receiver(0);
+        let result = (OperationTarget::Node { address: ADDRESS }, err());
+        let retry_params = RetryParams::default();
+        let (retry, next) = choose_response(result, request, &retry_params);
+
+        // READONLY has no redirect address, so the request keeps its (slot-based) routing
+        // and is retried after a sleep once the slot map has been rebuilt.
+        if let Some(super::Retry::AfterSleep { request, .. }) = retry {
+            assert!(get_redirect(&request).is_none());
+        } else {
+            panic!("Expected a sleep-then-retry");
+        };
+        assert_eq!(next, PollFlushAction::RebuildSlots);
+        assert_matches!(receiver.try_recv(), Err(_));
+
+        // Once retries are exhausted, the error is surfaced (still rebuilding slots).
+        let (request, mut receiver) = request_and_receiver(retry_params.number_of_retries);
+        let result = (OperationTarget::Node { address: ADDRESS }, err());
+        let (retry, next) = choose_response(result, request, &retry_params);
+
+        assert_eq!(receiver.try_recv(), Ok(Err(to_err(err_string))));
         assert!(retry.is_none());
         assert_eq!(next, PollFlushAction::RebuildSlots);
     }

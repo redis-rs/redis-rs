@@ -774,7 +774,7 @@ async fn test_cache_async_cluster_slot_change(migrate: bool) {
     // When not `migrate`, this test relies on Redis commit 8945067 which was included beginning
     // with Redis 7.2
     if !migrate {
-        run_test_if_version_supported!(&REDIS_VERSION_CE_7_2);
+        run_test_if_version_supported!(REDIS_CE_7_2);
     }
 
     struct NodeData {

@@ -5,7 +5,7 @@ use std::convert::identity;
 use std::thread::sleep;
 use std::time::Duration;
 
-use crate::support::{build_single_client, start_tls_crypto_provider};
+use crate::support::{AvailableComponents, build_single_client, start_tls_crypto_provider};
 use redis::Connection;
 use redis::ConnectionInfo;
 use redis::ProtocolVersion;
@@ -123,6 +123,25 @@ impl TestClusterContext {
         }
     }
 
+    /// Builds an additional cluster client against the same cluster.
+    pub fn new_client_with_builder<F>(&self, initializer: F) -> redis::cluster::ClusterClient
+    where
+        F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
+    {
+        #[allow(unused_mut)]
+        let mut builder = redis::cluster::ClusterClientBuilder::new(self.nodes.clone())
+            .use_protocol(self.protocol);
+
+        #[cfg(feature = "tls-rustls")]
+        if (self.mtls_enabled || ClusterType::get_intended() == ClusterType::TcpTls)
+            && let Some(tls_file_paths) = &self.cluster.tls_paths
+        {
+            builder = builder.certs(load_certs_from_file(tls_file_paths));
+        }
+
+        initializer(builder).build().unwrap()
+    }
+
     pub fn connection(&self) -> redis::cluster::ClusterConnection {
         self.client.get_connection().unwrap()
     }
@@ -202,18 +221,6 @@ impl TestClusterContext {
         }
     }
 
-    /// Gets the Redis version of the first server in the cluster
-    ///
-    /// # Panics
-    ///
-    /// As this function is only meant to be used during testing, it panics upon any issues.
-    pub fn get_version(&self) -> super::Version {
-        let server = self.cluster.servers.first().unwrap();
-        let mut conn = self.build_single_client_connection(server).unwrap();
-
-        super::get_version(&mut conn)
-    }
-
     pub fn get_ports(&self) -> Vec<u16> {
         self.nodes
             .iter()
@@ -225,5 +232,14 @@ impl TestClusterContext {
                 }
             })
             .collect()
+    }
+}
+
+impl super::TestContextVersioning for TestClusterContext {
+    fn get_available_components(&self) -> AvailableComponents {
+        let server = self.cluster.servers.first().unwrap();
+        let mut conn = self.build_single_client_connection(server).unwrap();
+
+        AvailableComponents::from(&mut conn)
     }
 }

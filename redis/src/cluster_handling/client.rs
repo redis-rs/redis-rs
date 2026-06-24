@@ -55,6 +55,7 @@ struct BuilderParams {
     connection_timeout: Option<Duration>,
     response_timeout: Option<Duration>,
     protocol: Option<ProtocolVersion>,
+    database_id: Option<i64>,
     #[cfg(feature = "cluster-async")]
     async_push_sender: Option<Arc<dyn AsyncPushSender>>,
     pub(crate) tcp_settings: TcpSettings,
@@ -96,12 +97,24 @@ impl Default for RetryParams {
     }
 }
 
+/// Exclusive upper bound (ms) for [`RetryParams::wait_time_for_retry`] jitter; see [`ClusterClientBuilder::retry_wait_formula`].
+///
+/// The result is always strictly greater than `min_wait` so the half-open jitter range is never empty
+/// (e.g. when `max_retry_wait == min_retry_wait`, or when the clamp would otherwise equal `min_wait`).
+fn cluster_retry_wait_upper_ms(base_wait: u64, min_wait: u64, max_wait: u64) -> u64 {
+    let capped = base_wait.max(min_wait + 1).min(max_wait);
+    if capped <= min_wait {
+        min_wait.saturating_add(1)
+    } else {
+        capped
+    }
+}
+
 impl RetryParams {
     pub(crate) fn wait_time_for_retry(&self, retry: u32) -> Duration {
         let base_wait = self.exponent_base.pow(retry) * self.factor;
-        let clamped_wait = base_wait
-            .min(self.max_wait_time)
-            .max(self.min_wait_time + 1);
+        let clamped_wait =
+            cluster_retry_wait_upper_ms(base_wait, self.min_wait_time, self.max_wait_time);
         let jittered_wait = rand::rng().random_range(self.min_wait_time..clamped_wait);
         Duration::from_millis(jittered_wait)
     }
@@ -122,6 +135,13 @@ pub(crate) struct ClusterParams {
     pub(crate) connection_timeout: Duration,
     pub(crate) response_timeout: Option<Duration>,
     pub(crate) protocol: Option<ProtocolVersion>,
+    /// Index of the logical database each cluster connection should `SELECT`.
+    ///
+    /// `None` means unset, in which case the database is inherited from the
+    /// initial nodes' URLs. Note that selecting a non-zero
+    /// database in cluster mode requires a server that supports multiple databases
+    /// in cluster mode; otherwise the connection handshake will fail.
+    pub(crate) database_id: Option<i64>,
     #[cfg(feature = "cluster-async")]
     pub(crate) async_push_sender: Option<Arc<dyn AsyncPushSender>>,
     pub(crate) tcp_settings: TcpSettings,
@@ -182,6 +202,7 @@ impl ClusterParams {
                 .unwrap_or(DEFAULT_CONNECTION_TIMEOUT.unwrap()),
             response_timeout: value.response_timeout,
             protocol: value.protocol,
+            database_id: value.database_id,
             #[cfg(feature = "cluster-async")]
             async_push_sender: value.async_push_sender,
             tcp_settings: value.tcp_settings,
@@ -297,6 +318,11 @@ impl ClusterClientBuilder {
         } else {
             None
         };
+        let database_id = match cluster_params.database_id {
+            Some(id) => id,
+            None => first_node.redis.db,
+        };
+        cluster_params.database_id = Some(database_id);
 
         // Verify that the initial nodes match the cluster client's configuration.
         for node in &initial_nodes {
@@ -324,6 +350,12 @@ impl ClusterClientBuilder {
                 return Err(RedisError::from((
                     ErrorKind::InvalidClientConfig,
                     "Cannot use different protocol among initial nodes.",
+                )));
+            }
+            if node.redis.db != 0 && node.redis.db != database_id {
+                return Err(RedisError::from((
+                    ErrorKind::InvalidClientConfig,
+                    "Cannot use different database among initial nodes.",
                 )));
             }
 
@@ -538,6 +570,23 @@ impl ClusterClientBuilder {
     /// Sets the protocol with which the client should communicate with the server.
     pub fn use_protocol(mut self, protocol: ProtocolVersion) -> ClusterClientBuilder {
         self.builder_params.protocol = Some(protocol);
+        self
+    }
+
+    /// Sets the numbered database for the cluster client.
+    ///
+    /// If left unset, the database is inherited from the first
+    /// node's URL (e.g. `redis://127.0.0.1:6379/4`), in which case all initial
+    /// nodes must specify the same database. If set, it must not conflict with a
+    /// database carried by any initial node's URL.
+    ///
+    /// The selected database is reapplied automatically after reconnects.
+    ///
+    /// Note that selecting a non-zero database in cluster mode requires a server that
+    /// supports multiple databases in cluster mode; otherwise the connection handshake
+    /// will fail.
+    pub fn database_id(mut self, database_id: i64) -> ClusterClientBuilder {
+        self.builder_params.database_id = Some(database_id);
         self
     }
 
@@ -881,6 +930,92 @@ mod tests {
         assert!(client.is_err())
     }
 
+    #[test]
+    fn database_id_defaults_to_zero() {
+        let client = ClusterClient::new(get_connection_data()).unwrap();
+        assert_eq!(client.cluster_params.database_id, Some(0));
+    }
+
+    #[test]
+    fn give_database_id_by_method() {
+        let client = ClusterClientBuilder::new(get_connection_data())
+            .database_id(4)
+            .build()
+            .unwrap();
+        assert_eq!(client.cluster_params.database_id, Some(4));
+    }
+
+    #[test]
+    fn give_database_id_by_initial_nodes() {
+        let client = ClusterClient::new(vec![
+            "redis://127.0.0.1:6379/4",
+            "redis://127.0.0.1:6378/4",
+            "redis://127.0.0.1:6377/4",
+        ])
+        .unwrap();
+        assert_eq!(client.cluster_params.database_id, Some(4));
+    }
+
+    #[test]
+    fn fail_if_database_id_method_conflicts_with_initial_nodes() {
+        let result = ClusterClientBuilder::new(vec![
+            "redis://127.0.0.1:6379/2",
+            "redis://127.0.0.1:6378/2",
+            "redis://127.0.0.1:6377/2",
+        ])
+        .database_id(7)
+        .build();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn fail_if_explicit_database_id_zero_conflicts_with_initial_nodes() {
+        let result = ClusterClientBuilder::new(vec![
+            "redis://127.0.0.1:6379/4",
+            "redis://127.0.0.1:6378/4",
+            "redis://127.0.0.1:6377/4",
+        ])
+        .database_id(0)
+        .build();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn give_database_id_by_method_matching_initial_nodes() {
+        let client = ClusterClientBuilder::new(vec![
+            "redis://127.0.0.1:6379/4",
+            "redis://127.0.0.1:6378/4",
+            "redis://127.0.0.1:6377/4",
+        ])
+        .database_id(4)
+        .build()
+        .unwrap();
+        assert_eq!(client.cluster_params.database_id, Some(4));
+    }
+
+    #[test]
+    fn give_database_id_zero_by_method_matching_initial_nodes() {
+        let client = ClusterClientBuilder::new(vec![
+            "redis://127.0.0.1:6379/0",
+            "redis://127.0.0.1:6378/0",
+            "redis://127.0.0.1:6377/0",
+        ])
+        .database_id(0)
+        .build()
+        .unwrap();
+        assert_eq!(client.cluster_params.database_id, Some(0));
+    }
+
+    #[test]
+    fn fail_if_received_different_database_between_initial_nodes() {
+        let result = ClusterClient::new(vec![
+            "redis://127.0.0.1:6379/4",
+            "redis://127.0.0.1:6378/5",
+            "redis://127.0.0.1:6377/4",
+        ]);
+        assert!(result.is_err());
+    }
+
     #[cfg(feature = "cluster-async")]
     #[test]
     fn overall_response_timeout_defaults_to_response_timeout() {
@@ -937,5 +1072,37 @@ mod tests {
             client.cluster_params.connection_concurrency_limit,
             Some(128)
         );
+    }
+
+    #[test]
+    fn cluster_retry_clamp_order_caps_at_max_after_floor() {
+        // Documented chain is `max(base, min+1).min(max)`; the old `.min(max).max(min+1)` overshoots `max` here.
+        let base = 10u64;
+        let min_w = 100u64;
+        let max_w = 50u64;
+        assert_eq!(base.max(min_w + 1).min(max_w), 50);
+        assert_eq!(base.min(max_w).max(min_w + 1), 101);
+        // Exclusive upper must exceed `min_wait` for `random_range`, so we lift when the clamp hits `min_wait`.
+        assert_eq!(
+            super::cluster_retry_wait_upper_ms(base, min_w, max_w),
+            min_w + 1
+        );
+    }
+
+    #[test]
+    fn cluster_retry_wait_upper_strictly_above_min_when_min_equals_max() {
+        assert_eq!(super::cluster_retry_wait_upper_ms(10, 100, 100), 101);
+    }
+
+    #[test]
+    fn cluster_retry_wait_time_does_not_panic_when_min_equals_max() {
+        let p = super::RetryParams {
+            number_of_retries: 16,
+            max_wait_time: 100,
+            min_wait_time: 100,
+            exponent_base: 2,
+            factor: 10,
+        };
+        let _ = p.wait_time_for_retry(0);
     }
 }

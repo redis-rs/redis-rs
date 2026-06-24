@@ -278,7 +278,29 @@ you can use the `Json` wrapper from the
  
  ## Webassembly Support
 
-redis-rs tests that webassembly succesfully builds for the sync client work, but today async support isn't enabled, and the webassembly builds aren't tested against a database.
+redis-rs tests that WebAssembly successfully builds for the sync client. Async
+clients on `wasm32-wasip2` are supported via the existing `tokio-comp` feature
+and [Tokio's wasm32-wasip2 networking](https://github.com/tokio-rs/tokio/pull/7933)
+(Tokio 1.51+).
+
+Build requirements for `wasm32-wasip2` with `tokio-comp`:
+
+- `rustup target add wasm32-wasip2`
+- Tokio 1.51 or newer in your dependency graph
+- `RUSTFLAGS="--cfg tokio_unstable"` (required by Tokio for WASIp2 until stabilized)
+- A `current_thread` Tokio runtime (WASIp2 is single-threaded)
+- A WASM host with network access (e.g. `wasmtime -S inherit-network`)
+
+```bash
+RUSTFLAGS="--cfg tokio_unstable" cargo build -p redis \
+  --target wasm32-wasip2 \
+  --no-default-features \
+  --features tokio-comp
+```
+
+This uses the standard `tokio-comp` code path — no redis-rs-specific WASI transport layer.
+
+CI currently only verifies that redis-rs compiles for WebAssembly targets.
 
 ## Development
 

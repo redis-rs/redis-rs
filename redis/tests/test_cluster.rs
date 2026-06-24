@@ -1,8 +1,10 @@
 #![cfg(feature = "cluster")]
+#[macro_use]
 mod support;
 
 #[cfg(test)]
 mod cluster {
+    use std::collections::HashMap;
     use std::sync::{
         Arc,
         atomic::{self, AtomicI32, Ordering},
@@ -15,7 +17,7 @@ mod cluster {
         cluster::{ClusterClient, ClusterConnection, cluster_pipe},
         cluster_read_routing::{RandomReplicaStrategy, RoundRobinReplicaStrategy},
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
-        cmd, parse_redis_value,
+        cmd, from_redis_value, parse_redis_value,
     };
     use redis_test::{
         cluster::{RedisCluster, RedisClusterConfiguration},
@@ -46,6 +48,59 @@ mod cluster {
     fn test_cluster_basics() {
         let cluster = TestClusterContext::new();
         smoke_test_connection(cluster.connection());
+    }
+
+    #[test]
+    fn test_cluster_numbered_database() {
+        run_test_if_version_supported!(VALKEY_9_0);
+
+        let cluster = TestClusterContext::new_with_config_and_builder(
+            RedisClusterConfiguration {
+                cluster_databases: Some(16),
+                tls_insecure: false,
+                ..Default::default()
+            },
+            |builder| builder.database_id(4),
+        );
+
+        let mut con = cluster.connection();
+
+        assert_all_nodes_on_db(&mut con, 4);
+
+        // Terminate the connections, verify that on reconnect we are still on db4.
+        con.route_command(
+            &redis::cmd("QUIT"),
+            RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
+        )
+        .unwrap();
+
+        assert_all_nodes_on_db(&mut con, 4);
+    }
+
+    fn assert_all_nodes_on_db(con: &mut ClusterConnection, expected_db: u32) {
+        let cmd = redis::cmd("CLIENT").arg("INFO").take();
+        let value = con
+            .route_command(
+                &cmd,
+                RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
+            )
+            .unwrap();
+        let client_info_results: HashMap<String, String> = from_redis_value(value).unwrap();
+        assert!(
+            !client_info_results.is_empty(),
+            "expected CLIENT INFO from at least one node"
+        );
+        for (node, info) in &client_info_results {
+            let db = info
+                .split(' ')
+                .find_map(|kv| kv.strip_prefix("db="))
+                .unwrap_or_else(|| panic!("CLIENT INFO from {node} missing db field: {info}"));
+            assert_eq!(
+                db,
+                expected_db.to_string(),
+                "node {node} should be on db{expected_db}, got: {info}"
+            );
+        }
     }
 
     #[cfg(feature = "tls-rustls")]
@@ -740,17 +795,17 @@ mod cluster {
             let completed = completed.clone();
             move |cmd: &[u8], _| {
                 respond_startup_two_nodes(name, cmd)?;
-                // Error twice with io-error, ensure connection is reestablished w/out calling
-                // other node (i.e., not doing a full slot rebuild)
+                // A genuinely non-retryable server error should be surfaced immediately,
+                // without any retry or slot rebuild.
                 completed.fetch_add(1, Ordering::SeqCst);
-                Err(Err((ServerErrorKind::ReadOnly.into(), "").into()))
+                Err(Err((ServerErrorKind::ResponseError.into(), "").into()))
             }
         });
 
         let result = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
 
         assert!(
-            matches!(&result, Err(err) if err.kind() == ServerErrorKind::ReadOnly.into()),
+            matches!(&result, Err(err) if err.kind() == ServerErrorKind::ResponseError.into()),
             "{result:?}",
         );
         assert_eq!(completed.load(Ordering::SeqCst), 1);

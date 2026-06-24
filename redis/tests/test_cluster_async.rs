@@ -1,4 +1,5 @@
 #![cfg(feature = "cluster-async")]
+#[macro_use]
 mod support;
 
 #[cfg(test)]
@@ -60,6 +61,59 @@ mod cluster_async {
 
         let connection = cluster.async_connection().await;
         smoke_test_connection(connection).await;
+    }
+
+    #[async_test]
+    async fn test_async_cluster_numbered_database() {
+        run_test_if_version_supported!(VALKEY_9_0);
+
+        let cluster = TestClusterContext::new_with_config_and_builder(
+            RedisClusterConfiguration {
+                cluster_databases: Some(16),
+                tls_insecure: false,
+                ..Default::default()
+            },
+            |builder| builder.database_id(4),
+        );
+
+        let mut con = cluster.async_connection().await;
+
+        assert_all_nodes_on_db(&mut con, 4).await;
+
+        // Terminate the connections, verify that on reconnect we are still on db4.
+        con.route_command(
+            redis::cmd("QUIT"),
+            RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
+        )
+        .await
+        .unwrap();
+        assert_all_nodes_on_db(&mut con, 4).await;
+    }
+
+    async fn assert_all_nodes_on_db(con: &mut ClusterConnection, expected_db: u32) {
+        let value = con
+            .route_command(
+                cmd("CLIENT").arg("INFO").take(),
+                RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
+            )
+            .await
+            .unwrap();
+        let client_info_results: HashMap<String, String> = from_redis_value(value).unwrap();
+        assert!(
+            !client_info_results.is_empty(),
+            "expected CLIENT INFO from at least one node"
+        );
+        for (node, info) in &client_info_results {
+            let db = info
+                .split(' ')
+                .find_map(|kv| kv.strip_prefix("db="))
+                .unwrap_or_else(|| panic!("CLIENT INFO from {node} missing db field: {info}"));
+            assert_eq!(
+                db,
+                expected_db.to_string(),
+                "node {node} should be on db{expected_db}, got: {info}"
+            );
+        }
     }
 
     #[async_test]
@@ -738,6 +792,76 @@ mod cluster_async {
         );
 
         assert_eq!(value, Ok(Some(123)));
+    }
+
+    #[test]
+    fn test_async_cluster_readonly_error_refreshes_slots_and_retries() {
+        // Simulates a failover: a write lands on a node that has been demoted to a replica,
+        // which returns READONLY. The client should refresh its (stale) slot map and retry
+        // against the slot's new owner, rather than surfacing the error.
+        let name = "readonly_refreshes_slots";
+
+        let requests = atomic::AtomicUsize::new(0);
+        let started = atomic::AtomicBool::new(false);
+        let refreshed = Arc::new(atomic::AtomicBool::new(false));
+        let refreshed_clone = refreshed.clone();
+
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::new(name, move |cmd: &[u8], port| {
+            if !started.load(atomic::Ordering::SeqCst) {
+                respond_startup(name, cmd)?;
+            }
+            started.store(true, atomic::Ordering::SeqCst);
+
+            if is_connection_check(cmd) {
+                return Err(Ok(redis_value!(simple:"OK")));
+            }
+
+            let i = requests.fetch_add(1, atomic::Ordering::SeqCst);
+
+            match i {
+                // The write hits the demoted (now read-only) node.
+                0 => Err(parse_redis_value(
+                    b"-READONLY You can't write against a read only replica.\r\n",
+                )),
+                _ => {
+                    if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
+                        // The READONLY error should trigger exactly one slot refresh.
+                        assert!(!refreshed.swap(true, Ordering::SeqCst));
+                        Err(Ok(redis_value!([
+                            [0, 1, [name, 6379]],
+                            [2, 16383, [name, 6380]]
+                        ])))
+                    } else {
+                        // After refreshing, the slot's owner is the newly promoted primary.
+                        assert_eq!(port, 6380);
+                        assert!(
+                            contains_slice(cmd, b"SET"),
+                            "{:?}",
+                            std::str::from_utf8(cmd)
+                        );
+                        Err(Ok(Value::Okay))
+                    }
+                }
+            }
+        });
+
+        let value = runtime.block_on(
+            cmd("SET")
+                .arg("test")
+                .arg("value")
+                .query_async::<Value>(&mut connection),
+        );
+
+        assert_eq!(value, Ok(Value::Okay));
+        assert!(
+            refreshed_clone.load(Ordering::SeqCst),
+            "slots should be refreshed"
+        );
     }
 
     #[test]
@@ -2191,10 +2315,10 @@ mod cluster_async {
             let completed = completed.clone();
             move |cmd: &[u8], _| {
                 respond_startup_two_nodes(name, cmd)?;
-                // Error twice with io-error, ensure connection is reestablished w/out calling
-                // other node (i.e., not doing a full slot rebuild)
+                // A genuinely non-retryable server error should be surfaced immediately,
+                // without any retry or slot rebuild.
                 completed.fetch_add(1, Ordering::SeqCst);
-                Err(Err((ServerErrorKind::ReadOnly.into(), "").into()))
+                Err(Err((ServerErrorKind::ResponseError.into(), "").into()))
             }
         });
 
@@ -2204,7 +2328,7 @@ mod cluster_async {
                 .query_async::<Option<i32>>(&mut connection),
         );
 
-        assert_matches!(&result, Err(err) if err.kind() == ServerErrorKind::ReadOnly.into());
+        assert_matches!(&result, Err(err) if err.kind() == ServerErrorKind::ResponseError.into());
         assert_eq!(completed.load(Ordering::SeqCst), 1);
     }
 
@@ -2475,8 +2599,10 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(5)
-                .max_retry_wait(2)
-                .min_retry_wait(2),
+                // Backoff must exceed the outer timeout; 1 ms was too tight (timeout could win
+                // before the first mock request on slow CI).
+                .max_retry_wait(64)
+                .min_retry_wait(64),
             name,
             move |received_cmd: &[u8], _| {
                 respond_startup(name, received_cmd)?;
@@ -2497,14 +2623,13 @@ mod cluster_async {
         runtime.block_on(async move {
             let err = cmd
                 .exec_async(&mut connection)
-                .timeout(futures_time::time::Duration::from_millis(1))
+                // Fires after the first TRYAGAIN returns but before min_retry_wait elapses.
+                .timeout(futures_time::time::Duration::from_millis(32))
                 .await
                 .unwrap_err();
             assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
 
-            // we sleep here, to allow the cluster connection time to retry. We expect it won't, but without this
-            // sleep the test will complete before the the runtime gave the connection time to retry, which would've made the
-            // test pass regardless of whether the connection tries retrying or not.
+            // Give the driver a chance to run a spurious retry if the drop path regressed.
             sleep(Duration::from_millis(10).into()).await;
         });
 
@@ -2544,14 +2669,10 @@ mod cluster_async {
     mod pubsub {
         use super::*;
 
-        fn check_if_redis_6(ctx: &TestClusterContext) -> bool {
-            ctx.get_version().0 == 6
-        }
-
         async fn subscribe_to_channels(
             pubsub_conn: &mut ClusterConnection,
             rx: &mut UnboundedReceiver<PushInfo>,
-            is_redis_6: bool,
+            supports_redis_7: bool,
         ) {
             let _: () = pubsub_conn.subscribe("regular-phonewave").await.unwrap();
             let push: PushInfo = get_push(rx).await;
@@ -2573,7 +2694,7 @@ mod cluster_async {
                 }
             );
 
-            if !is_redis_6 {
+            if supports_redis_7 {
                 let _: () = pubsub_conn.ssubscribe("sphonewave").await.unwrap();
                 let push = get_push(rx).await;
                 assert_eq!(
@@ -2597,7 +2718,7 @@ mod cluster_async {
         async fn check_publishing(
             publish_conn: &mut ClusterConnection,
             rx: &mut UnboundedReceiver<PushInfo>,
-            is_redis_6: bool,
+            supports_redis_7: bool,
         ) {
             let _: () = publish_conn
                 .publish("regular-phonewave", "banana")
@@ -2629,7 +2750,7 @@ mod cluster_async {
                 }
             );
 
-            if !is_redis_6 {
+            if supports_redis_7 {
                 let _: () = publish_conn.spublish("sphonewave", "banana").await.unwrap();
                 let push = get_push(rx).await;
                 assert_eq!(
@@ -2653,11 +2774,11 @@ mod cluster_async {
 
             let (mut publish_conn, mut pubsub_conn) =
                 join!(ctx.async_connection(), ctx.async_connection());
-            let is_redis_6 = check_if_redis_6(&ctx);
+            let supports_redis_7 = ctx.supports(REDIS_CE_7_0);
 
-            subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await;
+            subscribe_to_channels(&mut pubsub_conn, &mut rx, supports_redis_7).await;
 
-            check_publishing(&mut publish_conn, &mut rx, is_redis_6).await;
+            check_publishing(&mut publish_conn, &mut rx, supports_redis_7).await;
         }
 
         #[async_test]
@@ -2672,11 +2793,11 @@ mod cluster_async {
                 ctx.async_connection_with_config(config.clone()),
                 ctx.async_connection_with_config(config)
             );
-            let is_redis_6 = check_if_redis_6(&ctx);
+            let supports_redis_7 = ctx.supports(REDIS_CE_7_0);
 
-            subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await;
+            subscribe_to_channels(&mut pubsub_conn, &mut rx, supports_redis_7).await;
 
-            check_publishing(&mut publish_conn, &mut rx, is_redis_6).await;
+            check_publishing(&mut publish_conn, &mut rx, supports_redis_7).await;
         }
 
         #[async_test]
@@ -2684,12 +2805,9 @@ mod cluster_async {
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
                 builder.use_protocol(ProtocolVersion::RESP3)
             });
+            skip_if_context_does_not_support!(ctx, REDIS_CE_7_0);
 
             let mut pubsub_conn = ctx.async_connection().await;
-            if check_if_redis_6(&ctx) {
-                return;
-            }
-
             let _: () = pubsub_conn.ssubscribe("foo").await.unwrap();
 
             let res = cmd("pubsub")
@@ -2712,7 +2830,7 @@ mod cluster_async {
 
             let (mut publish_conn, mut pubsub_conn) =
                 join!(ctx.async_connection(), ctx.async_connection());
-            let is_redis_6 = check_if_redis_6(&ctx);
+            let supports_redis_7 = ctx.supports(REDIS_CE_7_0);
 
             let _: () = pubsub_conn.subscribe("regular-phonewave").await.unwrap();
             let push = get_push(&mut rx).await;
@@ -2752,7 +2870,7 @@ mod cluster_async {
                 }
             );
 
-            if !is_redis_6 {
+            if supports_redis_7 {
                 let _: () = pubsub_conn.ssubscribe("sphonewave").await.unwrap();
                 let push = get_push(&mut rx).await;
                 assert_eq!(
@@ -2781,7 +2899,7 @@ mod cluster_async {
                 .publish("phonewave-pattern", "banana")
                 .await
                 .unwrap();
-            if !is_redis_6 {
+            if supports_redis_7 {
                 let _: () = publish_conn.spublish("sphonewave", "banana").await.unwrap();
             }
 
@@ -2801,9 +2919,9 @@ mod cluster_async {
             });
 
             let mut pubsub_conn = ctx.async_connection().await;
-            let is_redis_6 = check_if_redis_6(&ctx);
+            let supports_redis_7 = ctx.supports(REDIS_CE_7_0);
 
-            subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await;
+            subscribe_to_channels(&mut pubsub_conn, &mut rx, supports_redis_7).await;
 
             drop(rx);
 
@@ -2827,7 +2945,7 @@ mod cluster_async {
             });
 
             let mut pubsub_conn = ctx.async_connection().await;
-            let is_redis_6 = check_if_redis_6(&ctx);
+            let supports_redis_7 = ctx.supports(REDIS_CE_7_0);
 
             let _: () = pubsub_conn
                 .subscribe(&[
@@ -2897,7 +3015,7 @@ mod cluster_async {
                     }
                 );
             }
-            if !is_redis_6 {
+            if supports_redis_7 {
                 // we use the curly braces in order to avoid cross slots errors.
                 let _: () = pubsub_conn
                     .ssubscribe(&["{sphonewave}1", "{sphonewave}2", "{sphonewave}3"])
@@ -2955,9 +3073,9 @@ mod cluster_async {
 
             let (mut publish_conn, mut pubsub_conn) =
                 join!(ctx.async_connection(), ctx.async_connection());
-            let is_redis_6 = check_if_redis_6(&ctx);
+            let supports_redis_7 = ctx.supports(REDIS_CE_7_0);
 
-            subscribe_to_channels(&mut pubsub_conn, &mut rx, is_redis_6).await;
+            subscribe_to_channels(&mut pubsub_conn, &mut rx, supports_redis_7).await;
 
             println!("dropped");
             drop(ctx);
@@ -3002,7 +3120,7 @@ mod cluster_async {
             let mut pushes = Vec::new();
             pushes.push(get_push(&mut rx).await);
             pushes.push(get_push(&mut rx).await);
-            if !is_redis_6 {
+            if supports_redis_7 {
                 pushes.push(get_push(&mut rx).await);
             }
             // we expect only 3 resubscriptions.
@@ -3016,14 +3134,14 @@ mod cluster_async {
                 data: vec![redis_value!("phonewave*"), redis_value!(2)]
             }));
 
-            if !is_redis_6 {
+            if supports_redis_7 {
                 assert!(pushes.contains(&PushInfo {
                     kind: PushKind::SSubscribe,
                     data: vec![redis_value!("sphonewave"), redis_value!(1)]
                 }));
             }
 
-            check_publishing(&mut publish_conn, &mut rx, is_redis_6).await;
+            check_publishing(&mut publish_conn, &mut rx, supports_redis_7).await;
         }
 
         #[async_test]

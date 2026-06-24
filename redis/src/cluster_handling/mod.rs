@@ -167,6 +167,7 @@ pub(crate) fn get_connection_info(
             cluster_params.tls_params.clone(),
         ),
         redis: RedisConnectionInfo {
+            db: cluster_params.database_id.unwrap_or(0),
             password: cluster_params.password.clone(),
             username: cluster_params.username.clone(),
             protocol: cluster_params.protocol.unwrap_or_default(),

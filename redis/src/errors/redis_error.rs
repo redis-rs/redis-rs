@@ -240,6 +240,9 @@ pub enum RetryMethod {
     MovedRedirect,
     /// Reconnect the initial connection to the master cluster, this is only relevant for clusters.
     ReconnectFromInitialConnections,
+    /// The slot map is stale (e.g. a write hit a node demoted to replica during failover).
+    /// Refresh the topology, then retry by re-routing to the slot's owner. Only relevant for clusters.
+    RefreshSlotsAndRetry,
 }
 
 /// Indicates a general failure in the library.
@@ -405,6 +408,7 @@ impl RedisError {
             RetryMethod::WaitAndRetry => false,
             RetryMethod::AskRedirect => false,
             RetryMethod::MovedRedirect => false,
+            RetryMethod::RefreshSlotsAndRetry => false,
         }
     }
 

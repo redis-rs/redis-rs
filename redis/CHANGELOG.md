@@ -1,3 +1,20 @@
+### 1.2.4 (2026-06-19)
+
+#### Changes & Bug fixes
+
+* cluster: refresh topology and retry on READONLY errors ([#2115](https://github.com/redis-rs/redis-rs/pull2115) by @alexcole)
+* fix(aio): bound permit allocation by concurrency limit, not pipeline length ([#2151](https://github.com/redis-rs/redis-rs/pull2151) by @Ali2Arslan)
+
+#### CI & operational improvements
+
+* tests/cluster_async: Switch to positive version checking (Version refactor 1/8) ([#2138](https://github.com/redis-rs/redis-rs/pull2138) by @somechris)
+* tests/basic: Switch version checks to constant (Version refactor 2/8) ([#2139](https://github.com/redis-rs/redis-rs/pull2139) by @somechris)
+* tests: Split off version code into dedicated module (Version refactor 3/10) ([#2140](https://github.com/redis-rs/redis-rs/pull2140) by @somechris)
+* tests/version: Add `TestClusterVersioning` trait for version handling (Version refactor 4/10) ([#2141](https://github.com/redis-rs/redis-rs/pull2141) by @somechris)
+* tests: Delegate version comparison to `TestClusterVersioning` (Version refactor 5/10) ([#2142](https://github.com/redis-rs/redis-rs/pull2142) by @somechris)
+* tests/version: Require ownership to check version support (Version refactor 5b/10) ([#2152](https://github.com/redis-rs/redis-rs/pull2152) by @somechris)
+* tests: Use server binary from env to detect major version ([#2149](https://github.com/redis-rs/redis-rs/pull2149) by @somechris)
+
 ### 1.2.3 (2026-06-13)
 
 #### Changes & Bug fixes
