@@ -241,6 +241,16 @@ jobs:
         env:
           RUSTDOCFLAGS: -Dwarnings
 
+      - name: wasm32-wasip2 tokio-comp build
+        run: |
+          rustup target add wasm32-wasip2
+          cargo build -p redis \
+            --target wasm32-wasip2 \
+            --no-default-features \
+            --features tokio-comp
+        env:
+          RUSTFLAGS: --cfg tokio_unstable
+
       - name: Check semver
         uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
