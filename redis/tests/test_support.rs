@@ -5,7 +5,7 @@
 //! module. This is unwarranted. So we instead collect them in this module.
 
 use crate::support::{
-    AvailableComponents, Component, REDIS_VERSION_CE_6_0, TestContext, TestContextVersioning,
+    AvailableComponents, Component, REDIS_CE_6_0, TestContext, TestContextVersioning,
 };
 use redis_test::{MockCmd, MockRedisConnection};
 
@@ -184,7 +184,7 @@ fn ctx_live_test_server() {
 
     let components = AvailableComponents::from(&mut conn);
 
-    assert!(components.supports(REDIS_VERSION_CE_6_0));
+    assert!(components.supports(REDIS_CE_6_0));
 }
 
 /// Tries to assure versions get correctly extracted from a single number with single digit components
