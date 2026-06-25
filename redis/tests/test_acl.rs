@@ -186,7 +186,6 @@ fn test_acl_dryrun() {
 }
 #[test]
 fn test_acl_info() {
-    // Skip the test <7.2, as `sanitize-payload` was not available before 7.2
     let ctx = run_test_if_version_supported!(REDIS_CE_7_2);
     let mut conn = ctx.connection();
     let username = "tenant";
@@ -264,7 +263,6 @@ fn test_acl_info() {
 }
 #[test]
 fn test_acl_sample_info() {
-    // Skip the test <7.2, as `sanitize-payload` was not available before 7.2
     let ctx = run_test_if_version_supported!(REDIS_CE_7_2);
     let mut conn = ctx.connection();
     let sample_rule = vec![

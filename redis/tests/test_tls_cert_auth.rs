@@ -90,10 +90,10 @@ fn generate_random_username() -> String {
 
 #[test]
 fn test_tls_certificate_authentication_with_matching_acl_user() {
-    // This test verifies that Redis 8.6+ can automatically authenticate a client
+    // This test verifies that Redis can automatically authenticate a client
     // based on the Common Name (CN) field in the client's TLS certificate.
 
-    run_test_if_version_supported!(REDIS_CE_8_6);
+    run_test_if_version_supported!([REDIS_CE_8_6, VALKEY_9_0]);
 
     // Generate a random username for the test.
     let test_username = generate_random_username();
@@ -170,7 +170,7 @@ fn test_tls_certificate_authentication_with_matching_acl_user() {
 fn test_tls_certificate_authentication_no_matching_user() {
     // This test verifies that when a client certificate's CN doesn't match
     // any existing ACL user, Redis falls back to the "default" user.
-    run_test_if_version_supported!(REDIS_CE_8_6);
+    run_test_if_version_supported!([REDIS_CE_8_6, VALKEY_9_0]);
 
     // Generate a random username (that won't have a corresponding ACL user).
     let test_username = generate_random_username();
