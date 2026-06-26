@@ -1,6 +1,7 @@
 use super::AsyncDNSResolver;
 use super::RedisRuntime;
 
+use crate::AsyncConnectionAddrSelection;
 use crate::connection::{ConnectionAddr, ConnectionInfo};
 #[cfg(feature = "aio")]
 use crate::types::RedisResult;
@@ -11,20 +12,20 @@ use crate::pipeline::Pipeline;
 use crate::{FromRedisValue, RedisError, ToRedisArgs};
 use futures_util::future::select_ok;
 use std::future::Future;
+use std::net::SocketAddr;
 
 pub(crate) async fn connect_simple<T: RedisRuntime>(
     connection_info: &ConnectionInfo,
     dns_resolver: &dyn AsyncDNSResolver,
+    connection_addr_selection: &AsyncConnectionAddrSelection,
 ) -> RedisResult<T> {
     Ok(match connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
             let socket_addrs = dns_resolver.resolve(host, port).await?;
-            select_ok(
-                socket_addrs
-                    .map(|addr| Box::pin(<T>::connect_tcp(addr, &connection_info.tcp_settings))),
-            )
+            connect_with_addr_selection(socket_addrs, connection_addr_selection, |addr| {
+                <T>::connect_tcp(addr, &connection_info.tcp_settings)
+            })
             .await?
-            .0
         }
 
         #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
@@ -35,17 +36,16 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             ref tls_params,
         } => {
             let socket_addrs = dns_resolver.resolve(host, port).await?;
-            select_ok(socket_addrs.map(|socket_addr| {
-                Box::pin(<T>::connect_tcp_tls(
+            connect_with_addr_selection(socket_addrs, connection_addr_selection, |socket_addr| {
+                <T>::connect_tcp_tls(
                     host,
                     socket_addr,
                     insecure,
                     tls_params,
                     &connection_info.tcp_settings,
-                ))
-            }))
+                )
+            })
             .await?
-            .0
         }
 
         #[cfg(not(any(feature = "tls-native-tls", feature = "tls-rustls")))]
@@ -68,6 +68,49 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             ))
         }
     })
+}
+
+async fn connect_with_addr_selection<T, F, Fut>(
+    socket_addrs: impl Iterator<Item = SocketAddr>,
+    connection_addr_selection: &AsyncConnectionAddrSelection,
+    mut connect: F,
+) -> RedisResult<T>
+where
+    F: FnMut(SocketAddr) -> Fut,
+    Fut: Future<Output = RedisResult<T>>,
+{
+    match connection_addr_selection {
+        AsyncConnectionAddrSelection::Race => {
+            select_ok(socket_addrs.map(|addr| Box::pin(connect(addr))))
+                .await
+                .map(|(connection, _)| connection)
+        }
+        AsyncConnectionAddrSelection::Sequential => connect_sequential(socket_addrs, connect).await,
+    }
+}
+
+async fn connect_sequential<T, F, Fut>(
+    socket_addrs: impl Iterator<Item = SocketAddr>,
+    mut connect: F,
+) -> RedisResult<T>
+where
+    F: FnMut(SocketAddr) -> Fut,
+    Fut: Future<Output = RedisResult<T>>,
+{
+    let mut last_error = None;
+    for socket_addr in socket_addrs {
+        match connect(socket_addr).await {
+            Ok(connection) => return Ok(connection),
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        RedisError::from((
+            crate::errors::ErrorKind::InvalidClientConfig,
+            "No address found for host",
+        ))
+    }))
 }
 
 /// Executes a Redis transaction asynchronously by automatically watching keys and running
@@ -167,6 +210,9 @@ mod tests {
     use crate::cluster_async;
 
     use super::super::*;
+    use super::connect_sequential;
+    use crate::{ErrorKind, RedisError};
+    use std::{future::ready, net::SocketAddr};
 
     #[test]
     fn test_is_sync() {
@@ -192,5 +238,57 @@ mod tests {
         assert_send::<ConnectionManager>();
         #[cfg(feature = "cluster-async")]
         assert_send::<cluster_async::ClusterConnection>();
+    }
+
+    #[test]
+    fn connect_sequential_uses_first_successful_address() {
+        futures::executor::block_on(async {
+            let first_addr: SocketAddr = "127.0.0.1:6379".parse().unwrap();
+            let second_addr: SocketAddr = "127.0.0.1:6380".parse().unwrap();
+            let mut attempts = 0;
+
+            let selected = connect_sequential([first_addr, second_addr].into_iter(), |addr| {
+                attempts += 1;
+                ready(if attempts == 1 {
+                    Err(RedisError::from((
+                        ErrorKind::Io,
+                        "synthetic connection failure",
+                    )))
+                } else {
+                    Ok(addr)
+                })
+            })
+            .await
+            .unwrap();
+
+            assert_eq!(selected, second_addr);
+            assert_eq!(attempts, 2);
+        });
+    }
+
+    #[test]
+    fn connect_sequential_returns_last_connection_error() {
+        futures::executor::block_on(async {
+            let first_addr: SocketAddr = "127.0.0.1:6379".parse().unwrap();
+            let second_addr: SocketAddr = "127.0.0.1:6380".parse().unwrap();
+            let mut attempts = 0;
+
+            let result = connect_sequential([first_addr, second_addr].into_iter(), |_addr| {
+                attempts += 1;
+                let error_kind = if attempts == 1 {
+                    ErrorKind::Client
+                } else {
+                    ErrorKind::Io
+                };
+                ready(Err::<(), _>(RedisError::from((
+                    error_kind,
+                    "synthetic connection failure",
+                ))))
+            })
+            .await;
+
+            assert_eq!(result.unwrap_err().kind(), ErrorKind::Io);
+            assert_eq!(attempts, 2);
+        });
     }
 }

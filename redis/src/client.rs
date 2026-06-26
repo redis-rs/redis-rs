@@ -181,6 +181,19 @@ pub(crate) const DEFAULT_RESPONSE_TIMEOUT: Option<Duration> = Some(Duration::fro
 #[cfg(any(feature = "aio", feature = "cluster"))]
 pub(crate) const DEFAULT_CONNECTION_TIMEOUT: Option<Duration> = Some(Duration::from_secs(1));
 
+/// Controls how async TCP connection attempts use addresses returned by DNS resolution.
+#[cfg(feature = "aio")]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum AsyncConnectionAddrSelection {
+    /// Race connection attempts to all resolved socket addresses and use the first
+    /// successful connection.
+    #[default]
+    Race,
+    /// Try resolved socket addresses in iterator order until one connects.
+    Sequential,
+}
+
 /// Options for creation of async connection
 #[cfg(feature = "aio")]
 #[derive(Clone)]
@@ -193,6 +206,7 @@ pub struct AsyncConnectionConfig {
     #[cfg(feature = "cache-aio")]
     pub(crate) cache: Option<Cache>,
     pub(crate) dns_resolver: Option<std::sync::Arc<dyn AsyncDNSResolver>>,
+    pub(crate) connection_addr_selection: AsyncConnectionAddrSelection,
     pub(crate) pipeline_buffer_size: Option<usize>,
     pub(crate) concurrency_limit: Option<usize>,
     /// Optional credentials provider for dynamic authentication (e.g., token-based authentication)
@@ -210,6 +224,7 @@ impl Default for AsyncConnectionConfig {
             #[cfg(feature = "cache-aio")]
             cache: Default::default(),
             dns_resolver: Default::default(),
+            connection_addr_selection: Default::default(),
             pipeline_buffer_size: None,
             concurrency_limit: None,
             #[cfg(feature = "token-based-authentication")]
@@ -306,6 +321,18 @@ impl AsyncConnectionConfig {
         dns_resolver: std::sync::Arc<dyn AsyncDNSResolver>,
     ) -> Self {
         self.dns_resolver = Some(dns_resolver);
+        self
+    }
+
+    /// Set how async TCP connection attempts use addresses returned by DNS resolution.
+    ///
+    /// The default is [`AsyncConnectionAddrSelection::Race`], which preserves the
+    /// existing redis-rs behavior of racing all returned socket addresses.
+    pub fn set_connection_addr_selection(
+        mut self,
+        connection_addr_selection: AsyncConnectionAddrSelection,
+    ) -> Self {
+        self.connection_addr_selection = connection_addr_selection;
         self
     }
 
@@ -550,7 +577,9 @@ impl Client {
             .dns_resolver
             .as_deref()
             .unwrap_or(&DefaultAsyncDNSResolver);
-        let con = self.get_simple_async_connection::<T>(resolver).await?;
+        let con = self
+            .get_simple_async_connection::<T>(resolver, &config.connection_addr_selection)
+            .await?;
         crate::aio::MultiplexedConnection::new_with_config(
             &self.connection_info.redis,
             con,
@@ -566,14 +595,20 @@ impl Client {
         match Runtime::locate() {
             #[cfg(feature = "tokio-comp")]
             Runtime::Tokio => {
-                self.get_simple_async_connection::<crate::aio::tokio::Tokio>(dns_resolver)
-                    .await
+                self.get_simple_async_connection::<crate::aio::tokio::Tokio>(
+                    dns_resolver,
+                    &AsyncConnectionAddrSelection::Race,
+                )
+                .await
             }
 
             #[cfg(feature = "smol-comp")]
             Runtime::Smol => {
-                self.get_simple_async_connection::<crate::aio::smol::Smol>(dns_resolver)
-                    .await
+                self.get_simple_async_connection::<crate::aio::smol::Smol>(
+                    dns_resolver,
+                    &AsyncConnectionAddrSelection::Race,
+                )
+                .await
             }
         }
     }
@@ -581,15 +616,18 @@ impl Client {
     async fn get_simple_async_connection<T>(
         &self,
         dns_resolver: &dyn AsyncDNSResolver,
+        connection_addr_selection: &AsyncConnectionAddrSelection,
     ) -> RedisResult<Pin<Box<dyn crate::aio::AsyncStream + Send + Sync>>>
     where
         T: crate::aio::RedisRuntime,
     {
-        Ok(
-            crate::aio::connect_simple::<T>(&self.connection_info, dns_resolver)
-                .await?
-                .boxed(),
+        Ok(crate::aio::connect_simple::<T>(
+            &self.connection_info,
+            dns_resolver,
+            connection_addr_selection,
         )
+        .await?
+        .boxed())
     }
 
     #[cfg(feature = "connection-manager")]
@@ -693,5 +731,22 @@ mod test {
     fn test_async_connection_config_concurrency_limit_custom() {
         let config = AsyncConnectionConfig::new().set_concurrency_limit(128);
         assert_eq!(config.concurrency_limit, Some(128));
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn test_async_connection_config_addr_selection() {
+        let config = AsyncConnectionConfig::new();
+        assert_eq!(
+            config.connection_addr_selection,
+            AsyncConnectionAddrSelection::Race
+        );
+
+        let config = AsyncConnectionConfig::new()
+            .set_connection_addr_selection(AsyncConnectionAddrSelection::Sequential);
+        assert_eq!(
+            config.connection_addr_selection,
+            AsyncConnectionAddrSelection::Sequential
+        );
     }
 }
