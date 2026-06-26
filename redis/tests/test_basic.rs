@@ -2552,10 +2552,11 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
+        // Set a key to later check access frequency on
         con.set("object_key_str", "object_value_str").unwrap();
 
-        // Needed for OBJECT FREQ and can't be set before object_idletime
-        // since that will break getting the idletime before idletime adjuts
+        // Enable an LFU `maxmemory-policy`. This is required for `OBJECT FREQ` to work.
+        // Initial counters are 0.
         redis::cmd("CONFIG")
             .arg("SET")
             .arg(b"maxmemory-policy")
@@ -2566,14 +2567,14 @@ mod basic {
         // give the redis server's background tracking algorithm time to recalculate values
         thread::sleep(Duration::from_millis(5));
 
+        // Access the key and check that its `OBJECT FREQ` reports a single access.
+        // (While `OBJECT FREQ` is in general both probabilistic and logarithmic-like, it is
+        // deterministically linear when <=5 -- cf. Redis' `[LFULogIncr`](https://github.com/redis/redis/blob/08b465e4f4891bef9f08d7049dd670627b86f7a4/src/evict.c#L281))
         con.get("object_key_str").unwrap();
-        // since maxmemory-policy changed, freq should reset to 1 since we only called
-        // get after that
         assert_eq!(con.object_freq("object_key_str").unwrap().unwrap(), 1);
 
+        // Access the key a second time and check that its `OBJECT FREQ` reports 2 accesses.
         con.get("object_key_str").unwrap();
-        // since maxmemory-policy changed, freq should reset to 1 since we only called
-        // get after that
         assert_eq!(con.object_freq("object_key_str").unwrap().unwrap(), 2);
     }
 
