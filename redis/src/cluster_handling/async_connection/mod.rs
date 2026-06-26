@@ -97,7 +97,7 @@ use std::{
     io,
     ops::Deref,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock as StdRwLock},
     task::{self, Poll},
     time::Duration,
 };
@@ -499,6 +499,7 @@ struct InnerCore<C> {
     initial_nodes: Vec<ConnectionInfo>,
     subscription_tracker: Option<Mutex<SubscriptionTracker>>,
     routing_strategy: Option<Box<dyn ReadRoutingStrategy>>,
+    reconnecting: StdRwLock<HashSet<NodeAddress>>,
 }
 
 /// This is a clonable wrapper.
@@ -879,6 +880,7 @@ where
             .cloned();
 
         if let Some(ref addr) = preferred
+            && !self.is_reconnecting(addr)
             && let Some(conn) = read_guard.0.get(addr).and_then(ConnState::connected)
         {
             return Ok((addr.clone(), conn));
@@ -889,6 +891,9 @@ where
             .shard_fallback_addrs(&route)
             .into_iter()
             .find_map(|candidate| {
+                if self.is_reconnecting(&candidate) {
+                    return None;
+                }
                 read_guard
                     .0
                     .get(&candidate)
@@ -900,25 +905,13 @@ where
             return Ok(found);
         }
 
-        if let Some(ref addr) = preferred
-            && let Ok(conn) = self.connect_check_and_add(addr).await
-        {
-            return Ok((addr.clone(), conn));
+        let read_guard = self.conn_lock.read().await;
+        if let Some((random_addr, random_conn)) = get_random_connection(&read_guard.0) {
+            drop(read_guard);
+            return Ok((random_addr, random_conn));
         }
 
-        Err((
-            ErrorKind::SingleShardConnectionNotFound,
-            "No same-shard connection available",
-            format!(
-                "slot {} ({:?}); shard primary {}",
-                route.slot(),
-                route.slot_addr(),
-                preferred
-                    .as_ref()
-                    .map_or_else(|| "unknown".to_string(), |addr| addr.to_string()),
-            ),
-        )
-            .into())
+        Err((ErrorKind::ClusterConnectionNotFound, "No connections found").into())
     }
 
     async fn random_connection(&self) -> RedisResult<(NodeAddress, C)> {
@@ -1093,6 +1086,10 @@ where
             let _ = self.pending_requests_tx.send(request);
         }
     }
+
+    fn is_reconnecting(&self, addr: &NodeAddress) -> bool {
+        self.reconnecting.read().unwrap().contains(addr)
+    }
 }
 
 /// This is the sink for requests sent by the user.
@@ -1103,8 +1100,64 @@ struct ClusterConnInner<C> {
     state: ConnectionState,
     #[allow(clippy::complexity)]
     in_flight_requests: stream::FuturesUnordered<Pin<Box<Request<C>>>>,
+    repair_futures: stream::FuturesUnordered<BoxFuture<'static, ()>>,
     pending_requests_rx: mpsc::UnboundedReceiver<PendingRequest<C>>,
     refresh_error: Option<RedisError>,
+}
+
+async fn repair_node<C>(core: Core<C>, addr: NodeAddress)
+where
+    C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
+{
+    mark_reconnecting(&mut core.conn_lock.write().await.0, addr.clone());
+
+    let mut backoff = Duration::from_millis(50);
+    loop {
+        let prev = {
+            let guard = core.conn_lock.read().await;
+            let in_topology = guard.1.addresses_for_all_nodes().contains(&addr);
+            let entry = guard.0.get(&addr);
+            let healthy = matches!(entry, Some(ConnState::Connected(_)));
+            let prev_conn = entry.and_then(ConnState::connected_or_reconnecting);
+            drop(guard);
+
+            if healthy {
+                break;
+            }
+            if !in_topology {
+                core.conn_lock.write().await.0.remove(&addr);
+                break;
+            }
+            prev_conn
+        };
+
+        match get_or_create_conn(&addr, prev, &core.cluster_params).await {
+            Ok(conn) => {
+                let installed = {
+                    let mut guard = core.conn_lock.write().await;
+                    if matches!(guard.0.get(&addr), Some(ConnState::Connected(_))) {
+                        false
+                    } else {
+                        guard.0.insert(addr.clone(), ConnState::Connected(conn));
+                        true
+                    }
+                };
+                if installed {
+                    warn!("ClusterConnInner: reconnected to {addr:?}");
+                    core.resubscribe();
+                }
+                break;
+            }
+            Err(err) => {
+                debug!("repair_node: failed to reconnect {addr:?}: {err:?}");
+            }
+        }
+
+        boxed_sleep(backoff).await;
+        backoff = (backoff * 2).min(Duration::from_secs(5));
+    }
+
+    core.reconnecting.write().unwrap().remove(&addr);
 }
 
 fn boxed_sleep(duration: Duration) -> BoxFuture<'static, ()> {
@@ -1137,20 +1190,7 @@ struct Message<C> {
 
 enum RecoverFuture {
     RecoverSlots(BoxFuture<'static, RedisResult<()>>),
-    ReconnectNode(BoxFuture<'static, RedisResult<()>>),
     ReconnectInitial(BoxFuture<'static, RedisResult<()>>),
-}
-
-impl RecoverFuture {
-    // Whether to block new requests from progressing.
-    // For topology refresh or initial connections we want to block.
-    // However for a reconnect to previously-known nodes we dont want to block.
-    fn blocks_dispatch(&self) -> bool {
-        matches!(
-            self,
-            RecoverFuture::RecoverSlots(_) | RecoverFuture::ReconnectInitial(_)
-        )
-    }
 }
 
 enum ConnectionState {
@@ -1202,11 +1242,13 @@ where
             initial_nodes: initial_nodes.to_vec(),
             subscription_tracker,
             routing_strategy,
+            reconnecting: StdRwLock::new(HashSet::new()),
         });
         let core = Core(inner);
         let mut inner = ClusterConnInner {
             inner: core.clone(),
             in_flight_requests: Default::default(),
+            repair_futures: Default::default(),
             pending_requests_rx,
             refresh_error: None,
             state: ConnectionState::PollComplete,
@@ -1281,80 +1323,23 @@ where
         }
     }
 
-    fn refresh_connections(
-        &mut self,
-        addrs: HashSet<NodeAddress>,
-    ) -> impl Future<Output = RedisResult<()>> + use<C> {
-        let inner = self.inner.clone();
-        async move {
-            {
-                let mut guard = inner.conn_lock.write().await;
-                for addr in addrs {
-                    mark_reconnecting(&mut guard.0, addr);
+    fn start_repairs(&mut self, addrs: HashSet<NodeAddress>) {
+        let mut new_repairs = Vec::new();
+        {
+            let mut guard = self.inner.reconnecting.write().unwrap();
+            for addr in addrs {
+                if guard.insert(addr.clone()) {
+                    new_repairs.push(repair_node(self.inner.clone(), addr));
                 }
             }
-
-            let mut backoff = Duration::from_millis(50);
-            loop {
-                let work: Vec<(NodeAddress, Option<C>)> = {
-                    let mut guard = inner.conn_lock.write().await;
-                    let topology: HashSet<NodeAddress> = guard
-                        .1
-                        .addresses_for_all_nodes()
-                        .into_iter()
-                        .cloned()
-                        .collect();
-                    let mut work = Vec::new();
-                    guard.0.retain(|addr, state| {
-                        let prev = match state {
-                            ConnState::Connected(_) => return true,
-                            ConnState::Reconnecting(prev) => Some(prev.clone()),
-                            ConnState::Connecting => None,
-                        };
-                        if topology.contains(addr) {
-                            work.push((addr.clone(), prev));
-                            true
-                        } else {
-                            false
-                        }
-                    });
-                    work
-                };
-                if work.is_empty() {
-                    break;
-                }
-
-                let params = &inner.cluster_params;
-                let results = stream::iter(work.into_iter().map(|(addr, prev)| async move {
-                    let res = get_or_create_conn(&addr, prev, params).await;
-                    (addr, res)
-                }))
-                .buffer_unordered(8)
-                .collect::<Vec<_>>()
-                .await;
-
-                {
-                    let mut guard = inner.conn_lock.write().await;
-                    for (addr, res) in results {
-                        match res {
-                            Ok(conn) => {
-                                log::warn!("ClusterConnInner: reconnected to {addr:?}");
-                                guard.0.insert(addr, ConnState::Connected(conn));
-                            }
-                            Err(err) => {
-                                debug!("repair: failed to reconnect {addr:?}: {err:?}");
-                            }
-                        }
-                    }
-                }
-
-                boxed_sleep(backoff).await;
-                backoff = (backoff * 2).min(Duration::from_secs(5));
-            }
-
-            inner.resubscribe();
-            Ok(())
         }
+        for repair in new_repairs {
+            self.repair_futures.push(Box::pin(repair));
+        }
+    }
+
+    fn poll_repairs(&mut self, cx: &mut task::Context<'_>) {
+        while let Poll::Ready(Some(())) = Pin::new(&mut self.repair_futures).poll_next(cx) {}
     }
 
     async fn wait_for_initial_connection(&mut self) -> RedisResult<()> {
@@ -1362,8 +1347,7 @@ where
             std::mem::replace(&mut self.state, ConnectionState::PollComplete)
         {
             match fut {
-                RecoverFuture::RecoverSlots(fut) => fut.await?,
-                RecoverFuture::ReconnectNode(fut) | RecoverFuture::ReconnectInitial(fut) => {
+                RecoverFuture::RecoverSlots(fut) | RecoverFuture::ReconnectInitial(fut) => {
                     fut.await?
                 }
             }
@@ -1389,7 +1373,7 @@ where
                     Err(err)
                 }
             },
-            RecoverFuture::ReconnectNode(future) | RecoverFuture::ReconnectInitial(future) => {
+            RecoverFuture::ReconnectInitial(future) => {
                 match ready!(future.as_mut().poll(cx)) {
                     Err(err) => warn!("Can't reconnect to initial nodes: `{err}`"),
                     Ok(()) => trace!("Reconnected connections"),
@@ -1598,6 +1582,7 @@ where
         trace!("poll_flush: {:?}", self.state);
         loop {
             self.send_refresh_error();
+            self.poll_repairs(cx);
 
             let block_dispatch = match self.as_mut().poll_recover(cx) {
                 Poll::Ready(Err(err)) => {
@@ -1613,10 +1598,7 @@ where
                     return Poll::Pending;
                 }
                 Poll::Ready(Ok(())) => false,
-                Poll::Pending => match &self.state {
-                    ConnectionState::Recover(future) => future.blocks_dispatch(),
-                    ConnectionState::PollComplete => false,
-                },
+                Poll::Pending => matches!(self.state, ConnectionState::Recover(_)),
             };
 
             if !block_dispatch {
@@ -1636,17 +1618,7 @@ where
                     )));
                 }
                 PollFlushAction::Reconnect(addrs) => {
-                    if matches!(self.state, ConnectionState::Recover(_)) {
-                        if let Ok(mut guard) = self.inner.conn_lock.try_write() {
-                            for addr in addrs {
-                                mark_reconnecting(&mut guard.0, addr);
-                            }
-                        }
-                    } else {
-                        self.state = ConnectionState::Recover(RecoverFuture::ReconnectNode(
-                            Box::pin(self.refresh_connections(addrs)),
-                        ));
-                    }
+                    self.start_repairs(addrs);
                 }
                 PollFlushAction::ReconnectFromInitialConnections => {
                     self.state = ConnectionState::Recover(RecoverFuture::ReconnectInitial(

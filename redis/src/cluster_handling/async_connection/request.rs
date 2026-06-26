@@ -562,17 +562,4 @@ mod tests {
         };
         assert_eq!(next, PollFlushAction::ReconnectFromInitialConnections);
     }
-
-    #[test]
-    fn single_shard_connection_not_found_should_rebuild_slots() {
-        let err = || RedisError::from((crate::ErrorKind::SingleShardConnectionNotFound, ""));
-
-        let (request, mut receiver) = request_and_receiver(0);
-        let result = (OperationTarget::NotFound, Err(err()));
-        let retry_params = RetryParams::default();
-        let (_retry, next) = choose_response(result, request, &retry_params);
-
-        assert_matches!(receiver.try_recv(), Err(_));
-        assert_eq!(next, PollFlushAction::RebuildSlots);
-    }
 }

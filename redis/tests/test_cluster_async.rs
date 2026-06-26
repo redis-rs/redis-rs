@@ -2106,20 +2106,19 @@ mod cluster_async {
     }
 
     #[test]
-    fn test_async_cluster_io_error_without_fallback_errors() {
-        let name = "test_async_cluster_io_error_without_fallback_errors";
+    fn test_async_cluster_io_error_without_fallback_redirects() {
+        let name = "test_async_cluster_io_error_without_fallback_redirects";
+        let moved_served = Arc::new(AtomicBool::new(false));
+        let moved_served_clone = moved_served.clone();
         let MockEnv {
             runtime,
             async_connection: mut connection,
             handler: _handler,
             ..
         } = MockEnv::with_client_builder(
-            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(2),
             name,
             {
-                // 6379 and 6380 are the two primaries.
-                // Both respond to the initial handshake.
-                // 6379 becomes unresponsive after the handshake.
                 let dead = Arc::new(AtomicBool::new(false));
                 move |cmd: &[u8], port| match port {
                     6379 => {
@@ -2132,33 +2131,30 @@ mod cluster_async {
                     }
                     6380 => {
                         respond_startup_two_nodes(name, cmd)?;
-                        panic!("Node should not be called");
+                        moved_served_clone.store(true, Ordering::SeqCst);
+                        Err(parse_redis_value(
+                            format!("-MOVED 123 {name}:6379\r\n").as_bytes(),
+                        ))
                     }
                     _ => panic!("unexpected port {port}"),
                 }
             },
         );
 
-        let first = runtime.block_on(
+        let result = runtime.block_on(
             cmd("GET")
                 .arg("test")
                 .query_async::<Option<i32>>(&mut connection),
-        );
-        assert_eq!(
-            first.unwrap_err().kind(),
-            ErrorKind::Io,
-            "first call should surface the underlying io error",
         );
 
-        let second = runtime.block_on(
-            cmd("GET")
-                .arg("test")
-                .query_async::<Option<i32>>(&mut connection),
+        assert!(
+            moved_served.load(Ordering::SeqCst),
+            "with no in-shard fallback the request should fall through to another shard's connection and receive a MOVED",
         );
         assert_eq!(
-            second.unwrap_err().kind(),
-            ErrorKind::SingleShardConnectionNotFound,
-            "with no in-shard fallback the call should fail with SingleShardConnectionNotFound",
+            result.unwrap_err().kind(),
+            ErrorKind::Io,
+            "following the MOVED back to the dead shard owner should surface its io error",
         );
     }
 

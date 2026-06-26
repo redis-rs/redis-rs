@@ -37,11 +37,6 @@ pub enum ErrorKind {
     EmptySentinelList,
     /// Used when a cluster connection cannot find a connection to a valid node.
     ClusterConnectionNotFound,
-    /// Used when a cluster connection cannot find a connection for a specific
-    /// shard (the shard's primary and all of its replicas are unavailable), while
-    /// connections to other shards may still be healthy. Recovered by refreshing
-    /// the slot map rather than reconnecting to the initial nodes.
-    SingleShardConnectionNotFound,
     /// An error returned from the server
     Server(ServerErrorKind),
 
@@ -311,7 +306,6 @@ impl RedisError {
             ErrorKind::EmptySentinelList => "empty sentinel list",
             ErrorKind::Server(ServerErrorKind::NotBusy) => "not busy",
             ErrorKind::ClusterConnectionNotFound => "connection to node in cluster not found",
-            ErrorKind::SingleShardConnectionNotFound => "connection to shard in cluster not found",
             #[cfg(feature = "json")]
             ErrorKind::Serialize => "serializing",
             ErrorKind::RESP3NotSupported => "resp3 is not supported by server",
@@ -453,7 +447,6 @@ impl RedisError {
             ErrorKind::Parse => RetryMethod::Reconnect,
             ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
             ErrorKind::ClusterConnectionNotFound => RetryMethod::ReconnectFromInitialConnections,
-            ErrorKind::SingleShardConnectionNotFound => RetryMethod::NoRetry,
 
             ErrorKind::Io => {
                 if self.is_connection_dropped() {
