@@ -1,3 +1,21 @@
+### 1.3.0 (2026-06-28)
+
+#### Changes & Bug fixes
+
+* Add numbered databases support for the cluster client ([#2146](https://github.com/redis-rs/redis-rs/pull/2146) by @virratanasangpunth)
+* fix(cluster): clamp retry backoff upper bound after min-wait floor ([#2158](https://github.com/redis-rs/redis-rs/pull/2158) by @nihohit)
+* docs/ci: add wasm32-wasip2 build support for tokio-comp ([#2153](https://github.com/redis-rs/redis-rs/pull/2153) by @Prashantsinghchouhan)
+* Add Bloom filter support ([#2117](https://github.com/redis-rs/redis-rs/pull/2117) by @somechris)
+
+#### CI & operational improvements
+
+* tests/version: Parse all available versions (Valkey, modules, ...) (Version refactor 6/10) ([#2143](https://github.com/redis-rs/redis-rs/pull/2143) by @somechris)
+* tests/version: Add disjunctive (`OR`) and conjunctive (`AND`) matchers (Version refactor 7/10) ([#2144](https://github.com/redis-rs/redis-rs/pull/2144) by @somechris)
+* tests/version: Drop Redis binary version parsing (Version refactor 8/10) ([#2145](https://github.com/redis-rs/redis-rs/pull/2145) by @somechris)
+* tests: Drop `_VERSION_` from version constants (version refactor 9/10) ([#2147](https://github.com/redis-rs/redis-rs/pull/2147) by @somechris)
+* Fix flakey object tests ([#2160](https://github.com/redis-rs/redis-rs/pull/2160) by @nihohit)
+* tests: Add test guards for Valkey servers (Version refactor 10/10) ([#2148](https://github.com/redis-rs/redis-rs/pull/2148) by @somechris)
+
 ### 1.2.4 (2026-06-19)
 
 #### Changes & Bug fixes
