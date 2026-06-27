@@ -2552,10 +2552,7 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        con.set("object_key_str", "object_value_str").unwrap();
-
-        // Needed for OBJECT FREQ and can't be set before object_idletime
-        // since that will break getting the idletime before idletime adjuts
+        // Enable an LFU `maxmemory-policy`. This is required for `OBJECT FREQ` to work.
         redis::cmd("CONFIG")
             .arg("SET")
             .arg(b"maxmemory-policy")
@@ -2563,18 +2560,20 @@ mod basic {
             .exec(&mut con)
             .unwrap();
 
-        // give the redis server's background tracking algorithm time to recalculate values
-        thread::sleep(Duration::from_millis(5));
+        // Set a key and check the initial access frequency.
+        // It should be 5 (`LFU_INIT_VALUE`), which is the default value for new keys
+        // cf. https://github.com/redis/redis/blob/08b465e4f4891bef9f08d7049dd670627b86f7a4/src/object.c#L125
+        con.set("object_key_str", "object_value_str").unwrap();
+        assert_eq!(con.object_freq("object_key_str").unwrap().unwrap(), 5);
 
+        // Access the key and check that its access frequency increased.
+        // The frequency update is probabilistic, but in our case will only fail in 1:MAX_RAND cases
+        // cf. https://github.com/redis/redis/blob/08b465e4f4891bef9f08d7049dd670627b86f7a4/src/evict.c#L281
         con.get("object_key_str").unwrap();
-        // since maxmemory-policy changed, freq should reset to 1 since we only called
-        // get after that
-        assert_eq!(con.object_freq("object_key_str").unwrap().unwrap(), 1);
+        assert_eq!(con.object_freq("object_key_str").unwrap().unwrap(), 6);
 
-        con.get("object_key_str").unwrap();
-        // since maxmemory-policy changed, freq should reset to 1 since we only called
-        // get after that
-        assert_eq!(con.object_freq("object_key_str").unwrap().unwrap(), 2);
+        // As further `GET` calls become less and less likely to bump the frequency, and we want to
+        // test `redis-rs`, not Redis, we don't test further access frequency increases.
     }
 
     #[test]
