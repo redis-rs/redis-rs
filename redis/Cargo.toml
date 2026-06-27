@@ -124,6 +124,7 @@ tokio = { version = "1.51", features = ["sync"], optional = true }
 [features]
 default = ["acl", "streams", "geospatial", "script", "num-bigint"]
 acl = []
+bloom = []
 geospatial = []
 json = ["dep:serde", "serde/derive", "dep:serde_json"]
 vector-sets = ["dep:serde", "serde/derive", "dep:serde_json"]
@@ -206,6 +207,10 @@ required-features = ["aio"]
 name = "test_acl"
 
 [[test]]
+name = "test_module_bloom"
+required-features = ["bloom"]
+
+[[test]]
 name = "test_module_json"
 required-features = ["json", "serde/derive"]
 
@@ -274,6 +279,10 @@ required-features = ["tokio-comp"]
 [[example]]
 name = "async-connection-loss"
 required-features = ["tokio-comp", "connection-manager"]
+
+[[example]]
+name = "bloom"
+required-features = ["bloom"]
 
 [[example]]
 name = "streams"

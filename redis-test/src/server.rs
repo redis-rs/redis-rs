@@ -32,6 +32,7 @@ enum ServerType {
 /// Represents a module that can be loaded into the Redis server.
 #[non_exhaustive]
 pub enum Module {
+    Bloom,
     Json,
 }
 
@@ -205,6 +206,13 @@ impl RedisServer {
                             }
                         },
                     };
+
+                    redis_cmd.arg("--loadmodule").arg(path);
+                }
+                Module::Bloom => {
+                    let path = env::var("REDISRS_REDIS_BLOOM_PATH").expect(
+                        "Unable to find path to RedisBloom at REDISRS_REDIS_BLOOM_PATH, is it set?",
+                    );
 
                     redis_cmd.arg("--loadmodule").arg(path);
                 }
