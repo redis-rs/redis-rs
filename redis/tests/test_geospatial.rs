@@ -146,12 +146,16 @@ fn test_georadius() {
     assert_eq!(result[0].name.as_str(), "Catania");
     assert_eq!(result[0].coord, None);
     assert_eq!(result[0].dist, None);
+    assert_eq!(result[0].hash, None);
 
     assert_eq!(result[1].name.as_str(), "Palermo");
     assert_eq!(result[1].coord, None);
     assert_eq!(result[1].dist, None);
+    assert_eq!(result[1].hash, None);
 
     // Get data with multiple fields
+
+    // With distance
     let result = geo_radius(RadiusOptions::default().with_dist().order(RadiusOrder::Asc));
 
     assert_eq!(result.len(), 2);
@@ -159,11 +163,14 @@ fn test_georadius() {
     assert_eq!(result[0].name.as_str(), "Catania");
     assert_eq!(result[0].coord, None);
     assert_approx_eq!(result[0].dist.unwrap(), 56.4413, 0.001);
+    assert_eq!(result[0].hash, None);
 
     assert_eq!(result[1].name.as_str(), "Palermo");
     assert_eq!(result[1].coord, None);
     assert_approx_eq!(result[1].dist.unwrap(), 190.4424, 0.001);
+    assert_eq!(result[1].hash, None);
 
+    // With coordinates
     let result = geo_radius(
         RadiusOptions::default()
             .with_coord()
@@ -177,6 +184,22 @@ fn test_georadius() {
     assert_approx_eq!(result[0].coord.as_ref().unwrap().longitude, 13.361_389);
     assert_approx_eq!(result[0].coord.as_ref().unwrap().latitude, 38.115_556);
     assert_eq!(result[0].dist, None);
+    assert_eq!(result[0].hash, None);
+
+    // With hashes
+    let result = geo_radius(RadiusOptions::default().with_hash().order(RadiusOrder::Asc));
+
+    assert_eq!(result.len(), 2);
+
+    assert_eq!(result[0].name.as_str(), "Catania");
+    assert_eq!(result[0].coord, None);
+    assert_eq!(result[0].dist, None);
+    assert_eq!(result[0].hash, Some(3479447370796909));
+
+    assert_eq!(result[1].name.as_str(), "Palermo");
+    assert_eq!(result[1].coord, None);
+    assert_eq!(result[1].dist, None);
+    assert_eq!(result[1].hash, Some(3479099956230698));
 }
 
 #[test]
@@ -194,4 +217,34 @@ fn test_georadius_by_member() {
     let names: Vec<_> = result.iter().map(|c| c.name.as_str()).collect();
 
     assert_eq!(names, vec!["Agrigento", "Palermo"]);
+
+    // Simple request, with all available data
+    let opts = RadiusOptions::default()
+        .with_dist()
+        .with_coord()
+        .with_hash()
+        .order(RadiusOrder::Asc);
+    let result = con
+        .geo_radius_by_member("my_gis", AGRIGENTO.2, 100.0, Unit::Kilometers, opts)
+        .unwrap();
+
+    assert_eq!(result[0].name.as_str(), "Agrigento");
+    assert_approx_eq!(
+        result[0].coord.as_ref().unwrap().longitude,
+        13.58333,
+        0.0001
+    );
+    assert_approx_eq!(result[0].coord.as_ref().unwrap().latitude, 37.31667, 0.0001);
+    assert_approx_eq!(result[0].dist.unwrap(), 0.0, 0.001);
+    assert_eq!(result[0].hash, Some(3479030013248308));
+
+    assert_eq!(result[1].name.as_str(), "Palermo");
+    assert_approx_eq!(
+        result[1].coord.as_ref().unwrap().longitude,
+        13.36139,
+        0.0001
+    );
+    assert_approx_eq!(result[1].coord.as_ref().unwrap().latitude, 38.11556, 0.0001);
+    assert_approx_eq!(result[1].dist.unwrap(), 90.9778, 0.001);
+    assert_eq!(result[1].hash, Some(3479099956230698));
 }
