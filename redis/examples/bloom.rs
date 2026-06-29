@@ -2,8 +2,12 @@
 
 //! Demonstrates basic operations and dumping/loading Bloom filters.
 
+use crate::support::{AvailableComponents, REDIS_BLOOM_ANY};
 use redis::bloom::{BloomFilterDumpChunk, BloomFilterDumpIterator};
 use redis::{Connection, RedisResult, TypedCommands};
+
+#[path = "../tests/support/mod.rs"]
+mod support;
 
 /// The key to use in the example
 const KEY: &str = "example_bloom_1";
@@ -69,11 +73,13 @@ fn main() -> RedisResult<()> {
     // Check membership of a few items
     check_membership(&mut con)?;
 
-    // Dump/Load-round-trip the Bloom filter
-    let dump = dump(&mut con);
-    cleanup(&mut con)?;
-    load(&mut con, dump)?;
-    check_membership(&mut con)?;
+    // Manual dump-/load-ing is only supporting on Redis' `bloom` module
+    if AvailableComponents::from(&mut con).supports(REDIS_BLOOM_ANY) {
+        let dump = dump(&mut con);
+        cleanup(&mut con)?;
+        load(&mut con, dump)?;
+        check_membership(&mut con)?;
+    }
 
     // Final cleanup
     cleanup(&mut con)?;

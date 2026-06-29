@@ -119,7 +119,11 @@ fn test_module_bloom_infos() {
     assert_eq!(con.bf_add(KEY_1, "foo"), Ok(true));
     assert_eq!(con.bf_card(KEY_1), Ok(1));
     let bf_type = con.key_type(KEY_1).unwrap();
-    assert!([ValueType::BloomFilterRedis, ValueType::BloomFilterValKey].contains(&bf_type));
+    if ctx.supports(REDIS_BLOOM_ANY) {
+        assert_eq!(bf_type, ValueType::BloomFilterRedis);
+    } else {
+        assert_eq!(bf_type, ValueType::BloomFilterValKey);
+    }
     assert_eq!(
         con.bf_info(KEY_1)
             .unwrap()
@@ -194,14 +198,21 @@ fn test_module_bloom_infos() {
             .code(),
         Some("WRONGTYPE")
     );
-    assert_eq!(con.bf_exists(KEY_2, "foo"), Ok(false));
-    // As of 2026-04-16, the following command should produce an error according to
-    // https://redis.io/docs/latest/commands/bf.mexists/
-    // as the key is of the wrong type. But instead it returns a proper array result
-    assert_eq!(
-        con.bf_mexists(KEY_2, &["foo", "bar", "baz"]),
-        Ok(vec![false, false, false])
-    );
+    let res_exists = con.bf_exists(KEY_2, "foo");
+    let res_mexists = con.bf_mexists(KEY_2, &["foo", "bar", "baz"]);
+    // We check whether we run Redis' and Valkey's `bloom` module, as they differ in how they react
+    // to non-Bloom filter keys.
+    if ctx.supports(REDIS_BLOOM_ANY) {
+        assert_eq!(res_exists, Ok(false));
+        // As of 2026-04-16, the following command should produce an error according to
+        // https://redis.io/docs/latest/commands/bf.mexists/
+        // as the key is of the wrong type. But instead it returns a proper array result
+        assert_eq!(res_mexists, Ok(vec![false, false, false]));
+    } else {
+        assert_eq!(res_exists.unwrap_err().code(), Some("WRONGTYPE"));
+        assert_eq!(res_mexists.unwrap_err().code(), Some("WRONGTYPE"));
+    }
+    // Check that the value of the non-Bloom filter key did not change
     assert_eq!(con.get(KEY_2), Ok(Some("quux".to_string())));
 }
 
@@ -249,6 +260,7 @@ fn test_module_bloom_reserving() {
 #[test]
 fn test_module_bloom_dump_and_load() {
     let ctx = TestContext::with_modules(&[Module::Bloom]);
+    skip_if_context_does_not_support!(ctx, REDIS_BLOOM_ANY);
     let mut con = ctx.connection();
 
     // Create a bloom filter with two elements
@@ -302,6 +314,7 @@ fn test_module_bloom_dump_and_load() {
 #[test]
 fn test_module_bloom_dump_iterator() {
     let ctx = TestContext::with_modules(&[Module::Bloom]);
+    skip_if_context_does_not_support!(ctx, REDIS_BLOOM_ANY);
     let mut con = ctx.connection();
 
     // Create a bloom filter with two elements

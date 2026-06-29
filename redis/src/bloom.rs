@@ -21,6 +21,18 @@ pub enum BloomFilterInfoType {
     Items,
     /// Expansion rate of the Bloom filter
     Expansion,
+    /// False positive rate of the Bloom filter
+    ///
+    /// Only available in `valkey-bloom`.
+    Error,
+    /// The tightening ration of the Bloom filter
+    ///
+    /// Only available for scaling Bloom filters in `valkey-bloom`
+    Tightening,
+    /// The maximum capacity the filter can expand to
+    ///
+    /// Only available for scaling Bloom filters in `valkey-bloom`
+    MaximumScaledCapacity,
 }
 
 impl ToRedisArgs for BloomFilterInfoType {
@@ -43,6 +55,15 @@ impl ToRedisArgs for BloomFilterInfoType {
             }
             BloomFilterInfoType::Size => {
                 out.write_arg(b"SIZE");
+            }
+            BloomFilterInfoType::Error => {
+                out.write_arg(b"ERROR");
+            }
+            BloomFilterInfoType::Tightening => {
+                out.write_arg(b"TIGHTENING");
+            }
+            BloomFilterInfoType::MaximumScaledCapacity => {
+                out.write_arg(b"MAXSCALEDCAPACITY");
             }
         }
     }
@@ -75,7 +96,7 @@ impl PartialEq<f64> for BloomFilterInfoTypeResponse {
 impl FromRedisValue for BloomFilterInfoTypeResponse {
     fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         match v {
-            // type-less RESP2 query gives an array of exactly one `Int`
+            // type-less `redisbloom` RESP2 query gives an array of exactly one `Int`
             Value::Array(items) => {
                 let mut item_iter = items.into_iter();
                 let Some(value) = item_iter.next() else {
@@ -93,7 +114,7 @@ impl FromRedisValue for BloomFilterInfoTypeResponse {
                 })
             }
 
-            // type-less RESP3 query gives a map of exactly one pair of (`SimpleString`, `Int`)
+            // type-less `redisbloom` RESP3 query gives a map of exactly one pair of (`SimpleString`, `Int`)
             Value::Map(items) => {
                 let mut item_iter = items.into_iter();
                 let Some((_, value)) = item_iter.next() else {
@@ -109,15 +130,13 @@ impl FromRedisValue for BloomFilterInfoTypeResponse {
                 })
             }
 
-            // typed query gives an `Int`
-            Value::Int(_) => Ok(Self {
+            // `valkey-bloom`'s `EXPANSION` response to non-scaling keys is `Nil`
+            Value::Nil => Ok(Self { value: 0. }),
+
+            // typed `redisbloom` queries and `valkey-bloom` queries give an `Int` or `SimpleString` containing a float
+            _ => Ok(Self {
                 value: f64::from_redis_value(v)?,
             }),
-
-            _ => invalid_type_error!(
-                v,
-                "expected array of an int, map to an int, or int response"
-            ),
         }
     }
 }
@@ -322,7 +341,8 @@ mod tests {
     #[test]
     fn info_type_response_from_value_wrong_type() {
         // The value to try to parse from.
-        // An `Array` or `Map` is expected, but it is text, so conversion should fail.
+        // An `Array` or `Map` or something convertible to a float is expected, but it is text,
+        // so conversion should fail.
         let value = Value::SimpleString("foo".to_string());
 
         // Actual parsing
@@ -330,7 +350,7 @@ mod tests {
             .expect_err("conversion should fail");
 
         // Checking the error message
-        assert!(err.to_string().contains("expected array"));
+        assert!(err.to_string().contains("string"));
     }
 
     /// Tries to assure that [`BloomFilterInfoTypeResponse`] conversion from a too short RESP2 response gives a useful error
@@ -472,6 +492,34 @@ mod tests {
 
         // Checking the response
         assert_eq!(*response, 42.);
+    }
+
+    /// Tries to assure that [`BloomFilterInfoTypeResponse`] conversion from a String encoded float succeeds
+    #[test]
+    fn info_type_response_from_value_ok_float_in_string() {
+        // The value to try to parse from.
+        let value = Value::SimpleString("42.4711".to_string());
+
+        // Actual parsing
+        let response = BloomFilterInfoTypeResponse::from_redis_value(value)
+            .expect("conversion should succeed");
+
+        // Checking the response
+        assert_eq!(*response, 42.4711);
+    }
+
+    /// Tries to assure that [`BloomFilterInfoTypeResponse`] conversion from a `Nil` succeeds
+    #[test]
+    fn info_type_response_from_value_ok_nil() {
+        // The value to try to parse from.
+        let value = Value::Nil;
+
+        // Actual parsing
+        let response = BloomFilterInfoTypeResponse::from_redis_value(value)
+            .expect("conversion should succeed");
+
+        // Checking the response
+        assert_eq!(*response, 0.);
     }
 
     /// Tries to assure that [`BloomFilterDumpChunk`] conversion from non-array gives a useful error
