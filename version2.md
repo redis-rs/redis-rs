@@ -10,6 +10,43 @@ redis = "2"
 
 ## Breaking Changes
 
+### Removed `zinterstore_*` and `zunionstore_*` commands in favor of `zinterstore`, `zinterstore_with_weights`, `zunionstore`, and `zunionstore_with_weights`
+
+The following commands have been removed:
+
+- `zinterstore_min`, `zinterstore_max`
+- `zinterstore_weights`, `zinterstore_min_weights`, `zinterstore_max_weights`
+- `zunionstore_min`, `zunionstore_max`
+- `zunionstore_weights`, `zunionstore_min_weights`, `zunionstore_max_weights`
+
+Adding more options to these commands would have caused an exponential explosion of variants. Instead, there are now two variants for each command:
+
+- `zinterstore(dstkey, keys, options)` / `zunionstore(dstkey, keys, options)` — keys without weights
+- `zinterstore_with_weights(dstkey, keys_and_weights, options)` / `zunionstore_with_weights(dstkey, keys_and_weights, options)` — keys paired with weights as `&[(key, weight)]`
+
+The `SortedSetStoreOptions` struct carries only the optional `AGGREGATE` modifier and defaults to `SUM`.
+
+**Migration:**
+
+```rust
+use redis::{Commands, SortedSetStoreOptions, Aggregate};
+
+// Before:
+con.zinterstore("out", &["zset1", "zset2"])?;
+con.zinterstore_min("out", &["zset1", "zset2"])?;
+con.zinterstore_weights("out", &[("zset1", 2), ("zset2", 3)])?;
+con.zinterstore_min_weights("out", &[("zset1", 2), ("zset2", 3)])?;
+
+// After:
+con.zinterstore("out", &["zset1", "zset2"], SortedSetStoreOptions::default())?;
+con.zinterstore("out", &["zset1", "zset2"], SortedSetStoreOptions::default().aggregate(Aggregate::Min))?;
+con.zinterstore_with_weights("out", &[("zset1", 2), ("zset2", 3)], SortedSetStoreOptions::default())?;
+con.zinterstore_with_weights("out", &[("zset1", 2), ("zset2", 3)], SortedSetStoreOptions::default().aggregate(Aggregate::Min))?;
+```
+
+The same pattern applies to `zunionstore` and `zunionstore_with_weights`.
+
+
 ### `cmd_iter` yields `CmdRef` instead of `&Cmd` (Breaking Change)
 
 **Most users can upgrade to 2.0.0 with no code changes.** The flattening is an internal representation change; the pipeline builder API (`cmd`, `arg`, `add_command`, `ignore`, `query`, `query_async`, `exec`, …) is unchanged. The only adjustments are needed if you iterate a pipeline's commands or call `with_capacity` directly.

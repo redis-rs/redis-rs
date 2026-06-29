@@ -12,12 +12,14 @@ mod basic {
     use rand::{RngExt, rng};
 
     use redis::{
-        Client, Connection, ConnectionInfo, ConnectionLike, ControlFlow, CopyOptions, ErrorKind,
-        ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, HashFieldExpirationOptions,
+        Aggregate, Client, Connection, ConnectionInfo, ConnectionLike, ControlFlow, CopyOptions,
+        ErrorKind, ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck,
+        HashFieldExpirationOptions,
         IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply},
         MSetOptions, ProtocolVersion, PubSubCommands, PushInfo, PushKind, RedisConnectionInfo,
-        RedisResult, Role, ScanOptions, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs,
-        TypedCommands, UpdateCheck, Value, ValueComparison, ValueType, cmd,
+        RedisResult, Role, ScanOptions, SetExpiry, SetOptions, SortedSetAddOptions,
+        SortedSetStoreOptions, ToRedisArgs, TypedCommands, UpdateCheck, Value, ValueComparison,
+        ValueType, cmd,
     };
     use redis::{RedisError, ServerErrorKind};
     use redis::{calculate_value_digest, is_valid_16_bytes_hex_digest};
@@ -2330,7 +2332,7 @@ mod basic {
     }
 
     #[test]
-    fn test_zinterstore_weights() {
+    fn test_zinterstore_options() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
@@ -2339,9 +2341,19 @@ mod basic {
         con.zadd_multiple("zset2", &[(1, "one"), (2, "two"), (3, "three")])
             .unwrap();
 
-        // zinterstore_weights
+        // zinterstore with SUM aggregation (default)
         assert_eq!(
-            con.zinterstore_weights("out", &[("zset1", 2), ("zset2", 3)]),
+            con.zinterstore("out", &["zset1", "zset2"], SortedSetStoreOptions::default()),
+            Ok(2)
+        );
+
+        // zinterstore with weights
+        assert_eq!(
+            con.zinterstore_with_weights(
+                "out",
+                &[("zset1", 2), ("zset2", 3)],
+                SortedSetStoreOptions::default()
+            ),
             Ok(2)
         );
 
@@ -2350,9 +2362,13 @@ mod basic {
             Ok(vec![("one".to_string(), 5.0), ("two".to_string(), 10.0)])
         );
 
-        // zinterstore_min_weights
+        // zinterstore_with_weights with MIN aggregation
         assert_eq!(
-            con.zinterstore_min_weights("out", &[("zset1", 2), ("zset2", 3)]),
+            con.zinterstore_with_weights(
+                "out",
+                &[("zset1", 2), ("zset2", 3)],
+                SortedSetStoreOptions::default().aggregate(Aggregate::Min)
+            ),
             Ok(2)
         );
 
@@ -2361,9 +2377,13 @@ mod basic {
             Ok(vec![("one".to_string(), 2.0), ("two".to_string(), 4.0),])
         );
 
-        // zinterstore_max_weights
+        // zinterstore_with_weights with MAX aggregation
         assert_eq!(
-            con.zinterstore_max_weights("out", &[("zset1", 2), ("zset2", 3)]),
+            con.zinterstore_with_weights(
+                "out",
+                &[("zset1", 2), ("zset2", 3)],
+                SortedSetStoreOptions::default().aggregate(Aggregate::Max)
+            ),
             Ok(2)
         );
 
@@ -2374,7 +2394,7 @@ mod basic {
     }
 
     #[test]
-    fn test_zunionstore_weights() {
+    fn test_zunionstore_options() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
@@ -2383,9 +2403,19 @@ mod basic {
         con.zadd_multiple("zset2", &[(1, "one"), (2, "two"), (3, "three")])
             .unwrap();
 
-        // zunionstore_weights
+        // zunionstore with SUM aggregation (default)
         assert_eq!(
-            con.zunionstore_weights("out", &[("zset1", 2), ("zset2", 3)]),
+            con.zunionstore("out", &["zset1", "zset2"], SortedSetStoreOptions::default()),
+            Ok(3)
+        );
+
+        // zunionstore with weights
+        assert_eq!(
+            con.zunionstore_with_weights(
+                "out",
+                &[("zset1", 2), ("zset2", 3)],
+                SortedSetStoreOptions::default()
+            ),
             Ok(3)
         );
 
@@ -2397,19 +2427,14 @@ mod basic {
                 ("two".to_string(), 10.0)
             ])
         );
-        // test converting to double
-        assert_eq!(
-            con.zrange_withscores("out", 0, -1),
-            Ok(vec![
-                ("one".to_string(), 5.0),
-                ("three".to_string(), 9.0),
-                ("two".to_string(), 10.0)
-            ])
-        );
 
-        // zunionstore_min_weights
+        // zunionstore_with_weights with MIN aggregation
         assert_eq!(
-            con.zunionstore_min_weights("out", &[("zset1", 2), ("zset2", 3)]),
+            con.zunionstore_with_weights(
+                "out",
+                &[("zset1", 2), ("zset2", 3)],
+                SortedSetStoreOptions::default().aggregate(Aggregate::Min)
+            ),
             Ok(3)
         );
 
@@ -2422,9 +2447,13 @@ mod basic {
             ])
         );
 
-        // zunionstore_max_weights
+        // zunionstore_with_weights with MAX aggregation
         assert_eq!(
-            con.zunionstore_max_weights("out", &[("zset1", 2), ("zset2", 3)]),
+            con.zunionstore_with_weights(
+                "out",
+                &[("zset1", 2), ("zset2", 3)],
+                SortedSetStoreOptions::default().aggregate(Aggregate::Max)
+            ),
             Ok(3)
         );
 
