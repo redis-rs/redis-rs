@@ -42,17 +42,29 @@ test:
 	@echo "===================================================================="
 	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run --locked -p redis-test
 
+test-module-json:
+	@echo "===================================================================="
+	@echo "Testing RESP2 with RedisJSON module"
+	@echo "===================================================================="
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo nextest run -p redis --locked --all-features --test test_module_json
 
-test-module:
 	@echo "===================================================================="
-	@echo "Testing RESP2 with module support enabled (currently only RedisJSON)"
+	@echo "Testing RESP3 with RedisJSON module"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo nextest run -p redis --locked --all-features -E 'test(test_module)'
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 PROTOCOL=RESP3 cargo nextest run -p redis --all-features --test test_module_json
+
+test-module-bloom:
+	@echo "===================================================================="
+	@echo "Testing RESP2 with RedisBloom module"
+	@echo "===================================================================="
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo nextest run -p redis --locked --all-features --test test_module_bloom
 
 	@echo "===================================================================="
-	@echo "Testing RESP3 with module support enabled (currently only RedisJSON)"
+	@echo "Testing RESP3 with RedisBloom module"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 PROTOCOL=RESP3 cargo nextest run -p redis --all-features -E 'test(test_module)'
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 PROTOCOL=RESP3 cargo nextest run -p redis --all-features --test test_module_bloom
+
+test-modules: test-module-json test-module-bloom
 
 test-single: test
 

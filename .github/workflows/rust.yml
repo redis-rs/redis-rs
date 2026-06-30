@@ -9,6 +9,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   REDISRS_REDIS_JSON_PATH: "/tmp/librejson.so"
+  REDISRS_REDIS_BLOOM_PATH: "/tmp/redisbloom.so"
 
 concurrency:
   group: "${{ github.workflow }}-${{ github.head_ref || github.run_id || github.ref }}"
@@ -33,12 +34,13 @@ jobs:
             {  db-org: redis, db-name: redis, db-version: 6.2.22 },
             {  db-org: redis, db-name: redis, db-version: 7.0.15, json-module-version: v2.6.22 },
             {  db-org: redis, db-name: redis, db-version: 7.4.9, json-module-version: v2.6.22 },
-            {  db-org: redis, db-name: redis, db-version: 8.0.6, json-module-version: bundled },
-            {  db-org: redis, db-name: redis, db-version: 8.8.0, json-module-version: bundled },
+            {  db-org: redis, db-name: redis, db-version: 8.0.6, json-module-version: bundled, bloom-module-version: bundled },
+            {  db-org: redis, db-name: redis, db-version: 8.8.0, json-module-version: bundled, bloom-module-version: bundled },
+            # valkey-bloom has some quirks with Valkey <8.1, so we only test it on >=8.1
             {  db-org: valkey-io, db-name: valkey, db-version: 7.2.13, json-module-version: v2.6.22 },
             {  db-org: valkey-io, db-name: valkey, db-version: 8.0.9, json-module-version: v2.6.22 },
             # Skipping ValKey 8.1 as it's too similar to 8.0
-            {  db-org: valkey-io, db-name: valkey, db-version: 9.0.4, json-module-version: v2.6.22 },
+            {  db-org: valkey-io, db-name: valkey, db-version: 9.0.4, json-module-version: v2.6.22, bloom-module-version: "valkey-bloom:1.0.1" },
             # Skipping ValKey 9.1 as it's too similar to 9.0
           ]
 
@@ -65,6 +67,11 @@ jobs:
         if: matrix.config.json-module-version == 'bundled'
         run: |
           cp "$HOME/db/rejson.so" "$REDISRS_REDIS_JSON_PATH"
+
+      - name: Copy bundled RedisBloom into place
+        if: matrix.config.bloom-module-version == 'bundled'
+        run: |
+          cp "$HOME/db/redisbloom.so" "$REDISRS_REDIS_BLOOM_PATH"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain/@master
@@ -141,9 +148,44 @@ jobs:
             exit 1
           fi
 
-      - name: Run module-specific tests
+      - name: Run RedisJSON tests
         if: matrix.config.json-module-version != ''
-        run: make test-module
+        run: make test-module-json
+
+      - name: Load Valkey Bloom module from cache
+        if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:')
+        id: cache-valkey-bloom
+        uses: actions/cache@v5
+        with:
+          path: |
+            /tmp/valkey-bloom/target/release/libvalkey_bloom.so
+          key: ${{ runner.os }}-valkey-bloom-${{ matrix.config.bloom-module-version }}
+
+      - name: Build Valkey Bloom repo
+        if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:') && steps.cache-valkey-bloom.cache-hit != 'true'
+        env:
+          VALKEY_BLOOM: ${{matrix.config.bloom-module-version}}
+        shell: bash
+        run: |
+          # Fetch and unpack valkey-bloom's code
+          cd /tmp
+          wget "https://github.com/valkey-io/valkey-bloom/archive/refs/tags/${VALKEY_BLOOM#*:}.tar.gz"
+          tar -xzvf "${VALKEY_BLOOM#*:}.tar.gz"
+          rm -rf "valkey-bloom"
+          mv "valkey-bloom-${VALKEY_BLOOM#*:}" "valkey-bloom"
+
+          # Build it
+          cd "valkey-bloom"
+          RUSTFLAGS="-D warnings" cargo build --all --all-targets  --release
+
+      - name: Copy Valkey Bloom into place
+        if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:')
+        run: |
+          cp /tmp/valkey-bloom/target/release/libvalkey_bloom.so "$REDISRS_REDIS_BLOOM_PATH"
+
+      - name: Run RedisBloom tests
+        if: matrix.config.bloom-module-version != ''
+        run: make test-module-bloom
 
       - name: Cache RedisJSON
         if: matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
@@ -171,6 +213,25 @@ jobs:
           db-name: ${{ matrix.config.db-name }}
           db-version: ${{ matrix.config.db-version }}
 
+      - name: Load Valkey Bloom module from cache
+        if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:')
+        id: cache-valkey-bloom
+        uses: actions/cache@v5
+        with:
+          path: |
+            /tmp/valkey-bloom/target/release/libvalkey_bloom.so
+          key: ${{ runner.os }}-valkey-bloom-${{ matrix.config.bloom-module-version }}
+
+      - name: Copy Valkey Bloom into place
+        if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:')
+        run: |
+          cp /tmp/valkey-bloom/target/release/libvalkey_bloom.so "$REDISRS_REDIS_BLOOM_PATH"
+
+      - name: Copy bundled RedisBloom into place
+        if: matrix.config.bloom-module-version == 'bundled'
+        run: |
+          cp "$HOME/db/redisbloom.so" "$REDISRS_REDIS_BLOOM_PATH"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain/@master
         with:
@@ -178,8 +239,15 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: start-redis
-        run: redis-server &
+      - name: Start Redis
+        run: |
+          EXTRA_OPTS=()
+          if [ -e "$REDISRS_REDIS_BLOOM_PATH" ]
+          then
+            echo "Adding module '$REDISRS_REDIS_BLOOM_PATH'"
+            EXTRA_OPTS+=("--loadmodule" "$REDISRS_REDIS_BLOOM_PATH")
+          fi
+          redis-server "${EXTRA_OPTS[@]}" &
 
       - name: basic
         run: cargo run --example basic
@@ -205,6 +273,9 @@ jobs:
         run: cargo run --example async-resp3-pub-sub --features tokio-comp,connection-manager
       - name: async-scan
         run: cargo run --example async-scan --features tokio-comp
+      - name: module bloom
+        if: matrix.config.bloom-module-version != ''
+        run: cargo run --example bloom --features bloom
 
   lint:
     runs-on: ubuntu-latest
