@@ -1341,7 +1341,7 @@ where
         }
     }
 
-    fn poll_repairs(&mut self, cx: &mut task::Context<'_>) {
+    fn poll_reconnects(&mut self, cx: &mut task::Context<'_>) {
         while let Poll::Ready(Some(())) = Pin::new(&mut self.reconnect_futures).poll_next(cx) {}
     }
 
@@ -1585,36 +1585,20 @@ where
         trace!("poll_flush: {:?}", self.state);
         loop {
             self.send_refresh_error();
-            self.poll_repairs(cx);
+            self.poll_reconnects(cx);
 
-            let block_dispatch = match self.as_mut().poll_recover(cx) {
-                Poll::Ready(Err(err)) => {
-                    // We failed to reconnect, while we will try again we will report the
-                    // error if we can to avoid getting trapped in an infinite loop of
-                    // trying to reconnect
-                    self.refresh_error = Some(err);
+            if let Err(err) = ready!(self.as_mut().poll_recover(cx)) {
+                self.refresh_error = Some(err);
 
-                    // Give other tasks a chance to progress before we try to recover
-                    // again. Since the future may not have registered a wake up we do so
-                    // now so the task is not forgotten
-                    cx.waker().wake_by_ref();
-                    return Poll::Pending;
-                }
-                Poll::Ready(Ok(())) => false,
-                Poll::Pending => matches!(self.state, ConnectionState::Recover(_)),
-            };
-
-            if !block_dispatch {
-                self.dispatch_pending();
+                // Give other tasks a chance to progress before we try to recover
+                // again. Since the future may not have registered a wake up we do so
+                // now so the task is not forgotten
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
             }
 
-            match ready!(self.poll_in_flight(cx)) {
-                PollFlushAction::None => {
-                    if matches!(self.state, ConnectionState::Recover(_)) {
-                        return Poll::Pending;
-                    }
-                    return Poll::Ready(Ok(()));
-                }
+            match ready!(self.poll_complete(cx)) {
+                PollFlushAction::None => return Poll::Ready(Ok(())),
                 PollFlushAction::RebuildSlots => {
                     self.state = ConnectionState::Recover(RecoverFuture::RecoverSlots(Box::pin(
                         self.inner.clone().refresh_slots(),
