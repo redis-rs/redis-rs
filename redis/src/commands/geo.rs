@@ -144,6 +144,7 @@ pub enum RadiusOrder {
 pub struct RadiusOptions {
     with_coord: bool,
     with_dist: bool,
+    with_hash: bool,
     count: Option<usize>,
     order: RadiusOrder,
     store: Option<Vec<Vec<u8>>>,
@@ -168,6 +169,12 @@ impl RadiusOptions {
     /// Return the `longitude, latitude` coordinates of the matching items.
     pub fn with_coord(mut self) -> Self {
         self.with_coord = true;
+        self
+    }
+
+    /// Return the server's raw geohash score of each matching item.
+    pub fn with_hash(mut self) -> Self {
+        self.with_hash = true;
         self
     }
 
@@ -206,6 +213,10 @@ impl ToRedisArgs for RadiusOptions {
             out.write_arg(b"WITHDIST");
         }
 
+        if self.with_hash {
+            out.write_arg(b"WITHHASH");
+        }
+
         if let Some(n) = self.count {
             out.write_arg(b"COUNT");
             out.write_arg_fmt(n);
@@ -240,6 +251,9 @@ impl ToRedisArgs for RadiusOptions {
         if self.with_dist {
             n += 1;
         }
+        if self.with_hash {
+            n += 1;
+        }
         if self.count.is_some() {
             n += 2;
         }
@@ -265,6 +279,8 @@ pub struct RadiusSearchResult {
     pub coord: Option<Coord<f64>>,
     /// The distance if available.
     pub dist: Option<f64>,
+    /// The geohash if available.
+    pub hash: Option<i64>,
 }
 
 impl FromRedisValue for RadiusSearchResult {
@@ -276,6 +292,7 @@ impl FromRedisValue for RadiusSearchResult {
                     name: s,
                     coord: None,
                     dist: None,
+                    hash: None,
                 })
             }
             Value::Array(items) => RadiusSearchResult::parse_multi_values(items),
@@ -294,25 +311,53 @@ impl RadiusSearchResult {
             _ => return Err(arcstr::literal!("Missing member name").into()),
         };
 
-        let (dist, coord) = match (iter.next(), iter.next()) {
-            (None, None) => (None, None),
-            (Some(Value::Array(coords)), None) => {
-                (None, Some(Coord::from_redis_value(Value::Array(coords))?))
-            }
-            (Some(dist), coord) => {
-                let dist = FromRedisValue::from_redis_value(dist)?;
+        // The remaining fields are optional. As their order is fixed and their types are different,
+        // we can parse piece by piece to avoid combinatorial explosion of having to cover all
+        // cases.
 
-                let coord = match coord.map(FromRedisValue::from_redis_value) {
-                    Some(Ok(c)) => Some(c),
-                    _ => None,
-                };
+        // The fields we need to fill
+        let mut coord = None;
+        let mut hash = None;
+        let mut dist = None;
 
-                (dist, coord)
-            }
-            _ => invalid_type_error!("Response type not RadiusSearchResult compatible."),
+        // The next value to parse to one of the fields.
+        let mut opt_value = iter.next();
+
+        // If present, the distance is first
+        if let Some(dist_value) = &opt_value
+            && let Value::BulkString(_) = dist_value
+        {
+            dist = Some(f64::from_redis_value_ref(dist_value)?);
+            opt_value = iter.next();
+        }
+
+        // If present, the hash is second
+        if let Some(hash_value) = &opt_value
+            && let Value::Int(hash_ref) = hash_value
+        {
+            hash = Some(*hash_ref);
+            opt_value = iter.next();
+        }
+
+        // If present, the coordinates are third
+        if let Some(coords_value) = &opt_value
+            && let Value::Array(_) = coords_value
+        {
+            coord = Some(Coord::from_redis_value_ref(coords_value)?);
+            opt_value = iter.next();
+        }
+
+        // We should have parsed all that's there. So we flag an error, if there is more.
+        if opt_value.is_some() {
+            invalid_type_error!("Response type not RadiusSearchResult compatible.")
         };
 
-        Ok(RadiusSearchResult { name, coord, dist })
+        Ok(RadiusSearchResult {
+            name,
+            coord,
+            dist,
+            hash,
+        })
     }
 }
 
@@ -347,7 +392,12 @@ mod tests {
         // Some combinations with WITH* options
         let opts = RadiusOptions::default;
 
-        assert_args!(opts().with_coord().with_dist(), "WITHCOORD", "WITHDIST");
+        assert_args!(
+            opts().with_coord().with_dist().with_hash(),
+            "WITHCOORD",
+            "WITHDIST",
+            "WITHHASH"
+        );
 
         assert_args!(opts().limit(50), "COUNT", "50");
 
