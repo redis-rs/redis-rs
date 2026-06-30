@@ -97,7 +97,7 @@ use std::{
     io,
     ops::Deref,
     pin::Pin,
-    sync::{Arc, Mutex, RwLock as StdRwLock},
+    sync::{Arc, Mutex},
     task::{self, Poll},
     time::Duration,
 };
@@ -499,7 +499,6 @@ struct InnerCore<C> {
     initial_nodes: Vec<ConnectionInfo>,
     subscription_tracker: Option<Mutex<SubscriptionTracker>>,
     routing_strategy: Option<Box<dyn ReadRoutingStrategy>>,
-    reconnecting: StdRwLock<HashSet<NodeAddress>>,
 }
 
 /// This is a clonable wrapper.
@@ -880,7 +879,6 @@ where
             .cloned();
 
         if let Some(ref addr) = preferred
-            && !self.is_reconnecting(addr)
             && let Some(conn) = read_guard.0.get(addr).and_then(ConnState::connected)
         {
             return Ok((addr.clone(), conn));
@@ -891,9 +889,6 @@ where
             .shard_fallback_addrs(&route)
             .into_iter()
             .find_map(|candidate| {
-                if self.is_reconnecting(&candidate) {
-                    return None;
-                }
                 read_guard
                     .0
                     .get(&candidate)
@@ -1086,10 +1081,6 @@ where
             let _ = self.pending_requests_tx.send(request);
         }
     }
-
-    fn is_reconnecting(&self, addr: &NodeAddress) -> bool {
-        self.reconnecting.read().unwrap().contains(addr)
-    }
 }
 
 /// This is the sink for requests sent by the user.
@@ -1109,7 +1100,16 @@ async fn repair_node<C>(core: Core<C>, addr: NodeAddress)
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
 {
-    mark_reconnecting(&mut core.conn_lock.write().await.0, addr.clone());
+    {
+        let mut guard = core.conn_lock.write().await;
+        if matches!(
+            guard.0.get(&addr),
+            Some(ConnState::Reconnecting(_) | ConnState::Connecting)
+        ) {
+            return;
+        }
+        mark_reconnecting(&mut guard.0, addr.clone());
+    }
 
     let mut backoff = Duration::from_millis(50);
     loop {
@@ -1156,8 +1156,6 @@ where
         boxed_sleep(backoff).await;
         backoff = (backoff * 2).min(Duration::from_secs(5));
     }
-
-    core.reconnecting.write().unwrap().remove(&addr);
 }
 
 fn boxed_sleep(duration: Duration) -> BoxFuture<'static, ()> {
@@ -1242,7 +1240,6 @@ where
             initial_nodes: initial_nodes.to_vec(),
             subscription_tracker,
             routing_strategy,
-            reconnecting: StdRwLock::new(HashSet::new()),
         });
         let core = Core(inner);
         let mut inner = ClusterConnInner {
@@ -1323,18 +1320,19 @@ where
         }
     }
 
-    fn start_repairs(&mut self, addrs: HashSet<NodeAddress>) {
-        let mut new_repairs = Vec::new();
-        {
-            let mut guard = self.inner.reconnecting.write().unwrap();
-            for addr in addrs {
-                if guard.insert(addr.clone()) {
-                    new_repairs.push(repair_node(self.inner.clone(), addr));
-                }
+    fn add_reconnect_futures(&mut self, addrs: HashSet<NodeAddress>) {
+        let in_progress = self.inner.conn_lock.try_read().ok();
+        for addr in addrs {
+            if let Some(guard) = &in_progress
+                && matches!(
+                    guard.0.get(&addr),
+                    Some(ConnState::Reconnecting(_) | ConnState::Connecting)
+                )
+            {
+                continue;
             }
-        }
-        for repair in new_repairs {
-            self.repair_futures.push(Box::pin(repair));
+            self.repair_futures
+                .push(Box::pin(repair_node(self.inner.clone(), addr)));
         }
     }
 
@@ -1618,7 +1616,7 @@ where
                     )));
                 }
                 PollFlushAction::Reconnect(addrs) => {
-                    self.start_repairs(addrs);
+                    self.add_reconnect_futures(addrs);
                 }
                 PollFlushAction::ReconnectFromInitialConnections => {
                     self.state = ConnectionState::Recover(RecoverFuture::ReconnectInitial(
