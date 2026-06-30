@@ -1350,9 +1350,8 @@ where
             std::mem::replace(&mut self.state, ConnectionState::PollComplete)
         {
             match fut {
-                RecoverFuture::RecoverSlots(fut) | RecoverFuture::ReconnectInitial(fut) => {
-                    fut.await?
-                }
+                RecoverFuture::RecoverSlots(fut) => fut.await?,
+                RecoverFuture::ReconnectInitial(fut) => fut.await?,
             }
         }
         Ok(())
