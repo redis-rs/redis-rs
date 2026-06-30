@@ -135,7 +135,7 @@ use futures_util::{
     sink::Sink,
     stream::{self, Stream, StreamExt},
 };
-use log::{debug, trace, warn};
+use log::{debug, info, trace, warn};
 use rand::{rng, seq::IteratorRandom};
 use request::{CmdArg, PendingRequest, Request, RequestState, Retry};
 use routing::{InternalRoutingInfo, InternalSingleNodeRouting, route_for_pipeline};
@@ -1091,12 +1091,15 @@ struct ClusterConnInner<C> {
     state: ConnectionState,
     #[allow(clippy::complexity)]
     in_flight_requests: stream::FuturesUnordered<Pin<Box<Request<C>>>>,
-    repair_futures: stream::FuturesUnordered<BoxFuture<'static, ()>>,
+    reconnect_futures: stream::FuturesUnordered<BoxFuture<'static, ()>>,
     pending_requests_rx: mpsc::UnboundedReceiver<PendingRequest<C>>,
     refresh_error: Option<RedisError>,
 }
 
-async fn repair_node<C>(core: Core<C>, addr: NodeAddress)
+// Keep trying to repair `addr` until it is re-connected, or the node
+// has left the topology.
+// This is a continuous attempt to reconnect rather than one-shot.
+async fn reconnect_loop<C>(core: Core<C>, addr: NodeAddress)
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
 {
@@ -1143,7 +1146,7 @@ where
                     }
                 };
                 if installed {
-                    warn!("ClusterConnInner: reconnected to {addr:?}");
+                    info!("ClusterConnInner: reconnected to {addr:?}");
                     core.resubscribe();
                 }
                 break;
@@ -1154,7 +1157,7 @@ where
         }
 
         boxed_sleep(backoff).await;
-        backoff = (backoff * 2).min(Duration::from_secs(5));
+        backoff = (backoff * 2).min(Duration::from_secs(1));
     }
 }
 
@@ -1245,7 +1248,7 @@ where
         let mut inner = ClusterConnInner {
             inner: core.clone(),
             in_flight_requests: Default::default(),
-            repair_futures: Default::default(),
+            reconnect_futures: Default::default(),
             pending_requests_rx,
             refresh_error: None,
             state: ConnectionState::PollComplete,
@@ -1320,7 +1323,9 @@ where
         }
     }
 
-    fn add_reconnect_futures(&mut self, addrs: HashSet<NodeAddress>) {
+    // Create reconnecting futures and register them into `reconnect_futures`
+    // so we can poll make at the next poll_flush iteration.
+    fn register_reconnect_futures(&mut self, addrs: HashSet<NodeAddress>) {
         let in_progress = self.inner.conn_lock.try_read().ok();
         for addr in addrs {
             if let Some(guard) = &in_progress
@@ -1331,13 +1336,13 @@ where
             {
                 continue;
             }
-            self.repair_futures
-                .push(Box::pin(repair_node(self.inner.clone(), addr)));
+            self.reconnect_futures
+                .push(Box::pin(reconnect_loop(self.inner.clone(), addr)));
         }
     }
 
     fn poll_repairs(&mut self, cx: &mut task::Context<'_>) {
-        while let Poll::Ready(Some(())) = Pin::new(&mut self.repair_futures).poll_next(cx) {}
+        while let Poll::Ready(Some(())) = Pin::new(&mut self.reconnect_futures).poll_next(cx) {}
     }
 
     async fn wait_for_initial_connection(&mut self) -> RedisResult<()> {
@@ -1616,7 +1621,7 @@ where
                     )));
                 }
                 PollFlushAction::Reconnect(addrs) => {
-                    self.add_reconnect_futures(addrs);
+                    self.register_reconnect_futures(addrs);
                 }
                 PollFlushAction::ReconnectFromInitialConnections => {
                     self.state = ConnectionState::Recover(RecoverFuture::ReconnectInitial(
