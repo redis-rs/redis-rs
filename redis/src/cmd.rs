@@ -333,11 +333,6 @@ where
     write_command(cmd, args, cursor)
 }
 
-// Both encoding entry points target an in-memory, pre-reserved `Vec<u8>`, so
-// write directly with `extend_from_slice` rather than through the generic
-// `io::Write` machinery (which wraps every one of the ~5 writes per argument in
-// a `Result` and a `write_all` loop). The buffer is sized by `args_len` first,
-// so these extends never reallocate on the hot path.
 fn write_command<'a, I>(cmd: &mut Vec<u8>, args: I, cursor: u64)
 where
     I: IntoIterator<Item = Arg<&'a [u8]>> + Clone + ExactSizeIterator,
