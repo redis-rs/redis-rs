@@ -358,6 +358,12 @@ macro_rules! implement_pipeline_commands {
             }
 
             fn filter_ignored_results(&self, resp: Vec<Value>) -> Vec<Value> {
+                // Common case: nothing was `.ignore()`d, so every result is kept.
+                // Return the response as-is instead of rebuilding the whole
+                // `Vec<Value>` (which would reallocate and move every element).
+                if self.ignored_commands.is_empty() {
+                    return resp;
+                }
                 resp.into_iter()
                     .enumerate()
                     .filter_map(|(index, result)| {
