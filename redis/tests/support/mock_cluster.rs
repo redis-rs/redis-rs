@@ -9,7 +9,7 @@ use redis::{
     cluster::{self, ClusterClient, ClusterClientBuilder},
 };
 
-use redis::{IntoConnectionInfo, RedisResult, Value};
+use redis::{IntoConnectionInfo, RedisError, RedisResult, Value};
 
 #[cfg(feature = "cluster-async")]
 use redis::{RedisFuture, aio, cluster_async};
@@ -213,6 +213,13 @@ pub fn respond_startup_with_replica_using_config(
     } else {
         Ok(())
     }
+}
+
+pub fn broken_pipe_error() -> RedisError {
+    RedisError::from(std::io::Error::new(
+        std::io::ErrorKind::BrokenPipe,
+        "mock-io-error",
+    ))
 }
 
 #[cfg(feature = "cluster-async")]

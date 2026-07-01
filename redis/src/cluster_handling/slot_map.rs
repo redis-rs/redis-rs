@@ -47,6 +47,21 @@ impl SlotMap {
     }
 
     #[cfg(feature = "cluster-async")]
+    pub(crate) fn shard_fallback_addrs(&self, route: &Route) -> Vec<NodeAddress> {
+        let Some(addrs) = self.slots.get(route.slot()) else {
+            return Vec::new();
+        };
+        match route.slot_addr() {
+            SlotAddr::Master => vec![addrs.primary.clone()],
+            SlotAddr::ReplicaOptional | SlotAddr::ReplicaRequired => {
+                let mut candidates = addrs.replicas.clone();
+                candidates.push(addrs.primary.clone());
+                candidates
+            }
+        }
+    }
+
+    #[cfg(feature = "cluster-async")]
     pub fn clear(&mut self) {
         self.slots.clear();
     }

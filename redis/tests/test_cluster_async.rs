@@ -39,13 +39,6 @@ mod cluster_async {
 
     use crate::support::*;
 
-    fn broken_pipe_error() -> RedisError {
-        RedisError::from(std::io::Error::new(
-            std::io::ErrorKind::BrokenPipe,
-            "mock-io-error",
-        ))
-    }
-
     async fn smoke_test_connection(mut connection: impl redis::aio::ConnectionLike) {
         cmd("SET")
             .arg("test")
@@ -2076,7 +2069,7 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_io_error() {
-        let name = "node";
+        let name = "test_async_cluster_io_error";
         let completed = Arc::new(AtomicI32::new(0));
         let MockEnv {
             runtime,
@@ -2109,6 +2102,199 @@ mod cluster_async {
                 .query_async::<Option<i32>>(&mut connection),
         );
 
+        assert_eq!(value, Ok(Some(123)));
+    }
+
+    #[test]
+    fn test_async_cluster_io_error_without_fallback_redirects() {
+        let name = "test_async_cluster_io_error_without_fallback_redirects";
+        let moved_served = Arc::new(AtomicBool::new(false));
+        let moved_served_clone = moved_served.clone();
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(2),
+            name,
+            {
+                let dead = Arc::new(AtomicBool::new(false));
+                move |cmd: &[u8], port| match port {
+                    6379 => {
+                        if dead.load(Ordering::SeqCst) {
+                            return Err(Err(broken_pipe_error()));
+                        }
+                        respond_startup_two_nodes(name, cmd)?;
+                        dead.store(true, Ordering::SeqCst);
+                        Err(Err(broken_pipe_error()))
+                    }
+                    6380 => {
+                        respond_startup_two_nodes(name, cmd)?;
+                        moved_served_clone.store(true, Ordering::SeqCst);
+                        Err(parse_redis_value(
+                            format!("-MOVED 123 {name}:6379\r\n").as_bytes(),
+                        ))
+                    }
+                    _ => panic!("unexpected port {port}"),
+                }
+            },
+        );
+
+        let result = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<Option<i32>>(&mut connection),
+        );
+
+        assert!(
+            moved_served.load(Ordering::SeqCst),
+            "with no in-shard fallback the request should fall through to another shard's connection and receive a MOVED",
+        );
+        assert_eq!(
+            result.unwrap_err().kind(),
+            ErrorKind::Io,
+            "following the MOVED back to the dead shard owner should surface its io error",
+        );
+    }
+
+    #[test]
+    fn test_async_cluster_io_error_recovers_via_repair() {
+        let name = "test_async_cluster_io_error_recovers_via_repair";
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
+            name,
+            {
+                let completed = Arc::new(AtomicI32::new(0));
+                move |cmd: &[u8], port| {
+                    respond_startup_two_nodes(name, cmd)?;
+                    // 6379 and 6380 are the two primaries.
+                    // 6379 fails the first data command, then recovers.
+                    match port {
+                        6379 => match completed.fetch_add(1, Ordering::SeqCst) {
+                            0 => Err(Err(broken_pipe_error())),
+                            _ => Err(Ok(redis_value!("123"))),
+                        },
+                        6380 => panic!("Node should not be called"),
+                        _ => panic!("unexpected port {port}"),
+                    }
+                }
+            },
+        );
+
+        let first = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<Option<i32>>(&mut connection),
+        );
+        assert_eq!(
+            first.unwrap_err().kind(),
+            ErrorKind::Io,
+            "first call should surface the underlying connection reset",
+        );
+
+        let second = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<Option<i32>>(&mut connection),
+        );
+        assert_eq!(second, Ok(Some(123)));
+    }
+
+    #[test]
+    fn test_async_cluster_reconnect_does_not_stall_healthy_shard() {
+        let name = "test_async_cluster_reconnect_does_not_stall_healthy_shard";
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
+            name,
+            move |cmd: &[u8], port| {
+                respond_startup_two_nodes(name, cmd)?;
+                // 6379 and 6380 are the two primaries.
+                // "test" key goes to 6379, which is permanently down after the handshake.
+                // "foo" key goes to 6380.
+                match port {
+                    6379 => Err(Err(broken_pipe_error())),
+                    6380 => Err(Ok(redis_value!("123"))),
+                    _ => panic!("unexpected port {port}"),
+                }
+            },
+        );
+
+        let downed = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<Option<i32>>(&mut connection),
+        );
+        assert_eq!(downed.unwrap_err().kind(), ErrorKind::Io);
+
+        let healthy = runtime.block_on(
+            cmd("GET")
+                .arg("foo")
+                .query_async::<Option<i32>>(&mut connection)
+                .timeout(futures_time::time::Duration::from_secs(5)),
+        );
+        assert_eq!(
+            healthy.expect("healthy shard stalled behind the dead shard's reconnect"),
+            Ok(Some(123)),
+        );
+    }
+
+    #[test]
+    fn test_async_cluster_read_routes_around_dead_replica() {
+        let name = "test_async_cluster_read_routes_around_dead_replica";
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .retries(1)
+                .read_routing_strategy(RandomReplicaStrategy),
+            name,
+            {
+                // There are two shards: [6379, 6380] and [6381, 6382].
+                // The primary (6379) is always healthy.
+                // The replica (6380) is dead after the initial handshake.
+                let dead = Arc::new(AtomicBool::new(false));
+                move |cmd: &[u8], port| match port {
+                    6379 => {
+                        respond_startup_with_replica(name, cmd)?;
+                        Err(Ok(redis_value!("123")))
+                    }
+                    6380 => {
+                        if dead.load(Ordering::SeqCst) {
+                            return Err(Err(broken_pipe_error()));
+                        }
+                        respond_startup_with_replica(name, cmd)?;
+                        dead.store(true, Ordering::SeqCst);
+                        Err(Err(broken_pipe_error()))
+                    }
+                    // No data commands should be routed to the second shard.
+                    // Initial handshake is okay.
+                    _ => {
+                        respond_startup_with_replica(name, cmd)?;
+                        panic!("Node {port} should not be called");
+                    }
+                }
+            },
+        );
+
+        let value = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<Option<i32>>(&mut connection),
+        );
         assert_eq!(value, Ok(Some(123)));
     }
 
