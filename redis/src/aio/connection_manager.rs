@@ -878,6 +878,19 @@ mod tests {
     }
 
     #[test]
+    fn test_connection_manager_config_write_backpressure_boundary_default() {
+        let config = ConnectionManagerConfig::new();
+        assert_eq!(config.write_backpressure_boundary, None);
+    }
+
+    #[test]
+    fn test_connection_manager_config_write_backpressure_boundary_custom() {
+        let config =
+            ConnectionManagerConfig::new().set_write_backpressure_boundary(16 * 1024 * 1024);
+        assert_eq!(config.write_backpressure_boundary, Some(16 * 1024 * 1024));
+    }
+
+    #[test]
     fn test_lazy_connection_manager_with_config() {
         // Test that lazy connection manager can be created with custom config
         let client = Client::open("redis://127.0.0.1/").unwrap();
