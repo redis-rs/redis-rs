@@ -46,6 +46,8 @@ pub struct ConnectionManagerConfig {
     pub(crate) cache_config: Option<crate::caching::CacheConfig>,
     pipeline_buffer_size: Option<usize>,
     concurrency_limit: Option<usize>,
+    /// Flush threshold for the outbound write buffer; see [`AsyncConnectionConfig::set_write_backpressure_boundary`].
+    write_backpressure_boundary: Option<usize>,
     /// Optional credentials provider for dynamic authentication (e.g., token-based authentication)
     #[cfg(feature = "token-based-authentication")]
     credentials_provider: Option<std::sync::Arc<dyn crate::auth::StreamingCredentialsProvider>>,
@@ -66,6 +68,7 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             cache_config,
             pipeline_buffer_size,
             concurrency_limit,
+            write_backpressure_boundary,
             #[cfg(feature = "token-based-authentication")]
             credentials_provider,
         } = &self;
@@ -79,6 +82,7 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             .field("resubscribe_automatically", &resubscribe_automatically)
             .field("pipeline_buffer_size", &pipeline_buffer_size)
             .field("concurrency_limit", &concurrency_limit)
+            .field("write_backpressure_boundary", &write_backpressure_boundary)
             .field(
                 "push_sender",
                 if push_sender.is_some() {
@@ -273,6 +277,15 @@ impl ConnectionManagerConfig {
         self
     }
 
+    /// Sets the flush threshold (backpressure boundary) for the outbound write buffer.
+    ///
+    /// See [`AsyncConnectionConfig::set_write_backpressure_boundary`] for full semantics.
+    /// When left unset, the connection keeps `tokio_util`'s default boundary.
+    pub fn set_write_backpressure_boundary(mut self, boundary: usize) -> Self {
+        self.write_backpressure_boundary = Some(boundary);
+        self
+    }
+
     /// Sets a credentials provider for dynamic authentication.
     ///
     /// This is useful for token-based authentication where credentials need to be
@@ -319,6 +332,7 @@ impl Default for ConnectionManagerConfig {
             cache_config: None,
             pipeline_buffer_size: None,
             concurrency_limit: None,
+            write_backpressure_boundary: None,
             #[cfg(feature = "token-based-authentication")]
             credentials_provider: None,
         }
@@ -476,6 +490,7 @@ impl ConnectionManager {
             .set_response_timeout(config.response_timeout);
         connection_config.pipeline_buffer_size = config.pipeline_buffer_size;
         connection_config.concurrency_limit = config.concurrency_limit;
+        connection_config.write_backpressure_boundary = config.write_backpressure_boundary;
 
         #[cfg(feature = "cache-aio")]
         let cache_manager = config
@@ -860,6 +875,19 @@ mod tests {
     fn test_connection_manager_config_concurrency_limit_custom() {
         let config = ConnectionManagerConfig::new().set_concurrency_limit(128);
         assert_eq!(config.concurrency_limit, Some(128));
+    }
+
+    #[test]
+    fn test_connection_manager_config_write_backpressure_boundary_default() {
+        let config = ConnectionManagerConfig::new();
+        assert_eq!(config.write_backpressure_boundary, None);
+    }
+
+    #[test]
+    fn test_connection_manager_config_write_backpressure_boundary_custom() {
+        let config =
+            ConnectionManagerConfig::new().set_write_backpressure_boundary(16 * 1024 * 1024);
+        assert_eq!(config.write_backpressure_boundary, Some(16 * 1024 * 1024));
     }
 
     #[test]

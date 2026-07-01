@@ -352,6 +352,70 @@ mod aio_support {
     use tokio::io::AsyncRead;
     use tokio_util::codec::{Decoder, Encoder};
 
+    /// Widest length-prefix line (`<marker><digits>\r\n`) we scan when sizing
+    /// the read buffer. A 64-bit length is at most 20 digits, so this window
+    /// covers any valid header while keeping the scan bounded no matter how
+    /// large the buffer has grown.
+    const MAX_HEADER_SCAN: usize = 32;
+
+    /// Upper bound on how much a single header peek will eagerly reserve. The
+    /// declared length comes from the peer and has not been validated yet, so
+    /// this caps the allocation a bogus or oversized prefix can trigger before
+    /// the payload has actually arrived; larger frames still grow incrementally
+    /// as data is read.
+    const MAX_ADVISORY_RESERVE: usize = 16 * 1024 * 1024;
+
+    /// Best-effort pre-allocation for length-prefixed frames.
+    ///
+    /// RESP bulk strings (`$`), verbatim strings (`=`) and bulk errors (`!`)
+    /// encode their payload length in the header. When such a frame sits at the
+    /// head of the buffer we can reserve the whole frame in one step, instead of
+    /// letting `tokio_util`'s reader grow the buffer by repeated doubling as a
+    /// large payload streams in.
+    ///
+    /// This is advisory only and never affects correctness: the authoritative
+    /// parse is still performed by [`value`]. It inspects a size-prefixed frame
+    /// at the *head* of the buffer only, so frames nested inside an aggregate
+    /// are not covered (the aggregate header occupies the head instead).
+    fn reserve_for_prefixed_frame(bytes: &mut BytesMut) {
+        let Some(&marker) = bytes.first() else {
+            return;
+        };
+        if !matches!(marker, b'$' | b'=' | b'!') {
+            return;
+        }
+
+        // The length line is short; only scan a small, bounded window for its
+        // terminating CRLF so this stays cheap on large buffers.
+        let scan_end = bytes.len().min(MAX_HEADER_SCAN);
+        let Some(lf) = bytes[..scan_end].iter().position(|&b| b == b'\n') else {
+            return;
+        };
+        if lf < 2 || bytes[lf - 1] != b'\r' {
+            return;
+        }
+
+        // A non-numeric or negative length (e.g. the `$-1` null bulk string)
+        // yields nothing to reserve.
+        let Some(payload_len) = std::str::from_utf8(&bytes[1..lf - 1])
+            .ok()
+            .and_then(|digits| digits.parse::<usize>().ok())
+        else {
+            return;
+        };
+
+        // Whole frame = header line (through `\n`) + payload + trailing CRLF.
+        let total_len = (lf + 1).saturating_add(payload_len).saturating_add(2);
+        if total_len <= bytes.capacity() {
+            return;
+        }
+
+        let additional = total_len
+            .saturating_sub(bytes.len())
+            .min(MAX_ADVISORY_RESERVE);
+        bytes.reserve(additional);
+    }
+
     #[derive(Default)]
     pub struct ValueCodec {
         state: AnySendSyncPartialState,
@@ -396,6 +460,7 @@ mod aio_support {
         type Error = RedisError;
 
         fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+            reserve_for_prefixed_frame(bytes);
             self.decode_stream(bytes, false)
         }
 
@@ -523,6 +588,55 @@ mod tests {
         let result = codec.decode_eof(&mut bytes).unwrap().unwrap();
 
         assert_eq!(result, Value::Okay);
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn decode_reserves_capacity_for_large_bulk_header() {
+        use tokio_util::codec::Decoder;
+
+        let mut codec = ValueCodec::default();
+
+        // Header announces a 1 MiB payload, but only a few payload bytes have
+        // arrived so far.
+        let payload_len = 1024 * 1024;
+        let header = format!("${payload_len}\r\n");
+        let mut bytes = bytes::BytesMut::from(format!("{header}abc").as_bytes());
+
+        // The frame is incomplete, so nothing is yielded yet ...
+        assert_eq!(codec.decode(&mut bytes).unwrap(), None);
+        // ... but the buffer has been sized to hold the whole payload in one
+        // step, rather than growing by repeated doubling as it streams in.
+        // (`capacity()` is measured from the current cursor, which the decoder
+        // has advanced past the consumed header, so compare against the payload.)
+        assert!(bytes.capacity() >= payload_len);
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn decode_does_not_reserve_for_aggregate_header() {
+        use tokio_util::codec::Decoder;
+
+        let mut codec = ValueCodec::default();
+        // An array header carries an element *count*, not a byte length, so the
+        // count must not be mistaken for a payload size to reserve.
+        let mut bytes = bytes::BytesMut::from(b"*1000000\r\n".as_slice());
+
+        assert_eq!(codec.decode(&mut bytes).unwrap(), None);
+        assert!(bytes.capacity() < 4096);
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn decode_does_not_reserve_for_nil_bulk() {
+        use tokio_util::codec::Decoder;
+
+        let mut codec = ValueCodec::default();
+        // A negative (null) bulk length must not be parsed into a reservation.
+        let mut bytes = bytes::BytesMut::from(b"$-1\r\n".as_slice());
+
+        assert_eq!(codec.decode(&mut bytes).unwrap(), Some(Value::Nil));
+        assert!(bytes.capacity() < 4096);
     }
 
     #[test]
