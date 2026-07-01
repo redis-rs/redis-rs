@@ -50,7 +50,7 @@ jobs:
       - name: Cache RedisJSON
         if: matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
         id: cache-redisjson
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: |
             /tmp/librejson.so
@@ -155,7 +155,7 @@ jobs:
       - name: Load Valkey Bloom module from cache
         if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:')
         id: cache-valkey-bloom
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             /tmp/valkey-bloom/target/release/libvalkey_bloom.so
@@ -190,7 +190,7 @@ jobs:
       - name: Cache RedisJSON
         if: matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
         id: cache-redisjson-save
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: ${{ env.REDISRS_REDIS_JSON_PATH }}
           key: ${{ runner.os }}-redisjson-${{ matrix.config.json-module-version }}
@@ -216,7 +216,7 @@ jobs:
       - name: Load Valkey Bloom module from cache
         if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:')
         id: cache-valkey-bloom
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             /tmp/valkey-bloom/target/release/libvalkey_bloom.so
