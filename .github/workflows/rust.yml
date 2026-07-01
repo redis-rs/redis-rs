@@ -45,7 +45,7 @@ jobs:
           ]
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Cache RedisJSON
         if: matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
@@ -91,7 +91,7 @@ jobs:
 
       - name: Checkout RedisJSON
         if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: "RedisJSON/RedisJSON"
           path: "./__ci/redis-json"
@@ -204,7 +204,7 @@ jobs:
       matrix: *db-matrix
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install DB
         uses: ./.github/actions/install-db
@@ -288,7 +288,7 @@ jobs:
           {toolchain: 1.88.0},
         ]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: lint
         uses: ./.github/actions/lint-and-check
         with:
@@ -334,7 +334,7 @@ jobs:
     env:
       rust_ver: stable
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install DB
         uses: ./.github/actions/install-db
@@ -360,13 +360,13 @@ jobs:
           critcmp base changes
 
       # We check out again, because we switched branches in the last step.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
   flag-frenzy:
     needs: [lint, build-and-test]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain/@master
         with:
           toolchain: stable
@@ -381,7 +381,7 @@ jobs:
     runs-on: windows-2022  # Locked to `2022` because of #2124
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install OpenSSL
         shell: powershell
