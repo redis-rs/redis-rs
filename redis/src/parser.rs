@@ -617,6 +617,17 @@ impl Parser {
 
     /// Parses synchronously into a single value from the reader.
     pub fn parse_value<T: Read>(&mut self, mut reader: T) -> RedisResult<Value> {
+        // Fast path: if the decoder already holds a complete supported value,
+        // decode it straight from the buffer and advance, skipping combine. This
+        // is the common case for pipelined reads, where a single `read` buffers
+        // many replies and only the first `parse_value` call actually blocks on
+        // I/O. Anything else — empty/incomplete buffer, or an unsupported RESP3
+        // type — falls through to combine, which handles reading more, partial
+        // state, EOF, and error reporting exactly as before.
+        if let Some((value, consumed)) = fast_parse_value(self.decoder.buffer()) {
+            self.decoder.advance(&mut reader, consumed);
+            return Ok(value);
+        }
         let mut decoder = &mut self.decoder;
         let result = combine::decode!(decoder, reader, value(None), |input, _| {
             combine::stream::easy::Stream::from(input)
@@ -784,6 +795,44 @@ mod tests {
                 "combine rejects non-utf8 line {input:?} (so the fast path must too)"
             );
         }
+    }
+
+    /// Sync `Parser::parse_value` over a buffer holding several concatenated
+    /// replies: the first call reads + buffers them all, later calls hit the
+    /// fast path over the decoder's buffer, and an unsupported type mid-stream
+    /// hands back to combine — all sharing one decoder buffer. The decoded
+    /// sequence must match exactly.
+    #[test]
+    fn sync_parser_buffered_fast_path() {
+        let wire: &[u8] = b"$5\r\nhello\r\n+OK\r\n:42\r\n%1\r\n+k\r\n:1\r\n*2\r\n:1\r\n:2\r\n_\r\n";
+        let expected = vec![
+            Value::BulkString(b"hello".to_vec()),
+            Value::Okay,
+            Value::Int(42),
+            Value::Map(vec![(Value::SimpleString("k".into()), Value::Int(1))]),
+            Value::Array(vec![Value::Int(1), Value::Int(2)]),
+            Value::Nil,
+        ];
+        let mut parser = Parser::new();
+        let mut reader = wire;
+        let mut got = Vec::new();
+        for _ in 0..expected.len() {
+            got.push(parser.parse_value(&mut reader).unwrap());
+        }
+        assert_eq!(got, expected);
+    }
+
+    /// After the fast path has advanced the shared decoder buffer, a malformed
+    /// value must still make combine return an error (not panic) despite the
+    /// bypassed `position`/`state`.
+    #[test]
+    fn sync_parser_error_after_fast_path() {
+        let wire: &[u8] = b":1\r\n+OK\r\n$abc\r\n";
+        let mut parser = Parser::new();
+        let mut reader = wire;
+        assert_eq!(parser.parse_value(&mut reader).unwrap(), Value::Int(1));
+        assert_eq!(parser.parse_value(&mut reader).unwrap(), Value::Okay);
+        assert!(parser.parse_value(&mut reader).is_err());
     }
 
     /// Exercise the async `ValueCodec` fast-path ↔ combine-partial
