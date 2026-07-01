@@ -717,4 +717,18 @@ mod test {
         let config = AsyncConnectionConfig::new().set_concurrency_limit(128);
         assert_eq!(config.concurrency_limit, Some(128));
     }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn test_async_connection_config_write_backpressure_boundary_default() {
+        let config = AsyncConnectionConfig::new();
+        assert_eq!(config.write_backpressure_boundary, None);
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn test_async_connection_config_write_backpressure_boundary_custom() {
+        let config = AsyncConnectionConfig::new().set_write_backpressure_boundary(16 * 1024 * 1024);
+        assert_eq!(config.write_backpressure_boundary, Some(16 * 1024 * 1024));
+    }
 }
