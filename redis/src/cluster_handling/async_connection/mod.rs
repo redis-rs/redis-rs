@@ -673,7 +673,7 @@ where
                                 Err(err) => Err(err),
                             })?;
                         Ok::<_, RedisError>((
-                            Value::BulkString(addr.to_string().into_bytes()),
+                            Value::BulkString(addr.to_string().into()),
                             result,
                         ))
                     }))

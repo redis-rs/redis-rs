@@ -90,13 +90,13 @@ into_redis_value_impl_float!(f64);
 
 impl IntoRedisValue for String {
     fn into_redis_value(self) -> Value {
-        Value::BulkString(self.as_bytes().to_vec())
+        Value::BulkString(self.into())
     }
 }
 
 impl IntoRedisValue for &str {
     fn into_redis_value(self) -> Value {
-        Value::BulkString(self.as_bytes().to_vec())
+        Value::BulkString(self.as_bytes().to_vec().into())
     }
 }
 
@@ -109,13 +109,13 @@ impl IntoRedisValue for bool {
 #[cfg(feature = "bytes")]
 impl IntoRedisValue for bytes::Bytes {
     fn into_redis_value(self) -> Value {
-        Value::BulkString(self.to_vec())
+        Value::BulkString(self)
     }
 }
 
 impl IntoRedisValue for Vec<u8> {
     fn into_redis_value(self) -> Value {
-        Value::BulkString(self)
+        Value::BulkString(self.into())
     }
 }
 
@@ -193,7 +193,7 @@ impl IntoRedisValue for ServerError {
 ///
 /// let expected = Value::Array(vec![
 ///   Value::Int(42),
-///   Value::BulkString("foo".as_bytes().to_vec()),
+///   Value::BulkString("foo".as_bytes().to_vec().into()),
 ///   Value::Map(vec![(Value::Boolean(true), Value::Nil)])
 /// ]);
 /// assert_eq!(actual, expected)
@@ -217,7 +217,7 @@ macro_rules! redis_value {
 
     // Simple strings
     (simple:$e:tt) => {
-        redis::Value::SimpleString($e.to_string())
+        redis::Value::SimpleString($e.to_string().into())
     };
 
     // Nil
@@ -539,7 +539,7 @@ mod tests {
             0x66, /* f */
             0x6f, /* o */
             0x6f, /* o */
-        ]);
+        ].into());
         assert_eq!(actual, expected);
     }
 
@@ -553,7 +553,7 @@ mod tests {
             0x66, /* f */
             0x6f, /* o */
             0x6f, /* o */
-        ]);
+        ].into());
         assert_eq!(actual, expected);
     }
 
@@ -578,7 +578,7 @@ mod tests {
             0x66, /* f */
             0x6f, /* o */
             0x6f, /* o */
-        ]);
+        ].into());
         assert_eq!(actual, expected);
     }
 
@@ -592,7 +592,7 @@ mod tests {
             0x66, /* f */
             0x6f, /* o */
             0x6f, /* o */
-        ]);
+        ].into());
         assert_eq!(actual, expected);
     }
 
@@ -701,7 +701,7 @@ mod tests {
     fn redis_simple_direct() {
         assert_eq!(
             redis_value!(simple:"foo"),
-            Value::SimpleString("foo".to_string())
+            Value::SimpleString("foo".to_string().into())
         );
     }
 
@@ -709,7 +709,7 @@ mod tests {
     fn redis_simple_in_complex() {
         let actual = redis_value!([(simple:"foo")]);
 
-        let expected = Value::Array(vec![Value::SimpleString("foo".to_string())]);
+        let expected = Value::Array(vec![Value::SimpleString("foo".to_string().into())]);
         assert_eq!(actual, expected);
     }
 
@@ -771,7 +771,7 @@ mod tests {
             0x66, /* f */
             0x6f, /* o */
             0x6f, /* o */
-        ]);
+        ].into());
         assert_eq!(actual, expected);
     }
 
@@ -783,7 +783,7 @@ mod tests {
             0x66, /* f */
             0x6f, /* o */
             0x6f, /* o */
-        ]);
+        ].into());
         assert_eq!(actual, expected);
     }
 
@@ -835,7 +835,7 @@ mod tests {
             0x66, /* f */
             0x6f, /* o */
             0x6f, /* o */
-        ]);
+        ].into());
         let expected3 = Value::Nil;
         let expected4 = Value::Boolean(true);
         let expected = Value::Array(vec![expected1, expected2, expected3, expected4]);
@@ -852,7 +852,7 @@ mod tests {
             0x66, /* f */
             0x6f, /* o */
             0x6f, /* o */
-        ]);
+        ].into());
         let expected22 = Value::Nil;
         let expected2 = Value::Array(vec![expected21, expected22]);
         let expected3 = Value::Boolean(true);
@@ -891,7 +891,7 @@ mod tests {
             0x66, /* f */
             0x6f, /* o */
             0x6f, /* o */
-        ]);
+        ].into());
         let expected3 = Value::Nil;
         let expected4 = Value::Boolean(true);
         let expected = Value::Set(vec![expected1, expected2, expected3, expected4]);
@@ -908,7 +908,7 @@ mod tests {
             0x66, /* f */
             0x6f, /* o */
             0x6f, /* o */
-        ]);
+        ].into());
         let expected22 = Value::Nil;
         let expected2 = Value::Set(vec![expected21, expected22]);
         let expected3 = Value::Boolean(true);
@@ -948,7 +948,7 @@ mod tests {
                 0x66, /* f */
                 0x6f, /* o */
                 0x6f, /* o */
-            ]),
+            ].into()),
         );
         let expected = Value::Map(vec![expected1, expected2]);
         assert_eq!(actual, expected);
@@ -969,7 +969,7 @@ mod tests {
                 0x66, /* f */
                 0x6f, /* o */
                 0x6f, /* o */
-            ]),
+            ].into()),
         );
         let expected = Value::Map(vec![expected1, expected2]);
         assert_eq!(actual, expected);

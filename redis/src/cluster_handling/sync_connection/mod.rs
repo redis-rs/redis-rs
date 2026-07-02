@@ -794,7 +794,7 @@ where
                     .into_iter()
                     .map(|result| {
                         result.map(|(addr, val)| {
-                            (Value::BulkString(addr.to_string().into_bytes()), val)
+                            (Value::BulkString(addr.to_string().into()), val)
                         })
                     })
                     .collect::<RedisResult<Vec<_>>>()?;

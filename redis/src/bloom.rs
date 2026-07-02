@@ -264,7 +264,10 @@ impl FromRedisValue for BloomFilterDumpChunk {
         }
 
         // Yield the chunk
-        Ok(BloomFilterDumpChunk { iterator, data })
+        Ok(BloomFilterDumpChunk {
+            iterator,
+            data: data.into(),
+        })
     }
 }
 
@@ -335,6 +338,7 @@ impl Iterator for BloomFilterDumpIterator<'_> {
 mod tests {
     use super::{BloomFilterDumpChunk, BloomFilterInfoTypeResponse};
     use crate::FromRedisValue;
+    use crate::Str;
     use crate::types::Value;
 
     /// Tries to assure that [`BloomFilterInfoTypeResponse`] conversion from wrong type gives a useful error
@@ -343,7 +347,7 @@ mod tests {
         // The value to try to parse from.
         // An `Array` or `Map` or something convertible to a float is expected, but it is text,
         // so conversion should fail.
-        let value = Value::SimpleString("foo".to_string());
+        let value = Value::SimpleString(Str::from_static("foo"));
 
         // Actual parsing
         let err = BloomFilterInfoTypeResponse::from_redis_value(value)
@@ -419,8 +423,8 @@ mod tests {
         // The value to try to parse from.
         // A `Map` response should have exactly 1 entry. Here we have 2, so the conversion should fail.
         let value = Value::Map(vec![
-            (Value::SimpleString("foo".to_string()), Value::Int(42)),
-            (Value::SimpleString("bar".to_string()), Value::Int(23)),
+            (Value::SimpleString(Str::from_static("foo")), Value::Int(42)),
+            (Value::SimpleString(Str::from_static("bar")), Value::Int(23)),
         ]);
 
         // Actual parsing
@@ -437,7 +441,10 @@ mod tests {
         // The value to try to parse from.
         // A `Map` response should have exactly entry mapping to `Int`. Here we have an `Okay`
         // instead, so the conversion should fail.
-        let value = Value::Map(vec![(Value::SimpleString("foo".to_string()), Value::Okay)]);
+        let value = Value::Map(vec![(
+            Value::SimpleString(Str::from_static("foo")),
+            Value::Okay,
+        )]);
 
         // Actual parsing
         let err = BloomFilterInfoTypeResponse::from_redis_value(value)
@@ -468,7 +475,7 @@ mod tests {
         // The value to try to parse from.
         // A good RESP3 Response is an `Map` of a single `SimpleString`, `Int` pair.
         let value = Value::Map(vec![(
-            Value::SimpleString("foo".to_string()),
+            Value::SimpleString(Str::from_static("foo")),
             Value::Int(42),
         )]);
 
@@ -498,7 +505,7 @@ mod tests {
     #[test]
     fn info_type_response_from_value_ok_float_in_string() {
         // The value to try to parse from.
-        let value = Value::SimpleString("42.4711".to_string());
+        let value = Value::SimpleString(Str::from_static("42.4711"));
 
         // Actual parsing
         let response = BloomFilterInfoTypeResponse::from_redis_value(value)
@@ -544,7 +551,7 @@ mod tests {
         // The first element should be an `Int`, but is an `Ok`, so conversion should fail.
         let value = Value::Array(vec![
             Value::Okay,
-            Value::BulkString("bar".as_bytes().to_vec()),
+            Value::BulkString("bar".as_bytes().into()),
         ]);
 
         // Actual parsing
@@ -592,7 +599,7 @@ mod tests {
         // The array should have two elements, but has only one, so conversion should fail.
         let value = Value::Array(vec![
             Value::Int(42),
-            Value::BulkString("foo".as_bytes().to_vec()),
+            Value::BulkString("foo".as_bytes().into()),
             Value::Okay,
         ]);
 
@@ -610,7 +617,7 @@ mod tests {
         // The value to try to parse from.
         let value = Value::Array(vec![
             Value::Int(42),
-            Value::BulkString("foo".as_bytes().to_vec()),
+            Value::BulkString("foo".as_bytes().into()),
         ]);
 
         // Actual parsing

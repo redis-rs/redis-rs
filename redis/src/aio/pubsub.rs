@@ -116,7 +116,7 @@ where
             Ok(Value::Array(value)) => {
                 if let Some(Value::BulkString(kind)) = value.first()
                     && matches!(
-                        kind.as_slice(),
+                        kind.as_ref(),
                         b"subscribe" | b"psubscribe" | b"unsubscribe" | b"punsubscribe" | b"pong"
                     )
                 {
@@ -385,7 +385,7 @@ impl PubSub {
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
-        let mut codec = ValueCodec::default().framed(stream);
+        let mut codec = ValueCodec.framed(stream);
         setup_connection(
             &mut codec,
             connection_info,
