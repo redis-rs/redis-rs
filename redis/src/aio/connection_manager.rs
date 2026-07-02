@@ -890,8 +890,8 @@ mod tests {
         assert_eq!(config.write_backpressure_boundary, Some(16 * 1024 * 1024));
     }
 
-    #[test]
-    fn test_lazy_connection_manager_with_config() {
+    #[tokio::test]
+    async fn test_lazy_connection_manager_with_config() {
         // Test that lazy connection manager can be created with custom config
         let client = Client::open("redis://127.0.0.1/").unwrap();
         let config = ConnectionManagerConfig::new()
@@ -900,6 +900,18 @@ mod tests {
             .set_number_of_retries(3);
         let result = ConnectionManager::new_lazy_with_config(client, config);
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_lazy_connection_manager_wires_write_backpressure_boundary() {
+        let client = Client::open("redis://127.0.0.1/").unwrap();
+        let config =
+            ConnectionManagerConfig::new().set_write_backpressure_boundary(16 * 1024 * 1024);
+        let manager = ConnectionManager::new_lazy_with_config(client, config).unwrap();
+        assert_eq!(
+            manager.0.connection_config.write_backpressure_boundary,
+            Some(16 * 1024 * 1024)
+        );
     }
 
     #[test]
