@@ -27,7 +27,7 @@ impl Monitor {
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + Sync + 'static,
     {
-        let mut codec = ValueCodec::default().framed(stream);
+        let mut codec = ValueCodec.framed(stream);
         setup_connection(
             &mut codec,
             connection_info,

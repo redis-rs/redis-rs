@@ -178,8 +178,8 @@ fn test_module_json_arr_pop() {
         json_arrpop,
         Ok(Array(vec![
             // convert string 3 to its ascii value as bytes
-            BulkString(Vec::from("3".as_bytes())),
-            BulkString(Vec::from("4".as_bytes()))
+            BulkString("3".as_bytes().to_vec().into()),
+            BulkString("4".as_bytes().to_vec().into())
         ]))
     );
 
@@ -196,7 +196,7 @@ fn test_module_json_arr_pop() {
     assert_eq!(
         json_arrpop_2,
         Ok(Array(vec![
-            BulkString(Vec::from("\"bar\"".as_bytes())),
+            BulkString("\"bar\"".as_bytes().to_vec().into()),
             Nil,
             Nil
         ]))
@@ -330,8 +330,8 @@ fn test_module_json_mget() {
     assert_eq!(
         json_mget,
         Ok(Array(vec![
-            BulkString(Vec::from("[1,3]".as_bytes())),
-            BulkString(Vec::from("[4,6]".as_bytes()))
+            BulkString("[1,3]".as_bytes().to_vec().into()),
+            BulkString("[4,6]".as_bytes().to_vec().into())
         ]))
     );
 }
@@ -390,8 +390,8 @@ fn test_module_json_obj_keys() {
         Ok(Array(vec![
             Nil,
             Array(vec![
-                BulkString(Vec::from("b".as_bytes())),
-                BulkString(Vec::from("c".as_bytes()))
+                BulkString("b".as_bytes().to_vec().into()),
+                BulkString("c".as_bytes().to_vec().into())
             ])
         ]))
     );
@@ -505,30 +505,28 @@ fn test_module_json_type() {
         // In RESP3 current RedisJSON always gives response in an array.
         assert_eq!(
             json_type_a,
-            Ok(Array(vec![Array(vec![BulkString(Vec::from(
-                "string".as_bytes()
-            ))])]))
+            Ok(Array(vec![Array(vec![BulkString("string".as_bytes().to_vec().into())])]))
         );
 
         assert_eq!(
             json_type_b,
             Ok(Array(vec![Array(vec![
-                BulkString(Vec::from("integer".as_bytes())),
-                BulkString(Vec::from("boolean".as_bytes()))
+                BulkString("integer".as_bytes().to_vec().into()),
+                BulkString("boolean".as_bytes().to_vec().into())
             ])]))
         );
         assert_eq!(json_type_c, Ok(Array(vec![Array(vec![])])));
     } else {
         assert_eq!(
             json_type_a,
-            Ok(Array(vec![BulkString(Vec::from("string".as_bytes()))]))
+            Ok(Array(vec![BulkString("string".as_bytes().to_vec().into())]))
         );
 
         assert_eq!(
             json_type_b,
             Ok(Array(vec![
-                BulkString(Vec::from("integer".as_bytes())),
-                BulkString(Vec::from("boolean".as_bytes()))
+                BulkString("integer".as_bytes().to_vec().into()),
+                BulkString("boolean".as_bytes().to_vec().into())
             ]))
         );
         assert_eq!(json_type_c, Ok(Array(vec![])));

@@ -599,7 +599,7 @@ impl MultiplexedConnection {
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
-        let mut codec = ValueCodec::default().framed(stream);
+        let mut codec = ValueCodec.framed(stream);
         if config.push_sender.is_some() {
             check_resp3!(
                 connection_info.protocol,
@@ -1009,6 +1009,10 @@ impl MultiplexedConnection {
 mod tests {
     use super::*;
 
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+    use tokio_util::codec::FramedRead;
+
     #[test]
     fn test_pipeline_resolve_buffer_size_default() {
         assert_eq!(Pipeline::resolve_buffer_size(None), 50);
@@ -1057,10 +1061,6 @@ mod tests {
         tokio::sync::mpsc::Receiver<()>,
         tokio::sync::mpsc::Sender<()>,
     ) {
-        use futures_util::StreamExt;
-        use tokio::io::AsyncWriteExt;
-        use tokio_util::codec::FramedRead;
-
         let (client_half, server_half) = tokio::io::duplex(4096);
         let (cmd_received_tx, cmd_received_rx) = tokio::sync::mpsc::channel::<()>(10);
         let (send_response_tx, mut send_response_rx) = tokio::sync::mpsc::channel::<()>(10);
@@ -1068,7 +1068,7 @@ mod tests {
         let (server_read, mut server_write) = tokio::io::split(server_half);
 
         tokio::spawn(async move {
-            let mut reader = FramedRead::new(server_read, ValueCodec::default());
+            let mut reader = FramedRead::new(server_read, ValueCodec);
             while let Some(Ok(_)) = reader.next().await {
                 let _ = cmd_received_tx.send(()).await;
             }
@@ -1330,10 +1330,6 @@ mod tests {
     /// which keeps the duplex moving and lets the SETs complete.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_deadlock_when_writes_blocked_with_pending_response() {
-        use futures_util::StreamExt;
-        use tokio::io::AsyncWriteExt;
-        use tokio_util::codec::FramedRead;
-
         // Small duplex buffer + ~4 KiB request/response sizes. The polling
         // pathology doesn't depend on scale; a real socket would see the
         // same shape with tens of KiB of buffer and MB-scale payloads.
@@ -1357,7 +1353,7 @@ mod tests {
         // becomes Pending — the general "server stops reading once its
         // own write is back-pressured" behavior the deadlock requires.
         let server_task = tokio::spawn(async move {
-            let mut reader = FramedRead::new(server_read, ValueCodec::default());
+            let mut reader = FramedRead::new(server_read, ValueCodec);
             loop {
                 match reader.next().await {
                     Some(Ok(_)) => {}
@@ -1421,17 +1417,13 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_permit_released_on_response_timeout() {
-        use futures_util::StreamExt;
-        use tokio::io::AsyncWriteExt;
-        use tokio_util::codec::FramedRead;
-
         let (client_half, server_half) = tokio::io::duplex(4096);
         let (cmd_received_tx, mut cmd_received_rx) = tokio::sync::mpsc::channel::<()>(10);
 
         let (server_read, mut server_write) = tokio::io::split(server_half);
 
         tokio::spawn(async move {
-            let mut reader = FramedRead::new(server_read, ValueCodec::default());
+            let mut reader = FramedRead::new(server_read, ValueCodec);
             while let Some(Ok(_)) = reader.next().await {
                 let _ = cmd_received_tx.send(()).await;
             }

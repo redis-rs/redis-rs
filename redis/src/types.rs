@@ -1,6 +1,7 @@
 use crate::errors::ParsingError;
 #[cfg(feature = "ahash")]
 pub(crate) use ahash::AHashMap as HashMap;
+use bytes::Bytes;
 #[cfg(feature = "num-bigint")]
 use num_bigint::BigInt;
 use std::borrow::Cow;
@@ -137,6 +138,166 @@ pub enum NumericBehavior {
     NumberIsFloat,
 }
 
+/// A cheaply-cloneable, UTF-8 string backed by [`bytes::Bytes`].
+///
+/// `Str` is used by [`Value`] for textual responses (simple strings, verbatim
+/// strings, push kinds, …). It holds a `Bytes` buffer that is guaranteed to be
+/// valid UTF-8 by construction, so dereferencing to `&str` is zero-cost.
+///
+/// Because the backing storage is `Bytes`, cloning a `Str` is a cheap
+/// reference-count bump rather than an allocation, and the parser can produce
+/// one as a zero-copy slice into the response buffer.
+#[derive(Clone, Default, PartialEq, Eq, Hash)]
+pub struct Str(Bytes);
+
+impl Str {
+    /// Wraps a `Bytes` buffer as a `Str`, validating that it is UTF-8.
+    pub fn from_utf8(bytes: Bytes) -> Result<Self, std::str::Utf8Error> {
+        from_utf8(&bytes)?;
+        Ok(Str(bytes))
+    }
+
+    /// Creates a `Str` from a static string slice without copying.
+    pub const fn from_static(s: &'static str) -> Self {
+        Str(Bytes::from_static(s.as_bytes()))
+    }
+
+    /// Wraps a `Bytes` buffer as a `Str` without checking that it is UTF-8.
+    ///
+    /// # Safety
+    /// The caller must ensure that `bytes` contains valid UTF-8.
+    pub(crate) unsafe fn from_utf8_unchecked(bytes: Bytes) -> Self {
+        Str(bytes)
+    }
+
+    /// Returns the string contents as a `&str`.
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        // SAFETY: the `Bytes` are guaranteed to be valid UTF-8 by construction.
+        unsafe { std::str::from_utf8_unchecked(&self.0) }
+    }
+
+    /// Returns the underlying bytes.
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// Consumes the `Str`, returning the underlying `Bytes`.
+    #[inline]
+    pub fn into_bytes(self) -> Bytes {
+        self.0
+    }
+}
+
+impl Deref for Str {
+    type Target = str;
+    #[inline]
+    fn deref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl AsRef<str> for Str {
+    #[inline]
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl AsRef<[u8]> for Str {
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
+impl std::borrow::Borrow<str> for Str {
+    #[inline]
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for Str {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl fmt::Debug for Str {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.as_str(), f)
+    }
+}
+
+impl From<&str> for Str {
+    fn from(s: &str) -> Self {
+        Str(Bytes::copy_from_slice(s.as_bytes()))
+    }
+}
+
+impl From<String> for Str {
+    fn from(s: String) -> Self {
+        Str(Bytes::from(s.into_bytes()))
+    }
+}
+
+impl From<&String> for Str {
+    fn from(s: &String) -> Self {
+        Str::from(s.as_str())
+    }
+}
+
+impl From<Str> for String {
+    fn from(s: Str) -> Self {
+        // SAFETY: the `Bytes` are guaranteed to be valid UTF-8 by construction.
+        unsafe { String::from_utf8_unchecked(s.0.into()) }
+    }
+}
+
+impl From<Str> for Bytes {
+    fn from(s: Str) -> Self {
+        s.0
+    }
+}
+
+impl PartialEq<str> for Str {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<&str> for Str {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<String> for Str {
+    fn eq(&self, other: &String) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl PartialEq<Str> for str {
+    fn eq(&self, other: &Str) -> bool {
+        self == other.as_str()
+    }
+}
+
+impl PartialEq<Str> for &str {
+    fn eq(&self, other: &Str) -> bool {
+        *self == other.as_str()
+    }
+}
+
+impl PartialEq<Str> for String {
+    fn eq(&self, other: &Str) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
 /// Internal low-level redis value enum.
 #[derive(PartialEq, Clone, Default)]
 #[non_exhaustive]
@@ -150,12 +311,12 @@ pub enum Value {
     /// the same for all numeric responses.
     Int(i64),
     /// An arbitrary binary data, usually represents a binary-safe string.
-    BulkString(Vec<u8>),
+    BulkString(Bytes),
     /// A response containing an array with more data. This is generally used by redis
     /// to express nested structures.
     Array(Vec<Value>),
     /// A simple string response, without line breaks and not binary safe.
-    SimpleString(String),
+    SimpleString(Str),
     /// A status response which represents the string "OK".
     Okay,
     /// Unordered key,value list from the server. Use `as_map_iter` function.
@@ -178,14 +339,14 @@ pub enum Value {
         /// Text's format type
         format: VerbatimFormat,
         /// Remaining string check format before using!
-        text: String,
+        text: Str,
     },
     #[cfg(feature = "num-bigint")]
     /// Very large number that out of the range of the signed 64 bit numbers
     BigNumber(BigInt),
     #[cfg(not(feature = "num-bigint"))]
     /// Very large number that out of the range of the signed 64 bit numbers
-    BigNumber(Vec<u8>),
+    BigNumber(Bytes),
     /// Push data from the server.
     Push {
         /// Push Kind
@@ -304,7 +465,7 @@ impl ToRedisArgs for ValueComparison {
 #[non_exhaustive]
 pub enum VerbatimFormat {
     /// Unknown type to catch future formats.
-    Unknown(String),
+    Unknown(Str),
     /// `mkd` format
     Markdown,
     /// `txt` format
@@ -318,7 +479,7 @@ pub enum PushKind {
     /// `Disconnection` is sent from the **library** when connection is closed.
     Disconnection,
     /// Other kind to catch future kinds.
-    Other(String),
+    Other(Str),
     /// `invalidate` is received when a key is changed/deleted.
     Invalidate,
     /// `message` is received when pubsub message published by another client.
@@ -670,7 +831,7 @@ impl InfoDict {
                 (Some(k), Some(v)) => (k.to_string(), v.to_string()),
                 _ => continue,
             };
-            map.insert(k, Value::SimpleString(v));
+            map.insert(k, Value::SimpleString(v.into()));
         }
         InfoDict { map }
     }
@@ -799,7 +960,7 @@ impl FromRedisValue for Role {
             )
         }
         match &v[0] {
-            Value::BulkString(role) => match role.as_slice() {
+            Value::BulkString(role) => match role.as_ref() {
                 b"master" => Role::new_primary(v),
                 b"slave" => Role::new_replica(v),
                 b"sentinel" => Role::new_sentinel(v),
@@ -1668,14 +1829,14 @@ pub trait FromRedisValue: Sized {
 
     /// Convert bytes to a single element vector.
     fn from_byte_slice(_vec: &[u8]) -> Option<Vec<Self>> {
-        Self::from_redis_value(Value::BulkString(_vec.into()))
+        Self::from_redis_value(Value::BulkString(Bytes::copy_from_slice(_vec)))
             .map(|rv| vec![rv])
             .ok()
     }
 
     /// Convert bytes to a single element vector.
     fn from_byte_vec(_vec: Vec<u8>) -> Result<Vec<Self>, ParsingError> {
-        Self::from_redis_value(Value::BulkString(_vec)).map(|rv| vec![rv])
+        Self::from_redis_value(Value::BulkString(_vec.into())).map(|rv| vec![rv])
     }
 }
 
@@ -1845,9 +2006,9 @@ impl FromRedisValue for bool {
                 }
             }
             Value::BulkString(ref bytes) => {
-                if bytes == b"1" {
+                if bytes.as_ref() == b"1" {
                     Ok(true)
-                } else if bytes == b"0" {
+                } else if bytes.as_ref() == b"0" {
                     Ok(false)
                 } else {
                     crate::errors::invalid_type_error!(v, "Response type not bool compatible.");
@@ -1868,7 +2029,7 @@ impl FromRedisValue for CString {
     fn from_redis_value_ref(v: &Value) -> Result<CString, ParsingError> {
         let v = get_inner_value(v);
         match *v {
-            Value::BulkString(ref bytes) => Ok(CString::new(bytes.as_slice())?),
+            Value::BulkString(ref bytes) => Ok(CString::new(bytes.as_ref())?),
             Value::Okay => Ok(CString::new("OK")?),
             Value::SimpleString(ref val) => Ok(CString::new(val.as_bytes())?),
             _ => crate::errors::invalid_type_error!(v, "Response type not CString compatible."),
@@ -1879,7 +2040,7 @@ impl FromRedisValue for CString {
         match v {
             Value::BulkString(bytes) => Ok(CString::new(bytes)?),
             Value::Okay => Ok(CString::new("OK")?),
-            Value::SimpleString(val) => Ok(CString::new(val)?),
+            Value::SimpleString(val) => Ok(CString::new(val.into_bytes())?),
             _ => crate::errors::invalid_type_error!(v, "Response type not CString compatible."),
         }
     }
@@ -1905,10 +2066,10 @@ impl FromRedisValue for String {
     fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let v = get_owned_inner_value(v);
         match v {
-            Value::BulkString(bytes) => Ok(Self::from_utf8(bytes)?),
+            Value::BulkString(bytes) => Ok(Self::from_utf8(bytes.into())?),
             Value::Okay => Ok("OK".to_string()),
-            Value::SimpleString(val) => Ok(val),
-            Value::VerbatimString { format: _, text } => Ok(text),
+            Value::SimpleString(val) => Ok(val.into()),
+            Value::VerbatimString { format: _, text } => Ok(text.into()),
             Value::Double(val) => Ok(val.to_string()),
             Value::Int(val) => Ok(val.to_string()),
             _ => crate::errors::invalid_type_error!(v, "Response type not string compatible."),
@@ -1986,7 +2147,9 @@ macro_rules! from_vec_from_redis_value {
                     // Binary data is parsed into a single-element vector, except
                     // for the element type `u8`, which directly consumes the entire
                     // array of bytes.
-                    Value::BulkString(bytes) => FromRedisValue::from_byte_vec(bytes).map($convert),
+                    Value::BulkString(bytes) => {
+                        FromRedisValue::from_byte_vec(bytes.into()).map($convert)
+                    }
                     Value::Array(items) => FromRedisValue::from_redis_values(items).map($convert),
                     Value::Set(items) => FromRedisValue::from_redis_values(items).map($convert),
                     Value::Map(items) => {
@@ -2391,14 +2554,14 @@ impl FromRedisValue for bytes::Bytes {
     fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
         let v = get_inner_value(v);
         match v {
-            Value::BulkString(bytes_vec) => Ok(bytes::Bytes::copy_from_slice(bytes_vec.as_ref())),
+            Value::BulkString(bytes) => Ok(bytes.clone()),
             _ => crate::errors::invalid_type_error!(v, "Not a bulk string"),
         }
     }
     fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let v = get_owned_inner_value(v);
         match v {
-            Value::BulkString(bytes_vec) => Ok(bytes_vec.into()),
+            Value::BulkString(bytes) => Ok(bytes),
             _ => crate::errors::invalid_type_error!(v, "Not a bulk string"),
         }
     }
