@@ -759,6 +759,10 @@ pub use crate::commands::AsyncHotkeysCommands;
 #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
 pub use crate::commands::vector_sets;
 
+#[cfg(feature = "redis-arrays")]
+#[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays")))]
+pub use crate::commands::redis_arrays;
+
 #[cfg(feature = "geospatial")]
 #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
 pub use commands::geo;

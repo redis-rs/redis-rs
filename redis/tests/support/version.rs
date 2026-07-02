@@ -12,6 +12,7 @@ pub const REDIS_CE_8_0: Component = ("redis", (8, 0, 0));
 pub const REDIS_CE_8_2: Component = ("redis", (8, 1, 240));
 pub const REDIS_CE_8_4: Component = ("redis", (8, 3, 224));
 pub const REDIS_CE_8_6: Component = ("redis", (8, 6, 0));
+pub const REDIS_CE_8_8: Component = ("redis", (8, 8, 0));
 
 pub const REDIS_BLOOM_ANY: Component = ("redis:bf", (0, 0, 0));
 
