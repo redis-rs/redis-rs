@@ -155,6 +155,21 @@ mod basic_async {
     }
 
     #[async_test]
+    async fn set_write_backpressure_boundary_does_not_break_connection() {
+        let ctx = TestContext::new();
+        let config =
+            redis::AsyncConnectionConfig::new().set_write_backpressure_boundary(16 * 1024 * 1024);
+        let mut conn = ctx
+            .client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await
+            .unwrap();
+        let _: () = conn.set("key", "value").await.unwrap();
+        let result: String = conn.get("key").await.unwrap();
+        assert_eq!(result, "value");
+    }
+
+    #[async_test]
     async fn can_authenticate_with_username_and_password() {
         let ctx = TestContext::new();
         let mut con = ctx.async_connection().await.unwrap();
