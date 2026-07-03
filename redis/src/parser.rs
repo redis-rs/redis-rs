@@ -1,13 +1,16 @@
 use std::{
     io::{self, Read},
+    ops::Range,
     str,
 };
 
 use crate::errors::{ParsingError, RedisError, Repr, ServerError, ServerErrorKind};
-use crate::types::{PushKind, RedisResult, Value, VerbatimFormat};
+use crate::types::{PushKind, RedisResult, Str, Value, VerbatimFormat};
+
+use bytes::{Bytes, BytesMut};
 
 use combine::{
-    ParseError, Parser as _, any,
+    Parser as _, any,
     error::StreamError,
     opaque,
     parser::{
@@ -15,62 +18,220 @@ use combine::{
         combinator::{AnySendSyncPartialState, any_send_sync_partial_state},
         range::{recognize, take},
     },
-    stream::{
-        PointerOffset, RangeStream, StreamErrorFor,
-        decoder::{self, Decoder},
-    },
+    stream::{RangeStream, StreamErrorFor},
     unexpected_any,
 };
 
 const MAX_RECURSE_DEPTH: usize = 100;
 
-fn err_parser(line: &str) -> ServerError {
-    let mut pieces = line.splitn(2, ' ');
-    let kind = match pieces.next().unwrap() {
-        "ERR" => ServerErrorKind::ResponseError,
-        "EXECABORT" => ServerErrorKind::ExecAbort,
-        "LOADING" => ServerErrorKind::BusyLoading,
-        "NOSCRIPT" => ServerErrorKind::NoScript,
-        "MOVED" => ServerErrorKind::Moved,
-        "ASK" => ServerErrorKind::Ask,
-        "TRYAGAIN" => ServerErrorKind::TryAgain,
-        "CLUSTERDOWN" => ServerErrorKind::ClusterDown,
-        "CROSSSLOT" => ServerErrorKind::CrossSlot,
-        "MASTERDOWN" => ServerErrorKind::MasterDown,
-        "READONLY" => ServerErrorKind::ReadOnly,
-        "NOTBUSY" => ServerErrorKind::NotBusy,
-        "NOSUB" => ServerErrorKind::NoSub,
-        "NOPERM" => ServerErrorKind::NoPerm,
-        code => {
-            return ServerError(Repr::Extension {
-                code: code.into(),
-                detail: pieces.next().map(|str| str.into()),
-            });
-        }
-    };
-    let detail = pieces.next().map(|str| str.into());
-    ServerError(Repr::Known { kind, detail })
+/// An intermediate, zero-copy representation of a parsed [`Value`].
+///
+/// The parser produces a `ValueRange` whose textual/binary leaves store
+/// `Range<usize>` offsets into the response buffer rather than copies of the
+/// data. Once a complete value has been parsed, [`materialize`] converts the
+/// ranges into [`Value`] by cheaply slicing the (frozen) buffer `Bytes`.
+enum ValueRange {
+    Nil,
+    Int(i64),
+    BulkString(Range<usize>),
+    Array(Vec<ValueRange>),
+    SimpleString(Range<usize>),
+    Okay,
+    Map(Vec<(ValueRange, ValueRange)>),
+    Attribute {
+        data: Box<ValueRange>,
+        attributes: Vec<(ValueRange, ValueRange)>,
+    },
+    Set(Vec<ValueRange>),
+    Double(f64),
+    Boolean(bool),
+    VerbatimString {
+        format: VerbatimFormatRange,
+        text: Range<usize>,
+    },
+    #[cfg(feature = "num-bigint")]
+    BigNumber(num_bigint::BigInt),
+    #[cfg(not(feature = "num-bigint"))]
+    BigNumber(Range<usize>),
+    /// The parsed elements of a push message. The first element, if any, is the
+    /// push kind; the rest is the data.
+    Push(Vec<ValueRange>),
+    ServerError(ServerErrorRange),
 }
 
-pub fn get_push_kind(kind: String) -> PushKind {
-    match kind.as_str() {
-        "invalidate" => PushKind::Invalidate,
-        "message" => PushKind::Message,
-        "pmessage" => PushKind::PMessage,
-        "smessage" => PushKind::SMessage,
-        "unsubscribe" => PushKind::Unsubscribe,
-        "punsubscribe" => PushKind::PUnsubscribe,
-        "sunsubscribe" => PushKind::SUnsubscribe,
-        "subscribe" => PushKind::Subscribe,
-        "psubscribe" => PushKind::PSubscribe,
-        "ssubscribe" => PushKind::SSubscribe,
-        _ => PushKind::Other(kind),
+enum VerbatimFormatRange {
+    Text,
+    Markdown,
+    Unknown(Range<usize>),
+}
+
+struct ServerErrorRange {
+    /// `Some` for a known error kind, `None` for an extension error (in which
+    /// case `code` holds the error code).
+    kind: Option<ServerErrorKind>,
+    code: Range<usize>,
+    detail: Option<Range<usize>>,
+}
+
+/// Computes the offset range of `slice` within the buffer that starts at `base`.
+///
+/// `slice` must be a sub-slice of the buffer whose start address is `base`.
+#[inline]
+fn range_of(slice: &[u8], base: usize) -> Range<usize> {
+    let start = slice.as_ptr() as usize - base;
+    start..start + slice.len()
+}
+
+fn err_parser(line: &str, base: usize) -> ServerErrorRange {
+    let mut pieces = line.splitn(2, ' ');
+    let code = pieces.next().unwrap();
+    let kind = match code {
+        "ERR" => Some(ServerErrorKind::ResponseError),
+        "EXECABORT" => Some(ServerErrorKind::ExecAbort),
+        "LOADING" => Some(ServerErrorKind::BusyLoading),
+        "NOSCRIPT" => Some(ServerErrorKind::NoScript),
+        "MOVED" => Some(ServerErrorKind::Moved),
+        "ASK" => Some(ServerErrorKind::Ask),
+        "TRYAGAIN" => Some(ServerErrorKind::TryAgain),
+        "CLUSTERDOWN" => Some(ServerErrorKind::ClusterDown),
+        "CROSSSLOT" => Some(ServerErrorKind::CrossSlot),
+        "MASTERDOWN" => Some(ServerErrorKind::MasterDown),
+        "READONLY" => Some(ServerErrorKind::ReadOnly),
+        "NOTBUSY" => Some(ServerErrorKind::NotBusy),
+        "NOSUB" => Some(ServerErrorKind::NoSub),
+        "NOPERM" => Some(ServerErrorKind::NoPerm),
+        _ => None,
+    };
+    ServerErrorRange {
+        kind,
+        code: range_of(code.as_bytes(), base),
+        detail: pieces.next().map(|detail| range_of(detail.as_bytes(), base)),
     }
 }
 
+// ------------------------------------------------------------------
+// Materialization: `ValueRange` + the response buffer -> `Value`.
+// ------------------------------------------------------------------
+
+/// Slices `frame` at `range`, wrapping it as a [`Str`] without re-validating.
+///
+/// All ranges that reach this helper were validated as UTF-8 during parsing.
+#[inline]
+fn slice_str(frame: &Bytes, range: Range<usize>) -> Str {
+    // SAFETY: the parser only produces `Str` ranges from input that has already
+    // been validated as UTF-8.
+    unsafe { Str::from_utf8_unchecked(frame.slice(range)) }
+}
+
+fn materialize(range: ValueRange, frame: &Bytes) -> Result<Value, ParsingError> {
+    Ok(match range {
+        ValueRange::Nil => Value::Nil,
+        ValueRange::Int(val) => Value::Int(val),
+        ValueRange::BulkString(range) => Value::BulkString(frame.slice(range)),
+        ValueRange::Array(items) => Value::Array(materialize_vec(items, frame)?),
+        ValueRange::SimpleString(range) => Value::SimpleString(slice_str(frame, range)),
+        ValueRange::Okay => Value::Okay,
+        ValueRange::Map(pairs) => Value::Map(materialize_pairs(pairs, frame)?),
+        ValueRange::Attribute { data, attributes } => Value::Attribute {
+            data: Box::new(materialize(*data, frame)?),
+            attributes: materialize_pairs(attributes, frame)?,
+        },
+        ValueRange::Set(items) => Value::Set(materialize_vec(items, frame)?),
+        ValueRange::Double(val) => Value::Double(val),
+        ValueRange::Boolean(val) => Value::Boolean(val),
+        ValueRange::VerbatimString { format, text } => Value::VerbatimString {
+            format: materialize_format(format, frame),
+            text: slice_str(frame, text),
+        },
+        #[cfg(feature = "num-bigint")]
+        ValueRange::BigNumber(num) => Value::BigNumber(num),
+        #[cfg(not(feature = "num-bigint"))]
+        ValueRange::BigNumber(range) => Value::BigNumber(frame.slice(range)),
+        ValueRange::Push(items) => materialize_push(items, frame)?,
+        ValueRange::ServerError(err) => Value::ServerError(materialize_error(err, frame)),
+    })
+}
+
+fn materialize_vec(items: Vec<ValueRange>, frame: &Bytes) -> Result<Vec<Value>, ParsingError> {
+    items.into_iter().map(|item| materialize(item, frame)).collect()
+}
+
+fn materialize_pairs(
+    pairs: Vec<(ValueRange, ValueRange)>,
+    frame: &Bytes,
+) -> Result<Vec<(Value, Value)>, ParsingError> {
+    pairs
+        .into_iter()
+        .map(|(k, v)| Ok((materialize(k, frame)?, materialize(v, frame)?)))
+        .collect()
+}
+
+fn materialize_format(format: VerbatimFormatRange, frame: &Bytes) -> VerbatimFormat {
+    match format {
+        VerbatimFormatRange::Text => VerbatimFormat::Text,
+        VerbatimFormatRange::Markdown => VerbatimFormat::Markdown,
+        VerbatimFormatRange::Unknown(range) => VerbatimFormat::Unknown(slice_str(frame, range)),
+    }
+}
+
+fn materialize_error(err: ServerErrorRange, frame: &Bytes) -> ServerError {
+    let detail = err.detail.map(|range| slice_str(frame, range));
+    match err.kind {
+        Some(kind) => ServerError(Repr::Known { kind, detail }),
+        None => ServerError(Repr::Extension {
+            code: slice_str(frame, err.code),
+            detail,
+        }),
+    }
+}
+
+fn materialize_push(items: Vec<ValueRange>, frame: &Bytes) -> Result<Value, ParsingError> {
+    let mut it = items.into_iter();
+    let Some(first) = it.next() else {
+        return Ok(Value::Push {
+            kind: PushKind::Other(Str::from_static("")),
+            data: vec![],
+        });
+    };
+    let kind = match first {
+        ValueRange::BulkString(range) | ValueRange::SimpleString(range) => {
+            get_push_kind(frame.slice(range))?
+        }
+        _ => return Err(ParsingError::from("parse error when decoding push")),
+    };
+    let data = it
+        .map(|item| materialize(item, frame))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Value::Push { kind, data })
+}
+
+fn get_push_kind(name: Bytes) -> Result<PushKind, ParsingError> {
+    let name = Str::from_utf8(name)
+        .map_err(|_| ParsingError::from("parse error when decoding push"))?;
+    let known = match name.as_str() {
+        "invalidate" => Some(PushKind::Invalidate),
+        "message" => Some(PushKind::Message),
+        "pmessage" => Some(PushKind::PMessage),
+        "smessage" => Some(PushKind::SMessage),
+        "unsubscribe" => Some(PushKind::Unsubscribe),
+        "punsubscribe" => Some(PushKind::PUnsubscribe),
+        "sunsubscribe" => Some(PushKind::SUnsubscribe),
+        "subscribe" => Some(PushKind::Subscribe),
+        "psubscribe" => Some(PushKind::PSubscribe),
+        "ssubscribe" => Some(PushKind::SSubscribe),
+        _ => None,
+    };
+    Ok(known.unwrap_or_else(|| PushKind::Other(name)))
+}
+
+// ------------------------------------------------------------------
+// The combine-based parser. Produces `ValueRange` (offsets), not `Value`.
+// ------------------------------------------------------------------
+
 fn value<'a, I>(
+    base: usize,
     count: Option<usize>,
-) -> impl combine::Parser<I, Output = Value, PartialState = AnySendSyncPartialState>
+) -> impl combine::Parser<I, Output = ValueRange, PartialState = AnySendSyncPartialState>
 where
     I: RangeStream<Token = u8, Range = &'a [u8]>,
     I::Error: combine::ParseError<u8, &'a [u8], I::Position>,
@@ -97,11 +258,11 @@ where
                 };
 
                 let simple_string = || {
-                    line().map(|line| {
+                    line().map(move |line: &str| {
                         if line == "OK" {
-                            Value::Okay
+                            ValueRange::Okay
                         } else {
-                            Value::SimpleString(line.into())
+                            ValueRange::SimpleString(range_of(line.as_bytes(), base))
                         }
                     })
                 };
@@ -119,51 +280,43 @@ where
                 let bulk_string = || {
                     int().then_partial(move |size| {
                         if *size < 0 {
-                            combine::produce(|| Value::Nil).left()
+                            combine::produce(|| ValueRange::Nil).left()
                         } else {
                             take(*size as usize)
-                                .map(|bs: &[u8]| Value::BulkString(bs.to_vec()))
+                                .map(move |bs: &[u8]| ValueRange::BulkString(range_of(bs, base)))
                                 .skip(crlf())
                                 .right()
                         }
                     })
                 };
-                let blob = || {
-                    int().then_partial(move |size| {
-                        take(*size as usize)
-                            .map(|bs: &[u8]| String::from_utf8_lossy(bs).to_string())
-                            .skip(crlf())
-                    })
-                };
-
                 let array = || {
                     int().then_partial(move |&mut length| {
                         if length < 0 {
-                            combine::produce(|| Value::Nil).left()
+                            combine::produce(|| ValueRange::Nil).left()
                         } else {
                             let length = length as usize;
-                            combine::count_min_max(length, length, value(Some(count + 1)))
-                                .map(Value::Array)
+                            combine::count_min_max(length, length, value(base, Some(count + 1)))
+                                .map(ValueRange::Array)
                                 .right()
                         }
                     })
                 };
 
-                let error = || line().map(err_parser);
+                let error = || line().map(move |line: &str| err_parser(line, base));
                 let map = || {
                     int().then_partial(move |&mut kv_length| {
                         match (kv_length as usize).checked_mul(2) {
                             Some(length) => {
-                                combine::count_min_max(length, length, value(Some(count + 1)))
-                                    .map(move |result: Vec<Value>| {
+                                combine::count_min_max(length, length, value(base, Some(count + 1)))
+                                    .map(move |result: Vec<ValueRange>| {
                                         let mut it = result.into_iter();
-                                        let mut x = vec![];
+                                        let mut x = Vec::with_capacity(kv_length as usize);
                                         for _ in 0..kv_length {
                                             if let (Some(k), Some(v)) = (it.next(), it.next()) {
                                                 x.push((k, v))
                                             }
                                         }
-                                        Value::Map(x)
+                                        ValueRange::Map(x)
                                     })
                                     .left()
                             }
@@ -179,16 +332,16 @@ where
                             Some(length) => {
                                 // + 1 is for data!
                                 let length = length + 1;
-                                combine::count_min_max(length, length, value(Some(count + 1)))
-                                    .map(move |result: Vec<Value>| {
+                                combine::count_min_max(length, length, value(base, Some(count + 1)))
+                                    .map(move |result: Vec<ValueRange>| {
                                         let mut it = result.into_iter();
-                                        let mut attributes = vec![];
+                                        let mut attributes = Vec::with_capacity(kv_length as usize);
                                         for _ in 0..kv_length {
                                             if let (Some(k), Some(v)) = (it.next(), it.next()) {
                                                 attributes.push((k, v))
                                             }
                                         }
-                                        Value::Attribute {
+                                        ValueRange::Attribute {
                                             data: Box::new(it.next().unwrap()),
                                             attributes,
                                         }
@@ -204,11 +357,11 @@ where
                 let set = || {
                     int().then_partial(move |&mut length| {
                         if length < 0 {
-                            combine::produce(|| Value::Nil).left()
+                            combine::produce(|| ValueRange::Nil).left()
                         } else {
                             let length = length as usize;
-                            combine::count_min_max(length, length, value(Some(count + 1)))
-                                .map(Value::Set)
+                            combine::count_min_max(length, length, value(base, Some(count + 1)))
+                                .map(ValueRange::Set)
                                 .right()
                         }
                     })
@@ -216,40 +369,16 @@ where
                 let push = || {
                     int().then_partial(move |&mut length| {
                         if length <= 0 {
-                            combine::produce(|| Value::Push {
-                                kind: PushKind::Other("".to_string()),
-                                data: vec![],
-                            })
-                            .left()
+                            combine::produce(|| ValueRange::Push(vec![])).left()
                         } else {
                             let length = length as usize;
-                            combine::count_min_max(length, length, value(Some(count + 1)))
-                                .and_then(|result: Vec<Value>| {
-                                    let mut it = result.into_iter();
-                                    let first = it.next().unwrap_or(Value::Nil);
-                                    if let Value::BulkString(kind) = first {
-                                        let push_kind = String::from_utf8(kind)
-                                            .map_err(StreamErrorFor::<I>::other)?;
-                                        Ok(Value::Push {
-                                            kind: get_push_kind(push_kind),
-                                            data: it.collect(),
-                                        })
-                                    } else if let Value::SimpleString(kind) = first {
-                                        Ok(Value::Push {
-                                            kind: get_push_kind(kind),
-                                            data: it.collect(),
-                                        })
-                                    } else {
-                                        Err(StreamErrorFor::<I>::message_static_message(
-                                            "parse error when decoding push",
-                                        ))
-                                    }
-                                })
+                            combine::count_min_max(length, length, value(base, Some(count + 1)))
+                                .map(ValueRange::Push)
                                 .right()
                         }
                     })
                 };
-                let null = || line().map(|_| Value::Nil);
+                let null = || line().map(|_| ValueRange::Nil);
                 let double = || {
                     line().and_then(|line| {
                         line.trim()
@@ -266,32 +395,50 @@ where
                         )),
                     })
                 };
-                let blob_error = || blob().map(|line| err_parser(&line));
-                let verbatim = || {
-                    blob().and_then(|line| {
-                        if let Some((format, text)) = line.split_once(':') {
-                            let format = match format {
-                                "txt" => VerbatimFormat::Text,
-                                "mkd" => VerbatimFormat::Markdown,
-                                x => VerbatimFormat::Unknown(x.to_string()),
-                            };
-                            Ok(Value::VerbatimString {
-                                format,
-                                text: text.to_string(),
+                let blob_error = || {
+                    int().then_partial(move |&mut size| {
+                        take(size as usize)
+                            .and_then(move |bs: &[u8]| {
+                                let line = str::from_utf8(bs).map_err(StreamErrorFor::<I>::other)?;
+                                Ok::<_, StreamErrorFor<I>>(err_parser(line, base))
                             })
-                        } else {
-                            Err(StreamErrorFor::<I>::message_static_message(
-                                "parse error when decoding verbatim string",
-                            ))
-                        }
+                            .skip(crlf())
+                    })
+                };
+                let verbatim = || {
+                    int().then_partial(move |&mut size| {
+                        take(size as usize)
+                            .and_then(move |bs: &[u8]| {
+                                let line = str::from_utf8(bs).map_err(StreamErrorFor::<I>::other)?;
+                                if let Some((format, text)) = line.split_once(':') {
+                                    let format = match format {
+                                        "txt" => VerbatimFormatRange::Text,
+                                        "mkd" => VerbatimFormatRange::Markdown,
+                                        x => VerbatimFormatRange::Unknown(range_of(
+                                            x.as_bytes(),
+                                            base,
+                                        )),
+                                    };
+                                    Ok(ValueRange::VerbatimString {
+                                        format,
+                                        text: range_of(text.as_bytes(), base),
+                                    })
+                                } else {
+                                    Err(StreamErrorFor::<I>::message_static_message(
+                                        "parse error when decoding verbatim string",
+                                    ))
+                                }
+                            })
+                            .skip(crlf())
                     })
                 };
                 let big_number = || {
-                    line().and_then(|line| {
+                    line().and_then(move |line| {
                         #[cfg(not(feature = "num-bigint"))]
-                        return Ok::<_, StreamErrorFor<I>>(Value::BigNumber(
-                            line.as_bytes().to_vec(),
-                        ));
+                        return Ok::<_, StreamErrorFor<I>>(ValueRange::BigNumber(range_of(
+                            line.as_bytes(),
+                            base,
+                        )));
                         #[cfg(feature = "num-bigint")]
                         num_bigint::BigInt::parse_bytes(line.as_bytes(), 10)
                             .ok_or_else(|| {
@@ -299,22 +446,22 @@ where
                                     "Expected bigint, got garbage",
                                 )
                             })
-                            .map(Value::BigNumber)
+                            .map(ValueRange::BigNumber)
                     })
                 };
                 combine::dispatch!(b;
                     b'+' => simple_string(),
-                    b':' => int().map(Value::Int),
+                    b':' => int().map(ValueRange::Int),
                     b'$' => bulk_string(),
                     b'*' => array(),
                     b'%' => map(),
                     b'|' => attribute(),
                     b'~' => set(),
-                    b'-' => error().map(Value::ServerError),
+                    b'-' => error().map(ValueRange::ServerError),
                     b'_' => null(),
-                    b',' => double().map(Value::Double),
-                    b'#' => boolean().map(Value::Boolean),
-                    b'!' => blob_error().map(Value::ServerError),
+                    b',' => double().map(ValueRange::Double),
+                    b'#' => boolean().map(ValueRange::Boolean),
+                    b'!' => blob_error().map(ValueRange::ServerError),
                     b'=' => verbatim(),
                     b'(' => big_number(),
                     b'>' => push(),
@@ -324,64 +471,50 @@ where
     ))
 }
 
-// a macro is needed because of lifetime shenanigans with `decoder`.
-macro_rules! to_redis_err {
-    ($err: expr, $decoder: expr) => {
-        match $err {
-            decoder::Error::Io { error, .. } => error.into(),
-            decoder::Error::Parse(err) => {
-                if err.is_unexpected_end_of_input() {
-                    RedisError::from(io::Error::from(io::ErrorKind::UnexpectedEof))
-                } else {
-                    let err = err
-                        .map_range(|range| format!("{range:?}"))
-                        .map_position(|pos| pos.translate_position($decoder.buffer()))
-                        .to_string();
-                    RedisError::from(ParsingError::from(err))
-                }
-            }
+/// Attempts to parse a single value from `buffer`.
+///
+/// Parsing always starts from the beginning of `buffer` with fresh state, so
+/// the offsets recorded in the returned [`ValueRange`] are valid relative to
+/// the start of `buffer`. Returns `Ok(None)` if `buffer` does not yet contain a
+/// complete value (and `complete` is `false`, i.e. more data may still arrive).
+fn decode_value_range(buffer: &[u8], complete: bool) -> RedisResult<Option<(ValueRange, usize)>> {
+    let base = buffer.as_ptr() as usize;
+    let mut state = AnySendSyncPartialState::default();
+    let mut stream = combine::easy::Stream(combine::stream::MaybePartialStream(buffer, !complete));
+    match combine::stream::decode_tokio(value(base, None), &mut stream, &mut state) {
+        Ok((opt, removed_len)) => Ok(opt.map(|value| (value, removed_len))),
+        Err(err) => {
+            let err = err
+                .map_position(|pos| pos.translate_position(buffer))
+                .map_range(|range| format!("{range:?}"))
+                .to_string();
+            Err(RedisError::from(ParsingError::from(err)))
         }
+    }
+}
+
+/// Parses a single value from `buffer`, consuming the bytes that make it up.
+///
+/// On success the consumed prefix is frozen into a [`Bytes`] and the value's
+/// leaves are produced as cheap, reference-counted slices into it; the
+/// remaining bytes are left in `buffer` for the next value.
+fn parse_buffer(buffer: &mut BytesMut, complete: bool) -> RedisResult<Option<Value>> {
+    let Some((range, consumed)) = decode_value_range(&buffer[..], complete)? else {
+        return Ok(None);
     };
+    let frame = buffer.split_to(consumed).freeze();
+    Ok(Some(materialize(range, &frame)?))
 }
 
 #[cfg(feature = "aio")]
 mod aio_support {
     use super::*;
 
-    use bytes::{Buf, BytesMut};
-    use tokio::io::AsyncRead;
+    use tokio::io::{AsyncRead, AsyncReadExt};
     use tokio_util::codec::{Decoder, Encoder};
 
     #[derive(Default)]
-    pub struct ValueCodec {
-        state: AnySendSyncPartialState,
-    }
-
-    impl ValueCodec {
-        fn decode_stream(&mut self, bytes: &mut BytesMut, eof: bool) -> RedisResult<Option<Value>> {
-            let (opt, removed_len) = {
-                let buffer = &bytes[..];
-                let mut stream =
-                    combine::easy::Stream(combine::stream::MaybePartialStream(buffer, !eof));
-                match combine::stream::decode_tokio(value(None), &mut stream, &mut self.state) {
-                    Ok(x) => x,
-                    Err(err) => {
-                        let err = err
-                            .map_position(|pos| pos.translate_position(buffer))
-                            .map_range(|range| format!("{range:?}"))
-                            .to_string();
-                        return Err(RedisError::from(ParsingError::from(err)));
-                    }
-                }
-            };
-
-            bytes.advance(removed_len);
-            match opt {
-                Some(result) => Ok(Some(result)),
-                None => Ok(None),
-            }
-        }
-    }
+    pub struct ValueCodec;
 
     impl Encoder<Vec<u8>> for ValueCodec {
         type Error = RedisError;
@@ -396,28 +529,38 @@ mod aio_support {
         type Error = RedisError;
 
         fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-            self.decode_stream(bytes, false)
+            parse_buffer(bytes, false)
         }
 
         fn decode_eof(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-            self.decode_stream(bytes, true)
+            parse_buffer(bytes, true)
         }
     }
 
     /// Parses a redis value asynchronously.
+    ///
+    /// `buffer` accumulates data read from `read` and retains any bytes that
+    /// follow a parsed value, so the same buffer should be reused across calls
+    /// on the same stream.
     pub async fn parse_redis_value_async<R>(
-        decoder: &mut combine::stream::Decoder<AnySendSyncPartialState, PointerOffset<[u8]>>,
+        buffer: &mut BytesMut,
         read: &mut R,
     ) -> RedisResult<Value>
     where
         R: AsyncRead + std::marker::Unpin,
     {
-        let result = combine::decode_tokio!(*decoder, *read, value(None), |input, _| {
-            combine::stream::easy::Stream::from(input)
-        });
-        match result {
-            Err(err) => Err(to_redis_err!(err, decoder)),
-            Ok(result) => Ok(result),
+        loop {
+            if let Some(value) = parse_buffer(buffer, false)? {
+                return Ok(value);
+            }
+            if read.read_buf(buffer).await? == 0 {
+                return match parse_buffer(buffer, true)? {
+                    Some(value) => Ok(value),
+                    None => Err(RedisError::from(io::Error::from(
+                        io::ErrorKind::UnexpectedEof,
+                    ))),
+                };
+            }
         }
     }
 }
@@ -428,7 +571,7 @@ pub use self::aio_support::*;
 
 /// The internal redis response parser.
 pub struct Parser {
-    decoder: Decoder<AnySendSyncPartialState, PointerOffset<[u8]>>,
+    buffer: BytesMut,
 }
 
 impl Default for Parser {
@@ -448,7 +591,7 @@ impl Parser {
     /// to be terminated.
     pub fn new() -> Parser {
         Parser {
-            decoder: Decoder::new(),
+            buffer: BytesMut::new(),
         }
     }
 
@@ -456,13 +599,21 @@ impl Parser {
 
     /// Parses synchronously into a single value from the reader.
     pub fn parse_value<T: Read>(&mut self, mut reader: T) -> RedisResult<Value> {
-        let mut decoder = &mut self.decoder;
-        let result = combine::decode!(decoder, reader, value(None), |input, _| {
-            combine::stream::easy::Stream::from(input)
-        });
-        match result {
-            Err(err) => Err(to_redis_err!(err, decoder)),
-            Ok(result) => Ok(result),
+        loop {
+            if let Some(value) = parse_buffer(&mut self.buffer, false)? {
+                return Ok(value);
+            }
+            let mut chunk = [0u8; 8 * 1024];
+            let read = reader.read(&mut chunk)?;
+            if read == 0 {
+                return match parse_buffer(&mut self.buffer, true)? {
+                    Some(value) => Ok(value),
+                    None => Err(RedisError::from(io::Error::from(
+                        io::ErrorKind::UnexpectedEof,
+                    ))),
+                };
+            }
+            self.buffer.extend_from_slice(&chunk[..read]);
         }
     }
 }
@@ -472,8 +623,13 @@ impl Parser {
 /// This is the most straightforward way to parse something into a low
 /// level redis value instead of having to use a whole parser.
 pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
-    let mut parser = Parser::new();
-    parser.parse_value(bytes)
+    let mut buffer = BytesMut::from(bytes);
+    match parse_buffer(&mut buffer, true)? {
+        Some(value) => Ok(value),
+        None => Err(RedisError::from(io::Error::from(
+            io::ErrorKind::UnexpectedEof,
+        ))),
+    }
 }
 
 #[cfg(test)]
@@ -486,7 +642,7 @@ mod tests {
     #[test]
     fn decode_eof_returns_none_at_eof() {
         use tokio_util::codec::Decoder;
-        let mut codec = ValueCodec::default();
+        let mut codec = ValueCodec;
 
         let mut bytes = bytes::BytesMut::from(&b"+GET 123\r\n"[..]);
         assert_eq!(
@@ -501,7 +657,7 @@ mod tests {
     #[test]
     fn decode_eof_returns_error_inside_array_and_can_parse_more_inputs() {
         use tokio_util::codec::Decoder;
-        let mut codec = ValueCodec::default();
+        let mut codec = ValueCodec;
 
         let mut bytes =
             bytes::BytesMut::from(b"*3\r\n+OK\r\n-LOADING server is loading\r\n+OK\r\n".as_slice());
@@ -513,7 +669,7 @@ mod tests {
                 Value::Okay,
                 Value::ServerError(ServerError(Repr::Known {
                     kind: ServerErrorKind::BusyLoading,
-                    detail: Some(arcstr::literal!("server is loading"))
+                    detail: Some(Str::from_static("server is loading"))
                 })),
                 Value::Okay
             ])
@@ -539,7 +695,7 @@ mod tests {
                 Value::Okay,
                 Value::ServerError(ServerError(Repr::Known {
                     kind: ServerErrorKind::BusyLoading,
-                    detail: Some(arcstr::literal!("server is loading"))
+                    detail: Some(Str::from_static("server is loading"))
                 })),
                 Value::Okay
             ])
@@ -590,11 +746,11 @@ mod tests {
         let val = parse_redis_value(b"%2\r\n+first\r\n:1\r\n+second\r\n:2\r\n").unwrap();
         let mut v = val.as_map_iter().unwrap();
         assert_eq!(
-            (&Value::SimpleString("first".to_string()), &Value::Int(1)),
+            (&Value::SimpleString("first".into()), &Value::Int(1)),
             v.next().unwrap()
         );
         assert_eq!(
-            (&Value::SimpleString("second".to_string()), &Value::Int(2)),
+            (&Value::SimpleString("second".into()), &Value::Int(2)),
             v.next().unwrap()
         );
     }
@@ -617,8 +773,8 @@ mod tests {
         assert_eq!(
             val.unwrap(),
             Value::ServerError(ServerError(Repr::Extension {
-                code: arcstr::literal!("SYNTAX"),
-                detail: Some(arcstr::literal!("invalid syntax"))
+                code: Str::from_static("SYNTAX"),
+                detail: Some(Str::from_static("invalid syntax"))
             }))
         )
     }
@@ -632,7 +788,9 @@ mod tests {
                 .unwrap(),
         );
         #[cfg(not(feature = "num-bigint"))]
-        let expected = Value::BigNumber(b"3492890328409238509324850943850943825024385".to_vec());
+        let expected = Value::BigNumber(Bytes::from_static(
+            b"3492890328409238509324850943850943825024385",
+        ));
         assert_eq!(val, expected);
     }
 
@@ -640,8 +798,8 @@ mod tests {
     fn decode_resp3_set() {
         let val = parse_redis_value(b"~5\r\n+orange\r\n+apple\r\n#t\r\n:100\r\n:999\r\n").unwrap();
         let v = val.as_sequence().unwrap();
-        assert_eq!(Value::SimpleString("orange".to_string()), v[0]);
-        assert_eq!(Value::SimpleString("apple".to_string()), v[1]);
+        assert_eq!(Value::SimpleString("orange".into()), v[0]);
+        assert_eq!(Value::SimpleString("apple".into()), v[1]);
         assert_eq!(Value::Boolean(true), v[2]);
         assert_eq!(Value::Int(100), v[3]);
         assert_eq!(Value::Int(999), v[4]);
@@ -653,9 +811,9 @@ mod tests {
             .unwrap();
         if let Value::Push { ref kind, ref data } = val {
             assert_eq!(&PushKind::Message, kind);
-            assert_eq!(Value::SimpleString("somechannel".to_string()), data[0]);
+            assert_eq!(Value::SimpleString("somechannel".into()), data[0]);
             assert_eq!(
-                Value::SimpleString("this is the message".to_string()),
+                Value::SimpleString("this is the message".into()),
                 data[1]
             );
         } else {
