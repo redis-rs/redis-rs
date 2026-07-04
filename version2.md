@@ -10,6 +10,21 @@ redis = "2"
 
 ## Breaking Changes
 
+### TCP_NODELAY is now enabled by default (Breaking Change)
+
+By default, Nagle's algorithm is now disabled on every TCP connection the crate creates (sync and async, plaintext and TLS). Previously it was left enabled, which serialized writes on a multiplexed connection to one per ACK round-trip under concurrency — measured at 39–68% lower throughput and roughly double the p50 latency on a real network (see [#2195](https://github.com/redis-rs/redis-rs/issues/2195) for the full evidence). Sequential request-response traffic is unaffected, and Redis clients in other ecosystems already ship with TCP_NODELAY enabled.
+
+No API changed, but the wire behavior did: the client now emits more, smaller packets at moderate concurrency. Deployments close to packets-per-second limits (small cloud instances) or on metered/WAN links may prefer the old behavior.
+
+**Migration:** nothing to do for most users — expect lower latency and higher multiplexed throughput. To keep Nagle's algorithm:
+
+```rust
+use redis::{IntoConnectionInfo, io::tcp::TcpSettings};
+
+let info = "redis://127.0.0.1/".into_connection_info()?
+    .set_tcp_settings(TcpSettings::default().set_nodelay(false));
+```
+
 ### `cmd_iter` yields `CmdRef` instead of `&Cmd` (Breaking Change)
 
 **Most users can upgrade to 2.0.0 with no code changes.** The flattening is an internal representation change; the pipeline builder API (`cmd`, `arg`, `add_command`, `ignore`, `query`, `query_async`, `exec`, …) is unchanged. The only adjustments are needed if you iterate a pipeline's commands or call `with_capacity` directly.
