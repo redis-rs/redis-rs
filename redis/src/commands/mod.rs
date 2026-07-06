@@ -3805,22 +3805,23 @@ impl ToRedisArgs for Expiry {
     where
         W: ?Sized + RedisWrite,
     {
+        let mut buf = ::itoa::Buffer::new();
         match self {
             Expiry::EX(sec) => {
                 out.write_arg(b"EX");
-                out.write_arg(sec.to_string().as_bytes());
+                out.write_arg(buf.format(*sec).as_bytes());
             }
             Expiry::PX(ms) => {
                 out.write_arg(b"PX");
-                out.write_arg(ms.to_string().as_bytes());
+                out.write_arg(buf.format(*ms).as_bytes());
             }
             Expiry::EXAT(timestamp_sec) => {
                 out.write_arg(b"EXAT");
-                out.write_arg(timestamp_sec.to_string().as_bytes());
+                out.write_arg(buf.format(*timestamp_sec).as_bytes());
             }
             Expiry::PXAT(timestamp_ms) => {
                 out.write_arg(b"PXAT");
-                out.write_arg(timestamp_ms.to_string().as_bytes());
+                out.write_arg(buf.format(*timestamp_ms).as_bytes());
             }
             Expiry::PERSIST => {
                 out.write_arg(b"PERSIST");

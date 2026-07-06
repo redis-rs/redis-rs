@@ -1714,6 +1714,9 @@ where
     if let Some(limit) = params.connection_concurrency_limit {
         config = config.set_concurrency_limit(limit);
     }
+    if let Some(boundary) = params.write_backpressure_boundary {
+        config = config.set_write_backpressure_boundary(boundary);
+    }
     let mut conn = match C::connect_with_config(info, config).await {
         Ok(conn) => conn,
         Err(err) => {

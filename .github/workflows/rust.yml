@@ -45,12 +45,12 @@ jobs:
           ]
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Cache RedisJSON
         if: matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
         id: cache-redisjson
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: |
             /tmp/librejson.so
@@ -91,7 +91,7 @@ jobs:
 
       - name: Checkout RedisJSON
         if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: "RedisJSON/RedisJSON"
           path: "./__ci/redis-json"
@@ -155,7 +155,7 @@ jobs:
       - name: Load Valkey Bloom module from cache
         if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:')
         id: cache-valkey-bloom
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             /tmp/valkey-bloom/target/release/libvalkey_bloom.so
@@ -190,7 +190,7 @@ jobs:
       - name: Cache RedisJSON
         if: matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
         id: cache-redisjson-save
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: ${{ env.REDISRS_REDIS_JSON_PATH }}
           key: ${{ runner.os }}-redisjson-${{ matrix.config.json-module-version }}
@@ -204,7 +204,7 @@ jobs:
       matrix: *db-matrix
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install DB
         uses: ./.github/actions/install-db
@@ -216,7 +216,7 @@ jobs:
       - name: Load Valkey Bloom module from cache
         if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:')
         id: cache-valkey-bloom
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             /tmp/valkey-bloom/target/release/libvalkey_bloom.so
@@ -288,7 +288,7 @@ jobs:
           {toolchain: 1.88.0},
         ]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: lint
         uses: ./.github/actions/lint-and-check
         with:
@@ -334,7 +334,7 @@ jobs:
     env:
       rust_ver: stable
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install DB
         uses: ./.github/actions/install-db
@@ -360,13 +360,13 @@ jobs:
           critcmp base changes
 
       # We check out again, because we switched branches in the last step.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
   flag-frenzy:
     needs: [lint, build-and-test]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain/@master
         with:
           toolchain: stable
@@ -381,7 +381,7 @@ jobs:
     runs-on: windows-2022  # Locked to `2022` because of #2124
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install OpenSSL
         shell: powershell
