@@ -1326,11 +1326,14 @@ where
     }
 
     // Create reconnecting futures and register them into `reconnect_futures`
-    // so we can poll make at the next poll_flush iteration.
+    // so we can poll them at the next poll_flush iteration.
     fn register_reconnect_futures(&mut self, addrs: HashSet<NodeAddress>) {
-        let in_progress = self.inner.conn_lock.try_read().ok();
+        // This is best-effort, non-blocking, opportunistic check to see
+        // if there is already a repair in progress.
+        // This is not load-bearing since the real dedupe logic lives inside reconnect_loop.
+        let opportunistic_read_guard = self.inner.conn_lock.try_read().ok();
         for addr in addrs {
-            if let Some(guard) = &in_progress
+            if let Some(guard) = &opportunistic_read_guard
                 && matches!(
                     guard.0.get(&addr),
                     Some(ConnState::Reconnecting(_) | ConnState::Connecting)
