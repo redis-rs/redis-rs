@@ -357,6 +357,64 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn test_shard_fallback_addrs_master_is_empty() {
+        let slot_map = get_slot_map();
+        let fallback = slot_map.shard_fallback_addrs(&Route::with_slot(
+            Slot::new(1500).unwrap(),
+            SlotAddr::Master,
+        ));
+        assert!(fallback.is_empty());
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn test_shard_fallback_addrs_replica_optional() {
+        let slot_map = get_slot_map();
+        let fallback = slot_map.shard_fallback_addrs(&Route::with_slot(
+            Slot::new(1500).unwrap(),
+            SlotAddr::ReplicaOptional,
+        ));
+        assert_eq!(
+            fallback,
+            vec![
+                addr("replica2:6379"),
+                addr("replica3:6379"),
+                addr("node2:6379")
+            ]
+        );
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn test_shard_fallback_addrs_replica_requiredy() {
+        let slot_map = get_slot_map();
+        let fallback = slot_map.shard_fallback_addrs(&Route::with_slot(
+            Slot::new(2500).unwrap(),
+            SlotAddr::ReplicaRequired,
+        ));
+        assert_eq!(
+            fallback,
+            vec![
+                addr("replica4:6379"),
+                addr("replica5:6379"),
+                addr("replica6:6379")
+            ]
+        );
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn test_shard_fallback_addrs_missing_slot_is_empty() {
+        let slot_map = get_slot_map();
+        let fallback = slot_map.shard_fallback_addrs(&Route::with_slot(
+            Slot::new(1001).unwrap(),
+            SlotAddr::ReplicaOptional,
+        ));
+        assert!(fallback.is_empty());
+    }
+
     fn get_slot_map() -> SlotMap {
         SlotMap::from_slots(vec![
             SlotRange::new(1, 1000, addr("node1:6379"), vec![addr("replica1:6379")]),
