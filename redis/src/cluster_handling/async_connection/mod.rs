@@ -434,7 +434,7 @@ where
 type ConnectionMap<C> = HashMap<NodeAddress, ConnState<C>>;
 
 enum ConnState<C> {
-    // Connection has been succefully established at some point.
+    // Connection has been successfully established at some point.
     Connected(C),
     // Connection is being repaired/reconnected. The old C is retained for faster reconnect.
     Reconnecting(C),
@@ -478,9 +478,7 @@ fn mark_reconnecting<C>(connections: &mut ConnectionMap<C>, addr: NodeAddress) {
         .and_modify(|state| {
             *state = match std::mem::replace(state, ConnState::Connecting) {
                 ConnState::Connected(conn) => {
-                    log::warn!(
-                        "ClusterConnInner: connection to {addr:?} lost; repairing in background"
-                    );
+                    warn!("ClusterConnInner: connection to {addr:?} lost; repairing in background");
                     ConnState::Reconnecting(conn)
                 }
                 other => other,
@@ -884,6 +882,8 @@ where
             return Ok((addr.clone(), conn));
         }
 
+        // The preferred node is not connected (e.g. it is being repaired by the `reconnect_loop` future).
+        // Instead of erroring or waiting we try a fallback (within the same shard).
         let fallback = read_guard
             .1
             .shard_fallback_addrs(&route)

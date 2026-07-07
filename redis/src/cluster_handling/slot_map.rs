@@ -52,12 +52,13 @@ impl SlotMap {
             return Vec::new();
         };
         match route.slot_addr() {
-            SlotAddr::Master => vec![addrs.primary.clone()],
-            SlotAddr::ReplicaOptional | SlotAddr::ReplicaRequired => {
+            SlotAddr::Master => vec![],
+            SlotAddr::ReplicaOptional => {
                 let mut candidates = addrs.replicas.clone();
                 candidates.push(addrs.primary.clone());
                 candidates
             }
+            SlotAddr::ReplicaRequired => addrs.replicas.clone(),
         }
     }
 
