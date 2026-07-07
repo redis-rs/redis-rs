@@ -1120,13 +1120,12 @@ where
             let guard = core.conn_lock.read().await;
             let in_topology = guard.1.addresses_for_all_nodes().contains(&addr);
             let entry = guard.0.get(&addr);
-            let healthy = matches!(entry, Some(ConnState::Connected(_)));
+            if matches!(entry, Some(ConnState::Connected(_))) {
+                break;
+            }
             let prev_conn = entry.and_then(ConnState::connected_or_reconnecting);
             drop(guard);
 
-            if healthy {
-                break;
-            }
             if !in_topology {
                 core.conn_lock.write().await.0.remove(&addr);
                 break;
@@ -1136,7 +1135,7 @@ where
 
         match get_or_create_conn(&addr, prev, &core.cluster_params).await {
             Ok(conn) => {
-                let installed = {
+                let newly_installed = {
                     let mut guard = core.conn_lock.write().await;
                     if matches!(guard.0.get(&addr), Some(ConnState::Connected(_))) {
                         false
@@ -1145,8 +1144,11 @@ where
                         true
                     }
                 };
-                if installed {
+                if newly_installed {
                     info!("ClusterConnInner: reconnected to {addr:?}");
+                    // TODO: make the resubscribe semantic more granular.
+                    // Right now resubscribe() re-sends every subscription across all nodes.
+                    // We should re-subscribe for the newly repaired node.
                     core.resubscribe();
                 }
                 break;
