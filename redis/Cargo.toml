@@ -165,6 +165,11 @@ entra-id = [
 
 # Instead of specifying "aio", use either "tokio-comp" or "smol-comp".
 aio = [
+  # `bytes` is a mandatory dependency now, but the `bytes` feature still gates
+  # the public `BufMut`/`FromRedisValue for Bytes` impls. `aio` enabled it
+  # transitively before `bytes` became mandatory; keep doing so, otherwise those
+  # impls silently disappear for every async downstream.
+  "bytes",
   "dep:pin-project-lite",
   "dep:futures-util",
   "dep:tokio",
