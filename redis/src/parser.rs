@@ -806,6 +806,40 @@ mod tests {
     }
 
     #[test]
+    fn invalid_utf8_in_verbatim_and_blob_error_is_rejected() {
+        // Both verbatim strings and blob errors are now decoded with strict
+        // `str::from_utf8` (previously `from_utf8_lossy`), so a non-UTF-8 body
+        // must surface as a parse error rather than silently gaining U+FFFD
+        // replacement characters.
+        assert_matches!(parse_redis_value(b"=5\r\ntxt:\xff\r\n"), Err(_));
+        assert_matches!(parse_redis_value(b"!4\r\nER\xff\xff\r\n"), Err(_));
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn parsed_error_is_detached_from_reply_buffer() {
+        // A parsed error must copy its code/detail out of the reply frame
+        // rather than slice into it, so that holding on to a small error does
+        // not pin the whole response buffer alive. We check this by asserting
+        // the detail bytes live outside the original buffer's allocation.
+        use tokio_util::codec::Decoder;
+        let mut codec = ValueCodec;
+        let mut buf = bytes::BytesMut::from(b"!21\r\nSYNTAX invalid syntax\r\n".as_slice());
+        let base = buf.as_ptr() as usize;
+        let cap = buf.capacity();
+        let val = codec.decode(&mut buf).unwrap().unwrap();
+        let Value::ServerError(err) = val else {
+            panic!("expected ServerError, got {val:?}");
+        };
+        let detail = err.details().expect("detail present");
+        let ptr = detail.as_ptr() as usize;
+        assert!(
+            ptr < base || ptr >= base + cap,
+            "error detail is a slice into the reply buffer (frame-pinning regression)"
+        );
+    }
+
+    #[test]
     fn decode_resp3_big_number() {
         let val = parse_redis_value(b"(3492890328409238509324850943850943825024385\r\n").unwrap();
         #[cfg(feature = "num-bigint")]
