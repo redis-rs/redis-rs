@@ -505,7 +505,9 @@ fn test_module_json_type() {
         // In RESP3 current RedisJSON always gives response in an array.
         assert_eq!(
             json_type_a,
-            Ok(Array(vec![Array(vec![BulkString("string".as_bytes().to_vec().into())])]))
+            Ok(Array(vec![Array(vec![BulkString(
+                "string".as_bytes().to_vec().into()
+            )])]))
         );
 
         assert_eq!(

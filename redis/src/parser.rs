@@ -105,7 +105,9 @@ fn err_parser(line: &str, base: usize) -> ServerErrorRange {
     ServerErrorRange {
         kind,
         code: range_of(code.as_bytes(), base),
-        detail: pieces.next().map(|detail| range_of(detail.as_bytes(), base)),
+        detail: pieces
+            .next()
+            .map(|detail| range_of(detail.as_bytes(), base)),
     }
 }
 
@@ -153,7 +155,10 @@ fn materialize(range: ValueRange, frame: &Bytes) -> Result<Value, ParsingError> 
 }
 
 fn materialize_vec(items: Vec<ValueRange>, frame: &Bytes) -> Result<Vec<Value>, ParsingError> {
-    items.into_iter().map(|item| materialize(item, frame)).collect()
+    items
+        .into_iter()
+        .map(|item| materialize(item, frame))
+        .collect()
 }
 
 fn materialize_pairs(
@@ -220,8 +225,8 @@ fn materialize_push(items: Vec<ValueRange>, frame: &Bytes) -> Result<Value, Pars
 }
 
 fn get_push_kind(name: Bytes) -> Result<PushKind, ParsingError> {
-    let name = Str::from_utf8(name)
-        .map_err(|_| ParsingError::from("parse error when decoding push"))?;
+    let name =
+        Str::from_utf8(name).map_err(|_| ParsingError::from("parse error when decoding push"))?;
     let known = match name.as_str() {
         "invalidate" => Some(PushKind::Invalidate),
         "message" => Some(PushKind::Message),
@@ -413,7 +418,8 @@ where
                     int().then_partial(move |&mut size| {
                         take(size as usize)
                             .and_then(move |bs: &[u8]| {
-                                let line = str::from_utf8(bs).map_err(StreamErrorFor::<I>::other)?;
+                                let line =
+                                    str::from_utf8(bs).map_err(StreamErrorFor::<I>::other)?;
                                 Ok::<_, StreamErrorFor<I>>(err_parser(line, base))
                             })
                             .skip(crlf())
@@ -423,7 +429,8 @@ where
                     int().then_partial(move |&mut size| {
                         take(size as usize)
                             .and_then(move |bs: &[u8]| {
-                                let line = str::from_utf8(bs).map_err(StreamErrorFor::<I>::other)?;
+                                let line =
+                                    str::from_utf8(bs).map_err(StreamErrorFor::<I>::other)?;
                                 if let Some((format, text)) = line.split_once(':') {
                                     let format = match format {
                                         "txt" => VerbatimFormatRange::Text,
@@ -831,10 +838,7 @@ mod tests {
         if let Value::Push { ref kind, ref data } = val {
             assert_eq!(&PushKind::Message, kind);
             assert_eq!(Value::SimpleString("somechannel".into()), data[0]);
-            assert_eq!(
-                Value::SimpleString("this is the message".into()),
-                data[1]
-            );
+            assert_eq!(Value::SimpleString("this is the message".into()), data[1]);
         } else {
             panic!("Expected Value::Push")
         }

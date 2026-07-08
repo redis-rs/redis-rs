@@ -858,7 +858,10 @@ mod tests {
                 Value::BulkString(b"tracking-active".to_vec().into()),
                 Value::Int(1),
             ),
-            (Value::BulkString(b"sample-ratio".to_vec().into()), Value::Int(1)),
+            (
+                Value::BulkString(b"sample-ratio".to_vec().into()),
+                Value::Int(1),
+            ),
             (
                 Value::BulkString(b"selected-slots".to_vec().into()),
                 Value::Array(vec![Value::Array(vec![Value::Int(0), Value::Int(16383)])]),

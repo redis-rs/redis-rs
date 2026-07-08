@@ -1459,7 +1459,10 @@ mod tests_routing {
             Value::BulkString("1".as_bytes().to_vec().into()),
             Value::BulkString("4".as_bytes().to_vec().into()),
         ]);
-        let res3 = Value::Array(vec![Value::SimpleString("2".to_string().into()), Value::Int(3)]);
+        let res3 = Value::Array(vec![
+            Value::SimpleString("2".to_string().into()),
+            Value::Int(3),
+        ]);
         let results = super::combine_and_sort_array_results(
             vec![res1, res2, res3],
             &[
@@ -1487,7 +1490,10 @@ mod tests_routing {
     fn test_combining_results_into_single_array_key_value_paires() {
         // For example `MSET foo bar foo2 bar2 {foo}foo3 bar3`
         let res1 = Value::Array(vec![Value::Okay]);
-        let res2 = Value::Array(vec![Value::BulkString("1".as_bytes().to_vec().into()), Value::Nil]);
+        let res2 = Value::Array(vec![
+            Value::BulkString("1".as_bytes().to_vec().into()),
+            Value::Nil,
+        ]);
         let results = super::combine_and_sort_array_results(
             vec![res1, res2],
             &[
@@ -1511,7 +1517,10 @@ mod tests_routing {
     fn test_combining_results_into_single_array_keys_and_path() {
         // For example `JSON.MGET foo bar {foo}foo2 $.a`
         let res1 = Value::Array(vec![Value::Okay]);
-        let res2 = Value::Array(vec![Value::BulkString("1".as_bytes().to_vec().into()), Value::Nil]);
+        let res2 = Value::Array(vec![
+            Value::BulkString("1".as_bytes().to_vec().into()),
+            Value::Nil,
+        ]);
         let results = super::combine_and_sort_array_results(
             vec![res1, res2],
             &[
@@ -1535,7 +1544,10 @@ mod tests_routing {
     fn test_combining_results_into_single_array_key_with_two_arg_triples() {
         // For example `JSON.MSET foo $.a bar foo2 $.f.a bar2 {foo}foo3 $.f bar3`
         let res1 = Value::Array(vec![Value::Okay]);
-        let res2 = Value::Array(vec![Value::BulkString("1".as_bytes().to_vec().into()), Value::Nil]);
+        let res2 = Value::Array(vec![
+            Value::BulkString("1".as_bytes().to_vec().into()),
+            Value::Nil,
+        ]);
         let results = super::combine_and_sort_array_results(
             vec![res1, res2],
             &[

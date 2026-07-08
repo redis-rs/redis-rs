@@ -535,11 +535,7 @@ mod tests {
 
         let actual = input.into_redis_value();
 
-        let expected = Value::BulkString(vec![
-            0x66, /* f */
-            0x6f, /* o */
-            0x6f, /* o */
-        ].into());
+        let expected = Value::BulkString(vec![0x66 /* f */, 0x6f /* o */, 0x6f /* o */].into());
         assert_eq!(actual, expected);
     }
 
@@ -549,11 +545,7 @@ mod tests {
 
         let actual = input.into_redis_value();
 
-        let expected = Value::BulkString(vec![
-            0x66, /* f */
-            0x6f, /* o */
-            0x6f, /* o */
-        ].into());
+        let expected = Value::BulkString(vec![0x66 /* f */, 0x6f /* o */, 0x6f /* o */].into());
         assert_eq!(actual, expected);
     }
 
@@ -574,11 +566,7 @@ mod tests {
 
         let actual = input.into_redis_value();
 
-        let expected = Value::BulkString(vec![
-            0x66, /* f */
-            0x6f, /* o */
-            0x6f, /* o */
-        ].into());
+        let expected = Value::BulkString(vec![0x66 /* f */, 0x6f /* o */, 0x6f /* o */].into());
         assert_eq!(actual, expected);
     }
 
@@ -588,11 +576,7 @@ mod tests {
 
         let actual = input.into_redis_value();
 
-        let expected = Value::BulkString(vec![
-            0x66, /* f */
-            0x6f, /* o */
-            0x6f, /* o */
-        ].into());
+        let expected = Value::BulkString(vec![0x66 /* f */, 0x6f /* o */, 0x6f /* o */].into());
         assert_eq!(actual, expected);
     }
 
@@ -767,11 +751,7 @@ mod tests {
     fn redis_string() {
         let actual = redis_value!("foo".to_string());
 
-        let expected = Value::BulkString(vec![
-            0x66, /* f */
-            0x6f, /* o */
-            0x6f, /* o */
-        ].into());
+        let expected = Value::BulkString(vec![0x66 /* f */, 0x6f /* o */, 0x6f /* o */].into());
         assert_eq!(actual, expected);
     }
 
@@ -779,11 +759,7 @@ mod tests {
     fn redis_str_ref() {
         let actual = redis_value!("foo");
 
-        let expected = Value::BulkString(vec![
-            0x66, /* f */
-            0x6f, /* o */
-            0x6f, /* o */
-        ].into());
+        let expected = Value::BulkString(vec![0x66 /* f */, 0x6f /* o */, 0x6f /* o */].into());
         assert_eq!(actual, expected);
     }
 
@@ -831,11 +807,7 @@ mod tests {
         let actual = redis_value!([42, "foo", nil, last_arg]);
 
         let expected1 = Value::Int(42);
-        let expected2 = Value::BulkString(vec![
-            0x66, /* f */
-            0x6f, /* o */
-            0x6f, /* o */
-        ].into());
+        let expected2 = Value::BulkString(vec![0x66 /* f */, 0x6f /* o */, 0x6f /* o */].into());
         let expected3 = Value::Nil;
         let expected4 = Value::Boolean(true);
         let expected = Value::Array(vec![expected1, expected2, expected3, expected4]);
@@ -848,11 +820,7 @@ mod tests {
         let actual = redis_value!([42, ["foo", nil,], last_arg]);
 
         let expected1 = Value::Int(42);
-        let expected21 = Value::BulkString(vec![
-            0x66, /* f */
-            0x6f, /* o */
-            0x6f, /* o */
-        ].into());
+        let expected21 = Value::BulkString(vec![0x66 /* f */, 0x6f /* o */, 0x6f /* o */].into());
         let expected22 = Value::Nil;
         let expected2 = Value::Array(vec![expected21, expected22]);
         let expected3 = Value::Boolean(true);
@@ -887,11 +855,7 @@ mod tests {
         let actual = redis_value!(set:[42, "foo", nil, last_arg]);
 
         let expected1 = Value::Int(42);
-        let expected2 = Value::BulkString(vec![
-            0x66, /* f */
-            0x6f, /* o */
-            0x6f, /* o */
-        ].into());
+        let expected2 = Value::BulkString(vec![0x66 /* f */, 0x6f /* o */, 0x6f /* o */].into());
         let expected3 = Value::Nil;
         let expected4 = Value::Boolean(true);
         let expected = Value::Set(vec![expected1, expected2, expected3, expected4]);
@@ -904,11 +868,7 @@ mod tests {
         let actual = redis_value!(set:[42, (set:["foo", nil,]), last_arg]);
 
         let expected1 = Value::Int(42);
-        let expected21 = Value::BulkString(vec![
-            0x66, /* f */
-            0x6f, /* o */
-            0x6f, /* o */
-        ].into());
+        let expected21 = Value::BulkString(vec![0x66 /* f */, 0x6f /* o */, 0x6f /* o */].into());
         let expected22 = Value::Nil;
         let expected2 = Value::Set(vec![expected21, expected22]);
         let expected3 = Value::Boolean(true);
@@ -944,11 +904,7 @@ mod tests {
         let expected1 = (Value::Int(42), Value::Boolean(true));
         let expected2 = (
             Value::Nil,
-            Value::BulkString(vec![
-                0x66, /* f */
-                0x6f, /* o */
-                0x6f, /* o */
-            ].into()),
+            Value::BulkString(vec![0x66 /* f */, 0x6f /* o */, 0x6f /* o */].into()),
         );
         let expected = Value::Map(vec![expected1, expected2]);
         assert_eq!(actual, expected);
@@ -965,11 +921,7 @@ mod tests {
         let expected1 = (expected1_key, expected1_value);
         let expected2 = (
             Value::Nil,
-            Value::BulkString(vec![
-                0x66, /* f */
-                0x6f, /* o */
-                0x6f, /* o */
-            ].into()),
+            Value::BulkString(vec![0x66 /* f */, 0x6f /* o */, 0x6f /* o */].into()),
         );
         let expected = Value::Map(vec![expected1, expected2]);
         assert_eq!(actual, expected);
