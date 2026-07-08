@@ -147,8 +147,21 @@ pub enum NumericBehavior {
 /// Because the backing storage is `Bytes`, cloning a `Str` is a cheap
 /// reference-count bump rather than an allocation, and the parser can produce
 /// one as a zero-copy slice into the response buffer.
-#[derive(Clone, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Str(Bytes);
+
+impl std::hash::Hash for Str {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Hash as a `str`, not as the raw `Bytes`. `<str as Hash>` and
+        // `<[u8] as Hash>` produce different values (str writes a trailing
+        // `0xff`, the slice writes a length prefix), so deriving `Hash` from
+        // `Bytes` while also implementing `Borrow<str>` would break the
+        // `Borrow`/`Hash` contract and make `HashMap<Str, _>::get(&str)` miss
+        // present keys.
+        self.as_str().hash(state);
+    }
+}
 
 impl Str {
     /// Wraps a `Bytes` buffer as a `Str`, validating that it is UTF-8.
@@ -2918,5 +2931,30 @@ impl PartialEq<u32> for IntegerReplyOrNoOp {
             IntegerReplyOrNoOp::IntegerReply(s) => *s as u32 == *other,
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod str_tests {
+    use super::Str;
+    use std::collections::{BTreeMap, HashMap};
+
+    #[test]
+    fn hashmap_lookup_by_str_borrow() {
+        // `Str: Borrow<str>` requires `str`-consistent hashing; otherwise a
+        // `HashMap<Str, _>` lookup by `&str` would miss the present key.
+        let mut map: HashMap<Str, i32> = HashMap::new();
+        map.insert(Str::from("hello"), 1);
+        assert_eq!(map.get("hello"), Some(&1));
+    }
+
+    #[test]
+    fn str_is_ordered_like_str() {
+        assert!(Str::from("apple") < Str::from("banana"));
+        // Usable as a BTreeMap key, matching what `String` previously allowed.
+        let mut m: BTreeMap<Str, i32> = BTreeMap::new();
+        m.insert(Str::from("b"), 2);
+        m.insert(Str::from("a"), 1);
+        assert_eq!(m.keys().map(|s| s.as_str()).collect::<Vec<_>>(), ["a", "b"]);
     }
 }
