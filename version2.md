@@ -86,6 +86,27 @@ the largest wins on responses that contain many elements. Cloning a `Value` (or
 any `Str`/`BulkString` inside it) is now a reference-count bump rather than a
 deep copy.
 
+### Trade-offs to be aware of
+
+- **Memory retention:** every `Bytes`/`Str` leaf is a reference-counted slice of
+  the response it arrived in, so holding on to one small field keeps that whole
+  response's buffer alive (one buffer per reply, not per connection). If you
+  extract a small piece of a large response and store it long-term, copy it out
+  (e.g. `Vec::from(&bytes[..])` or `str.to_string()`). Server errors are already
+  copied out by the parser for exactly this reason — storing an error never pins
+  a response buffer.
+- **Extracting owned `Vec<u8>`/`String`:** conversions like
+  `from_redis_value::<Vec<u8>>` now perform their copy at conversion time rather
+  than at parse time (the total number of copies is unchanged — one). Code that
+  reads payloads by reference performs no copy at all.
+- **Fragmented arrival of huge multi-element responses:** the parser re-parses
+  the buffered prefix when a response arrives across many reads (parse state is
+  not kept between reads, which is what makes the zero-copy offsets sound).
+  For typical responses over typical networks this is a handful of cheap
+  attempts; a response with a very large number of elements arriving in many
+  small fragments does more repeated work than before. Bulk-string payloads are
+  skipped in O(1) regardless of size.
+
 ### `cmd_iter` yields `CmdRef` instead of `&Cmd` (Breaking Change)
 
 **Most users can upgrade to 2.0.0 with no code changes.** The flattening is an internal representation change; the pipeline builder API (`cmd`, `arg`, `add_command`, `ignore`, `query`, `query_async`, `exec`, …) is unchanged. The only adjustments are needed if you iterate a pipeline's commands or call `with_capacity` directly.
