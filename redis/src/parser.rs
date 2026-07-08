@@ -174,12 +174,26 @@ fn materialize_format(format: VerbatimFormatRange, frame: &Bytes) -> VerbatimFor
     }
 }
 
+/// Copies `frame[range]` out into a detached [`Str`].
+///
+/// Used for error payloads instead of [`slice_str`]: errors are rare, small,
+/// and often outlive the response they arrived in (users store them, retry
+/// loops hold them, cluster redirects carry them around). Slicing would pin
+/// the whole response frame for as long as the error lives — e.g. one error
+/// among thousands of pipelined results would retain the entire reply buffer.
+/// Copying a few bytes here keeps the hot data path zero-copy while giving
+/// errors an independent lifetime.
+#[inline]
+fn detached_str(frame: &Bytes, range: Range<usize>) -> Str {
+    Str::from(slice_str(frame, range).as_str())
+}
+
 fn materialize_error(err: ServerErrorRange, frame: &Bytes) -> ServerError {
-    let detail = err.detail.map(|range| slice_str(frame, range));
+    let detail = err.detail.map(|range| detached_str(frame, range));
     match err.kind {
         Some(kind) => ServerError(Repr::Known { kind, detail }),
         None => ServerError(Repr::Extension {
-            code: slice_str(frame, err.code),
+            code: detached_str(frame, err.code),
             detail,
         }),
     }
@@ -553,6 +567,11 @@ mod aio_support {
             if let Some(value) = parse_buffer(buffer, false)? {
                 return Ok(value);
             }
+            // Keep a sane minimum read granularity: `read_buf` only fills the
+            // buffer's spare capacity, which after a `split_to`/`freeze` can be
+            // arbitrarily small (the frozen prefix may still share the backing
+            // allocation). Without this, reads can degrade to tiny chunks.
+            buffer.reserve(8 * 1024);
             if read.read_buf(buffer).await? == 0 {
                 return match parse_buffer(buffer, true)? {
                     Some(value) => Ok(value),
