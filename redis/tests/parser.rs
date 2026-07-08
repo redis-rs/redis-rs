@@ -208,3 +208,51 @@ quickcheck! {
         );
     }
 }
+
+#[test]
+fn pipelined_values_across_fragmented_reads() {
+    // Multiple pipelined replies flowing through one reused buffer in awkward
+    // 7-byte chunks: exercises leftover preservation after each parsed value
+    // (the consumed prefix is split off and frozen while the next reply's
+    // bytes stay in the buffer) and mid-value refills. This is the read-path
+    // shape a multiplexed connection produces on a real socket.
+    let values = vec![
+        Value::Array(vec![
+            Value::BulkString(vec![b'x'; 10_000].into()),
+            Value::Okay,
+            Value::Int(-1),
+        ]),
+        Value::SimpleString("pipelined".into()),
+        Value::Map(vec![(
+            Value::BulkString(b"key".to_vec().into()),
+            Value::Double(1.5),
+        )]),
+    ];
+
+    let mut encoded = Vec::new();
+    for v in &values {
+        encode_value(v, &mut encoded).unwrap();
+    }
+
+    let mut reader = &encoded[..];
+    let mut partial_reader = PartialAsyncRead {
+        inner: &mut reader,
+        ops: Box::new(std::iter::repeat(PartialOp::Limited(7))),
+    };
+    let mut buffer = bytes::BytesMut::new();
+
+    let runtime = current_thread_runtime();
+    for expected in &values {
+        let got = runtime
+            .block_on(redis::parse_redis_value_async(
+                &mut buffer,
+                &mut partial_reader,
+            ))
+            .unwrap();
+        assert_eq!(&got, expected);
+    }
+    assert!(
+        buffer.is_empty(),
+        "no bytes should remain after the last value"
+    );
+}
