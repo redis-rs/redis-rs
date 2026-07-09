@@ -38,8 +38,10 @@ reference-counted buffers instead of owned `Vec<u8>`/`String`:
 - Server error code/detail are now `Str` as well
 
 `Str` is a new UTF-8-guaranteed string backed by `bytes::Bytes`. It derefs to
-`&str`, so most code keeps working unchanged, and it converts cheaply to/from
-`String` and `Bytes` (`Into<String>`, `Into<Bytes>`).
+`&str`, so most code keeps working unchanged. Constructing one from `&str`/`String`
+is cheap, and `Into<Bytes>` is free (it just moves the inner buffer). Converting
+to an owned `String` (`Into<String>`) copies when the `Str` is a shared slice into
+a response — the common parser case — so only reach for it when you need ownership.
 
 The parser was rewritten to be **zero-copy**: instead of allocating a fresh
 `Vec`/`String` for every element of a response, it parses into byte-range
@@ -61,9 +63,9 @@ if let Value::BulkString(bytes) = v {
 }
 ```
 
-`Str` derefs to `&str`, so `Value::SimpleString` matches that previously used
-the inner `String` as a `&str` continue to work; constructing one now takes a
-`Str` (e.g. `Value::SimpleString("OK".into())`).
+`Str` derefs to `&str`, so `match` arms that previously used the inner `String`
+of a `Value::SimpleString` as a `&str` continue to work; constructing one now
+takes a `Str` (e.g. `Value::SimpleString("OK".into())`).
 
 The (rarely used) re-exported `parse_redis_value_async` also changed shape as
 part of the rewrite: its first argument is now a `&mut bytes::BytesMut` read
