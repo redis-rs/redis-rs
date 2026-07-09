@@ -5,6 +5,9 @@
 //! which node within a shard should handle each read — for example picking
 //! a random replica, round-robin across replicas, or selecting the
 //! lowest-latency node.
+//! `UniformRandom` gives each cluster connection stable affinity to one
+//! uniformly selected replica per shard, reducing its steady-state replica
+//! connection fan-out.
 //!
 //! This module contains the trait definitions for implementing custom
 //! strategies and some built-in strategies.
@@ -14,6 +17,7 @@
 mod interface;
 mod random_replica;
 mod round_robin_replica;
+mod uniform_random;
 mod zonal_read_routing;
 
 pub use interface::{
@@ -24,4 +28,5 @@ pub use interface::{
 };
 pub use random_replica::RandomReplicaStrategy;
 pub use round_robin_replica::RoundRobinReplicaStrategy;
+pub use uniform_random::UniformRandom;
 pub use zonal_read_routing::ZonalReadRoutingStrategy;

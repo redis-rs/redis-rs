@@ -53,6 +53,18 @@ impl SlotMap {
             .map(|addrs| addrs.slot_addr(slot, &route.slot_addr(), strategy))
     }
 
+    pub(crate) fn slot_addr_for_route_excluding(
+        &self,
+        route: &Route,
+        strategy: Option<&dyn ReadRoutingStrategy>,
+        excluded_nodes: &[NodeAddress],
+    ) -> Option<&NodeAddress> {
+        let slot = route.slot();
+        self.slots.get(slot).and_then(|addrs| {
+            addrs.slot_addr_excluding(slot, &route.slot_addr(), strategy, excluded_nodes)
+        })
+    }
+
     #[cfg(feature = "cluster-async")]
     pub fn clear(&mut self) {
         self.slots.clear();
@@ -88,6 +100,7 @@ impl SlotMap {
         self.all_unique_addresses(false)
     }
 
+    #[cfg(any(feature = "cluster-async", test))]
     pub fn addresses_for_multi_slot<'a, 'b>(
         &'a self,
         routes: &'b [(Route, Vec<usize>)],
@@ -146,6 +159,61 @@ pub(crate) struct SlotAddrs {
 impl SlotAddrs {
     pub(crate) fn new(primary: NodeAddress, replicas: Vec<NodeAddress>) -> Self {
         Self { primary, replicas }
+    }
+
+    pub(crate) fn slot_addr_excluding(
+        &self,
+        slot: u16,
+        slot_addr: &SlotAddr,
+        strategy: Option<&dyn ReadRoutingStrategy>,
+        excluded_nodes: &[NodeAddress],
+    ) -> Option<&NodeAddress> {
+        if excluded_nodes.is_empty() {
+            return Some(self.slot_addr(slot, slot_addr, strategy));
+        }
+
+        match slot_addr {
+            SlotAddr::Master => (!excluded_nodes.contains(&self.primary)).then_some(&self.primary),
+            SlotAddr::ReplicaOptional => {
+                let selected = match (strategy, Replicas::new(&self.replicas)) {
+                    (Some(strategy), Some(replicas)) => strategy
+                        .route_read(&ReadCandidates::any_node(slot, &self.primary, replicas)),
+                    _ => &self.primary,
+                };
+                if !excluded_nodes.contains(selected) {
+                    return Some(selected);
+                }
+
+                (!excluded_nodes.contains(&self.primary))
+                    .then_some(&self.primary)
+                    .or_else(|| {
+                        strategy.and_then(|_| {
+                            self.replicas
+                                .iter()
+                                .find(|replica| !excluded_nodes.contains(*replica))
+                        })
+                    })
+            }
+            SlotAddr::ReplicaRequired => {
+                let Some(replicas) = Replicas::new(&self.replicas) else {
+                    return (!excluded_nodes.contains(&self.primary)).then_some(&self.primary);
+                };
+                let selected = match strategy {
+                    Some(strategy) => strategy.route_read(&ReadCandidates::replicas_only(
+                        slot,
+                        Replicas::new(&self.replicas).expect("replicas are non-empty"),
+                    )),
+                    None => replicas.choose_random(),
+                };
+                if !excluded_nodes.contains(selected) {
+                    return Some(selected);
+                }
+
+                self.replicas
+                    .iter()
+                    .find(|replica| !excluded_nodes.contains(*replica))
+            }
+        }
     }
 
     pub(crate) fn slot_addr(
@@ -353,6 +421,68 @@ mod tests {
                 )
                 .unwrap(),
             "replica1:6379"
+        );
+    }
+
+    #[test]
+    fn test_slot_map_read_fallback_respects_route_semantics() {
+        let strategy = FirstReplicaStrategy;
+        let slot_map = SlotMap::from_slots(vec![SlotRange::new(
+            1,
+            1000,
+            addr("primary:6379"),
+            vec![addr("replica1:6379"), addr("replica2:6379")],
+        )]);
+        let optional = Route::with_slot(Slot::new(500).unwrap(), SlotAddr::ReplicaOptional);
+        let required = Route::with_slot(Slot::new(500).unwrap(), SlotAddr::ReplicaRequired);
+
+        assert_eq!(
+            slot_map.slot_addr_for_route_excluding(
+                &optional,
+                Some(&strategy),
+                &[addr("replica1:6379")],
+            ),
+            Some(&addr("primary:6379"))
+        );
+        assert_eq!(
+            slot_map.slot_addr_for_route_excluding(
+                &optional,
+                Some(&strategy),
+                &[addr("replica1:6379"), addr("primary:6379")],
+            ),
+            Some(&addr("replica2:6379"))
+        );
+        assert_eq!(
+            slot_map.slot_addr_for_route_excluding(
+                &required,
+                Some(&strategy),
+                &[addr("replica1:6379")],
+            ),
+            Some(&addr("replica2:6379"))
+        );
+        assert_eq!(
+            slot_map.slot_addr_for_route_excluding(
+                &required,
+                Some(&strategy),
+                &[addr("replica1:6379"), addr("replica2:6379")],
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn test_slot_map_without_strategy_does_not_fall_back_to_unprepared_replica() {
+        let slot_map = SlotMap::from_slots(vec![SlotRange::new(
+            1,
+            1000,
+            addr("primary:6379"),
+            vec![addr("replica:6379")],
+        )]);
+        let optional = Route::with_slot(Slot::new(500).unwrap(), SlotAddr::ReplicaOptional);
+
+        assert_eq!(
+            slot_map.slot_addr_for_route_excluding(&optional, None, &[addr("primary:6379")],),
+            None
         );
     }
 

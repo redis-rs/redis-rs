@@ -3,7 +3,7 @@ use std::hint::black_box;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use redis::cluster::cluster_pipe;
-use redis::cluster_read_routing::RandomReplicaStrategy;
+use redis::cluster_read_routing::{RandomReplicaStrategy, UniformRandom};
 use redis_test::cluster::RedisClusterConfiguration;
 
 use support::*;
@@ -13,10 +13,14 @@ mod support;
 
 const PIPELINE_QUERIES: usize = 100;
 
-fn bench_set_get_and_del(c: &mut Criterion, con: &mut redis::cluster::ClusterConnection) {
+fn bench_set_get_and_del(
+    c: &mut Criterion,
+    con: &mut redis::cluster::ClusterConnection,
+    strategy_name: &str,
+) {
     let key = "test_key";
 
-    let mut group = c.benchmark_group("cluster_basic");
+    let mut group = c.benchmark_group(format!("cluster_basic_{strategy_name}"));
 
     group.bench_function("set", |b| {
         b.iter(|| {
@@ -43,8 +47,12 @@ fn bench_set_get_and_del(c: &mut Criterion, con: &mut redis::cluster::ClusterCon
     group.finish();
 }
 
-fn bench_pipeline(c: &mut Criterion, con: &mut redis::cluster::ClusterConnection) {
-    let mut group = c.benchmark_group("cluster_pipeline");
+fn bench_pipeline(
+    c: &mut Criterion,
+    con: &mut redis::cluster::ClusterConnection,
+    strategy_name: &str,
+) {
+    let mut group = c.benchmark_group(format!("cluster_pipeline_{strategy_name}"));
     group.throughput(Throughput::Elements(PIPELINE_QUERIES as u64));
 
     let mut queries = Vec::new();
@@ -85,11 +93,10 @@ fn bench_cluster_setup(c: &mut Criterion) {
     cluster.wait_for_cluster_up();
 
     let mut con = cluster.connection();
-    bench_set_get_and_del(c, &mut con);
-    bench_pipeline(c, &mut con);
+    bench_set_get_and_del(c, &mut con, "primary");
+    bench_pipeline(c, &mut con, "primary");
 }
 
-#[allow(dead_code)]
 fn bench_cluster_read_from_replicas_setup(c: &mut Criterion) {
     let cluster = TestClusterContext::new_with_config_and_builder(
         RedisClusterConfiguration::single_replica_config(),
@@ -98,13 +105,26 @@ fn bench_cluster_read_from_replicas_setup(c: &mut Criterion) {
     cluster.wait_for_cluster_up();
 
     let mut con = cluster.connection();
-    bench_set_get_and_del(c, &mut con);
-    bench_pipeline(c, &mut con);
+    bench_set_get_and_del(c, &mut con, "random_replica");
+    bench_pipeline(c, &mut con, "random_replica");
+}
+
+fn bench_cluster_uniform_random_setup(c: &mut Criterion) {
+    let cluster = TestClusterContext::new_with_config_and_builder(
+        RedisClusterConfiguration::single_replica_config(),
+        |builder| builder.read_routing_strategy(UniformRandom::new()),
+    );
+    cluster.wait_for_cluster_up();
+
+    let mut con = cluster.connection();
+    bench_set_get_and_del(c, &mut con, "uniform_random");
+    bench_pipeline(c, &mut con, "uniform_random");
 }
 
 criterion_group!(
     cluster_bench,
     bench_cluster_setup,
-    // bench_cluster_read_from_replicas_setup
+    bench_cluster_read_from_replicas_setup,
+    bench_cluster_uniform_random_setup,
 );
 criterion_main!(cluster_bench);

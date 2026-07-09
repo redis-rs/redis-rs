@@ -5,7 +5,7 @@ use std::hint::black_box;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use redis::cluster::ClusterClient;
 use redis::cluster_read_routing::{
-    RandomReplicaStrategy, RoundRobinReplicaStrategy, ZonalReadRoutingStrategy,
+    RandomReplicaStrategy, RoundRobinReplicaStrategy, UniformRandom, ZonalReadRoutingStrategy,
 };
 use redis::{Value, cmd};
 
@@ -142,6 +142,12 @@ fn bench_get(
     builder: redis::cluster::ClusterClientBuilder,
 ) {
     let mut env = mock_env(name, builder);
+    let value: Option<i32> = cmd("GET")
+        .arg(black_box("{bench}key"))
+        .query(&mut env.connection)
+        .unwrap();
+    assert_eq!(value, Some(123));
+
     group.bench_function(name, |b| {
         b.iter(|| {
             let value: Option<i32> = cmd("GET")
@@ -175,6 +181,13 @@ fn bench_cluster_read_routing(c: &mut Criterion) {
         ClusterClient::builder(vec!["redis://round_robin_replica"])
             .retries(0)
             .read_routing_strategy(RoundRobinReplicaStrategy::new()),
+    );
+    bench_get(
+        &mut group,
+        "uniform_random",
+        ClusterClient::builder(vec!["redis://uniform_random"])
+            .retries(0)
+            .read_routing_strategy(UniformRandom::new()),
     );
     bench_get(
         &mut group,

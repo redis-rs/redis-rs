@@ -43,7 +43,13 @@ pub(super) enum InternalSingleNodeRouting<C> {
     #[default]
     Random,
     SpecificNode(Route),
+    SpecificNodeWithPreferred {
+        route: Route,
+        preferred: NodeAddress,
+    },
     ByAddress(NodeAddress),
+    ByAddressTransient(NodeAddress),
+    #[allow(dead_code)]
     Connection {
         identifier: NodeAddress,
         conn: C,
@@ -54,12 +60,32 @@ pub(super) enum InternalSingleNodeRouting<C> {
     },
 }
 
+impl<C> InternalSingleNodeRouting<C> {
+    pub(super) fn is_transient(&self) -> bool {
+        match self {
+            Self::ByAddressTransient(_) => true,
+            Self::Redirect {
+                previous_routing, ..
+            } => previous_routing.is_transient(),
+            _ => false,
+        }
+    }
+}
+
 impl<C> std::fmt::Debug for InternalSingleNodeRouting<C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Random => write!(f, "Random"),
             Self::SpecificNode(arg0) => f.debug_tuple("SpecificNode").field(arg0).finish(),
+            Self::SpecificNodeWithPreferred { route, preferred } => f
+                .debug_struct("SpecificNodeWithPreferred")
+                .field("route", route)
+                .field("preferred", preferred)
+                .finish(),
             Self::ByAddress(arg0) => f.debug_tuple("ByAddress").field(arg0).finish(),
+            Self::ByAddressTransient(arg0) => {
+                f.debug_tuple("ByAddressTransient").field(arg0).finish()
+            }
             Self::Connection {
                 identifier,
                 conn: _conn,

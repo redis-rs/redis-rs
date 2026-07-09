@@ -9,8 +9,11 @@ use std::{
 
 use crate::errors::RetryMethod;
 use crate::{
-    Cmd, RedisResult, cluster_async::OperationTarget, cluster_handling::NodeAddress,
-    cluster_handling::client::RetryParams, cluster_routing::Redirect,
+    Cmd, ErrorKind, RedisResult,
+    cluster_async::OperationTarget,
+    cluster_handling::NodeAddress,
+    cluster_handling::client::RetryParams,
+    cluster_routing::{Redirect, SlotAddr},
 };
 
 use futures_util::{future::BoxFuture, ready};
@@ -51,6 +54,43 @@ pub(super) enum Retry<C> {
 }
 
 impl<C> CmdArg<C> {
+    fn route_uses_read_fallback(route: &InternalSingleNodeRouting<C>) -> bool {
+        match route {
+            InternalSingleNodeRouting::SpecificNode(route) => matches!(
+                route.slot_addr(),
+                SlotAddr::ReplicaOptional | SlotAddr::ReplicaRequired
+            ),
+            InternalSingleNodeRouting::SpecificNodeWithPreferred { route, .. } => matches!(
+                route.slot_addr(),
+                SlotAddr::ReplicaOptional | SlotAddr::ReplicaRequired
+            ),
+            InternalSingleNodeRouting::Redirect {
+                previous_routing, ..
+            } => Self::route_uses_read_fallback(previous_routing),
+            _ => false,
+        }
+    }
+
+    fn uses_read_fallback(&self) -> bool {
+        match self {
+            CmdArg::Cmd { routing, .. } => match routing {
+                InternalRoutingInfo::SingleNode(route) => Self::route_uses_read_fallback(route),
+                InternalRoutingInfo::MultiNode(_) => false,
+            },
+            CmdArg::Pipeline { route, .. } => Self::route_uses_read_fallback(route),
+        }
+    }
+
+    fn is_transient(&self) -> bool {
+        match self {
+            CmdArg::Cmd { routing, .. } => match routing {
+                InternalRoutingInfo::SingleNode(route) => route.is_transient(),
+                InternalRoutingInfo::MultiNode(_) => false,
+            },
+            CmdArg::Pipeline { route, .. } => route.is_transient(),
+        }
+    }
+
     fn set_redirect(&mut self, redirect: Option<Redirect>) {
         if let Some(redirect) = redirect {
             match self {
@@ -80,19 +120,32 @@ impl<C> CmdArg<C> {
 
     fn reset_routing(&mut self) {
         let fix_route = |route: &mut InternalSingleNodeRouting<C>| {
-            match route {
-                InternalSingleNodeRouting::Redirect {
-                    previous_routing, ..
-                } => {
-                    let previous_routing = std::mem::take(previous_routing.as_mut());
-                    *route = previous_routing;
+            let mut current = std::mem::take(route);
+            loop {
+                match current {
+                    InternalSingleNodeRouting::Redirect {
+                        previous_routing, ..
+                    } => {
+                        current = *previous_routing;
+                    }
+                    InternalSingleNodeRouting::SpecificNodeWithPreferred {
+                        route: slot_route,
+                        ..
+                    } => {
+                        *route = InternalSingleNodeRouting::SpecificNode(slot_route);
+                        break;
+                    }
+                    // If a specific connection is specified, then reconnecting without resetting
+                    // the routing will mean that the request is still routed to the old connection.
+                    InternalSingleNodeRouting::Connection { identifier, .. } => {
+                        *route = InternalSingleNodeRouting::ByAddress(identifier);
+                        break;
+                    }
+                    current_route => {
+                        *route = current_route;
+                        break;
+                    }
                 }
-                // If a specific connection is specified, then reconnecting without resetting the routing
-                // will mean that the request is still routed to the old connection.
-                InternalSingleNodeRouting::Connection { identifier, .. } => {
-                    *route = InternalSingleNodeRouting::ByAddress(std::mem::take(identifier));
-                }
-                _ => {}
             }
         };
         match self {
@@ -150,6 +203,15 @@ pub(super) struct PendingRequest<C> {
     pub(super) retry: u32,
     pub(super) sender: ResultExpectation,
     pub(super) cmd: CmdArg<C>,
+    pub(super) excluded_read_nodes: Vec<NodeAddress>,
+}
+
+impl<C> PendingRequest<C> {
+    fn mark_read_node_failed(&mut self, address: &NodeAddress) {
+        if self.cmd.uses_read_fallback() && !self.excluded_read_nodes.contains(address) {
+            self.excluded_read_nodes.push(address.clone());
+        }
+    }
 }
 
 pin_project! {
@@ -215,8 +277,17 @@ pub(crate) fn choose_response<C>(
             (retry, PollFlushAction::ReconnectFromInitialConnections)
         }
 
+        (OperationTarget::Node { .. }, RetryMethod::Reconnect) if request.cmd.is_transient() => (
+            retry_or_send!(|mut request: PendingRequest<C>| {
+                request.cmd.reset_routing();
+                Retry::Immediately { request }
+            }),
+            PollFlushAction::None,
+        ),
+
         (OperationTarget::Node { address }, RetryMethod::Reconnect) => (
             retry_or_send!(|mut request: PendingRequest<C>| {
+                request.mark_read_node_failed(&address);
                 request.cmd.reset_routing();
                 Retry::MoveToPending { request }
             }),
@@ -276,6 +347,19 @@ pub(crate) fn choose_response<C>(
         (_, RetryMethod::NoRetry) => {
             request.sender.send(Err(err));
             (None, PollFlushAction::None)
+        }
+
+        (OperationTarget::Node { address }, RetryMethod::RetryImmediately)
+            if err.kind() == ErrorKind::Io =>
+        {
+            (
+                retry_or_send!(|mut request: PendingRequest<C>| {
+                    request.mark_read_node_failed(&address);
+                    request.cmd.reset_routing();
+                    Retry::Immediately { request }
+                }),
+                PollFlushAction::None,
+            )
         }
 
         (_, RetryMethod::RetryImmediately) => (
@@ -364,6 +448,7 @@ mod tests {
                     cmd: Arc::new(crate::cmd("foo")),
                     routing: routing::InternalSingleNodeRouting::Random.into(),
                 },
+                excluded_read_nodes: Vec::new(),
             },
             receiver,
         )
@@ -380,6 +465,44 @@ mod tests {
             .unwrap()
             .extract_error()
             .unwrap_err()
+    }
+
+    #[test]
+    fn reset_routing_discards_a_stale_multi_slot_preference_after_redirect() {
+        let route = crate::cluster_routing::Route::with_key(
+            "key",
+            crate::cluster_routing::SlotAddr::ReplicaOptional,
+        );
+        let mut cmd = CmdArg::<usize>::Cmd {
+            cmd: Arc::new(crate::cmd("GET")),
+            routing: InternalSingleNodeRouting::Redirect {
+                redirect: Redirect::Moved(ADDRESS),
+                previous_routing: Box::new(InternalSingleNodeRouting::Redirect {
+                    redirect: Redirect::Ask(NodeAddress::from_parts(
+                        arcstr::literal!("intermediate"),
+                        6380,
+                    )),
+                    previous_routing: Box::new(
+                        InternalSingleNodeRouting::SpecificNodeWithPreferred {
+                            route,
+                            preferred: NodeAddress::from_parts(arcstr::literal!("stale"), 6379),
+                        },
+                    ),
+                }),
+            }
+            .into(),
+        };
+
+        cmd.reset_routing();
+
+        match cmd {
+            CmdArg::Cmd {
+                routing:
+                    InternalRoutingInfo::SingleNode(InternalSingleNodeRouting::SpecificNode(actual)),
+                ..
+            } => assert_eq!(actual, route),
+            _ => panic!("expected slot-based routing after reset"),
+        }
     }
 
     #[test]
