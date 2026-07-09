@@ -1444,6 +1444,16 @@ impl ToRedisArgs for String {
 }
 impl ToSingleRedisArg for String {}
 
+impl ToRedisArgs for Str {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        out.write_arg(self.as_bytes())
+    }
+}
+impl ToSingleRedisArg for Str {}
+
 impl ToRedisArgs for &str {
     fn write_redis_args<W>(&self, out: &mut W)
     where
@@ -2085,6 +2095,40 @@ impl FromRedisValue for String {
             Value::VerbatimString { format: _, text } => Ok(text.into()),
             Value::Double(val) => Ok(val.to_string()),
             Value::Int(val) => Ok(val.to_string()),
+            _ => crate::errors::invalid_type_error!(v, "Response type not string compatible."),
+        }
+    }
+}
+
+impl FromRedisValue for Str {
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
+        let v = get_inner_value(v);
+        match *v {
+            // Cloning a `Bytes`/`Str` is a refcount bump, so these stay zero-copy.
+            Value::BulkString(ref bytes) => Ok(Str::from_utf8(bytes.clone())?),
+            Value::Okay => Ok(Str::from_static("OK")),
+            Value::SimpleString(ref val) => Ok(val.clone()),
+            Value::VerbatimString {
+                format: _,
+                ref text,
+            } => Ok(text.clone()),
+            Value::Double(ref val) => Ok(Str::from(val.to_string())),
+            Value::Int(val) => Ok(Str::from(val.to_string())),
+            _ => crate::errors::invalid_type_error!(v, "Response type not string compatible."),
+        }
+    }
+
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        let v = get_owned_inner_value(v);
+        match v {
+            // Consumes the payload without copying: the `Bytes` is validated and
+            // rewrapped, and an existing `Str` is moved out as-is.
+            Value::BulkString(bytes) => Ok(Str::from_utf8(bytes)?),
+            Value::Okay => Ok(Str::from_static("OK")),
+            Value::SimpleString(val) => Ok(val),
+            Value::VerbatimString { format: _, text } => Ok(text),
+            Value::Double(val) => Ok(Str::from(val.to_string())),
+            Value::Int(val) => Ok(Str::from(val.to_string())),
             _ => crate::errors::invalid_type_error!(v, "Response type not string compatible."),
         }
     }
@@ -2956,5 +3000,32 @@ mod str_tests {
         m.insert(Str::from("b"), 2);
         m.insert(Str::from("a"), 1);
         assert_eq!(m.keys().map(|s| s.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+    }
+
+    #[test]
+    fn str_from_redis_value_is_zero_copy() {
+        use super::{FromRedisValue, Value};
+        use bytes::Bytes;
+
+        // Owned BulkString -> Str reuses the same allocation (no copy).
+        let bytes = Bytes::from_static(b"payload");
+        let ptr = bytes.as_ptr();
+        let s = Str::from_redis_value(Value::BulkString(bytes)).unwrap();
+        assert_eq!(s.as_str(), "payload");
+        assert_eq!(s.as_bytes().as_ptr(), ptr, "BulkString -> Str copied");
+
+        // SimpleString is already a Str: moved out unchanged.
+        assert_eq!(
+            Str::from_redis_value(Value::SimpleString("OK".into())).unwrap(),
+            Str::from("OK")
+        );
+        // Numeric and Okay conversions still work.
+        assert_eq!(
+            Str::from_redis_value(Value::Int(7)).unwrap(),
+            Str::from("7")
+        );
+        assert_eq!(Str::from_redis_value(Value::Okay).unwrap(), Str::from("OK"));
+        // Non-string types are rejected.
+        assert!(Str::from_redis_value(Value::Nil).is_err());
     }
 }
