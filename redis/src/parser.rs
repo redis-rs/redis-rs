@@ -527,6 +527,44 @@ fn parse_buffer(buffer: &mut BytesMut, complete: bool) -> RedisResult<Option<Val
     Ok(Some(materialize(range, &frame)?))
 }
 
+/// Final parse attempt for callers that own their read loop (the sync and async
+/// `parse_*` entry points), used once the underlying reader has hit EOF.
+///
+/// A reply truncated by a dropped connection is reported as `Ok(None)` so the
+/// caller can surface it as [`io::ErrorKind::UnexpectedEof`] (which
+/// [`RedisError::is_connection_dropped`] recognizes), matching the pre-2.0
+/// behavior; genuinely malformed data is still an `Err`. The codec path
+/// (`decode_eof`) deliberately keeps returning the parse error instead.
+fn parse_final_value(buffer: &mut BytesMut) -> RedisResult<Option<Value>> {
+    let base = buffer.as_ptr() as usize;
+    let mut state = AnySendSyncPartialState::default();
+    let (range, consumed) = {
+        let mut stream =
+            combine::easy::Stream(combine::stream::MaybePartialStream(&buffer[..], false));
+        match combine::stream::decode_tokio(value(base, None), &mut stream, &mut state) {
+            Ok((Some(value), removed_len)) => (value, removed_len),
+            Ok((None, _)) => return Ok(None),
+            // Input ended in the middle of a value: a truncated reply, not a
+            // protocol error.
+            Err(ref err) if err.errors.iter().any(is_end_of_input) => return Ok(None),
+            Err(err) => {
+                let err = err
+                    .map_position(|pos| pos.translate_position(&buffer[..]))
+                    .map_range(|range| format!("{range:?}"))
+                    .to_string();
+                return Err(RedisError::from(ParsingError::from(err)));
+            }
+        }
+    };
+    let frame = buffer.split_to(consumed).freeze();
+    Ok(Some(materialize(range, &frame)?))
+}
+
+/// Whether a single combine error is the "unexpected end of input" marker.
+fn is_end_of_input(err: &combine::easy::Error<u8, &[u8]>) -> bool {
+    *err == combine::easy::Error::end_of_input()
+}
+
 #[cfg(feature = "aio")]
 mod aio_support {
     use super::*;
@@ -580,7 +618,7 @@ mod aio_support {
             // allocation). Without this, reads can degrade to tiny chunks.
             buffer.reserve(8 * 1024);
             if read.read_buf(buffer).await? == 0 {
-                return match parse_buffer(buffer, true)? {
+                return match parse_final_value(buffer)? {
                     Some(value) => Ok(value),
                     None => Err(RedisError::from(io::Error::from(
                         io::ErrorKind::UnexpectedEof,
@@ -632,7 +670,7 @@ impl Parser {
             let mut chunk = [0u8; 8 * 1024];
             let read = reader.read(&mut chunk)?;
             if read == 0 {
-                return match parse_buffer(&mut self.buffer, true)? {
+                return match parse_final_value(&mut self.buffer)? {
                     Some(value) => Ok(value),
                     None => Err(RedisError::from(io::Error::from(
                         io::ErrorKind::UnexpectedEof,
@@ -650,7 +688,7 @@ impl Parser {
 /// level redis value instead of having to use a whole parser.
 pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
     let mut buffer = BytesMut::from(bytes);
-    match parse_buffer(&mut buffer, true)? {
+    match parse_final_value(&mut buffer)? {
         Some(value) => Ok(value),
         None => Err(RedisError::from(io::Error::from(
             io::ErrorKind::UnexpectedEof,
@@ -803,6 +841,47 @@ mod tests {
                 detail: Some(Str::from_static("invalid syntax"))
             }))
         )
+    }
+
+    #[test]
+    fn truncated_reply_at_eof_is_unexpected_eof_not_parse_error() {
+        // A reply cut off mid-value (server dropped the connection) must surface
+        // as an UnexpectedEof IO error that `is_connection_dropped()` recognizes,
+        // not a protocol parse error. Genuinely malformed data stays a parse error.
+        let truncated = parse_redis_value(b"$5\r\nab").unwrap_err();
+        assert_eq!(truncated.kind(), ErrorKind::Io);
+        assert!(truncated.is_connection_dropped());
+
+        // A truncated aggregate (array promises 2 elements, only 1 arrives) is
+        // likewise a dropped-connection EOF, not a parse error.
+        let truncated_array = parse_redis_value(b"*2\r\n:1\r\n").unwrap_err();
+        assert_eq!(truncated_array.kind(), ErrorKind::Io);
+        assert!(truncated_array.is_connection_dropped());
+
+        // Sanity: a well-formed reply still parses, and malformed-but-complete
+        // data (an invalid boolean line, terminated by CRLF) is still a parse
+        // error — only genuine end-of-input becomes UnexpectedEof.
+        assert_eq!(
+            parse_redis_value(b"$2\r\nab\r\n").unwrap(),
+            Value::BulkString("ab".into())
+        );
+        assert_eq!(
+            parse_redis_value(b"#x\r\n").unwrap_err().kind(),
+            ErrorKind::Parse
+        );
+    }
+
+    #[cfg(feature = "aio")]
+    #[tokio::test]
+    async fn async_truncated_reply_at_eof_is_unexpected_eof() {
+        // Same guarantee on the async entry point: 5-byte bulk, only 2 delivered.
+        let mut buf = bytes::BytesMut::new();
+        let mut input: &[u8] = b"$5\r\nab";
+        let err = parse_redis_value_async(&mut buf, &mut input)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Io);
+        assert!(err.is_connection_dropped());
     }
 
     #[test]
