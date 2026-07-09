@@ -2994,7 +2994,8 @@ mod str_tests {
 
     #[test]
     fn str_is_ordered_like_str() {
-        assert!(Str::from("apple") < Str::from("banana"));
+        let (apple, banana) = (Str::from("apple"), Str::from("banana"));
+        assert!(apple < banana);
         // Usable as a BTreeMap key, matching what `String` previously allowed.
         let mut m: BTreeMap<Str, i32> = BTreeMap::new();
         m.insert(Str::from("b"), 2);
