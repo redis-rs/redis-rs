@@ -65,6 +65,11 @@ if let Value::BulkString(bytes) = v {
 the inner `String` as a `&str` continue to work; constructing one now takes a
 `Str` (e.g. `Value::SimpleString("OK".into())`).
 
+The (rarely used) re-exported `parse_redis_value_async` also changed shape as
+part of the rewrite: its first argument is now a `&mut bytes::BytesMut` read
+buffer instead of a `combine::stream::Decoder`. Call it with a `BytesMut` you
+own and reuse across calls.
+
 ### Why it's faster
 
 The new parser allocates a small, constant number of times per response rather

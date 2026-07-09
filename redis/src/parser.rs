@@ -831,10 +831,18 @@ mod tests {
         let Value::ServerError(err) = val else {
             panic!("expected ServerError, got {val:?}");
         };
-        let detail = err.details().expect("detail present");
-        let ptr = detail.as_ptr() as usize;
+        let outside = |s: &str| {
+            let ptr = s.as_ptr() as usize;
+            ptr < base || ptr >= base + cap
+        };
+        // Both fields of an extension error are detached, so check both: code
+        // and detail must each live outside the reply buffer's allocation.
         assert!(
-            ptr < base || ptr >= base + cap,
+            outside(err.code()),
+            "error code is a slice into the reply buffer (frame-pinning regression)"
+        );
+        assert!(
+            outside(err.details().expect("detail present")),
             "error detail is a slice into the reply buffer (frame-pinning regression)"
         );
     }
