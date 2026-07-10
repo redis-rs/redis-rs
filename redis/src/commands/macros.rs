@@ -11,7 +11,7 @@ macro_rules! implement_command_async {
         implement_command_async!(
             $lifetime
             $(#[$attr])+
-            fn $name<RV: FromRedisValue$(, $tyargs : $ty)*>(
+            fn $name<$($tyargs : $ty,)* RV: FromRedisValue>(
                 $($argname: $argty),*) $body RV
         );
     };
@@ -48,7 +48,7 @@ macro_rules! implement_command_sync {
         implement_command_sync!(
             $lifetime
             $(#[$attr])+
-            fn $name<RV: FromRedisValue$(, $tyargs : $ty)*>(
+            fn $name<$($tyargs : $ty,)* RV: FromRedisValue>(
                 $($argname: $argty),*) $body RV
         );
     };

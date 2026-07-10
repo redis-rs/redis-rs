@@ -10,6 +10,24 @@ redis = "2"
 
 ## Breaking Changes
 
+### `Generic` typed commands have their `RV` moved from first to last parameter (Breaking Change)
+
+Untyped commands (`Commands`, `AsyncCommands`) have the return value's type (`RV`) as last type parameter, while for typed commands (`TypedCommands`, `AsyncTypedCommands`) it was the first.
+
+Now both typed and untyped commands have their return value's type as last type parameter.
+
+**Migration:** Move the return type parameter to the last position, if you explicitly gave it.
+
+```rust
+// Before:
+con.rpop::<Vec<String>, _>("foo", NonZeroUsize::new(1));
+//         ^^^ RV as first type parameter
+
+// After:
+con.rpop::<_, Vec<String>>("foo", NonZeroUsize::new(1));
+//            ^^^ RV as last type parameter
+```
+
 ### TCP_NODELAY is now enabled by default (Breaking Change)
 
 By default, Nagle's algorithm is now disabled on every TCP connection the crate creates (sync and async, plaintext and TLS). Previously it was left enabled, which serialized writes on a multiplexed connection to one per ACK round-trip under concurrency — measured at 39–68% lower throughput and roughly double the p50 latency on a real network (see [#2195](https://github.com/redis-rs/redis-rs/issues/2195) for the full evidence). Sequential request-response traffic is unaffected, and Redis clients in other ecosystems already ship with TCP_NODELAY enabled.
