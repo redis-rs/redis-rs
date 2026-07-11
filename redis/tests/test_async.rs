@@ -1455,8 +1455,11 @@ mod basic_async {
             redis::aio::ConnectionManager::new_with_config(ctx.client.clone(), config)
                 .await
                 .unwrap();
+
+        // Store the server's address and kill the server
         let addr = ctx.server.client_addr().clone();
         drop(ctx);
+
         let result: RedisResult<redis::Value> = manager.set("foo", "bar").await;
         // we expect a connection failure error.
         assert!(result.unwrap_err().is_unrecoverable_error());
@@ -1464,7 +1467,8 @@ mod basic_async {
             assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
         }
 
-        let _server = redis_test::server::RedisServer::new_with_addr_and_modules(addr, &[], false);
+        // Start a new server, re-using the previous address
+        let _ctx = TestContext::new_with_addr(addr);
 
         for _ in 0..5 {
             let Ok(result) = manager.set::<_, _, Value>("foo", "bar").await else {

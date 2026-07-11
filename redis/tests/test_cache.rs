@@ -619,14 +619,17 @@ async fn test_connection_manager_maintains_statistics_after_crashes(test_with_op
     assert_hit!(&manager, 1);
     assert_miss!(&manager, 1);
 
+    // Store the server's address and kill the server
     let addr = ctx.server.client_addr().clone();
     drop(ctx);
 
+    // With the server gone, commands should fail
     let result: Result<redis::Value, RedisError> =
         manager.send_packed_command(&redis::cmd("PING")).await;
     assert!(result.unwrap_err().is_unrecoverable_error());
 
-    let _server = redis_test::server::RedisServer::new_with_addr_and_modules(addr, &[], false);
+    // Start a new server, re-using the previous address
+    let _ctx = TestContext::new_with_addr(addr);
 
     loop {
         if manager.send_packed_command(&get).await.is_ok() {
