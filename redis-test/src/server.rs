@@ -188,10 +188,10 @@ impl RedisServer {
         }
 
         match addr {
-            redis::ConnectionAddr::Tcp(ref bind, server_port) => {
+            redis::ConnectionAddr::Tcp(ref host, port) => {
                 redis_cmd
-                    .arg2("--port", server_port.to_string())
-                    .arg2("--bind", bind);
+                    .arg2("--port", port.to_string())
+                    .arg2("--bind", host);
             }
             redis::ConnectionAddr::TcpTls { ref host, port, .. } => {
                 let tls_paths =
