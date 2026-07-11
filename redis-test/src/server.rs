@@ -175,40 +175,7 @@ impl RedisServer {
         // This stops littering `dump.rdb` files during testing/development.
         redis_cmd.arg2("--save", "");
 
-        // Load Redis Modules
-        for module in modules {
-            match module {
-                Module::Json => {
-                    // Try to pick up json module path from REDISRS_REDIS_JSON_PATH environment variable
-                    let path = match env::var("REDISRS_REDIS_JSON_PATH") {
-                        Ok(path) => path,
-                        // Falling back to legacy REDIS_RS_REDIS_JSON_PATH environment variable
-                        Err(_) => match env::var("REDIS_RS_REDIS_JSON_PATH") {
-                            Ok(path) => {
-                                eprintln!(
-                                    "Warning: Use of REDIS_RS_REDIS_JSON_PATH is deprecated. Use REDISRS_REDIS_JSON_PATH (no '_' before 'RS') instead"
-                                );
-                                path
-                            }
-                            Err(_) => {
-                                panic!(
-                                    "Unable to find path to RedisJSON at REDISRS_REDIS_JSON_PATH, is it set?"
-                                );
-                            }
-                        },
-                    };
-
-                    redis_cmd.arg2("--loadmodule", path);
-                }
-                Module::Bloom => {
-                    let path = env::var("REDISRS_REDIS_BLOOM_PATH").expect(
-                        "Unable to find path to RedisBloom at REDISRS_REDIS_BLOOM_PATH, is it set?",
-                    );
-
-                    redis_cmd.arg2("--loadmodule", path);
-                }
-            };
-        }
+        redis_cmd.load_modules(modules);
 
         let tempdir = tempfile::Builder::new()
             .prefix("redis")
@@ -404,6 +371,50 @@ impl RedisServerCommand {
         self.cmd
             .spawn()
             .unwrap_or_else(|err| panic!("Failed to run {:?}: {err}", self.cmd))
+    }
+
+    /// Loads a module from the given path
+    fn load_module(&mut self, path: String) {
+        self.arg2("--loadmodule", path);
+    }
+
+    /// Loads the given modules
+    ///
+    /// The paths to the modules are inferred from environment variables.
+    pub(crate) fn load_modules(&mut self, modules: &[Module]) {
+        for module in modules {
+            match module {
+                Module::Json => {
+                    // Try to pick up json module path from REDISRS_REDIS_JSON_PATH environment variable
+                    let path = match env::var("REDISRS_REDIS_JSON_PATH") {
+                        Ok(path) => path,
+                        // Falling back to legacy REDIS_RS_REDIS_JSON_PATH environment variable
+                        Err(_) => match env::var("REDIS_RS_REDIS_JSON_PATH") {
+                            Ok(path) => {
+                                eprintln!(
+                                    "Warning: Use of REDIS_RS_REDIS_JSON_PATH is deprecated. Use REDISRS_REDIS_JSON_PATH (no '_' before 'RS') instead"
+                                );
+                                path
+                            }
+                            Err(_) => {
+                                panic!(
+                                    "Unable to find path to RedisJSON at REDISRS_REDIS_JSON_PATH, is it set?"
+                                );
+                            }
+                        },
+                    };
+
+                    self.load_module(path);
+                }
+                Module::Bloom => {
+                    let path = env::var("REDISRS_REDIS_BLOOM_PATH").expect(
+                        "Unable to find path to RedisBloom at REDISRS_REDIS_BLOOM_PATH, is it set?",
+                    );
+
+                    self.load_module(path);
+                }
+            };
+        }
     }
 }
 
