@@ -144,9 +144,9 @@ fn spawn_master_server(
         modules,
         |cmd| {
             // Minimize startup delay
-            cmd.arg("--repl-diskless-sync-delay").arg("0");
+            cmd.arg2("--repl-diskless-sync-delay", "0");
             if let ConnectionAddr::TcpTls { .. } = get_addr(port) {
-                cmd.arg("--tls-replication").arg("yes");
+                cmd.arg2("--tls-replication", "yes");
             }
             cmd.current_dir(dir.path());
         },
@@ -171,11 +171,9 @@ fn spawn_replica_server(
         None, // cert_auth_field - not used in sentinel tests
         modules,
         |cmd| {
-            cmd.arg("--replicaof")
-                .arg("127.0.0.1")
-                .arg(master_port.to_string());
+            cmd.arg3("--replicaof", "127.0.0.1", master_port.to_string());
             if let ConnectionAddr::TcpTls { .. } = get_addr(port) {
-                cmd.arg("--tls-replication").arg("yes");
+                cmd.arg2("--tls-replication", "yes");
             }
             cmd.current_dir(dir.path());
         },
@@ -209,7 +207,7 @@ fn spawn_sentinel_server(
         |cmd| {
             cmd.arg("--sentinel");
             if let ConnectionAddr::TcpTls { .. } = get_addr(port) {
-                cmd.arg("--tls-replication").arg("yes");
+                cmd.arg2("--tls-replication", "yes");
             }
             cmd.current_dir(dir.path());
         },

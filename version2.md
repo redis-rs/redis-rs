@@ -26,6 +26,8 @@ The arg_refiner function takes a `RedisStartCommand` as argument (instead of a `
 
 This new `RedisStartCommand` also has a `arg()` method, so your spawners probably work out of the box.
 
+But it also comes with `arg2()`, and `arg3()`, which takes multiple arguments in a single function, and can help to make things more readable.
+
 ```rust
 // Before:
 
@@ -52,10 +54,8 @@ let server = RedisServer::new_with_addr_tls_modules_and_arg_refiner(
     false,
     None,
     &[], |cmd| {
-        cmd.arg("--foo")
-            .arg("value-foo")
-            .arg("--bar")
-            .arg("value-baz");
+        cmd.arg2("--foo", "value-foo")
+            .arg2("--bar", "value-baz");
     }
 );
 ```

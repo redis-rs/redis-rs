@@ -190,22 +190,17 @@ impl RedisCluster {
                         Self::password()
                     );
                     std::fs::write(&acl_path, acl_content).expect("failed to write acl file");
-                    cmd.arg("--cluster-enabled")
-                        .arg("yes")
-                        .arg("--cluster-config-file")
-                        .arg(tempdir.path().join("nodes.conf"))
-                        .arg("--cluster-node-timeout")
-                        .arg("5000")
-                        .arg("--aclfile")
-                        .arg(&acl_path);
+                    cmd.arg2("--cluster-enabled", "yes")
+                        .arg2("--cluster-config-file", tempdir.path().join("nodes.conf"))
+                        .arg2("--cluster-node-timeout", "5000")
+                        .arg2("--aclfile", &acl_path);
                     if let Some(num_databases) = cluster_databases {
-                        cmd.arg("--cluster-databases")
-                            .arg(num_databases.to_string());
+                        cmd.arg2("--cluster-databases", num_databases.to_string());
                     }
                     if is_tls {
-                        cmd.arg("--tls-cluster").arg("yes");
+                        cmd.arg2("--tls-cluster", "yes");
                         if replicas > 0 {
-                            cmd.arg("--tls-replication").arg("yes");
+                            cmd.arg2("--tls-replication", "yes");
                         }
                     }
                     cmd.current_dir(tempdir.path());

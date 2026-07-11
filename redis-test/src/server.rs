@@ -173,7 +173,7 @@ impl RedisServer {
 
         // Disable snapshotting
         // This stops littering `dump.rdb` files during testing/development.
-        redis_cmd.arg("--save").arg("");
+        redis_cmd.arg2("--save", "");
 
         // Load Redis Modules
         for module in modules {
@@ -198,14 +198,14 @@ impl RedisServer {
                         },
                     };
 
-                    redis_cmd.arg("--loadmodule").arg(path);
+                    redis_cmd.arg2("--loadmodule", path);
                 }
                 Module::Bloom => {
                     let path = env::var("REDISRS_REDIS_BLOOM_PATH").expect(
                         "Unable to find path to RedisBloom at REDISRS_REDIS_BLOOM_PATH, is it set?",
                     );
 
-                    redis_cmd.arg("--loadmodule").arg(path);
+                    redis_cmd.arg2("--loadmodule", path);
                 }
             };
         }
@@ -215,18 +215,16 @@ impl RedisServer {
             .tempdir()
             .expect("failed to create tempdir");
         let log_file = Self::log_file(&tempdir);
-        redis_cmd.arg("--logfile").arg(log_file.clone());
+        redis_cmd.arg2("--logfile", log_file.clone());
         if get_major_version() > 6 {
-            redis_cmd.arg("--enable-debug-command").arg("yes");
+            redis_cmd.arg2("--enable-debug-command", "yes");
         }
 
         match addr {
             redis::ConnectionAddr::Tcp(ref bind, server_port) => {
                 redis_cmd
-                    .arg("--port")
-                    .arg(server_port.to_string())
-                    .arg("--bind")
-                    .arg(bind);
+                    .arg2("--port", server_port.to_string())
+                    .arg2("--bind", bind);
             }
             redis::ConnectionAddr::TcpTls { ref host, port, .. } => {
                 let tls_paths =
@@ -236,26 +234,19 @@ impl RedisServer {
 
                 // prepare redis with TLS
                 redis_cmd
-                    .arg("--tls-port")
-                    .arg(port.to_string())
-                    .arg("--port")
-                    .arg("0")
-                    .arg("--tls-cert-file")
-                    .arg(&tls_paths.redis_crt)
-                    .arg("--tls-key-file")
-                    .arg(&tls_paths.redis_key)
-                    .arg("--tls-ca-cert-file")
-                    .arg(&tls_paths.ca_crt)
-                    .arg("--tls-auth-clients")
-                    .arg(auth_client)
-                    .arg("--bind")
-                    .arg(host);
+                    .arg2("--tls-port", port.to_string())
+                    .arg2("--port", "0")
+                    .arg2("--tls-cert-file", &tls_paths.redis_crt)
+                    .arg2("--tls-key-file", &tls_paths.redis_key)
+                    .arg2("--tls-ca-cert-file", &tls_paths.ca_crt)
+                    .arg2("--tls-auth-clients", auth_client)
+                    .arg2("--bind", host);
 
                 // Enable certificate-based authentication (Redis 8.6+)
                 // The cert_auth_field specifies which certificate field to use for username mapping
                 // (e.g., "CN" for Common Name)
                 if let Some(field) = cert_auth_field {
-                    redis_cmd.arg("--tls-auth-clients-user").arg(field);
+                    redis_cmd.arg2("--tls-auth-clients-user", field);
                 }
 
                 // Insecure only disabled if `mtls` is enabled
@@ -269,11 +260,7 @@ impl RedisServer {
                 };
             }
             redis::ConnectionAddr::Unix(ref path) => {
-                redis_cmd
-                    .arg("--port")
-                    .arg("0")
-                    .arg("--unixsocket")
-                    .arg(path);
+                redis_cmd.arg2("--port", "0").arg2("--unixsocket", path);
             }
             _ => panic!("Unknown address format: {addr:?}"),
         };
@@ -351,6 +338,51 @@ impl RedisServerCommand {
     /// Appends a new argument to the command
     pub fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
         self.cmd.arg(arg);
+        self
+    }
+
+    /// Appends two new arguments to the command
+    ///
+    /// This method is purely convenience to get more readable argument setting as it allows to
+    /// re-write
+    ///
+    /// ```rust,no_run
+    /// # use redis_test::server::RedisServerCommand;
+    /// # let mut redis_cmd = RedisServerCommand::new();
+    /// redis_cmd
+    ///     .arg("--foo")
+    ///     .arg("some-value-for-foo")
+    ///     .arg("--bar")
+    ///     .arg("some-value-for-bar")
+    ///     .arg("--baz")
+    ///     .arg("some-value-for-baz");
+    /// ```
+    ///
+    /// in a more readable fashion:
+    ///
+    /// ```rust,no_run
+    /// # use redis_test::server::RedisServerCommand;
+    /// # let mut redis_cmd = RedisServerCommand::new();
+    /// redis_cmd
+    ///     .arg2("--foo", "some-value-for-foo")
+    ///     .arg2("--bar", "some-value-for-bar")
+    ///     .arg2("--baz", "some-value-for-baz");
+    /// ```
+    pub fn arg2<S1: AsRef<OsStr>, S2: AsRef<OsStr>>(&mut self, arg1: S1, arg2: S2) -> &mut Self {
+        self.cmd.arg(arg1).arg(arg2);
+        self
+    }
+
+    /// Appends three new arguments to the command
+    ///
+    /// This method is purely convenience to get more readable argument setting (cf. [`arg2`](Self::arg2)).
+    pub fn arg3<S1: AsRef<OsStr>, S2: AsRef<OsStr>, S3: AsRef<OsStr>>(
+        &mut self,
+        arg1: S1,
+        arg2: S2,
+        arg3: S3,
+    ) -> &mut Self {
+        self.cmd.arg(arg1).arg(arg2).arg(arg3);
         self
     }
 
