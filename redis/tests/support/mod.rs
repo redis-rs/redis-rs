@@ -246,17 +246,14 @@ impl TestContext {
         tls_files: Option<TlsFilePaths>,
         cert_auth_field: Option<&str>,
     ) -> Self {
-        let server = RedisServer::new_with_addr_tls_modules_and_spawner(
+        let server = RedisServer::new_with_addr_tls_modules_and_arg_refiner(
             addr,
             None,
             tls_files,
             mtls_enabled,
             cert_auth_field,
             modules,
-            |cmd| {
-                cmd.spawn()
-                    .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
-            },
+            |_cmd| {},
         );
 
         let client =

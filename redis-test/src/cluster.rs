@@ -171,7 +171,7 @@ impl RedisCluster {
         let max_attempts = 5;
 
         let mut make_server = |port| {
-            RedisServer::new_with_addr_tls_modules_and_spawner(
+            RedisServer::new_with_addr_tls_modules_and_arg_refiner(
                 ClusterType::build_addr(port),
                 None,
                 tls_paths.clone(),
@@ -210,7 +210,6 @@ impl RedisCluster {
                     }
                     cmd.current_dir(tempdir.path());
                     folders.push(tempdir);
-                    cmd.spawn().unwrap()
                 },
             )
         };

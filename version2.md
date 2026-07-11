@@ -10,6 +10,56 @@ redis = "2"
 
 ## Breaking Changes
 
+### `RedisServer::new_with_addr_tls_modules_and_spawner` got removed (Breaking Change)
+
+All callers used the spawner function to adjust the command's arguments, then spawn and unwrap it.
+The spawning was the same across all of them, hence duplicated.
+The unwrapping only differed in thoroughness of the error handling.
+So the common spawning and unwrapping got moved into `RedisServer` to ease its use.
+
+Refining arguments is available via `RedisServer::new_with_addr_tls_modules_and_arg_refiner`.
+
+**Migration:** Switch from `RedisServer::new_with_addr_tls_modules_and_spawner` to `RedisServer::new_with_addr_tls_modules_and_arg_refiner`.
+
+Typically, replacing `new_with_addr_tls_modules_and_spawner` by `new_with_addr_tls_modules_and_arg_refiner` and removing the `cmd.spawn().unwrap()` from your spawning function end will be enough.
+The arg_refiner function takes a `RedisStartCommand` as argument (instead of a `Command` before).
+
+This new `RedisStartCommand` also has a `arg()` method, so your spawners probably work out of the box.
+
+```rust
+// Before:
+
+let server = RedisServer::new_with_addr_tls_modules_and_spawner(
+    addr,
+    None,
+    None,
+    false,
+    None,
+    &[], |cmd| {
+        cmd.arg("--foo")
+            .arg("value-foo")
+            .arg("--bar")
+            .arg("value-baz");
+        cmd.spawn().unwrap()
+    }
+);
+
+// After:
+let server = RedisServer::new_with_addr_tls_modules_and_arg_refiner(
+    addr,
+    None,
+    None,
+    false,
+    None,
+    &[], |cmd| {
+        cmd.arg("--foo")
+            .arg("value-foo")
+            .arg("--bar")
+            .arg("value-baz");
+    }
+);
+```
+
 ### TCP_NODELAY is now enabled by default (Breaking Change)
 
 By default, Nagle's algorithm is now disabled on every TCP connection the crate creates (sync and async, plaintext and TLS). Previously it was left enabled, which serialized writes on a multiplexed connection to one per ACK round-trip under concurrency — measured at 39–68% lower throughput and roughly double the p50 latency on a real network (see [#2195](https://github.com/redis-rs/redis-rs/issues/2195) for the full evidence). Sequential request-response traffic is unaffected, and Redis clients in other ecosystems already ship with TCP_NODELAY enabled.

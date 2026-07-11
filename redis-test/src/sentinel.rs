@@ -135,7 +135,7 @@ fn spawn_master_server(
     tlspaths: &TlsFilePaths,
     modules: &[Module],
 ) -> RedisServer {
-    RedisServer::new_with_addr_tls_modules_and_spawner(
+    RedisServer::new_with_addr_tls_modules_and_arg_refiner(
         get_addr(port),
         None,
         Some(tlspaths.clone()),
@@ -149,7 +149,6 @@ fn spawn_master_server(
                 cmd.arg("--tls-replication").arg("yes");
             }
             cmd.current_dir(dir.path());
-            cmd.spawn().unwrap()
         },
     )
 }
@@ -164,7 +163,7 @@ fn spawn_replica_server(
     let config_file_path = dir.path().join("redis_config.conf");
     File::create(&config_file_path).unwrap();
 
-    RedisServer::new_with_addr_tls_modules_and_spawner(
+    RedisServer::new_with_addr_tls_modules_and_arg_refiner(
         get_addr(port),
         Some(&config_file_path),
         Some(tlspaths.clone()),
@@ -179,7 +178,6 @@ fn spawn_replica_server(
                 cmd.arg("--tls-replication").arg("yes");
             }
             cmd.current_dir(dir.path());
-            cmd.spawn().unwrap()
         },
     )
 }
@@ -201,7 +199,7 @@ fn spawn_sentinel_server(
     }
     file.flush().unwrap();
 
-    RedisServer::new_with_addr_tls_modules_and_spawner(
+    RedisServer::new_with_addr_tls_modules_and_arg_refiner(
         get_addr(port),
         Some(&config_file_path),
         Some(tlspaths.clone()),
@@ -214,7 +212,6 @@ fn spawn_sentinel_server(
                 cmd.arg("--tls-replication").arg("yes");
             }
             cmd.current_dir(dir.path());
-            cmd.spawn().unwrap()
         },
     )
 }
