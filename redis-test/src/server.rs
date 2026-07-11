@@ -375,6 +375,9 @@ impl RedisServerCommand {
 
     /// Loads a module from the given path
     fn load_module(&mut self, path: String) {
+        if !Path::new(&path).is_file() {
+            panic!("Module doesn't exist or is not a file: {path}");
+        }
         self.arg2("--loadmodule", path);
     }
 
