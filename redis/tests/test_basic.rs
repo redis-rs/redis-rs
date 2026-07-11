@@ -18,7 +18,7 @@ mod basic {
         IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply},
         MSetOptions, ProtocolVersion, PubSubCommands, PushInfo, PushKind, RedisConnectionInfo,
         RedisResult, Role, ScanOptions, SetExpiry, SetOptions, SortedSetAddOptions,
-        SortedSetStoreOptions, ToRedisArgs, TypedCommands, UpdateCheck, Value, ValueComparison,
+        SortedSetOperationOptions, ToRedisArgs, TypedCommands, UpdateCheck, Value, ValueComparison,
         ValueType, cmd,
     };
     use redis::{RedisError, ServerErrorKind};
@@ -2343,7 +2343,11 @@ mod basic {
 
         // zinterstore with SUM aggregation (default)
         assert_eq!(
-            con.zinterstore("out", &["zset1", "zset2"], SortedSetStoreOptions::default()),
+            con.zinterstore(
+                "out",
+                &["zset1", "zset2"],
+                SortedSetOperationOptions::default()
+            ),
             Ok(2)
         );
 
@@ -2352,7 +2356,7 @@ mod basic {
             con.zinterstore_with_weights(
                 "out",
                 &[("zset1", 2), ("zset2", 3)],
-                SortedSetStoreOptions::default()
+                SortedSetOperationOptions::default()
             ),
             Ok(2)
         );
@@ -2367,7 +2371,7 @@ mod basic {
             con.zinterstore_with_weights(
                 "out",
                 &[("zset1", 2), ("zset2", 3)],
-                SortedSetStoreOptions::default().aggregate(Aggregate::Min)
+                SortedSetOperationOptions::default().aggregate(Aggregate::Min)
             ),
             Ok(2)
         );
@@ -2382,7 +2386,7 @@ mod basic {
             con.zinterstore_with_weights(
                 "out",
                 &[("zset1", 2), ("zset2", 3)],
-                SortedSetStoreOptions::default().aggregate(Aggregate::Max)
+                SortedSetOperationOptions::default().aggregate(Aggregate::Max)
             ),
             Ok(2)
         );
@@ -2405,7 +2409,11 @@ mod basic {
 
         // zunionstore with SUM aggregation (default)
         assert_eq!(
-            con.zunionstore("out", &["zset1", "zset2"], SortedSetStoreOptions::default()),
+            con.zunionstore(
+                "out",
+                &["zset1", "zset2"],
+                SortedSetOperationOptions::default()
+            ),
             Ok(3)
         );
 
@@ -2414,7 +2422,7 @@ mod basic {
             con.zunionstore_with_weights(
                 "out",
                 &[("zset1", 2), ("zset2", 3)],
-                SortedSetStoreOptions::default()
+                SortedSetOperationOptions::default()
             ),
             Ok(3)
         );
@@ -2433,7 +2441,7 @@ mod basic {
             con.zunionstore_with_weights(
                 "out",
                 &[("zset1", 2), ("zset2", 3)],
-                SortedSetStoreOptions::default().aggregate(Aggregate::Min)
+                SortedSetOperationOptions::default().aggregate(Aggregate::Min)
             ),
             Ok(3)
         );
@@ -2452,7 +2460,7 @@ mod basic {
             con.zunionstore_with_weights(
                 "out",
                 &[("zset1", 2), ("zset2", 3)],
-                SortedSetStoreOptions::default().aggregate(Aggregate::Max)
+                SortedSetOperationOptions::default().aggregate(Aggregate::Max)
             ),
             Ok(3)
         );

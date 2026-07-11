@@ -1108,14 +1108,14 @@ implement_commands! {
     /// Intersect multiple sorted sets and store the resulting sorted set in
     /// a new key using SUM as aggregation function.
     /// [Redis Docs](https://redis.io/commands/ZINTERSTORE)
-    fn zinterstore<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K, options: SortedSetStoreOptions) -> (usize) {
+    fn zinterstore<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K, options: SortedSetOperationOptions) -> (usize) {
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg(options).take()
     }
 
     /// Intersect multiple sorted sets and store the resulting sorted set in
     /// a new key, applying per-key `WEIGHTS` and an optional `AGGREGATE` modifier.
     /// [Redis Docs](https://redis.io/commands/ZINTERSTORE)
-    fn zinterstore_with_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)], options: SortedSetStoreOptions) -> (usize) {
+    fn zinterstore_with_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)], options: SortedSetOperationOptions) -> (usize) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("WEIGHTS").arg(weights).arg(options).take()
     }
@@ -1353,14 +1353,14 @@ implement_commands! {
     /// Unions multiple sorted sets and store the resulting sorted set in
     /// a new key using SUM as aggregation function.
     /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
-    fn zunionstore<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K, options: SortedSetStoreOptions) -> (usize) {
+    fn zunionstore<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K, options: SortedSetOperationOptions) -> (usize) {
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg(options).take()
     }
 
     /// Unions multiple sorted sets and store the resulting sorted set in
     /// a new key, applying per-key `WEIGHTS` and an optional `AGGREGATE` modifier.
     /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
-    fn zunionstore_with_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)], options: SortedSetStoreOptions) -> (usize) {
+    fn zunionstore_with_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)], options: SortedSetOperationOptions) -> (usize) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("WEIGHTS").arg(weights).arg(options).take()
     }
@@ -3898,23 +3898,23 @@ impl ToRedisArgs for Aggregate {
 ///
 /// # Example
 /// ```rust,no_run
-/// use redis::{Commands, RedisResult, SortedSetStoreOptions, Aggregate};
+/// use redis::{Commands, RedisResult, SortedSetOperationOptions, Aggregate};
 /// fn intersect(con: &mut redis::Connection) -> RedisResult<usize> {
-///     con.zinterstore("out", &["zset1", "zset2"], SortedSetStoreOptions::default())
+///     con.zinterstore("out", &["zset1", "zset2"], SortedSetOperationOptions::default())
 /// }
 /// fn intersect_min(con: &mut redis::Connection) -> RedisResult<usize> {
-///     con.zinterstore("out", &["zset1", "zset2"], SortedSetStoreOptions::default().aggregate(Aggregate::Min))
+///     con.zinterstore("out", &["zset1", "zset2"], SortedSetOperationOptions::default().aggregate(Aggregate::Min))
 /// }
 /// fn intersect_weighted(con: &mut redis::Connection) -> RedisResult<usize> {
-///     con.zinterstore_with_weights("out", &[("zset1", 2), ("zset2", 3)], SortedSetStoreOptions::default().aggregate(Aggregate::Min))
+///     con.zinterstore_with_weights("out", &[("zset1", 2), ("zset2", 3)], SortedSetOperationOptions::default().aggregate(Aggregate::Min))
 /// }
 /// ```
 #[derive(Clone, Default)]
-pub struct SortedSetStoreOptions {
+pub struct SortedSetOperationOptions {
     aggregate: Option<Aggregate>,
 }
 
-impl SortedSetStoreOptions {
+impl SortedSetOperationOptions {
     /// Sets the `AGGREGATE` modifier used to combine the scores of members that
     /// appear in more than one input sorted set.
     pub fn aggregate(mut self, aggregate: Aggregate) -> Self {
@@ -3923,7 +3923,7 @@ impl SortedSetStoreOptions {
     }
 }
 
-impl ToRedisArgs for SortedSetStoreOptions {
+impl ToRedisArgs for SortedSetOperationOptions {
     fn write_redis_args<Out>(&self, out: &mut Out)
     where
         Out: ?Sized + RedisWrite,

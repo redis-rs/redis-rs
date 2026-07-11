@@ -39,12 +39,12 @@ Adding more options to these commands would have caused an exponential explosion
 - `zinterstore(dstkey, keys, options)` / `zunionstore(dstkey, keys, options)` — keys without weights
 - `zinterstore_with_weights(dstkey, keys_and_weights, options)` / `zunionstore_with_weights(dstkey, keys_and_weights, options)` — keys paired with weights as `&[(key, weight)]`
 
-The `SortedSetStoreOptions` struct carries only the optional `AGGREGATE` modifier and defaults to `SUM`.
+The `SortedSetOperationOptions` struct carries only the optional `AGGREGATE` modifier and defaults to `SUM`.
 
 **Migration:**
 
 ```rust
-use redis::{Commands, SortedSetStoreOptions, Aggregate};
+use redis::{Commands, SortedSetOperationOptions, Aggregate};
 
 // Before:
 con.zinterstore("out", &["zset1", "zset2"])?;
@@ -53,10 +53,10 @@ con.zinterstore_weights("out", &[("zset1", 2), ("zset2", 3)])?;
 con.zinterstore_min_weights("out", &[("zset1", 2), ("zset2", 3)])?;
 
 // After:
-con.zinterstore("out", &["zset1", "zset2"], SortedSetStoreOptions::default())?;
-con.zinterstore("out", &["zset1", "zset2"], SortedSetStoreOptions::default().aggregate(Aggregate::Min))?;
-con.zinterstore_with_weights("out", &[("zset1", 2), ("zset2", 3)], SortedSetStoreOptions::default())?;
-con.zinterstore_with_weights("out", &[("zset1", 2), ("zset2", 3)], SortedSetStoreOptions::default().aggregate(Aggregate::Min))?;
+con.zinterstore("out", &["zset1", "zset2"], SortedSetOperationOptions::default())?;
+con.zinterstore("out", &["zset1", "zset2"], SortedSetOperationOptions::default().aggregate(Aggregate::Min))?;
+con.zinterstore_with_weights("out", &[("zset1", 2), ("zset2", 3)], SortedSetOperationOptions::default())?;
+con.zinterstore_with_weights("out", &[("zset1", 2), ("zset2", 3)], SortedSetOperationOptions::default().aggregate(Aggregate::Min))?;
 ```
 
 The same pattern applies to `zunionstore` and `zunionstore_with_weights`.
