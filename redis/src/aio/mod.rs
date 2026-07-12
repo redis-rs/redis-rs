@@ -24,6 +24,10 @@ mod monitor;
 #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 use crate::connection::TlsConnParams;
 
+/// Enables the monoio compatibility
+#[cfg(feature = "monoio-comp")]
+#[cfg_attr(docsrs, doc(cfg(feature = "monoio-comp")))]
+pub mod monoio;
 /// Enables the smol compatibility
 #[cfg(feature = "smol-comp")]
 #[cfg_attr(docsrs, doc(cfg(feature = "smol-comp")))]
@@ -169,9 +173,20 @@ mod connection_manager;
 #[cfg_attr(docsrs, doc(cfg(feature = "connection-manager")))]
 pub use connection_manager::*;
 mod runtime;
-#[cfg(all(feature = "smol-comp", feature = "tokio-comp"))]
+#[cfg(all(
+    feature = "monoio-comp",
+    any(feature = "tokio-comp", feature = "smol-comp")
+))]
+pub use runtime::prefer_monoio;
+#[cfg(all(
+    feature = "smol-comp",
+    any(feature = "tokio-comp", feature = "monoio-comp")
+))]
 pub use runtime::prefer_smol;
-#[cfg(all(feature = "tokio-comp", feature = "smol-comp"))]
+#[cfg(all(
+    feature = "tokio-comp",
+    any(feature = "smol-comp", feature = "monoio-comp")
+))]
 pub use runtime::prefer_tokio;
 pub(super) use runtime::*;
 
@@ -258,6 +273,16 @@ async fn get_socket_addrs(host: &str, port: u16) -> RedisResult<Vec<SocketAddr>>
         Runtime::Smol => ::smol::net::resolve((host, port))
             .await
             .map_err(RedisError::from),
+
+        #[cfg(feature = "monoio-comp")]
+        Runtime::Monoio => {
+            // Monoio doesn't have built-in DNS resolution, use std::net::ToSocketAddrs
+            use std::net::ToSocketAddrs;
+            (host, port)
+                .to_socket_addrs()
+                .map(|iter| iter.collect::<Vec<_>>())
+                .map_err(RedisError::from)
+        }
     }?;
 
     if socket_addrs.is_empty() {
