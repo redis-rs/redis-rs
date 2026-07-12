@@ -10,23 +10,22 @@ redis = "2"
 
 ## Breaking Changes
 
-### `RedisServer::new_with_addr_tls_modules_and_spawner` got removed (Breaking Change)
+### `RedisServer::new...` got removed; use `RedisServerBuilder` instead (Breaking Change)
 
-All callers used the spawner function to adjust the command's arguments, then spawn and unwrap it.
-The spawning was the same across all of them, hence duplicated.
-The unwrapping only differed in thoroughness of the error handling.
-So the common spawning and unwrapping got moved into `RedisServer` to ease its use.
+Over time `RedisServer::new...` methods grew in parameters and made them hard to use.
+So they got removed in favor of `RedisServerBuilder`, which is now the recommended way to build `RedisServer` instances.
 
-Refining the server's start command is available via `RedisServer::new_with_addr_tls_modules_and_cmd_refiner`.
+**Migration:** Switch from `RedisServer::new...` to `RedisServerBuilder`
 
-**Migration:** Switch from `RedisServer::new_with_addr_tls_modules_and_spawner` to `RedisServer::new_with_addr_tls_modules_and_cmd_refiner`.
+`RedisServerBuilder::new()` starts a new builder.
 
-Typically, replacing `new_with_addr_tls_modules_and_spawner` by `new_with_addr_tls_modules_and_cmd_refiner` and removing the `cmd.spawn().unwrap()` from your spawning function end will be enough.
-The `cmd_refiner` function takes a `RedisStartCommand` as argument (instead of a `Command` before).
+It's fluent interface allows to set the needed parameters in a chaining manner (`.address(...).mtls(...).modules(...)`).
 
-This new `RedisStartCommand` also has a `arg()` method, so your spawners probably work out of the box.
+Call `.build()` to finally build the `RedisServer` with the set properties.
 
-But it also comes with `arg2()`, and `arg3()`, which takes multiple arguments in a single function, and can help to make things more readable.
+To refine the command before actually starting the server, use `refine_and_build(...)` instead.
+This allows to fine tune the start command.
+The passed `RedisServerCommand` comes with syntactic sugar to make things more readable (e.g. `arg2`).
 
 ```rust
 // Before:
@@ -35,7 +34,7 @@ let server = RedisServer::new_with_addr_tls_modules_and_spawner(
     addr,
     None,
     None,
-    false,
+    true,
     None,
     &[], |cmd| {
         cmd.arg("--foo")
@@ -47,17 +46,13 @@ let server = RedisServer::new_with_addr_tls_modules_and_spawner(
 );
 
 // After:
-let server = RedisServer::new_with_addr_tls_modules_and_cmd_refiner(
-    addr,
-    None,
-    None,
-    false,
-    None,
-    &[], |cmd| {
+let server = RedisServerBuilder::new()
+    .address(addr)
+    .mtls(true)
+    .refine_and_build(|cmd| {
         cmd.arg2("--foo", "value-foo")
             .arg2("--bar", "value-baz");
-    }
-);
+    });
 ```
 
 ### `Generic` typed commands have their `RV` moved from first to last parameter (Breaking Change)
