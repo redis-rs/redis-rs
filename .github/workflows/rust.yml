@@ -42,6 +42,8 @@ jobs:
             # Skipping ValKey 8.1 as it's too similar to 8.0
             {  db-org: valkey-io, db-name: valkey, db-version: 9.0.4, json-module-version: v2.6.22, bloom-module-version: "valkey-bloom:1.0.1" },
             # Skipping ValKey 9.1 as it's too similar to 9.0
+            #
+            # KeyDB (#2203), Dragonfly (#2204), Kvrocks, ... are implicitly supported, but this support is not tested.
           ]
 
     steps:
