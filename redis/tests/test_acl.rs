@@ -621,7 +621,7 @@ mod token_based_authentication_acl_tests {
     }
 
     #[async_test]
-    async fn authentication_with_mock_streaming_credentials_provider() {
+    async fn test_authentication_with_mock_streaming_credentials_provider() {
         init_logger();
         let ctx = TestContext::new();
         // Set up a Redis user that expects a JWT token as password
@@ -761,7 +761,7 @@ mod token_based_authentication_acl_tests {
     }
 
     #[async_test]
-    async fn authentication_error_handling_with_mock_streaming_credentials_provider() {
+    async fn test_authentication_error_handling_with_mock_streaming_credentials_provider() {
         init_logger();
         let ctx = TestContext::new();
         let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
@@ -820,7 +820,7 @@ mod token_based_authentication_acl_tests {
     }
 
     #[async_test]
-    async fn multiple_connections_from_one_client_sharing_a_single_credentials_provider() {
+    async fn test_multiple_connections_from_one_client_sharing_a_single_credentials_provider() {
         init_logger();
         let ctx = TestContext::new();
         let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
@@ -887,7 +887,7 @@ mod token_based_authentication_acl_tests {
     }
 
     #[async_test]
-    async fn multiple_clients_sharing_a_single_credentials_provider() {
+    async fn test_multiple_clients_sharing_a_single_credentials_provider() {
         init_logger();
         let ctx1 = TestContext::new();
         let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
@@ -958,7 +958,7 @@ mod token_based_authentication_acl_tests {
     /// 4. Admin invalidates Alice via ACL DELUSER
     /// 5. The server rejects the next command — proving we rely on the server for auth enforcement
     #[async_test]
-    async fn server_rejects_after_user_invalidated() {
+    async fn test_server_rejects_after_user_invalidated() {
         init_logger();
         let ctx = TestContext::new();
 
@@ -1051,7 +1051,7 @@ mod token_based_authentication_acl_tests {
         }
 
         #[async_test]
-        async fn cluster_authentication_with_mock_streaming_credentials_provider() {
+        async fn test_cluster_authentication_with_mock_streaming_credentials_provider() {
             init_logger();
             let cluster = TestClusterContext::new_with_cluster_client_builder(
                 |builder: ClusterClientBuilder| {
@@ -1089,7 +1089,7 @@ mod token_based_authentication_acl_tests {
         }
 
         #[async_test]
-        async fn cluster_token_rotation_with_mock_streaming_credentials_provider() {
+        async fn test_cluster_token_rotation_with_mock_streaming_credentials_provider() {
             init_logger();
             let cluster = TestClusterContext::new_with_cluster_client_builder(
                 |builder: ClusterClientBuilder| {
@@ -1119,7 +1119,8 @@ mod token_based_authentication_acl_tests {
         }
 
         #[async_test]
-        async fn cluster_authentication_error_handling_with_mock_streaming_credentials_provider() {
+        async fn test_cluster_authentication_error_handling_with_mock_streaming_credentials_provider()
+         {
             init_logger();
             let cluster = TestClusterContext::new_with_cluster_client_builder(
                 |builder: ClusterClientBuilder| {
@@ -1155,7 +1156,7 @@ mod token_based_authentication_acl_tests {
         }
 
         #[async_test]
-        async fn cluster_multiple_connections_sharing_a_single_credentials_provider() {
+        async fn test_cluster_multiple_connections_sharing_a_single_credentials_provider() {
             init_logger();
             let cluster = TestClusterContext::new_with_cluster_client_builder(
                 |builder: ClusterClientBuilder| {
@@ -1197,7 +1198,7 @@ mod token_based_authentication_acl_tests {
         }
 
         #[async_test]
-        async fn cluster_multiple_clients_sharing_a_single_credentials_provider() {
+        async fn test_cluster_multiple_clients_sharing_a_single_credentials_provider() {
             init_logger();
             let cluster = TestClusterContext::new();
 
@@ -1266,7 +1267,7 @@ mod token_based_authentication_acl_tests {
         /// 4. Admin invalidates Alice via ACL DELUSER on all nodes
         /// 5. The server rejects the next command — proving we rely on the server for auth enforcement
         #[async_test]
-        async fn cluster_server_rejects_after_user_invalidated() {
+        async fn test_cluster_server_rejects_after_user_invalidated() {
             init_logger();
             let cluster = TestClusterContext::new_with_cluster_client_builder(
                 |builder: ClusterClientBuilder| {
