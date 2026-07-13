@@ -679,7 +679,7 @@ pub mod async_tests {
     }
 
     #[async_test]
-    async fn sentinel_connect_to_random_replica_async() {
+    async fn test_sentinel_connect_to_random_replica_async() {
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);
         let node_conn_info = context.sentinel_node_connection_info();
@@ -708,7 +708,7 @@ pub mod async_tests {
     }
 
     #[async_test]
-    async fn sentinel_connect_to_multiple_replicas_async() {
+    async fn test_sentinel_connect_to_multiple_replicas_async() {
         let number_of_replicas = 3;
         let master_name = "master1";
         let mut cluster = TestSentinelContext::new(2, number_of_replicas, 3);
@@ -747,7 +747,7 @@ pub mod async_tests {
     }
 
     #[async_test]
-    async fn sentinel_server_down_async() {
+    async fn test_sentinel_server_down_async() {
         let number_of_replicas = 3;
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, number_of_replicas, 3);
@@ -792,7 +792,7 @@ pub mod async_tests {
     }
 
     #[async_test]
-    async fn sentinel_redis_client_async() {
+    async fn test_sentinel_redis_client_async() {
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);
         let mut master_client = SentinelClient::build(
@@ -832,7 +832,7 @@ pub mod async_tests {
     }
 
     #[async_test]
-    async fn sentinel_client_async() {
+    async fn test_sentinel_client_async() {
         let master_name = "master1";
         let context = TestSentinelContext::new(2, 3, 3);
         let mut master_client = SentinelClient::build(
@@ -867,7 +867,7 @@ pub mod async_tests {
     }
 
     #[async_test]
-    async fn sentinel_client_async_not_sentinel_error() {
+    async fn test_sentinel_client_async_not_sentinel_error() {
         let master_name = "master1";
 
         let mut context = TestSentinelContext::new(2, 3, 3);
@@ -898,7 +898,7 @@ pub mod async_tests {
     }
 
     #[async_test]
-    async fn sentinel_client_async_io_error() {
+    async fn test_sentinel_client_async_io_error() {
         let master_name = "master1";
 
         let mut master_client = SentinelClient::build(
@@ -915,7 +915,7 @@ pub mod async_tests {
     }
 
     #[async_test]
-    async fn sentinel_client_async_with_connection_timeout() {
+    async fn test_sentinel_client_async_with_connection_timeout() {
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);
         let mut master_client = SentinelClient::build(
@@ -964,7 +964,7 @@ pub mod async_tests {
     }
 
     #[async_test]
-    async fn sentinel_client_async_with_response_timeout() {
+    async fn test_sentinel_client_async_with_response_timeout() {
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);
         let mut master_client = SentinelClient::build(
@@ -1012,7 +1012,7 @@ pub mod async_tests {
     }
 
     #[async_test]
-    async fn sentinel_client_async_with_timeouts() {
+    async fn test_sentinel_client_async_with_timeouts() {
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, 3, 3);
         let mut master_client = SentinelClient::build(
@@ -1060,7 +1060,7 @@ pub mod async_tests {
     }
 
     #[async_test]
-    async fn get_replica_clients_success_async() {
+    async fn test_get_replica_clients_success_async() {
         let number_of_replicas = 3;
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, number_of_replicas, 3);
@@ -1075,7 +1075,7 @@ pub mod async_tests {
     }
 
     #[async_test]
-    async fn get_replica_clients_invalid_master_name_async() {
+    async fn test_get_replica_clients_invalid_master_name_async() {
         let mut context = TestSentinelContext::new(2, 2, 3);
         let node_conn_info = context.sentinel_node_connection_info();
         let sentinel = context.sentinel_mut();
@@ -1095,7 +1095,7 @@ pub mod async_tests {
     }
 
     #[async_test]
-    async fn get_replica_clients_report_correct_master_async() {
+    async fn test_get_replica_clients_report_correct_master_async() {
         let number_of_replicas = 3;
         let master_name = "master1";
         let mut context = TestSentinelContext::new(2, number_of_replicas, 3);
@@ -1121,7 +1121,7 @@ pub mod async_tests {
     }
 
     #[async_test]
-    async fn get_replica_clients_with_one_replica_down_async() {
+    async fn test_get_replica_clients_with_one_replica_down_async() {
         let number_of_replicas = 3;
         let master_name = "master0";
         let mut context = TestSentinelContext::new(2, number_of_replicas, 3);
