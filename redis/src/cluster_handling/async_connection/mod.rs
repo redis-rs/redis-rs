@@ -539,6 +539,10 @@ where
                 read_guard
                     .0
                     .get(addr)
+                    // For a fan-out, we do not want to silently return a partial response
+                    // by skipping a shard because of a connection issue.
+                    // We are intentionally using a connection under repair (Reconnecting state).
+                    // It may or may not succeed. But the aggregate response will be honest.
                     .and_then(ConnState::connected_or_reconnecting)
                     .map(|conn| {
                         let (sender, receiver) = oneshot::channel();
@@ -847,7 +851,15 @@ where
         route: InternalSingleNodeRouting<C>,
     ) -> RedisResult<(NodeAddress, C)> {
         let route = match route {
-            InternalSingleNodeRouting::Random => return self.random_connection().await,
+            InternalSingleNodeRouting::Random => {
+                let read_guard = self.conn_lock.read().await;
+                return match get_random_connection(&read_guard.0) {
+                    Some((addr, conn)) => Ok((addr, conn)),
+                    None => {
+                        Err((ErrorKind::ClusterConnectionNotFound, "No connections found").into())
+                    }
+                };
+            }
             InternalSingleNodeRouting::SpecificNode(route) => route,
             InternalSingleNodeRouting::Connection { identifier, conn } => {
                 return Ok((identifier, conn));
@@ -907,14 +919,6 @@ where
         }
 
         Err((ErrorKind::ClusterConnectionNotFound, "No connections found").into())
-    }
-
-    async fn random_connection(&self) -> RedisResult<(NodeAddress, C)> {
-        let read_guard = self.conn_lock.read().await;
-        match get_random_connection(&read_guard.0) {
-            Some((addr, conn)) => Ok((addr, conn)),
-            None => Err((ErrorKind::ClusterConnectionNotFound, "No connections found").into()),
-        }
     }
 
     async fn get_redirected_connection(&self, redirect: Redirect) -> RedisResult<(NodeAddress, C)> {
@@ -985,7 +989,9 @@ where
             }
         }
 
-        // Second pass is to attempt to repair connections on-demand as we iterate thru each one.
+        // Second pass is to attempt to repair connections on-demand as we iterate through each one.
+        // We include Connected connections in this pass, in addition to the first pass above,
+        // so that we can do inline connection repairs, if needed (via `get_or_create_conn`).
         if !found {
             for (addr, state) in &mut *connections {
                 let prev = std::mem::replace(state, ConnState::Connecting).into_conn();

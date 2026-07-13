@@ -46,6 +46,7 @@ impl SlotMap {
             .map(|addrs| addrs.slot_addr(slot, &route.slot_addr(), strategy))
     }
 
+    // TODO - Include the routing strategy in the fallback logic too.
     #[cfg(feature = "cluster-async")]
     pub(crate) fn shard_fallback_addrs(&self, route: &Route) -> Vec<NodeAddress> {
         let Some(addrs) = self.slots.get(route.slot()) else {
