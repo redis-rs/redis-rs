@@ -123,10 +123,9 @@ const MTLS_NOT_ENABLED: bool = false;
 fn get_addr(port: u16) -> ConnectionAddr {
     let addr = RedisServer::get_addr(port);
     if let ConnectionAddr::Unix(_) = addr {
-        ConnectionAddr::Tcp(String::from("127.0.0.1"), port)
-    } else {
-        addr
+        panic!("Sentinels are not supported on unix sockets");
     }
+    addr
 }
 
 fn spawn_master_server(
