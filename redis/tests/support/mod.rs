@@ -272,7 +272,7 @@ impl Default for TestContext {
 
 impl TestContext {
     pub fn new() -> TestContext {
-        TestContext::with_modules(&[])
+        TestContextBuilder::new().build()
     }
 
     #[cfg(feature = "tls-rustls")]
@@ -319,23 +319,8 @@ impl TestContext {
         )
     }
 
-    pub fn with_modules(modules: &[Module]) -> TestContext {
-        Self::with_modules_and_tls(modules, false, None)
-    }
-
     pub fn new_with_addr(addr: ConnectionAddr) -> Self {
         Self::with_modules_addr_and_tls(&[], false, addr, None)
-    }
-
-    fn with_modules_and_tls(
-        modules: &[Module],
-        mtls_enabled: bool,
-        tls_files: Option<TlsFilePaths>,
-    ) -> Self {
-        start_tls_crypto_provider();
-        let redis_port = get_random_available_port();
-        let addr = RedisServer::get_addr(redis_port);
-        Self::with_modules_addr_and_tls(modules, mtls_enabled, addr, tls_files)
     }
 
     fn with_modules_addr_and_tls(
