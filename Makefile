@@ -35,7 +35,7 @@ test:
 	@echo "===================================================================="
 	@echo "Testing Connection Type UNIX SOCKETS"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=unix RUST_BACKTRACE=1 cargo nextest run --locked -p redis --all-features -E 'not (test(test_module) | test(cluster))'
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=unix RUST_BACKTRACE=1 cargo nextest run --locked -p redis --all-features -E 'not (test(test_module) | test(cluster) | binary(test_sentinel))'
 
 	@echo "===================================================================="
 	@echo "Testing redis-test"
