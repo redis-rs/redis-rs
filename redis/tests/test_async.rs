@@ -1355,7 +1355,7 @@ mod basic_async {
             sleep(Duration::from_millis(1).into()).await;
             let push = rx.recv().await.unwrap();
             assert_eq!(push.kind, PushKind::Disconnection);
-            let ctx = TestContext::new_with_addr(addr);
+            let ctx = TestContextBuilder::new().address(addr).build();
 
             let push1 = rx.recv().await.unwrap();
             assert_eq!(push1.kind, PushKind::Subscribe);
@@ -1462,7 +1462,7 @@ mod basic_async {
         }
 
         // Start a new server, re-using the previous address
-        let _ctx = TestContext::new_with_addr(addr);
+        let _ctx = TestContextBuilder::new().address(addr).build();
 
         for _ in 0..5 {
             let Ok(result) = manager.set::<_, _, Value>("foo", "bar").await else {
@@ -1499,7 +1499,7 @@ mod basic_async {
 
         let addr = ctx.server.client_addr().clone();
         drop(ctx);
-        let _ctx = TestContext::new_with_addr(addr);
+        let _ctx = TestContextBuilder::new().address(addr).build();
 
         sleep(Duration::from_secs_f32(0.01).into()).await;
 
@@ -1575,7 +1575,7 @@ mod basic_async {
         drop(ctx);
         let push = rx.recv().await.unwrap();
         assert_eq!(push.kind, PushKind::Disconnection);
-        let _ctx = TestContext::new_with_addr(addr.clone());
+        let _ctx = TestContextBuilder::new().address(addr.clone()).build();
 
         assert_matches!(cmd("PING").exec_async(&mut conn).await, Ok(_));
         assert_matches!(rx.try_recv(), Err(_));
@@ -1584,7 +1584,7 @@ mod basic_async {
         drop(_ctx);
         let push = rx.recv().await.unwrap();
         assert_eq!(push.kind, PushKind::Disconnection);
-        let _ctx = TestContext::new_with_addr(addr);
+        let _ctx = TestContextBuilder::new().address(addr).build();
 
         sleep(Duration::from_secs_f32(0.01).into()).await;
         assert_matches!(cmd("PING").exec_async(&mut conn).await, Ok(_));
@@ -1995,7 +1995,7 @@ mod basic_async {
             let result: RedisResult<String> = manager.get("key").await;
             assert!(result.is_err());
 
-            let _ctx = TestContext::new_with_addr(addr);
+            let _ctx = TestContextBuilder::new().address(addr).build();
 
             for _ in 0..10 {
                 sleep(Duration::from_millis(10).into()).await;
