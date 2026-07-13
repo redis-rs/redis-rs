@@ -175,6 +175,7 @@ pub struct RedisServer {
     pub log_file: PathBuf,
     pub addr: redis::ConnectionAddr,
     pub tls_paths: Option<TlsFilePaths>,
+    pub mtls: bool,
 }
 
 impl ServerType {
@@ -239,7 +240,7 @@ impl RedisServer {
         mut addr: redis::ConnectionAddr,
         config_file: Option<PathBuf>,
         mut tls_paths: Option<TlsFilePaths>,
-        mtls_enabled: bool,
+        mtls: bool,
         cert_auth_field: Option<String>,
         modules: &[Module],
         cmd_refiner: impl FnOnce(&mut RedisServerCommand),
@@ -249,7 +250,7 @@ impl RedisServer {
             panic!("'tls_paths' is only supported for TCP with TLS");
         }
 
-        if mtls_enabled && !matches!(addr, ConnectionAddr::TcpTls { .. }) {
+        if mtls && !matches!(addr, ConnectionAddr::TcpTls { .. }) {
             panic!("'mtls' is only supported for TCP with TLS");
         }
 
@@ -257,7 +258,7 @@ impl RedisServer {
             panic!("'cert_auth_field' is only supported for TCP with TLS");
         }
 
-        if cert_auth_field.is_some() && !mtls_enabled {
+        if cert_auth_field.is_some() && !mtls {
             panic!("'cert_auth_field' is only supported for mTLS");
         }
 
@@ -298,7 +299,7 @@ impl RedisServer {
                 let tls_paths =
                     tls_paths.get_or_insert_with(|| build_keys_and_certs_for_tls(&tempdir));
 
-                let auth_client = if mtls_enabled { "yes" } else { "no" };
+                let auth_client = if mtls { "yes" } else { "no" };
 
                 // prepare redis with TLS
                 redis_cmd
@@ -317,7 +318,7 @@ impl RedisServer {
                 }
 
                 // Insecure only disabled if `mtls` is enabled
-                let insecure = !mtls_enabled;
+                let insecure = !mtls;
 
                 addr = redis::ConnectionAddr::TcpTls {
                     host: host.clone(),
@@ -340,6 +341,7 @@ impl RedisServer {
             tempdir,
             addr,
             tls_paths,
+            mtls,
         }
     }
 
