@@ -2,25 +2,27 @@
 
 #[cfg(feature = "aio")]
 use futures::Future;
+#[cfg(feature = "cache-aio")]
+use redis::caching::CacheConfig;
+#[cfg(feature = "tls-rustls")]
+use redis::{ClientTlsConfig, TlsCertificates};
 use redis::{
     Commands, ConnectionAddr, ErrorKind, Pipeline, ProtocolVersion, RedisResult, ServerErrorKind,
     Value,
 };
 #[cfg(feature = "aio")]
 use redis::{aio, cmd};
-use redis_test::server::{Module, RedisServer, RedisServerBuilder, use_protocol};
+use redis_test::server::{
+    Module, RedisServer, RedisServerBuilder, RedisServerCommand, use_protocol,
+};
 use redis_test::utils::{TlsFilePaths, get_random_available_port};
+use std::path::PathBuf;
 #[cfg(feature = "tls-rustls")]
 use std::{
     fs::File,
     io::{BufReader, Read},
 };
 use std::{io, thread::sleep, time::Duration};
-
-#[cfg(feature = "cache-aio")]
-use redis::caching::CacheConfig;
-#[cfg(feature = "tls-rustls")]
-use redis::{ClientTlsConfig, TlsCertificates};
 
 #[macro_use]
 mod version;
@@ -139,6 +141,115 @@ mod sentinel;
 #[allow(unused_imports)]
 pub use self::sentinel::*;
 
+/// A builder for [`TestContext`]
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use tests::support::TestContextBuilder;
+///
+/// let ctx = TestContextBuilder::new().module(Module::Json).build();
+/// let connection = ctx.connection();
+/// // Use `connection` to run commands
+/// ```
+// Note that this builder is an owned-builder as we want to build in a single chain anyway and do
+// not have to build multiple instances from the same builder. Also, this spares us cloning
+// considerations.
+#[derive(Default)]
+pub struct TestContextBuilder {
+    server_builder: RedisServerBuilder,
+}
+
+impl TestContextBuilder {
+    /// Starts a fresh builder
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn address(mut self, address: ConnectionAddr) -> Self {
+        self.server_builder = self.server_builder.address(address);
+        self
+    }
+
+    pub fn config(mut self, config_file: PathBuf) -> Self {
+        self.server_builder = self.server_builder.config(config_file);
+        self
+    }
+
+    pub fn cert_auth_field(mut self, cert_auth_field: impl Into<String>) -> Self {
+        self.server_builder = self.server_builder.cert_auth_field(cert_auth_field);
+        self
+    }
+
+    pub fn cert_auth_field_opt(mut self, opt_cert_auth_field: Option<impl Into<String>>) -> Self {
+        self.server_builder = self.server_builder.cert_auth_field_opt(opt_cert_auth_field);
+        self
+    }
+
+    pub fn module(mut self, module: Module) -> Self {
+        self.server_builder = self.server_builder.module(module);
+        self
+    }
+
+    pub fn modules(mut self, modules: &[Module]) -> Self {
+        self.server_builder = self.server_builder.modules(modules);
+        self
+    }
+
+    pub fn mtls(mut self, enable_mtls: bool) -> Self {
+        self.server_builder = self.server_builder.mtls(enable_mtls);
+        self
+    }
+
+    pub fn tls_paths(mut self, tls_paths: TlsFilePaths) -> Self {
+        self.server_builder = self.server_builder.tls_paths(tls_paths);
+        self
+    }
+
+    pub fn tls_paths_opt(mut self, opt_tls_paths: Option<TlsFilePaths>) -> Self {
+        self.server_builder = self.server_builder.tls_paths_opt(opt_tls_paths);
+        self
+    }
+
+    /// Builds the [`TestContext`] for this instance
+    pub fn build(self) -> TestContext {
+        self.refine_and_build(|_| {})
+    }
+
+    /// Builds the [`TestContext`] for this instance after refining the arguments for the server
+    ///
+    /// # Arguments
+    ///
+    /// * `refiner` - See [`RedisServerBuilder::refine_and_build`]
+    pub fn refine_and_build(self, refiner: impl FnOnce(&mut RedisServerCommand)) -> TestContext {
+        let server = self.server_builder.refine_and_build(refiner);
+        TestContext::from_server(server)
+    }
+}
+
+/// Utility wrapper for a standalone Redis server instance for testing.
+///
+/// # Example
+///
+/// Use `default()` to build a [`TestContext`] with default settings:
+///
+/// ```rust,no_run
+/// use tests::support::TestContext;
+///
+/// let ctx = TestContext::default();
+/// let connection = ctx.connection();
+/// // Use `connection` to run commands
+/// ```
+///
+/// If you need a custom setup, use [`TestContextBuilder`]:
+///
+/// ```rust,no_run
+/// use tests::support::TestContextBuilder;
+///
+/// let ctx = TestContextBuilder::new().module(Module::Json).build();
+/// let connection = ctx.connection();
+/// // Use `connection` to run commands
+/// ```
 pub struct TestContext {
     pub server: RedisServer,
     pub client: redis::Client,
@@ -150,6 +261,12 @@ pub(crate) fn start_tls_crypto_provider() {
     if rustls::crypto::CryptoProvider::get_default().is_none() {
         // we don't care about success, because failure means that the provider was set from another thread.
         let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+}
+
+impl Default for TestContext {
+    fn default() -> Self {
+        TestContextBuilder::new().build()
     }
 }
 
@@ -242,16 +359,23 @@ impl TestContext {
         tls_files: Option<TlsFilePaths>,
         cert_auth_field: Option<&str>,
     ) -> Self {
-        let server = RedisServerBuilder::new()
+        TestContextBuilder::new()
+            .modules(modules)
+            .mtls(mtls_enabled)
             .address(addr)
             .tls_paths_opt(tls_files)
-            .mtls(mtls_enabled)
             .cert_auth_field_opt(cert_auth_field)
-            .modules(modules)
-            .build();
+            .build()
+    }
 
+    /// Builds a new instance from a [`RedisServer`]
+    // We intentionally do _not_ implement `From<RedisServer>` as that would be public.
+    //
+    // Instead, users should to go through `TestContextBuilder` to limit the points of entry and
+    // hence help us with maintenance.
+    fn from_server(server: RedisServer) -> Self {
         let client =
-            build_single_client(server.connection_info(), &server.tls_paths, mtls_enabled).unwrap();
+            build_single_client(server.connection_info(), &server.tls_paths, server.mtls).unwrap();
 
         let mut con;
 
