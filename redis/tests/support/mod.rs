@@ -319,19 +319,6 @@ impl TestContext {
         )
     }
 
-    pub fn new_with_addr(addr: ConnectionAddr) -> Self {
-        Self::with_modules_addr_and_tls(&[], false, addr, None)
-    }
-
-    fn with_modules_addr_and_tls(
-        modules: &[Module],
-        mtls_enabled: bool,
-        addr: ConnectionAddr,
-        tls_files: Option<TlsFilePaths>,
-    ) -> Self {
-        Self::with_modules_addr_tls_and_cert_auth(modules, mtls_enabled, addr, tls_files, None)
-    }
-
     fn with_modules_addr_tls_and_cert_auth(
         modules: &[Module],
         mtls_enabled: bool,
