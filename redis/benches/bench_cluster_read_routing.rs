@@ -136,6 +136,29 @@ fn mock_env(name: &'static str, builder: redis::cluster::ClusterClientBuilder) -
     })
 }
 
+fn mock_multi_slot_env(
+    name: &'static str,
+    builder: redis::cluster::ClusterClientBuilder,
+) -> MockEnv {
+    let slots_config = slots_config();
+    MockEnv::with_client_builder(builder, name, move |packed_command: &[u8], _port| {
+        if is_connection_check(packed_command) {
+            return Err(Ok(Value::SimpleString("OK".into())));
+        }
+        if contains_slice(packed_command, b"CLUSTER") && contains_slice(packed_command, b"SLOTS") {
+            return respond_startup_with_replica_using_config(
+                name,
+                packed_command,
+                Some(slots_config.clone()),
+            );
+        }
+        if contains_slice(packed_command, b"MGET") {
+            return Err(Ok(Value::Array(vec![Value::BulkString(b"123".to_vec())])));
+        }
+        Ok(())
+    })
+}
+
 fn bench_get(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     name: &'static str,
@@ -204,6 +227,27 @@ fn bench_cluster_read_routing(c: &mut Criterion) {
             .read_routing_strategy(ZonalReadRoutingStrategy::shared("us-east-1b")),
     );
 
+    group.finish();
+
+    let mut group = c.benchmark_group("cluster_read_routing_mock_multi_slot");
+    group.throughput(Throughput::Elements(2));
+    let mut env = mock_multi_slot_env(
+        "round_robin_multi_slot",
+        ClusterClient::builder(vec!["redis://round_robin_multi_slot"])
+            .retries(0)
+            .read_routing_strategy(RoundRobinReplicaStrategy::new()),
+    );
+    let mut command = cmd("MGET");
+    command.arg("test").arg("{foo}test");
+    let values = command.query::<Vec<i32>>(&mut env.connection).unwrap();
+    assert_eq!(values, vec![123, 123]);
+
+    group.bench_function("round_robin_replica", |b| {
+        b.iter(|| {
+            let values = command.query::<Vec<i32>>(&mut env.connection).unwrap();
+            black_box(values)
+        });
+    });
     group.finish();
 }
 

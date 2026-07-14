@@ -1201,13 +1201,17 @@ where
                     )))?;
                 let cmd =
                     crate::cluster_routing::command_for_multi_slot_indices(&input, indices.iter());
-                let routing = Some(RoutingInfo::SingleNode(
-                    SingleNodeRoutingInfo::SpecificNode(*route),
-                ));
                 let response = if self.uses_read_fallback(route) {
+                    let routing = Some(RoutingInfo::SingleNode(
+                        SingleNodeRoutingInfo::SpecificNode(*route),
+                    ));
                     self.request_with_preferred_addr(Input::Cmd(&cmd), routing, addr.clone())
                 } else {
-                    self.request(Input::Cmd(&cmd), routing)
+                    // Stateful strategies must dispatch the address selected above instead of
+                    // resolving the route a second time.
+                    let mut connections = self.connections.borrow_mut();
+                    self.get_connection_by_addr(&mut connections, &addr)
+                        .and_then(|connection| Input::Cmd(&cmd).send(connection))
                 };
                 response.map(|res| match res {
                     Output::Single(value) => (addr, value),

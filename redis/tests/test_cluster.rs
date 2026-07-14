@@ -1445,6 +1445,52 @@ mod cluster {
     }
 
     #[test]
+    fn test_cluster_round_robin_multi_shard_read_advances_once_per_shard() {
+        let name = "test_cluster_round_robin_multi_shard_read_advances_once_per_shard";
+        let slots_config = vec![
+            MockSlotRange {
+                primary_port: 6379,
+                replica_ports: vec![6380, 6381],
+                slot_range: 0..8192,
+            },
+            MockSlotRange {
+                primary_port: 6382,
+                replica_ports: vec![6383, 6384],
+                slot_range: 8192..16384,
+            },
+        ];
+        let mut command = cmd("MGET");
+        command.arg("test").arg("{foo}test");
+        let MockEnv {
+            mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .retries(0)
+                .read_routing_strategy(RoundRobinReplicaStrategy::new()),
+            name,
+            move |received_cmd: &[u8], port| {
+                respond_startup_with_replica_using_config(
+                    name,
+                    received_cmd,
+                    Some(slots_config.clone()),
+                )?;
+                if contains_slice(received_cmd, b"MGET") {
+                    return Err(Ok(Value::Array(vec![redis_value!(port.to_string())])));
+                }
+                Ok(())
+            },
+        );
+
+        let first = command.query::<Vec<String>>(&mut connection).unwrap();
+        let second = command.query::<Vec<String>>(&mut connection).unwrap();
+
+        assert_eq!(first, vec!["6380", "6383"]);
+        assert_eq!(second, vec!["6381", "6384"]);
+    }
+
+    #[test]
     fn test_cluster_io_error() {
         let name = "test_cluster_io_error";
         let completed = Arc::new(AtomicI32::new(0));
