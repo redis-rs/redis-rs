@@ -46,6 +46,23 @@ impl SlotMap {
             .map(|addrs| addrs.slot_addr(slot, &route.slot_addr(), strategy))
     }
 
+    // TODO - Include the routing strategy in the fallback logic too.
+    #[cfg(feature = "cluster-async")]
+    pub(crate) fn shard_fallback_addrs(&self, route: &Route) -> Vec<NodeAddress> {
+        let Some(addrs) = self.slots.get(route.slot()) else {
+            return Vec::new();
+        };
+        match route.slot_addr() {
+            SlotAddr::Master => vec![],
+            SlotAddr::ReplicaOptional => {
+                let mut candidates = addrs.replicas.clone();
+                candidates.push(addrs.primary.clone());
+                candidates
+            }
+            SlotAddr::ReplicaRequired => addrs.replicas.clone(),
+        }
+    }
+
     #[cfg(feature = "cluster-async")]
     pub fn clear(&mut self) {
         self.slots.clear();
@@ -339,6 +356,64 @@ mod tests {
                 .unwrap(),
             "replica1:6379"
         );
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn test_shard_fallback_addrs_master_is_empty() {
+        let slot_map = get_slot_map();
+        let fallback = slot_map.shard_fallback_addrs(&Route::with_slot(
+            Slot::new(1500).unwrap(),
+            SlotAddr::Master,
+        ));
+        assert!(fallback.is_empty());
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn test_shard_fallback_addrs_replica_optional() {
+        let slot_map = get_slot_map();
+        let fallback = slot_map.shard_fallback_addrs(&Route::with_slot(
+            Slot::new(1500).unwrap(),
+            SlotAddr::ReplicaOptional,
+        ));
+        assert_eq!(
+            fallback,
+            vec![
+                addr("replica2:6379"),
+                addr("replica3:6379"),
+                addr("node2:6379")
+            ]
+        );
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn test_shard_fallback_addrs_replica_requiredy() {
+        let slot_map = get_slot_map();
+        let fallback = slot_map.shard_fallback_addrs(&Route::with_slot(
+            Slot::new(2500).unwrap(),
+            SlotAddr::ReplicaRequired,
+        ));
+        assert_eq!(
+            fallback,
+            vec![
+                addr("replica4:6379"),
+                addr("replica5:6379"),
+                addr("replica6:6379")
+            ]
+        );
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn test_shard_fallback_addrs_missing_slot_is_empty() {
+        let slot_map = get_slot_map();
+        let fallback = slot_map.shard_fallback_addrs(&Route::with_slot(
+            Slot::new(1001).unwrap(),
+            SlotAddr::ReplicaOptional,
+        ));
+        assert!(fallback.is_empty());
     }
 
     fn get_slot_map() -> SlotMap {
