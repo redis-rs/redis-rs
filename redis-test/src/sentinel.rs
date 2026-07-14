@@ -131,20 +131,20 @@ fn get_addr(port: u16) -> ConnectionAddr {
 fn spawn_master_server(
     port: u16,
     dir: &TempDir,
-    tlspaths: &TlsFilePaths,
+    tlspaths: &Option<TlsFilePaths>,
     modules: &[Module],
 ) -> RedisServer {
     RedisServer::new_with_addr_tls_modules_and_cmd_refiner(
         get_addr(port),
         None,
-        Some(tlspaths.clone()),
+        tlspaths.clone(),
         MTLS_NOT_ENABLED,
         None, // cert_auth_field - not used in sentinel tests
         modules,
         |cmd| {
             // Minimize startup delay
             cmd.arg2("--repl-diskless-sync-delay", "0");
-            if let ConnectionAddr::TcpTls { .. } = get_addr(port) {
+            if tlspaths.is_some() {
                 cmd.arg2("--tls-replication", "yes");
             }
             cmd.current_dir(dir.path());
@@ -156,7 +156,7 @@ fn spawn_replica_server(
     port: u16,
     master_port: u16,
     dir: &TempDir,
-    tlspaths: &TlsFilePaths,
+    tlspaths: &Option<TlsFilePaths>,
     modules: &[Module],
 ) -> RedisServer {
     let config_file_path = dir.path().join("redis_config.conf");
@@ -165,13 +165,13 @@ fn spawn_replica_server(
     RedisServer::new_with_addr_tls_modules_and_cmd_refiner(
         get_addr(port),
         Some(&config_file_path),
-        Some(tlspaths.clone()),
+        tlspaths.clone(),
         MTLS_NOT_ENABLED,
         None, // cert_auth_field - not used in sentinel tests
         modules,
         |cmd| {
             cmd.arg3("--replicaof", "127.0.0.1", master_port.to_string());
-            if let ConnectionAddr::TcpTls { .. } = get_addr(port) {
+            if tlspaths.is_some() {
                 cmd.arg2("--tls-replication", "yes");
             }
             cmd.current_dir(dir.path());
@@ -183,7 +183,7 @@ fn spawn_sentinel_server(
     port: u16,
     master_ports: &[u16],
     dir: &TempDir,
-    tlspaths: &TlsFilePaths,
+    tlspaths: &Option<TlsFilePaths>,
     modules: &[Module],
 ) -> RedisServer {
     let config_file_path = dir.path().join("redis_config.conf");
@@ -199,13 +199,13 @@ fn spawn_sentinel_server(
     RedisServer::new_with_addr_tls_modules_and_cmd_refiner(
         get_addr(port),
         Some(&config_file_path),
-        Some(tlspaths.clone()),
+        tlspaths.clone(),
         MTLS_NOT_ENABLED,
         None, // cert_auth_field - not used in sentinel tests
         modules,
         |cmd| {
             cmd.arg("--sentinel");
-            if let ConnectionAddr::TcpTls { .. } = get_addr(port) {
+            if tlspaths.is_some() {
                 cmd.arg2("--tls-replication", "yes");
             }
             cmd.current_dir(dir.path());
@@ -336,19 +336,27 @@ impl RedisSentinelCluster {
         let mut folders = vec![];
         let mut master_ports = vec![];
 
-        let tempdir = tempfile::Builder::new()
-            .prefix("redistls")
-            .tempdir()
-            .expect("failed to create tempdir");
-        let tlspaths = build_keys_and_certs_for_tls(&tempdir);
-        folders.push(tempdir);
-
         let required_number_of_sockets = masters * (replicas_per_master + 1) + sentinels;
         let mut available_ports = std::collections::HashSet::new();
         while available_ports.len() < required_number_of_sockets as usize {
             available_ports.insert(get_random_available_port());
         }
         let mut available_ports: Vec<_> = available_ports.into_iter().collect();
+
+        let tlspaths = if matches!(
+            RedisServer::get_addr(available_ports[0]),
+            ConnectionAddr::TcpTls { .. }
+        ) {
+            let tempdir = tempfile::Builder::new()
+                .prefix("redistls")
+                .tempdir()
+                .expect("failed to create tempdir");
+            let tlspaths = build_keys_and_certs_for_tls(&tempdir);
+            folders.push(tempdir);
+            Some(tlspaths)
+        } else {
+            None
+        };
 
         for _ in 0..masters {
             let port = available_ports.pop().unwrap();
