@@ -3,11 +3,15 @@ use quote::quote;
 
 #[proc_macro_attribute]
 pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
-    let item = syn::parse_macro_input!(input as syn::ItemFn);
+    let mut item = syn::parse_macro_input!(input as syn::ItemFn);
 
+    let test_function_name = item.sig.ident.clone();
+
+    item.sig.ident = syn::Ident::new(
+        &format!("{test_function_name}_internal"),
+        test_function_name.span(),
+    );
     let function_name = item.sig.ident.clone();
-    let test_function_name =
-        syn::Ident::new(&format!("test_{function_name}"), function_name.span());
 
     let final_code = if item.sig.inputs.len() == 1 {
         let Some(syn::FnArg::Typed(pat_type)) = item.sig.inputs.last() else {
@@ -16,7 +20,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
                 .into();
         };
         // Verify the argument is a boolean
-        let is_bool = matches!(&*pat_type.ty, syn::Type::Path(type_path) 
+        let is_bool = matches!(&*pat_type.ty, syn::Type::Path(type_path)
                 if type_path.path.is_ident("bool"));
         let is_connection = matches!(&*pat_type.ty, syn::Type::ImplTrait(impl_trait)
         if impl_trait.bounds.iter().any(|bound| {
@@ -25,39 +29,34 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
         }));
 
         if is_connection {
-            let test_multiplexed_connection_function_name = syn::Ident::new(
-                &format!("test_multiplexed_connection_{function_name}"),
-                function_name.span(),
-            );
-            let test_connection_manager_function_name = syn::Ident::new(
-                &format!("test_connection_manager_{function_name}"),
-                function_name.span(),
-            );
-
             quote! {
-                #item
+                mod #test_function_name {
+                    use super::*;
+                    #item
 
-                #[rstest::rstest]
-                #[cfg_attr(feature = "tokio-comp", case::tokio(support::RuntimeType::Tokio))]
-                #[cfg_attr(feature = "smol-comp", case::smol(support::RuntimeType::Smol))]
-                fn #test_multiplexed_connection_function_name (#[case]runtime: support::RuntimeType) {
-                    let ctx = TestContext::new();
-                    support::block_on_all(async move {
-                        let conn = ctx.async_connection().await.unwrap();
-                        #function_name (conn).await
-                    }, runtime);
-                }
+                    #[rstest::rstest]
+                    #[cfg_attr(feature = "tokio-comp", case::tokio(support::RuntimeType::Tokio))]
+                    #[cfg_attr(feature = "smol-comp", case::smol(support::RuntimeType::Smol))]
+                    fn multiplexed_connection (#[case]runtime: support::RuntimeType) {
+                        let ctx = TestContext::new();
+                        support::block_on_all(async move {
+                            let conn = ctx.async_connection().await.unwrap();
+                            #function_name (conn).await
+                        }, runtime);
+                    }
 
-                #[rstest::rstest]
-                #[cfg_attr(feature = "tokio-comp", case::tokio(support::RuntimeType::Tokio))]
-                #[cfg_attr(feature = "smol-comp", case::smol(support::RuntimeType::Smol))]
-                #[cfg(feature = "connection-manager")]
-                fn #test_connection_manager_function_name (#[case]runtime: support::RuntimeType) {
-                    let ctx = TestContext::new();
-                    support::block_on_all(async move {
-                        let conn = ctx.client.get_connection_manager().await.unwrap();
-                        #function_name (conn).await
-                    }, runtime);
+                    #[rstest::rstest]
+                    #[cfg_attr(feature = "tokio-comp", case::tokio(support::RuntimeType::Tokio))]
+                    #[cfg_attr(feature = "smol-comp", case::smol(support::RuntimeType::Smol))]
+                    #[cfg(feature = "connection-manager")]
+                    fn connection_manager (#[case]runtime: support::RuntimeType) {
+                        let ctx = TestContext::new();
+                        support::block_on_all(async move {
+                            let conn = ctx.client.get_connection_manager().await.unwrap();
+                            #function_name (conn).await
+                        }, runtime);
+                    }
+
                 }
             }
         } else if is_bool {

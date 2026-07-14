@@ -9,3 +9,19 @@ status-level = "skip"
 [[profile.default.overrides]]
 filter = 'test(cluster_async::test_async_cluster_basic_failover)'
 slow-timeout = { period = "20s", terminate-after = 2 }
+
+
+[profile.tcp_tls]
+default-filter = 'not (test(test_module))'
+
+[profile.tcp]
+default-filter = 'not (test(tls) | test(test_module))'
+
+[profile.unix]
+default-filter = 'not (test(cluster) | binary(test_sentinel) | test(tls) | test(test_module))'
+
+[profile.module_bloom]
+default-filter = 'binary(test_module_bloom*)'
+
+[profile.module_json]
+default-filter = 'test(test_module_json)'

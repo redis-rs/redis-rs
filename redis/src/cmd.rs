@@ -8,7 +8,7 @@ use futures_util::{
 use std::pin::Pin;
 #[cfg(feature = "cache-aio")]
 use std::time::Duration;
-use std::{fmt, io, io::Write};
+use std::{fmt, io::Write};
 
 use crate::pipeline::Pipeline;
 use crate::types::{FromRedisValue, RedisResult, RedisWrite, ToRedisArgs, from_redis_value};
@@ -483,23 +483,18 @@ where
 
     cmd.reserve(totlen);
 
-    write_command(cmd, args, cursor).unwrap()
+    write_command(cmd, args, cursor)
 }
 
-pub(crate) fn write_command<'a, I>(
-    cmd: &mut (impl ?Sized + Write),
-    args: I,
-    cursor: u64,
-) -> io::Result<()>
+pub(crate) fn write_command<'a, I>(cmd: &mut Vec<u8>, args: I, cursor: u64)
 where
     I: IntoIterator<Item = Arg<&'a [u8]>> + Clone + ExactSizeIterator,
 {
     let mut buf = ::itoa::Buffer::new();
 
-    cmd.write_all(b"*")?;
-    let s = buf.format(args.len());
-    cmd.write_all(s.as_bytes())?;
-    cmd.write_all(b"\r\n")?;
+    cmd.extend_from_slice(b"*");
+    cmd.extend_from_slice(buf.format(args.len()).as_bytes());
+    cmd.extend_from_slice(b"\r\n");
 
     let mut cursor_bytes = itoa::Buffer::new();
     for item in args {
@@ -508,15 +503,13 @@ where
             Arg::Simple(val) => val,
         };
 
-        cmd.write_all(b"$")?;
-        let s = buf.format(bytes.len());
-        cmd.write_all(s.as_bytes())?;
-        cmd.write_all(b"\r\n")?;
+        cmd.extend_from_slice(b"$");
+        cmd.extend_from_slice(buf.format(bytes.len()).as_bytes());
+        cmd.extend_from_slice(b"\r\n");
 
-        cmd.write_all(bytes)?;
-        cmd.write_all(b"\r\n")?;
+        cmd.extend_from_slice(bytes);
+        cmd.extend_from_slice(b"\r\n");
     }
-    Ok(())
 }
 
 impl RedisWrite for Cmd {
