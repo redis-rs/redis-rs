@@ -72,7 +72,11 @@ fn create_cert_auth_context_with_username(username: &str) -> CertAuthTestContext
         build_client_cert_with_custom_cn(&tempdir, username, &tls_paths.ca_crt, &ca_key_path);
 
     // Create a single server context with cert-based auth enabled
-    let server_ctx = TestContext::new_with_cert_auth(tls_paths.clone());
+    let server_ctx = TestContextBuilder::new()
+        .tls_paths(tls_paths.clone())
+        .mtls(true)
+        .cert_auth_field("CN")
+        .build();
 
     CertAuthTestContext {
         server_ctx,
