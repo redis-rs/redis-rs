@@ -483,7 +483,7 @@ impl ClusterClientBuilder {
     /// The blanket implementation uses default to construct a new strategy for each connection.
     ///
     /// The `cluster_read_routing` module provides built-in simple strategies such as
-    /// `RandomReplicaStrategy` and `RoundRobinReplicaStrategy`.
+    /// `RandomReplicaStrategy`, `UniformRandom`, and `RoundRobinReplicaStrategy`.
     ///
     /// You can implement your own `ReadRoutingStrategy` using the provided traits.
     ///

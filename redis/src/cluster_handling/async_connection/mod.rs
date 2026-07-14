@@ -97,7 +97,10 @@ use std::{
     io,
     ops::Deref,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     task::{self, Poll},
     time::Duration,
 };
@@ -121,7 +124,8 @@ use crate::{
             ReadRoutingStrategy,
         },
         routing::{
-            MultipleNodeRoutingInfo, Redirect, ResponsePolicy, RoutingInfo, SingleNodeRoutingInfo,
+            MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, RoutingInfo,
+            SingleNodeRoutingInfo, SlotAddr,
         },
         shard_cmd, slot_cmd,
         slot_map::{SlotMap, SlotRange},
@@ -447,11 +451,13 @@ type ConnectionMap<C> = HashMap<NodeAddress, C>;
 /// as common parameters for connecting to nodes and executing commands.
 struct InnerCore<C> {
     conn_lock: RwLock<(ConnectionMap<C>, SlotMap)>,
+    connection_generation: AtomicU64,
     cluster_params: ClusterParams,
     pending_requests_tx: mpsc::UnboundedSender<PendingRequest<C>>,
     initial_nodes: Vec<ConnectionInfo>,
     subscription_tracker: Option<Mutex<SubscriptionTracker>>,
     routing_strategy: Option<Box<dyn ReadRoutingStrategy>>,
+    read_fallback_enabled: bool,
     az_discovery: Arc<NodeAvailabilityZoneDiscoveryState>,
 }
 
@@ -491,54 +497,88 @@ where
             );
         }
         let (receivers, requests): (Vec<_>, Vec<_>) = {
-            let to_request = |(addr, cmd): (&NodeAddress, Arc<Cmd>)| {
-                read_guard.0.get(addr).cloned().map(|conn| {
+            let to_request =
+                |addr: NodeAddress, cmd: Arc<Cmd>, routing: InternalSingleNodeRouting<C>| {
                     let (sender, receiver) = oneshot::channel();
-                    let addr = addr.clone();
                     (
-                        (addr.clone(), receiver),
+                        (addr, receiver),
                         PendingRequest {
                             retry: 0,
                             sender: request::ResultExpectation::External(sender),
                             cmd: CmdArg::Cmd {
                                 cmd,
-                                routing: InternalSingleNodeRouting::Connection {
-                                    identifier: addr,
-                                    conn,
-                                }
-                                .into(),
+                                routing: routing.into(),
                             },
+                            excluded_read_nodes: Vec::new(),
                         },
                     )
-                })
-            };
+                };
             let slot_map = &read_guard.1;
 
-            // TODO - these filter_map calls mean that we ignore nodes that are missing. Should we report an error in such cases?
-            // since some of the operators drop other requests, mapping to errors here might mean that no request is sent.
             match routing {
                 MultipleNodeRoutingInfo::AllNodes => slot_map
                     .addresses_for_all_nodes()
                     .into_iter()
-                    .filter_map(|addr| to_request((addr, cmd.clone())))
+                    .filter_map(|addr| {
+                        let addr = addr.clone();
+                        let request_routing = if let Some(conn) = read_guard.0.get(&addr).cloned() {
+                            InternalSingleNodeRouting::Connection {
+                                identifier: addr.clone(),
+                                conn,
+                            }
+                        } else if self.read_fallback_enabled {
+                            InternalSingleNodeRouting::ByAddressTransient(addr.clone())
+                        } else {
+                            return None;
+                        };
+                        Some(to_request(addr, cmd.clone(), request_routing))
+                    })
                     .unzip(),
                 MultipleNodeRoutingInfo::AllMasters => slot_map
                     .addresses_for_all_primaries()
                     .into_iter()
-                    .filter_map(|addr| to_request((addr, cmd.clone())))
+                    .filter_map(|addr| {
+                        read_guard.0.get(addr).cloned().map(|conn| {
+                            let addr = addr.clone();
+                            to_request(
+                                addr.clone(),
+                                cmd.clone(),
+                                InternalSingleNodeRouting::Connection {
+                                    identifier: addr,
+                                    conn,
+                                },
+                            )
+                        })
+                    })
                     .unzip(),
                 MultipleNodeRoutingInfo::MultiSlot((routes, _)) => slot_map
                     .addresses_for_multi_slot(routes, self.routing_strategy.as_deref())
                     .enumerate()
                     .filter_map(|(index, addr_opt)| {
                         addr_opt.and_then(|addr| {
-                            let (_, indices) = routes.get(index).unwrap();
+                            let (route, indices) = routes.get(index).unwrap();
                             let cmd =
                                 Arc::new(crate::cluster_routing::command_for_multi_slot_indices(
                                     cmd.as_ref(),
                                     indices.iter(),
                                 ));
-                            to_request((addr, cmd))
+                            let request_routing = if self.read_fallback_enabled
+                                && matches!(
+                                    route.slot_addr(),
+                                    SlotAddr::ReplicaOptional | SlotAddr::ReplicaRequired
+                                ) {
+                                InternalSingleNodeRouting::SpecificNodeWithPreferred {
+                                    route: *route,
+                                    preferred: addr.clone(),
+                                }
+                            } else {
+                                let conn = read_guard.0.get(addr)?.clone();
+                                InternalSingleNodeRouting::Connection {
+                                    identifier: addr.clone(),
+                                    conn,
+                                }
+                            };
+                            Some(to_request(addr.clone(), cmd, request_routing))
                         })
                     })
                     .unzip(),
@@ -699,6 +739,7 @@ where
         &self,
         cmd: Arc<Cmd>,
         routing: InternalRoutingInfo<C>,
+        excluded_read_nodes: Vec<NodeAddress>,
     ) -> OperationResult {
         let route = match routing {
             InternalRoutingInfo::SingleNode(single_node_routing) => single_node_routing,
@@ -709,7 +750,7 @@ where
             }
         };
 
-        match self.get_connection(route).await {
+        match self.get_connection(route, &excluded_read_nodes).await {
             Ok((addr, mut conn)) => (
                 addr.into(),
                 conn.req_packed_command(&cmd)
@@ -738,8 +779,9 @@ where
         offset: usize,
         count: usize,
         route: InternalSingleNodeRouting<C>,
+        excluded_read_nodes: Vec<NodeAddress>,
     ) -> OperationResult {
-        match self.get_connection(route).await {
+        match self.get_connection(route, &excluded_read_nodes).await {
             Ok((addr, mut conn)) => (
                 OperationTarget::Node { address: addr },
                 conn.req_packed_commands(&pipeline, offset, count)
@@ -781,16 +823,23 @@ where
         }
     }
 
-    async fn try_request(self, cmd: CmdArg<C>) -> OperationResult {
+    async fn try_request(
+        self,
+        cmd: CmdArg<C>,
+        excluded_read_nodes: Vec<NodeAddress>,
+    ) -> OperationResult {
         match cmd {
-            CmdArg::Cmd { cmd, routing } => self.try_cmd_request(cmd, routing).await,
+            CmdArg::Cmd { cmd, routing } => {
+                self.try_cmd_request(cmd, routing, excluded_read_nodes)
+                    .await
+            }
             CmdArg::Pipeline {
                 pipeline,
                 offset,
                 count,
                 route,
             } => {
-                self.try_pipeline_request(pipeline, offset, count, route)
+                self.try_pipeline_request(pipeline, offset, count, route, excluded_read_nodes)
                     .await
             }
         }
@@ -799,7 +848,31 @@ where
     async fn get_connection(
         &self,
         route: InternalSingleNodeRouting<C>,
+        excluded_read_nodes: &[NodeAddress],
     ) -> RedisResult<(NodeAddress, C)> {
+        if self.read_fallback_enabled {
+            match &route {
+                InternalSingleNodeRouting::SpecificNode(route)
+                    if (!excluded_read_nodes.is_empty()
+                        || route.slot_addr() == SlotAddr::ReplicaRequired)
+                        && matches!(
+                            route.slot_addr(),
+                            SlotAddr::ReplicaOptional | SlotAddr::ReplicaRequired
+                        ) =>
+                {
+                    return self
+                        .get_connection_for_read_route(*route, excluded_read_nodes, None)
+                        .await;
+                }
+                InternalSingleNodeRouting::SpecificNodeWithPreferred { route, preferred } => {
+                    return self
+                        .get_connection_for_read_route(*route, excluded_read_nodes, Some(preferred))
+                        .await;
+                }
+                _ => {}
+            }
+        }
+
         let read_guard = self.conn_lock.read().await;
 
         let conn = match route {
@@ -808,18 +881,28 @@ where
                 .1
                 .slot_addr_for_route(&route, self.routing_strategy.as_deref())
                 .cloned(),
+            InternalSingleNodeRouting::SpecificNodeWithPreferred { preferred, .. } => {
+                Some(preferred)
+            }
             InternalSingleNodeRouting::Connection { identifier, conn } => {
                 return Ok((identifier, conn));
             }
-            InternalSingleNodeRouting::Redirect { redirect, .. } => {
+            InternalSingleNodeRouting::Redirect {
+                redirect,
+                previous_routing,
+            } => {
+                let retain_connection = !previous_routing.is_transient();
                 drop(read_guard);
                 // redirected requests shouldn't use a random connection, so they have a separate codepath.
-                return self.get_redirected_connection(redirect).await;
+                return self
+                    .get_redirected_connection(redirect, retain_connection)
+                    .await;
             }
             InternalSingleNodeRouting::ByAddress(address) => {
                 if let Some(conn) = read_guard.0.get(&address).cloned() {
                     return Ok((address, conn));
-                } else {
+                }
+                if !self.read_fallback_enabled {
                     return Err((
                         ErrorKind::Client,
                         "Requested connection not found",
@@ -827,6 +910,14 @@ where
                     )
                         .into());
                 }
+                drop(read_guard);
+                let conn = self.connect_check_and_add(&address).await?;
+                return Ok((address, conn));
+            }
+            InternalSingleNodeRouting::ByAddressTransient(address) => {
+                drop(read_guard);
+                let conn = connect_and_check::<C>(&address, &self.cluster_params).await?;
+                return Ok((address, conn));
             }
         }
         .map(|addr| {
@@ -863,18 +954,85 @@ where
         Ok((addr, conn))
     }
 
-    async fn get_redirected_connection(&self, redirect: Redirect) -> RedisResult<(NodeAddress, C)> {
+    async fn get_connection_for_read_route(
+        &self,
+        route: Route,
+        excluded_read_nodes: &[NodeAddress],
+        preferred: Option<&NodeAddress>,
+    ) -> RedisResult<(NodeAddress, C)> {
+        let mut excluded_nodes = excluded_read_nodes.to_vec();
+        let mut last_error = None;
+
+        loop {
+            let read_guard = self.conn_lock.read().await;
+            let addr = preferred
+                .filter(|address| !excluded_nodes.contains(address))
+                .cloned()
+                .or_else(|| {
+                    read_guard
+                        .1
+                        .slot_addr_for_route_excluding(
+                            &route,
+                            self.routing_strategy.as_deref(),
+                            &excluded_nodes,
+                        )
+                        .cloned()
+                });
+
+            let Some(addr) = addr else {
+                if let Some(err) = last_error {
+                    return Err(err);
+                }
+                if excluded_nodes.is_empty() {
+                    if let Some((addr, conn)) = get_random_connection(&read_guard.0) {
+                        return Ok((addr, conn));
+                    }
+                }
+                return Err((
+                    ErrorKind::ClusterConnectionNotFound,
+                    "No eligible read connection found",
+                )
+                    .into());
+            };
+
+            if let Some(conn) = read_guard.0.get(&addr).cloned() {
+                return Ok((addr, conn));
+            }
+
+            drop(read_guard);
+
+            match self.connect_check_and_add(&addr).await {
+                Ok(conn) => return Ok((addr, conn)),
+                Err(err) => {
+                    if excluded_nodes.contains(&addr) {
+                        return Err(err);
+                    }
+                    excluded_nodes.push(addr);
+                    last_error = Some(err);
+                }
+            }
+        }
+    }
+
+    async fn get_redirected_connection(
+        &self,
+        redirect: Redirect,
+        retain_connection: bool,
+    ) -> RedisResult<(NodeAddress, C)> {
         let asking = matches!(redirect, Redirect::Ask(_));
         let addr = match redirect {
             Redirect::Moved(addr) => addr,
             Redirect::Ask(addr) => addr,
         };
         let read_guard = self.conn_lock.read().await;
-        let conn = read_guard.0.get(&addr).cloned();
+        let conn = retain_connection
+            .then(|| read_guard.0.get(&addr).cloned())
+            .flatten();
         drop(read_guard);
         let mut conn = match conn {
             Some(conn) => conn,
-            None => self.connect_check_and_add(&addr).await?,
+            None if retain_connection => self.connect_check_and_add(&addr).await?,
+            None => connect_and_check::<C>(&addr, &self.cluster_params).await?,
         };
         if asking {
             let mut asking_cmd = crate::cmd::cmd("ASKING");
@@ -889,13 +1047,16 @@ where
     }
 
     async fn connect_check_and_add(&self, addr: &NodeAddress) -> RedisResult<C> {
+        let generation = self.connection_generation.load(Ordering::Acquire);
         match connect_and_check::<C>(addr, &self.cluster_params).await {
             Ok(conn) => {
-                self.conn_lock
-                    .write()
-                    .await
-                    .0
-                    .insert(addr.clone(), conn.clone());
+                let mut write_guard = self.conn_lock.write().await;
+                if generation == self.connection_generation.load(Ordering::Acquire) {
+                    write_guard.0.insert(addr.clone(), conn.clone());
+                    if let Some(strategy) = &self.routing_strategy {
+                        strategy.on_connection_added(addr);
+                    }
+                }
                 Ok(conn)
             }
             Err(err) => Err(err),
@@ -943,12 +1104,14 @@ where
             let nodes = strategy
                 .eager_connection_nodes(&topology)
                 .unwrap_or_else(|| slots.values().flatten().cloned().collect());
-            self.refresh_connections_locked(connections, nodes).await;
+            self.refresh_connections_locked(connections, nodes, true)
+                .await;
             return Ok(());
         }
 
         let nodes = slots.values().flatten().cloned().collect::<HashSet<_>>();
-        self.refresh_connections_locked(connections, nodes).await;
+        self.refresh_connections_locked(connections, nodes, true)
+            .await;
 
         Ok(())
     }
@@ -1169,7 +1332,11 @@ where
         &self,
         connections: &mut ConnectionMap<C>,
         nodes: HashSet<NodeAddress>,
+        prune_unrequested: bool,
     ) {
+        if prune_unrequested {
+            connections.retain(|address, _| nodes.contains(address));
+        }
         let nodes_len = nodes.len();
 
         let addresses_and_connections_iter = nodes
@@ -1185,13 +1352,23 @@ where
 
         stream::iter(addresses_and_connections_iter)
             .buffer_unordered(nodes_len.max(8))
-            .fold(connections, |connections, (addr, result)| async move {
-                if let Ok(conn) = result {
-                    connections.insert(addr, conn);
-                }
-                connections
-            })
+            .fold(
+                &mut *connections,
+                |connections, (addr, result)| async move {
+                    if let Ok(conn) = result {
+                        connections.insert(addr, conn);
+                    }
+                    connections
+                },
+            )
             .await;
+        if let Some(strategy) = &self.routing_strategy {
+            let connected_nodes = connections.keys().cloned().collect();
+            strategy.on_connections_changed(&connected_nodes);
+        }
+        if prune_unrequested {
+            self.connection_generation.fetch_add(1, Ordering::Release);
+        }
     }
 
     fn resubscribe(&self) {
@@ -1216,6 +1393,7 @@ where
                     cmd: Arc::new(cmd),
                     routing,
                 },
+                excluded_read_nodes: Vec::new(),
             }
         });
         for request in requests {
@@ -1309,15 +1487,20 @@ where
             .read_routing_factory
             .as_ref()
             .map(|f| f.create_strategy());
+        let read_fallback_enabled = routing_strategy
+            .as_deref()
+            .is_some_and(ReadRoutingStrategy::supports_read_fallback);
 
         let (pending_requests_tx, pending_requests_rx) = mpsc::unbounded_channel();
         let inner = Arc::new(InnerCore {
             conn_lock: RwLock::new((Default::default(), SlotMap::new())),
+            connection_generation: AtomicU64::new(0),
             cluster_params,
             pending_requests_tx,
             initial_nodes: initial_nodes.to_vec(),
             subscription_tracker,
             routing_strategy,
+            read_fallback_enabled,
             az_discovery: Arc::new(NodeAvailabilityZoneDiscoveryState::default()),
         });
         let core = Core(inner);
@@ -1407,7 +1590,7 @@ where
             let mut write_guard = inner.conn_lock.write().await;
 
             inner
-                .refresh_connections_locked(&mut write_guard.0, addrs)
+                .refresh_connections_locked(&mut write_guard.0, addrs, false)
                 .await;
         }
     }
@@ -1463,7 +1646,10 @@ where
                 let _ = self.inner.pending_requests_tx.send(request);
             }
             Some(Retry::Immediately { request }) => {
-                let future = self.inner.clone().try_request(request.cmd.clone());
+                let future = self
+                    .inner
+                    .clone()
+                    .try_request(request.cmd.clone(), request.excluded_read_nodes.clone());
                 self.in_flight_requests.push(Box::pin(Request {
                     retry_params: self.inner.cluster_params.retry_params.clone(),
                     request: Some(request),
@@ -1506,7 +1692,11 @@ where
                 continue;
             }
 
-            let future = self.inner.clone().try_request(request.cmd.clone()).boxed();
+            let future = self
+                .inner
+                .clone()
+                .try_request(request.cmd.clone(), request.excluded_read_nodes.clone())
+                .boxed();
             self.in_flight_requests.push(Box::pin(Request {
                 retry_params: self.inner.cluster_params.retry_params.clone(),
                 request: Some(request),
@@ -1633,6 +1823,7 @@ where
             retry: 0,
             sender: request::ResultExpectation::External(sender),
             cmd,
+            excluded_read_nodes: Vec::new(),
         });
         Ok(())
     }

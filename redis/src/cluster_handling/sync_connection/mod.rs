@@ -332,6 +332,7 @@ pub struct ClusterConnection<C = Connection> {
     read_timeout: RefCell<Option<Duration>>,
     write_timeout: RefCell<Option<Duration>>,
     routing_strategy: Option<Box<dyn ReadRoutingStrategy>>,
+    read_fallback_enabled: bool,
     az_discovery: Arc<NodeAvailabilityZoneDiscoveryState>,
     cluster_params: ClusterParams,
 }
@@ -380,6 +381,9 @@ where
             .read_routing_factory
             .as_ref()
             .map(|f| f.create_strategy());
+        let read_fallback_enabled = routing_strategy
+            .as_deref()
+            .is_some_and(ReadRoutingStrategy::supports_read_fallback);
 
         let connection = Self {
             connections: RefCell::new(HashMap::new()),
@@ -388,6 +392,7 @@ where
             read_timeout: RefCell::new(cluster_params.response_timeout),
             write_timeout: RefCell::new(None),
             routing_strategy,
+            read_fallback_enabled,
             az_discovery: Arc::new(NodeAvailabilityZoneDiscoveryState::default()),
             initial_nodes: initial_nodes.to_vec(),
             cluster_params,
@@ -638,6 +643,7 @@ where
         }
 
         *connections = refreshed;
+        self.notify_connections_changed(&connections);
     }
 
     fn create_new_slots(&self) -> RedisResult<SlotMap> {
@@ -893,9 +899,152 @@ where
         if let Some(addr) = slots.slot_addr_for_route(route, self.routing_strategy.as_deref()) {
             (addr.clone(), self.get_connection_by_addr(connections, addr))
         } else {
-            // try a random node next.  This is safe if slots are involved
+            // try a random node next. This is safe if slots are involved
             // as a wrong node would reject the request.
             get_random_connection_or_error(connections)
+        }
+    }
+
+    fn get_connection_excluding<'a>(
+        &self,
+        connections: &'a mut HashMap<NodeAddress, C>,
+        route: &Route,
+        excluded_nodes: &mut Vec<NodeAddress>,
+        mut preferred_addr: Option<NodeAddress>,
+    ) -> (NodeAddress, RedisResult<&'a mut C>) {
+        if route.slot_addr() == SlotAddr::ReplicaRequired {
+            return self.get_connection_excluding_slow(
+                connections,
+                route,
+                excluded_nodes,
+                preferred_addr,
+            );
+        }
+
+        if excluded_nodes.is_empty() {
+            let addr = preferred_addr.take().or_else(|| {
+                self.slots
+                    .borrow()
+                    .slot_addr_for_route(route, self.routing_strategy.as_deref())
+                    .cloned()
+            });
+            if let Some(addr) = addr {
+                let connection = self.get_connection_by_addr(connections, &addr);
+                return (addr, connection);
+            }
+        }
+
+        self.get_connection_excluding_slow(connections, route, excluded_nodes, preferred_addr)
+    }
+
+    fn get_connection_excluding_slow<'a>(
+        &self,
+        connections: &'a mut HashMap<NodeAddress, C>,
+        route: &Route,
+        excluded_nodes: &mut Vec<NodeAddress>,
+        mut preferred_addr: Option<NodeAddress>,
+    ) -> (NodeAddress, RedisResult<&'a mut C>) {
+        let mut last_failure = None;
+
+        loop {
+            let addr = {
+                let slots = self.slots.borrow();
+                preferred_addr
+                    .take()
+                    .filter(|addr| !excluded_nodes.contains(addr))
+                    .or_else(|| {
+                        slots
+                            .slot_addr_for_route_excluding(
+                                route,
+                                self.routing_strategy.as_deref(),
+                                excluded_nodes,
+                            )
+                            .cloned()
+                    })
+            };
+
+            let Some(addr) = addr else {
+                return match last_failure {
+                    Some((addr, err)) => (addr, Err(err)),
+                    None if excluded_nodes.is_empty() => {
+                        get_random_connection_or_error(connections)
+                    }
+                    None => (
+                        NodeAddress::default(),
+                        Err(RedisError::from((
+                            ErrorKind::ClusterConnectionNotFound,
+                            "No eligible read connection found",
+                        ))),
+                    ),
+                };
+            };
+
+            match self.ensure_connection_by_addr(connections, &addr) {
+                Ok(()) => {
+                    let return_addr = addr.clone();
+                    return (
+                        return_addr,
+                        connections.get_mut(&addr).ok_or_else(|| {
+                            RedisError::from((
+                                ErrorKind::ClusterConnectionNotFound,
+                                "Couldn't find connection",
+                            ))
+                        }),
+                    );
+                }
+                Err(err) => {
+                    if excluded_nodes.contains(&addr) {
+                        return (addr, Err(err));
+                    }
+                    excluded_nodes.push(addr.clone());
+                    last_failure = Some((addr, err));
+                }
+            }
+        }
+    }
+
+    fn ensure_connection_by_addr(
+        &self,
+        connections: &mut HashMap<NodeAddress, C>,
+        addr: &NodeAddress,
+    ) -> RedisResult<()> {
+        if connections.contains_key(addr) {
+            return Ok(());
+        }
+
+        let conn = self.connect(addr)?;
+        connections.insert(addr.clone(), conn);
+        if let Some(strategy) = &self.routing_strategy {
+            strategy.on_connection_added(addr);
+        }
+        Ok(())
+    }
+
+    fn notify_connections_changed(&self, connections: &HashMap<NodeAddress, C>) {
+        if let Some(strategy) = &self.routing_strategy {
+            let connected_nodes = connections.keys().cloned().collect();
+            strategy.on_connections_changed(&connected_nodes);
+        }
+    }
+
+    fn uses_read_fallback(&self, route: &Route) -> bool {
+        self.read_fallback_enabled
+            && matches!(
+                route.slot_addr(),
+                SlotAddr::ReplicaOptional | SlotAddr::ReplicaRequired
+            )
+    }
+
+    fn note_read_node_failure(
+        &self,
+        routing: &SingleNodeRoutingInfo,
+        addr: &NodeAddress,
+        excluded_nodes: &mut Vec<NodeAddress>,
+    ) {
+        if let SingleNodeRoutingInfo::SpecificNode(route) = routing {
+            if self.uses_read_fallback(route) && !excluded_nodes.contains(addr) {
+                excluded_nodes.push(addr.clone());
+            }
         }
     }
 
@@ -912,7 +1061,11 @@ where
                 // Create new connection.
                 // TODO: error handling
                 let conn = self.connect(addr)?;
-                Ok(vacant_entry.insert(conn))
+                let connection = vacant_entry.insert(conn);
+                if let Some(strategy) = &self.routing_strategy {
+                    strategy.on_connection_added(addr);
+                }
+                Ok(connection)
             }
         }
     }
@@ -957,11 +1110,11 @@ where
         Ok(result)
     }
 
-    fn execute_on_all<'a>(
-        &'a self,
+    fn execute_on_all(
+        &self,
         input: Input,
-        addresses: HashSet<&'a NodeAddress>,
-    ) -> Vec<RedisResult<(&'a NodeAddress, Value)>> {
+        addresses: HashSet<NodeAddress>,
+    ) -> Vec<RedisResult<(NodeAddress, Value)>> {
         addresses
             .into_iter()
             .map(|addr| {
@@ -981,45 +1134,89 @@ where
             .collect()
     }
 
-    fn execute_on_all_nodes<'a>(
-        &'a self,
-        input: Input,
-        slots: &'a mut SlotMap,
-    ) -> Vec<RedisResult<(&'a NodeAddress, Value)>> {
-        self.execute_on_all(input, slots.addresses_for_all_nodes())
+    fn execute_on_all_nodes(&self, input: Input) -> Vec<RedisResult<(NodeAddress, Value)>> {
+        let preserved_connections = self.routing_strategy.as_ref().map(|_| {
+            self.connections
+                .borrow()
+                .keys()
+                .cloned()
+                .collect::<HashSet<_>>()
+        });
+        let addresses = self
+            .slots
+            .borrow()
+            .addresses_for_all_nodes()
+            .into_iter()
+            .cloned()
+            .collect();
+        let results = self.execute_on_all(input, addresses);
+        if let Some(preserved_connections) = preserved_connections {
+            self.prune_to_eager_connections(&preserved_connections);
+        }
+        results
     }
 
-    fn execute_on_all_primaries<'a>(
-        &'a self,
-        input: Input,
-        slots: &'a mut SlotMap,
-    ) -> Vec<RedisResult<(&'a NodeAddress, Value)>> {
-        self.execute_on_all(input, slots.addresses_for_all_primaries())
+    fn prune_to_eager_connections(&self, preserved_connections: &HashSet<NodeAddress>) {
+        let Some(strategy) = &self.routing_strategy else {
+            return;
+        };
+        let topology = self.slots.borrow().topology();
+        let Some(eager_nodes) = strategy.eager_connection_nodes(&topology) else {
+            return;
+        };
+        let mut connections = self.connections.borrow_mut();
+        connections.retain(|address, _| {
+            eager_nodes.contains(address) || preserved_connections.contains(address)
+        });
+        self.notify_connections_changed(&connections);
     }
 
-    fn execute_multi_slot<'a, 'b>(
-        &'a self,
+    fn execute_on_all_primaries(&self, input: Input) -> Vec<RedisResult<(NodeAddress, Value)>> {
+        let addresses = self
+            .slots
+            .borrow()
+            .addresses_for_all_primaries()
+            .into_iter()
+            .cloned()
+            .collect();
+        self.execute_on_all(input, addresses)
+    }
+
+    fn execute_multi_slot(
+        &self,
         input: Input,
-        slots: &'a mut SlotMap,
-        connections: &'a mut HashMap<NodeAddress, C>,
-        routes: &'b [(Route, Vec<usize>)],
-    ) -> Vec<RedisResult<(&'a NodeAddress, Value)>>
-    where
-        'b: 'a,
-    {
-        slots
-            .addresses_for_multi_slot(routes, self.routing_strategy.as_deref())
-            .enumerate()
-            .map(|(index, addr)| {
-                let addr = addr.ok_or(RedisError::from((
-                    ErrorKind::Io,
-                    "Couldn't find connection",
-                )))?;
-                let connection = self.get_connection_by_addr(connections, addr)?;
-                let (_, indices) = routes.get(index).unwrap();
+        routes: &[(Route, Vec<usize>)],
+    ) -> Vec<RedisResult<(NodeAddress, Value)>> {
+        routes
+            .iter()
+            .map(|(route, indices)| {
+                let addr = self
+                    .slots
+                    .borrow()
+                    .slot_addr_for_route(route, self.routing_strategy.as_deref())
+                    .cloned()
+                    .ok_or(RedisError::from((
+                        ErrorKind::Io,
+                        "Couldn't find connection",
+                    )))?;
                 let cmd =
                     crate::cluster_routing::command_for_multi_slot_indices(&input, indices.iter());
-                connection.req_command(&cmd).map(|res| (addr, res))
+                let response = if self.uses_read_fallback(route) {
+                    let routing = Some(RoutingInfo::SingleNode(
+                        SingleNodeRoutingInfo::SpecificNode(*route),
+                    ));
+                    self.request_with_preferred_addr(Input::Cmd(&cmd), routing, addr.clone())
+                } else {
+                    // Stateful strategies must dispatch the address selected above instead of
+                    // resolving the route a second time.
+                    let mut connections = self.connections.borrow_mut();
+                    self.get_connection_by_addr(&mut connections, &addr)
+                        .and_then(|connection| Input::Cmd(&cmd).send(connection))
+                };
+                response.map(|res| match res {
+                    Output::Single(value) => (addr, value),
+                    Output::Multi(values) => (addr, Value::Array(values)),
+                })
             })
             .collect()
     }
@@ -1030,21 +1227,12 @@ where
         routing: MultipleNodeRoutingInfo,
         response_policy: Option<ResponsePolicy>,
     ) -> RedisResult<Value> {
-        let mut connections = self.connections.borrow_mut();
-        let mut slots = self.slots.borrow_mut();
-
         let results = match &routing {
             MultipleNodeRoutingInfo::MultiSlot((routes, _)) => {
-                self.execute_multi_slot(input, &mut slots, &mut connections, routes)
+                self.execute_multi_slot(input, routes)
             }
-            MultipleNodeRoutingInfo::AllMasters => {
-                drop(connections);
-                self.execute_on_all_primaries(input, &mut slots)
-            }
-            MultipleNodeRoutingInfo::AllNodes => {
-                drop(connections);
-                self.execute_on_all_nodes(input, &mut slots)
-            }
+            MultipleNodeRoutingInfo::AllMasters => self.execute_on_all_primaries(input),
+            MultipleNodeRoutingInfo::AllNodes => self.execute_on_all_nodes(input),
         };
 
         match response_policy {
@@ -1150,8 +1338,33 @@ where
         }
     }
 
+    #[inline(always)]
     #[allow(clippy::unnecessary_unwrap)]
     fn request(&self, input: Input, route_option: Option<RoutingInfo>) -> RedisResult<Output> {
+        if self.read_fallback_enabled {
+            self.request_inner::<true, false>(input, route_option, None)
+        } else {
+            self.request_inner::<false, false>(input, route_option, None)
+        }
+    }
+
+    #[inline(always)]
+    fn request_with_preferred_addr(
+        &self,
+        input: Input,
+        route_option: Option<RoutingInfo>,
+        preferred_addr: NodeAddress,
+    ) -> RedisResult<Output> {
+        self.request_inner::<true, true>(input, route_option, Some(preferred_addr))
+    }
+
+    #[allow(clippy::unnecessary_unwrap)]
+    fn request_inner<const READ_FALLBACK: bool, const HAS_PREFERRED_ADDR: bool>(
+        &self,
+        input: Input,
+        route_option: Option<RoutingInfo>,
+        mut preferred_addr: Option<NodeAddress>,
+    ) -> RedisResult<Output> {
         let single_node_routing = match route_option {
             Some(RoutingInfo::SingleNode(single_node_routing)) => single_node_routing,
             Some(RoutingInfo::MultiNode((multi_node_routing, response_policy))) => {
@@ -1164,6 +1377,7 @@ where
 
         let mut retries = 0;
         let mut redirected = None::<Redirect>;
+        let mut excluded_read_nodes = Vec::new();
 
         loop {
             // Get target address and response.
@@ -1192,7 +1406,20 @@ where
                             get_random_connection_or_error(&mut connections)
                         }
                         SingleNodeRoutingInfo::SpecificNode(route) => {
-                            self.get_connection(&mut connections, route)
+                            if READ_FALLBACK && self.uses_read_fallback(route) {
+                                self.get_connection_excluding(
+                                    &mut connections,
+                                    route,
+                                    &mut excluded_read_nodes,
+                                    if HAS_PREFERRED_ADDR {
+                                        preferred_addr.take()
+                                    } else {
+                                        None
+                                    },
+                                )
+                            } else {
+                                self.get_connection(&mut connections, route)
+                            }
                         }
                         SingleNodeRoutingInfo::ByAddress { host, port } => {
                             let address = NodeAddress::new(host.as_str(), *port);
@@ -1252,20 +1479,37 @@ where
                             thread::sleep(sleep_time);
                         }
                         RetryMethod::Reconnect => {
+                            if READ_FALLBACK {
+                                self.note_read_node_failure(
+                                    &single_node_routing,
+                                    &addr,
+                                    &mut excluded_read_nodes,
+                                );
+                            }
                             if *self.auto_reconnect.borrow() {
                                 // if the connection is no longer valid, we should remove it.
-                                self.connections.borrow_mut().remove(&addr);
+                                let mut connections = self.connections.borrow_mut();
+                                connections.remove(&addr);
                                 if let Ok(mut conn) = self.connect(&addr) {
                                     if conn.check_connection() {
-                                        self.connections.borrow_mut().insert(addr, conn);
+                                        connections.insert(addr, conn);
                                     }
                                 }
+                                self.notify_connections_changed(&connections);
                             }
                         }
                         RetryMethod::NoRetry => {
                             return Err(err);
                         }
-                        RetryMethod::RetryImmediately => {}
+                        RetryMethod::RetryImmediately => {
+                            if READ_FALLBACK && err.kind() == ErrorKind::Io {
+                                self.note_read_node_failure(
+                                    &single_node_routing,
+                                    &addr,
+                                    &mut excluded_read_nodes,
+                                );
+                            }
+                        }
                         RetryMethod::ReconnectFromInitialConnections => {
                             // TODO - implement reconnect from initial connections
                             if *self.auto_reconnect.borrow() {

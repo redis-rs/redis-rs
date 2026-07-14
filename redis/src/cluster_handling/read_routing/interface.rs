@@ -442,6 +442,25 @@ pub trait ReadRoutingStrategy: Send + Sync {
         None
     }
 
+    /// Notifies the strategy after the cluster connection's live node set changes.
+    ///
+    /// This callback is intended for strategies that deliberately keep only a
+    /// topology subset connected and need to avoid repeatedly selecting an eager
+    /// node whose connection could not be established. The default implementation
+    /// does nothing.
+    #[doc(hidden)]
+    fn on_connections_changed(&self, _connected_nodes: &HashSet<NodeAddress>) {}
+
+    /// Notifies the strategy that an on-demand node connection was added.
+    #[doc(hidden)]
+    fn on_connection_added(&self, _connected_node: &NodeAddress) {}
+
+    /// Returns whether failed read requests should try other shard candidates.
+    #[doc(hidden)]
+    fn supports_read_fallback(&self) -> bool {
+        false
+    }
+
     /// Choose which node within a shard to route a read command to.
     ///
     /// The returned reference must point to one of the addresses provided in

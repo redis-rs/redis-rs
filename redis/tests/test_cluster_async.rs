@@ -4,10 +4,10 @@ mod support;
 #[cfg(test)]
 mod cluster_async {
     use std::{
-        collections::HashMap,
+        collections::{HashMap, HashSet},
         sync::{
             Arc, LazyLock,
-            atomic::{self, AtomicBool, AtomicI32, AtomicU16, AtomicU32, Ordering},
+            atomic::{self, AtomicBool, AtomicI32, AtomicU16, AtomicU32, AtomicUsize, Ordering},
         },
         time::Duration,
     };
@@ -22,7 +22,7 @@ mod cluster_async {
         aio::{ConnectionLike, MultiplexedConnection},
         cluster::ClusterClient,
         cluster_async::Connect,
-        cluster_read_routing::{RandomReplicaStrategy, RoundRobinReplicaStrategy},
+        cluster_read_routing::{RandomReplicaStrategy, RoundRobinReplicaStrategy, UniformRandom},
         cluster_routing::{
             MultipleNodeRoutingInfo, ResponsePolicy, Route, RoutingInfo, SingleNodeRoutingInfo,
             Slot, SlotAddr,
@@ -1276,6 +1276,317 @@ mod cluster_async {
     }
 
     #[test]
+    fn test_async_cluster_uniform_random_falls_back_after_selected_replica_io_error() {
+        let name = "async_uniform_random_fallback";
+        let slots_config = vec![MockSlotRange {
+            primary_port: 6379,
+            replica_ports: vec![6380, 6381],
+            slot_range: 0..16384,
+        }];
+        let ports = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let ports_clone = ports.clone();
+        let failed_once = Arc::new(AtomicBool::new(false));
+        let failed_once_clone = failed_once.clone();
+
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .retries(2)
+                .read_routing_strategy(UniformRandom::new()),
+            name,
+            move |cmd: &[u8], port| {
+                respond_startup_with_replica_using_config(name, cmd, Some(slots_config.clone()))?;
+
+                if contains_slice(cmd, b"GET") {
+                    ports_clone.lock().unwrap().push(port);
+                    if port != 6379 && !failed_once_clone.swap(true, Ordering::SeqCst) {
+                        return Err(Err(RedisError::from(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "mock selected replica failure",
+                        ))));
+                    }
+                    return Err(Ok(redis_value!("123")));
+                }
+
+                Ok(())
+            },
+        );
+
+        let value = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<Option<i32>>(&mut connection),
+        );
+
+        assert_eq!(value, Ok(Some(123)));
+        let recorded = ports.lock().unwrap().clone();
+        assert_eq!(recorded.len(), 2);
+        assert_ne!(recorded[0], 6379);
+        assert_eq!(recorded[1], 6379);
+    }
+
+    #[test]
+    fn test_async_cluster_uniform_random_falls_back_when_selected_replica_cannot_connect() {
+        let name = "async_uniform_random_connect_fallback";
+        let slots_config = vec![MockSlotRange {
+            primary_port: 6379,
+            replica_ports: vec![6380, 6381],
+            slot_range: 0..16384,
+        }];
+        let read_ports = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let read_ports_clone = Arc::clone(&read_ports);
+        let replica_connect_attempts = Arc::new(AtomicUsize::new(0));
+        let replica_connect_attempts_clone = Arc::clone(&replica_connect_attempts);
+
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .retries(0)
+                .read_routing_strategy(UniformRandom::new()),
+            name,
+            move |cmd: &[u8], port| {
+                if contains_slice(cmd, b"READONLY") && port != 6379 {
+                    replica_connect_attempts_clone.fetch_add(1, Ordering::SeqCst);
+                    return Err(Err(RedisError::from(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionRefused,
+                        "mock replica connect failure",
+                    ))));
+                }
+                respond_startup_with_replica_using_config(name, cmd, Some(slots_config.clone()))?;
+                if contains_slice(cmd, b"GET") {
+                    read_ports_clone.lock().unwrap().push(port);
+                    return Err(Ok(redis_value!("123")));
+                }
+                Ok(())
+            },
+        );
+
+        let attempts_after_startup = replica_connect_attempts.load(Ordering::SeqCst);
+        assert!(attempts_after_startup > 0);
+
+        for _ in 0..2 {
+            let value = runtime.block_on(
+                cmd("GET")
+                    .arg("test")
+                    .query_async::<Option<i32>>(&mut connection),
+            );
+            assert_eq!(value, Ok(Some(123)));
+        }
+
+        assert_eq!(*read_ports.lock().unwrap(), vec![6379, 6379]);
+        assert_eq!(
+            replica_connect_attempts.load(Ordering::SeqCst),
+            attempts_after_startup
+        );
+    }
+
+    #[test]
+    fn test_async_cluster_uniform_random_replica_required_connects_to_another_replica() {
+        let name = "async_uniform_random_replica_required_connect_fallback";
+        let slots_config = vec![MockSlotRange {
+            primary_port: 6379,
+            replica_ports: vec![6380, 6381],
+            slot_range: 0..16384,
+        }];
+        let failed_replica = Arc::new(AtomicU16::new(0));
+        let failed_replica_clone = Arc::clone(&failed_replica);
+        let read_ports = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let read_ports_clone = Arc::clone(&read_ports);
+
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .retries(0)
+                .read_routing_strategy(UniformRandom::new()),
+            name,
+            move |cmd: &[u8], port| {
+                if contains_slice(cmd, b"READONLY") && port != 6379 {
+                    let failed = failed_replica_clone
+                        .compare_exchange(0, port, Ordering::SeqCst, Ordering::SeqCst)
+                        .unwrap_or_else(|failed| failed);
+                    if failed == port || failed == 0 {
+                        return Err(Err(RedisError::from(std::io::Error::new(
+                            std::io::ErrorKind::ConnectionRefused,
+                            "mock selected replica connect failure",
+                        ))));
+                    }
+                }
+                respond_startup_with_replica_using_config(name, cmd, Some(slots_config.clone()))?;
+                if contains_slice(cmd, b"GET") {
+                    read_ports_clone.lock().unwrap().push(port);
+                    return Err(Ok(redis_value!("123")));
+                }
+                Ok(())
+            },
+        );
+
+        let failed_replica = failed_replica.load(Ordering::SeqCst);
+        assert!(matches!(failed_replica, 6380 | 6381));
+        let mut command = cmd("GET");
+        command.arg("test");
+        let value = runtime
+            .block_on(connection.route_command(
+                command,
+                RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route::with_key(
+                    "test",
+                    SlotAddr::ReplicaRequired,
+                ))),
+            ))
+            .unwrap();
+
+        assert_eq!(value, redis_value!("123"));
+        let read_ports = read_ports.lock().unwrap();
+        assert_eq!(read_ports.len(), 1);
+        assert_ne!(read_ports[0], 6379);
+        assert_ne!(read_ports[0], failed_replica);
+    }
+
+    #[test]
+    fn test_async_cluster_uniform_random_connects_to_one_replica_per_shard() {
+        let name = "async_uniform_random_connection_count";
+        let slots_config = vec![
+            MockSlotRange {
+                primary_port: 6379,
+                replica_ports: vec![6380, 6381],
+                slot_range: 0..8192,
+            },
+            MockSlotRange {
+                primary_port: 6382,
+                replica_ports: vec![6383, 6384],
+                slot_range: 8192..16384,
+            },
+        ];
+        let slot_refreshes = Arc::new(AtomicUsize::new(0));
+        let slot_refreshes_clone = Arc::clone(&slot_refreshes);
+        let async_connection_ports = Arc::new(std::sync::Mutex::new(HashSet::new()));
+        let async_connection_ports_clone = Arc::clone(&async_connection_ports);
+        let command_ports = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let command_ports_clone = Arc::clone(&command_ports);
+        let readonly_ports = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let readonly_ports_clone = Arc::clone(&readonly_ports);
+        let trigger_moved = Arc::new(AtomicBool::new(false));
+        let trigger_moved_clone = Arc::clone(&trigger_moved);
+
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .read_routing_strategy(UniformRandom::new()),
+            name,
+            move |cmd: &[u8], port| {
+                if contains_slice(cmd, b"READONLY") {
+                    readonly_ports_clone.lock().unwrap().push(port);
+                }
+                if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
+                    slot_refreshes_clone.fetch_add(1, Ordering::SeqCst);
+                    return respond_startup_with_replica_using_config(
+                        name,
+                        cmd,
+                        Some(slots_config.clone()),
+                    );
+                }
+                if is_connection_check(cmd) && slot_refreshes_clone.load(Ordering::SeqCst) >= 2 {
+                    async_connection_ports_clone.lock().unwrap().insert(port);
+                }
+                respond_startup_with_replica_using_config(name, cmd, Some(slots_config.clone()))?;
+                if contains_slice(cmd, b"GET") {
+                    command_ports_clone.lock().unwrap().push(port);
+                    if trigger_moved_clone.swap(false, Ordering::SeqCst) {
+                        return Err(parse_redis_value(
+                            format!("-MOVED 6918 {name}:6379\r\n").as_bytes(),
+                        ));
+                    }
+                    return Err(Ok(Value::Nil));
+                }
+                Ok(())
+            },
+        );
+
+        let connected_ports = async_connection_ports.lock().unwrap().clone();
+        assert!(connected_ports.contains(&6379));
+        assert!(connected_ports.contains(&6382));
+        assert_eq!(
+            connected_ports
+                .iter()
+                .filter(|port| matches!(**port, 6380 | 6381))
+                .count(),
+            1
+        );
+        assert_eq!(
+            connected_ports
+                .iter()
+                .filter(|port| matches!(**port, 6383 | 6384))
+                .count(),
+            1
+        );
+        assert_eq!(connected_ports.len(), 4);
+
+        let omitted_replica = [6380, 6381, 6383, 6384]
+            .into_iter()
+            .find(|port| !connected_ports.contains(port))
+            .unwrap();
+        let mut get_command = cmd("GET");
+        get_command.arg("test");
+        runtime
+            .block_on(connection.route_command(
+                get_command.clone(),
+                RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+                    host: name.to_string(),
+                    port: omitted_replica,
+                }),
+            ))
+            .unwrap();
+        assert_eq!(*command_ports.lock().unwrap(), vec![omitted_replica]);
+        command_ports.lock().unwrap().clear();
+
+        runtime
+            .block_on(connection.route_command(
+                get_command,
+                RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
+            ))
+            .unwrap();
+        command_ports.lock().unwrap().sort_unstable();
+        assert_eq!(
+            *command_ports.lock().unwrap(),
+            vec![6379, 6380, 6381, 6382, 6383, 6384]
+        );
+
+        trigger_moved.store(true, Ordering::SeqCst);
+        let _: Option<String> = runtime
+            .block_on(cmd("GET").arg("test").query_async(&mut connection))
+            .unwrap();
+        readonly_ports.lock().unwrap().clear();
+
+        let mut get_command = cmd("GET");
+        get_command.arg("test");
+        runtime
+            .block_on(connection.route_command(
+                get_command,
+                RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+                    host: name.to_string(),
+                    port: omitted_replica,
+                }),
+            ))
+            .unwrap();
+        assert_eq!(*readonly_ports.lock().unwrap(), vec![omitted_replica]);
+    }
+
+    #[test]
     fn test_async_cluster_round_robin_read() {
         let name = "test_async_cluster_round_robin_read";
         let ports = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1993,6 +2304,56 @@ mod cluster_async {
             .block_on(cmd.query_async::<Vec<String>>(&mut connection))
             .unwrap();
         assert_eq!(result, vec!["foo-6382", "bar-6380", "baz-6380"]);
+    }
+
+    #[test]
+    fn test_async_cluster_uniform_random_multi_shard_read_falls_back_to_primaries() {
+        let name = "async_uniform_random_multi_shard_fallback";
+        let replica_connect_attempts = Arc::new(AtomicUsize::new(0));
+        let replica_connect_attempts_clone = Arc::clone(&replica_connect_attempts);
+        let mut command = cmd("MGET");
+        command.arg("foo").arg("bar").arg("baz");
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .retries(0)
+                .read_routing_strategy(UniformRandom::new()),
+            name,
+            move |received_cmd: &[u8], port| {
+                if contains_slice(received_cmd, b"READONLY") && matches!(port, 6380 | 6382) {
+                    replica_connect_attempts_clone.fetch_add(1, Ordering::SeqCst);
+                    return Err(Err(RedisError::from(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionRefused,
+                        "mock replica connect failure",
+                    ))));
+                }
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                let cmd_str = std::str::from_utf8(received_cmd).unwrap();
+                let results = ["foo", "bar", "baz"]
+                    .iter()
+                    .filter(|expected_key| cmd_str.contains(*expected_key))
+                    .map(|expected_key| redis_value!(format!("{expected_key}-{port}").into_bytes()))
+                    .collect();
+                Err(Ok(Value::Array(results)))
+            },
+        );
+
+        let attempts_after_startup = replica_connect_attempts.load(Ordering::SeqCst);
+        assert!(attempts_after_startup >= 2);
+        for _ in 0..2 {
+            let result = runtime
+                .block_on(command.query_async::<Vec<String>>(&mut connection))
+                .unwrap();
+            assert_eq!(result, vec!["foo-6381", "bar-6379", "baz-6379"]);
+        }
+        assert_eq!(
+            replica_connect_attempts.load(Ordering::SeqCst),
+            attempts_after_startup
+        );
     }
 
     #[test]
