@@ -14,7 +14,7 @@ const AGRIGENTO: (&str, &str, &str) = ("13.5833332", "37.316667", "Agrigento");
 
 #[test]
 fn test_geoadd_single_tuple() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", PALERMO), Ok(1));
@@ -22,7 +22,7 @@ fn test_geoadd_single_tuple() {
 
 #[test]
 fn test_geoadd_multiple_tuples() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
@@ -30,7 +30,7 @@ fn test_geoadd_multiple_tuples() {
 
 #[test]
 fn test_geodist_existing_members() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
@@ -44,7 +44,7 @@ fn test_geodist_existing_members() {
 
 #[test]
 fn test_geodist_support_option() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
@@ -64,7 +64,7 @@ fn test_geodist_support_option() {
 
 #[test]
 fn test_geohash() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
@@ -83,7 +83,7 @@ fn test_geohash() {
 
 #[test]
 fn test_geopos() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
@@ -107,7 +107,7 @@ fn test_geopos() {
 
 #[test]
 fn test_use_coord_struct() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     assert_eq!(
@@ -127,7 +127,7 @@ fn test_use_coord_struct() {
 
 #[test]
 fn test_georadius() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
@@ -204,7 +204,7 @@ fn test_georadius() {
 
 #[test]
 fn test_georadius_by_member() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA, AGRIGENTO]), Ok(3));

@@ -38,7 +38,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
                     #[cfg_attr(feature = "tokio-comp", case::tokio(support::RuntimeType::Tokio))]
                     #[cfg_attr(feature = "smol-comp", case::smol(support::RuntimeType::Smol))]
                     fn multiplexed_connection (#[case]runtime: support::RuntimeType) {
-                        let ctx = TestContext::new();
+                        let ctx = TestContext::default();
                         support::block_on_all(async move {
                             let conn = ctx.async_connection().await.unwrap();
                             #function_name (conn).await
@@ -50,7 +50,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
                     #[cfg_attr(feature = "smol-comp", case::smol(support::RuntimeType::Smol))]
                     #[cfg(feature = "connection-manager")]
                     fn connection_manager (#[case]runtime: support::RuntimeType) {
-                        let ctx = TestContext::new();
+                        let ctx = TestContext::default();
                         support::block_on_all(async move {
                             let conn = ctx.client.get_connection_manager().await.unwrap();
                             #function_name (conn).await

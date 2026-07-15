@@ -179,7 +179,7 @@ baz_version: 23.0.0
 /// Tries to assure that the current server allows to parse the versions
 #[test]
 fn ctx_live_test_server() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut conn = ctx.connection();
 
     let components = AvailableComponents::from(&mut conn);
