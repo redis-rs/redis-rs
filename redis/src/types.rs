@@ -52,22 +52,23 @@ impl ToRedisArgs for SetExpiry {
     where
         W: ?Sized + RedisWrite,
     {
+        let mut buf = ::itoa::Buffer::new();
         match self {
             SetExpiry::EX(secs) => {
                 out.write_arg(b"EX");
-                out.write_arg(format!("{secs}").as_bytes());
+                out.write_arg(buf.format(*secs).as_bytes());
             }
             SetExpiry::PX(millis) => {
                 out.write_arg(b"PX");
-                out.write_arg(format!("{millis}").as_bytes());
+                out.write_arg(buf.format(*millis).as_bytes());
             }
             SetExpiry::EXAT(unix_time) => {
                 out.write_arg(b"EXAT");
-                out.write_arg(format!("{unix_time}").as_bytes());
+                out.write_arg(buf.format(*unix_time).as_bytes());
             }
             SetExpiry::PXAT(unix_time) => {
                 out.write_arg(b"PXAT");
-                out.write_arg(format!("{unix_time}").as_bytes());
+                out.write_arg(buf.format(*unix_time).as_bytes());
             }
             SetExpiry::KEEPTTL => {
                 out.write_arg(b"KEEPTTL");

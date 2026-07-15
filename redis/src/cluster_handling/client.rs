@@ -69,6 +69,8 @@ struct BuilderParams {
     overall_response_timeout: OverallResponseTimeout,
     #[cfg(feature = "cluster-async")]
     connection_concurrency_limit: Option<usize>,
+    #[cfg(feature = "cluster-async")]
+    write_backpressure_boundary: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -155,6 +157,8 @@ pub(crate) struct ClusterParams {
     pub(crate) overall_response_timeout: Option<Duration>,
     #[cfg(feature = "cluster-async")]
     pub(crate) connection_concurrency_limit: Option<usize>,
+    #[cfg(feature = "cluster-async")]
+    pub(crate) write_backpressure_boundary: Option<usize>,
 }
 
 impl ClusterParams {
@@ -219,6 +223,8 @@ impl ClusterParams {
             },
             #[cfg(feature = "cluster-async")]
             connection_concurrency_limit: value.connection_concurrency_limit,
+            #[cfg(feature = "cluster-async")]
+            write_backpressure_boundary: value.write_backpressure_boundary,
         })
     }
 
@@ -671,6 +677,18 @@ impl ClusterClientBuilder {
         self
     }
 
+    /// Sets the flush threshold (backpressure boundary) for each node connection's outbound write buffer.
+    ///
+    /// See [`crate::AsyncConnectionConfig::set_write_backpressure_boundary`] for full semantics.
+    /// This value is applied identically to every node connection in the cluster.
+    ///
+    /// When left unset, connections keep `tokio_util`'s default boundary.
+    #[cfg(feature = "cluster-async")]
+    pub fn write_backpressure_boundary(mut self, boundary: usize) -> ClusterClientBuilder {
+        self.builder_params.write_backpressure_boundary = Some(boundary);
+        self
+    }
+
     /// Sets a credentials provider for dynamic authentication (e.g., token-based authentication)
     /// on all cluster node connections.
     ///
@@ -1071,6 +1089,26 @@ mod tests {
         assert_eq!(
             client.cluster_params.connection_concurrency_limit,
             Some(128)
+        );
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn write_backpressure_boundary_default() {
+        let client = ClusterClient::new(get_connection_data()).unwrap();
+        assert_eq!(client.cluster_params.write_backpressure_boundary, None);
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn write_backpressure_boundary_custom() {
+        let client = ClusterClientBuilder::new(get_connection_data())
+            .write_backpressure_boundary(16 * 1024 * 1024)
+            .build()
+            .unwrap();
+        assert_eq!(
+            client.cluster_params.write_backpressure_boundary,
+            Some(16 * 1024 * 1024)
         );
     }
 

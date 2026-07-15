@@ -93,7 +93,7 @@ async fn test_cache_basic(test_with_optin: bool) {
 }
 
 #[async_test]
-async fn cache_mget() {
+async fn test_cache_mget() {
     let ctx = TestContext::new();
     if !ctx.protocol.supports_resp3() {
         return;
@@ -149,7 +149,7 @@ async fn cache_mget() {
 
 #[cfg(feature = "json")]
 #[async_test]
-async fn module_cache_json_get_mget() {
+async fn test_module_json_cache_get_mget() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     if !ctx.protocol.supports_resp3() {
         return;
@@ -219,7 +219,7 @@ async fn module_cache_json_get_mget() {
 
 #[cfg(feature = "json")]
 #[async_test]
-async fn module_cache_json_get_mget_different_paths() {
+async fn test_module_json_cache_get_mget_different_paths() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     if !ctx.protocol.supports_resp3() {
         return;
@@ -332,7 +332,7 @@ async fn module_cache_json_get_mget_different_paths() {
 }
 
 #[async_test]
-async fn cache_is_not_target_type_dependent() {
+async fn test_cache_is_not_target_type_dependent() {
     let ctx = TestContext::new();
     if !ctx.protocol.supports_resp3() {
         return;
@@ -398,7 +398,7 @@ async fn test_cache_with_pipeline(atomic: bool) {
 }
 
 #[async_test]
-async fn cache_basic_partial_opt_in() {
+async fn test_cache_basic_partial_opt_in() {
     // In OptIn mode cache must not be utilized without explicit per command configuration.
     let ctx = TestContext::new();
     if !ctx.protocol.supports_resp3() {
@@ -619,14 +619,17 @@ async fn test_connection_manager_maintains_statistics_after_crashes(test_with_op
     assert_hit!(&manager, 1);
     assert_miss!(&manager, 1);
 
+    // Store the server's address and kill the server
     let addr = ctx.server.client_addr().clone();
     drop(ctx);
 
+    // With the server gone, commands should fail
     let result: Result<redis::Value, RedisError> =
         manager.send_packed_command(&redis::cmd("PING")).await;
     assert!(result.unwrap_err().is_unrecoverable_error());
 
-    let _server = redis_test::server::RedisServer::new_with_addr_and_modules(addr, &[], false);
+    // Start a new server, re-using the previous address
+    let _ctx = TestContext::new_with_addr(addr);
 
     loop {
         if manager.send_packed_command(&get).await.is_ok() {
@@ -642,7 +645,7 @@ async fn test_connection_manager_maintains_statistics_after_crashes(test_with_op
 
 #[cfg(feature = "cluster-async")]
 #[async_test]
-async fn cache_async_cluster_reconnect_all_nodes() {
+async fn test_cache_async_cluster_reconnect_all_nodes() {
     let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
         builder.cache_config(CacheConfig::default())
     });
@@ -705,7 +708,7 @@ async fn cache_async_cluster_reconnect_all_nodes() {
 
 #[cfg(feature = "cluster-async")]
 #[async_test]
-async fn cache_async_cluster_mget() {
+async fn test_cache_async_cluster_mget() {
     let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
         builder.cache_config(CacheConfig::default())
     });
