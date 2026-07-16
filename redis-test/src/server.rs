@@ -165,9 +165,9 @@ impl RedisServer {
     pub fn new_with_addr_tls_modules_and_spawner<
         F: FnOnce(&mut process::Command) -> process::Child,
     >(
-        addr: redis::ConnectionAddr,
+        mut addr: redis::ConnectionAddr,
         config_file: Option<&Path>,
-        tls_paths: Option<TlsFilePaths>,
+        mut tls_paths: Option<TlsFilePaths>,
         mtls_enabled: bool,
         cert_auth_field: Option<&str>,
         modules: &[Module],
@@ -238,17 +238,10 @@ impl RedisServer {
                     .arg(server_port.to_string())
                     .arg("--bind")
                     .arg(bind);
-
-                RedisServer {
-                    process: spawner(&mut redis_cmd),
-                    log_file,
-                    tempdir,
-                    addr,
-                    tls_paths: None,
-                }
             }
             redis::ConnectionAddr::TcpTls { ref host, port, .. } => {
-                let tls_paths = tls_paths.unwrap_or_else(|| build_keys_and_certs_for_tls(&tempdir));
+                let tls_paths =
+                    tls_paths.get_or_insert_with(|| build_keys_and_certs_for_tls(&tempdir));
 
                 let auth_client = if mtls_enabled { "yes" } else { "no" };
 
@@ -279,20 +272,12 @@ impl RedisServer {
                 // Insecure only disabled if `mtls` is enabled
                 let insecure = !mtls_enabled;
 
-                let addr = redis::ConnectionAddr::TcpTls {
+                addr = redis::ConnectionAddr::TcpTls {
                     host: host.clone(),
                     port,
                     insecure,
                     tls_params: None,
                 };
-
-                RedisServer {
-                    process: spawner(&mut redis_cmd),
-                    log_file,
-                    tempdir,
-                    addr,
-                    tls_paths: Some(tls_paths),
-                }
             }
             redis::ConnectionAddr::Unix(ref path) => {
                 redis_cmd
@@ -300,15 +285,16 @@ impl RedisServer {
                     .arg("0")
                     .arg("--unixsocket")
                     .arg(path);
-                RedisServer {
-                    process: spawner(&mut redis_cmd),
-                    log_file,
-                    tempdir,
-                    addr,
-                    tls_paths: None,
-                }
             }
             _ => panic!("Unknown address format: {addr:?}"),
+        };
+
+        RedisServer {
+            process: spawner(&mut redis_cmd),
+            log_file,
+            tempdir,
+            addr,
+            tls_paths,
         }
     }
 
