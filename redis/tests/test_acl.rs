@@ -308,7 +308,11 @@ fn test_acl_sample_info() {
     );
 }
 
-#[cfg(all(feature = "acl", feature = "token-based-authentication"))]
+#[cfg(all(
+    feature = "acl",
+    feature = "aio",
+    feature = "token-based-authentication"
+))]
 mod token_based_authentication_acl_tests {
     use crate::support::*;
     use futures_channel::oneshot;
