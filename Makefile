@@ -51,7 +51,7 @@ test-module-json:
 	@echo "===================================================================="
 	@echo "Testing RESP3 with RedisJSON module"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 PROTOCOL=RESP3 cargo nextest run -p redis --all-features --profile module_json
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 PROTOCOL=RESP3 cargo nextest run -p redis --locked --all-features --profile module_json
 
 test-module-bloom:
 	@echo "===================================================================="
@@ -62,7 +62,7 @@ test-module-bloom:
 	@echo "===================================================================="
 	@echo "Testing RESP3 with RedisBloom module"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 PROTOCOL=RESP3 cargo nextest run -p redis --all-features --profile module_bloom
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 PROTOCOL=RESP3 cargo nextest run -p redis --locked --all-features --profile module_bloom
 
 test-modules: test-module-json test-module-bloom
 
