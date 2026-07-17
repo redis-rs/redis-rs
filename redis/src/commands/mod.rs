@@ -1108,49 +1108,16 @@ implement_commands! {
     /// Intersect multiple sorted sets and store the resulting sorted set in
     /// a new key using SUM as aggregation function.
     /// [Redis Docs](https://redis.io/commands/ZINTERSTORE)
-    fn zinterstore<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K) -> (usize) {
-        cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).take()
+    fn zinterstore<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K, options: SortedSetOperationOptions) -> (usize) {
+        cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg(options).take()
     }
 
     /// Intersect multiple sorted sets and store the resulting sorted set in
-    /// a new key using MIN as aggregation function.
+    /// a new key, applying per-key `WEIGHTS` and an optional `AGGREGATE` modifier.
     /// [Redis Docs](https://redis.io/commands/ZINTERSTORE)
-    fn zinterstore_min<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K) -> (usize) {
-        cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MIN").take()
-    }
-
-    /// Intersect multiple sorted sets and store the resulting sorted set in
-    /// a new key using MAX as aggregation function.
-    /// [Redis Docs](https://redis.io/commands/ZINTERSTORE)
-    fn zinterstore_max<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K) -> (usize) {
-        cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MAX").take()
-    }
-
-    /// [`Commands::zinterstore`], but with the ability to specify a
-    /// multiplication factor for each sorted set by pairing one with each key
-    /// in a tuple.
-    /// [Redis Docs](https://redis.io/commands/ZINTERSTORE)
-    fn zinterstore_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) -> (usize) {
-        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
-        cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("WEIGHTS").arg(weights).take()
-    }
-
-    /// [`Commands::zinterstore_min`], but with the ability to specify a
-    /// multiplication factor for each sorted set by pairing one with each key
-    /// in a tuple.
-    /// [Redis Docs](https://redis.io/commands/ZINTERSTORE)
-    fn zinterstore_min_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) -> (usize) {
-        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
-        cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MIN").arg("WEIGHTS").arg(weights).take()
-    }
-
-    /// [`Commands::zinterstore_max`], but with the ability to specify a
-    /// multiplication factor for each sorted set by pairing one with each key
-    /// in a tuple.
-    /// [Redis Docs](https://redis.io/commands/ZINTERSTORE)
-    fn zinterstore_max_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) -> (usize) {
-        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
-        cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MAX").arg("WEIGHTS").arg(weights).take()
+    fn zinterstore_with_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)], options: SortedSetOperationOptions) -> (usize) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
+        cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("WEIGHTS").arg(weights).arg(options).take()
     }
 
     /// Count the number of members in a sorted set between a given lexicographical range.
@@ -1386,49 +1353,16 @@ implement_commands! {
     /// Unions multiple sorted sets and store the resulting sorted set in
     /// a new key using SUM as aggregation function.
     /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
-    fn zunionstore<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K) -> (usize) {
-        cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).take()
+    fn zunionstore<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K, options: SortedSetOperationOptions) -> (usize) {
+        cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg(options).take()
     }
 
     /// Unions multiple sorted sets and store the resulting sorted set in
-    /// a new key using MIN as aggregation function.
+    /// a new key, applying per-key `WEIGHTS` and an optional `AGGREGATE` modifier.
     /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
-    fn zunionstore_min<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K) -> (usize) {
-        cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MIN").take()
-    }
-
-    /// Unions multiple sorted sets and store the resulting sorted set in
-    /// a new key using MAX as aggregation function.
-    /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
-    fn zunionstore_max<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K) -> (usize) {
-        cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MAX").take()
-    }
-
-    /// [`Commands::zunionstore`], but with the ability to specify a
-    /// multiplication factor for each sorted set by pairing one with each key
-    /// in a tuple.
-    /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
-    fn zunionstore_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) -> (usize) {
-        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
-        cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("WEIGHTS").arg(weights).take()
-    }
-
-    /// [`Commands::zunionstore_min`], but with the ability to specify a
-    /// multiplication factor for each sorted set by pairing one with each key
-    /// in a tuple.
-    /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
-    fn zunionstore_min_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) -> (usize) {
-        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
-        cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MIN").arg("WEIGHTS").arg(weights).take()
-    }
-
-    /// [`Commands::zunionstore_max`], but with the ability to specify a
-    /// multiplication factor for each sorted set by pairing one with each key
-    /// in a tuple.
-    /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
-    fn zunionstore_max_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)]) -> (usize) {
-        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(key, weight):&(K, W)| -> ((&K, &W)) {(key, weight)}).unzip();
-        cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("AGGREGATE").arg("MAX").arg("WEIGHTS").arg(weights).take()
+    fn zunionstore_with_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)], options: SortedSetOperationOptions) -> (usize) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
+        cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("WEIGHTS").arg(weights).arg(options).take()
     }
 
     // vector set commands
@@ -3926,6 +3860,78 @@ impl ToRedisArgs for SortedSetAddOptions {
         }
         if self.increment {
             out.write_arg(b"INCR")
+        }
+    }
+}
+
+/// Aggregation function used by the `ZINTERSTORE` and `ZUNIONSTORE` commands to
+/// combine the scores of members that appear in more than one input sorted set.
+#[derive(Clone, Copy)]
+#[non_exhaustive]
+pub enum Aggregate {
+    /// Sum the scores of matching members (the Redis default).
+    Sum,
+    /// Use the minimum score of matching members.
+    Min,
+    /// Use the maximum score of matching members.
+    Max,
+}
+
+impl ToRedisArgs for Aggregate {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        let s: &[u8] = match self {
+            Aggregate::Sum => b"SUM",
+            Aggregate::Min => b"MIN",
+            Aggregate::Max => b"MAX",
+        };
+        out.write_arg(s);
+    }
+}
+
+/// Options for the [ZINTERSTORE](https://redis.io/commands/zinterstore) and
+/// [ZUNIONSTORE](https://redis.io/commands/zunionstore) commands.
+///
+/// Controls the optional `AGGREGATE` modifier. For weighted variants use
+/// [`Commands::zinterstore_with_weights`] / [`Commands::zunionstore_with_weights`].
+///
+/// # Example
+/// ```rust,no_run
+/// use redis::{Commands, RedisResult, SortedSetOperationOptions, Aggregate};
+/// fn intersect(con: &mut redis::Connection) -> RedisResult<usize> {
+///     con.zinterstore("out", &["zset1", "zset2"], SortedSetOperationOptions::default())
+/// }
+/// fn intersect_min(con: &mut redis::Connection) -> RedisResult<usize> {
+///     con.zinterstore("out", &["zset1", "zset2"], SortedSetOperationOptions::default().aggregate(Aggregate::Min))
+/// }
+/// fn intersect_weighted(con: &mut redis::Connection) -> RedisResult<usize> {
+///     con.zinterstore_with_weights("out", &[("zset1", 2), ("zset2", 3)], SortedSetOperationOptions::default().aggregate(Aggregate::Min))
+/// }
+/// ```
+#[derive(Clone, Default)]
+pub struct SortedSetOperationOptions {
+    aggregate: Option<Aggregate>,
+}
+
+impl SortedSetOperationOptions {
+    /// Sets the `AGGREGATE` modifier used to combine the scores of members that
+    /// appear in more than one input sorted set.
+    pub fn aggregate(mut self, aggregate: Aggregate) -> Self {
+        self.aggregate = Some(aggregate);
+        self
+    }
+}
+
+impl ToRedisArgs for SortedSetOperationOptions {
+    fn write_redis_args<Out>(&self, out: &mut Out)
+    where
+        Out: ?Sized + RedisWrite,
+    {
+        if let Some(ref aggregate) = self.aggregate {
+            out.write_arg(b"AGGREGATE");
+            aggregate.write_redis_args(out);
         }
     }
 }
