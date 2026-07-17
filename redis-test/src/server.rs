@@ -1,7 +1,7 @@
 use redis::{ConnectionAddr, IntoConnectionInfo, ProtocolVersion, RedisConnectionInfo};
+use std::ffi::OsStr;
 use std::path::Path;
 use std::{env, fs, path::PathBuf, process};
-
 use tempfile::TempDir;
 
 use crate::utils::{TlsFilePaths, build_keys_and_certs_for_tls, get_random_available_port};
@@ -129,17 +129,14 @@ impl RedisServer {
         let redis_port = get_random_available_port();
         let addr = RedisServer::get_addr(redis_port);
 
-        RedisServer::new_with_addr_tls_modules_and_spawner(
+        RedisServer::new_with_addr_tls_modules_and_cmd_refiner(
             addr,
             None,
             None,
             mtls_enabled,
             None,
             modules,
-            |cmd| {
-                cmd.spawn()
-                    .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
-            },
+            |_cmd| {},
         )
     }
 
@@ -148,33 +145,27 @@ impl RedisServer {
         modules: &[Module],
         mtls_enabled: bool,
     ) -> RedisServer {
-        RedisServer::new_with_addr_tls_modules_and_spawner(
+        RedisServer::new_with_addr_tls_modules_and_cmd_refiner(
             addr,
             None,
             None,
             mtls_enabled,
             None,
             modules,
-            |cmd| {
-                cmd.spawn()
-                    .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
-            },
+            |_cmd| {},
         )
     }
 
-    pub fn new_with_addr_tls_modules_and_spawner<
-        F: FnOnce(&mut process::Command) -> process::Child,
-    >(
+    pub fn new_with_addr_tls_modules_and_cmd_refiner(
         mut addr: redis::ConnectionAddr,
         config_file: Option<&Path>,
         mut tls_paths: Option<TlsFilePaths>,
         mtls_enabled: bool,
         cert_auth_field: Option<&str>,
         modules: &[Module],
-        spawner: F,
+        cmd_refiner: impl FnOnce(&mut RedisServerCommand),
     ) -> RedisServer {
-        let bin = env::var("REDISRS_SERVER_BIN").unwrap_or_else(|_| "redis-server".to_string());
-        let mut redis_cmd = process::Command::new(&bin);
+        let mut redis_cmd = RedisServerCommand::new();
 
         if let Some(config_path) = config_file {
             redis_cmd.arg(config_path);
@@ -219,18 +210,16 @@ impl RedisServer {
             };
         }
 
-        redis_cmd
-            .stdout(process::Stdio::piped())
-            .stderr(process::Stdio::piped());
         let tempdir = tempfile::Builder::new()
             .prefix("redis")
             .tempdir()
             .expect("failed to create tempdir");
         let log_file = Self::log_file(&tempdir);
         redis_cmd.arg("--logfile").arg(log_file.clone());
-        if get_major_version(&bin) > 6 {
+        if get_major_version() > 6 {
             redis_cmd.arg("--enable-debug-command").arg("yes");
         }
+
         match addr {
             redis::ConnectionAddr::Tcp(ref bind, server_port) => {
                 redis_cmd
@@ -289,8 +278,10 @@ impl RedisServer {
             _ => panic!("Unknown address format: {addr:?}"),
         };
 
+        cmd_refiner(&mut redis_cmd);
+
         RedisServer {
-            process: spawner(&mut redis_cmd),
+            process: redis_cmd.spawn(),
             log_file,
             tempdir,
             addr,
@@ -331,11 +322,65 @@ impl RedisServer {
     }
 }
 
-fn get_major_version(server_binary: &str) -> u8 {
+pub struct RedisServerCommand {
+    // The actual command to run
+    cmd: process::Command,
+}
+
+impl Default for RedisServerCommand {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RedisServerCommand {
+    pub fn new() -> Self {
+        let bin = env::var("REDISRS_SERVER_BIN").unwrap_or_else(|_| "redis-server".to_string());
+
+        // Build the main command
+        let mut cmd = process::Command::new(&bin);
+
+        // Capture the command's stdout and stderr
+        cmd.stdout(process::Stdio::piped());
+        cmd.stderr(process::Stdio::piped());
+
+        // Build the instance
+        Self { cmd }
+    }
+
+    /// Appends a new argument to the command
+    pub fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
+        self.cmd.arg(arg);
+        self
+    }
+
+    /// Set the directory to run the command in
+    pub fn current_dir<P: AsRef<Path>>(&mut self, dir: P) -> &mut Self {
+        self.cmd.current_dir(dir);
+        self
+    }
+
+    /// Runs the command
+    ///
+    /// # Panics
+    ///
+    /// This method panics if spawning fails.
+    ///
+    /// If the command itself exits (immediately or not, regardless of the exit code) this function
+    /// does _not_ panic but returns the `Child` instance.
+    pub fn spawn(&mut self) -> process::Child {
+        self.cmd
+            .spawn()
+            .unwrap_or_else(|err| panic!("Failed to run {:?}: {err}", self.cmd))
+    }
+}
+
+fn get_major_version() -> u8 {
     let full_string = String::from_utf8(
-        process::Command::new(server_binary)
+        RedisServerCommand::new()
             .arg("-v")
-            .output()
+            .spawn()
+            .wait_with_output()
             .unwrap()
             .stdout,
     )

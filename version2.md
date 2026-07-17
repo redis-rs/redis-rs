@@ -10,6 +10,56 @@ redis = "2"
 
 ## Breaking Changes
 
+### `RedisServer::new_with_addr_tls_modules_and_spawner` got removed (Breaking Change)
+
+All callers used the spawner function to adjust the command's arguments, then spawn and unwrap it.
+The spawning was the same across all of them, hence duplicated.
+The unwrapping only differed in thoroughness of the error handling.
+So the common spawning and unwrapping got moved into `RedisServer` to ease its use.
+
+Refining the server's start command is available via `RedisServer::new_with_addr_tls_modules_and_cmd_refiner`.
+
+**Migration:** Switch from `RedisServer::new_with_addr_tls_modules_and_spawner` to `RedisServer::new_with_addr_tls_modules_and_cmd_refiner`.
+
+Typically, replacing `new_with_addr_tls_modules_and_spawner` by `new_with_addr_tls_modules_and_cmd_refiner` and removing the `cmd.spawn().unwrap()` from your spawning function end will be enough.
+The `cmd_refiner` function takes a `RedisStartCommand` as argument (instead of a `Command` before).
+
+This new `RedisStartCommand` also has a `arg()` method, so your spawners probably work out of the box.
+
+```rust
+// Before:
+
+let server = RedisServer::new_with_addr_tls_modules_and_spawner(
+    addr,
+    None,
+    None,
+    false,
+    None,
+    &[], |cmd| {
+        cmd.arg("--foo")
+            .arg("value-foo")
+            .arg("--bar")
+            .arg("value-baz");
+        cmd.spawn().unwrap()
+    }
+);
+
+// After:
+let server = RedisServer::new_with_addr_tls_modules_and_cmd_refiner(
+    addr,
+    None,
+    None,
+    false,
+    None,
+    &[], |cmd| {
+        cmd.arg("--foo")
+            .arg("value-foo")
+            .arg("--bar")
+            .arg("value-baz");
+    }
+);
+```
+
 ### `Generic` typed commands have their `RV` moved from first to last parameter (Breaking Change)
 
 Untyped commands (`Commands`, `AsyncCommands`) have the return value's type (`RV`) as last type parameter, while for typed commands (`TypedCommands`, `AsyncTypedCommands`) it was the first.
