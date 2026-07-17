@@ -268,10 +268,7 @@ pub(crate) fn choose_response<C>(
                 // No redirect address is available (e.g. READONLY), so re-route by slot
                 // against the refreshed topology.
                 request.cmd.reset_routing();
-                Retry::AfterSleep {
-                    request,
-                    sleep_duration,
-                }
+                Retry::MoveToPending { request }
             });
             (retry, PollFlushAction::RebuildSlots)
         }
@@ -460,10 +457,10 @@ mod tests {
 
         // READONLY has no redirect address, so the request keeps its (slot-based) routing
         // and is retried after a sleep once the slot map has been rebuilt.
-        if let Some(super::Retry::AfterSleep { request, .. }) = retry {
+        if let Some(super::Retry::MoveToPending { request }) = retry {
             assert!(get_redirect(&request).is_none());
         } else {
-            panic!("Expected a sleep-then-retry");
+            panic!("Expected a move-to-pending");
         };
         assert_eq!(next, PollFlushAction::RebuildSlots);
         assert_matches!(receiver.try_recv(), Err(_));
