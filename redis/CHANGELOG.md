@@ -1,3 +1,15 @@
+### 1.4.1 (2026-07-17)
+
+#### Changes & Bug fixes
+
+* Remove unnecessary sleep from cluster readonly error handling ([#2223](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2223) by @nihohit)
+
+#### CI & operational improvements
+
+* ci: Allow `semicolon_in_expressions_from_macros` to make nightly pass ([#2218](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2218) by @somechris)
+* tests/acl: Add the missing requirements for token based authentication ([#2214](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2214) by @somechris)
+* Makefile: Switch to `--locked` for module tests on RESP3 ([#2222](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2222) by @somechris)
+
 ### 1.4.0 (2026-07-14)
 
 #### Changes & Bug fixes
