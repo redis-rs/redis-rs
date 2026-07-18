@@ -3172,8 +3172,7 @@ assert_eq!(invok_2_res, 5);
     /// # Caveats
     ///
     /// If `key` is not a Bloom filter, Redis' module yields an array of `false`s as if all items
-    /// were missing (although its documentation as of 2026-04-16 claims to raise an error), while
-    /// Valkey yields a `WRONGKEY` error.
+    /// were missing, while Valkey yields a `WRONGTYPE` error.
     ///
     /// [Redis Docs](https://redis.io/commands/BF.MEXISTS)
     /// [Valkey Docs](https://valkey.io/commands/bf.mexists/)
