@@ -10,6 +10,22 @@ redis = "2"
 
 ## Breaking Changes
 
+### JSON commands got promoted to standard commands (Breaking Change)
+
+`JsonCommands`, and `JsonAsyncCommands` got merged into `Commands`, and `JsonAsyncCommands`.
+
+**Migration:** Switch from `JsonCommands` and `JsonAsyncCommands` to `Commands` and `AsyncCommands`
+
+```rust
+// Before:
+use redis::JsonCommands;
+use redis::JsonAsyncCommands;
+
+// After:
+use redis::Commands;
+use redis::AsyncCommands;
+```
+
 ### `RedisServer::new...` got removed; use `RedisServerBuilder` instead (Breaking Change)
 
 Over time `RedisServer::new...` methods grew in parameters and made them hard to use.

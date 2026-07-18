@@ -1,6 +1,6 @@
 #![cfg(feature = "json")]
 
-use redis::{Commands, JsonCommands, ValueType};
+use redis::{Commands, ValueType};
 use std::assert_eq;
 use std::collections::HashMap;
 
