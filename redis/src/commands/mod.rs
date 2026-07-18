@@ -1106,7 +1106,8 @@ implement_commands! {
     }
 
     /// Intersect multiple sorted sets and store the resulting sorted set in
-    /// a new key using SUM as aggregation function.
+    /// a new key, optionally applying an `AGGREGATE` modifier.
+    /// If no `AGGREGATE` modifier is provided, `SUM` is used.
     /// [Redis Docs](https://redis.io/commands/ZINTERSTORE)
     fn zinterstore<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K, options: SortedSetOperationOptions) -> (usize) {
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg(options).take()
@@ -1118,6 +1119,34 @@ implement_commands! {
     fn zinterstore_with_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)], options: SortedSetOperationOptions) -> (usize) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
         cmd("ZINTERSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("WEIGHTS").arg(weights).arg(options).take()
+    }
+
+    /// Intersect multiple sorted sets and return the resulting members,
+    /// applying an optional `AGGREGATE` modifier (SUM by default).
+    /// [Redis Docs](https://redis.io/commands/ZINTER)
+    fn zinter<K: ToRedisArgs>(keys: K, options: SortedSetOperationOptions) -> (Vec<String>) {
+        cmd("ZINTER").arg(keys.num_of_args()).arg(keys).arg(options).take()
+    }
+
+    /// [`Commands::zinter`], but with the ability to specify a weight for each
+    /// sorted set by pairing each key with its corresponding weight.
+    /// [Redis Docs](https://redis.io/commands/ZINTER)
+    fn zinter_with_weights<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)], options: SortedSetOperationOptions) -> (Vec<String>) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
+        cmd("ZINTER").arg(keys.num_of_args()).arg(keys).arg("WEIGHTS").arg(weights).arg(options).take()
+    }
+
+    /// [`Commands::zinter`], but additionally returns the score of each member.
+    /// [Redis Docs](https://redis.io/commands/ZINTER)
+    fn zinter_withscores<K: ToRedisArgs>(keys: K, options: SortedSetOperationOptions) -> (Vec<(String, f64)>) {
+        cmd("ZINTER").arg(keys.num_of_args()).arg(keys).arg(options).arg("WITHSCORES").take()
+    }
+
+    /// [`Commands::zinter_with_weights`], but additionally returns the score of each member.
+    /// [Redis Docs](https://redis.io/commands/ZINTER)
+    fn zinter_with_weights_withscores<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)], options: SortedSetOperationOptions) -> (Vec<(String, f64)>) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
+        cmd("ZINTER").arg(keys.num_of_args()).arg(keys).arg("WEIGHTS").arg(weights).arg(options).arg("WITHSCORES").take()
     }
 
     /// Count the number of members in a sorted set between a given lexicographical range.
@@ -1350,19 +1379,48 @@ implement_commands! {
         cmd("ZMSCORE").arg(key).arg(members).take()
     }
 
-    /// Unions multiple sorted sets and store the resulting sorted set in
-    /// a new key using SUM as aggregation function.
+    /// Union multiple sorted sets and store the resulting sorted set in
+    /// a new key, optionally applying an `AGGREGATE` modifier.
+    /// If no `AGGREGATE` modifier is provided, `SUM` is used.
     /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
     fn zunionstore<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K, options: SortedSetOperationOptions) -> (usize) {
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg(options).take()
     }
 
-    /// Unions multiple sorted sets and store the resulting sorted set in
+    /// Union multiple sorted sets and store the resulting sorted set in
     /// a new key, applying per-key `WEIGHTS` and an optional `AGGREGATE` modifier.
     /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
     fn zunionstore_with_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)], options: SortedSetOperationOptions) -> (usize) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
         cmd("ZUNIONSTORE").arg(dstkey).arg(keys.num_of_args()).arg(keys).arg("WEIGHTS").arg(weights).arg(options).take()
+    }
+
+    /// Union multiple sorted sets and return the resulting members,
+    /// applying an optional `AGGREGATE` modifier (SUM by default).
+    /// [Redis Docs](https://redis.io/commands/ZUNION)
+    fn zunion<K: ToRedisArgs>(keys: K, options: SortedSetOperationOptions) -> (Vec<String>) {
+        cmd("ZUNION").arg(keys.num_of_args()).arg(keys).arg(options).take()
+    }
+
+    /// [`Commands::zunion`], but with the ability to specify a weight for each
+    /// sorted set by pairing each key with its corresponding weight.
+    /// [Redis Docs](https://redis.io/commands/ZUNION)
+    fn zunion_with_weights<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)], options: SortedSetOperationOptions) -> (Vec<String>) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
+        cmd("ZUNION").arg(keys.num_of_args()).arg(keys).arg("WEIGHTS").arg(weights).arg(options).take()
+    }
+
+    /// [`Commands::zunion`], but additionally returns the score of each member.
+    /// [Redis Docs](https://redis.io/commands/ZUNION)
+    fn zunion_withscores<K: ToRedisArgs>(keys: K, options: SortedSetOperationOptions) -> (Vec<(String, f64)>) {
+        cmd("ZUNION").arg(keys.num_of_args()).arg(keys).arg(options).arg("WITHSCORES").take()
+    }
+
+    /// [`Commands::zunion_with_weights`], but additionally returns the score of each member.
+    /// [Redis Docs](https://redis.io/commands/ZUNION)
+    fn zunion_with_weights_withscores<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)], options: SortedSetOperationOptions) -> (Vec<(String, f64)>) {
+        let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
+        cmd("ZUNION").arg(keys.num_of_args()).arg(keys).arg("WEIGHTS").arg(weights).arg(options).arg("WITHSCORES").take()
     }
 
     // vector set commands
@@ -3864,8 +3922,9 @@ impl ToRedisArgs for SortedSetAddOptions {
     }
 }
 
-/// Aggregation function used by the `ZINTERSTORE` and `ZUNIONSTORE` commands to
-/// combine the scores of members that appear in more than one input sorted set.
+/// Aggregation function used by the `ZINTERSTORE`, `ZUNIONSTORE`, `ZINTER` and
+/// `ZUNION` commands to combine the scores of members that appear in more than
+/// one input sorted set.
 #[derive(Clone, Copy)]
 #[non_exhaustive]
 pub enum Aggregate {
@@ -3875,6 +3934,12 @@ pub enum Aggregate {
     Min,
     /// Use the maximum score of matching members.
     Max,
+    /// Ignore the input scores and instead sum the per-set weights of the sets
+    /// that contain each member (with default weights of `1`, this is the
+    /// number of input sets that contain the member).
+    ///
+    /// Requires Redis 8.8 or later.
+    Count,
 }
 
 impl ToRedisArgs for Aggregate {
@@ -3886,28 +3951,56 @@ impl ToRedisArgs for Aggregate {
             Aggregate::Sum => b"SUM",
             Aggregate::Min => b"MIN",
             Aggregate::Max => b"MAX",
+            Aggregate::Count => b"COUNT",
         };
         out.write_arg(s);
     }
 }
 
 /// Options for the [ZINTERSTORE](https://redis.io/commands/zinterstore) and
-/// [ZUNIONSTORE](https://redis.io/commands/zunionstore) commands.
+/// [ZUNIONSTORE](https://redis.io/commands/zunionstore) commands and their respective non-store variants
+/// [`ZINTER`](https://redis.io/commands/zinter) and [`ZUNION`](https://redis.io/commands/zunion).
 ///
-/// Controls the optional `AGGREGATE` modifier. For weighted variants use
-/// [`Commands::zinterstore_with_weights`] / [`Commands::zunionstore_with_weights`].
+/// Controls the optional `AGGREGATE` modifier. For weighted operations, use
+/// [`Commands::zinterstore_with_weights`] / [`Commands::zunionstore_with_weights`] or
+/// [`Commands::zinter_with_weights`] / [`Commands::zunion_with_weights`].
+/// The non-store commands also provide
+/// [`Commands::zinter_withscores`] / [`Commands::zunion_withscores`] to return member scores and
+/// [`Commands::zinter_with_weights_withscores`] / [`Commands::zunion_with_weights_withscores`] to return scores for weighted operations.
 ///
 /// # Example
 /// ```rust,no_run
 /// use redis::{Commands, RedisResult, SortedSetOperationOptions, Aggregate};
-/// fn intersect(con: &mut redis::Connection) -> RedisResult<usize> {
+/// fn intersect_and_store(con: &mut redis::Connection) -> RedisResult<usize> {
 ///     con.zinterstore("out", &["zset1", "zset2"], SortedSetOperationOptions::default())
 /// }
-/// fn intersect_min(con: &mut redis::Connection) -> RedisResult<usize> {
+/// fn intersect(con: &mut redis::Connection) -> RedisResult<Vec<String>> {
+///     con.zinter(&["zset1", "zset2"], SortedSetOperationOptions::default())
+/// }
+/// fn intersect_min_and_store(con: &mut redis::Connection) -> RedisResult<usize> {
 ///     con.zinterstore("out", &["zset1", "zset2"], SortedSetOperationOptions::default().aggregate(Aggregate::Min))
 /// }
-/// fn intersect_weighted(con: &mut redis::Connection) -> RedisResult<usize> {
+/// fn intersect_min(con: &mut redis::Connection) -> RedisResult<Vec<String>> {
+///     con.zinter(&["zset1", "zset2"], SortedSetOperationOptions::default().aggregate(Aggregate::Min))
+/// }
+/// fn intersect_weighted_and_store(con: &mut redis::Connection) -> RedisResult<usize> {
 ///     con.zinterstore_with_weights("out", &[("zset1", 2), ("zset2", 3)], SortedSetOperationOptions::default().aggregate(Aggregate::Min))
+/// }
+/// fn intersect_weighted(con: &mut redis::Connection) -> RedisResult<Vec<String>> {
+///     con.zinter_with_weights(&[("zset1", 2), ("zset2", 3)], SortedSetOperationOptions::default().aggregate(Aggregate::Min))
+/// }
+/// fn intersect_min_with_scores(con: &mut redis::Connection) -> RedisResult<Vec<(String, f64)>> {
+///     con.zinter_withscores(&["zset1", "zset2"], SortedSetOperationOptions::default().aggregate(Aggregate::Min))
+/// }
+/// fn intersect_weighted_with_scores(con: &mut redis::Connection) -> RedisResult<Vec<(String, f64)>> {
+///     con.zinter_with_weights_withscores(&[("zset1", 2), ("zset2", 3)], SortedSetOperationOptions::default().aggregate(Aggregate::Min))
+/// }
+/// // Count the number of input sets each member appears in (Redis 8.8+):
+/// fn store_membership_counts(con: &mut redis::Connection) -> RedisResult<usize> {
+///     con.zinterstore("out", &["zset1", "zset2"], SortedSetOperationOptions::default().aggregate(Aggregate::Count))
+/// }
+/// fn membership_counts(con: &mut redis::Connection) -> RedisResult<Vec<String>> {
+///     con.zinter(&["zset1", "zset2"], SortedSetOperationOptions::default().aggregate(Aggregate::Count))
 /// }
 /// ```
 #[derive(Clone, Default)]
@@ -3916,8 +4009,7 @@ pub struct SortedSetOperationOptions {
 }
 
 impl SortedSetOperationOptions {
-    /// Sets the `AGGREGATE` modifier used to combine the scores of members that
-    /// appear in more than one input sorted set.
+    /// Sets the `AGGREGATE` modifier used when combining scores from the input sorted sets.
     pub fn aggregate(mut self, aggregate: Aggregate) -> Self {
         self.aggregate = Some(aggregate);
         self
