@@ -9,6 +9,9 @@ use crate::types::{
     ValueComparison,
 };
 
+#[cfg(feature = "json")]
+use json::{SingletonOrVec, VecOrSingleton};
+
 #[cfg(feature = "vector-sets")]
 use crate::types::Value;
 
@@ -18,6 +21,10 @@ use std::collections::HashSet;
 
 #[macro_use]
 mod macros;
+
+#[cfg(feature = "json")]
+#[cfg_attr(docsrs, doc(cfg(feature = "json")))]
+mod json;
 
 #[cfg(feature = "cluster")]
 use crate::cluster_handling::sync_connection::ClusterPipeline;
@@ -3003,16 +3010,30 @@ assert_eq!(invok_2_res, 5);
     // JSON commands
 
     /// Append the JSON `value` to the array at `path` after the last element in it.
+    ///
+    /// ```text
+    /// JSON.ARRAPPEND <key> <path> <value>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/JSON.ARRAPPEND)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_arr_append<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V) -> (RedisResult<Generic>) {
+    fn json_arr_append<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V) -> (RedisResult<VecOrSingleton<Option<usize>>>) {
         cmd("JSON.ARRAPPEND").arg(key).arg(path).arg(serde_json::to_string(value)?).take()
     }
 
     /// Index array at `path`, returns first occurrence of `value`
+    ///
+    /// To pass additional `start` and `stop`, see [`Self::json_arr_index_ss`]
+    ///
+    /// ```text
+    /// JSON.ARRINDEX <key> <path> <value>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/JSON.ARRINDEX)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_arr_index<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V) -> (RedisResult<Generic>) {
+    fn json_arr_index<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V) -> (RedisResult<VecOrSingleton<Option<i64>>>) {
         cmd("JSON.ARRINDEX").arg(key).arg(path).arg(serde_json::to_string(value)?).take()
     }
 
@@ -3020,34 +3041,60 @@ assert_eq!(invok_2_res, 5);
     /// they make no effect on the query
     ///
     /// The default values for `start` and `stop` are `0`, so pass those in if you want them to take no effect
+    ///
+    /// See [`Self::json_arr_index`] for a variant without `start` and `stop`.
+    ///
+    /// ```text
+    /// JSON.ARRINDEX <key> <path> <value> <start> <stop>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/JSON.ARRINDEX)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_arr_index_ss<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V, start: &'a isize, stop: &'a isize) -> (RedisResult<Generic>) {
+    fn json_arr_index_ss<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V, start: &'a isize, stop: &'a isize) -> (RedisResult<VecOrSingleton<Option<i64>>>) {
         cmd("JSON.ARRINDEX").arg(key).arg(path).arg(serde_json::to_string(value)?).arg(start).arg(stop).take()
     }
 
     /// Inserts the JSON `value` in the array at `path` before the `index` (shifts to the right).
     ///
     /// `index` must be within the array's range.
+    ///
+    /// ```text
+    /// JSON.ARRINSERT <key> <path> <index> <value>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/JSON.ARRINSERT)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_arr_insert<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, index: i64, value: &'a V) -> (RedisResult<Generic>) {
+    fn json_arr_insert<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, index: i64, value: &'a V) -> (RedisResult<VecOrSingleton<Option<usize>>>) {
         cmd("JSON.ARRINSERT").arg(key).arg(path).arg(index).arg(serde_json::to_string(value)?).take()
     }
 
     /// Reports the length of the JSON Array at `path` in `key`.
+    ///
+    /// ```text
+    /// JSON.ARRLEN <key> <path>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/JSON.ARRLEN)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_arr_len<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (RedisResult<Generic>) {
+    fn json_arr_len<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (VecOrSingleton<Option<usize>>) {
         cmd("JSON.ARRLEN").arg(key).arg(path).take()
     }
 
     /// Removes and returns an element from the `index` in the array.
     ///
     /// `index` defaults to `-1` (the end of the array).
+    ///
+    /// ```text
+    /// JSON.ARRPOP <key> <path> <index>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/JSON.ARRPOP)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_arr_pop<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P, index: i64) -> (RedisResult<Generic>) {
+    fn json_arr_pop<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P, index: i64) -> (Vec<Option<String>>) {
         cmd("JSON.ARRPOP").arg(key).arg(path).arg(index).take()
     }
 
@@ -3055,23 +3102,41 @@ assert_eq!(invok_2_res, 5);
     ///
     /// This command is extremely forgiving and using it with out-of-range indexes will not produce an error.
     /// There are a few differences between how RedisJSON v2.0 and legacy versions handle out-of-range indexes.
+    ///
+    /// ```text
+    /// JSON.ARRTRIM <key> <path> <start> <stop>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/JSON.ARRTRIM)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_arr_trim<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P, start: i64, stop: i64) -> (RedisResult<Generic>) {
+    fn json_arr_trim<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P, start: i64, stop: i64) -> (VecOrSingleton<Option<usize>>) {
         cmd("JSON.ARRTRIM").arg(key).arg(path).arg(start).arg(stop).take()
     }
 
     /// Clears container values (Arrays/Objects), and sets numeric values to 0.
+    ///
+    /// ```text
+    /// JSON.CLEAR <key> <path>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/JSON.CLEAR)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_clear<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (RedisResult<Generic>) {
+    fn json_clear<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (usize) {
         cmd("JSON.CLEAR").arg(key).arg(path).take()
     }
 
     /// Deletes a value at `path`.
+    ///
+    /// ```text
+    /// JSON.DEL <key> <path>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/JSON.DEL)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_del<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (RedisResult<Generic>) {
+    fn json_del<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (usize) {
         cmd("JSON.DEL").arg(key).arg(path).take()
     }
 
@@ -3080,9 +3145,15 @@ assert_eq!(invok_2_res, 5);
     /// With RedisJSON commands, you have to note that all results will be wrapped
     /// in square brackets (or empty brackets if not found). If you want to deserialize it
     /// with e.g. `serde_json` you have to use `Vec<T>` for your output type instead of `T`.
+    ///
+    /// ```text
+    /// JSON.GET <key> <path>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/JSON.GET)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_get<K: ToSingleRedisArg, P: ToRedisArgs>(key: K, path: P) -> (RedisResult<Generic>) {
+    fn json_get<K: ToSingleRedisArg, P: ToRedisArgs>(key: K, path: P) -> (String) {
         cmd("JSON.GET").arg(key).arg(path).take()
     }
 
@@ -3091,44 +3162,80 @@ assert_eq!(invok_2_res, 5);
     /// With RedisJSON commands, you have to note that all results will be wrapped
     /// in square brackets (or empty brackets if not found). If you want to deserialize it
     /// with e.g. `serde_json` you have to use `Vec<T>` for your output type instead of `T`.
+    ///
+    /// ```text
+    /// JSON.MGET <key> <path>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/JSON.MGET)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_mget<K: ToRedisArgs, P: ToSingleRedisArg>(key: K, path: P) -> (RedisResult<Generic>) {
+    fn json_mget<K: ToRedisArgs, P: ToSingleRedisArg>(key: K, path: P) -> (Vec<Option<String>>) {
         cmd("JSON.MGET").arg(key).arg(path).take()
     }
 
-    /// Increments the number value stored at `path` by `number`.
+    /// Increments the number value stored at `path` by `value`.
+    ///
+    /// ```text
+    /// JSON.NUMINCRBY <key> <path> <value>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/JSON.NUMINCRBY)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_num_incr_by<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P, value: i64) -> (RedisResult<Generic>) {
+    fn json_num_incr_by<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P, value: i64) -> (VecOrSingleton<Option<String>>) {
         cmd("JSON.NUMINCRBY").arg(key).arg(path).arg(value).take()
     }
 
     /// Returns the keys in the object that's referenced by `path`.
+    ///
+    /// ```text
+    /// JSON.OBJKEYS <key> <path>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/JSON.OBJKEYS)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_obj_keys<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (RedisResult<Generic>) {
+    fn json_obj_keys<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (SingletonOrVec<Option<Vec<String>>>) {
         cmd("JSON.OBJKEYS").arg(key).arg(path).take()
     }
 
     /// Reports the number of keys in the JSON Object at `path` in `key`.
+    ///
+    /// ```text
+    /// JSON.OBJLEN <key> <path>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/JSON.OBJLEN)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_obj_len<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (RedisResult<Generic>) {
+    fn json_obj_len<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (VecOrSingleton<Option<usize>>) {
         cmd("JSON.OBJLEN").arg(key).arg(path).take()
     }
 
     /// Sets the JSON Value at `path` in `key`.
+    ///
+    /// ```text
+    /// JSON.SET <key> <path> <value>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/JSON.SET)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_set<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V) -> (RedisResult<Generic>) {
+    fn json_set<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V) -> (RedisResult<bool>) {
         cmd("JSON.SET").arg(key).arg(path).arg(serde_json::to_string(value)?).take()
     }
 
     /// Sets the value at the path per key, for every given tuple.
+    ///
+    /// ```text
+    /// JSON.MSET <key1> <path1> <value1> <key2> <path2> <value2> ...
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/JSON.MSET)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_mset<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key_path_values: &'a [(K,P,V)]) -> (RedisResult<Generic>) {
+    fn json_mset<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key_path_values: &'a [(K,P,V)]) -> (RedisResult<bool>) {
         let mut cmd = cmd("JSON.MSET");
 
         for (key, path, value) in key_path_values {
@@ -3141,30 +3248,54 @@ assert_eq!(invok_2_res, 5);
     }
 
     /// Appends the `json-string` values to the string at `path`.
+    ///
+    /// ```text
+    /// JSON.STRAPPEND <key> <path> <value>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/JSON.STRAPPEND)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_str_append<K: ToSingleRedisArg, P: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, path: P, value: V) -> (RedisResult<Generic>) {
+    fn json_str_append<K: ToSingleRedisArg, P: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, path: P, value: V) -> (VecOrSingleton<Option<usize>>) {
         cmd("JSON.STRAPPEND").arg(key).arg(path).arg(value).take()
     }
 
     /// Reports the length of the JSON String at `path` in `key`.
+    ///
+    /// ```text
+    /// JSON.STRLEN <key> <path>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/JSON.STRLEN)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_str_len<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (RedisResult<Generic>) {
+    fn json_str_len<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (VecOrSingleton<Option<usize>>) {
         cmd("JSON.STRLEN").arg(key).arg(path).take()
     }
 
     /// Toggle a `boolean` value stored at `path`.
+    ///
+    /// ```text
+    /// JSON.TOGGLE <key> <path>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/JSON.TOGGLE)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_toggle<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (RedisResult<Generic>) {
+    fn json_toggle<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (VecOrSingleton<Option<bool>>) {
         cmd("JSON.TOGGLE").arg(key).arg(path).take()
     }
 
     /// Reports the type of JSON value at `path`.
+    ///
+    /// ```text
+    /// JSON.TYPE <key> <path>
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/JSON.TYPE)
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_type<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (RedisResult<Generic>) {
+    fn json_type<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (SingletonOrVec<Vec<String>>) {
         cmd("JSON.TYPE").arg(key).arg(path).take()
     }
 

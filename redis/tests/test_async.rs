@@ -368,14 +368,10 @@ mod basic_async {
             .set("x", 142)
             .ignore()
             .json_get("x", ".path")
-            .unwrap()
             .ignore()
             .json_get("x", ".path")
-            .unwrap()
             .json_get("y", ".path")
-            .unwrap()
             .json_get("y", ".other")
-            .unwrap()
             .get("x");
 
         type IgnoreErrorsResult = (

@@ -1837,18 +1837,18 @@ impl FromRedisValue for bool {
             Value::Nil => Ok(false),
             Value::Int(val) => Ok(val != 0),
             Value::SimpleString(ref s) => {
-                if &s[..] == "1" {
+                if &s[..] == "1" || &s[..] == "true" {
                     Ok(true)
-                } else if &s[..] == "0" {
+                } else if &s[..] == "0" || &s[..] == "false" {
                     Ok(false)
                 } else {
                     crate::errors::invalid_type_error!(v, "Response status not valid boolean");
                 }
             }
             Value::BulkString(ref bytes) => {
-                if bytes == b"1" {
+                if bytes == b"1" || bytes == b"true" {
                     Ok(true)
-                } else if bytes == b"0" {
+                } else if bytes == b"0" || bytes == b"false" {
                     Ok(false)
                 } else {
                     crate::errors::invalid_type_error!(v, "Response type not bool compatible.");
