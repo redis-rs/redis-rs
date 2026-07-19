@@ -187,6 +187,10 @@ impl RedisServer {
             redis_cmd.arg2("--enable-debug-command", "yes");
         }
 
+        // Disable all default listening
+        redis_cmd.arg2("--port", "0");
+
+        // Enable one kind of listening
         match addr {
             redis::ConnectionAddr::Tcp(ref host, port) => {
                 redis_cmd
@@ -202,7 +206,6 @@ impl RedisServer {
                 // prepare redis with TLS
                 redis_cmd
                     .arg2("--tls-port", port.to_string())
-                    .arg2("--port", "0")
                     .arg2("--tls-cert-file", &tls_paths.redis_crt)
                     .arg2("--tls-key-file", &tls_paths.redis_key)
                     .arg2("--tls-ca-cert-file", &tls_paths.ca_crt)
@@ -227,7 +230,7 @@ impl RedisServer {
                 };
             }
             redis::ConnectionAddr::Unix(ref path) => {
-                redis_cmd.arg2("--port", "0").arg2("--unixsocket", path);
+                redis_cmd.arg2("--unixsocket", path);
             }
             _ => panic!("Unknown address format: {addr:?}"),
         };
