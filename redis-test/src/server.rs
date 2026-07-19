@@ -165,6 +165,24 @@ impl RedisServer {
         modules: &[Module],
         cmd_refiner: impl FnOnce(&mut RedisServerCommand),
     ) -> RedisServer {
+        // Guard against unsupported settings
+        if tls_paths.is_some() && !matches!(addr, ConnectionAddr::TcpTls { .. }) {
+            panic!("'tls_paths' is only supported for TCP with TLS");
+        }
+
+        if mtls_enabled && !matches!(addr, ConnectionAddr::TcpTls { .. }) {
+            panic!("'mtls' is only supported for TCP with TLS");
+        }
+
+        if cert_auth_field.is_some() && !matches!(addr, ConnectionAddr::TcpTls { .. }) {
+            panic!("'cert_auth_field' is only supported for TCP with TLS");
+        }
+
+        if cert_auth_field.is_some() && !mtls_enabled {
+            panic!("'cert_auth_field' is only supported for mTLS");
+        }
+
+        // From here on, settings are good and supported
         let mut redis_cmd = RedisServerCommand::new();
 
         if let Some(config_path) = config_file {
