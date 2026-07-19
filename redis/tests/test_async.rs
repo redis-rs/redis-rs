@@ -1438,13 +1438,7 @@ mod basic_async {
             .set_exponent_base(10000.0)
             .set_max_delay(max_delay_between_attempts);
 
-        let tempdir = tempfile::Builder::new()
-            .prefix("redis")
-            .tempdir()
-            .expect("failed to create tempdir");
-        let tls_files = redis_test::utils::build_keys_and_certs_for_tls(&tempdir);
-
-        let ctx = TestContext::with_tls(tls_files.clone(), false);
+        let ctx = TestContext::new();
         let protocol = ctx.protocol;
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();

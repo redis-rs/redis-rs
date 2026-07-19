@@ -207,10 +207,6 @@ impl TestContext {
         )
     }
 
-    pub fn with_tls(tls_files: TlsFilePaths, mtls_enabled: bool) -> TestContext {
-        Self::with_modules_and_tls(&[], mtls_enabled, Some(tls_files))
-    }
-
     pub fn with_modules(modules: &[Module]) -> TestContext {
         Self::with_modules_and_tls(modules, false, None)
     }
