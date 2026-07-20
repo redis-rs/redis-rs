@@ -525,33 +525,37 @@ implement_commands! {
         cmd("DECRBY").arg(key).arg(delta).take()
     }
 
-    /// Increment the integer value of a key by the given amount and set its expiration.
+    /// Increment the numeric value of a key by the given amount and set its expiration.
     ///
     /// Uses 0 as the initial value if the key does not exist.
-    /// The reply is an [`IncrexResult`] holding the value after the increment and the increment that was actually applied
-    /// (see [`IncrexOptions`] for the bounds and `SATURATE` behavior).
+    /// The increment's type determines the operation: integer increments use `BYINT`, while floating-point ones use `BYFLOAT`.
+    /// The reply is an [`IncrexResult`] holding the raw value after the increment and the raw
+    /// increment that was actually applied (see [`IncrexOptions`] for the bounds and `SATURATE`
+    /// behavior). Read it with [`IncrexResult::as_i64`] / [`IncrexResult::as_f64`] for the common
+    /// typed pairs, or [`IncrexResult::value_as`] / [`IncrexResult::actual_increment_as`] to decode
+    /// a single field into any other [`FromRedisValue`] type.
     ///
-    /// The server operates on 64-bit signed integers, so `i64` is an exact match.
+    /// For `BYINT`, the server operates on 64-bit signed integers, so `i64` is an exact match.
     /// Every storable or clamped value fits in `i64`, the implicit `SATURATE` limits are `i64::MAX`/`i64::MIN`.
     /// Out-of-range increment or bound is rejected by the server.
-    /// [Redis Docs](https://redis.io/commands/INCREX)
-    fn increx_by_int<K: ToSingleRedisArg>(key: K, increment: i64, options: IncrexOptions<i64>) -> (IncrexResult<i64>) {
-        cmd("INCREX").arg(key).arg("BYINT").arg(increment).arg(options).take()
-    }
-
-    /// Increment the floating-point value of a key by the given amount and set its expiration.
     ///
-    /// Uses 0 as the initial value if the key does not exist.
-    /// The reply is an [`IncrexResult`] holding the value after the increment and the increment that was actually applied
-    /// (see [`IncrexOptions`] for the bounds and `SATURATE` behavior).
-    ///
-    /// The server computes in C `long double`, whose range and precision exceed `f64`.
-    /// A magnitude beyond `f64::MAX`, including the implicit `SATURATE` limit of `±LDBL_MAX`, therefore decodes to `±f64::INFINITY` rather than the exact value.
-    /// This is lossy saturation, not an error. If the exact value is needed, call the generic variant instead and choose a wider return type
-    /// (e.g. `(String, String)`, or a `bigdecimal::BigDecimal` pair with the `bigdecimal` feature).
+    /// For `BYFLOAT`, the server computes with more range and precision than `f64`, so decoding a
+    /// result beyond `f64::MAX` (including the implicit `±LDBL_MAX` limit) as `f64` yields
+    /// `±f64::INFINITY`. On RESP2 the value arrives as a bulk string, so `value_as::<String>()`
+    /// recovers the server's exact text; on RESP3 it arrives as a double the client has already
+    /// narrowed to `f64`, so `f64` is the full precision available there.
     /// [Redis Docs](https://redis.io/commands/INCREX)
-    fn increx_by_float<K: ToSingleRedisArg>(key: K, increment: f64, options: IncrexOptions<f64>) -> (IncrexResult<f64>) {
-        cmd("INCREX").arg(key).arg("BYFLOAT").arg(increment).arg(options).take()
+    fn increx<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, increment: V, options: IncrexOptions<V>) -> (IncrexResult) {
+        cmd("INCREX")
+            .arg(key)
+            .arg(if increment.describe_numeric_behavior() == NumericBehavior::NumberIsFloat {
+                "BYFLOAT"
+            } else {
+                "BYINT"
+            })
+            .arg(increment)
+            .arg(options)
+            .take()
     }
 
     /// Sets or clears the bit at offset in the string value stored at key.
@@ -3958,22 +3962,20 @@ impl ToRedisArgs for Expiry {
 /// Options for the [INCREX](https://redis.io/commands/increx) command.
 ///
 /// `T` is the type of the increment and of the `LBOUND`/`UBOUND` bounds.
-///  Use `IncrexOptions<i64>` with [`increx_by_int`] and `IncrexOptions<f64>` with [`increx_by_float`].
+/// It matches the increment passed to [`increx`](crate::TypedCommands::increx).
+/// (e.g. `IncrexOptions<i64>` for an `i64` increment, `IncrexOptions<f64>` for an `f64` one).
 ///
 /// # Example
 /// ```rust,no_run
 /// use redis::{Commands, RedisResult, IncrexOptions, IncrexResult, Expiry};
-/// fn bump(con: &mut redis::Connection) -> RedisResult<IncrexResult<i64>> {
+/// fn bump(con: &mut redis::Connection) -> RedisResult<IncrexResult> {
 ///     let opts = IncrexOptions::default()
 ///         .saturate()
 ///         .upper_bound(100)
 ///         .with_expiration(Expiry::EX(60));
-///     con.increx_by_int("counter", 5, opts)
+///     con.increx("counter", 5, opts)
 /// }
 /// ```
-///
-/// [`increx_by_int`]: crate::TypedCommands::increx_by_int
-/// [`increx_by_float`]: crate::TypedCommands::increx_by_float
 #[derive(Clone, Default)]
 pub struct IncrexOptions<T> {
     saturate: bool,
