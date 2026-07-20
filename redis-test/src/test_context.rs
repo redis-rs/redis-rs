@@ -95,6 +95,15 @@ impl TestContextBuilder {
     }
 }
 
+/// `panic`ks and dumps the server log file
+macro_rules! panic_w_server_log_dump {
+    ($server:ident, $msg:literal $(, $arg:tt)*) => {
+        let msg = format!($msg, $(, $arg)*);
+        let logs = $server.log_file_contents().unwrap_or_else(|| "<failed to read server log>".into());
+        panic!("{msg}\nServer logs:\n{logs}")
+    }
+}
+
 /// Utility wrapper for a standalone Redis server instance for testing.
 ///
 /// # Example
@@ -156,16 +165,13 @@ impl TestContext {
                         sleep(millisecond);
                         retries += 1;
                         if retries > 100000 {
-                            panic!(
-                                "Tried to connect too many times, last error: {err}, logfile: {:?}",
-                                server.log_file_contents()
+                            panic_w_server_log_dump!(
+                                server,
+                                "Tried to connect too many times, last error: {err}"
                             );
                         }
                     } else {
-                        panic!(
-                            "Could not connect: {err}, logfile: {:?}",
-                            server.log_file_contents()
-                        );
+                        panic_w_server_log_dump!(server, "Could not connect: {err}");
                     }
                 }
                 Ok(x) => {
@@ -188,17 +194,14 @@ impl TestContext {
                     sleep(millisecond);
                     flush_retries += 1;
                     if flush_retries > 10000 {
-                        panic!(
-                            "Redis is still loading after too many retries, last error: {err}, logfile: {:?}",
-                            server.log_file_contents()
+                        panic_w_server_log_dump!(
+                            server,
+                            "Redis is still loading after too many retries, last error: {err}"
                         );
                     }
                 }
                 Err(err) => {
-                    panic!(
-                        "Failed to flush database: {err}, logfile: {:?}",
-                        server.log_file_contents()
-                    );
+                    panic_w_server_log_dump!(server, "Failed to flush database: {err}");
                 }
             }
         }
