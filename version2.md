@@ -10,6 +10,27 @@ redis = "2"
 
 ## Breaking Changes
 
+### `ScanOptions::with_type` takes `ValueType` instead of `Into<String>` (Breaking Change)
+
+To increase type safety, `ScanOptions::with_type` now takes a `ValueType`.
+This allows to check at compile time that correct type names are used, and hence helps to avoid accidental typos.
+
+It also gives more readable code, as `ValueType::CountMin` is easier to understand than `CMSk-TYPE`.
+
+For types that lack a `ValueType` dedicated variant, any `String`-like value converts `into` `ValueType`.
+
+**Migration:** Switch from `String`, `&str`, or `Into<String>` to `ValueType`
+
+```rust
+// Before:
+let opts1 = ScanOptions::default().with_type("ReJSON-RL"); // Has a `ValueType`; we switch to it.
+let opts2 = ScanOptions::default().with_type("your-custom-type"); // Does not have a `ValueType`; we convert into it.
+
+// After:
+let opts1 = ScanOptions::default().with_type(ValueType::JSON); // Use `ValueType`
+let opts2 = ScanOptions::default().with_type("your-custom-type".into()); // Convert to `ValueType`
+```
+
 ### `RedisServer::new...` got removed; use `RedisServerBuilder` instead (Breaking Change)
 
 Over time `RedisServer::new...` methods grew in parameters and made them hard to use.
