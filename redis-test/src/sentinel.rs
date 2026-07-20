@@ -3,6 +3,7 @@ use std::{fs::File, io::Write, thread::sleep, time::Duration};
 use redis::{Client, ConnectionAddr, FromRedisValue, RedisResult};
 use tempfile::TempDir;
 
+use crate::server::RedisServerBuilder;
 use crate::{
     server::{Module, RedisServer},
     utils::{TlsFilePaths, build_keys_and_certs_for_tls, get_random_available_port},
@@ -118,8 +119,6 @@ impl RedisSentinelCluster {
     }
 }
 
-const MTLS_NOT_ENABLED: bool = false;
-
 fn get_addr(port: u16) -> ConnectionAddr {
     let addr = RedisServer::get_addr(port);
     if let ConnectionAddr::Unix(_) = addr {
@@ -134,22 +133,18 @@ fn spawn_master_server(
     tlspaths: &Option<TlsFilePaths>,
     modules: &[Module],
 ) -> RedisServer {
-    RedisServer::new_with_addr_tls_modules_and_cmd_refiner(
-        get_addr(port),
-        None,
-        tlspaths.clone(),
-        MTLS_NOT_ENABLED,
-        None, // cert_auth_field - not used in sentinel tests
-        modules,
-        |cmd| {
+    RedisServerBuilder::new()
+        .address(get_addr(port))
+        .tls_paths_opt(tlspaths.clone())
+        .modules(modules)
+        .refine_and_build(|cmd| {
             // Minimize startup delay
             cmd.arg2("--repl-diskless-sync-delay", "0");
             if tlspaths.is_some() {
                 cmd.arg2("--tls-replication", "yes");
             }
             cmd.current_dir(dir.path());
-        },
-    )
+        })
 }
 
 fn spawn_replica_server(
@@ -162,21 +157,18 @@ fn spawn_replica_server(
     let config_file_path = dir.path().join("redis_config.conf");
     File::create(&config_file_path).unwrap();
 
-    RedisServer::new_with_addr_tls_modules_and_cmd_refiner(
-        get_addr(port),
-        Some(&config_file_path),
-        tlspaths.clone(),
-        MTLS_NOT_ENABLED,
-        None, // cert_auth_field - not used in sentinel tests
-        modules,
-        |cmd| {
+    RedisServerBuilder::new()
+        .address(get_addr(port))
+        .config(config_file_path)
+        .tls_paths_opt(tlspaths.clone())
+        .modules(modules)
+        .refine_and_build(|cmd| {
             cmd.arg3("--replicaof", "127.0.0.1", master_port.to_string());
             if tlspaths.is_some() {
                 cmd.arg2("--tls-replication", "yes");
             }
             cmd.current_dir(dir.path());
-        },
-    )
+        })
 }
 
 fn spawn_sentinel_server(
@@ -196,21 +188,18 @@ fn spawn_sentinel_server(
     }
     file.flush().unwrap();
 
-    RedisServer::new_with_addr_tls_modules_and_cmd_refiner(
-        get_addr(port),
-        Some(&config_file_path),
-        tlspaths.clone(),
-        MTLS_NOT_ENABLED,
-        None, // cert_auth_field - not used in sentinel tests
-        modules,
-        |cmd| {
+    RedisServerBuilder::new()
+        .address(get_addr(port))
+        .config(config_file_path)
+        .tls_paths_opt(tlspaths.clone())
+        .modules(modules)
+        .refine_and_build(|cmd| {
             cmd.arg("--sentinel");
             if tlspaths.is_some() {
                 cmd.arg2("--tls-replication", "yes");
             }
             cmd.current_dir(dir.path());
-        },
-    )
+        })
 }
 
 pub struct SentinelError;

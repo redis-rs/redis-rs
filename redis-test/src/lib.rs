@@ -5,7 +5,7 @@
 //! * **Mock Connections**: `MockRedisConnection` implements `ConnectionLike` and can be
 //!   used in the same place as any other type that behaves like a Redis connection. This is useful
 //!   for writing unit tests without needing a real Redis server.
-//! * **Standalone Servers**: [`server::RedisServer`] provides an easy way to spin up
+//! * **Standalone Servers**: [`server::RedisServerBuilder`] provides an easy way to spin up
 //!   and manage a real local Redis instance for integration tests.
 //! * **Clusters**: [`cluster::RedisCluster`] provides functionality to spawn and configure
 //!   a local Redis cluster with multiple nodes and replicas.

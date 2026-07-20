@@ -2,6 +2,7 @@ use std::{env, process, thread::sleep, time::Duration};
 
 use tempfile::TempDir;
 
+use crate::server::RedisServerBuilder;
 use crate::{
     server::{Module, RedisServer},
     utils::{TlsFilePaths, build_keys_and_certs_for_tls_ext, get_random_available_port},
@@ -171,14 +172,12 @@ impl RedisCluster {
         let max_attempts = 5;
 
         let mut make_server = |port| {
-            RedisServer::new_with_addr_tls_modules_and_cmd_refiner(
-                ClusterType::build_addr(port),
-                None,
-                tls_paths.clone(),
-                mtls_enabled,
-                None, // cert_auth_field - not used in cluster tests
-                &modules,
-                |cmd| {
+            RedisServerBuilder::new()
+                .address(ClusterType::build_addr(port))
+                .tls_paths_opt(tls_paths.clone())
+                .mtls(mtls_enabled)
+                .modules(&modules)
+                .refine_and_build(|cmd| {
                     let tempdir = tempfile::Builder::new()
                         .prefix("redis")
                         .tempdir()
@@ -205,8 +204,7 @@ impl RedisCluster {
                     }
                     cmd.current_dir(tempdir.path());
                     folders.push(tempdir);
-                },
-            )
+                })
         };
 
         let verify_server = |server: &mut RedisServer| {

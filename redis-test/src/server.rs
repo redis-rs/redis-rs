@@ -30,10 +30,117 @@ enum ServerType {
 }
 
 /// Represents a module that can be loaded into the Redis server.
+#[derive(Clone)]
 #[non_exhaustive]
 pub enum Module {
     Bloom,
     Json,
+}
+
+/// A builder for [`RedisServer`]
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use redis_test::server::{RedisServerBuilder, Module};
+///
+/// let server = RedisServerBuilder::new().module(Module::Json).build();
+/// let info = server.connection_info();
+/// // Connect to the server using `info`...
+/// ```
+// Note that this builder is an owned-builder as we want to build in a single chain anyway and do
+// not have to build multiple instances from the same builder. Also, this spares us cloning
+// considerations.
+#[derive(Default)]
+pub struct RedisServerBuilder {
+    address: Option<ConnectionAddr>,
+    config_file: Option<PathBuf>,
+    cert_auth_field: Option<String>,
+    modules: Vec<Module>,
+    mtls: bool,
+    tls_paths: Option<TlsFilePaths>,
+}
+
+impl RedisServerBuilder {
+    /// Starts a fresh builder
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn address(mut self, address: ConnectionAddr) -> Self {
+        self.address = Some(address);
+        self
+    }
+
+    pub fn config(mut self, config_file: PathBuf) -> Self {
+        self.config_file = Some(config_file);
+        self
+    }
+
+    pub fn cert_auth_field(mut self, cert_auth_field: impl Into<String>) -> Self {
+        self.cert_auth_field = Some(cert_auth_field.into());
+        self
+    }
+
+    pub fn cert_auth_field_opt(mut self, opt_cert_auth_field: Option<impl Into<String>>) -> Self {
+        self.cert_auth_field = opt_cert_auth_field.map(|value| value.into());
+        self
+    }
+
+    pub fn module(self, module: Module) -> Self {
+        self.modules(&[module])
+    }
+
+    pub fn modules(mut self, modules: &[Module]) -> Self {
+        self.modules = modules.to_vec();
+        self
+    }
+
+    pub fn mtls(mut self, enable_mtls: bool) -> Self {
+        self.mtls = enable_mtls;
+        self
+    }
+
+    pub fn tls_paths(mut self, tls_paths: TlsFilePaths) -> Self {
+        self.tls_paths = Some(tls_paths);
+        self
+    }
+
+    pub fn tls_paths_opt(mut self, opt_tls_paths: Option<TlsFilePaths>) -> Self {
+        self.tls_paths = opt_tls_paths;
+        self
+    }
+
+    /// Builds the [`RedisServer`] for this instance
+    pub fn build(self) -> RedisServer {
+        self.refine_and_build(|_| {})
+    }
+
+    /// Builds the [`RedisServer`] for this instance after refining the arguments for the server
+    ///
+    /// # Arguments
+    ///
+    /// * `refiner` - This method is called just before starting the server. It takes one argument,
+    ///   which is the command to start the server with. This allows to add additional config to
+    ///   the server command.
+    pub fn refine_and_build(self, refiner: impl FnOnce(&mut RedisServerCommand)) -> RedisServer {
+        let addr = self.address.unwrap_or_else(|| {
+            // This is technically a race, but we can't do better with
+            // the tools that redis gives us :(
+            let redis_port = get_random_available_port();
+            RedisServer::get_addr(redis_port)
+        });
+
+        RedisServer::new(
+            addr,
+            self.config_file,
+            self.tls_paths,
+            self.mtls,
+            self.cert_auth_field,
+            self.modules.as_slice(),
+            refiner,
+        )
+    }
 }
 
 /// A standalone Redis server instance for testing.
@@ -42,10 +149,23 @@ pub enum Module {
 /// configuration, and shutdown.
 ///
 /// # Example
+///
+/// Use `default()` to build a [`RedisServer`] with default settings:
+///
 /// ```rust,no_run
 /// use redis_test::server::RedisServer;
 ///
-/// let server = RedisServer::new();
+/// let server = RedisServer::default();
+/// let info = server.connection_info();
+/// // Connect to the server using `info`...
+/// ```
+///
+/// If you need a custom setup, use [`RedisServerBuilder`]:
+///
+/// ```rust,no_run
+/// use redis_test::server::{RedisServerBuilder, Module};
+///
+/// let server = RedisServerBuilder::new().module(Module::Json).build();
 /// let info = server.connection_info();
 /// // Connect to the server using `info`...
 /// ```
@@ -83,19 +203,11 @@ impl Drop for RedisServer {
 
 impl Default for RedisServer {
     fn default() -> Self {
-        Self::new()
+        RedisServerBuilder::new().build()
     }
 }
 
 impl RedisServer {
-    pub fn new() -> RedisServer {
-        RedisServer::with_modules(&[], false)
-    }
-
-    pub fn new_with_mtls() -> RedisServer {
-        RedisServer::with_modules(&[], true)
-    }
-
     pub fn log_file_contents(&self) -> Option<String> {
         std::fs::read_to_string(self.log_file.clone()).ok()
     }
@@ -123,45 +235,12 @@ impl RedisServer {
         }
     }
 
-    pub fn with_modules(modules: &[Module], mtls_enabled: bool) -> RedisServer {
-        // this is technically a race but we can't do better with
-        // the tools that redis gives us :(
-        let redis_port = get_random_available_port();
-        let addr = RedisServer::get_addr(redis_port);
-
-        RedisServer::new_with_addr_tls_modules_and_cmd_refiner(
-            addr,
-            None,
-            None,
-            mtls_enabled,
-            None,
-            modules,
-            |_cmd| {},
-        )
-    }
-
-    pub fn new_with_addr_and_modules(
-        addr: redis::ConnectionAddr,
-        modules: &[Module],
-        mtls_enabled: bool,
-    ) -> RedisServer {
-        RedisServer::new_with_addr_tls_modules_and_cmd_refiner(
-            addr,
-            None,
-            None,
-            mtls_enabled,
-            None,
-            modules,
-            |_cmd| {},
-        )
-    }
-
-    pub fn new_with_addr_tls_modules_and_cmd_refiner(
+    fn new(
         mut addr: redis::ConnectionAddr,
-        config_file: Option<&Path>,
+        config_file: Option<PathBuf>,
         mut tls_paths: Option<TlsFilePaths>,
         mtls_enabled: bool,
-        cert_auth_field: Option<&str>,
+        cert_auth_field: Option<String>,
         modules: &[Module],
         cmd_refiner: impl FnOnce(&mut RedisServerCommand),
     ) -> RedisServer {
