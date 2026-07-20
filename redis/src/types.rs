@@ -2762,11 +2762,8 @@ impl PartialEq<u32> for IntegerReplyOrNoOp {
 
 /// The two-element reply of the [INCREX](https://redis.io/commands/increx) command.
 ///
-/// `T` is `i64` for `BYINT` operations (see [`increx_by_int`])
-/// and `f64` for `BYFLOAT` operations (see [`increx_by_float`]).
-///
-/// [`increx_by_int`]: crate::TypedCommands::increx_by_int
-/// [`increx_by_float`]: crate::TypedCommands::increx_by_float
+/// `T` matches the increment type passed to [`increx`](crate::TypedCommands::increx) -
+///  `i64` for `BYINT` operations and `f64` for `BYFLOAT` operations.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct IncrexResult<T> {

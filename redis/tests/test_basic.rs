@@ -282,14 +282,14 @@ mod basic {
     }
 
     #[test]
-    fn test_increx_by_int() {
+    fn test_increx_with_integers() {
         let ctx = run_test_if_version_supported!([REDIS_CE_8_8]);
         let mut con = ctx.connection();
 
         // A fresh key starts at 0.
         // A normal in-bounds increment applies fully.
         let result = con
-            .increx_by_int("counter", 5, IncrexOptions::default())
+            .increx("counter", 5i64, IncrexOptions::default())
             .unwrap();
         assert_eq!(result.value, 5);
         assert_eq!(result.actual_increment, 5);
@@ -297,16 +297,16 @@ mod basic {
         // The default policy rejects out-of-bounds operations.
         // The reply is a regular successful `Ok`, reporting the unchanged current value and a zero applied increment.
         let result = con
-            .increx_by_int("counter", 100, IncrexOptions::default().upper_bound(10))
+            .increx("counter", 100i64, IncrexOptions::default().upper_bound(10))
             .unwrap();
         assert_eq!(result.value, 5);
         assert_eq!(result.actual_increment, 0);
 
         // SATURATE clamps the result to an explicit upper bound and reports the clamped delta (10 - 5 = 5), not the requested increment (100).
         let result = con
-            .increx_by_int(
+            .increx(
                 "counter",
-                100,
+                100i64,
                 IncrexOptions::default().saturate().upper_bound(10),
             )
             .unwrap();
@@ -317,9 +317,9 @@ mod basic {
         // The actual_increment is again the clamped delta (-10 - 5 = -15), not the requested -100.
         con.set("underflow", 5).unwrap();
         let result = con
-            .increx_by_int(
+            .increx(
                 "underflow",
-                -100,
+                -100i64,
                 IncrexOptions::default().saturate().lower_bound(-10),
             )
             .unwrap();
@@ -330,22 +330,22 @@ mod basic {
         // which are exactly i64::MAX / i64::MIN (the server operates on 64-bit `long long`).
         con.set("hi", i64::MAX - 100).unwrap();
         let result = con
-            .increx_by_int("hi", 200, IncrexOptions::default().saturate())
+            .increx("hi", 200i64, IncrexOptions::default().saturate())
             .unwrap();
         assert_eq!(result.value, i64::MAX);
         assert_eq!(result.actual_increment, 100);
         con.set("lo", i64::MIN + 100).unwrap();
         let result = con
-            .increx_by_int("lo", -200, IncrexOptions::default().saturate())
+            .increx("lo", -200i64, IncrexOptions::default().saturate())
             .unwrap();
         assert_eq!(result.value, i64::MIN);
         assert_eq!(result.actual_increment, -100);
 
         // Expiration is applied alongside the increment.
         let result = con
-            .increx_by_int(
+            .increx(
                 "ttl_counter",
-                1,
+                1i64,
                 IncrexOptions::default().with_expiration(Expiry::EX(100)),
             )
             .unwrap();
@@ -356,9 +356,9 @@ mod basic {
         // Rejected operations leave the key's value *and* TTL untouched.
         con.set_ex("bounded", 5, 100).unwrap();
         let result = con
-            .increx_by_int(
+            .increx(
                 "bounded",
-                100,
+                100i64,
                 IncrexOptions::default()
                     .upper_bound(10)
                     .with_expiration(Expiry::EX(999)),
@@ -374,9 +374,9 @@ mod basic {
         // This differs from the default policy rejection above, which leaves the TTL untouched.
         con.set("at_bound", 10).unwrap();
         let result = con
-            .increx_by_int(
+            .increx(
                 "at_bound",
-                100,
+                100i64,
                 IncrexOptions::default()
                     .saturate() // Because of this, the operation is applied even though the value doesn't change.
                     .upper_bound(10)
@@ -391,9 +391,9 @@ mod basic {
         // ENX takes into account if a TTL is already present and blocks the update even though the clamp itself is applied.
         con.set_ex("at_bound_enx", 10, 100).unwrap();
         let result = con
-            .increx_by_int(
+            .increx(
                 "at_bound_enx",
-                100,
+                100i64,
                 IncrexOptions::default()
                     .saturate()
                     .upper_bound(10)
@@ -407,13 +407,13 @@ mod basic {
     }
 
     #[test]
-    fn test_increx_by_float() {
+    fn test_increx_with_floats() {
         let ctx = run_test_if_version_supported!([REDIS_CE_8_8]);
         let mut con = ctx.connection();
 
         // A normal in-bounds float increment applies fully.
         let result = con
-            .increx_by_float("balance", 2.5, IncrexOptions::default())
+            .increx("balance", 2.5f64, IncrexOptions::default())
             .unwrap();
         assert_approx_eq!(result.value, 2.5);
         assert_approx_eq!(result.actual_increment, 2.5);
@@ -421,9 +421,9 @@ mod basic {
         // SATURATE clamps to a floating-point upper bound.
         // The actual_increment is the clamped delta (4.0 - 2.5 = 1.5), not the requested 5.5.
         let result = con
-            .increx_by_float(
+            .increx(
                 "balance",
-                5.5,
+                5.5f64,
                 IncrexOptions::default().saturate().upper_bound(4.0),
             )
             .unwrap();
@@ -432,7 +432,7 @@ mod basic {
 
         // The default policy rejects an out-of-bounds floating-point operation, leaving the value unchanged.
         let result = con
-            .increx_by_float("balance", 5.5, IncrexOptions::default().upper_bound(4.0))
+            .increx("balance", 5.5f64, IncrexOptions::default().upper_bound(4.0))
             .unwrap();
         assert_approx_eq!(result.value, 4.0);
         assert_approx_eq!(result.actual_increment, 0.0);
@@ -440,9 +440,9 @@ mod basic {
         // SATURATE clamps to a floating-point lower bound on underflow.
         // From 0, -5.5 clamps to -1.5, so the clamped delta is -1.5 rather than the requested -5.5.
         let result = con
-            .increx_by_float(
+            .increx(
                 "debt",
-                -5.5,
+                -5.5f64,
                 IncrexOptions::default().saturate().lower_bound(-1.5),
             )
             .unwrap();
@@ -451,9 +451,9 @@ mod basic {
 
         // Expiration is applied alongside the increment.
         let result = con
-            .increx_by_float(
+            .increx(
                 "ttl_counter",
-                1.0,
+                1.0f64,
                 IncrexOptions::default().with_expiration(Expiry::EX(100)),
             )
             .unwrap();
@@ -464,9 +464,9 @@ mod basic {
         // Rejected operations leave the key's value *and* TTL untouched.
         con.set_ex("bounded", 5.0, 100).unwrap();
         let result = con
-            .increx_by_float(
+            .increx(
                 "bounded",
-                100.0,
+                100.0f64,
                 IncrexOptions::default()
                     .upper_bound(10.0)
                     .with_expiration(Expiry::EX(999)),
@@ -480,9 +480,9 @@ mod basic {
         // which means that the supplied expiration still takes effect.
         con.set("at_bound", 10.0).unwrap();
         let result = con
-            .increx_by_float(
+            .increx(
                 "at_bound",
-                100.0,
+                100.0f64,
                 IncrexOptions::default()
                     .saturate() // Because of this, the operation is applied even though the value doesn't change.
                     .upper_bound(10.0)
@@ -496,9 +496,9 @@ mod basic {
         // ENX takes into account if a TTL is already present and blocks the update even though the clamp itself is applied.
         con.set_ex("at_bound_enx", 10.0, 100).unwrap();
         let result = con
-            .increx_by_float(
+            .increx(
                 "at_bound_enx",
-                100.0,
+                100.0f64,
                 IncrexOptions::default()
                     .saturate()
                     .upper_bound(10.0)
@@ -519,7 +519,7 @@ mod basic {
         // Type mismatch: INCREX against a list key yields WRONGTYPE, surfaced with the server's exact code and detail.
         con.rpush("list_key", "a").unwrap();
         let err = con
-            .increx_by_int("list_key", 1, IncrexOptions::default())
+            .increx("list_key", 1i64, IncrexOptions::default())
             .unwrap_err();
         assert_eq!(err.code(), Some("WRONGTYPE"));
         assert_eq!(
@@ -532,7 +532,7 @@ mod basic {
         // Note: The error message wording differs between BYINT and BYFLOAT.
         con.set("str_key", "hello").unwrap();
         let err = con
-            .increx_by_int("str_key", 1, IncrexOptions::default())
+            .increx("str_key", 1i64, IncrexOptions::default())
             .unwrap_err();
         assert_eq!(err.code(), Some("ERR"));
         assert_eq!(
@@ -541,7 +541,7 @@ mod basic {
         );
 
         let err = con
-            .increx_by_float("str_key", 1.5, IncrexOptions::default())
+            .increx("str_key", 1.5f64, IncrexOptions::default())
             .unwrap_err();
         assert_eq!(err.code(), Some("ERR"));
         assert_eq!(err.detail(), Some("value is not a valid float"));
@@ -549,7 +549,7 @@ mod basic {
         // Malformed arguments reachable through the typed API - ENX with no expiration.
         // The server's argument error is forwarded verbatim.
         let err = con
-            .increx_by_int("misc", 1, IncrexOptions::default().enx())
+            .increx("misc", 1i64, IncrexOptions::default().enx())
             .unwrap_err();
         assert_eq!(err.code(), Some("ERR"));
         assert_eq!(err.detail(), Some("ENX flag requires an expiration"));
