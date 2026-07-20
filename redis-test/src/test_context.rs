@@ -146,7 +146,7 @@ impl TestContext {
     //
     // Instead, users should to go through `TestContextBuilder` to limit the points of entry and
     // hence help us with maintenance.
-    fn from_server(server: RedisServer) -> Self {
+    fn from_server(mut server: RedisServer) -> Self {
         let client =
             build_single_client(server.connection_info(), &server.tls_paths, server.mtls).unwrap();
 
@@ -162,6 +162,15 @@ impl TestContext {
             match client.get_connection() {
                 Err(err) => {
                     if err.is_connection_refusal() {
+                        // Check if the server is still alive
+                        if let Some(exit_status) = server.process.try_wait().unwrap() {
+                            panic_w_server_log_dump!(
+                                server,
+                                "Server exited (status: {exit_status}) before we could connect"
+                            );
+                        }
+
+                        // Wait and retry
                         sleep(millisecond);
                         retries += 1;
                         if retries > 100000 {
