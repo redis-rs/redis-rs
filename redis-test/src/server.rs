@@ -271,9 +271,12 @@ impl RedisServer {
             redis_cmd.arg(config_path);
         }
 
-        // Disable snapshotting
-        // This stops littering `dump.rdb` files during testing/development.
+        // Disable basic disk operations
+        // This stops littering or loading `dump.rdb` files during testing/development.
         redis_cmd.arg2("--save", "");
+        redis_cmd.arg2("--dbfilename", "");
+        // We'd prefer `flushdb` here, but this is only available on Redis 8.6+.
+        redis_cmd.arg2("--repl-diskless-load", "on-empty-db");
 
         redis_cmd.load_modules(modules);
 
