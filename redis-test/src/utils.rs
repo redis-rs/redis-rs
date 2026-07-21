@@ -97,7 +97,7 @@ pub fn build_keys_and_certs_for_tls_with_hostname(
             [alt_names]\n\
             IP.1 = 127.0.0.1\n\
             "
-            .to_string()
+        .to_string()
     } else {
         format!(
             "\

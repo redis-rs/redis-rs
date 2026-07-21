@@ -4,9 +4,7 @@ use tempfile::TempDir;
 
 use crate::{
     server::{Module, RedisServer},
-    utils::{
-        TlsFilePaths, build_keys_and_certs_for_tls_with_hostname, get_random_available_port,
-    },
+    utils::{TlsFilePaths, build_keys_and_certs_for_tls_with_hostname, get_random_available_port},
 };
 
 /// Configuration for creating a Redis Cluster.

@@ -1295,7 +1295,19 @@ mod cluster {
             ..Default::default()
         });
 
-        assert!(cluster.client.get_connection().is_err());
+        let err = match cluster.client.get_connection() {
+            Ok(_) => panic!("connecting via IP address should fail TLS hostname verification"),
+            Err(err) => err,
+        };
+        assert!(
+            err.is_io_error(),
+            "expected a TLS/IO error from hostname verification failure, got: {err:?}"
+        );
+        let err_string = err.to_string();
+        assert!(
+            err_string.contains("certificate") || err_string.contains("NotValidForName"),
+            "expected a certificate hostname verification error, got: {err_string}"
+        );
 
         let mut address_map = std::collections::HashMap::new();
         for server in cluster.cluster.iter_servers() {

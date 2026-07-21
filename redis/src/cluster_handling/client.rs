@@ -5,8 +5,8 @@ use crate::auth::StreamingCredentialsProvider;
 #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
 use crate::caching::{CacheConfig, CacheManager};
 use crate::client::DEFAULT_CONNECTION_TIMEOUT;
-use crate::cluster_handling::read_routing::{RandomReplicaStrategy, ReadRoutingStrategyFactory};
 use crate::cluster_handling::NodeAddress;
+use crate::cluster_handling::read_routing::{RandomReplicaStrategy, ReadRoutingStrategyFactory};
 use crate::connection::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo};
 use crate::errors::{ErrorKind, RedisError};
 #[cfg(feature = "cluster-async")]
