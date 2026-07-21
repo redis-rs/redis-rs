@@ -2268,6 +2268,7 @@ dependencies = [
  "futures",
  "rand 0.10.1",
  "redis",
+ "rustls",
  "socket2 0.6.4",
  "tempfile",
  "tokio",

@@ -591,6 +591,7 @@ fn test_sentinel_client_builder() {
 pub mod async_tests {
     use super::*;
     use redis::{AsyncConnectionConfig, aio::MultiplexedConnection};
+
     use test_macros::async_test;
 
     use crate::{assert_is_master_role, assert_replica_role_and_master_addr};

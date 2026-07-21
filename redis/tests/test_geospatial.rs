@@ -4,9 +4,9 @@ use assert_approx_eq::assert_approx_eq;
 
 use redis::geo::{Coord, RadiusOptions, RadiusOrder, RadiusSearchResult, Unit};
 use redis::{RedisResult, TypedCommands};
+use redis_test::TestContext;
 
 mod support;
-use crate::support::*;
 
 const PALERMO: (&str, &str, &str) = ("13.361389", "38.115556", "Palermo");
 const CATANIA: (&str, &str, &str) = ("15.087269", "37.502669", "Catania");
