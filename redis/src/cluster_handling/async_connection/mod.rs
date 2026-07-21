@@ -135,7 +135,7 @@ use futures_util::{
     sink::Sink,
     stream::{self, Stream, StreamExt},
 };
-use log::{debug, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 use rand::{rng, seq::IteratorRandom};
 use request::{CmdArg, PendingRequest, Request, RequestState, Retry};
 use routing::{InternalRoutingInfo, InternalSingleNodeRouting, route_for_pipeline};
@@ -1381,17 +1381,20 @@ where
                     Ok(())
                 }
                 Err(err) => {
-                    trace!("Recover slots failed!");
+                    error!("async cluster client recovery: slot refresh failed: `{err}`");
                     *future = Box::pin(self.inner.clone().refresh_slots());
                     Err(err)
                 }
             },
             RecoverFuture::ReconnectInitial(future) => {
                 match ready!(future.as_mut().poll(cx)) {
-                    Err(err) => warn!("Can't reconnect to initial nodes: `{err}`"),
-                    Ok(()) => trace!("Reconnected connections"),
+                    Ok(()) => {
+                        info!("async cluster client recovery: reconnect to initial nodes complete");
+                    }
+                    Err(err) => {
+                        error!("async cluster client recovery: reconnect to initial nodes failed: `{err}`");
+                    }
                 }
-                info!("async cluster client recovery: reconnect to initial nodes complete");
                 self.state = ConnectionState::PollComplete;
                 Ok(())
             }
