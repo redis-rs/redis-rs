@@ -10,6 +10,69 @@ redis = "2"
 
 ## Breaking Changes
 
+### `RedisServer::new...` got removed; use `RedisServerBuilder` instead (Breaking Change)
+
+Over time `RedisServer::new...` methods grew in parameters and made them hard to use.
+So they got removed in favor of `RedisServerBuilder`, which is now the recommended way to build `RedisServer` instances.
+
+**Migration:** Switch from `RedisServer::new...` to `RedisServerBuilder`
+
+`RedisServerBuilder::new()` starts a new builder.
+
+It's fluent interface allows to set the needed parameters in a chaining manner (`.address(...).mtls(...).modules(...)`).
+
+Call `.build()` to finally build the `RedisServer` with the set properties.
+
+To refine the command before actually starting the server, use `refine_and_build(...)` instead.
+This allows to fine tune the start command.
+The passed `RedisServerCommand` comes with syntactic sugar to make things more readable (e.g. `arg2`).
+
+```rust
+// Before:
+
+let server = RedisServer::new_with_addr_tls_modules_and_spawner(
+    addr,
+    None,
+    None,
+    true,
+    None,
+    &[], |cmd| {
+        cmd.arg("--foo")
+            .arg("value-foo")
+            .arg("--bar")
+            .arg("value-baz");
+        cmd.spawn().unwrap()
+    }
+);
+
+// After:
+let server = RedisServerBuilder::new()
+    .address(addr)
+    .mtls(true)
+    .refine_and_build(|cmd| {
+        cmd.arg2("--foo", "value-foo")
+            .arg2("--bar", "value-baz");
+    });
+```
+
+### `Generic` typed commands have their `RV` moved from first to last parameter (Breaking Change)
+
+Untyped commands (`Commands`, `AsyncCommands`) have the return value's type (`RV`) as last type parameter, while for typed commands (`TypedCommands`, `AsyncTypedCommands`) it was the first.
+
+Now both typed and untyped commands have their return value's type as last type parameter.
+
+**Migration:** Move the return type parameter to the last position, if you explicitly gave it.
+
+```rust
+// Before:
+con.rpop::<Vec<String>, _>("foo", NonZeroUsize::new(1));
+//         ^^^ RV as first type parameter
+
+// After:
+con.rpop::<_, Vec<String>>("foo", NonZeroUsize::new(1));
+//            ^^^ RV as last type parameter
+```
+
 ### TCP_NODELAY is now enabled by default (Breaking Change)
 
 By default, Nagle's algorithm is now disabled on every TCP connection the crate creates (sync and async, plaintext and TLS). Previously it was left enabled, which serialized writes on a multiplexed connection to one per ACK round-trip under concurrency — measured at 39–68% lower throughput and roughly double the p50 latency on a real network (see [#2195](https://github.com/redis-rs/redis-rs/issues/2195) for the full evidence). Sequential request-response traffic is unaffected, and Redis clients in other ecosystems already ship with TCP_NODELAY enabled.
@@ -113,6 +176,42 @@ deep copy.
   attempts; a response with a very large number of elements arriving in many
   small fragments does more repeated work than before. Bulk-string payloads are
   skipped in O(1) regardless of size.
+
+### Removed `zinterstore_*` and `zunionstore_*` commands in favor of `zinterstore`, `zinterstore_with_weights`, `zunionstore`, and `zunionstore_with_weights`
+
+The following commands have been removed:
+
+- `zinterstore_min`, `zinterstore_max`
+- `zinterstore_weights`, `zinterstore_min_weights`, `zinterstore_max_weights`
+- `zunionstore_min`, `zunionstore_max`
+- `zunionstore_weights`, `zunionstore_min_weights`, `zunionstore_max_weights`
+
+Adding more options to these commands would have caused an exponential explosion of variants. Instead, there are now two variants for each command:
+
+- `zinterstore(dstkey, keys, options)` / `zunionstore(dstkey, keys, options)` — keys without weights
+- `zinterstore_with_weights(dstkey, keys_and_weights, options)` / `zunionstore_with_weights(dstkey, keys_and_weights, options)` — keys paired with weights as `&[(key, weight)]`
+
+The `SortedSetOperationOptions` struct carries only the optional `AGGREGATE` modifier and defaults to `SUM`.
+
+**Migration:**
+
+```rust
+use redis::{Commands, SortedSetOperationOptions, Aggregate};
+
+// Before:
+con.zinterstore("out", &["zset1", "zset2"])?;
+con.zinterstore_min("out", &["zset1", "zset2"])?;
+con.zinterstore_weights("out", &[("zset1", 2), ("zset2", 3)])?;
+con.zinterstore_min_weights("out", &[("zset1", 2), ("zset2", 3)])?;
+
+// After:
+con.zinterstore("out", &["zset1", "zset2"], SortedSetOperationOptions::default())?;
+con.zinterstore("out", &["zset1", "zset2"], SortedSetOperationOptions::default().aggregate(Aggregate::Min))?;
+con.zinterstore_with_weights("out", &[("zset1", 2), ("zset2", 3)], SortedSetOperationOptions::default())?;
+con.zinterstore_with_weights("out", &[("zset1", 2), ("zset2", 3)], SortedSetOperationOptions::default().aggregate(Aggregate::Min))?;
+```
+
+The same pattern applies to `zunionstore` and `zunionstore_with_weights`.
 
 ### `cmd_iter` yields `CmdRef` instead of `&Cmd` (Breaking Change)
 

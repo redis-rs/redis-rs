@@ -600,6 +600,9 @@ impl MultiplexedConnection {
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
         let mut codec = ValueCodec.framed(stream);
+        if let Some(boundary) = config.write_backpressure_boundary {
+            codec.set_backpressure_boundary(boundary);
+        }
         if config.push_sender.is_some() {
             check_resp3!(
                 connection_info.protocol,

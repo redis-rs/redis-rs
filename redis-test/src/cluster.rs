@@ -2,6 +2,7 @@ use std::{env, process, thread::sleep, time::Duration};
 
 use tempfile::TempDir;
 
+use crate::server::RedisServerBuilder;
 use crate::{
     server::{Module, RedisServer},
     utils::{TlsFilePaths, build_keys_and_certs_for_tls_ext, get_random_available_port},
@@ -171,14 +172,12 @@ impl RedisCluster {
         let max_attempts = 5;
 
         let mut make_server = |port| {
-            RedisServer::new_with_addr_tls_modules_and_spawner(
-                ClusterType::build_addr(port),
-                None,
-                tls_paths.clone(),
-                mtls_enabled,
-                None, // cert_auth_field - not used in cluster tests
-                &modules,
-                |cmd| {
+            RedisServerBuilder::new()
+                .address(ClusterType::build_addr(port))
+                .tls_paths_opt(tls_paths.clone())
+                .mtls(mtls_enabled)
+                .modules(&modules)
+                .refine_and_build(|cmd| {
                     let tempdir = tempfile::Builder::new()
                         .prefix("redis")
                         .tempdir()
@@ -190,29 +189,22 @@ impl RedisCluster {
                         Self::password()
                     );
                     std::fs::write(&acl_path, acl_content).expect("failed to write acl file");
-                    cmd.arg("--cluster-enabled")
-                        .arg("yes")
-                        .arg("--cluster-config-file")
-                        .arg(tempdir.path().join("nodes.conf"))
-                        .arg("--cluster-node-timeout")
-                        .arg("5000")
-                        .arg("--aclfile")
-                        .arg(&acl_path);
+                    cmd.arg2("--cluster-enabled", "yes")
+                        .arg2("--cluster-config-file", tempdir.path().join("nodes.conf"))
+                        .arg2("--cluster-node-timeout", "5000")
+                        .arg2("--aclfile", &acl_path);
                     if let Some(num_databases) = cluster_databases {
-                        cmd.arg("--cluster-databases")
-                            .arg(num_databases.to_string());
+                        cmd.arg2("--cluster-databases", num_databases.to_string());
                     }
                     if is_tls {
-                        cmd.arg("--tls-cluster").arg("yes");
+                        cmd.arg2("--tls-cluster", "yes");
                         if replicas > 0 {
-                            cmd.arg("--tls-replication").arg("yes");
+                            cmd.arg2("--tls-replication", "yes");
                         }
                     }
                     cmd.current_dir(tempdir.path());
                     folders.push(tempdir);
-                    cmd.spawn().unwrap()
-                },
-            )
+                })
         };
 
         let verify_server = |server: &mut RedisServer| {

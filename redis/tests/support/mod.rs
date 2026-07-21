@@ -8,7 +8,7 @@ use redis::{
 };
 #[cfg(feature = "aio")]
 use redis::{aio, cmd};
-use redis_test::server::{Module, RedisServer, use_protocol};
+use redis_test::server::{Module, RedisServer, RedisServerBuilder, use_protocol};
 use redis_test::utils::{TlsFilePaths, get_random_available_port};
 #[cfg(feature = "tls-rustls")]
 use std::{
@@ -207,10 +207,6 @@ impl TestContext {
         )
     }
 
-    pub fn with_tls(tls_files: TlsFilePaths, mtls_enabled: bool) -> TestContext {
-        Self::with_modules_and_tls(&[], mtls_enabled, Some(tls_files))
-    }
-
     pub fn with_modules(modules: &[Module]) -> TestContext {
         Self::with_modules_and_tls(modules, false, None)
     }
@@ -246,18 +242,13 @@ impl TestContext {
         tls_files: Option<TlsFilePaths>,
         cert_auth_field: Option<&str>,
     ) -> Self {
-        let server = RedisServer::new_with_addr_tls_modules_and_spawner(
-            addr,
-            None,
-            tls_files,
-            mtls_enabled,
-            cert_auth_field,
-            modules,
-            |cmd| {
-                cmd.spawn()
-                    .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
-            },
-        );
+        let server = RedisServerBuilder::new()
+            .address(addr)
+            .tls_paths_opt(tls_files)
+            .mtls(mtls_enabled)
+            .cert_auth_field_opt(cert_auth_field)
+            .modules(modules)
+            .build();
 
         let client =
             build_single_client(server.connection_info(), &server.tls_paths, mtls_enabled).unwrap();

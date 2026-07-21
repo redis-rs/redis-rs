@@ -324,7 +324,7 @@ fn write_pipeline(rv: &mut Vec<u8>, pipe: &Pipeline, atomic: bool) {
     let write_commands = |rv: &mut Vec<u8>| {
         for idx in 0..pipe.commands.len() {
             let (args, data_start, cursor) = pipe.command_parts(idx);
-            write_command(rv, command_args_iter(&pipe.data, args, data_start), cursor).unwrap();
+            write_command(rv, command_args_iter(&pipe.data, args, data_start), cursor);
         }
     };
 

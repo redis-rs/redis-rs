@@ -214,6 +214,22 @@ fn bench_encode_integer(b: &mut Bencher) {
     });
 }
 
+fn bench_encode_set_ex(b: &mut Bencher) {
+    // `SET key val EX <secs>` — exercises the `SetExpiry` option encoder.
+    b.iter(|| {
+        let mut pipe = redis::pipe();
+
+        for _ in 0..1_000 {
+            pipe.cmd("SET")
+                .arg("session:abc123")
+                .arg("some-value")
+                .arg(redis::SetExpiry::EX(3600))
+                .ignore();
+        }
+        pipe.get_packed_pipeline()
+    });
+}
+
 fn bench_encode_pipeline(b: &mut Bencher) {
     b.iter(|| {
         let mut pipe = redis::pipe();
@@ -248,7 +264,8 @@ fn bench_encode(c: &mut Criterion) {
         .bench_function("pipeline", bench_encode_pipeline)
         .bench_function("pipeline_nested", bench_encode_pipeline_nested)
         .bench_function("integer", bench_encode_integer)
-        .bench_function("small", bench_encode_small);
+        .bench_function("small", bench_encode_small)
+        .bench_function("set_ex", bench_encode_set_ex);
     group.finish();
 }
 

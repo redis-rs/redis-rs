@@ -1,7 +1,7 @@
 use redis::{ConnectionAddr, IntoConnectionInfo, ProtocolVersion, RedisConnectionInfo};
+use std::ffi::OsStr;
 use std::path::Path;
 use std::{env, fs, path::PathBuf, process};
-
 use tempfile::TempDir;
 
 use crate::utils::{TlsFilePaths, build_keys_and_certs_for_tls, get_random_available_port};
@@ -30,10 +30,117 @@ enum ServerType {
 }
 
 /// Represents a module that can be loaded into the Redis server.
+#[derive(Clone)]
 #[non_exhaustive]
 pub enum Module {
     Bloom,
     Json,
+}
+
+/// A builder for [`RedisServer`]
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use redis_test::server::{RedisServerBuilder, Module};
+///
+/// let server = RedisServerBuilder::new().module(Module::Json).build();
+/// let info = server.connection_info();
+/// // Connect to the server using `info`...
+/// ```
+// Note that this builder is an owned-builder as we want to build in a single chain anyway and do
+// not have to build multiple instances from the same builder. Also, this spares us cloning
+// considerations.
+#[derive(Default)]
+pub struct RedisServerBuilder {
+    address: Option<ConnectionAddr>,
+    config_file: Option<PathBuf>,
+    cert_auth_field: Option<String>,
+    modules: Vec<Module>,
+    mtls: bool,
+    tls_paths: Option<TlsFilePaths>,
+}
+
+impl RedisServerBuilder {
+    /// Starts a fresh builder
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn address(mut self, address: ConnectionAddr) -> Self {
+        self.address = Some(address);
+        self
+    }
+
+    pub fn config(mut self, config_file: PathBuf) -> Self {
+        self.config_file = Some(config_file);
+        self
+    }
+
+    pub fn cert_auth_field(mut self, cert_auth_field: impl Into<String>) -> Self {
+        self.cert_auth_field = Some(cert_auth_field.into());
+        self
+    }
+
+    pub fn cert_auth_field_opt(mut self, opt_cert_auth_field: Option<impl Into<String>>) -> Self {
+        self.cert_auth_field = opt_cert_auth_field.map(|value| value.into());
+        self
+    }
+
+    pub fn module(self, module: Module) -> Self {
+        self.modules(&[module])
+    }
+
+    pub fn modules(mut self, modules: &[Module]) -> Self {
+        self.modules = modules.to_vec();
+        self
+    }
+
+    pub fn mtls(mut self, enable_mtls: bool) -> Self {
+        self.mtls = enable_mtls;
+        self
+    }
+
+    pub fn tls_paths(mut self, tls_paths: TlsFilePaths) -> Self {
+        self.tls_paths = Some(tls_paths);
+        self
+    }
+
+    pub fn tls_paths_opt(mut self, opt_tls_paths: Option<TlsFilePaths>) -> Self {
+        self.tls_paths = opt_tls_paths;
+        self
+    }
+
+    /// Builds the [`RedisServer`] for this instance
+    pub fn build(self) -> RedisServer {
+        self.refine_and_build(|_| {})
+    }
+
+    /// Builds the [`RedisServer`] for this instance after refining the arguments for the server
+    ///
+    /// # Arguments
+    ///
+    /// * `refiner` - This method is called just before starting the server. It takes one argument,
+    ///   which is the command to start the server with. This allows to add additional config to
+    ///   the server command.
+    pub fn refine_and_build(self, refiner: impl FnOnce(&mut RedisServerCommand)) -> RedisServer {
+        let addr = self.address.unwrap_or_else(|| {
+            // This is technically a race, but we can't do better with
+            // the tools that redis gives us :(
+            let redis_port = get_random_available_port();
+            RedisServer::get_addr(redis_port)
+        });
+
+        RedisServer::new(
+            addr,
+            self.config_file,
+            self.tls_paths,
+            self.mtls,
+            self.cert_auth_field,
+            self.modules.as_slice(),
+            refiner,
+        )
+    }
 }
 
 /// A standalone Redis server instance for testing.
@@ -42,10 +149,23 @@ pub enum Module {
 /// configuration, and shutdown.
 ///
 /// # Example
+///
+/// Use `default()` to build a [`RedisServer`] with default settings:
+///
 /// ```rust,no_run
 /// use redis_test::server::RedisServer;
 ///
-/// let server = RedisServer::new();
+/// let server = RedisServer::default();
+/// let info = server.connection_info();
+/// // Connect to the server using `info`...
+/// ```
+///
+/// If you need a custom setup, use [`RedisServerBuilder`]:
+///
+/// ```rust,no_run
+/// use redis_test::server::{RedisServerBuilder, Module};
+///
+/// let server = RedisServerBuilder::new().module(Module::Json).build();
 /// let info = server.connection_info();
 /// // Connect to the server using `info`...
 /// ```
@@ -55,6 +175,7 @@ pub struct RedisServer {
     pub log_file: PathBuf,
     pub addr: redis::ConnectionAddr,
     pub tls_paths: Option<TlsFilePaths>,
+    pub mtls: bool,
 }
 
 impl ServerType {
@@ -83,19 +204,11 @@ impl Drop for RedisServer {
 
 impl Default for RedisServer {
     fn default() -> Self {
-        Self::new()
+        RedisServerBuilder::new().build()
     }
 }
 
 impl RedisServer {
-    pub fn new() -> RedisServer {
-        RedisServer::with_modules(&[], false)
-    }
-
-    pub fn new_with_mtls() -> RedisServer {
-        RedisServer::with_modules(&[], true)
-    }
-
     pub fn log_file_contents(&self) -> Option<String> {
         std::fs::read_to_string(self.log_file.clone()).ok()
     }
@@ -123,58 +236,34 @@ impl RedisServer {
         }
     }
 
-    pub fn with_modules(modules: &[Module], mtls_enabled: bool) -> RedisServer {
-        // this is technically a race but we can't do better with
-        // the tools that redis gives us :(
-        let redis_port = get_random_available_port();
-        let addr = RedisServer::get_addr(redis_port);
-
-        RedisServer::new_with_addr_tls_modules_and_spawner(
-            addr,
-            None,
-            None,
-            mtls_enabled,
-            None,
-            modules,
-            |cmd| {
-                cmd.spawn()
-                    .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
-            },
-        )
-    }
-
-    pub fn new_with_addr_and_modules(
-        addr: redis::ConnectionAddr,
+    fn new(
+        mut addr: redis::ConnectionAddr,
+        config_file: Option<PathBuf>,
+        mut tls_paths: Option<TlsFilePaths>,
+        mtls: bool,
+        cert_auth_field: Option<String>,
         modules: &[Module],
-        mtls_enabled: bool,
+        cmd_refiner: impl FnOnce(&mut RedisServerCommand),
     ) -> RedisServer {
-        RedisServer::new_with_addr_tls_modules_and_spawner(
-            addr,
-            None,
-            None,
-            mtls_enabled,
-            None,
-            modules,
-            |cmd| {
-                cmd.spawn()
-                    .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
-            },
-        )
-    }
+        // Guard against unsupported settings
+        if tls_paths.is_some() && !matches!(addr, ConnectionAddr::TcpTls { .. }) {
+            panic!("'tls_paths' is only supported for TCP with TLS");
+        }
 
-    pub fn new_with_addr_tls_modules_and_spawner<
-        F: FnOnce(&mut process::Command) -> process::Child,
-    >(
-        addr: redis::ConnectionAddr,
-        config_file: Option<&Path>,
-        tls_paths: Option<TlsFilePaths>,
-        mtls_enabled: bool,
-        cert_auth_field: Option<&str>,
-        modules: &[Module],
-        spawner: F,
-    ) -> RedisServer {
-        let bin = env::var("REDISRS_SERVER_BIN").unwrap_or_else(|_| "redis-server".to_string());
-        let mut redis_cmd = process::Command::new(&bin);
+        if mtls && !matches!(addr, ConnectionAddr::TcpTls { .. }) {
+            panic!("'mtls' is only supported for TCP with TLS");
+        }
+
+        if cert_auth_field.is_some() && !matches!(addr, ConnectionAddr::TcpTls { .. }) {
+            panic!("'cert_auth_field' is only supported for TCP with TLS");
+        }
+
+        if cert_auth_field.is_some() && !mtls {
+            panic!("'cert_auth_field' is only supported for mTLS");
+        }
+
+        // From here on, settings are good and supported
+        let mut redis_cmd = RedisServerCommand::new();
 
         if let Some(config_path) = config_file {
             redis_cmd.arg(config_path);
@@ -182,133 +271,77 @@ impl RedisServer {
 
         // Disable snapshotting
         // This stops littering `dump.rdb` files during testing/development.
-        redis_cmd.arg("--save").arg("");
+        redis_cmd.arg2("--save", "");
 
-        // Load Redis Modules
-        for module in modules {
-            match module {
-                Module::Json => {
-                    // Try to pick up json module path from REDISRS_REDIS_JSON_PATH environment variable
-                    let path = match env::var("REDISRS_REDIS_JSON_PATH") {
-                        Ok(path) => path,
-                        // Falling back to legacy REDIS_RS_REDIS_JSON_PATH environment variable
-                        Err(_) => match env::var("REDIS_RS_REDIS_JSON_PATH") {
-                            Ok(path) => {
-                                eprintln!(
-                                    "Warning: Use of REDIS_RS_REDIS_JSON_PATH is deprecated. Use REDISRS_REDIS_JSON_PATH (no '_' before 'RS') instead"
-                                );
-                                path
-                            }
-                            Err(_) => {
-                                panic!(
-                                    "Unable to find path to RedisJSON at REDISRS_REDIS_JSON_PATH, is it set?"
-                                );
-                            }
-                        },
-                    };
+        redis_cmd.load_modules(modules);
 
-                    redis_cmd.arg("--loadmodule").arg(path);
-                }
-                Module::Bloom => {
-                    let path = env::var("REDISRS_REDIS_BLOOM_PATH").expect(
-                        "Unable to find path to RedisBloom at REDISRS_REDIS_BLOOM_PATH, is it set?",
-                    );
-
-                    redis_cmd.arg("--loadmodule").arg(path);
-                }
-            };
-        }
-
-        redis_cmd
-            .stdout(process::Stdio::piped())
-            .stderr(process::Stdio::piped());
         let tempdir = tempfile::Builder::new()
             .prefix("redis")
             .tempdir()
             .expect("failed to create tempdir");
         let log_file = Self::log_file(&tempdir);
-        redis_cmd.arg("--logfile").arg(log_file.clone());
-        if get_major_version(&bin) > 6 {
-            redis_cmd.arg("--enable-debug-command").arg("yes");
+        redis_cmd.arg2("--logfile", log_file.clone());
+        if get_major_version() > 6 {
+            redis_cmd.arg2("--enable-debug-command", "yes");
         }
-        match addr {
-            redis::ConnectionAddr::Tcp(ref bind, server_port) => {
-                redis_cmd
-                    .arg("--port")
-                    .arg(server_port.to_string())
-                    .arg("--bind")
-                    .arg(bind);
 
-                RedisServer {
-                    process: spawner(&mut redis_cmd),
-                    log_file,
-                    tempdir,
-                    addr,
-                    tls_paths: None,
-                }
+        // Disable all default listening
+        redis_cmd.arg2("--port", "0");
+
+        // Enable one kind of listening
+        match addr {
+            redis::ConnectionAddr::Tcp(ref host, port) => {
+                redis_cmd
+                    .arg2("--port", port.to_string())
+                    .arg2("--bind", host);
             }
             redis::ConnectionAddr::TcpTls { ref host, port, .. } => {
-                let tls_paths = tls_paths.unwrap_or_else(|| build_keys_and_certs_for_tls(&tempdir));
+                let tls_paths =
+                    tls_paths.get_or_insert_with(|| build_keys_and_certs_for_tls(&tempdir));
 
-                let auth_client = if mtls_enabled { "yes" } else { "no" };
+                let auth_client = if mtls { "yes" } else { "no" };
 
                 // prepare redis with TLS
                 redis_cmd
-                    .arg("--tls-port")
-                    .arg(port.to_string())
-                    .arg("--port")
-                    .arg("0")
-                    .arg("--tls-cert-file")
-                    .arg(&tls_paths.redis_crt)
-                    .arg("--tls-key-file")
-                    .arg(&tls_paths.redis_key)
-                    .arg("--tls-ca-cert-file")
-                    .arg(&tls_paths.ca_crt)
-                    .arg("--tls-auth-clients")
-                    .arg(auth_client)
-                    .arg("--bind")
-                    .arg(host);
+                    .arg2("--tls-port", port.to_string())
+                    .arg2("--tls-cert-file", &tls_paths.redis_crt)
+                    .arg2("--tls-key-file", &tls_paths.redis_key)
+                    .arg2("--tls-ca-cert-file", &tls_paths.ca_crt)
+                    .arg2("--tls-auth-clients", auth_client)
+                    .arg2("--bind", host);
 
                 // Enable certificate-based authentication (Redis 8.6+)
                 // The cert_auth_field specifies which certificate field to use for username mapping
                 // (e.g., "CN" for Common Name)
                 if let Some(field) = cert_auth_field {
-                    redis_cmd.arg("--tls-auth-clients-user").arg(field);
+                    redis_cmd.arg2("--tls-auth-clients-user", field);
                 }
 
                 // Insecure only disabled if `mtls` is enabled
-                let insecure = !mtls_enabled;
+                let insecure = !mtls;
 
-                let addr = redis::ConnectionAddr::TcpTls {
+                addr = redis::ConnectionAddr::TcpTls {
                     host: host.clone(),
                     port,
                     insecure,
                     tls_params: None,
                 };
-
-                RedisServer {
-                    process: spawner(&mut redis_cmd),
-                    log_file,
-                    tempdir,
-                    addr,
-                    tls_paths: Some(tls_paths),
-                }
             }
             redis::ConnectionAddr::Unix(ref path) => {
-                redis_cmd
-                    .arg("--port")
-                    .arg("0")
-                    .arg("--unixsocket")
-                    .arg(path);
-                RedisServer {
-                    process: spawner(&mut redis_cmd),
-                    log_file,
-                    tempdir,
-                    addr,
-                    tls_paths: None,
-                }
+                redis_cmd.arg2("--unixsocket", path);
             }
             _ => panic!("Unknown address format: {addr:?}"),
+        };
+
+        cmd_refiner(&mut redis_cmd);
+
+        RedisServer {
+            process: redis_cmd.spawn(),
+            log_file,
+            tempdir,
+            addr,
+            tls_paths,
+            mtls,
         }
     }
 
@@ -345,11 +378,157 @@ impl RedisServer {
     }
 }
 
-fn get_major_version(server_binary: &str) -> u8 {
+pub struct RedisServerCommand {
+    // The actual command to run
+    cmd: process::Command,
+}
+
+impl Default for RedisServerCommand {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RedisServerCommand {
+    pub fn new() -> Self {
+        let bin = env::var("REDISRS_SERVER_BIN").unwrap_or_else(|_| "redis-server".to_string());
+
+        // Build the main command
+        let mut cmd = process::Command::new(&bin);
+
+        // Capture the command's stdout and stderr
+        cmd.stdout(process::Stdio::piped());
+        cmd.stderr(process::Stdio::piped());
+
+        // Build the instance
+        Self { cmd }
+    }
+
+    /// Appends a new argument to the command
+    pub fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
+        self.cmd.arg(arg);
+        self
+    }
+
+    /// Appends two new arguments to the command
+    ///
+    /// This method is purely convenience to get more readable argument setting as it allows to
+    /// re-write
+    ///
+    /// ```rust,no_run
+    /// # use redis_test::server::RedisServerCommand;
+    /// # let mut redis_cmd = RedisServerCommand::new();
+    /// redis_cmd
+    ///     .arg("--foo")
+    ///     .arg("some-value-for-foo")
+    ///     .arg("--bar")
+    ///     .arg("some-value-for-bar")
+    ///     .arg("--baz")
+    ///     .arg("some-value-for-baz");
+    /// ```
+    ///
+    /// in a more readable fashion:
+    ///
+    /// ```rust,no_run
+    /// # use redis_test::server::RedisServerCommand;
+    /// # let mut redis_cmd = RedisServerCommand::new();
+    /// redis_cmd
+    ///     .arg2("--foo", "some-value-for-foo")
+    ///     .arg2("--bar", "some-value-for-bar")
+    ///     .arg2("--baz", "some-value-for-baz");
+    /// ```
+    pub fn arg2<S1: AsRef<OsStr>, S2: AsRef<OsStr>>(&mut self, arg1: S1, arg2: S2) -> &mut Self {
+        self.cmd.arg(arg1).arg(arg2);
+        self
+    }
+
+    /// Appends three new arguments to the command
+    ///
+    /// This method is purely convenience to get more readable argument setting (cf. [`arg2`](Self::arg2)).
+    pub fn arg3<S1: AsRef<OsStr>, S2: AsRef<OsStr>, S3: AsRef<OsStr>>(
+        &mut self,
+        arg1: S1,
+        arg2: S2,
+        arg3: S3,
+    ) -> &mut Self {
+        self.cmd.arg(arg1).arg(arg2).arg(arg3);
+        self
+    }
+
+    /// Set the directory to run the command in
+    pub fn current_dir<P: AsRef<Path>>(&mut self, dir: P) -> &mut Self {
+        self.cmd.current_dir(dir);
+        self
+    }
+
+    /// Runs the command
+    ///
+    /// # Panics
+    ///
+    /// This method panics if spawning fails.
+    ///
+    /// If the command itself exits (immediately or not, regardless of the exit code) this function
+    /// does _not_ panic but returns the `Child` instance.
+    pub fn spawn(&mut self) -> process::Child {
+        self.cmd
+            .spawn()
+            .unwrap_or_else(|err| panic!("Failed to run {:?}: {err}", self.cmd))
+    }
+
+    /// Loads a module from the given path
+    fn load_module(&mut self, path: String) {
+        if !Path::new(&path).is_file() {
+            panic!("Module doesn't exist or is not a file: {path}");
+        }
+        self.arg2("--loadmodule", path);
+    }
+
+    /// Loads the given modules
+    ///
+    /// The paths to the modules are inferred from environment variables.
+    pub(crate) fn load_modules(&mut self, modules: &[Module]) {
+        for module in modules {
+            match module {
+                Module::Json => {
+                    // Try to pick up json module path from REDISRS_REDIS_JSON_PATH environment variable
+                    let path = match env::var("REDISRS_REDIS_JSON_PATH") {
+                        Ok(path) => path,
+                        // Falling back to legacy REDIS_RS_REDIS_JSON_PATH environment variable
+                        Err(_) => match env::var("REDIS_RS_REDIS_JSON_PATH") {
+                            Ok(path) => {
+                                eprintln!(
+                                    "Warning: Use of REDIS_RS_REDIS_JSON_PATH is deprecated. Use REDISRS_REDIS_JSON_PATH (no '_' before 'RS') instead"
+                                );
+                                path
+                            }
+                            Err(_) => {
+                                panic!(
+                                    "Unable to find path to RedisJSON at REDISRS_REDIS_JSON_PATH, is it set?"
+                                );
+                            }
+                        },
+                    };
+
+                    self.load_module(path);
+                }
+                Module::Bloom => {
+                    let path = env::var("REDISRS_REDIS_BLOOM_PATH").expect(
+                        "Unable to find path to RedisBloom at REDISRS_REDIS_BLOOM_PATH, is it set?",
+                    );
+
+                    self.load_module(path);
+                }
+            };
+        }
+    }
+}
+
+fn get_major_version() -> u8 {
     let full_string = String::from_utf8(
-        process::Command::new(server_binary)
+        RedisServerCommand::new()
             .arg("-v")
-            .output()
+            .spawn()
+            .wait_with_output()
             .unwrap()
             .stdout,
     )

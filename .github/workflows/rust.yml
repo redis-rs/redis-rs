@@ -42,15 +42,17 @@ jobs:
             # Skipping ValKey 8.1 as it's too similar to 8.0
             {  db-org: valkey-io, db-name: valkey, db-version: 9.0.4, json-module-version: v2.6.22, bloom-module-version: "valkey-bloom:1.0.1" },
             # Skipping ValKey 9.1 as it's too similar to 9.0
+            #
+            # KeyDB (#2203), Dragonfly (#2204), Kvrocks, ... are implicitly supported, but this support is not tested.
           ]
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Cache RedisJSON
         if: matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
         id: cache-redisjson
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             /tmp/librejson.so
@@ -74,15 +76,15 @@ jobs:
           cp "$HOME/db/redisbloom.so" "$REDISRS_REDIS_BLOOM_PATH"
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain/@master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
           components: rustfmt
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # v2.82.10
         with:
           tool: nextest
 
@@ -91,7 +93,7 @@ jobs:
 
       - name: Checkout RedisJSON
         if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: "RedisJSON/RedisJSON"
           path: "./__ci/redis-json"
@@ -155,7 +157,7 @@ jobs:
       - name: Load Valkey Bloom module from cache
         if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:')
         id: cache-valkey-bloom
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             /tmp/valkey-bloom/target/release/libvalkey_bloom.so
@@ -190,7 +192,7 @@ jobs:
       - name: Cache RedisJSON
         if: matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
         id: cache-redisjson-save
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.REDISRS_REDIS_JSON_PATH }}
           key: ${{ runner.os }}-redisjson-${{ matrix.config.json-module-version }}
@@ -204,7 +206,7 @@ jobs:
       matrix: *db-matrix
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Install DB
         uses: ./.github/actions/install-db
@@ -216,7 +218,7 @@ jobs:
       - name: Load Valkey Bloom module from cache
         if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:')
         id: cache-valkey-bloom
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             /tmp/valkey-bloom/target/release/libvalkey_bloom.so
@@ -233,11 +235,11 @@ jobs:
           cp "$HOME/db/redisbloom.so" "$REDISRS_REDIS_BLOOM_PATH"
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain/@master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
 
       - name: Start Redis
         run: |
@@ -288,7 +290,7 @@ jobs:
           {toolchain: 1.88.0},
         ]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: lint
         uses: ./.github/actions/lint-and-check
         with:
@@ -323,7 +325,7 @@ jobs:
           RUSTFLAGS: --cfg tokio_unstable
 
       - name: Check semver
-        uses: obi1kenobi/cargo-semver-checks-action@v2
+        uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
         with:
           package: redis
 
@@ -334,7 +336,7 @@ jobs:
     env:
       rust_ver: stable
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Install DB
         uses: ./.github/actions/install-db
@@ -344,11 +346,11 @@ jobs:
           db-version: 8.0.2
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain/@master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: ${{ env.rust_ver }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
 
       - name: Benchmark
         run: |
@@ -360,17 +362,17 @@ jobs:
           critcmp base changes
 
       # We check out again, because we switched branches in the last step.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
   flag-frenzy:
     needs: [lint, build-and-test]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain/@master
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
 
       - run: |
           cargo install --git https://github.com/nihohit/flag-frenzy.git
@@ -381,7 +383,7 @@ jobs:
     runs-on: windows-2022  # Locked to `2022` because of #2124
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Install OpenSSL
         shell: powershell

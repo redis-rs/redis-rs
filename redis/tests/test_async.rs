@@ -56,7 +56,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn args(mut con: impl ConnectionLike) {
+    async fn test_args(mut con: impl ConnectionLike) {
         redis::cmd("SET")
             .arg("key1")
             .arg(b"foo")
@@ -76,7 +76,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn no_response_skips_response_even_on_error(mut con: impl ConnectionLike) {
+    async fn test_no_response_skips_response_even_on_error(mut con: impl ConnectionLike) {
         redis::cmd("SET")
             .arg("key")
             .arg(b"foo")
@@ -155,7 +155,22 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn can_authenticate_with_username_and_password() {
+    async fn test_set_write_backpressure_boundary_does_not_break_connection() {
+        let ctx = TestContext::new();
+        let config =
+            redis::AsyncConnectionConfig::new().set_write_backpressure_boundary(16 * 1024 * 1024);
+        let mut conn = ctx
+            .client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await
+            .unwrap();
+        let _: () = conn.set("key", "value").await.unwrap();
+        let result: String = conn.get("key").await.unwrap();
+        assert_eq!(result, "value");
+    }
+
+    #[async_test]
+    async fn test_can_authenticate_with_username_and_password() {
         let ctx = TestContext::new();
         let mut con = ctx.async_connection().await.unwrap();
 
@@ -192,7 +207,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn nice_hash_api(mut connection: impl AsyncCommands) {
+    async fn test_nice_hash_api(mut connection: impl AsyncCommands) {
         assert_eq!(
             connection
                 .hset_multiple("my_hash", &[("f1", 1), ("f2", 2), ("f3", 4), ("f4", 8)])
@@ -209,7 +224,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn nice_hash_api_in_pipe(mut connection: impl AsyncCommands) {
+    async fn test_nice_hash_api_in_pipe(mut connection: impl AsyncCommands) {
         assert_eq!(
             connection
                 .hset_multiple("my_hash", &[("f1", 1), ("f2", 2), ("f3", 4), ("f4", 8)])
@@ -230,7 +245,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn dont_panic_on_closed_multiplexed_connection() {
+    async fn test_dont_panic_on_closed_multiplexed_connection() {
         let ctx = TestContext::new();
         let client = ctx.client.clone();
         let connect = client.get_multiplexed_async_connection();
@@ -259,7 +274,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn pipeline_transaction(mut con: impl ConnectionLike) {
+    async fn test_pipeline_transaction(mut con: impl ConnectionLike) {
         let mut pipe = redis::pipe();
         pipe.atomic()
             .cmd("SET")
@@ -282,7 +297,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn client_tracking_doesnt_block_execution(mut con: impl AsyncCommands) {
+    async fn test_client_tracking_doesnt_block_execution(mut con: impl AsyncCommands) {
         //It checks if the library distinguish a push-type message from the others and continues its normal operation.
 
         let mut pipe = redis::pipe();
@@ -303,7 +318,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn pipeline_transaction_with_errors(mut con: impl AsyncCommands) {
+    async fn test_pipeline_transaction_with_errors(mut con: impl AsyncCommands) {
         con.set::<_, _, ()>("x", 42).await.unwrap();
 
         // Make Redis a replica of a nonexistent master, thereby making it read-only.
@@ -340,7 +355,7 @@ mod basic_async {
 
     #[async_test]
     #[cfg(feature = "json")]
-    async fn module_json_and_pipeline_transaction_with_ignore_errors() {
+    async fn test_module_json_and_pipeline_transaction_with_ignore_errors() {
         let ctx = TestContext::with_modules(&[Module::Json]);
         let mut con = ctx.async_connection().await.unwrap();
         con.set::<_, _, ()>("x", 42).await.unwrap();
@@ -391,7 +406,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn pipeline_with_ignore_errors(mut con: impl AsyncCommands) {
+    async fn test_pipeline_with_ignore_errors(mut con: impl AsyncCommands) {
         con.set::<_, _, ()>("x", 42).await.unwrap();
 
         let mut pipeline = redis::pipe();
@@ -420,7 +435,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn pipeline_returns_server_errors(mut con: impl AsyncCommands) {
+    async fn test_pipeline_returns_server_errors(mut con: impl AsyncCommands) {
         let mut pipe = redis::pipe();
         pipe.set("x", "x-value")
             .ignore()
@@ -468,7 +483,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn pipe_over_multiplexed_connection(mut con: impl ConnectionLike) {
+    async fn test_pipe_over_multiplexed_connection(mut con: impl ConnectionLike) {
         let mut pipe = pipe();
         pipe.zrange("zset", 0, 0);
         pipe.zrange("zset", 0, 0);
@@ -479,13 +494,13 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn running_multiple_commands(con: impl AsyncCommands + Clone) {
+    async fn test_running_multiple_commands(con: impl AsyncCommands + Clone) {
         let cmds = (0..100).map(move |i| test_cmd(con.clone(), i));
         future::join_all(cmds).await;
     }
 
     #[async_test]
-    async fn transaction_multiplexed_connection(con: impl ConnectionLike + Clone) {
+    async fn test_async_transaction(con: impl ConnectionLike + Clone) {
         let cmds = (0..100).map(move |i| {
             let mut con = con.clone();
             async move {
@@ -522,7 +537,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn async_scanning(mut con: impl ConnectionLike + Send) {
+    async fn test_async_scanning(mut con: impl ConnectionLike + Send) {
         let mut unseen = std::collections::HashSet::new();
 
         for x in 0..1000 {
@@ -554,7 +569,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn async_scanning_iterative(mut con: impl ConnectionLike + Send) {
+    async fn test_async_scanning_iterative(mut con: impl ConnectionLike + Send) {
         let mut unseen = std::collections::HashSet::new();
 
         for x in 0..1000 {
@@ -590,7 +605,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn async_scanning_stream(mut con: impl ConnectionLike + Sync + Send) {
+    async fn test_async_scanning_stream(mut con: impl ConnectionLike + Sync + Send) {
         let mut unseen = std::collections::HashSet::new();
 
         for x in 0..1000 {
@@ -626,7 +641,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn response_timeout_multiplexed_connection() {
+    async fn test_response_timeout_multiplexed_connection() {
         let ctx = TestContext::new();
 
         let mut connection = ctx.async_connection().await.unwrap();
@@ -640,7 +655,7 @@ mod basic_async {
 
     #[async_test]
     #[cfg(feature = "script")]
-    async fn script(mut con: impl ConnectionLike) {
+    async fn test_script(mut con: impl ConnectionLike) {
         // Note this test runs both scripts twice to test when they have already been loaded
         // into Redis and when they need to be loaded in
         let script1 = redis::Script::new("return redis.call('SET', KEYS[1], ARGV[1])");
@@ -670,7 +685,7 @@ mod basic_async {
 
     #[async_test]
     #[cfg(feature = "script")]
-    async fn script_load(mut con: impl ConnectionLike) {
+    async fn test_script_load(mut con: impl ConnectionLike) {
         let script = redis::Script::new("return 'Hello World'");
 
         let hash = script.prepare_invoke().load_async(&mut con).await.unwrap();
@@ -679,7 +694,7 @@ mod basic_async {
 
     #[async_test]
     #[cfg(feature = "script")]
-    async fn script_returning_complex_type(mut con: impl ConnectionLike) {
+    async fn test_script_returning_complex_type(mut con: impl ConnectionLike) {
         redis::Script::new("return {1, ARGV[1], true}")
             .arg("hello")
             .invoke_async(&mut con)
@@ -696,7 +711,7 @@ mod basic_async {
     // Allowing `let ()` as `query_async` requires the type it converts the result to.
     #[allow(clippy::let_unit_value, clippy::iter_nth_zero)]
     #[async_test]
-    async fn io_error_on_kill_issue_320() {
+    async fn test_io_error_on_kill_issue_320() {
         let ctx = TestContext::new();
 
         let mut conn_to_kill = ctx.async_connection().await.unwrap();
@@ -716,7 +731,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn invalid_password_issue_343() {
+    async fn test_invalid_password_issue_343() {
         let ctx = TestContext::new();
 
         let redis = RedisConnectionInfo::default().set_password("asdcasc");
@@ -743,7 +758,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn scan_with_options_works(mut con: impl AsyncCommands) {
+    async fn test_scan_with_options_works(mut con: impl AsyncCommands) {
         for i in 0..20usize {
             let _: () = con.append(format!("test/{i}"), i).await.unwrap();
             let _: () = con.append(format!("other/{i}"), i).await.unwrap();
@@ -772,7 +787,7 @@ mod basic_async {
     // Test issue of Stream trait blocking if we try to iterate more than 10 items
     // https://github.com/mitsuhiko/redis-rs/issues/537 and https://github.com/mitsuhiko/redis-rs/issues/583
     #[async_test]
-    async fn issue_stream_blocks(mut con: impl AsyncCommands) {
+    async fn test_issue_stream_blocks(mut con: impl AsyncCommands) {
         for i in 0..20usize {
             let _: () = con.append(format!("test/{i}"), i).await.unwrap();
         }
@@ -789,7 +804,7 @@ mod basic_async {
     // Test issue of AsyncCommands::scan returning the wrong number of keys
     // https://github.com/redis-rs/redis-rs/issues/759
     #[async_test]
-    async fn issue_async_commands_scan_broken(mut con: impl AsyncCommands) {
+    async fn test_issue_async_commands_scan_broken(mut con: impl AsyncCommands) {
         let mut keys: Vec<String> = (0..100).map(|k| format!("async-key{k}")).collect();
         keys.sort();
         for key in &keys {
@@ -809,7 +824,7 @@ mod basic_async {
         use super::*;
 
         #[async_test]
-        async fn pub_sub_subscription() {
+        async fn test_pub_sub_subscription() {
             let ctx = TestContext::new();
 
             let mut pubsub_conn = ctx.async_pubsub().await.unwrap();
@@ -831,7 +846,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn pub_sub_subscription_to_multiple_channels() {
+        async fn test_pub_sub_subscription_to_multiple_channels() {
             let ctx = TestContext::new();
 
             let mut pubsub_conn = ctx.async_pubsub().await.unwrap();
@@ -854,7 +869,7 @@ mod basic_async {
         // Test issue of AsyncCommands::scan not returning keys because wrong assumptions about the key type were made
         // https://github.com/redis-rs/redis-rs/issues/1309
         #[async_test]
-        async fn issue_async_commands_scan_finishing_prematurely(mut con: impl AsyncCommands) {
+        async fn test_issue_async_commands_scan_finishing_prematurely(mut con: impl AsyncCommands) {
             const PREFIX: &str = "async-key";
             const NUM_KEYS: usize = 100;
 
@@ -912,7 +927,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn pub_sub_unsubscription() {
+        async fn test_pub_sub_unsubscription() {
             const SUBSCRIPTION_KEY: &str = "phonewave-pub-sub-unsubscription";
 
             let ctx = TestContext::new();
@@ -933,7 +948,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn can_receive_messages_while_sending_requests_from_split_pub_sub() {
+        async fn test_can_receive_messages_while_sending_requests_from_split_pub_sub() {
             let ctx = TestContext::new();
 
             let (mut sink, mut stream) = ctx.async_pubsub().await.unwrap().split();
@@ -953,7 +968,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn can_send_ping_on_split_pubsub() {
+        async fn test_can_send_ping_on_split_pubsub() {
             let ctx = TestContext::new();
 
             let (mut sink, mut stream) = ctx.async_pubsub().await.unwrap().split();
@@ -996,7 +1011,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn can_receive_messages_from_split_pub_sub_after_sink_was_dropped() {
+        async fn test_can_receive_messages_from_split_pub_sub_after_sink_was_dropped() {
             let ctx = TestContext::new();
 
             let (mut sink, mut stream) = ctx.async_pubsub().await.unwrap().split();
@@ -1017,7 +1032,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn can_receive_messages_from_split_pub_sub_after_into_on_message() {
+        async fn test_can_receive_messages_from_split_pub_sub_after_into_on_message() {
             let ctx = TestContext::new();
 
             let mut pubsub = ctx.async_pubsub().await.unwrap();
@@ -1040,7 +1055,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn cannot_subscribe_on_split_pub_sub_after_stream_was_dropped() {
+        async fn test_cannot_subscribe_on_split_pub_sub_after_stream_was_dropped() {
             let ctx = TestContext::new();
 
             let (mut sink, stream) = ctx.async_pubsub().await.unwrap().split();
@@ -1050,7 +1065,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn automatic_unsubscription() {
+        async fn test_automatic_unsubscription() {
             const SUBSCRIPTION_KEY: &str = "phonewave-automatic-unsubscription";
 
             let ctx = TestContext::new();
@@ -1080,7 +1095,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn automatic_unsubscription_on_split() {
+        async fn test_automatic_unsubscription_on_split() {
             const SUBSCRIPTION_KEY: &str = "phonewave-automatic-unsubscription-on-split";
 
             let ctx = TestContext::new();
@@ -1124,7 +1139,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn pipe_errors_do_not_affect_subsequent_commands(mut conn: impl AsyncCommands) {
+        async fn test_pipe_errors_do_not_affect_subsequent_commands(mut conn: impl AsyncCommands) {
             conn.lpush::<&str, &str, ()>("key", "value").await.unwrap();
 
             redis::pipe()
@@ -1139,7 +1154,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn multiplexed_pub_sub_subscribe_on_multiple_channels() {
+        async fn test_multiplexed_pub_sub_subscribe_on_multiple_channels() {
             let ctx = TestContext::new();
             if !ctx.protocol.supports_resp3() {
                 return;
@@ -1169,7 +1184,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn non_transaction_errors_do_not_affect_other_results_in_pipeline(
+        async fn test_non_transaction_errors_do_not_affect_other_results_in_pipeline(
             mut conn: impl AsyncCommands,
         ) {
             conn.lpush::<&str, &str, ()>("key", "value").await.unwrap();
@@ -1190,7 +1205,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn pub_sub_multiple() {
+        async fn test_pub_sub_multiple() {
             let ctx = TestContext::new();
             let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);
             let connection_info = ctx.server.connection_info().set_redis_settings(redis);
@@ -1254,7 +1269,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn pub_sub_requires_resp3() {
+        async fn test_pub_sub_requires_resp3() {
             if use_protocol().supports_resp3() {
                 return;
             }
@@ -1270,7 +1285,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn push_sender_send_on_disconnect() {
+        async fn test_push_sender_send_on_disconnect() {
             let ctx = TestContext::new();
             let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);
             let connection_info = ctx.server.connection_info().set_redis_settings(redis);
@@ -1292,7 +1307,7 @@ mod basic_async {
 
         #[cfg(feature = "connection-manager")]
         #[async_test]
-        async fn manager_should_resubscribe_to_pubsub_channels_after_disconnect() {
+        async fn test_manager_should_resubscribe_to_pubsub_channels_after_disconnect() {
             let ctx = TestContext::new();
             if !ctx.protocol.supports_resp3() {
                 return;
@@ -1387,7 +1402,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn async_basic_pipe_with_parsing_error(mut conn: impl ConnectionLike) {
+    async fn test_async_basic_pipe_with_parsing_error(mut conn: impl ConnectionLike) {
         // Tests a specific case involving repeated errors in transactions.
 
         // create a transaction where 2 errors are returned.
@@ -1417,19 +1432,13 @@ mod basic_async {
 
     #[async_test]
     #[cfg(feature = "connection-manager")]
-    async fn connection_manager_reconnect_after_delay() {
+    async fn test_connection_manager_reconnect_after_delay() {
         let max_delay_between_attempts = Duration::from_millis(2);
         let mut config = redis::aio::ConnectionManagerConfig::new()
             .set_exponent_base(10000.0)
             .set_max_delay(max_delay_between_attempts);
 
-        let tempdir = tempfile::Builder::new()
-            .prefix("redis")
-            .tempdir()
-            .expect("failed to create tempdir");
-        let tls_files = redis_test::utils::build_keys_and_certs_for_tls(&tempdir);
-
-        let ctx = TestContext::with_tls(tls_files.clone(), false);
+        let ctx = TestContext::new();
         let protocol = ctx.protocol;
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1440,8 +1449,11 @@ mod basic_async {
             redis::aio::ConnectionManager::new_with_config(ctx.client.clone(), config)
                 .await
                 .unwrap();
+
+        // Store the server's address and kill the server
         let addr = ctx.server.client_addr().clone();
         drop(ctx);
+
         let result: RedisResult<redis::Value> = manager.set("foo", "bar").await;
         // we expect a connection failure error.
         assert!(result.unwrap_err().is_unrecoverable_error());
@@ -1449,7 +1461,8 @@ mod basic_async {
             assert_eq!(rx.recv().await.unwrap().kind, PushKind::Disconnection);
         }
 
-        let _server = redis_test::server::RedisServer::new_with_addr_and_modules(addr, &[], false);
+        // Start a new server, re-using the previous address
+        let _ctx = TestContext::new_with_addr(addr);
 
         for _ in 0..5 {
             let Ok(result) = manager.set::<_, _, Value>("foo", "bar").await else {
@@ -1467,7 +1480,7 @@ mod basic_async {
 
     #[cfg(feature = "connection-manager")]
     #[async_test]
-    async fn manager_should_reconnect_without_actions_if_resp3_is_set() {
+    async fn test_manager_should_reconnect_without_actions_if_resp3_is_set() {
         let ctx = TestContext::new();
         if !ctx.protocol.supports_resp3() {
             return;
@@ -1495,7 +1508,7 @@ mod basic_async {
 
     #[cfg(feature = "connection-manager")]
     #[async_test]
-    async fn manager_should_completely_disconnect_when_drop() {
+    async fn test_manager_should_completely_disconnect_when_drop() {
         let ctx = TestContext::new();
         let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);
         let connection_info = ctx.server.connection_info().set_redis_settings(redis);
@@ -1536,7 +1549,7 @@ mod basic_async {
 
     #[cfg(feature = "connection-manager")]
     #[async_test]
-    async fn manager_should_reconnect_without_actions_if_push_sender_is_set_even_after_sender_returns_error()
+    async fn test_manager_should_reconnect_without_actions_if_push_sender_is_set_even_after_sender_returns_error()
      {
         let ctx = TestContext::new();
         if !ctx.protocol.supports_resp3() {
@@ -1579,7 +1592,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn multiplexed_connection_kills_connection_on_drop_even_when_blocking() {
+    async fn test_multiplexed_connection_kills_connection_on_drop_even_when_blocking() {
         let ctx = TestContext::new();
 
         let mut conn = ctx.async_connection().await.unwrap();
@@ -1616,7 +1629,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn monitor() {
+    async fn test_monitor() {
         let ctx = TestContext::new();
 
         let mut conn = ctx.async_connection().await.unwrap();
@@ -1712,7 +1725,7 @@ mod basic_async {
 
     #[async_test]
     #[cfg(feature = "connection-manager")]
-    async fn resp3_pushes_connection_manager() {
+    async fn test_resp3_pushes_connection_manager() {
         let ctx = TestContext::new();
         let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);
         let connection_info = ctx.server.connection_info().set_redis_settings(redis);
@@ -1738,7 +1751,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn select_db() {
+    async fn test_select_db() {
         let ctx = TestContext::new();
         let redis = redis_settings().set_db(5);
         let connection_info = ctx.server.connection_info().set_redis_settings(redis);
@@ -1755,7 +1768,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn multiplexed_connection_send_single_disconnect_on_connection_failure() {
+    async fn test_multiplexed_connection_send_single_disconnect_on_connection_failure() {
         let mut ctx = TestContext::new();
         if !ctx.protocol.supports_resp3() {
             return;
@@ -1778,7 +1791,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn fail_on_empty_command() {
+    async fn test_fail_on_empty_command() {
         let ctx = TestContext::new();
         let mut connection = ctx.async_connection().await.unwrap();
 
@@ -1811,7 +1824,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn simple_case_success(mut con: impl AsyncCommands + Clone) {
+        async fn test_simple_case_success(mut con: impl AsyncCommands + Clone) {
             let res: Vec<usize> = redis::aio::transaction_async(
                 con.clone(),
                 &["x", "y"],
@@ -1834,7 +1847,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn transaction_should_retry_on_watch() {
+        async fn test_transaction_should_retry_on_watch() {
             let ctx = TestContext::new();
             let con1 = ctx.async_connection().await.unwrap();
             let mut con2 = ctx.async_connection().await.unwrap();
@@ -1880,7 +1893,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn transaction_should_retry_on_none_from_closure() {
+        async fn test_transaction_should_retry_on_none_from_closure() {
             let ctx = TestContext::new();
             let con = ctx.async_connection().await.unwrap();
 
@@ -1907,7 +1920,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn transaction_abort_if_internal_function_returns_error() {
+        async fn test_transaction_abort_if_internal_function_returns_error() {
             let ctx = TestContext::new();
             let con = ctx.async_connection().await.unwrap();
             let attempts = Arc::new(AtomicUsize::new(0));
@@ -1949,7 +1962,7 @@ mod basic_async {
         use super::*;
 
         #[async_test]
-        async fn lazy_connection_manager_can_be_created_synchronously() {
+        async fn test_lazy_connection_manager_can_be_created_synchronously() {
             let ctx = TestContext::new();
 
             let config = redis::aio::ConnectionManagerConfig::new()
@@ -1965,7 +1978,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn lazy_connection_manager_reconnects_after_disconnect() {
+        async fn test_lazy_connection_manager_reconnects_after_disconnect() {
             let ctx = TestContext::new();
 
             let max_delay_between_attempts = Duration::from_millis(2);
@@ -1996,7 +2009,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn lazy_connection_manager_can_be_cloned_before_sending() {
+        async fn test_lazy_connection_manager_can_be_cloned_before_sending() {
             let ctx = TestContext::new();
 
             let config = redis::aio::ConnectionManagerConfig::new();
@@ -2015,7 +2028,7 @@ mod basic_async {
         }
 
         #[async_test]
-        async fn lazy_connection_manager_with_resp3_push() {
+        async fn test_lazy_connection_manager_with_resp3_push() {
             let ctx = TestContext::new();
             if !ctx.protocol.supports_resp3() {
                 return;

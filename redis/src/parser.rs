@@ -1,3 +1,8 @@
+// TODO remove this `allow` once `combine` released a fix. Upstream bug: https://github.com/Marwes/combine/issues/372
+#![allow(
+    semicolon_in_expressions_from_macros,
+    reason = "This lint is on in nightly since 2026-07-16, but `combine-4.6.7` violates it in `opaque`. As we cannot decorate directly, we allow it for the whole module for now"
+)]
 use std::{
     io::{self, Read},
     ops::Range,
