@@ -1376,7 +1376,7 @@ where
         let res = match recover_future {
             RecoverFuture::RecoverSlots(future) => match ready!(future.as_mut().poll(cx)) {
                 Ok(_) => {
-                    trace!("Recovered!");
+                    info!("async cluster client recovery: slot refresh complete");
                     self.state = ConnectionState::PollComplete;
                     Ok(())
                 }
@@ -1391,6 +1391,7 @@ where
                     Err(err) => warn!("Can't reconnect to initial nodes: `{err}`"),
                     Ok(()) => trace!("Reconnected connections"),
                 }
+                info!("async cluster client recovery: reconnect to initial nodes complete");
                 self.state = ConnectionState::PollComplete;
                 Ok(())
             }
@@ -1610,6 +1611,7 @@ where
             match ready!(self.poll_complete(cx)) {
                 PollFlushAction::None => return Poll::Ready(Ok(())),
                 PollFlushAction::RebuildSlots => {
+                    warn!("async cluster client recovery: beginning slot refresh");
                     self.state = ConnectionState::Recover(RecoverFuture::RecoverSlots(Box::pin(
                         self.inner.clone().refresh_slots(),
                     )));
@@ -1618,6 +1620,7 @@ where
                     self.register_reconnect_futures(addrs);
                 }
                 PollFlushAction::ReconnectFromInitialConnections => {
+                    warn!("async cluster client recovery: beginning reconnect to initial nodes");
                     self.state = ConnectionState::Recover(RecoverFuture::ReconnectInitial(
                         Box::pin(self.reconnect_to_initial_nodes()),
                     ));
