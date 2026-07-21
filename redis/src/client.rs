@@ -197,6 +197,8 @@ pub struct AsyncConnectionConfig {
     pub(crate) concurrency_limit: Option<usize>,
     /// Flush threshold for the outbound write buffer; see [`AsyncConnectionConfig::set_write_backpressure_boundary`].
     pub(crate) write_backpressure_boundary: Option<usize>,
+    #[cfg(feature = "cluster-async-diagnostics")]
+    pub(crate) cluster_diagnostics: Option<crate::cluster_async::ClusterDiagnostics>,
     /// Optional credentials provider for dynamic authentication (e.g., token-based authentication)
     #[cfg(feature = "token-based-authentication")]
     pub(crate) credentials_provider: Option<std::sync::Arc<dyn StreamingCredentialsProvider>>,
@@ -215,6 +217,8 @@ impl Default for AsyncConnectionConfig {
             pipeline_buffer_size: None,
             concurrency_limit: None,
             write_backpressure_boundary: None,
+            #[cfg(feature = "cluster-async-diagnostics")]
+            cluster_diagnostics: None,
             #[cfg(feature = "token-based-authentication")]
             credentials_provider: None,
         }
@@ -371,6 +375,15 @@ impl AsyncConnectionConfig {
     /// When left unset, the connection keeps `tokio_util`'s default boundary (8 KiB).
     pub fn set_write_backpressure_boundary(mut self, boundary: usize) -> Self {
         self.write_backpressure_boundary = Some(boundary);
+        self
+    }
+
+    #[cfg(feature = "cluster-async-diagnostics")]
+    pub(crate) fn set_cluster_diagnostics(
+        mut self,
+        diagnostics: crate::cluster_async::ClusterDiagnostics,
+    ) -> Self {
+        self.cluster_diagnostics = Some(diagnostics);
         self
     }
 

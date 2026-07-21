@@ -35,6 +35,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{self, Poll};
 use std::time::Duration;
+#[cfg(feature = "cluster-async-diagnostics")]
+use std::time::Instant;
 use tokio_util::codec::Decoder;
 
 // Senders which the result of a single request are sent through
@@ -82,6 +84,8 @@ impl ResponseAggregate {
 struct InFlight {
     output: Option<PipelineOutput>,
     response_aggregate: ResponseAggregate,
+    #[cfg(feature = "cluster-async-diagnostics")]
+    diagnostics: Option<crate::cluster_async::ClusterDiagnostics>,
 }
 
 // A single message sent through the pipeline
@@ -93,6 +97,10 @@ struct PipelineMessage {
     // If `Some`, the first value is the number of responses to skip,
     // the second is the number of responses to keep, and the third is whether the pipeline is a transaction.
     expectation: Option<PipelineResponseExpectation>,
+    #[cfg(feature = "cluster-async-diagnostics")]
+    enqueued_at: Option<Instant>,
+    #[cfg(feature = "cluster-async-diagnostics")]
+    diagnostics: Option<crate::cluster_async::ClusterDiagnostics>,
 }
 
 /// Wrapper around a `Stream + Sink` where each item sent through the `Sink` results in one or more
@@ -102,6 +110,8 @@ struct PipelineMessage {
 #[derive(Clone)]
 struct Pipeline {
     sender: mpsc::Sender<PipelineMessage>,
+    #[cfg(feature = "cluster-async-diagnostics")]
+    diagnostics: Option<crate::cluster_async::ClusterDiagnostics>,
 }
 
 impl Debug for Pipeline {
@@ -110,7 +120,20 @@ impl Debug for Pipeline {
     }
 }
 
-#[cfg(feature = "cache-aio")]
+#[cfg(all(feature = "cache-aio", feature = "cluster-async-diagnostics"))]
+pin_project! {
+    struct PipelineSink<T> {
+        #[pin]
+        sink_stream: T,
+        in_flight: VecDeque<InFlight>,
+        error: Option<RedisError>,
+        push_sender: Option<Arc<dyn AsyncPushSender>>,
+        cache_manager: Option<CacheManager>,
+        diagnostics: Option<crate::cluster_async::ClusterDiagnostics>,
+    }
+}
+
+#[cfg(all(feature = "cache-aio", not(feature = "cluster-async-diagnostics")))]
 pin_project! {
     struct PipelineSink<T> {
         #[pin]
@@ -122,7 +145,19 @@ pin_project! {
     }
 }
 
-#[cfg(not(feature = "cache-aio"))]
+#[cfg(all(not(feature = "cache-aio"), feature = "cluster-async-diagnostics"))]
+pin_project! {
+    struct PipelineSink<T> {
+        #[pin]
+        sink_stream: T,
+        in_flight: VecDeque<InFlight>,
+        error: Option<RedisError>,
+        push_sender: Option<Arc<dyn AsyncPushSender>>,
+        diagnostics: Option<crate::cluster_async::ClusterDiagnostics>,
+    }
+}
+
+#[cfg(all(not(feature = "cache-aio"), not(feature = "cluster-async-diagnostics")))]
 pin_project! {
     struct PipelineSink<T> {
         #[pin]
@@ -151,6 +186,9 @@ where
         sink_stream: T,
         push_sender: Option<Arc<dyn AsyncPushSender>>,
         #[cfg(feature = "cache-aio")] cache_manager: Option<CacheManager>,
+        #[cfg(feature = "cluster-async-diagnostics")] diagnostics: Option<
+            crate::cluster_async::ClusterDiagnostics,
+        >,
     ) -> Self
     where
         T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
@@ -162,6 +200,8 @@ where
             push_sender,
             #[cfg(feature = "cache-aio")]
             cache_manager,
+            #[cfg(feature = "cluster-async-diagnostics")]
+            diagnostics,
         }
     }
 
@@ -216,6 +256,10 @@ where
             Some(entry) => entry,
             None => return,
         };
+        #[cfg(feature = "cluster-async-diagnostics")]
+        if let Some(diagnostics) = &entry.diagnostics {
+            diagnostics.response_received();
+        }
 
         match &mut entry.response_aggregate {
             ResponseAggregate::SingleCommand => {
@@ -328,6 +372,10 @@ where
             input,
             mut output,
             expectation,
+            #[cfg(feature = "cluster-async-diagnostics")]
+            enqueued_at,
+            #[cfg(feature = "cluster-async-diagnostics")]
+            diagnostics,
         }: PipelineMessage,
     ) -> Result<(), Self::Error> {
         // If initially a receiver was created, but then dropped, there is nothing to receive our output we do not need to send the message as it is
@@ -348,10 +396,16 @@ where
 
         match self_.sink_stream.start_send(input) {
             Ok(()) => {
+                #[cfg(feature = "cluster-async-diagnostics")]
+                if let (Some(diagnostics), Some(enqueued_at)) = (&diagnostics, enqueued_at) {
+                    diagnostics.socket_buffered(enqueued_at);
+                }
                 let response_aggregate = ResponseAggregate::new(expectation);
                 let entry = InFlight {
                     output,
                     response_aggregate,
+                    #[cfg(feature = "cluster-async-diagnostics")]
+                    diagnostics,
                 };
 
                 self_.in_flight.push_back(entry);
@@ -379,13 +433,29 @@ where
         if matches!(self.as_mut().poll_read(cx), Poll::Ready(Err(()))) {
             return Poll::Ready(Err(()));
         }
-        self.as_mut()
+        #[cfg(feature = "cluster-async-diagnostics")]
+        let flush_started = self
+            .as_ref()
+            .project_ref()
+            .diagnostics
+            .is_some()
+            .then(Instant::now);
+        let result = self
+            .as_mut()
             .project()
             .sink_stream
             .poll_flush(cx)
             .map_err(|err| {
                 self.as_mut().send_result(Err(err));
-            })
+            });
+        #[cfg(feature = "cluster-async-diagnostics")]
+        if matches!(result, Poll::Ready(Ok(())))
+            && let (Some(diagnostics), Some(flush_started)) =
+                (self.as_ref().project_ref().diagnostics, flush_started)
+        {
+            diagnostics.socket_flushed(flush_started);
+        }
+        result
     }
 
     fn poll_close(
@@ -415,6 +485,9 @@ impl Pipeline {
         sink_stream: T,
         push_sender: Option<Arc<dyn AsyncPushSender>>,
         #[cfg(feature = "cache-aio")] cache_manager: Option<CacheManager>,
+        #[cfg(feature = "cluster-async-diagnostics")] diagnostics: Option<
+            crate::cluster_async::ClusterDiagnostics,
+        >,
         buffer_size: usize,
     ) -> (Self, impl Future<Output = ()>)
     where
@@ -429,12 +502,21 @@ impl Pipeline {
             push_sender,
             #[cfg(feature = "cache-aio")]
             cache_manager,
+            #[cfg(feature = "cluster-async-diagnostics")]
+            diagnostics.clone(),
         );
         let f = stream::poll_fn(move |cx| receiver.poll_recv(cx))
             .map(Ok)
             .forward(sink)
             .map(|_| ());
-        (Pipeline { sender }, f)
+        (
+            Pipeline {
+                sender,
+                #[cfg(feature = "cluster-async-diagnostics")]
+                diagnostics,
+            },
+            f,
+        )
     }
 
     async fn send_recv(
@@ -452,6 +534,46 @@ impl Pipeline {
 
         let request = async {
             if skip_response {
+                #[cfg(feature = "cluster-async-diagnostics")]
+                {
+                    if let Some(diagnostics) = &self.diagnostics {
+                        let enqueue_started = Instant::now();
+                        #[cfg(feature = "cluster-async-profiling")]
+                        let permit = match self.sender.try_reserve() {
+                            Ok(permit) => {
+                                diagnostics.node_channel_admission(true);
+                                permit
+                            }
+                            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                diagnostics.node_channel_admission(false);
+                                self.sender.reserve().await.map_err(|_| None)?
+                            }
+                            Err(_) => return Err(None),
+                        };
+                        #[cfg(not(feature = "cluster-async-profiling"))]
+                        let permit = self.sender.reserve().await.map_err(|_| None)?;
+                        diagnostics.node_enqueued(enqueue_started);
+                        permit.send(PipelineMessage {
+                            input,
+                            expectation,
+                            output: None,
+                            enqueued_at: Some(Instant::now()),
+                            diagnostics: Some(diagnostics.clone()),
+                        });
+                    } else {
+                        self.sender
+                            .send(PipelineMessage {
+                                input,
+                                expectation,
+                                output: None,
+                                enqueued_at: None,
+                                diagnostics: None,
+                            })
+                            .await
+                            .map_err(|_| None)?;
+                    }
+                }
+                #[cfg(not(feature = "cluster-async-diagnostics"))]
                 self.sender
                     .send(PipelineMessage {
                         input,
@@ -466,6 +588,46 @@ impl Pipeline {
 
             let (sender, receiver) = oneshot::channel();
 
+            #[cfg(feature = "cluster-async-diagnostics")]
+            {
+                if let Some(diagnostics) = &self.diagnostics {
+                    let enqueue_started = Instant::now();
+                    #[cfg(feature = "cluster-async-profiling")]
+                    let permit = match self.sender.try_reserve() {
+                        Ok(permit) => {
+                            diagnostics.node_channel_admission(true);
+                            permit
+                        }
+                        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                            diagnostics.node_channel_admission(false);
+                            self.sender.reserve().await.map_err(|_| None)?
+                        }
+                        Err(_) => return Err(None),
+                    };
+                    #[cfg(not(feature = "cluster-async-profiling"))]
+                    let permit = self.sender.reserve().await.map_err(|_| None)?;
+                    diagnostics.node_enqueued(enqueue_started);
+                    permit.send(PipelineMessage {
+                        input,
+                        expectation,
+                        output: Some(sender),
+                        enqueued_at: Some(Instant::now()),
+                        diagnostics: Some(diagnostics.clone()),
+                    });
+                } else {
+                    self.sender
+                        .send(PipelineMessage {
+                            input,
+                            expectation,
+                            output: Some(sender),
+                            enqueued_at: None,
+                            diagnostics: None,
+                        })
+                        .await
+                        .map_err(|_| None)?;
+                }
+            }
+            #[cfg(not(feature = "cluster-async-diagnostics"))]
             self.sender
                 .send(PipelineMessage {
                     input,
@@ -681,6 +843,8 @@ impl MultiplexedConnection {
             config.push_sender,
             #[cfg(feature = "cache-aio")]
             cache_manager_opt.clone(),
+            #[cfg(feature = "cluster-async-diagnostics")]
+            config.cluster_diagnostics,
             Pipeline::resolve_buffer_size(config.pipeline_buffer_size),
         );
 

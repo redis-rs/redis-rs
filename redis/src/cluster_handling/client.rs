@@ -34,6 +34,8 @@ use crate::connection::TlsConnParams;
 
 #[cfg(feature = "cluster-async")]
 use crate::cluster_async;
+#[cfg(feature = "cluster-async-diagnostics")]
+use crate::cluster_async::ClusterDiagnostics;
 
 #[cfg(feature = "tls-rustls")]
 use crate::tls::{TlsCertificates, retrieve_tls_certificates};
@@ -159,6 +161,8 @@ pub(crate) struct ClusterParams {
     pub(crate) connection_concurrency_limit: Option<usize>,
     #[cfg(feature = "cluster-async")]
     pub(crate) write_backpressure_boundary: Option<usize>,
+    #[cfg(feature = "cluster-async-diagnostics")]
+    pub(crate) diagnostics: ClusterDiagnostics,
 }
 
 impl ClusterParams {
@@ -225,6 +229,8 @@ impl ClusterParams {
             connection_concurrency_limit: value.connection_concurrency_limit,
             #[cfg(feature = "cluster-async")]
             write_backpressure_boundary: value.write_backpressure_boundary,
+            #[cfg(feature = "cluster-async-diagnostics")]
+            diagnostics: ClusterDiagnostics::default(),
         })
     }
 

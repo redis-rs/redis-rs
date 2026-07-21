@@ -2226,6 +2226,7 @@ dependencies = [
  "futures-util",
  "hashbrown 0.17.1",
  "itoa",
+ "libc",
  "log",
  "lru",
  "native-tls",

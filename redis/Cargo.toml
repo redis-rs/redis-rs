@@ -54,6 +54,7 @@ tokio = { version = "1", features = [
 arc-swap = { version = "1.9.1", optional = true }
 futures-channel = { version = "0.3.31", optional = true }
 backon = { version = "1.6.0", optional = true, default-features = false }
+libc = { version = "0.2", optional = true }
 
 # Only needed for the r2d2 feature
 r2d2 = { version = "0.8.10", optional = true }
@@ -147,7 +148,17 @@ connection-manager = [
   "dep:backon",
 ]
 streams = []
-cluster-async = ["aio", "cluster", "dep:log"]
+cluster-async = ["aio", "cluster", "dep:arc-swap", "dep:log"]
+# Low-overhead counters and timing aggregates for diagnosing queueing in the
+# async cluster driver. This is intentionally opt-in so the normal hot path
+# remains unchanged.
+cluster-async-diagnostics = ["cluster-async"]
+# More intrusive, sampled Linux CPU/wall profiling for diagnostic benchmark
+# builds. Keep this separate from aggregate diagnostics and normal clients.
+cluster-async-profiling = ["cluster-async-diagnostics", "dep:libc"]
+# Experimental stable per-node connection handles. When disabled, the same
+# atomic routing table uses an original-style locked connection-state map.
+cluster-async-atomic-node-connections = ["cluster-async"]
 sentinel = ["dep:log", "dep:rand"]
 num-bigint = ["dep:num-bigint"]
 cache-aio = ["aio", "dep:lru"]

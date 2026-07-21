@@ -102,8 +102,13 @@ use std::{
     time::Duration,
 };
 
+use arc_swap::ArcSwap;
+mod connection_store;
+#[cfg(feature = "cluster-async-diagnostics")]
+mod diagnostics;
 mod request;
 mod routing;
+mod routing_table;
 use crate::{
     AsyncConnectionConfig, Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError,
     RedisFuture, RedisResult, ToRedisArgs, Value,
@@ -118,17 +123,20 @@ use crate::{
             MultipleNodeRoutingInfo, Redirect, ResponsePolicy, RoutingInfo, SingleNodeRoutingInfo,
         },
         slot_cmd,
-        slot_map::{SlotMap, SlotRange},
+        slot_map::SlotRange,
         topology::parse_slots,
     },
     cmd,
     errors::closed_connection_error,
     subscription_tracker::SubscriptionTracker,
 };
+#[cfg(feature = "cluster-async-diagnostics")]
+pub use diagnostics::{ClusterDiagnostics, ClusterDiagnosticsSnapshot, ClusterTimingSnapshot};
 
 use crate::ProtocolVersion;
 #[cfg(feature = "cache-aio")]
 use crate::caching::{CacheManager, CacheStatistics};
+use connection_store::ConnectionStore;
 use futures_util::{
     future::{self, BoxFuture, FutureExt},
     ready,
@@ -136,16 +144,18 @@ use futures_util::{
     stream::{self, Stream, StreamExt},
 };
 use log::{debug, info, trace, warn};
-use rand::{rng, seq::IteratorRandom};
 use request::{CmdArg, PendingRequest, Request, RequestState, Retry};
 use routing::{InternalRoutingInfo, InternalSingleNodeRouting, route_for_pipeline};
-use tokio::sync::{RwLock, mpsc, oneshot};
+use routing_table::RoutingTable;
+use tokio::sync::{mpsc, oneshot};
 
 struct ClientSideState {
     protocol: ProtocolVersion,
     _task_handle: HandleContainer,
     overall_response_timeout: Option<Duration>,
     runtime: Runtime,
+    #[cfg(feature = "cluster-async-diagnostics")]
+    diagnostics: ClusterDiagnostics,
     #[cfg(feature = "cache-aio")]
     cache_manager: Option<CacheManager>,
 }
@@ -187,11 +197,19 @@ where
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
     ) -> (ClusterConnection<C>, oneshot::Receiver<RedisResult<()>>) {
+        #[cfg(feature = "cluster-async-diagnostics")]
+        let mut cluster_params = cluster_params;
         let protocol = cluster_params.protocol.unwrap_or_default();
         let overall_response_timeout = cluster_params.overall_response_timeout;
         #[cfg(feature = "cache-aio")]
         let cache_manager = cluster_params.cache_manager.clone();
         let runtime = Runtime::locate();
+        #[cfg(feature = "cluster-async-diagnostics")]
+        let diagnostics = ClusterDiagnostics::default();
+        #[cfg(feature = "cluster-async-diagnostics")]
+        {
+            cluster_params.diagnostics = diagnostics.clone();
+        }
         let mut inner = ClusterConnInner::new(initial_nodes, cluster_params);
 
         let (connect_sender, connect_receiver) = oneshot::channel::<RedisResult<()>>();
@@ -215,6 +233,8 @@ where
                     _task_handle,
                     overall_response_timeout,
                     runtime,
+                    #[cfg(feature = "cluster-async-diagnostics")]
+                    diagnostics,
                     #[cfg(feature = "cache-aio")]
                     cache_manager,
                 }),
@@ -226,8 +246,56 @@ where
     /// Send a command to the given `routing`, and aggregate the response according to `response_policy`.
     pub async fn route_command(&mut self, cmd: Cmd, routing: RoutingInfo) -> RedisResult<Value> {
         trace!("send_packed_command");
+        #[cfg(feature = "cluster-async-diagnostics")]
+        let api_started = {
+            self.state.diagnostics.api_started();
+            std::time::Instant::now()
+        };
         let (sender, receiver) = oneshot::channel();
         let request = async {
+            #[cfg(feature = "cluster-async-diagnostics")]
+            {
+                let enqueue_started = std::time::Instant::now();
+                #[cfg(feature = "cluster-async-profiling")]
+                let permit = match self.sender.try_reserve() {
+                    Ok(permit) => {
+                        self.state.diagnostics.top_channel_admission(true);
+                        permit
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                        self.state.diagnostics.top_channel_admission(false);
+                        self.sender.reserve().await.map_err(|_| {
+                            RedisError::from(io::Error::new(
+                                io::ErrorKind::BrokenPipe,
+                                "redis_cluster: Unable to send command",
+                            ))
+                        })?
+                    }
+                    Err(_) => {
+                        return Err(RedisError::from(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "redis_cluster: Unable to send command",
+                        )));
+                    }
+                };
+                #[cfg(not(feature = "cluster-async-profiling"))]
+                let permit = self.sender.reserve().await.map_err(|_| {
+                    RedisError::from(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "redis_cluster: Unable to send command",
+                    ))
+                })?;
+                self.state.diagnostics.enqueued(enqueue_started);
+                permit.send(Message {
+                    cmd: CmdArg::Cmd {
+                        cmd: Arc::new(cmd),
+                        routing: routing.into(),
+                    },
+                    sender,
+                    enqueued_at: std::time::Instant::now(),
+                });
+            }
+            #[cfg(not(feature = "cluster-async-diagnostics"))]
             self.sender
                 .send(Message {
                     cmd: CmdArg::Cmd {
@@ -244,7 +312,7 @@ where
                     ))
                 })?;
 
-            receiver
+            let result = receiver
                 .await
                 .unwrap_or_else(|_| {
                     Err(RedisError::from(io::Error::new(
@@ -255,7 +323,10 @@ where
                 .map(|response| match response {
                     Response::Single(value) => value,
                     Response::Multiple(_) => unreachable!(),
-                })
+                });
+            #[cfg(feature = "cluster-async-diagnostics")]
+            self.state.diagnostics.caller_delivered(api_started);
+            result
         };
 
         match self.state.overall_response_timeout {
@@ -272,9 +343,51 @@ where
         count: usize,
         route: SingleNodeRoutingInfo,
     ) -> RedisResult<Vec<Value>> {
+        #[cfg(feature = "cluster-async-diagnostics")]
+        let api_started = {
+            self.state.diagnostics.api_started();
+            std::time::Instant::now()
+        };
         let (sender, receiver) = oneshot::channel();
 
         let request = async {
+            #[cfg(feature = "cluster-async-diagnostics")]
+            {
+                let enqueue_started = std::time::Instant::now();
+                #[cfg(feature = "cluster-async-profiling")]
+                let permit = match self.sender.try_reserve() {
+                    Ok(permit) => {
+                        self.state.diagnostics.top_channel_admission(true);
+                        permit
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                        self.state.diagnostics.top_channel_admission(false);
+                        self.sender
+                            .reserve()
+                            .await
+                            .map_err(|_| closed_connection_error())?
+                    }
+                    Err(_) => return Err(closed_connection_error()),
+                };
+                #[cfg(not(feature = "cluster-async-profiling"))]
+                let permit = self
+                    .sender
+                    .reserve()
+                    .await
+                    .map_err(|_| closed_connection_error())?;
+                self.state.diagnostics.enqueued(enqueue_started);
+                permit.send(Message {
+                    cmd: CmdArg::Pipeline {
+                        pipeline: Arc::new(pipeline),
+                        offset,
+                        count,
+                        route: route.into(),
+                    },
+                    sender,
+                    enqueued_at: std::time::Instant::now(),
+                });
+            }
+            #[cfg(not(feature = "cluster-async-diagnostics"))]
             self.sender
                 .send(Message {
                     cmd: CmdArg::Pipeline {
@@ -287,19 +400,29 @@ where
                 })
                 .await
                 .map_err(|_| closed_connection_error())?;
-            receiver
+            let result = receiver
                 .await
                 .unwrap_or_else(|_| Err(closed_connection_error()))
                 .map(|response| match response {
                     Response::Multiple(values) => values,
                     Response::Single(_) => unreachable!(),
-                })
+                });
+            #[cfg(feature = "cluster-async-diagnostics")]
+            self.state.diagnostics.caller_delivered(api_started);
+            result
         };
 
         match self.state.overall_response_timeout {
             Some(duration) => self.state.runtime.timeout(duration, request).await?,
             None => request.await,
         }
+    }
+
+    /// Returns aggregate queue, timing, cancellation, refresh, and reconnect diagnostics
+    /// for the shared cluster driver backing this handle.
+    #[cfg(feature = "cluster-async-diagnostics")]
+    pub fn diagnostics(&self) -> ClusterDiagnostics {
+        self.state.diagnostics.clone()
     }
 
     /// Subscribes to a new channel(s).
@@ -431,67 +554,12 @@ where
     }
 }
 
-type ConnectionMap<C> = HashMap<NodeAddress, ConnState<C>>;
-
-enum ConnState<C> {
-    // Connection has been successfully established at some point.
-    Connected(C),
-    // Connection is being repaired/reconnected. The old C is retained for faster reconnect.
-    Reconnecting(C),
-    // New connection that we are trying to connect to.
-    Connecting,
-}
-
-impl<C> ConnState<C> {
-    fn connected(&self) -> Option<C>
-    where
-        C: Clone,
-    {
-        match self {
-            ConnState::Connected(conn) => Some(conn.clone()),
-            ConnState::Reconnecting(_) | ConnState::Connecting => None,
-        }
-    }
-
-    // Get the underlying connection anyway whether it is being reconnected or not.
-    fn connected_or_reconnecting(&self) -> Option<C>
-    where
-        C: Clone,
-    {
-        match self {
-            ConnState::Connected(conn) | ConnState::Reconnecting(conn) => Some(conn.clone()),
-            ConnState::Connecting => None,
-        }
-    }
-
-    fn into_conn(self) -> Option<C> {
-        match self {
-            ConnState::Connected(conn) | ConnState::Reconnecting(conn) => Some(conn),
-            ConnState::Connecting => None,
-        }
-    }
-}
-
-fn mark_reconnecting<C>(connections: &mut ConnectionMap<C>, addr: NodeAddress) {
-    connections
-        .entry(addr.clone())
-        .and_modify(|state| {
-            *state = match std::mem::replace(state, ConnState::Connecting) {
-                ConnState::Connected(conn) => {
-                    warn!("ClusterConnInner: connection to {addr:?} lost; repairing in background");
-                    ConnState::Reconnecting(conn)
-                }
-                other => other,
-            };
-        })
-        .or_insert(ConnState::Connecting);
-}
-
 /// This is the internal representation of an async Redis Cluster connection. It stores the
 /// underlying connections maintained for each node in the cluster, as well
 /// as common parameters for connecting to nodes and executing commands.
 struct InnerCore<C> {
-    conn_lock: RwLock<(ConnectionMap<C>, SlotMap)>,
+    routing: ArcSwap<RoutingTable>,
+    connections: ConnectionStore<C>,
     cluster_params: ClusterParams,
     pending_requests_tx: mpsc::UnboundedSender<PendingRequest<C>>,
     initial_nodes: Vec<ConnectionInfo>,
@@ -521,8 +589,8 @@ where
         routing: &'a MultipleNodeRoutingInfo,
         response_policy: Option<ResponsePolicy>,
     ) -> OperationResult {
-        let read_guard = self.conn_lock.read().await;
-        if read_guard.0.is_empty() {
+        let snapshot = self.routing.load();
+        if snapshot.is_empty() {
             return (
                 OperationTarget::FanOut,
                 Result::Err(
@@ -534,71 +602,75 @@ where
                 ),
             );
         }
-        let (receivers, requests): (Vec<_>, Vec<_>) = {
-            let to_request = |(addr, cmd): (&NodeAddress, Arc<Cmd>)| {
-                read_guard
-                    .0
-                    .get(addr)
-                    // For a fan-out, we do not want to silently return a partial response
-                    // by skipping a shard because of a connection issue.
-                    // We are intentionally using a connection under repair (Reconnecting state).
-                    // It may or may not succeed. But the aggregate response will be honest.
-                    .and_then(ConnState::connected_or_reconnecting)
-                    .map(|conn| {
-                        let (sender, receiver) = oneshot::channel();
-                        let addr = addr.clone();
-                        (
-                            (addr.clone(), receiver),
-                            PendingRequest {
-                                retry: 0,
-                                sender: request::ResultExpectation::External(sender),
-                                cmd: CmdArg::Cmd {
-                                    cmd,
-                                    routing: InternalSingleNodeRouting::Connection {
-                                        identifier: addr,
-                                        conn,
-                                    }
-                                    .into(),
-                                },
-                            },
-                        )
+        let targets = match routing {
+            MultipleNodeRoutingInfo::AllNodes => snapshot
+                .topology_addresses(false)
+                .into_iter()
+                .map(|address| (address.clone(), cmd.clone()))
+                .collect::<Vec<_>>(),
+            MultipleNodeRoutingInfo::AllMasters => snapshot
+                .topology_addresses(true)
+                .into_iter()
+                .map(|address| (address.clone(), cmd.clone()))
+                .collect::<Vec<_>>(),
+            MultipleNodeRoutingInfo::MultiSlot((routes, _)) => snapshot
+                .addresses_for_multi_slot(routes, self.routing_strategy.as_deref())
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, address)| {
+                    address.map(|address| {
+                        let (_, indices) = routes.get(index).unwrap();
+                        let command =
+                            Arc::new(crate::cluster_routing::command_for_multi_slot_indices(
+                                cmd.as_ref(),
+                                indices.iter(),
+                            ));
+                        (address.clone(), command)
                     })
-            };
-            let slot_map = &read_guard.1;
-
-            // TODO - these filter_map calls mean that we ignore nodes that are missing. Should we report an error in such cases?
-            // since some of the operators drop other requests, mapping to errors here might mean that no request is sent.
-            match routing {
-                MultipleNodeRoutingInfo::AllNodes => slot_map
-                    .addresses_for_all_nodes()
-                    .into_iter()
-                    .filter_map(|addr| to_request((addr, cmd.clone())))
-                    .unzip(),
-                MultipleNodeRoutingInfo::AllMasters => slot_map
-                    .addresses_for_all_primaries()
-                    .into_iter()
-                    .filter_map(|addr| to_request((addr, cmd.clone())))
-                    .unzip(),
-                MultipleNodeRoutingInfo::MultiSlot((routes, _)) => slot_map
-                    .addresses_for_multi_slot(routes, self.routing_strategy.as_deref())
-                    .enumerate()
-                    .filter_map(|(index, addr_opt)| {
-                        addr_opt.and_then(|addr| {
-                            let (_, indices) = routes.get(index).unwrap();
-                            let cmd =
-                                Arc::new(crate::cluster_routing::command_for_multi_slot_indices(
-                                    cmd.as_ref(),
-                                    indices.iter(),
-                                ));
-                            to_request((addr, cmd))
-                        })
-                    })
-                    .unzip(),
-            }
+                })
+                .collect::<Vec<_>>(),
         };
-        drop(read_guard);
+        drop(snapshot);
+
+        let target_addresses = targets
+            .iter()
+            .map(|(address, _)| address.clone())
+            .collect::<Vec<_>>();
+        // A fan-out must not silently return a partial response. Retain the old
+        // connection while it is being repaired and let the aggregate report
+        // any actual per-shard failure.
+        let available = self
+            .connections
+            .connected_for_addresses(&target_addresses, true, &self.cluster_params)
+            .await
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        let (receivers, requests): (Vec<_>, Vec<_>) = targets
+            .into_iter()
+            .filter_map(|(address, cmd)| {
+                let conn = available.get(&address)?.clone();
+                let (sender, receiver) = oneshot::channel();
+                Some((
+                    (address.clone(), receiver),
+                    PendingRequest {
+                        retry: 0,
+                        sender: request::ResultExpectation::External(sender),
+                        #[cfg(feature = "cluster-async-diagnostics")]
+                        diagnostics: self.cluster_params.diagnostics.clone(),
+                        cmd: CmdArg::Cmd {
+                            cmd,
+                            routing: InternalSingleNodeRouting::Connection {
+                                identifier: address,
+                                conn,
+                            }
+                            .into(),
+                        },
+                    },
+                ))
+            })
+            .unzip();
         for request in requests {
-            let _ = self.pending_requests_tx.send(request);
+            self.send_pending(request);
         }
 
         (
@@ -752,16 +824,28 @@ where
         cmd: Arc<Cmd>,
         routing: InternalRoutingInfo<C>,
     ) -> OperationResult {
+        #[cfg(feature = "cluster-async-diagnostics")]
+        let routing_started = std::time::Instant::now();
         let route = match routing {
             InternalRoutingInfo::SingleNode(single_node_routing) => single_node_routing,
             InternalRoutingInfo::MultiNode((multi_node_routing, response_policy)) => {
-                return self
+                let result = self
                     .execute_on_multiple_nodes(&cmd, &multi_node_routing, response_policy)
                     .await;
+                #[cfg(feature = "cluster-async-diagnostics")]
+                self.cluster_params
+                    .diagnostics
+                    .routing_completed(routing_started);
+                return result;
             }
         };
 
-        match self.get_connection(route).await {
+        let connection = self.get_connection(route).await;
+        #[cfg(feature = "cluster-async-diagnostics")]
+        self.cluster_params
+            .diagnostics
+            .routing_completed(routing_started);
+        match connection {
             Ok((addr, mut conn)) => (
                 addr.into(),
                 conn.req_packed_command(&cmd)
@@ -789,7 +873,14 @@ where
         count: usize,
         route: InternalSingleNodeRouting<C>,
     ) -> OperationResult {
-        match self.get_connection(route).await {
+        #[cfg(feature = "cluster-async-diagnostics")]
+        let routing_started = std::time::Instant::now();
+        let connection = self.get_connection(route).await;
+        #[cfg(feature = "cluster-async-diagnostics")]
+        self.cluster_params
+            .diagnostics
+            .routing_completed(routing_started);
+        match connection {
             Ok((addr, mut conn)) => (
                 OperationTarget::Node { address: addr },
                 conn.req_packed_commands(&pipeline, offset, count)
@@ -846,14 +937,23 @@ where
         }
     }
 
+    fn send_pending(&self, request: PendingRequest<C>) {
+        #[cfg(feature = "cluster-async-diagnostics")]
+        request.diagnostics.pending_added();
+        let _ = self.pending_requests_tx.send(request);
+    }
+
     async fn get_connection(
         &self,
         route: InternalSingleNodeRouting<C>,
     ) -> RedisResult<(NodeAddress, C)> {
         let route = match route {
             InternalSingleNodeRouting::Random => {
-                let read_guard = self.conn_lock.read().await;
-                return match get_random_connection(&read_guard.0) {
+                return match self
+                    .connections
+                    .random_connected(&self.cluster_params)
+                    .await
+                {
                     Some((addr, conn)) => Ok((addr, conn)),
                     None => {
                         Err((ErrorKind::ClusterConnectionNotFound, "No connections found").into())
@@ -869,8 +969,11 @@ where
                 return self.get_redirected_connection(redirect).await;
             }
             InternalSingleNodeRouting::ByAddress(address) => {
-                let read_guard = self.conn_lock.read().await;
-                return match read_guard.0.get(&address).and_then(ConnState::connected) {
+                return match self
+                    .connections
+                    .connected(&address, &self.cluster_params)
+                    .await
+                {
                     Some(conn) => Ok((address, conn)),
                     None => Err((
                         ErrorKind::Client,
@@ -882,39 +985,49 @@ where
             }
         };
 
-        let read_guard = self.conn_lock.read().await;
-        let preferred = read_guard
-            .1
-            .slot_addr_for_route(&route, self.routing_strategy.as_deref())
-            .cloned();
+        #[cfg(feature = "cluster-async-profiling")]
+        let _routing_profile = self
+            .cluster_params
+            .diagnostics
+            .profile(diagnostics::ProfilePhase::RoutingSync);
 
-        if let Some(ref addr) = preferred
-            && let Some(conn) = read_guard.0.get(addr).and_then(ConnState::connected)
+        let snapshot = self.routing.load();
+        let preferred = snapshot
+            .preferred_address(&route, self.routing_strategy.as_deref())
+            .cloned();
+        let fallbacks = snapshot
+            .fallback_addresses(&route)
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        drop(snapshot);
+
+        if let Some(preferred) = preferred
+            && let Some(conn) = self
+                .connections
+                .connected(&preferred, &self.cluster_params)
+                .await
         {
-            return Ok((addr.clone(), conn));
+            return Ok((preferred, conn));
         }
 
         // The preferred node is not connected (e.g. it is being repaired by the `reconnect_loop` future).
         // Instead of erroring or waiting we try a fallback (within the same shard).
-        let fallback = read_guard
-            .1
-            .shard_fallback_addrs(&route)
-            .into_iter()
-            .find_map(|candidate| {
-                read_guard
-                    .0
-                    .get(&candidate)
-                    .and_then(ConnState::connected)
-                    .map(|conn| (candidate, conn))
-            });
-        drop(read_guard);
-        if let Some(found) = fallback {
-            return Ok(found);
+        for fallback in fallbacks {
+            if let Some(conn) = self
+                .connections
+                .connected(&fallback, &self.cluster_params)
+                .await
+            {
+                return Ok((fallback, conn));
+            }
         }
 
-        let read_guard = self.conn_lock.read().await;
-        if let Some((random_addr, random_conn)) = get_random_connection(&read_guard.0) {
-            drop(read_guard);
+        if let Some((random_addr, random_conn)) = self
+            .connections
+            .random_connected(&self.cluster_params)
+            .await
+        {
             return Ok((random_addr, random_conn));
         }
 
@@ -927,9 +1040,10 @@ where
             Redirect::Moved(addr) => addr,
             Redirect::Ask(addr) => addr,
         };
-        let read_guard = self.conn_lock.read().await;
-        let conn = read_guard.0.get(&addr).and_then(ConnState::connected);
-        drop(read_guard);
+        let conn = self
+            .connections
+            .connected(&addr, &self.cluster_params)
+            .await;
         let mut conn = match conn {
             Some(conn) => conn,
             None => self.connect_check_and_add(&addr).await?,
@@ -948,41 +1062,47 @@ where
 
     async fn connect_check_and_add(&self, addr: &NodeAddress) -> RedisResult<C> {
         let conn = connect_and_check::<C>(addr, &self.cluster_params).await?;
-        self.conn_lock
-            .write()
-            .await
-            .0
-            .insert(addr.clone(), ConnState::Connected(conn.clone()));
+        self.connections
+            .install_connected(addr.clone(), conn.clone(), &self.cluster_params)
+            .await;
         Ok(conn)
     }
 
-    async fn query_slots(conn: &mut C, addr: &NodeAddress, slots: &mut SlotMap) -> RedisResult<()> {
+    async fn query_slots(conn: &mut C, addr: &NodeAddress) -> RedisResult<Vec<SlotRange>> {
         let mut slot_refresh_cmd = slot_cmd();
         slot_refresh_cmd.skip_concurrency_limit = true;
         let value = conn
             .req_packed_command(&slot_refresh_cmd)
             .await
             .and_then(|value| value.extract_error())?;
-        let v: Vec<SlotRange> = parse_slots(value, addr.host())?;
-        build_slot_map(slots, v)
+        parse_slots(value, addr.host())
     }
 
     // Query a node to discover slot-> master mappings.
     async fn refresh_slots(self) -> RedisResult<()> {
-        let mut write_guard = self.conn_lock.write().await;
-        let (connections, slots) = &mut *write_guard;
+        #[cfg(feature = "cluster-async-diagnostics")]
+        let diagnostics_started = self.cluster_params.diagnostics.refresh_started();
+        let previous_generation = self.routing.load().generation();
+        let known_connections = self
+            .connections
+            .known_connections(&self.cluster_params)
+            .await;
 
-        let mut found = false;
+        let mut discovered_slots = None;
         let mut last_err = None;
 
         // First pass is to query previously-known good connections for the new slots.
-        for (addr, state) in &mut *connections {
-            let ConnState::Connected(conn) = state else {
+        for (address, _) in &known_connections {
+            let Some(mut conn) = self
+                .connections
+                .connected(address, &self.cluster_params)
+                .await
+            else {
                 continue;
             };
-            match Self::query_slots(conn, addr, slots).await {
-                Ok(()) => {
-                    found = true;
+            match Self::query_slots(&mut conn, address).await {
+                Ok(slots) => {
+                    discovered_slots = Some(slots);
                     break;
                 }
                 Err(err) => last_err = Some(err),
@@ -992,16 +1112,17 @@ where
         // Second pass is to attempt to repair connections on-demand as we iterate through each one.
         // We include Connected connections in this pass, in addition to the first pass above,
         // so that we can do inline connection repairs, if needed (via `get_or_create_conn`).
-        if !found {
-            for (addr, state) in &mut *connections {
-                let prev = std::mem::replace(state, ConnState::Connecting).into_conn();
-                match get_or_create_conn(addr, prev, &self.cluster_params).await {
+        if discovered_slots.is_none() {
+            for (address, old_connection) in known_connections {
+                match get_or_create_conn(&address, old_connection, &self.cluster_params).await {
                     Ok(mut conn) => {
-                        let res = Self::query_slots(&mut conn, addr, slots).await;
-                        *state = ConnState::Connected(conn);
+                        let res = Self::query_slots(&mut conn, &address).await;
+                        self.connections
+                            .install_connected(address.clone(), conn, &self.cluster_params)
+                            .await;
                         match res {
-                            Ok(()) => {
-                                found = true;
+                            Ok(slots) => {
+                                discovered_slots = Some(slots);
                                 break;
                             }
                             Err(err) => last_err = Some(err),
@@ -1012,51 +1133,71 @@ where
             }
         }
 
-        if !found {
+        let Some(slots) = discovered_slots else {
+            #[cfg(feature = "cluster-async-diagnostics")]
+            self.cluster_params
+                .diagnostics
+                .refresh_finished(diagnostics_started, false);
             return Err(last_err.unwrap_or_else(|| {
                 (ErrorKind::ClusterConnectionNotFound, "No connections found").into()
             }));
+        };
+
+        let addresses = slots
+            .iter()
+            .flat_map(|slot| std::iter::once(&slot.master).chain(slot.replicas.iter()))
+            .cloned()
+            .collect::<HashSet<_>>();
+
+        self.refresh_connections(&addresses).await;
+
+        let candidate = RoutingTable::from_slots(previous_generation.wrapping_add(1), slots)?;
+        let topology = self
+            .routing_strategy
+            .as_ref()
+            .map(|_| candidate.slot_map().topology());
+        self.routing.store(Arc::new(candidate));
+        self.connections
+            .retain(&addresses, &self.cluster_params)
+            .await;
+
+        if let (Some(strategy), Some(topology)) = (&self.routing_strategy, topology) {
+            strategy.on_topology_changed(topology);
         }
 
-        if let Some(ref strategy) = self.routing_strategy {
-            strategy.on_topology_changed(slots.topology());
-        }
-
-        let nodes = slots.values().flatten().cloned().collect::<HashSet<_>>();
-
-        connections.retain(|addr, _| nodes.contains(addr));
-
-        self.refresh_connections_locked(connections, nodes).await;
-
+        #[cfg(feature = "cluster-async-diagnostics")]
+        self.cluster_params
+            .diagnostics
+            .refresh_finished(diagnostics_started, true);
         Ok(())
     }
 
-    async fn refresh_connections_locked(
-        &self,
-        connections: &mut ConnectionMap<C>,
-        nodes: HashSet<NodeAddress>,
-    ) {
-        let nodes_len = nodes.len();
-        let addresses_and_connections_iter = nodes
-            .into_iter()
-            .map(|addr| {
-                let connection = connections.remove(&addr).and_then(ConnState::into_conn);
-                async move {
-                    let res = get_or_create_conn(&addr, connection, &self.cluster_params).await;
-                    (addr, res)
-                }
-            })
-            .collect::<Vec<_>>();
+    async fn refresh_connections(&self, addresses: &HashSet<NodeAddress>) {
+        let mut connection_futures = Vec::with_capacity(addresses.len());
+        for address in addresses {
+            let address = address.clone();
+            let old_connection = self
+                .connections
+                .connection_for_repair(&address, &self.cluster_params)
+                .await;
+            connection_futures.push(async move {
+                let result =
+                    get_or_create_conn(&address, old_connection, &self.cluster_params).await;
+                (address, result)
+            });
+        }
 
-        stream::iter(addresses_and_connections_iter)
-            .buffer_unordered(nodes_len.max(8))
-            .fold(connections, |connections, (addr, result)| async move {
-                if let Ok(conn) = result {
-                    connections.insert(addr, ConnState::Connected(conn));
-                }
-                connections
-            })
+        let results = stream::iter(connection_futures)
+            .buffer_unordered(addresses.len().max(8))
+            .collect::<Vec<_>>()
             .await;
+        for (address, result) in results {
+            if let Ok(connection) = result {
+                self.connections
+                    .install_connected(address, connection, &self.cluster_params)
+                    .await;
+            }
+        }
     }
 
     fn resubscribe(&self) {
@@ -1077,6 +1218,8 @@ where
             PendingRequest {
                 retry: 0,
                 sender: request::ResultExpectation::Internal,
+                #[cfg(feature = "cluster-async-diagnostics")]
+                diagnostics: self.cluster_params.diagnostics.clone(),
                 cmd: CmdArg::Cmd {
                     cmd: Arc::new(cmd),
                     routing,
@@ -1084,7 +1227,7 @@ where
             }
         });
         for request in requests {
-            let _ = self.pending_requests_tx.send(request);
+            self.send_pending(request);
         }
     }
 }
@@ -1097,69 +1240,77 @@ struct ClusterConnInner<C> {
     state: ConnectionState,
     #[allow(clippy::complexity)]
     in_flight_requests: stream::FuturesUnordered<Pin<Box<Request<C>>>>,
-    reconnect_futures: stream::FuturesUnordered<BoxFuture<'static, ()>>,
+    reconnect_futures: stream::FuturesUnordered<BoxFuture<'static, (NodeAddress, bool)>>,
+    reconnect_pending: HashSet<NodeAddress>,
     pending_requests_rx: mpsc::UnboundedReceiver<PendingRequest<C>>,
     refresh_error: Option<RedisError>,
+    #[cfg(feature = "cluster-async-diagnostics")]
+    received_since_poll: usize,
 }
 
-// Keep trying to repair `addr` until it is re-connected, or the node
+// Keep trying to repair `node` until it is re-connected, or the node
 // has left the topology.
 // This is a continuous attempt to reconnect rather than one-shot.
-async fn reconnect_loop<C>(core: Core<C>, addr: NodeAddress)
+async fn reconnect_loop<C>(core: Core<C>, addr: NodeAddress) -> (NodeAddress, bool)
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
 {
+    if !core
+        .connections
+        .begin_reconnect(addr.clone(), &core.cluster_params)
+        .await
     {
-        let mut guard = core.conn_lock.write().await;
-        if matches!(
-            guard.0.get(&addr),
-            Some(ConnState::Reconnecting(_) | ConnState::Connecting)
-        ) {
-            return;
-        }
-        mark_reconnecting(&mut guard.0, addr.clone());
+        return (addr, false);
     }
+    warn!("ClusterConnInner: connection to {addr:?} lost; repairing in background");
 
     let mut backoff = Duration::from_millis(50);
     loop {
-        let prev = {
-            let guard = core.conn_lock.read().await;
-            let in_topology = guard.1.addresses_for_all_nodes().contains(&addr);
-            let entry = guard.0.get(&addr);
-            if matches!(entry, Some(ConnState::Connected(_))) {
-                break;
-            }
-            let prev_conn = entry.and_then(ConnState::connected_or_reconnecting);
-            drop(guard);
+        let snapshot = core.routing.load();
+        let in_topology = snapshot.contains_topology_address(&addr);
+        drop(snapshot);
+        if !in_topology {
+            core.connections.remove(&addr, &core.cluster_params).await;
+            return (addr, false);
+        }
+        if core
+            .connections
+            .is_connected(&addr, &core.cluster_params)
+            .await
+        {
+            return (addr, false);
+        }
+        let previous_connection = core
+            .connections
+            .connection_for_repair(&addr, &core.cluster_params)
+            .await;
 
-            if !in_topology {
-                core.conn_lock.write().await.0.remove(&addr);
-                break;
-            }
-            prev_conn
-        };
-
-        match get_or_create_conn(&addr, prev, &core.cluster_params).await {
+        #[cfg(feature = "cluster-async-diagnostics")]
+        let reconnect_started = core.cluster_params.diagnostics.reconnect_started();
+        match get_or_create_conn(&addr, previous_connection, &core.cluster_params).await {
             Ok(conn) => {
-                let newly_installed = {
-                    let mut guard = core.conn_lock.write().await;
-                    if matches!(guard.0.get(&addr), Some(ConnState::Connected(_))) {
-                        false
-                    } else {
-                        guard.0.insert(addr.clone(), ConnState::Connected(conn));
-                        true
-                    }
-                };
+                let newly_installed = core
+                    .connections
+                    .install_repaired(addr.clone(), conn, &core.cluster_params)
+                    .await;
+                #[cfg(feature = "cluster-async-diagnostics")]
+                core.cluster_params
+                    .diagnostics
+                    .reconnect_install(newly_installed);
                 if newly_installed {
                     info!("ClusterConnInner: reconnected to {addr:?}");
-                    // TODO: make the resubscribe semantic more granular.
-                    // Right now resubscribe() re-sends every subscription across all nodes.
-                    // We should re-subscribe for the newly repaired node.
-                    core.resubscribe();
                 }
-                break;
+                #[cfg(feature = "cluster-async-diagnostics")]
+                core.cluster_params
+                    .diagnostics
+                    .reconnect_finished(reconnect_started, true);
+                return (addr, newly_installed);
             }
             Err(err) => {
+                #[cfg(feature = "cluster-async-diagnostics")]
+                core.cluster_params
+                    .diagnostics
+                    .reconnect_finished(reconnect_started, false);
                 debug!("repair_node: failed to reconnect {addr:?}: {err:?}");
             }
         }
@@ -1195,6 +1346,8 @@ impl From<NodeAddress> for OperationTarget {
 struct Message<C> {
     cmd: CmdArg<C>,
     sender: oneshot::Sender<RedisResult<Response>>,
+    #[cfg(feature = "cluster-async-diagnostics")]
+    enqueued_at: std::time::Instant,
 }
 
 enum RecoverFuture {
@@ -1220,13 +1373,6 @@ impl fmt::Debug for ConnectionState {
     }
 }
 
-fn build_slot_map(slot_map: &mut SlotMap, slots_data: Vec<SlotRange>) -> RedisResult<()> {
-    slot_map.clear();
-    slot_map.fill_slots(slots_data);
-    trace!("{slot_map:?}");
-    Ok(())
-}
-
 impl<C> ClusterConnInner<C>
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
@@ -1245,7 +1391,8 @@ where
 
         let (pending_requests_tx, pending_requests_rx) = mpsc::unbounded_channel();
         let inner = Arc::new(InnerCore {
-            conn_lock: RwLock::new((Default::default(), SlotMap::new())),
+            routing: ArcSwap::from_pointee(RoutingTable::empty(0)),
+            connections: ConnectionStore::new(),
             cluster_params,
             pending_requests_tx,
             initial_nodes: initial_nodes.to_vec(),
@@ -1257,8 +1404,11 @@ where
             inner: core.clone(),
             in_flight_requests: Default::default(),
             reconnect_futures: Default::default(),
+            reconnect_pending: Default::default(),
             pending_requests_rx,
             refresh_error: None,
+            #[cfg(feature = "cluster-async-diagnostics")]
+            received_since_poll: 0,
             state: ConnectionState::PollComplete,
         };
         inner.state = ConnectionState::Recover(RecoverFuture::ReconnectInitial(Box::pin(
@@ -1270,7 +1420,7 @@ where
     async fn create_initial_connections(
         initial_nodes: &[ConnectionInfo],
         params: &ClusterParams,
-    ) -> RedisResult<ConnectionMap<C>> {
+    ) -> RedisResult<HashMap<NodeAddress, C>> {
         let (connections, error) = stream::iter(initial_nodes.iter().cloned())
             .map(async move |info| {
                 let addr = NodeAddress::try_from(&info.addr)?;
@@ -1285,11 +1435,11 @@ where
             })
             .buffer_unordered(initial_nodes.len())
             .fold(
-                (ConnectionMap::<C>::with_capacity(initial_nodes.len()), None),
+                (HashMap::with_capacity(initial_nodes.len()), None),
                 |(mut connections, mut error), result| async move {
                     match result {
                         Ok((addr, conn)) => {
-                            connections.insert(addr, ConnState::Connected(conn));
+                            connections.insert(addr, conn);
                         }
                         Err(err) => {
                             // Store at least one error to use as detail in the connection error if
@@ -1322,10 +1472,13 @@ where
         debug!("Received request to reconnect to initial nodes");
         let inner = self.inner.clone();
         async move {
-            let connection_map =
+            let initial_connections =
                 Self::create_initial_connections(&inner.initial_nodes, &inner.cluster_params)
                     .await?;
-            *inner.conn_lock.write().await = (connection_map, SlotMap::new());
+            inner
+                .connections
+                .replace_connected(initial_connections, &inner.cluster_params)
+                .await;
             inner.refresh_slots().await?;
             Ok(())
         }
@@ -1334,17 +1487,17 @@ where
     // Create reconnecting futures and register them into `reconnect_futures`
     // so we can poll them at the next poll_flush iteration.
     fn register_reconnect_futures(&mut self, addrs: HashSet<NodeAddress>) {
-        // This is best-effort, non-blocking, opportunistic check to see
-        // if there is already a repair in progress.
-        // This is not load-bearing since the real dedupe logic lives inside reconnect_loop.
-        let opportunistic_read_guard = self.inner.conn_lock.try_read().ok();
         for addr in addrs {
-            if let Some(guard) = &opportunistic_read_guard
-                && matches!(
-                    guard.0.get(&addr),
-                    Some(ConnState::Reconnecting(_) | ConnState::Connecting)
-                )
-            {
+            // Deduplicate before queueing. This prevents a stale queued future from
+            // starting a second repair after the first has already restored the node,
+            // independently of which connection-state backend is under test.
+            let claimed = self.reconnect_pending.insert(addr.clone());
+            #[cfg(feature = "cluster-async-diagnostics")]
+            self.inner
+                .cluster_params
+                .diagnostics
+                .reconnect_triggered(claimed);
+            if !claimed {
                 continue;
             }
             self.reconnect_futures
@@ -1353,7 +1506,21 @@ where
     }
 
     fn poll_reconnects(&mut self, cx: &mut task::Context<'_>) {
-        while let Poll::Ready(Some(())) = Pin::new(&mut self.reconnect_futures).poll_next(cx) {}
+        let topology_recovery_in_progress = matches!(self.state, ConnectionState::Recover(_));
+        let mut repaired_any = false;
+        while let Poll::Ready(Some((address, repaired))) =
+            Pin::new(&mut self.reconnect_futures).poll_next(cx)
+        {
+            self.reconnect_pending.remove(&address);
+            repaired_any |= repaired;
+        }
+
+        // A topology recovery reconnects every node and replays subscriptions when
+        // it completes. Suppress per-node replay while that recovery is active so
+        // parallel, off-lock repairs cannot enqueue duplicate subscription pushes.
+        if repaired_any && !topology_recovery_in_progress {
+            self.inner.resubscribe();
+        }
     }
 
     async fn wait_for_initial_connection(&mut self) -> RedisResult<()> {
@@ -1404,7 +1571,7 @@ where
     fn handle_retries(&mut self, request_handling: Option<Retry<C>>) {
         match request_handling {
             Some(Retry::MoveToPending { request }) => {
-                let _ = self.inner.pending_requests_tx.send(request);
+                self.inner.send_pending(request);
             }
             Some(Retry::Immediately { request }) => {
                 let future = self.inner.clone().try_request(request.cmd.clone());
@@ -1434,6 +1601,14 @@ where
     }
 
     fn dispatch_pending(&mut self) {
+        #[cfg(feature = "cluster-async-profiling")]
+        let _dispatch_profile = self
+            .inner
+            .cluster_params
+            .diagnostics
+            .profile(diagnostics::ProfilePhase::Dispatch);
+        #[cfg(feature = "cluster-async-diagnostics")]
+        let mut dispatched = 0usize;
         loop {
             let request = match self.pending_requests_rx.try_recv() {
                 Ok(request) => request,
@@ -1441,24 +1616,51 @@ where
                 | Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
             };
 
-            // Drop the request if no-one is waiting for a response to free up resources for
-            // requests callers care about (load shedding). It will be ambiguous whether the
-            // request actually goes through regardless.
-            if request.sender.is_closed() {
-                continue;
+            #[cfg(feature = "cluster-async-diagnostics")]
+            request.diagnostics.pending_removed();
+            if self.dispatch_request(request) {
+                #[cfg(feature = "cluster-async-diagnostics")]
+                {
+                    dispatched += 1;
+                }
             }
-
-            let future = self.inner.clone().try_request(request.cmd.clone()).boxed();
-            self.in_flight_requests.push(Box::pin(Request {
-                retry_params: self.inner.cluster_params.retry_params.clone(),
-                request: Some(request),
-                future: RequestState::Future { future },
-            }));
         }
+        #[cfg(feature = "cluster-async-diagnostics")]
+        self.inner
+            .cluster_params
+            .diagnostics
+            .dispatch_batch(dispatched, self.in_flight_requests.len());
+    }
+
+    fn dispatch_request(&mut self, request: PendingRequest<C>) -> bool {
+        // Drop the request if no-one is waiting for a response to free up resources for
+        // requests callers care about (load shedding). It will be ambiguous whether the
+        // request actually goes through regardless.
+        if request.sender.is_closed() {
+            #[cfg(feature = "cluster-async-diagnostics")]
+            request.diagnostics.cancelled_before_dispatch();
+            return false;
+        }
+
+        let future = self.inner.clone().try_request(request.cmd.clone()).boxed();
+        self.in_flight_requests.push(Box::pin(Request {
+            retry_params: self.inner.cluster_params.retry_params.clone(),
+            request: Some(request),
+            future: RequestState::Future { future },
+        }));
+        true
     }
 
     fn poll_in_flight(&mut self, cx: &mut task::Context<'_>) -> Poll<PollFlushAction> {
+        #[cfg(feature = "cluster-async-profiling")]
+        let _completion_profile = self
+            .inner
+            .cluster_params
+            .diagnostics
+            .profile(diagnostics::ProfilePhase::Completion);
         let mut poll_flush_action = PollFlushAction::None;
+        #[cfg(feature = "cluster-async-diagnostics")]
+        let mut completed = 0usize;
 
         loop {
             let (request_handling, next) =
@@ -1469,7 +1671,17 @@ where
 
             self.handle_retries(request_handling);
             poll_flush_action = poll_flush_action.change_state(next);
+            #[cfg(feature = "cluster-async-diagnostics")]
+            {
+                completed += 1;
+            }
         }
+
+        #[cfg(feature = "cluster-async-diagnostics")]
+        self.inner
+            .cluster_params
+            .diagnostics
+            .completion_batch(completed, self.in_flight_requests.len());
 
         if !matches!(poll_flush_action, PollFlushAction::None) || self.in_flight_requests.is_empty()
         {
@@ -1578,13 +1790,30 @@ where
 
     fn start_send(self: Pin<&mut Self>, msg: Message<C>) -> Result<(), Self::Error> {
         trace!("start_send");
-        let Message { cmd, sender } = msg;
+        let Message {
+            cmd,
+            sender,
+            #[cfg(feature = "cluster-async-diagnostics")]
+            enqueued_at,
+        } = msg;
+        let this = self.get_mut();
+        #[cfg(feature = "cluster-async-diagnostics")]
+        {
+            this.inner
+                .cluster_params
+                .diagnostics
+                .driver_received(enqueued_at);
+            this.received_since_poll += 1;
+        }
 
-        let _ = self.inner.pending_requests_tx.send(PendingRequest {
+        let request = PendingRequest {
             retry: 0,
             sender: request::ResultExpectation::External(sender),
+            #[cfg(feature = "cluster-async-diagnostics")]
+            diagnostics: this.inner.cluster_params.diagnostics.clone(),
             cmd,
-        });
+        };
+        this.inner.send_pending(request);
         Ok(())
     }
 
@@ -1593,6 +1822,17 @@ where
         cx: &mut task::Context,
     ) -> Poll<Result<(), Self::Error>> {
         trace!("poll_flush: {:?}", self.state);
+        #[cfg(feature = "cluster-async-profiling")]
+        let _driver_poll_profile = self
+            .inner
+            .cluster_params
+            .diagnostics
+            .profile(diagnostics::ProfilePhase::DriverPoll);
+        #[cfg(feature = "cluster-async-diagnostics")]
+        {
+            let received = std::mem::take(&mut self.received_since_poll);
+            self.inner.cluster_params.diagnostics.driver_poll(received);
+        }
         loop {
             self.send_refresh_error();
             self.poll_reconnects(cx);
@@ -1728,6 +1968,10 @@ where
     if let Some(boundary) = params.write_backpressure_boundary {
         config = config.set_write_backpressure_boundary(boundary);
     }
+    #[cfg(feature = "cluster-async-diagnostics")]
+    {
+        config = config.set_cluster_diagnostics(params.diagnostics.clone());
+    }
     let mut conn = match C::connect_with_config(info, config).await {
         Ok(conn) => conn,
         Err(err) => {
@@ -1754,14 +1998,4 @@ where
         .await
         .and_then(|v| v.extract_error())?;
     Ok(())
-}
-
-fn get_random_connection<C>(connections: &ConnectionMap<C>) -> Option<(NodeAddress, C)>
-where
-    C: Clone,
-{
-    connections
-        .iter()
-        .filter_map(|(addr, state)| state.connected().map(|conn| (addr.clone(), conn)))
-        .choose(&mut rng())
 }

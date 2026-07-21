@@ -149,7 +149,17 @@ impl ResultExpectation {
 pub(super) struct PendingRequest<C> {
     pub(super) retry: u32,
     pub(super) sender: ResultExpectation,
+    #[cfg(feature = "cluster-async-diagnostics")]
+    pub(super) diagnostics: super::ClusterDiagnostics,
     pub(super) cmd: CmdArg<C>,
+}
+
+impl<C> PendingRequest<C> {
+    fn send(self, result: RedisResult<super::Response>) {
+        #[cfg(feature = "cluster-async-diagnostics")]
+        self.diagnostics.driver_completed();
+        self.sender.send(result);
+    }
 }
 
 pin_project! {
@@ -182,7 +192,7 @@ pub(crate) fn choose_response<C>(
                 error
             } else {
                 trace!("Ok");
-                request.sender.send(Ok(item));
+                request.send(Ok(item));
                 return (None, PollFlushAction::None);
             }
         }
@@ -196,7 +206,7 @@ pub(crate) fn choose_response<C>(
             if has_retries_remaining {
                 Some($retry_func(request))
             } else {
-                let _ = request.sender.send(Err(err));
+                request.send(Err(err));
                 None
             }
         };
@@ -225,7 +235,7 @@ pub(crate) fn choose_response<C>(
 
         (OperationTarget::FanOut, _) => {
             // Fanout operation are retried per internal request, and don't need additional retries.
-            request.sender.send(Err(err));
+            request.send(Err(err));
             (None, PollFlushAction::None)
         }
         (OperationTarget::NotFound, _) => {
@@ -284,7 +294,7 @@ pub(crate) fn choose_response<C>(
         ),
 
         (_, RetryMethod::NoRetry) => {
-            request.sender.send(Err(err));
+            request.send(Err(err));
             (None, PollFlushAction::None)
         }
 
@@ -301,6 +311,10 @@ impl<C> Future for Request<C> {
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
         let mut this = self.as_mut().project();
         if this.request.is_none() || this.request.as_ref().unwrap().sender.is_closed() {
+            #[cfg(feature = "cluster-async-diagnostics")]
+            if let Some(request) = this.request.as_ref() {
+                request.diagnostics.cancelled_in_flight();
+            }
             return Poll::Ready((None, PollFlushAction::None));
         };
 
@@ -370,6 +384,8 @@ mod tests {
             PendingRequest::<usize> {
                 retry,
                 sender: ResultExpectation::External(sender),
+                #[cfg(feature = "cluster-async-diagnostics")]
+                diagnostics: crate::cluster_async::ClusterDiagnostics::default(),
                 cmd: super::CmdArg::Cmd {
                     cmd: Arc::new(crate::cmd("foo")),
                     routing: routing::InternalSingleNodeRouting::Random.into(),

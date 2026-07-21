@@ -37,11 +37,6 @@ impl<V> SlotRangeMap<V> {
     pub fn iter(&self) -> impl Iterator<Item = (u16, u16, &V)> {
         self.inner.iter().map(|(&end, (start, v))| (*start, end, v))
     }
-
-    #[cfg(feature = "cluster-async")]
-    pub fn clear(&mut self) {
-        self.inner.clear();
-    }
 }
 
 impl<V> Default for SlotRangeMap<V> {
