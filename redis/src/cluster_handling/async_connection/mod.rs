@@ -1392,7 +1392,9 @@ where
                         info!("async cluster client recovery: reconnect to initial nodes complete");
                     }
                     Err(err) => {
-                        error!("async cluster client recovery: reconnect to initial nodes failed: `{err}`");
+                        error!(
+                            "async cluster client recovery: reconnect to initial nodes failed: `{err}`"
+                        );
                     }
                 }
                 self.state = ConnectionState::PollComplete;
