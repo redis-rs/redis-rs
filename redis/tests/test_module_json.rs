@@ -2,6 +2,11 @@
 
 use redis::json::{FphaType, JsonSetOptions};
 use redis::{Commands, ExistenceCheck, JsonCommands, ValueType};
+use redis_test::server::Module;
+use redis_test::{
+    REDIS_CE_7_0, REDIS_CE_8_8, REDIS_JSON_8_8, TestContextBuilder, TestContextVersioning,
+    run_test_if_version_supported,
+};
 use std::assert_eq;
 use std::collections::HashMap;
 use std::f32::consts::PI;
@@ -10,9 +15,7 @@ use redis::{
     ErrorKind, RedisResult,
     Value::{self, *},
 };
-use redis_test::server::Module;
 
-use crate::support::*;
 mod support;
 
 use serde::Serialize;

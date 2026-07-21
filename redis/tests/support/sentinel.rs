@@ -4,8 +4,7 @@ use redis::TlsMode;
 use redis::sentinel::SentinelNodeConnectionInfo;
 use redis_test::sentinel::{RedisSentinelCluster, wait_for_master_server, wait_for_replica};
 use redis_test::server::RedisServer;
-
-use crate::support::start_tls_crypto_provider;
+use redis_test::utils::start_tls_crypto_provider;
 
 const MTLS_NOT_ENABLED: bool = false;
 

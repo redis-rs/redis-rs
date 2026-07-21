@@ -13,10 +13,12 @@
 
 use redis::acl::Rule;
 use redis::{Commands, RedisResult};
+use redis_test::{
+    REDIS_CE_8_6, TestContext, TestContextBuilder, VALKEY_9_0, run_test_if_version_supported,
+};
 use tempfile::TempDir;
 
 mod support;
-use crate::support::*;
 use redis_test::utils::{ClientCertPaths, build_client_cert_with_custom_cn};
 
 /// Helper struct to manage cert-based auth testing with a single Redis server

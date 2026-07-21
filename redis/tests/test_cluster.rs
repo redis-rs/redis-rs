@@ -6,6 +6,8 @@ mod support;
 mod cluster {
     #[cfg(feature = "tls-rustls")]
     use redis_test::cluster::ClusterType;
+    #[cfg(feature = "tls-rustls")]
+    use redis_test::utils::load_certs_from_file;
     use std::collections::HashMap;
     use std::sync::{
         Arc,
@@ -21,11 +23,9 @@ mod cluster {
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
         cmd, from_redis_value, parse_redis_value,
     };
-    use redis_test::{
-        cluster::{RedisCluster, RedisClusterConfiguration},
-        redis_value,
-        server::use_protocol,
-    };
+    use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
+    use redis_test::server::use_protocol;
+    use redis_test::{VALKEY_9_0, redis_value, run_test_if_version_supported};
 
     fn smoke_test_connection(mut con: ClusterConnection) {
         redis::cmd("SET")
