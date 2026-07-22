@@ -1,304 +1,350 @@
-use crate::cmd::{Cmd, cmd};
-use crate::connection::ConnectionLike;
-use crate::pipeline::Pipeline;
-use crate::types::{FromRedisValue, RedisResult, ToRedisArgs, ToSingleRedisArg};
+//! Types for the JSON module
+//!
+//! Some commands in the JSON module return either `T` or `Vec<T>` depending on the path argument.
+//! [`VecOrSingleton`] and [`SingletonOrVec`] abstract this difference away, treating `T`
+//! as singleton `Vec<T>`:
+//!
+//! * [`VecOrSingleton`] first tries to parse as `Vec<T>` and falls back to parsing as `T`.
+//! * [`SingletonOrVec`] first tries to parse as `T` and falls back to parsing as `Vec<T>`.
 
-#[cfg(feature = "cluster")]
-use crate::commands::ClusterPipeline;
+use crate::errors::invalid_type_error;
+use crate::{FromRedisValue, ParsingError, Value};
+use std::ops::Deref;
 
-use serde::ser::Serialize;
+/// A [`Vec`] that tries to parse to `Vec<T>`, if unsuccessful to `T`, treated as singleton `Vec<T>`
+///
+/// This struct is useful for typing in Redis' JSON module, where return types are often either `T`
+/// or `Vec<T>` depending on the path argument. This struct allows to abstract that difference away.
+///
+/// It dereferences to a plain [`Vec`].
+///
+/// This struct is similar to [`SingletonOrVec`], except that it first tries to parse as
+/// `Vec<T>` and falls back to parsing as `T`.
+#[derive(Debug)]
+pub struct VecOrSingleton<T>(Vec<T>);
 
-macro_rules! implement_json_commands {
-    (
-        $lifetime: lifetime
-        $(
-            $(#[$attr:meta])+
-            fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-                $($argname:ident: $argty:ty),*) $body:block
-        )*
-    ) => (
+impl<T> Deref for VecOrSingleton<T> {
+    type Target = Vec<T>;
 
-        /// Implements RedisJSON commands for connection like objects.  This
-        /// allows you to send commands straight to a connection or client.  It
-        /// is also implemented for redis results of clients which makes for
-        /// very convenient access in some basic cases.
-        ///
-        /// This allows you to use nicer syntax for some common operations.
-        /// For instance this code:
-        ///
-        /// ```rust,no_run
-        /// use redis::JsonCommands;
-        /// use serde_json::json;
-        /// # fn do_something() -> redis::RedisResult<()> {
-        /// let client = redis::Client::open("redis://127.0.0.1/")?;
-        /// let mut con = client.get_connection()?;
-        /// redis::cmd("JSON.SET").arg("my_key").arg("$").arg(&json!({"item": 42i32}).to_string()).exec(&mut con).unwrap();
-        /// assert_eq!(redis::cmd("JSON.GET").arg("my_key").arg("$").query(&mut con), Ok(String::from(r#"[{"item":42}]"#)));
-        /// # Ok(()) }
-        /// ```
-        ///
-        /// Will become this:
-        ///
-        /// ```rust,no_run
-        /// use redis::JsonCommands;
-        /// use serde_json::json;
-        /// # fn do_something() -> redis::RedisResult<()> {
-        /// let client = redis::Client::open("redis://127.0.0.1/")?;
-        /// let mut con = client.get_connection()?;
-        /// let _: () = con.json_set("my_key", "$", &json!({"item": 42i32}).to_string())?;
-        /// assert_eq!(con.json_get("my_key", "$"), Ok(String::from(r#"[{"item":42}]"#)));
-        /// assert_eq!(con.json_get("my_key", "$.item"), Ok(String::from(r#"[42]"#)));
-        /// # Ok(()) }
-        /// ```
-        ///
-        /// With RedisJSON commands, you have to note that all results will be wrapped
-        /// in square brackets (or empty brackets if not found). If you want to deserialize it
-        /// with e.g. `serde_json` you have to use `Vec<T>` for your output type instead of `T`.
-        pub trait JsonCommands : ConnectionLike + Sized {
-            $(
-                $(#[$attr])*
-                #[inline]
-                #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-                fn $name<$lifetime, $($tyargs: $ty, )* RV: FromRedisValue>(
-                    &mut self $(, $argname: $argty)*) -> RedisResult<RV>
-                    { Cmd::$name($($argname),*)?.query(self) }
-            )*
-        }
-
-        impl Cmd {
-            $(
-                $(#[$attr])*
-                #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-                pub fn $name<$lifetime, $($tyargs: $ty),*>($($argname: $argty),*) -> RedisResult<Self> {
-                    Ok($body)
-                }
-            )*
-        }
-
-        /// Implements RedisJSON commands over asynchronous connections. This
-        /// allows you to send commands straight to a connection or client.
-        ///
-        /// This allows you to use nicer syntax for some common operations.
-        /// For instance this code:
-        ///
-        /// ```rust,no_run
-        /// use redis::JsonAsyncCommands;
-        /// use serde_json::json;
-        /// # async fn do_something() -> redis::RedisResult<()> {
-        /// let client = redis::Client::open("redis://127.0.0.1/")?;
-        /// let mut con = client.get_multiplexed_async_connection().await?;
-        /// redis::cmd("JSON.SET").arg("my_key").arg("$").arg(&json!({"item": 42i32}).to_string()).exec_async(&mut con).await?;
-        /// assert_eq!(redis::cmd("JSON.GET").arg("my_key").arg("$").query_async(&mut con).await, Ok(String::from(r#"[{"item":42}]"#)));
-        /// # Ok(()) }
-        /// ```
-        ///
-        /// Will become this:
-        ///
-        /// ```rust,no_run
-        /// use redis::JsonAsyncCommands;
-        /// use serde_json::json;
-        /// # async fn do_something() -> redis::RedisResult<()> {
-        /// use redis::Commands;
-        /// let client = redis::Client::open("redis://127.0.0.1/")?;
-        /// let mut con = client.get_multiplexed_async_connection().await?;
-        /// let _: () = con.json_set("my_key", "$", &json!({"item": 42i32}).to_string()).await?;
-        /// assert_eq!(con.json_get("my_key", "$").await, Ok(String::from(r#"[{"item":42}]"#)));
-        /// assert_eq!(con.json_get("my_key", "$.item").await, Ok(String::from(r#"[42]"#)));
-        /// # Ok(()) }
-        /// ```
-        ///
-        /// With RedisJSON commands, you have to note that all results will be wrapped
-        /// in square brackets (or empty brackets if not found). If you want to deserialize it
-        /// with e.g. `serde_json` you have to use `Vec<T>` for your output type instead of `T`.
-        ///
-        #[cfg(feature = "aio")]
-        pub trait JsonAsyncCommands : crate::aio::ConnectionLike + Send + Sized {
-            $(
-                $(#[$attr])*
-                #[inline]
-                #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-                fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)* RV>(
-                    & $lifetime mut self
-                    $(, $argname: $argty)*
-                ) -> $crate::types::RedisFuture<'a, RV>
-                where
-                    RV: FromRedisValue,
-                {
-                    Box::pin(async move {
-                        $body.query_async(self).await
-                    })
-                }
-            )*
-        }
-
-        /// Implements RedisJSON commands for pipelines.  Unlike the regular
-        /// commands trait, this returns the pipeline rather than a result
-        /// directly.  Other than that it works the same however.
-        impl Pipeline {
-            $(
-                $(#[$attr])*
-                #[inline]
-                #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-                pub fn $name<$lifetime, $($tyargs: $ty),*>(
-                    &mut self $(, $argname: $argty)*
-                ) -> RedisResult<&mut Self> {
-                    self.add_command($body);
-                    Ok(self)
-                }
-            )*
-        }
-
-        /// Implements RedisJSON commands for cluster pipelines.  Unlike the regular
-        /// commands trait, this returns the cluster pipeline rather than a result
-        /// directly.  Other than that it works the same however.
-        #[cfg(feature = "cluster")]
-        impl ClusterPipeline {
-            $(
-                $(#[$attr])*
-                #[inline]
-                #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-                pub fn $name<$lifetime, $($tyargs: $ty),*>(
-                    &mut self $(, $argname: $argty)*
-                ) -> RedisResult<&mut Self> {
-                    self.add_command($body);
-                    Ok(self)
-                }
-            )*
-        }
-    )
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
-
-implement_json_commands! {
-    'a
-
-    /// Append the JSON `value` to the array at `path` after the last element in it.
-    fn json_arr_append<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V) {
-        cmd("JSON.ARRAPPEND").arg(key).arg(path).arg(serde_json::to_string(value)?).take()
+impl<T: FromRedisValue> FromRedisValue for VecOrSingleton<T> {
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
+        let items = if let Value::Array(arr) = v {
+            arr.iter()
+                .map(|item| T::from_redis_value_ref(item))
+                .collect::<Result<Vec<_>, ParsingError>>()?
+        } else {
+            vec![T::from_redis_value_ref(v)?]
+        };
+        Ok(Self(items))
     }
 
-    /// Index array at `path`, returns first occurrence of `value`
-    fn json_arr_index<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V) {
-        cmd("JSON.ARRINDEX").arg(key).arg(path).arg(serde_json::to_string(value)?).take()
-    }
-
-    /// Same as `json_arr_index` except takes a `start` and a `stop` value, setting these to `0` will mean
-    /// they make no effect on the query
-    ///
-    /// The default values for `start` and `stop` are `0`, so pass those in if you want them to take no effect
-    fn json_arr_index_ss<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V, start: &'a isize, stop: &'a isize) {
-        cmd("JSON.ARRINDEX").arg(key).arg(path).arg(serde_json::to_string(value)?).arg(start).arg(stop).take()
-    }
-
-    /// Inserts the JSON `value` in the array at `path` before the `index` (shifts to the right).
-    ///
-    /// `index` must be within the array's range.
-    fn json_arr_insert<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, index: i64, value: &'a V) {
-        cmd("JSON.ARRINSERT").arg(key).arg(path).arg(index).arg(serde_json::to_string(value)?).take()
-    }
-
-    /// Reports the length of the JSON Array at `path` in `key`.
-    fn json_arr_len<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) {
-        cmd("JSON.ARRLEN").arg(key).arg(path).take()
-    }
-
-    /// Removes and returns an element from the `index` in the array.
-    ///
-    /// `index` defaults to `-1` (the end of the array).
-    fn json_arr_pop<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P, index: i64) {
-        cmd("JSON.ARRPOP").arg(key).arg(path).arg(index).take()
-    }
-
-    /// Trims an array so that it contains only the specified inclusive range of elements.
-    ///
-    /// This command is extremely forgiving and using it with out-of-range indexes will not produce an error.
-    /// There are a few differences between how RedisJSON v2.0 and legacy versions handle out-of-range indexes.
-    fn json_arr_trim<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P, start: i64, stop: i64) {
-        cmd("JSON.ARRTRIM").arg(key).arg(path).arg(start).arg(stop).take()
-    }
-
-    /// Clears container values (Arrays/Objects), and sets numeric values to 0.
-    fn json_clear<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) {
-        cmd("JSON.CLEAR").arg(key).arg(path).take()
-    }
-
-    /// Deletes a value at `path`.
-    fn json_del<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) {
-        cmd("JSON.DEL").arg(key).arg(path).take()
-    }
-
-    /// Gets JSON Value at `path`.
-    ///
-    /// With RedisJSON commands, you have to note that all results will be wrapped
-    /// in square brackets (or empty brackets if not found). If you want to deserialize it
-    /// with e.g. `serde_json` you have to use `Vec<T>` for your output type instead of `T`.
-    fn json_get<K: ToSingleRedisArg, P: ToRedisArgs>(key: K, path: P) {
-        cmd("JSON.GET").arg(key).arg(path).take()
-    }
-
-    /// Gets JSON Values at `path`.
-    ///
-    /// With RedisJSON commands, you have to note that all results will be wrapped
-    /// in square brackets (or empty brackets if not found). If you want to deserialize it
-    /// with e.g. `serde_json` you have to use `Vec<T>` for your output type instead of `T`.
-    fn json_mget<K: ToRedisArgs, P: ToSingleRedisArg>(key: K, path: P) {
-        cmd("JSON.MGET").arg(key).arg(path).take()
-    }
-
-    /// Increments the number value stored at `path` by `number`.
-    fn json_num_incr_by<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P, value: i64) {
-        cmd("JSON.NUMINCRBY").arg(key).arg(path).arg(value).take()
-    }
-
-    /// Returns the keys in the object that's referenced by `path`.
-    fn json_obj_keys<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) {
-        cmd("JSON.OBJKEYS").arg(key).arg(path).take()
-    }
-
-    /// Reports the number of keys in the JSON Object at `path` in `key`.
-    fn json_obj_len<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) {
-        cmd("JSON.OBJLEN").arg(key).arg(path).take()
-    }
-
-    /// Sets the JSON Value at `path` in `key`.
-    fn json_set<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V) {
-        cmd("JSON.SET").arg(key).arg(path).arg(serde_json::to_string(value)?).take()
-    }
-
-        /// Sets the value at the path per key, for every given tuple.
-    fn json_mset<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key_path_values: &'a [(K,P,V)]) {
-        let mut cmd = cmd("JSON.MSET");
-
-        for (key, path, value) in key_path_values {
-            cmd.arg(key)
-               .arg(path)
-               .arg(serde_json::to_string(value)?);
-        }
-
-        cmd
-    }
-
-    /// Appends the `json-string` values to the string at `path`.
-    fn json_str_append<K: ToSingleRedisArg, P: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, path: P, value: V) {
-        cmd("JSON.STRAPPEND").arg(key).arg(path).arg(value).take()
-    }
-
-    /// Reports the length of the JSON String at `path` in `key`.
-    fn json_str_len<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) {
-        cmd("JSON.STRLEN").arg(key).arg(path).take()
-    }
-
-    /// Toggle a `boolean` value stored at `path`.
-    fn json_toggle<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) {
-        cmd("JSON.TOGGLE").arg(key).arg(path).take()
-    }
-
-    /// Reports the type of JSON value at `path`.
-    fn json_type<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) {
-        cmd("JSON.TYPE").arg(key).arg(path).take()
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        let items = if let Value::Array(arr) = v {
+            arr.into_iter()
+                .map(|item| T::from_redis_value(item))
+                .collect::<Result<Vec<_>, ParsingError>>()?
+        } else {
+            vec![T::from_redis_value(v)?]
+        };
+        Ok(Self(items))
     }
 }
 
-impl<T> JsonCommands for T where T: ConnectionLike {}
+/// A [`Vec`] that tries to parse to `T`, treated as singleton `Vec<T>`, if unsuccessful to `Vec<T>`
+///
+/// This struct is useful for typing in Redis' JSON module, where return types are often either `T`
+/// or `Vec<T>` depending on the path argument. This struct allows to abstract that difference away.
+///
+/// It dereferences to a plain [`Vec`].
+///
+/// This struct is similar to [`VecOrSingleton`], except that it first tries to parse as `T` and falls
+/// back to parsing as `Vec<T>`.
+///
+/// If `T` allows it, use [`VecOrSingleton`], as it has a cheaper to decide whether to parse as `T`,
+/// or `Vec<T>`.
+///
+/// [`SingletonOrVec`] allows to avoid mis-parsings, if `T` contains a `Vec` of a type
+/// that itself parses to a `Vec`, like `Vec<String>`.
+///
+/// E.g.: On the wire, `JSON.OBJKEYS` for .-paths yields `Array`s of `BulkString`s and `Nil`s. But
+/// as `BulkString` and `Nil` both themselves parse to `Vec<String>`,
+/// `SingletonFallbackVec<Opt<Vec<String>>` would parse `Array(BulkString(foo), BulkString(bar))` to
+/// `[Some([foo]), Some([bar])]` instead of `[Some[foo, bar]]`. [`SingletonOrVec`] parses
+/// to the latter.
+#[derive(Debug)]
+pub struct SingletonOrVec<T>(Vec<T>);
 
-#[cfg(feature = "aio")]
-impl<T> JsonAsyncCommands for T where T: crate::aio::ConnectionLike + Send + Sized {}
+impl<T> Deref for SingletonOrVec<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl<T: FromRedisValue> FromRedisValue for SingletonOrVec<T> {
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
+        if let Ok(parsed) = T::from_redis_value_ref(v) {
+            return Ok(Self(vec![parsed]));
+        }
+
+        let Value::Array(arr) = v else {
+            invalid_type_error!(v, "Could not convert to T or Vec<T>");
+        };
+
+        Ok(Self(
+            arr.iter()
+                .map(|item| T::from_redis_value_ref(item))
+                .collect::<Result<Vec<_>, ParsingError>>()?,
+        ))
+    }
+
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        if let Ok(parsed) = T::from_redis_value_ref(&v) {
+            return Ok(Self(vec![parsed]));
+        }
+
+        let Value::Array(arr) = v else {
+            invalid_type_error!(v, "Could not convert to T or Vec<T>");
+        };
+
+        Ok(Self(
+            arr.into_iter()
+                .map(|item| T::from_redis_value(item))
+                .collect::<Result<Vec<_>, ParsingError>>()?,
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SingletonOrVec;
+    use super::VecOrSingleton;
+    use crate::Value::*;
+    use crate::types::FromRedisValue;
+
+    /// Tries to assure that converting an Array value to an `SingletonFallbackVec` works
+    #[test]
+    fn singleton_fallback_vec_from_redis_value_array() {
+        // The value to test with
+        let value = Array(vec![Int(4711), Nil, Int(42)]);
+
+        // The actual conversion
+        let converted = VecOrSingleton::<Option<i64>>::from_redis_value(value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(*converted, vec![Some(4711), None, Some(42)]);
+    }
+
+    /// Tries to assure that converting a basic value to an `SingletonFallbackVec` works
+    #[test]
+    fn singleton_fallback_vec_from_redis_value_basic() {
+        // The value to test with
+        let value = Int(4711);
+
+        // The actual conversion
+        let converted = VecOrSingleton::<Option<i64>>::from_redis_value(value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(*converted, vec![Some(4711)]);
+    }
+
+    /// Tries to assure that result of parsing a value that parses as both `T` and `Vec<T>`
+    #[test]
+    fn singleton_fallback_vec_from_redis_value_ambiguous() {
+        // The value to test with
+        let value = Array(vec![BulkString("foo".into()), BulkString("bar".into())]);
+
+        // The actual conversion
+        let converted = VecOrSingleton::<Option<Vec<String>>>::from_redis_value(value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(
+            *converted,
+            vec![Some(vec!["foo".to_string()]), Some(vec!["bar".to_string()])]
+        );
+    }
+
+    /// Tries to assure that converting fails for unconvertible values in `SingletonFallbackVec`
+    #[test]
+    fn singleton_fallback_vec_from_redis_value_other_fails() {
+        // The value to test with
+        let value = BulkString("foo".into());
+
+        // The actual conversion should fail as a `str` should not convert to `i64` or `Vec<i64>`.
+        let err = VecOrSingleton::<Option<i64>>::from_redis_value(value).unwrap_err();
+
+        // Check the resulting value
+        assert!(err.description.contains("not convert"));
+    }
+
+    /// Tries to assure that converting an Array value ref to an `SingletonFallbackVec` works
+    #[test]
+    fn singleton_fallback_vec_from_redis_value_ref_array() {
+        // The value to test with
+        let value = Array(vec![Int(4711), Nil, Int(42)]);
+
+        // The actual conversion
+        let converted = VecOrSingleton::<Option<i64>>::from_redis_value_ref(&value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(*converted, vec![Some(4711), None, Some(42)]);
+    }
+
+    /// Tries to assure that converting a basic value ref to an `SingletonFallbackVec` works
+    #[test]
+    fn singleton_fallback_vec_from_redis_value_ref_basic() {
+        // The value to test with
+        let value = Int(4711);
+
+        // The actual conversion
+        let converted = VecOrSingleton::<Option<i64>>::from_redis_value_ref(&value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(*converted, vec![Some(4711)]);
+    }
+
+    /// Tries to assure that result of parsing a ref to a value that parses as both `T` and `Vec<T>`
+    #[test]
+    fn singleton_fallback_vec_from_redis_value_ref_ambiguous() {
+        // The value to test with
+        let value = Array(vec![BulkString("foo".into()), BulkString("bar".into())]);
+
+        // The actual conversion
+        let converted =
+            VecOrSingleton::<Option<Vec<String>>>::from_redis_value_ref(&value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(
+            *converted,
+            vec![Some(vec!["foo".to_string()]), Some(vec!["bar".to_string()])]
+        );
+    }
+
+    /// Tries to assure that converting fails for refs to unconvertible values in `SingletonFallbackVec`
+    #[test]
+    fn singleton_fallback_vec_from_redis_value_ref_other_fails() {
+        // The value to test with
+        let value = BulkString("foo".into());
+
+        // The actual conversion should fail as a `str` should not convert to `i64` or `Vec<i64>`.
+        let err = VecOrSingleton::<Option<i64>>::from_redis_value_ref(&value).unwrap_err();
+
+        // Check the resulting value
+        assert!(err.description.contains("not convert"));
+    }
+
+    /// Tries to assure that converting an Array value to an `SingletonFirstVec` works
+    #[test]
+    fn singleton_first_vec_from_redis_value_array() {
+        // The value to test with
+        let value = Array(vec![Int(4711), Nil, Int(42)]);
+
+        // The actual conversion
+        let converted = SingletonOrVec::<Option<i64>>::from_redis_value(value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(*converted, vec![Some(4711), None, Some(42)]);
+    }
+
+    /// Tries to assure that converting a basic value to an `SingletonFirstVec` works
+    #[test]
+    fn singleton_first_vec_from_redis_value_basic() {
+        // The value to test with
+        let value = Int(4711);
+
+        // The actual conversion
+        let converted = SingletonOrVec::<Option<i64>>::from_redis_value(value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(*converted, vec![Some(4711)]);
+    }
+
+    /// Tries to assure that result of parsing a value that parses as both `T` and `Vec<T>`
+    #[test]
+    fn singleton_first_vec_from_redis_value_ambiguous() {
+        // The value to test with
+        let value = Array(vec![BulkString("foo".into()), BulkString("bar".into())]);
+
+        // The actual conversion
+        let converted = SingletonOrVec::<Option<Vec<String>>>::from_redis_value(value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(
+            *converted,
+            vec![Some(vec!["foo".to_string(), "bar".to_string()])]
+        );
+    }
+
+    /// Tries to assure that converting fails for unconvertible values in `SingletonFirstVec`
+    #[test]
+    fn singleton_first_vec_from_redis_value_other_fails() {
+        // The value to test with
+        let value = BulkString("foo".into());
+
+        // The actual conversion should fail as a `str` should not convert to `i64` or `Vec<i64>`.
+        let err = SingletonOrVec::<Option<i64>>::from_redis_value(value).unwrap_err();
+
+        // Check the resulting value
+        assert!(err.description.contains("not convert"));
+    }
+
+    /// Tries to assure that converting an Array value ref to an `SingletonFirstVec` works
+    #[test]
+    fn singleton_first_vec_from_redis_value_ref_array() {
+        // The value to test with
+        let value = Array(vec![Int(4711), Nil, Int(42)]);
+
+        // The actual conversion
+        let converted = SingletonOrVec::<Option<i64>>::from_redis_value_ref(&value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(*converted, vec![Some(4711), None, Some(42)]);
+    }
+
+    /// Tries to assure that converting a basic value ref to an `SingletonFirstVec` works
+    #[test]
+    fn singleton_first_vec_from_redis_value_ref_basic() {
+        // The value to test with
+        let value = Int(4711);
+
+        // The actual conversion
+        let converted = SingletonOrVec::<Option<i64>>::from_redis_value_ref(&value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(*converted, vec![Some(4711)]);
+    }
+
+    /// Tries to assure that result of parsing a ref to a value that parses as both `T` and `Vec<T>`
+    #[test]
+    fn singleton_first_vec_from_redis_value_ref_ambiguous() {
+        // The value to test with
+        let value = Array(vec![BulkString("foo".into()), BulkString("bar".into())]);
+
+        // The actual conversion
+        let converted =
+            SingletonOrVec::<Option<Vec<String>>>::from_redis_value_ref(&value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(
+            *converted,
+            vec![Some(vec!["foo".to_string(), "bar".to_string()])]
+        );
+    }
+
+    /// Tries to assure that converting fails for refs to unconvertible values in `SingletonFirstVec`
+    #[test]
+    fn singleton_first_vec_from_redis_value_ref_other_fails() {
+        // The value to test with
+        let value = BulkString("foo".into());
+
+        // The actual conversion should fail as a `str` should not convert to `i64` or `Vec<i64>`.
+        let err = SingletonOrVec::<Option<i64>>::from_redis_value_ref(&value).unwrap_err();
+
+        // Check the resulting value
+        assert!(err.description.contains("not convert"));
+    }
+}

@@ -10,6 +10,63 @@ redis = "2"
 
 ## Breaking Changes
 
+### `bool` can be parsed from `true`/`false` Redis strings (Breaking Change)
+
+The strings `0` and `1` already parsed to `bool` in earlier versions.
+
+Now additionally the strings `true` and `false` (both as `BulkString` and for consistence also as `SimpleString`) parse to their corresponding `bool`s to simplify parsing `JSON.TOGGLE` result.
+
+**Migration:** Check your use of conversion that you do _not_ rely on parsing to `bool`s fails for `true`/`false` strings.
+
+### JSON commands got promoted to standard commands (Breaking Change)
+
+`JsonCommands`, and `JsonAsyncCommands` got merged into `Commands`, and `JsonAsyncCommands`.
+
+The return types of the following functions in `Cmd`, `Pipeline`, and `ClusterPipeline` had the wrapping `RedisResult` stripped from their return type, as they cannot fail (their variants in `Commands` etc. still can fail during execution and hence keep their `RedisResult`):
+
+* `json_arr_len`
+* `json_arr_pop`
+* `json_arr_trim`
+* `json_clear`
+* `json_del`
+* `json_get`
+* `json_mget`
+* `json_num_incr_by`
+* `json_obj_keys`
+* `json_obj_len`
+* `json_str_append`
+* `json_str_len`
+* `json_toggle`
+* `json_type`
+
+**Migration:**
+1. **Switch from `JsonCommands` and `JsonAsyncCommands` to `Commands` and `AsyncCommands`**
+1. **Drop the `?` (or `unwrap`, `expect`, ...) from affected JSON commands in `Cmd`, `Pipeline`, and `ClusterPipeline`**
+
+```rust
+// Before:
+use redis::JsonCommands;
+use redis::JsonAsyncCommands;
+[...]
+let mut pipeline = redis::pipe();
+pipeline.get("foo")                  // No json command, hence no `?`
+        .json_type("key", ".path")?; // This `?` should vanish during migration
+pipeline.query(&mut con)?;           // This `?` will stay
+
+let type = con.json_type("key", ".path")?; // This `?` will stay
+
+// After:
+use redis::Commands;
+use redis::AsyncCommands;
+[...]
+let mut pipeline = redis::pipe();
+pipeline.get("foo")
+        .json_type("key", ".path"); // No `?` any longer, as queueing the command cannot fail
+pipeline.query(&mut con)?;          // Still with `?`, as running the pipeline can still fail
+
+let type = con.json_type("key", ".path")?; // Still with `?`, as running the statement can still fail
+```
+
 ### `RedisServer::new...` got removed; use `RedisServerBuilder` instead (Breaking Change)
 
 Over time `RedisServer::new...` methods grew in parameters and made them hard to use.

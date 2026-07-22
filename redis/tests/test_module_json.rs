@@ -1,19 +1,13 @@
 #![cfg(feature = "json")]
 
-use redis::{Commands, JsonCommands, ValueType};
+use redis::{ErrorKind, RedisResult, TypedCommands};
+use redis_test::server::Module;
 use std::assert_eq;
 use std::collections::HashMap;
-
-use redis::{
-    ErrorKind, RedisResult,
-    Value::{self, *},
-};
-use redis_test::server::Module;
 
 use crate::support::*;
 mod support;
 
-use serde::Serialize;
 // adds json! macro for quick json generation on the fly.
 use serde_json::json;
 
@@ -24,30 +18,13 @@ fn test_module_json_serialize_error() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    #[derive(Debug, Serialize)]
-    struct InvalidSerializedStruct {
-        // Maps in serde_json must have string-like keys
-        // so numbers and strings, anything else will cause the serialization to fail
-        // this is basically the only way to make a serialization fail at runtime
-        // since rust doesnt provide the necessary ability to enforce this
-        pub invalid_json: HashMap<Option<bool>, i64>,
-    }
+    // Maps in JSON need to have string keys. So the following will fail to serialize.
+    let unserializable: HashMap<Option<bool>, i64> = HashMap::from([(None, 42)]);
 
-    let mut test_invalid_value: InvalidSerializedStruct = InvalidSerializedStruct {
-        invalid_json: HashMap::new(),
-    };
+    let err = con.json_set(TEST_KEY, "$", &unserializable).unwrap_err();
 
-    test_invalid_value.invalid_json.insert(None, 2i64);
-
-    let set_invalid = con
-        .json_set::<_, _, _, bool>(TEST_KEY, "$", &test_invalid_value)
-        .unwrap_err();
-
-    assert_eq!(set_invalid.kind(), ErrorKind::Serialize);
-    assert_eq!(
-        set_invalid.to_string(),
-        String::from("key must be a string")
-    );
+    assert_eq!(err.kind(), ErrorKind::Serialize);
+    assert_eq!(err.to_string(), String::from("key must be a string"));
 }
 
 #[test]
@@ -55,17 +32,20 @@ fn test_module_json_arr_append() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    let set_initial: RedisResult<bool> = con.json_set(
+    let setup = con.json_set(
         TEST_KEY,
         "$",
-        &json!({"a":[1i64], "nested": {"a": [1i64, 2i64]}, "nested2": {"a": 42i64}}),
+        &json!({"a":[1], "nested": {"a": [1, 2]}, "nested2": {"a": 42}}),
     );
+    assert_eq!(setup, Ok(true));
 
-    assert_eq!(set_initial, Ok(true));
+    // Testing a .-path
+    let result = con.json_arr_append(TEST_KEY, ".a", &4711).unwrap();
+    assert_eq!(*result, vec![Some(2)]);
 
-    let json_append: RedisResult<Value> = con.json_arr_append(TEST_KEY, "$..a", &3i64);
-
-    assert_eq!(json_append, Ok(Array(vec![Int(2i64), Int(3i64), Nil])));
+    // Testing a $-path
+    let result = con.json_arr_append(TEST_KEY, "$..a", &3).unwrap();
+    assert_eq!(*result, vec![Some(3), Some(3), None]); // 3 for the first item, as the .-path command run also added an item
 }
 
 #[test]
@@ -73,30 +53,41 @@ fn test_module_json_arr_index() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    let set_initial: RedisResult<bool> = con.json_set(
+    let setup = con.json_set(
         TEST_KEY,
         "$",
-        &json!({"a":[1i64, 2i64, 3i64, 2i64], "nested": {"a": [3i64, 4i64]}}),
+        &json!({"a":[1, 2, 3, 2], "nested": {"a": [3, 4]}, "nested2": {"a": 42}}),
     );
+    assert_eq!(setup, Ok(true));
 
-    assert_eq!(set_initial, Ok(true));
+    // Testing a .-path
+    let result = con.json_arr_index(TEST_KEY, ".a", &2).unwrap();
 
-    let json_arrindex: RedisResult<Value> = con.json_arr_index(TEST_KEY, "$..a", &2i64);
+    assert_eq!(*result, vec![Some(1)]);
+    // Testing a $-path
+    let result = con.json_arr_index(TEST_KEY, "$..a", &2).unwrap();
+    assert_eq!(*result, vec![Some(1), Some(-1), None]);
+}
 
-    assert_eq!(json_arrindex, Ok(Array(vec![Int(1i64), Int(-1i64)])));
+#[test]
+fn test_module_json_arr_index_ss() {
+    let ctx = TestContext::with_modules(&[Module::Json]);
+    let mut con = ctx.connection();
 
-    let update_initial: RedisResult<bool> = con.json_set(
+    let setup = con.json_set(
         TEST_KEY,
         "$",
-        &json!({"a":[1i64, 2i64, 3i64, 2i64], "nested": {"a": false}}),
+        &json!({"a":[1, 2, 3, 2], "nested": {"a": "foo"}, "nested2": {"a": 42}}),
     );
+    assert_eq!(setup, Ok(true));
 
-    assert_eq!(update_initial, Ok(true));
+    // Testing a .-path
+    let result = con.json_arr_index_ss(TEST_KEY, ".a", &2, &2, &4).unwrap();
+    assert_eq!(*result, vec![Some(3)]);
 
-    let json_arrindex_2: RedisResult<Value> =
-        con.json_arr_index_ss(TEST_KEY, "$..a", &2i64, &0, &0);
-
-    assert_eq!(json_arrindex_2, Ok(Array(vec![Int(1i64), Nil])));
+    // Testing a $-path
+    let result = con.json_arr_index_ss(TEST_KEY, "$..a", &2, &2, &4).unwrap();
+    assert_eq!(*result, vec![Some(3), None, None]);
 }
 
 #[test]
@@ -104,29 +95,20 @@ fn test_module_json_arr_insert() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    let set_initial: RedisResult<bool> = con.json_set(
+    let setup = con.json_set(
         TEST_KEY,
         "$",
-        &json!({"a":[3i64], "nested": {"a": [3i64 ,4i64]}}),
+        &json!({"a":[1, 2, 3, 2], "nested": {"a": "foo"}, "nested2": {"a": 42}}),
     );
+    assert_eq!(setup, Ok(true));
 
-    assert_eq!(set_initial, Ok(true));
+    // Testing a .-path
+    let result = con.json_arr_insert(TEST_KEY, ".a", 2, &1).unwrap();
+    assert_eq!(*result, vec![Some(5)]);
 
-    let json_arrinsert: RedisResult<Value> = con.json_arr_insert(TEST_KEY, "$..a", 0, &1i64);
-
-    assert_eq!(json_arrinsert, Ok(Array(vec![Int(2), Int(3)])));
-
-    let update_initial: RedisResult<bool> = con.json_set(
-        TEST_KEY,
-        "$",
-        &json!({"a":[1i64 ,2i64 ,3i64 ,2i64], "nested": {"a": false}}),
-    );
-
-    assert_eq!(update_initial, Ok(true));
-
-    let json_arrinsert_2: RedisResult<Value> = con.json_arr_insert(TEST_KEY, "$..a", 0, &1i64);
-
-    assert_eq!(json_arrinsert_2, Ok(Array(vec![Int(5), Nil])));
+    // Testing a $-path
+    let result = con.json_arr_insert(TEST_KEY, "$..a", 0, &1).unwrap();
+    assert_eq!(*result, vec![Some(6), None, None]); // 6 for the first item, as the .-path command run also added an item
 }
 
 #[test]
@@ -134,29 +116,20 @@ fn test_module_json_arr_len() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    let set_initial: RedisResult<bool> = con.json_set(
+    let setup = con.json_set(
         TEST_KEY,
         "$",
-        &json!({"a": [3i64], "nested": {"a": [3i64, 4i64]}}),
+        &json!({"a":[1, 2, 3, 2], "nested": {"a": "foo"}, "nested2": {"a": 42}}),
     );
+    assert_eq!(setup, Ok(true));
 
-    assert_eq!(set_initial, Ok(true));
+    // Testing a .-path
+    let result = con.json_arr_len(TEST_KEY, ".a").unwrap();
+    assert_eq!(*result, vec![Some(4)]);
 
-    let json_arrlen: RedisResult<Value> = con.json_arr_len(TEST_KEY, "$..a");
-
-    assert_eq!(json_arrlen, Ok(Array(vec![Int(1), Int(2)])));
-
-    let update_initial: RedisResult<bool> = con.json_set(
-        TEST_KEY,
-        "$",
-        &json!({"a": [1i64, 2i64, 3i64, 2i64], "nested": {"a": false}}),
-    );
-
-    assert_eq!(update_initial, Ok(true));
-
-    let json_arrlen_2: RedisResult<Value> = con.json_arr_len(TEST_KEY, "$..a");
-
-    assert_eq!(json_arrlen_2, Ok(Array(vec![Int(4), Nil])));
+    // Testing a $-path
+    let result = con.json_arr_len(TEST_KEY, "$..a").unwrap();
+    assert_eq!(*result, vec![Some(4), None, None]);
 }
 
 #[test]
@@ -164,43 +137,20 @@ fn test_module_json_arr_pop() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    let set_initial: RedisResult<bool> = con.json_set(
+    let setup = con.json_set(
         TEST_KEY,
         "$",
-        &json!({"a": [3i64], "nested": {"a": [3i64, 4i64]}}),
+        &json!({"a":[1, 2, 3, 2], "nested": {"a": "foo"}, "nested2": {"a": 42}}),
     );
+    assert_eq!(setup, Ok(true));
 
-    assert_eq!(set_initial, Ok(true));
+    // Testing a .-path
+    let result = con.json_arr_pop(TEST_KEY, ".a", -1).unwrap();
+    assert_eq!(*result, vec![Some("2".to_string())]);
 
-    let json_arrpop: RedisResult<Value> = con.json_arr_pop(TEST_KEY, "$..a", -1);
-
-    assert_eq!(
-        json_arrpop,
-        Ok(Array(vec![
-            // convert string 3 to its ascii value as bytes
-            BulkString(Vec::from("3".as_bytes())),
-            BulkString(Vec::from("4".as_bytes()))
-        ]))
-    );
-
-    let update_initial: RedisResult<bool> = con.json_set(
-        TEST_KEY,
-        "$",
-        &json!({"a":["foo", "bar"], "nested": {"a": false}, "nested2": {"a":[]}}),
-    );
-
-    assert_eq!(update_initial, Ok(true));
-
-    let json_arrpop_2: RedisResult<Value> = con.json_arr_pop(TEST_KEY, "$..a", -1);
-
-    assert_eq!(
-        json_arrpop_2,
-        Ok(Array(vec![
-            BulkString(Vec::from("\"bar\"".as_bytes())),
-            Nil,
-            Nil
-        ]))
-    );
+    // Testing a $-path
+    let result = con.json_arr_pop(TEST_KEY, "$..a", -1).unwrap();
+    assert_eq!(*result, vec![Some("3".to_string()), None, None]); // "3 for the first item", as the .-path command run also took an item
 }
 
 #[test]
@@ -208,29 +158,20 @@ fn test_module_json_arr_trim() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    let set_initial: RedisResult<bool> = con.json_set(
+    let setup = con.json_set(
         TEST_KEY,
         "$",
-        &json!({"a": [], "nested": {"a": [1i64, 4u64]}}),
+        &json!({"a":[1, 2, 3, 2], "nested": {"a": "foo"}, "nested2": {"a": 42}}),
     );
+    assert_eq!(setup, Ok(true));
 
-    assert_eq!(set_initial, Ok(true));
+    // Testing a .-path
+    let result = con.json_arr_trim(TEST_KEY, ".a", 1, 2).unwrap();
+    assert_eq!(*result, vec![Some(2)]);
 
-    let json_arrtrim: RedisResult<Value> = con.json_arr_trim(TEST_KEY, "$..a", 1, 1);
-
-    assert_eq!(json_arrtrim, Ok(Array(vec![Int(0), Int(1)])));
-
-    let update_initial: RedisResult<bool> = con.json_set(
-        TEST_KEY,
-        "$",
-        &json!({"a": [1i64, 2i64, 3i64, 4i64], "nested": {"a": false}}),
-    );
-
-    assert_eq!(update_initial, Ok(true));
-
-    let json_arrtrim_2: RedisResult<Value> = con.json_arr_trim(TEST_KEY, "$..a", 1, 1);
-
-    assert_eq!(json_arrtrim_2, Ok(Array(vec![Int(1), Nil])));
+    // Testing a $-path
+    let result = con.json_arr_trim(TEST_KEY, "$..a", 1, 2).unwrap();
+    assert_eq!(*result, vec![Some(1), None, None]); // 1 for the first item, as the .-path command run trimmed to 2 elements, and we're trying to take the 2nd (which exists) and 3rd (which does no longer exist)
 }
 
 #[test]
@@ -238,24 +179,20 @@ fn test_module_json_clear() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    let set_initial: RedisResult<bool> = con.json_set(TEST_KEY, "$", &json!({"obj": {"a": 1i64, "b": 2i64}, "arr": [1i64, 2i64, 3i64], "str": "foo", "bool": true, "int": 42i64, "float": std::f64::consts::PI}));
-
-    assert_eq!(set_initial, Ok(true));
-
-    let json_clear: RedisResult<i64> = con.json_clear(TEST_KEY, "$.*");
-
-    assert_eq!(json_clear, Ok(4));
-
-    let checking_value: RedisResult<String> = con.json_get(TEST_KEY, "$");
-
-    // float is set to 0 and serde_json serializes 0f64 to 0.0, which is a different string
-    assert_eq!(
-        checking_value,
-        // i found it changes the order?
-        // its not really a problem if you're just deserializing it anyway but still
-        // kinda weird
-        Ok("[{\"arr\":[],\"bool\":true,\"float\":0,\"int\":0,\"obj\":{},\"str\":\"foo\"}]".into())
+    let setup = con.json_set(
+        TEST_KEY,
+        "$",
+        &json!({"a":[1, 2, 3, 2], "nested": {"a": "foo"}, "nested2": {"a": 42}}),
     );
+    assert_eq!(setup, Ok(true));
+
+    // Testing a .-path
+    let result = con.json_clear(TEST_KEY, ".a").unwrap();
+    assert_eq!(result, 1);
+
+    // Testing a $-path
+    let result = con.json_clear(TEST_KEY, "$..a").unwrap();
+    assert_eq!(result, 1); // 1, as the .-path command run took the main `a`, and `nested.a` is not numeric
 }
 
 #[test]
@@ -263,17 +200,20 @@ fn test_module_json_del() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    let set_initial: RedisResult<bool> = con.json_set(
+    let setup = con.json_set(
         TEST_KEY,
         "$",
-        &json!({"a": 1i64, "nested": {"a": 2i64, "b": 3i64}}),
+        &json!({"a":[1, 2, 3, 2], "nested": {"a": "foo"}, "nested2": {"a": 42}}),
     );
+    assert_eq!(setup, Ok(true));
 
-    assert_eq!(set_initial, Ok(true));
+    // Testing a .-path
+    let result = con.json_del(TEST_KEY, ".a").unwrap();
+    assert_eq!(result, 1);
 
-    let json_del: RedisResult<i64> = con.json_del(TEST_KEY, "$..a");
-
-    assert_eq!(json_del, Ok(2));
+    // Testing a $-path
+    let result = con.json_del(TEST_KEY, "$..a").unwrap();
+    assert_eq!(result, 2); // 2, as the .-path command run took the main `a`
 }
 
 #[test]
@@ -281,25 +221,35 @@ fn test_module_json_get() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    let set_initial: RedisResult<bool> = con.json_set(
+    let setup = con.json_set(
         TEST_KEY,
         "$",
-        &json!({"a":2i64, "b": 3i64, "nested": {"a": 4i64, "b": null}}),
+        &json!({"a":[1, 2, 3, 2], "nested": {"a": "foo"}, "nested2": {"a": 42}}),
     );
+    assert_eq!(setup, Ok(true));
 
-    assert_eq!(set_initial, Ok(true));
+    // Testing a .-path
+    let result = con.json_get(TEST_KEY, ".a").unwrap();
+    assert_eq!(result, "[1,2,3,2]");
 
-    let json_get: RedisResult<String> = con.json_get(TEST_KEY, "$..b");
+    // Testing a $-path
+    let result = con.json_get(TEST_KEY, "$..a").unwrap();
+    assert_eq!(result, "[[1,2,3,2],\"foo\",42]");
 
-    assert_eq!(json_get, Ok("[3,null]".into()));
-
-    let json_get_multi: RedisResult<String> = con.json_get(TEST_KEY, &["..a", "$..b"]);
-
-    if json_get_multi != Ok("{\"$..b\":[3,null],\"..a\":[2,4]}".into())
-        && json_get_multi != Ok("{\"..a\":[2,4],\"$..b\":[3,null]}".into())
-    {
-        panic!("test_error: incorrect response from json_get_multi");
-    }
+    // Testing multiple paths
+    let paths = [".nested.a", "$..a", ".nested2"];
+    let result = con.json_get(TEST_KEY, &paths).unwrap();
+    // As the result is a serialized object, the keys don't have a fixed order in the serialization.
+    // So we parse it to check reliably.
+    let parsed_result: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(
+        parsed_result,
+        json!({
+            ".nested.a": ["foo"],
+            "$..a": [[1, 2, 3, 2], "foo", 42],
+            ".nested2": [{"a": 42}],
+        })
+    );
 }
 
 #[test]
@@ -307,32 +257,37 @@ fn test_module_json_mget() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    let set_initial: RedisResult<bool> = con.json_mset(&[
+    let keys = [
+        format!("{TEST_KEY}-a"),
+        format!("{TEST_KEY}-b"),
+        format!("{TEST_KEY}-c"),
+    ];
+    let setup: RedisResult<bool> = con.json_mset(&[
         (
-            format!("{TEST_KEY}-a"),
+            &keys[0],
             "$",
-            &json!({"a":1i64, "b": 2i64, "nested": {"a": 3i64, "b": null}}),
+            &json!({"a":1, "b": 2, "nested": {"a": 3, "b": null}}),
         ),
         (
-            format!("{TEST_KEY}-b"),
+            &keys[1],
             "$",
-            &json!({"a":4i64, "b": 5i64, "nested": {"a": 6i64, "b": null}}),
+            &json!({"a":4, "b": 5, "nested": {"a": 6, "b": null}}),
         ),
     ]);
+    assert_eq!(setup, Ok(true));
 
-    assert_eq!(set_initial, Ok(true));
-
-    let json_mget: RedisResult<Value> = con.json_mget(
-        vec![format!("{TEST_KEY}-a"), format!("{TEST_KEY}-b")],
-        "$..a",
+    // Testing a .-path
+    let result = con.json_mget(&keys, ".a").unwrap();
+    assert_eq!(
+        result,
+        vec![Some("1".to_string()), Some("4".to_string()), None]
     );
 
+    // Testing a $-path
+    let result = con.json_mget(&keys, "$..a").unwrap();
     assert_eq!(
-        json_mget,
-        Ok(Array(vec![
-            BulkString(Vec::from("[1,3]".as_bytes())),
-            BulkString(Vec::from("[4,6]".as_bytes()))
-        ]))
+        result,
+        vec![Some("[1,3]".to_string()), Some("[4,6]".to_string()), None]
     );
 }
 
@@ -341,32 +296,32 @@ fn test_module_json_num_incr_by() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    let set_initial: RedisResult<bool> = con.json_set(
+    let setup = con.json_set(
         TEST_KEY,
         "$",
-        &json!({"a":"b","b":[{"a":2i64}, {"a":5i64}, {"a":"c"}]}),
+        &json!({"a": 4711, "nested": {"a": "foo"}, "nested2": {"a": 42}}),
     );
+    assert_eq!(setup, Ok(true));
 
-    assert_eq!(set_initial, Ok(true));
+    if ctx.protocol.supports_resp3() {
+        // Testing a .-path
+        let result = con.json_num_incr_by(TEST_KEY, ".a", 42).unwrap();
+        assert_eq!(*result, vec![Some("4753".to_string())]);
 
-    if ctx.protocol.supports_resp3() && ctx.supports(REDIS_CE_7_0) {
-        // cannot increment a string
-        let json_numincrby_a: RedisResult<Vec<Value>> = con.json_num_incr_by(TEST_KEY, "$.a", 2);
-        assert_eq!(json_numincrby_a, Ok(vec![Nil]));
-
-        let json_numincrby_b: RedisResult<Vec<Value>> = con.json_num_incr_by(TEST_KEY, "$..a", 2);
-
-        // however numbers can be incremented
-        assert_eq!(json_numincrby_b, Ok(vec![Nil, Int(4), Int(7), Nil]));
+        // Testing a $-path
+        let result = con.json_num_incr_by(TEST_KEY, "$..a", 42).unwrap();
+        assert_eq!(
+            *result,
+            vec![Some("4795".to_string()), None, Some("84".to_string())]
+        ); // 4795 for the first item, as the .-path command run already increased 4711 to 4753
     } else {
-        // cannot increment a string
-        let json_numincrby_a: RedisResult<String> = con.json_num_incr_by(TEST_KEY, "$.a", 2);
-        assert_eq!(json_numincrby_a, Ok("[null]".into()));
+        // Testing a .-path
+        let result = con.json_num_incr_by(TEST_KEY, ".a", 42).unwrap();
+        assert_eq!(*result, vec![Some("4753".to_string())]);
 
-        let json_numincrby_b: RedisResult<String> = con.json_num_incr_by(TEST_KEY, "$..a", 2);
-
-        // however numbers can be incremented
-        assert_eq!(json_numincrby_b, Ok("[null,4,7,null]".into()));
+        // Testing a $-path
+        let result = con.json_num_incr_by(TEST_KEY, "$..a", 42).unwrap();
+        assert_eq!(*result, vec![Some("[4795,null,84]".to_string())]); // 4795 for the first item, as the .-path command run already increased 4711 to 4753
     }
 }
 
@@ -375,25 +330,22 @@ fn test_module_json_obj_keys() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    let set_initial: RedisResult<bool> = con.json_set(
+    let setup = con.json_set(
         TEST_KEY,
         "$",
-        &json!({"a":[3i64], "nested": {"a": {"b":2i64, "c": 1i64}}}),
+        &json!({"a":[3], "nested": {"a": {"b":2, "c": 1}}}),
     );
+    assert_eq!(setup, Ok(true));
 
-    assert_eq!(set_initial, Ok(true));
+    // Testing a .-path
+    let result = con.json_obj_keys(TEST_KEY, ".nested.a").unwrap();
+    assert_eq!(*result, vec![Some(vec!["b".to_string(), "c".to_string()])]);
 
-    let json_objkeys: RedisResult<Value> = con.json_obj_keys(TEST_KEY, "$..a");
-
+    // Testing a $-path
+    let result = con.json_obj_keys(TEST_KEY, "$..a").unwrap();
     assert_eq!(
-        json_objkeys,
-        Ok(Array(vec![
-            Nil,
-            Array(vec![
-                BulkString(Vec::from("b".as_bytes())),
-                BulkString(Vec::from("c".as_bytes()))
-            ])
-        ]))
+        *result,
+        vec![None, Some(vec!["b".to_string(), "c".to_string()])]
     );
 }
 
@@ -402,17 +354,20 @@ fn test_module_json_obj_len() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    let set_initial: RedisResult<bool> = con.json_set(
+    let setup = con.json_set(
         TEST_KEY,
         "$",
-        &json!({"a":[3i64], "nested": {"a": {"b":2i64, "c": 1i64}}}),
+        &json!({"a":{ "foo": 42, "bar": 4711, "nested": {"a": 23}}}),
     );
+    assert_eq!(setup, Ok(true));
 
-    assert_eq!(set_initial, Ok(true));
+    // Testing a .-path
+    let result = con.json_obj_len(TEST_KEY, ".a").unwrap();
+    assert_eq!(*result, vec![Some(3)]);
 
-    let json_objlen: RedisResult<Value> = con.json_obj_len(TEST_KEY, "$..a");
-
-    assert_eq!(json_objlen, Ok(Array(vec![Nil, Int(2)])));
+    // Testing a $-path
+    let result = con.json_obj_len(TEST_KEY, "$..a").unwrap();
+    assert_eq!(*result, vec![Some(3), None]);
 }
 
 #[test]
@@ -420,9 +375,12 @@ fn test_module_json_set() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    let set: RedisResult<bool> = con.json_set(TEST_KEY, "$", &json!({"key": "value"}));
-
-    assert_eq!(set, Ok(true));
+    let result = con.json_set(
+        TEST_KEY,
+        "$",
+        &json!({"a": 4711, "nested": {"a": "foo"}, "nested2": {"a": 42}}),
+    );
+    assert_eq!(result, Ok(true));
 }
 
 #[test]
@@ -430,24 +388,22 @@ fn test_module_json_str_append() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    let set_initial: RedisResult<bool> = con.json_set(
+    let setup = con.json_set(
         TEST_KEY,
         "$",
-        &json!({"a":"foo", "nested": {"a": "hello"}, "nested2": {"a": 31i64}}),
+        &json!({"a": 4711, "nested": {"a": "foo"}, "nested2": {"a": 42}}),
     );
+    assert_eq!(setup, Ok(true));
 
-    assert_eq!(set_initial, Ok(true));
+    // Testing a .-path
+    let result = con
+        .json_str_append(TEST_KEY, ".nested.a", "\"bar\"")
+        .unwrap();
+    assert_eq!(*result, vec![Some(6)]);
 
-    let json_strappend: RedisResult<Value> = con.json_str_append(TEST_KEY, "$..a", "\"baz\"");
-
-    assert_eq!(json_strappend, Ok(Array(vec![Int(6), Int(8), Nil])));
-
-    let json_get_check: RedisResult<String> = con.json_get(TEST_KEY, "$");
-
-    assert_eq!(
-        json_get_check,
-        Ok("[{\"a\":\"foobaz\",\"nested\":{\"a\":\"hellobaz\"},\"nested2\":{\"a\":31}}]".into())
-    );
+    // Testing a $-path
+    let result = con.json_str_append(TEST_KEY, "$..a", "\"baz\"").unwrap();
+    assert_eq!(*result, vec![None, Some(9), None]); // 9 for the 2nd item, as the .-path command run already added "bar"
 }
 
 #[test]
@@ -455,17 +411,20 @@ fn test_module_json_str_len() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    let set_initial: RedisResult<bool> = con.json_set(
+    let setup = con.json_set(
         TEST_KEY,
         "$",
-        &json!({"a":"foo", "nested": {"a": "hello"}, "nested2": {"a": 31i32}}),
+        &json!({"a": 4711, "nested": {"a": "foo"}, "nested2": {"a": 42}}),
     );
+    assert_eq!(setup, Ok(true));
 
-    assert_eq!(set_initial, Ok(true));
+    // Testing a .-path
+    let result = con.json_str_len(TEST_KEY, ".nested.a").unwrap();
+    assert_eq!(*result, vec![Some(3)]);
 
-    let json_strlen: RedisResult<Value> = con.json_str_len(TEST_KEY, "$..a");
-
-    assert_eq!(json_strlen, Ok(Array(vec![Int(3), Int(5), Nil])));
+    // Testing a $-path
+    let result = con.json_str_len(TEST_KEY, "$..a").unwrap();
+    assert_eq!(*result, vec![None, Some(3), None]); // 9 for the 2nd item, as the .-path command run already added "bar"
 }
 
 #[test]
@@ -473,15 +432,20 @@ fn test_module_json_toggle() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    let set_initial: RedisResult<bool> = con.json_set(TEST_KEY, "$", &json!({"bool": true}));
+    let setup = con.json_set(
+        TEST_KEY,
+        "$",
+        &json!({"a": true, "nested": {"a": "foo"}, "nested2": {"a": true}}),
+    );
+    assert_eq!(setup, Ok(true));
 
-    assert_eq!(set_initial, Ok(true));
+    // Testing a .-path
+    let result = con.json_toggle(TEST_KEY, ".a").unwrap();
+    assert_eq!(*result, vec![Some(false)]);
 
-    let json_toggle_a: RedisResult<Value> = con.json_toggle(TEST_KEY, "$.bool");
-    assert_eq!(json_toggle_a, Ok(Array(vec![Int(0)])));
-
-    let json_toggle_b: RedisResult<Value> = con.json_toggle(TEST_KEY, "$.bool");
-    assert_eq!(json_toggle_b, Ok(Array(vec![Int(1)])));
+    // Testing a $-path
+    let result = con.json_toggle(TEST_KEY, "$..a").unwrap();
+    assert_eq!(*result, vec![Some(true), None, Some(false)]); // true for the first item, as the .-path command run already toggled it
 }
 
 #[test]
@@ -489,52 +453,25 @@ fn test_module_json_type() {
     let ctx = TestContext::with_modules(&[Module::Json]);
     let mut con = ctx.connection();
 
-    let set_initial: RedisResult<bool> = con.json_set(
+    let setup = con.json_set(
         TEST_KEY,
         "$",
-        &json!({"a":2i64, "nested": {"a": true}, "foo": "bar"}),
+        &json!({"a": true, "nested": {"a": "foo"}, "nested2": {"a": 4711}}),
     );
+    assert_eq!(setup, Ok(true));
 
-    assert_eq!(set_initial, Ok(true));
+    // Testing a .-path
+    let result = con.json_type(TEST_KEY, ".a").unwrap();
+    assert_eq!(*result, vec![vec!["boolean".to_string()]]);
 
-    let json_type_a: RedisResult<Value> = con.json_type(TEST_KEY, "$..foo");
-    let json_type_b: RedisResult<Value> = con.json_type(TEST_KEY, "$..a");
-    let json_type_c: RedisResult<Value> = con.json_type(TEST_KEY, "$..dummy");
-
-    if ctx.protocol.supports_resp3() && ctx.supports(REDIS_CE_7_0) {
-        // In RESP3 current RedisJSON always gives response in an array.
-        assert_eq!(
-            json_type_a,
-            Ok(Array(vec![Array(vec![BulkString(Vec::from(
-                "string".as_bytes()
-            ))])]))
-        );
-
-        assert_eq!(
-            json_type_b,
-            Ok(Array(vec![Array(vec![
-                BulkString(Vec::from("integer".as_bytes())),
-                BulkString(Vec::from("boolean".as_bytes()))
-            ])]))
-        );
-        assert_eq!(json_type_c, Ok(Array(vec![Array(vec![])])));
-    } else {
-        assert_eq!(
-            json_type_a,
-            Ok(Array(vec![BulkString(Vec::from("string".as_bytes()))]))
-        );
-
-        assert_eq!(
-            json_type_b,
-            Ok(Array(vec![
-                BulkString(Vec::from("integer".as_bytes())),
-                BulkString(Vec::from("boolean".as_bytes()))
-            ]))
-        );
-        assert_eq!(json_type_c, Ok(Array(vec![])));
-    }
-
-    // Checking the type of the key as a whole
-    let key_type: RedisResult<ValueType> = con.key_type(TEST_KEY);
-    assert_eq!(key_type, Ok(ValueType::JSON));
+    // Testing a $-path
+    let result = con.json_type(TEST_KEY, "$..a").unwrap();
+    assert_eq!(
+        *result,
+        vec![vec![
+            "boolean".to_string(),
+            "string".to_string(),
+            "integer".to_string(),
+        ]]
+    );
 }
