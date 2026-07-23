@@ -25,6 +25,7 @@ use crate::{
 /// let mut sentinel_client = redis::sentinel::SentinelClient::build(sentinel_addresses, String::from("master0"), None, redis::sentinel::SentinelServerType::Master).unwrap();
 /// let mut connection = sentinel_client.get_connection().unwrap();
 /// ```
+#[non_exhaustive]
 pub struct RedisSentinelCluster {
     pub servers: Vec<RedisServer>,
     pub sentinel_servers: Vec<RedisServer>,

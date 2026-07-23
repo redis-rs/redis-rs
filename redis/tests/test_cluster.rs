@@ -4,6 +4,8 @@ mod support;
 
 #[cfg(test)]
 mod cluster {
+    #[cfg(feature = "tls-rustls")]
+    use redis_test::cluster::ClusterType;
     use std::collections::HashMap;
     use std::sync::{
         Arc,
@@ -55,11 +57,9 @@ mod cluster {
         run_test_if_version_supported!(VALKEY_9_0);
 
         let cluster = TestClusterContext::new_with_config_and_builder(
-            RedisClusterConfiguration {
-                cluster_databases: Some(16),
-                tls_insecure: false,
-                ..Default::default()
-            },
+            RedisClusterConfiguration::default()
+                .cluster_databases(16)
+                .insecure_tls(),
             |builder| builder.database_id(4),
         );
 
@@ -106,37 +106,31 @@ mod cluster {
     #[cfg(feature = "tls-rustls")]
     #[test]
     fn test_default_reject_invalid_hostnames() {
-        use redis_test::cluster::ClusterType;
-
         if ClusterType::get_intended() != ClusterType::TcpTls {
             // Only TLS causes invalid certificates to be rejected as desired.
             return;
         }
 
-        let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
-            tls_insecure: false,
-            certs_with_ip_alts: false,
-            ..Default::default()
-        });
+        let cluster = TestClusterContext::new_with_config(
+            RedisClusterConfiguration::default()
+                .insecure_tls()
+                .certs_without_ip_alts(),
+        );
         assert!(cluster.client.get_connection().is_err());
     }
 
     #[cfg(feature = "tls-rustls-insecure")]
     #[test]
     fn test_danger_accept_invalid_hostnames() {
-        use redis_test::cluster::ClusterType;
-
         if ClusterType::get_intended() != ClusterType::TcpTls {
             // No point testing this TLS-specific mode in non-TLS configurations.
             return;
         }
 
         let cluster = TestClusterContext::new_with_config_and_builder(
-            RedisClusterConfiguration {
-                tls_insecure: false,
-                certs_with_ip_alts: false,
-                ..Default::default()
-            },
+            RedisClusterConfiguration::default()
+                .insecure_tls()
+                .certs_without_ip_alts(),
             |builder| builder.danger_accept_invalid_hostnames(true),
         );
 
@@ -1111,10 +1105,7 @@ mod cluster {
         // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
         assert_matches!(result, Err(_));
 
-        let _cluster = RedisCluster::new(RedisClusterConfiguration {
-            ports,
-            ..Default::default()
-        });
+        let _cluster = RedisCluster::new(RedisClusterConfiguration::default().ports(ports));
 
         let result = connection
             .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
@@ -1134,10 +1125,8 @@ mod cluster {
         drop(cluster);
 
         // recreate cluster
-        let _cluster: RedisCluster = RedisCluster::new(RedisClusterConfiguration {
-            ports,
-            ..Default::default()
-        });
+        let _cluster: RedisCluster =
+            RedisCluster::new(RedisClusterConfiguration::default().ports(ports));
 
         let cmd = cmd("PING");
         // explicitly route to all primaries and request all succeeded
@@ -1280,20 +1269,18 @@ mod cluster {
     #[cfg(feature = "tls-rustls")]
     #[test]
     fn test_cluster_node_address_map_fixes_tls_hostname_mismatch() {
-        use redis_test::cluster::ClusterType;
-
         if ClusterType::get_intended() != ClusterType::TcpTls {
             return;
         }
 
         // Certs issued for "localhost" only (no IP SAN), so connecting via
         // 127.0.0.1 will fail TLS verification without node_address_map.
-        let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
-            tls_insecure: false,
-            certs_with_ip_alts: false,
-            dns_hostname: Some("localhost".to_string()),
-            ..Default::default()
-        });
+        let cluster = TestClusterContext::new_with_config(
+            RedisClusterConfiguration::default()
+                .insecure_tls()
+                .certs_without_ip_alts()
+                .dns_hostname("localhost"),
+        );
 
         let err = match cluster.client.get_connection() {
             Ok(_) => panic!("connecting via IP address should fail TLS hostname verification"),

@@ -6,6 +6,7 @@ use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
 
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct TlsFilePaths {
     pub redis_crt: PathBuf,
     pub redis_key: PathBuf,
@@ -14,6 +15,7 @@ pub struct TlsFilePaths {
 
 /// Client certificate and key paths for mTLS authentication
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct ClientCertPaths {
     pub client_crt: PathBuf,
     pub client_key: PathBuf,

@@ -10,21 +10,21 @@ use crate::{
 
 /// Configuration for creating a Redis Cluster.
 pub struct RedisClusterConfiguration {
-    pub num_nodes: u16,
-    pub num_replicas: u16,
-    pub modules: Vec<Module>,
-    pub tls_insecure: bool,
-    pub mtls_enabled: bool,
-    pub ports: Vec<u16>,
-    pub certs_with_ip_alts: bool,
+    num_nodes: u16,
+    num_replicas: u16,
+    modules: Vec<Module>,
+    require_secure_tls: bool,
+    mtls_enabled: bool,
+    ports: Vec<u16>,
+    certs_with_ip_alts: bool,
     /// Number of logical databases each node should expose (`--cluster-databases`).
     ///
     /// `None` leaves the server default (`1`, i.e. only database `0`). Setting a
     /// value greater than `1` requires a server that supports numbered databases
     /// in cluster mode (Valkey 9.0+); older servers fail to start with this flag.
-    pub cluster_databases: Option<u16>,
+    cluster_databases: Option<u16>,
     /// Custom DNS hostname for TLS certificate SAN (used when `certs_with_ip_alts` is false).
-    pub dns_hostname: Option<String>,
+    dns_hostname: Option<String>,
 }
 
 impl RedisClusterConfiguration {
@@ -35,6 +35,67 @@ impl RedisClusterConfiguration {
             ..Default::default()
         }
     }
+
+    /// Set the number of nodes in the cluster.
+    pub fn num_nodes(mut self, num_nodes: u16) -> Self {
+        self.num_nodes = num_nodes;
+        self
+    }
+
+    /// Set the number of replicas per primary.
+    pub fn num_replicas(mut self, num_replicas: u16) -> Self {
+        self.num_replicas = num_replicas;
+        self
+    }
+
+    /// Set the modules to load into each server.
+    pub fn modules(mut self, modules: Vec<Module>) -> Self {
+        self.modules = modules;
+        self
+    }
+
+    /// Allow TLS connections to accept invalid certificates.
+    pub fn insecure_tls(mut self) -> Self {
+        self.require_secure_tls = false;
+        self
+    }
+
+    /// Set the cluster to enable mutual TLS (client certificate authentication).
+    pub fn mtls_enabled(mut self) -> Self {
+        self.mtls_enabled = true;
+        self
+    }
+
+    /// Set the explicit ports to use for the cluster nodes.
+    pub fn ports(mut self, ports: Vec<u16>) -> Self {
+        self.ports = ports;
+        self
+    }
+
+    /// Set the generated certificates to not include IP subject-alternative names.
+    pub fn certs_without_ip_alts(mut self) -> Self {
+        self.certs_with_ip_alts = false;
+        self
+    }
+
+    /// Set whether the generated certificates include IP subject-alternative names.
+    pub fn cluster_databases(mut self, cluster_databases: u16) -> Self {
+        self.cluster_databases = Some(cluster_databases);
+        self
+    }
+
+    pub fn dns_hostname(mut self, hostname: &str) -> Self {
+        self.dns_hostname = Some(hostname.to_string());
+        self
+    }
+
+    pub fn get_require_secure_tls(&self) -> bool {
+        self.require_secure_tls
+    }
+
+    pub fn get_mtls_enabled(&self) -> bool {
+        self.mtls_enabled
+    }
 }
 
 impl Default for RedisClusterConfiguration {
@@ -43,7 +104,7 @@ impl Default for RedisClusterConfiguration {
             num_nodes: 3,
             num_replicas: 0,
             modules: vec![],
-            tls_insecure: true,
+            require_secure_tls: true,
             mtls_enabled: false,
             ports: vec![],
             certs_with_ip_alts: true,
@@ -119,6 +180,7 @@ fn port_in_use(addr: &str) -> bool {
 /// let client = redis::cluster::ClusterClient::new(addresses).unwrap();
 /// let mut connection = client.get_connection().unwrap();
 /// ```
+#[non_exhaustive]
 pub struct RedisCluster {
     pub servers: Vec<RedisServer>,
     pub folders: Vec<TempDir>,
@@ -139,7 +201,7 @@ impl RedisCluster {
             num_nodes: nodes,
             num_replicas: replicas,
             modules,
-            tls_insecure,
+            require_secure_tls,
             mtls_enabled,
             ports,
             certs_with_ip_alts,
@@ -307,7 +369,7 @@ impl RedisCluster {
                     cmd.arg(ca_crt);
                     cmd.arg("--tls");
                 }
-            } else if !tls_insecure && tls_paths.is_some() {
+            } else if !require_secure_tls && tls_paths.is_some() {
                 let ca_crt = &tls_paths.as_ref().unwrap().ca_crt;
                 cmd.arg("--tls").arg("--cacert").arg(ca_crt);
             } else {

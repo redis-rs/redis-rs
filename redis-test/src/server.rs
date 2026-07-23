@@ -169,6 +169,7 @@ impl RedisServerBuilder {
 /// let info = server.connection_info();
 /// // Connect to the server using `info`...
 /// ```
+#[non_exhaustive]
 pub struct RedisServer {
     pub process: process::Child,
     pub tempdir: tempfile::TempDir,
