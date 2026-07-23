@@ -21,7 +21,7 @@ mod macros;
 
 #[cfg(feature = "json")]
 #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-mod json;
+pub mod json;
 
 #[cfg(feature = "json")]
 pub use json::JsonCommands;
