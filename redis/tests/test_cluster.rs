@@ -1231,4 +1231,109 @@ mod cluster {
             }
         }
     }
+
+    #[test]
+    fn test_cluster_node_address_map_remaps_connections() {
+        let cluster = TestClusterContext::new();
+
+        let mut address_map = std::collections::HashMap::new();
+        for server in cluster.cluster.iter_servers() {
+            if let Some((host, port)) = server.host_and_port() {
+                let original = redis::cluster::NodeAddress::new(host, port);
+                let mapped = redis::cluster::NodeAddress::new("localhost", port);
+                address_map.insert(original, mapped);
+            }
+        }
+
+        let initial_nodes: Vec<redis::ConnectionInfo> = cluster
+            .cluster
+            .iter_servers()
+            .map(|s| s.connection_info())
+            .collect();
+
+        let client = redis::cluster::ClusterClient::builder(initial_nodes)
+            .use_protocol(use_protocol())
+            .node_address_map(address_map)
+            .build()
+            .unwrap();
+
+        let mut con = client.get_connection().unwrap();
+
+        redis::cmd("SET")
+            .arg("{x}key1")
+            .arg(b"foo")
+            .exec(&mut con)
+            .unwrap();
+        redis::cmd("SET")
+            .arg(&["{x}key2", "bar"])
+            .exec(&mut con)
+            .unwrap();
+
+        assert_eq!(
+            redis::cmd("MGET")
+                .arg(&["{x}key1", "{x}key2"])
+                .query(&mut con),
+            Ok(("foo".to_string(), b"bar".to_vec()))
+        );
+    }
+
+    #[cfg(feature = "tls-rustls")]
+    #[test]
+    fn test_cluster_node_address_map_fixes_tls_hostname_mismatch() {
+        use redis_test::cluster::ClusterType;
+
+        if ClusterType::get_intended() != ClusterType::TcpTls {
+            return;
+        }
+
+        // Certs issued for "localhost" only (no IP SAN), so connecting via
+        // 127.0.0.1 will fail TLS verification without node_address_map.
+        let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
+            tls_insecure: false,
+            certs_with_ip_alts: false,
+            dns_hostname: Some("localhost".to_string()),
+            ..Default::default()
+        });
+
+        let err = match cluster.client.get_connection() {
+            Ok(_) => panic!("connecting via IP address should fail TLS hostname verification"),
+            Err(err) => err,
+        };
+        assert!(
+            err.is_io_error(),
+            "expected a TLS/IO error from hostname verification failure, got: {err:?}"
+        );
+        let err_string = err.to_string();
+        assert!(
+            err_string.contains("certificate") || err_string.contains("NotValidForName"),
+            "expected a certificate hostname verification error, got: {err_string}"
+        );
+
+        let mut address_map = std::collections::HashMap::new();
+        for server in cluster.cluster.iter_servers() {
+            if let Some((host, port)) = server.host_and_port() {
+                address_map.insert(
+                    redis::cluster::NodeAddress::new(host, port),
+                    redis::cluster::NodeAddress::new("localhost", port),
+                );
+            }
+        }
+
+        let initial_nodes: Vec<redis::ConnectionInfo> = cluster
+            .cluster
+            .iter_servers()
+            .map(|s| s.connection_info())
+            .collect();
+
+        let mut builder = redis::cluster::ClusterClient::builder(initial_nodes)
+            .use_protocol(use_protocol())
+            .node_address_map(address_map);
+
+        if let Some(tls_file_paths) = &cluster.cluster.tls_paths {
+            builder = builder.certs(load_certs_from_file(tls_file_paths));
+        }
+
+        let client = builder.build().unwrap();
+        smoke_test_connection(client.get_connection().unwrap());
+    }
 }

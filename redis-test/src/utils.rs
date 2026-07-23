@@ -24,6 +24,14 @@ pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
 }
 
 pub fn build_keys_and_certs_for_tls_ext(tempdir: &TempDir, with_ip_alts: bool) -> TlsFilePaths {
+    build_keys_and_certs_for_tls_with_hostname(tempdir, with_ip_alts, None)
+}
+
+pub fn build_keys_and_certs_for_tls_with_hostname(
+    tempdir: &TempDir,
+    with_ip_alts: bool,
+    dns_hostname: Option<&str>,
+) -> TlsFilePaths {
     // Based on shell script in redis's server tests
     // https://github.com/redis/redis/blob/8c291b97b95f2e011977b522acf77ead23e26f55/utils/gen-test-certs.sh
     let ca_crt = tempdir.path().join("ca.crt");
@@ -79,6 +87,8 @@ pub fn build_keys_and_certs_for_tls_ext(tempdir: &TempDir, with_ip_alts: bool) -
         "`openssl req` failed to create CA cert: {status}"
     );
 
+    let hostname = dns_hostname.unwrap_or("localhost.example.com");
+
     // Build x509v3 extensions file
     let ext = if with_ip_alts {
         "\
@@ -87,15 +97,17 @@ pub fn build_keys_and_certs_for_tls_ext(tempdir: &TempDir, with_ip_alts: bool) -
             [alt_names]\n\
             IP.1 = 127.0.0.1\n\
             "
+        .to_string()
     } else {
-        "\
+        format!(
+            "\
             [req]\n\
             distinguished_name = req_distinguished_name\n\
             x509_extensions = v3_req\n\
             prompt = no\n\
             \n\
             [req_distinguished_name]\n\
-            CN = localhost.example.com\n\
+            CN = {hostname}\n\
             \n\
             [v3_req]\n\
             basicConstraints = CA:FALSE\n\
@@ -103,8 +115,9 @@ pub fn build_keys_and_certs_for_tls_ext(tempdir: &TempDir, with_ip_alts: bool) -
             subjectAltName = @alt_names\n\
             \n\
             [alt_names]\n\
-            DNS.1 = localhost.example.com\n\
+            DNS.1 = {hostname}\n\
             "
+        )
     };
     fs::write(&ext_file, ext).expect("failed to create x509v3 extensions file");
 
