@@ -4,6 +4,8 @@ mod support;
 
 #[cfg(test)]
 mod cluster_async {
+    #[cfg(feature = "tls-rustls")]
+    use redis_test::cluster::ClusterType;
     use std::{
         collections::HashMap,
         sync::{
@@ -68,11 +70,9 @@ mod cluster_async {
         run_test_if_version_supported!(VALKEY_9_0);
 
         let cluster = TestClusterContext::new_with_config_and_builder(
-            RedisClusterConfiguration {
-                cluster_databases: Some(16),
-                tls_insecure: false,
-                ..Default::default()
-            },
+            RedisClusterConfiguration::default()
+                .cluster_databases(16)
+                .insecure_tls(),
             |builder| builder.database_id(4),
         );
 
@@ -294,11 +294,11 @@ mod cluster_async {
 
     #[async_test]
     async fn test_async_cluster_route_info_to_nodes() {
-        let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
-            num_nodes: 6,
-            num_replicas: 1,
-            ..Default::default()
-        });
+        let cluster = TestClusterContext::new_with_config(
+            RedisClusterConfiguration::default()
+                .num_nodes(6)
+                .num_replicas(1),
+        );
 
         let split_to_addresses_and_info = |res| -> (Vec<String>, Vec<String>) {
             if let Value::Map(values) = res {
@@ -474,18 +474,16 @@ mod cluster_async {
     #[cfg(feature = "tls-rustls")]
     #[async_test]
     async fn test_async_cluster_default_reject_invalid_hostnames() {
-        use redis_test::cluster::ClusterType;
-
         if ClusterType::get_intended() != ClusterType::TcpTls {
             // Only TLS causes invalid certificates to be rejected as desired.
             return;
         }
 
-        let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
-            tls_insecure: false,
-            certs_with_ip_alts: false,
-            ..Default::default()
-        });
+        let cluster = TestClusterContext::new_with_config(
+            RedisClusterConfiguration::default()
+                .insecure_tls()
+                .certs_without_ip_alts(),
+        );
 
         assert!(cluster.client.get_async_connection().await.is_err());
     }
@@ -493,19 +491,15 @@ mod cluster_async {
     #[cfg(feature = "tls-rustls-insecure")]
     #[async_test]
     async fn test_async_cluster_danger_accept_invalid_hostnames() {
-        use redis_test::cluster::ClusterType;
-
         if ClusterType::get_intended() != ClusterType::TcpTls {
             // No point testing this TLS-specific mode in non-TLS configurations.
             return;
         }
 
         let cluster = TestClusterContext::new_with_config_and_builder(
-            RedisClusterConfiguration {
-                tls_insecure: false,
-                certs_with_ip_alts: false,
-                ..Default::default()
-            },
+            RedisClusterConfiguration::default()
+                .insecure_tls()
+                .certs_without_ip_alts(),
             |builder| builder.danger_accept_invalid_hostnames(true),
         );
 
@@ -516,20 +510,18 @@ mod cluster_async {
     #[cfg(feature = "tls-rustls")]
     #[async_test]
     async fn async_cluster_node_address_map_fixes_tls_hostname_mismatch() {
-        use redis_test::cluster::ClusterType;
-
         if ClusterType::get_intended() != ClusterType::TcpTls {
             return;
         }
 
         // Certs issued for "localhost" only (no IP SAN), so connecting via
         // 127.0.0.1 will fail TLS verification without node_address_map.
-        let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
-            tls_insecure: false,
-            certs_with_ip_alts: false,
-            dns_hostname: Some("localhost".to_string()),
-            ..Default::default()
-        });
+        let cluster = TestClusterContext::new_with_config(
+            RedisClusterConfiguration::default()
+                .insecure_tls()
+                .certs_without_ip_alts()
+                .dns_hostname("localhost"),
+        );
 
         let err = match cluster.client.get_async_connection().await {
             Ok(_) => panic!("connecting via IP address should fail TLS hostname verification"),
@@ -2480,10 +2472,7 @@ mod cluster_async {
         // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
         assert_matches!(result, Err(_));
 
-        let _cluster = RedisCluster::new(RedisClusterConfiguration {
-            ports: ports.clone(),
-            ..Default::default()
-        });
+        let _cluster = RedisCluster::new(RedisClusterConfiguration::default().ports(ports.clone()));
 
         let result = connection.req_packed_command(&cmd).await.unwrap();
         assert_eq!(result, redis_value!(simple:"PONG"));
@@ -2501,10 +2490,7 @@ mod cluster_async {
         drop(cluster);
 
         // recreate cluster
-        let _cluster = RedisCluster::new(RedisClusterConfiguration {
-            ports: ports.clone(),
-            ..Default::default()
-        });
+        let _cluster = RedisCluster::new(RedisClusterConfiguration::default().ports(ports.clone()));
 
         // explicitly route to all primaries and request all succeeded
         let result = connection
@@ -3150,10 +3136,8 @@ mod cluster_async {
             }
 
             // recreate cluster
-            let _cluster = RedisCluster::new(RedisClusterConfiguration {
-                ports: ports.clone(),
-                ..Default::default()
-            });
+            let _cluster =
+                RedisCluster::new(RedisClusterConfiguration::default().ports(ports.clone()));
 
             // verify that we didn't get any disconnect notices.
             assert_eq!(
@@ -3240,10 +3224,8 @@ mod cluster_async {
             }
 
             // recreate cluster
-            let _cluster = RedisCluster::new(RedisClusterConfiguration {
-                ports: ports.clone(),
-                ..Default::default()
-            });
+            let _cluster =
+                RedisCluster::new(RedisClusterConfiguration::default().ports(ports.clone()));
 
             // verify that we didn't get any disconnect notices.
             assert_eq!(
