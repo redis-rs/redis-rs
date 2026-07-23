@@ -18,8 +18,8 @@ mod cluster_async {
 
     use assert_matches::assert_matches;
     use redis::{
-        AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo, ProtocolVersion, RedisError,
-        RedisFuture, RedisResult, Script, ServerErrorKind, Value,
+        AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo, RedisError, RedisFuture,
+        RedisResult, Script, ServerErrorKind, Value,
         aio::{ConnectionLike, MultiplexedConnection},
         cluster::ClusterClient,
         cluster_async::Connect,
@@ -2671,7 +2671,7 @@ mod cluster_async {
             supports_redis_7: bool,
         ) {
             let _: () = pubsub_conn.subscribe("regular-phonewave").await.unwrap();
-            let push: PushInfo = get_push(rx).await;
+            let push: PushInfo = get_push(rx).await.unwrap();
             assert_eq!(
                 push,
                 PushInfo {
@@ -2681,7 +2681,7 @@ mod cluster_async {
             );
 
             let _: () = pubsub_conn.psubscribe("phonewave*").await.unwrap();
-            let push = get_push(rx).await;
+            let push = get_push(rx).await.unwrap();
             assert_eq!(
                 push,
                 PushInfo {
@@ -2692,7 +2692,7 @@ mod cluster_async {
 
             if supports_redis_7 {
                 let _: () = pubsub_conn.ssubscribe("sphonewave").await.unwrap();
-                let push = get_push(rx).await;
+                let push = get_push(rx).await.unwrap();
                 assert_eq!(
                     push,
                     PushInfo {
@@ -2703,12 +2703,19 @@ mod cluster_async {
             }
         }
 
-        async fn get_push(rx: &mut UnboundedReceiver<PushInfo>) -> PushInfo {
-            rx.recv()
-                .timeout(futures_time::time::Duration::from_millis(5))
-                .await
-                .unwrap()
-                .unwrap()
+        async fn get_push_with_timeout(
+            rx: &mut UnboundedReceiver<PushInfo>,
+            timeout: Duration,
+        ) -> RedisResult<PushInfo> {
+            Ok(rx
+                .recv()
+                .timeout(futures_time::time::Duration::from(timeout))
+                .await?
+                .unwrap())
+        }
+
+        async fn get_push(rx: &mut UnboundedReceiver<PushInfo>) -> RedisResult<PushInfo> {
+            get_push_with_timeout(rx, Duration::from_millis(5)).await
         }
 
         async fn check_publishing(
@@ -2720,7 +2727,7 @@ mod cluster_async {
                 .publish("regular-phonewave", "banana")
                 .await
                 .unwrap();
-            let push = get_push(rx).await;
+            let push = get_push(rx).await.unwrap();
             assert_eq!(
                 push,
                 PushInfo {
@@ -2733,7 +2740,7 @@ mod cluster_async {
                 .publish("phonewave-pattern", "banana")
                 .await
                 .unwrap();
-            let push = get_push(rx).await;
+            let push = get_push(rx).await.unwrap();
             assert_eq!(
                 push,
                 PushInfo {
@@ -2748,7 +2755,7 @@ mod cluster_async {
 
             if supports_redis_7 {
                 let _: () = publish_conn.spublish("sphonewave", "banana").await.unwrap();
-                let push = get_push(rx).await;
+                let push = get_push(rx).await.unwrap();
                 assert_eq!(
                     push,
                     PushInfo {
@@ -2761,11 +2768,13 @@ mod cluster_async {
 
         #[async_test]
         async fn test_pub_sub_subscription() {
+            if !use_protocol().supports_resp3() {
+                return;
+            }
+
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
-                builder
-                    .use_protocol(ProtocolVersion::RESP3)
-                    .push_sender(tx.clone())
+                builder.push_sender(tx.clone())
             });
 
             let (mut publish_conn, mut pubsub_conn) =
@@ -2779,10 +2788,12 @@ mod cluster_async {
 
         #[async_test]
         async fn test_pub_sub_subscription_with_config() {
+            if !use_protocol().supports_resp3() {
+                return;
+            }
+
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
-                builder.use_protocol(ProtocolVersion::RESP3)
-            });
+            let ctx = TestClusterContext::new();
             let config = redis::cluster::ClusterConfig::new().set_push_sender(tx.clone());
 
             let (mut publish_conn, mut pubsub_conn) = join!(
@@ -2798,9 +2809,11 @@ mod cluster_async {
 
         #[async_test]
         async fn test_pub_sub_shardnumsub() {
-            let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
-                builder.use_protocol(ProtocolVersion::RESP3)
-            });
+            if !use_protocol().supports_resp3() {
+                return;
+            }
+
+            let ctx = TestClusterContext::new();
             skip_if_context_does_not_support!(ctx, REDIS_CE_7_0);
 
             let mut pubsub_conn = ctx.async_connection().await;
@@ -2817,11 +2830,13 @@ mod cluster_async {
 
         #[async_test]
         async fn test_pub_sub_unsubscription() {
+            if !use_protocol().supports_resp3() {
+                return;
+            }
+
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
-                builder
-                    .use_protocol(ProtocolVersion::RESP3)
-                    .push_sender(tx.clone())
+                builder.push_sender(tx.clone())
             });
 
             let (mut publish_conn, mut pubsub_conn) =
@@ -2829,7 +2844,7 @@ mod cluster_async {
             let supports_redis_7 = ctx.supports(REDIS_CE_7_0);
 
             let _: () = pubsub_conn.subscribe("regular-phonewave").await.unwrap();
-            let push = get_push(&mut rx).await;
+            let push = get_push(&mut rx).await.unwrap();
             assert_eq!(
                 push,
                 PushInfo {
@@ -2838,7 +2853,7 @@ mod cluster_async {
                 }
             );
             let _: () = pubsub_conn.unsubscribe("regular-phonewave").await.unwrap();
-            let push = get_push(&mut rx).await;
+            let push = get_push(&mut rx).await.unwrap();
             assert_eq!(
                 push,
                 PushInfo {
@@ -2848,7 +2863,7 @@ mod cluster_async {
             );
 
             let _: () = pubsub_conn.psubscribe("phonewave*").await.unwrap();
-            let push = get_push(&mut rx).await;
+            let push = get_push(&mut rx).await.unwrap();
             assert_eq!(
                 push,
                 PushInfo {
@@ -2857,7 +2872,7 @@ mod cluster_async {
                 }
             );
             let _: () = pubsub_conn.punsubscribe("phonewave*").await.unwrap();
-            let push = get_push(&mut rx).await;
+            let push = get_push(&mut rx).await.unwrap();
             assert_eq!(
                 push,
                 PushInfo {
@@ -2868,7 +2883,7 @@ mod cluster_async {
 
             if supports_redis_7 {
                 let _: () = pubsub_conn.ssubscribe("sphonewave").await.unwrap();
-                let push = get_push(&mut rx).await;
+                let push = get_push(&mut rx).await.unwrap();
                 assert_eq!(
                     push,
                     PushInfo {
@@ -2877,7 +2892,7 @@ mod cluster_async {
                     }
                 );
                 let _: () = pubsub_conn.sunsubscribe("sphonewave").await.unwrap();
-                let push = get_push(&mut rx).await;
+                let push = get_push(&mut rx).await.unwrap();
                 assert_eq!(
                     push,
                     PushInfo {
@@ -2907,11 +2922,13 @@ mod cluster_async {
 
         #[async_test]
         async fn test_connection_is_still_usable_if_pubsub_receiver_is_dropped() {
+            if !use_protocol().supports_resp3() {
+                return;
+            }
+
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
-                builder
-                    .use_protocol(ProtocolVersion::RESP3)
-                    .push_sender(tx.clone())
+                builder.push_sender(tx.clone())
             });
 
             let mut pubsub_conn = ctx.async_connection().await;
@@ -2932,12 +2949,14 @@ mod cluster_async {
 
         #[async_test]
         async fn test_multiple_subscribes_and_unsubscribes_work() {
+            if !use_protocol().supports_resp3() {
+                return;
+            }
+
             // In this test we subscribe on all subscription variations to 3 channels in a single call, then unsubscribe from 2 channels.
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
-                builder
-                    .use_protocol(ProtocolVersion::RESP3)
-                    .push_sender(tx.clone())
+                builder.push_sender(tx.clone())
             });
 
             let mut pubsub_conn = ctx.async_connection().await;
@@ -2952,7 +2971,7 @@ mod cluster_async {
                 .await
                 .unwrap();
             for i in 1..4 {
-                let push = get_push(&mut rx).await;
+                let push = get_push(&mut rx).await.unwrap();
                 assert_eq!(
                     push,
                     PushInfo {
@@ -2969,7 +2988,7 @@ mod cluster_async {
                 .await
                 .unwrap();
             for i in 1..3 {
-                let push = get_push(&mut rx).await;
+                let push = get_push(&mut rx).await.unwrap();
                 assert_eq!(
                     push,
                     PushInfo {
@@ -2987,7 +3006,7 @@ mod cluster_async {
                 .await
                 .unwrap();
             for i in 1..4 {
-                let push = get_push(&mut rx).await;
+                let push = get_push(&mut rx).await.unwrap();
                 assert_eq!(
                     push,
                     PushInfo {
@@ -3002,7 +3021,7 @@ mod cluster_async {
                 .await
                 .unwrap();
             for i in 1..3 {
-                let push = get_push(&mut rx).await;
+                let push = get_push(&mut rx).await.unwrap();
                 assert_eq!(
                     push,
                     PushInfo {
@@ -3018,7 +3037,7 @@ mod cluster_async {
                     .await
                     .unwrap();
                 for i in 1..4 {
-                    let push = get_push(&mut rx).await;
+                    let push = get_push(&mut rx).await.unwrap();
                     assert_eq!(
                         push,
                         PushInfo {
@@ -3033,7 +3052,7 @@ mod cluster_async {
                     .await
                     .unwrap();
                 for i in 1..3 {
-                    let push = get_push(&mut rx).await;
+                    let push = get_push(&mut rx).await.unwrap();
                     assert_eq!(
                         push,
                         PushInfo {
@@ -3055,14 +3074,16 @@ mod cluster_async {
 
         #[async_test]
         async fn test_pub_sub_reconnect_after_disconnect() {
+            if !use_protocol().supports_resp3() {
+                return;
+            }
+
             // in this test we will subscribe to channels, then restart the server, and check that the connection
             // doesn't send disconnect message, but instead resubscribes automatically.
 
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let ctx = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
-                builder
-                    .use_protocol(ProtocolVersion::RESP3)
-                    .push_sender(tx.clone())
+                builder.push_sender(tx.clone())
             });
 
             let ports: Vec<_> = ctx.get_ports();
@@ -3078,7 +3099,7 @@ mod cluster_async {
 
             // we expect 1 disconnect per connection to node. 2 connections * 3 node = 6 disconnects.
             for _ in 0..6 {
-                let push = get_push(&mut rx).await;
+                let push = get_push(&mut rx).await.unwrap();
                 assert_eq!(
                     push,
                     PushInfo {
@@ -3094,30 +3115,21 @@ mod cluster_async {
                 ..Default::default()
             });
 
-            // verify that we didn't get any disconnect notices.
-            assert_eq!(
-                rx.try_recv(),
-                Err(tokio::sync::mpsc::error::TryRecvError::Empty)
-            );
-
-            // send request to trigger reconnection.
-            let _ = pubsub_conn
-                .route_command(
-                    cmd("PING"),
-                    RoutingInfo::MultiNode((
-                        MultipleNodeRoutingInfo::AllMasters,
-                        Some(ResponsePolicy::AllSucceeded),
-                    )),
-                )
-                .await
-                .unwrap();
+            // verify that we didn't get any disconnect notices, and collect any early resubscriptions.
+            let mut pushes = Vec::new();
+            while let Ok(push) = rx.try_recv() {
+                assert_ne!(push.kind, PushKind::Disconnection);
+                pushes.push(push);
+            }
 
             // the resubsriptions can be received in any order, so we assert without assuming order.
-            let mut pushes = Vec::new();
-            pushes.push(get_push(&mut rx).await);
-            pushes.push(get_push(&mut rx).await);
-            if supports_redis_7 {
-                pushes.push(get_push(&mut rx).await);
+            let expected_pushes_count = if supports_redis_7 { 3 } else { 2 };
+            while pushes.len() < expected_pushes_count {
+                pushes.push(
+                    get_push_with_timeout(&mut rx, Duration::from_secs(5))
+                        .await
+                        .unwrap(),
+                );
             }
             // we expect only 3 resubscriptions.
             assert_matches!(rx.try_recv(), Err(_));
@@ -3142,12 +3154,14 @@ mod cluster_async {
 
         #[async_test]
         async fn test_pub_sub_should_not_reconnect_if_subscription_failed() {
+            if !use_protocol().supports_resp3() {
+                return;
+            }
+
             // in this test we will try to subscribe to a disconnected cluster, fail, and check that once the connection reconnects it won't try and resubscribe.
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let ctx = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
-                builder
-                    .use_protocol(ProtocolVersion::RESP3)
-                    .push_sender(tx.clone())
+                builder.push_sender(tx.clone())
             });
 
             let ports: Vec<_> = ctx.get_ports();
