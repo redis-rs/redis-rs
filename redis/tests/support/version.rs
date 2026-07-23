@@ -83,35 +83,22 @@ impl<'a> From<&[&[Component<'a>]]> for ComponentMatcher<'a> {
     }
 }
 
-/// Macros to provide array implementations for matchers' slice implementations
+/// Coercing array implementations for matchers' slice implementations
 ///
-/// Rust can auto-coerce array to slices. But with generic arguments, this
+/// Rust can auto-coerce arrays to slices. But with generic arguments, this
 /// array-to-slice-auto-coercion does not kick in. So one would have to convert manually. To avoid
-/// this for the common cases, this macro implements coercing `From`s. for a given array length
-///
-/// # Arguments
-///
-/// * `$n` - The array lengths to implement coercing `From`s for.
-macro_rules! matcher_array_impls {
-    ($n:expr) => {
-        impl<'a> From<[Component<'a>; $n]> for ComponentMatcher<'a> {
-            fn from(value: [Component<'a>; $n]) -> Self {
-                let coerced_value: &[Component<'a>] = &value;
-                Self::from(coerced_value)
-            }
-        }
-
-        impl<'a> From<[&[Component<'a>]; $n]> for ComponentMatcher<'a> {
-            fn from(value: [&[Component<'a>]; $n]) -> Self {
-                let coerced_value: &[&[Component<'a>]] = &value;
-                Self::from(coerced_value)
-            }
-        }
-    };
+/// this, these const-generic `From`s coerce arrays of any length to the corresponding slice matcher.
+impl<'a, const N: usize> From<[Component<'a>; N]> for ComponentMatcher<'a> {
+    fn from(value: [Component<'a>; N]) -> Self {
+        Self::from(value.as_slice())
+    }
 }
-matcher_array_impls!(1);
-matcher_array_impls!(2);
-matcher_array_impls!(3);
+
+impl<'a, const N: usize> From<[&[Component<'a>]; N]> for ComponentMatcher<'a> {
+    fn from(value: [&[Component<'a>]; N]) -> Self {
+        Self::from(value.as_slice())
+    }
+}
 
 #[derive(Clone)]
 pub struct AvailableComponents {

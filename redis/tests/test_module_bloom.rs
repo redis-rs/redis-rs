@@ -107,9 +107,6 @@ fn test_module_bloom_infos() {
     assert_matches!(con.bf_info(KEY_1).unwrap_err().detail(), Some(d) if d.contains("not found"));
     assert_matches!(con.bf_info_type(KEY_1, BloomFilterInfoType::Items).unwrap_err().detail(), Some(d) if d.contains("not found"));
     assert_eq!(con.bf_exists(KEY_1, "foo"), Ok(false));
-    // As of 2026-04-16, the following command should produce an error according to
-    // https://redis.io/docs/latest/commands/bf.mexists/
-    // as the key is missing. But instead it returns a proper array result
     assert_eq!(
         con.bf_mexists(KEY_1, &["foo", "bar", "baz"]),
         Ok(vec![false, false, false])
@@ -204,9 +201,6 @@ fn test_module_bloom_infos() {
     // to non-Bloom filter keys.
     if ctx.supports(REDIS_BLOOM_ANY) {
         assert_eq!(res_exists, Ok(false));
-        // As of 2026-04-16, the following command should produce an error according to
-        // https://redis.io/docs/latest/commands/bf.mexists/
-        // as the key is of the wrong type. But instead it returns a proper array result
         assert_eq!(res_mexists, Ok(vec![false, false, false]));
     } else {
         assert_eq!(res_exists.unwrap_err().code(), Some("WRONGTYPE"));
