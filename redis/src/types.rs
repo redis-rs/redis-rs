@@ -17,6 +17,7 @@ use std::str::from_utf8;
 use crate::errors::{RedisError, ServerError};
 
 /// Helper enum that is used to define expiry time
+#[derive(Clone)]
 #[non_exhaustive]
 pub enum Expiry {
     /// EX seconds -- Set the specified expire time, in seconds.
@@ -2756,5 +2757,41 @@ impl PartialEq<u32> for IntegerReplyOrNoOp {
             IntegerReplyOrNoOp::IntegerReply(s) => *s as u32 == *other,
             _ => false,
         }
+    }
+}
+
+/// The two-element reply of the [INCREX](https://redis.io/commands/increx) command.
+///
+/// `T` matches the increment type passed to [`increx`](crate::TypedCommands::increx) -
+///  `i64` for `BYINT` operations and `f64` for `BYFLOAT` operations.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct IncrexResult<T> {
+    /// The key's value after the increment.
+    pub value: T,
+    /// The increment that was actually applied.
+    ///
+    /// This is `0` when the default policy (when `SATURATE` is not set) rejected an out-of-bounds operation.
+    /// In that case `value` holds the unchanged current value and the TTL is left untouched.
+    /// When `SATURATE` is set, it clamps the result to a bound.
+    /// This reflects the clamped delta, which may differ from the requested increment.
+    pub actual_increment: T,
+}
+
+impl<T: FromRedisValue> FromRedisValue for IncrexResult<T> {
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
+        let (value, actual_increment) = <(T, T)>::from_redis_value_ref(v)?;
+        Ok(IncrexResult {
+            value,
+            actual_increment,
+        })
+    }
+
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        let (value, actual_increment) = <(T, T)>::from_redis_value(v)?;
+        Ok(IncrexResult {
+            value,
+            actual_increment,
+        })
     }
 }
