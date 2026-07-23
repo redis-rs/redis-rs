@@ -1185,40 +1185,33 @@ where
                     let target_addr = guard.as_ref().and_then(|g| {
                         g.1.slot_addr_for_route(route, self.routing_strategy.as_deref())
                     });
-                    if target_addr == Some(reconnected_addr) {
-                        Some(PendingRequest {
-                            retry: 0,
-                            sender: request::ResultExpectation::Internal,
-                            cmd: CmdArg::Cmd {
-                                cmd: Arc::new(cmd),
-                                routing: routing.into(),
-                            },
-                        })
-                    } else {
-                        None
+                    if target_addr != Some(reconnected_addr) {
+                        return None;
                     }
                 }
-                _ => {
-                    // For random/any-node routing (like SUBSCRIBE/PSUBSCRIBE),
-                    // only send if this is the first connected node.
-                    if !other_nodes_connected {
-                        Some(PendingRequest {
-                            retry: 0,
-                            sender: request::ResultExpectation::Internal,
-                            cmd: CmdArg::Cmd {
-                                cmd: Arc::new(cmd),
-                                routing: routing.into(),
-                            },
-                        })
-                    } else {
-                        None
-                    }
+                // For random/any-node routing (like SUBSCRIBE/PSUBSCRIBE),
+                // only send if this is the first connected node.
+                _ if other_nodes_connected => {
+                    return None;
                 }
+                _ => {}
             }
+
+            Some(PendingRequest {
+                retry: 0,
+                sender: request::ResultExpectation::Internal,
+                cmd: CmdArg::Cmd {
+                    cmd: Arc::new(cmd),
+                    routing: routing.into(),
+                },
+            })
         });
 
         for request in requests {
-            let _ = self.pending_requests_tx.send(request);
+            let _ = self
+                .pending_requests_tx
+                .send(request)
+                .inspect_err(|e| debug!("Failed internal send {e:?}"));
         }
     }
 }
@@ -1232,7 +1225,6 @@ struct ClusterConnInner<C> {
     #[allow(clippy::complexity)]
     in_flight_requests: stream::FuturesUnordered<Pin<Box<Request<C>>>>,
     reconnect_futures: stream::FuturesUnordered<BoxFuture<'static, NodeAddress>>,
-    reconnecting_addresses: HashSet<NodeAddress>,
     pending_requests_rx: mpsc::UnboundedReceiver<PendingRequest<C>>,
     refresh_error: Option<RedisError>,
 }
@@ -1403,7 +1395,6 @@ where
             inner: core.clone(),
             in_flight_requests: Default::default(),
             reconnect_futures: Default::default(),
-            reconnecting_addresses: Default::default(),
             pending_requests_rx,
             refresh_error: None,
             state: ConnectionState::PollComplete,
@@ -1485,20 +1476,26 @@ where
     // Create reconnecting futures and register them into `reconnect_futures`
     // so we can poll them at the next poll_flush iteration.
     fn register_reconnect_futures(&mut self, addrs: HashSet<NodeAddress>) {
+        // This is best-effort, non-blocking, opportunistic check to see
+        // if there is already a repair in progress.
+        // This is not load-bearing since the real dedupe logic lives inside reconnect_loop.
+        let opportunistic_read_guard = self.inner.conn_lock.try_read().ok();
         for addr in addrs {
-            if self.reconnecting_addresses.contains(&addr) {
+            if let Some(guard) = &opportunistic_read_guard
+                && matches!(
+                    guard.0.get(&addr),
+                    Some(ConnState::Reconnecting(_) | ConnState::Connecting)
+                )
+            {
                 continue;
             }
-            self.reconnecting_addresses.insert(addr.clone());
             self.reconnect_futures
                 .push(Box::pin(reconnect_loop(self.inner.clone(), addr)));
         }
     }
 
     fn poll_reconnects(&mut self, cx: &mut task::Context<'_>) {
-        while let Poll::Ready(Some(addr)) = Pin::new(&mut self.reconnect_futures).poll_next(cx) {
-            self.reconnecting_addresses.remove(&addr);
-        }
+        while let Poll::Ready(Some(_)) = Pin::new(&mut self.reconnect_futures).poll_next(cx) {}
     }
 
     async fn wait_for_initial_connection(&mut self) -> RedisResult<()> {
