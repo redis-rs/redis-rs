@@ -2,36 +2,36 @@
 
 #### Changes & Bug fixes
 
-* Remove unnecessary sleep from cluster readonly error handling ([#2223](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2223) by @nihohit)
+* Remove unnecessary sleep from cluster readonly error handling ([#2223](https://github.com/redis-rs/redis-rs/pull/2223) by @nihohit)
 
 #### CI & operational improvements
 
-* ci: Allow `semicolon_in_expressions_from_macros` to make nightly pass ([#2218](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2218) by @somechris)
-* tests/acl: Add the missing requirements for token based authentication ([#2214](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2214) by @somechris)
-* Makefile: Switch to `--locked` for module tests on RESP3 ([#2222](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2222) by @somechris)
+* ci: Allow `semicolon_in_expressions_from_macros` to make nightly pass ([#2218](https://github.com/redis-rs/redis-rs/pull/2218) by @somechris)
+* tests/acl: Add the missing requirements for token based authentication ([#2214](https://github.com/redis-rs/redis-rs/pull/2214) by @somechris)
+* Makefile: Switch to `--locked` for module tests on RESP3 ([#2222](https://github.com/redis-rs/redis-rs/pull/2222) by @somechris)
 
 ### 1.4.0 (2026-07-14)
 
 #### Changes & Bug fixes
 
-* Add support for Valkey's `bloom` module ([#2168](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2168) by @somechris)
-* perf(pipeline): skip result-filter rebuild when nothing is ignored ([#2186](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2186) by @fcostaoliveira)
-* perf(cmd): encode into the Vec buffer instead of via io::Write ([#2187](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2187) by @fcostaoliveira)
-* Make backpressure boundary configurable ([#2188](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2188) by @kushudai)
-* perf(cmd): encode expiry options via itoa instead of format!/to_string ([#2194](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2194) by @fcostaoliveira)
-* Keep dispatching requests when repairing a connection to a replica ([#2120](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2120) by @virratanasangpunth)
+* Add support for Valkey's `bloom` module ([#2168](https://github.com/redis-rs/redis-rs/pull/2168) by @somechris)
+* perf(pipeline): skip result-filter rebuild when nothing is ignored ([#2186](https://github.com/redis-rs/redis-rs/pull/2186) by @fcostaoliveira)
+* perf(cmd): encode into the Vec buffer instead of via io::Write ([#2187](https://github.com/redis-rs/redis-rs/pull/2187) by @fcostaoliveira)
+* Make backpressure boundary configurable ([#2188](https://github.com/redis-rs/redis-rs/pull/2188) by @kushudai)
+* perf(cmd): encode expiry options via itoa instead of format!/to_string ([#2194](https://github.com/redis-rs/redis-rs/pull/2194) by @fcostaoliveira)
+* Keep dispatching requests when repairing a connection to a replica ([#2120](https://github.com/redis-rs/redis-rs/pull/2120) by @virratanasangpunth)
 
 
 #### CI & operational improvements
 
-* tests: Avoid relying on Redis bug in `test_object_freq_command` ([#2164](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2164) by @somechris)
-* Makefile: Select module tests directly to reduce output ([#2167](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2167) by @somechris)
-* test: Switch to selecting tests through profiles ([#2210](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2210) by @somechris)
-* Stabilize github actions dependencies ([#2198](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2198) by @nihohit)
-* tests: Switch direct use of RedisServer to better suited TestContext ([#2202](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2202) by @somechris)
-* ci: Document status of KeyDB, Valkey, and Kvrocks support ([#2206](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2206) by @somechris)
-* tests: Stop running sentinel tests when testing on unix sockets ([#2208](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2208) by @somechris)
-* Make test names greppable ([#2211](https://github.com/redis-rs/redis-rs/pull/https://github.com/redis-rs/redis-rs/pull/2211) by @nihohit)
+* tests: Avoid relying on Redis bug in `test_object_freq_command` ([#2164](https://github.com/redis-rs/redis-rs/pull/2164) by @somechris)
+* Makefile: Select module tests directly to reduce output ([#2167](https://github.com/redis-rs/redis-rs/pull/2167) by @somechris)
+* test: Switch to selecting tests through profiles ([#2210](https://github.com/redis-rs/redis-rs/pull/2210) by @somechris)
+* Stabilize github actions dependencies ([#2198](https://github.com/redis-rs/redis-rs/pull/2198) by @nihohit)
+* tests: Switch direct use of RedisServer to better suited TestContext ([#2202](https://github.com/redis-rs/redis-rs/pull/2202) by @somechris)
+* ci: Document status of KeyDB, Valkey, and Kvrocks support ([#2206](https://github.com/redis-rs/redis-rs/pull/2206) by @somechris)
+* tests: Stop running sentinel tests when testing on unix sockets ([#2208](https://github.com/redis-rs/redis-rs/pull/2208) by @somechris)
+* Make test names greppable ([#2211](https://github.com/redis-rs/redis-rs/pull/2211) by @nihohit)
 
 ### 1.3.0 (2026-06-28)
 
