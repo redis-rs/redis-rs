@@ -5,7 +5,7 @@ use tempfile::TempDir;
 use crate::server::RedisServerBuilder;
 use crate::{
     server::{Module, RedisServer},
-    utils::{TlsFilePaths, build_keys_and_certs_for_tls_ext, get_random_available_port},
+    utils::{TlsFilePaths, build_keys_and_certs_for_tls_with_hostname, get_random_available_port},
 };
 
 /// Configuration for creating a Redis Cluster.
@@ -23,6 +23,8 @@ pub struct RedisClusterConfiguration {
     /// value greater than `1` requires a server that supports numbered databases
     /// in cluster mode (Valkey 9.0+); older servers fail to start with this flag.
     pub cluster_databases: Option<u16>,
+    /// Custom DNS hostname for TLS certificate SAN (used when `certs_with_ip_alts` is false).
+    pub dns_hostname: Option<String>,
 }
 
 impl RedisClusterConfiguration {
@@ -46,6 +48,7 @@ impl Default for RedisClusterConfiguration {
             ports: vec![],
             certs_with_ip_alts: true,
             cluster_databases: None,
+            dns_hostname: None,
         }
     }
 }
@@ -141,6 +144,7 @@ impl RedisCluster {
             ports,
             certs_with_ip_alts,
             cluster_databases,
+            dns_hostname,
         } = configuration;
 
         let optional_ports = if ports.is_empty() {
@@ -163,7 +167,11 @@ impl RedisCluster {
                 .prefix("redis")
                 .tempdir()
                 .expect("failed to create tempdir");
-            let files = build_keys_and_certs_for_tls_ext(&tempdir, certs_with_ip_alts);
+            let files = build_keys_and_certs_for_tls_with_hostname(
+                &tempdir,
+                certs_with_ip_alts,
+                dns_hostname.as_deref(),
+            );
             folders.push(tempdir);
             tls_paths = Some(files);
             is_tls = true;
