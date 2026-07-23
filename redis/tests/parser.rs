@@ -27,9 +27,13 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
         match self.0 {
             Value::Nil | Value::Okay => Box::new(None.into_iter()),
             Value::Int(i) => Box::new(i.shrink().map(Value::Int).map(ArbitraryValue)),
-            Value::BulkString(ref xs) => {
-                Box::new(xs.shrink().map(Value::BulkString).map(ArbitraryValue))
-            }
+            Value::BulkString(ref bytes) => Box::new(
+                bytes
+                    .to_vec()
+                    .shrink()
+                    .map(|bytes| Value::BulkString(bytes.into()))
+                    .map(ArbitraryValue),
+            ),
             Value::Array(ref xs) | Value::Set(ref xs) => {
                 let ys = xs
                     .iter()
@@ -58,7 +62,10 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
                     .iter()
                     .map(|x| ArbitraryValue(x.clone()))
                     .collect::<Vec<_>>();
-                ys.insert(0, ArbitraryValue(Value::SimpleString(kind.to_string())));
+                ys.insert(
+                    0,
+                    ArbitraryValue(Value::SimpleString(kind.to_string().into())),
+                );
                 Box::new(
                     ys.shrink()
                         .map(|xs| xs.into_iter().map(|x| x.0).collect())
@@ -66,9 +73,13 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
                         .map(ArbitraryValue),
                 )
             }
-            Value::SimpleString(ref status) => {
-                Box::new(status.shrink().map(Value::SimpleString).map(ArbitraryValue))
-            }
+            Value::SimpleString(ref status) => Box::new(
+                status
+                    .to_string()
+                    .shrink()
+                    .map(|str: String| Value::SimpleString(str.into()))
+                    .map(ArbitraryValue),
+            ),
             Value::Double(i) => Box::new(i.shrink().map(Value::Double).map(ArbitraryValue)),
             Value::Boolean(i) => Box::new(i.shrink().map(Value::Boolean).map(ArbitraryValue)),
             Value::BigNumber(ref i) => {
@@ -100,7 +111,7 @@ fn arbitrary_value(g: &mut Gen, recursive_size: usize) -> Value {
         match u8::arbitrary(g) % 6 {
             0 => Value::Nil,
             1 => Value::Int(Arbitrary::arbitrary(g)),
-            2 => Value::BulkString(Arbitrary::arbitrary(g)),
+            2 => Value::BulkString(Vec::<u8>::arbitrary(g).into()),
             3 => {
                 let size = {
                     let s = g.size();
@@ -129,7 +140,7 @@ fn arbitrary_value(g: &mut Gen, recursive_size: usize) -> Value {
                 if string == "OK" {
                     Value::Okay
                 } else {
-                    Value::SimpleString(string)
+                    Value::SimpleString(string.into())
                 }
             }
             5 => Value::Okay,
@@ -187,7 +198,7 @@ quickcheck! {
 
         let mut reader = &encoded_input[..];
         let mut partial_reader = PartialAsyncRead { inner: &mut reader, ops: Box::new(seq.into_iter()) };
-        let mut decoder = combine::stream::Decoder::new();
+        let mut decoder = bytes::BytesMut::new();
 
         let result = current_thread_runtime().block_on(redis::parse_redis_value_async(&mut decoder, &mut partial_reader));
         assert!(result.as_ref().is_ok(), "{}", result.unwrap_err());
@@ -196,4 +207,52 @@ quickcheck! {
             input.0,
         );
     }
+}
+
+#[test]
+fn pipelined_values_across_fragmented_reads() {
+    // Multiple pipelined replies flowing through one reused buffer in awkward
+    // 7-byte chunks: exercises leftover preservation after each parsed value
+    // (the consumed prefix is split off and frozen while the next reply's
+    // bytes stay in the buffer) and mid-value refills. This is the read-path
+    // shape a multiplexed connection produces on a real socket.
+    let values = vec![
+        Value::Array(vec![
+            Value::BulkString(vec![b'x'; 10_000].into()),
+            Value::Okay,
+            Value::Int(-1),
+        ]),
+        Value::SimpleString("pipelined".into()),
+        Value::Map(vec![(
+            Value::BulkString(b"key".to_vec().into()),
+            Value::Double(1.5),
+        )]),
+    ];
+
+    let mut encoded = Vec::new();
+    for v in &values {
+        encode_value(v, &mut encoded).unwrap();
+    }
+
+    let mut reader = &encoded[..];
+    let mut partial_reader = PartialAsyncRead {
+        inner: &mut reader,
+        ops: Box::new(std::iter::repeat(PartialOp::Limited(7))),
+    };
+    let mut buffer = bytes::BytesMut::new();
+
+    let runtime = current_thread_runtime();
+    for expected in &values {
+        let got = runtime
+            .block_on(redis::parse_redis_value_async(
+                &mut buffer,
+                &mut partial_reader,
+            ))
+            .unwrap();
+        assert_eq!(&got, expected);
+    }
+    assert!(
+        buffer.is_empty(),
+        "no bytes should remain after the last value"
+    );
 }

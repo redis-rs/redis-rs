@@ -88,6 +88,95 @@ let info = "redis://127.0.0.1/".into_connection_info()?
     .set_tcp_settings(TcpSettings::default().set_nodelay(false));
 ```
 
+### Zero-copy response parsing (Breaking Change)
+
+`Value` now stores its textual and binary payloads in cheaply-cloneable,
+reference-counted buffers instead of owned `Vec<u8>`/`String`:
+
+- `Value::BulkString(Vec<u8>)` → `Value::BulkString(bytes::Bytes)`
+- `Value::SimpleString(String)` → `Value::SimpleString(Str)`
+- `Value::VerbatimString { text: String, .. }` → `{ text: Str, .. }`
+- `Value::BigNumber(Vec<u8>)` → `Value::BigNumber(bytes::Bytes)` (unchanged under the `num-bigint` feature)
+- `PushKind::Other(String)` / `VerbatimFormat::Unknown(String)` → `Str`
+- Server error code/detail are now `Str` as well
+
+`Str` is a new UTF-8-guaranteed string backed by `bytes::Bytes`. It derefs to
+`&str`, so most code keeps working unchanged. Constructing one from `&str`/`String`
+is cheap, and `Into<Bytes>` is free (it just moves the inner buffer). Converting
+to an owned `String` (`Into<String>`) copies when the `Str` is a shared slice into
+a response — the common parser case — so only reach for it when you need ownership.
+
+The parser was rewritten to be **zero-copy**: instead of allocating a fresh
+`Vec`/`String` for every element of a response, it parses into byte-range
+offsets and then produces each leaf as a cheap reference-counted slice into the
+response buffer. A response with many elements no longer performs a heap
+allocation per element.
+
+**Migration:** Most code that goes through `FromRedisValue`/`from_redis_value`
+is unaffected. Code that matches on `Value` directly should:
+
+```rust
+// Before:
+if let Value::BulkString(bytes) = v {
+    let s = String::from_utf8(bytes)?;       // bytes: Vec<u8>
+}
+// After:
+if let Value::BulkString(bytes) = v {
+    let s = String::from_utf8(bytes.into())?; // bytes: Bytes  (or use &bytes as &[u8])
+}
+```
+
+`Str` derefs to `&str`, so `match` arms that previously used the inner `String`
+of a `Value::SimpleString` as a `&str` continue to work; constructing one now
+takes a `Str` (e.g. `Value::SimpleString("OK".into())`).
+
+The (rarely used) re-exported `parse_redis_value_async` also changed shape as
+part of the rewrite: its first argument is now a `&mut bytes::BytesMut` read
+buffer instead of a `combine::stream::Decoder`. Call it with a `BytesMut` you
+own and reuse across calls.
+
+### Why it's faster
+
+The new parser allocates a small, constant number of times per response rather
+than once per element, and avoids copying bulk-string payloads out of the read
+buffer entirely on the async codec path. Parsing benchmarks
+(`cargo bench -p redis --bench bench_decode`) comparing the new parser against
+the previous `Vec`/`String`-based one:
+
+| Response                     | Allocations (before → after) | Time (before → after)         |
+| ---------------------------- | ---------------------------- | ----------------------------- |
+| Single 1 MiB bulk string     | 154 → **2** (77×)            | 50.8 µs → 12.3 µs (**4.1×**)  |
+| Array of 5000 small bulks    | 7509 → **16** (469×)         | 548 µs → 367 µs (1.5×)        |
+| Array of 500 × 1 KiB bulks   | 2022 → **11** (184×)         | 160.7 µs → 45.6 µs (**3.5×**) |
+| Array of 5000 simple strings | 7152 → **16** (447×)         | 411 µs → 263 µs (1.6×)        |
+| Map of 1000 key/value pairs  | 2933 → **13** (226×)         | 206 µs → 149 µs (1.4×)        |
+
+In short: **1.4×–4.1× faster parsing and 10×–470× fewer heap allocations**, with
+the largest wins on responses that contain many elements. Cloning a `Value` (or
+any `Str`/`BulkString` inside it) is now a reference-count bump rather than a
+deep copy.
+
+### Trade-offs to be aware of
+
+- **Memory retention:** every `Bytes`/`Str` leaf is a reference-counted slice of
+  the response it arrived in, so holding on to one small field keeps that whole
+  response's buffer alive (one buffer per reply, not per connection). If you
+  extract a small piece of a large response and store it long-term, copy it out
+  (e.g. `Vec::from(&bytes[..])` or `str.to_string()`). Server errors are already
+  copied out by the parser for exactly this reason — storing an error never pins
+  a response buffer.
+- **Extracting owned `Vec<u8>`/`String`:** conversions like
+  `from_redis_value::<Vec<u8>>` now perform their copy at conversion time rather
+  than at parse time (the total number of copies is unchanged — one). Code that
+  reads payloads by reference performs no copy at all.
+- **Fragmented arrival of huge multi-element responses:** the parser re-parses
+  the buffered prefix when a response arrives across many reads (parse state is
+  not kept between reads, which is what makes the zero-copy offsets sound).
+  For typical responses over typical networks this is a handful of cheap
+  attempts; a response with a very large number of elements arriving in many
+  small fragments does more repeated work than before. Bulk-string payloads are
+  skipped in O(1) regardless of size.
+
 ### Removed `zinterstore_*` and `zunionstore_*` commands in favor of `zinterstore`, `zinterstore_with_weights`, `zunionstore`, and `zunionstore_with_weights`
 
 The following commands have been removed:
@@ -123,7 +212,6 @@ con.zinterstore_with_weights("out", &[("zset1", 2), ("zset2", 3)], SortedSetOper
 ```
 
 The same pattern applies to `zunionstore` and `zunionstore_with_weights`.
-
 
 ### `cmd_iter` yields `CmdRef` instead of `&Cmd` (Breaking Change)
 

@@ -287,7 +287,7 @@ impl FromRedisValue for RadiusSearchResult {
     fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         match v {
             Value::BulkString(b) => {
-                let s = String::from_utf8(b)?;
+                let s = String::from_utf8(b.into())?;
                 Ok(RadiusSearchResult {
                     name: s,
                     coord: None,

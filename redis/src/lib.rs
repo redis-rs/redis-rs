@@ -709,6 +709,7 @@ pub use crate::types::{
 
     // low level values
     Value,
+    Str,
     PushKind,
     VerbatimFormat,
     ProtocolVersion,
@@ -716,6 +717,11 @@ pub use crate::types::{
 };
 
 pub use crate::types::{calculate_value_digest, is_valid_16_bytes_hex_digest};
+
+// `Value` exposes `bytes::Bytes` in its public API, so re-export the crate to
+// spare downstreams from having to add (and version-match) `bytes` themselves.
+pub use bytes;
+pub use bytes::Bytes;
 
 pub use crate::errors::{
     ErrorKind, ParsingError, RedisError, RetryMethod, ServerError, ServerErrorKind,

@@ -734,10 +734,7 @@ where
                                 Ok(server_error) => Ok(Value::ServerError(server_error)),
                                 Err(err) => Err(err),
                             })?;
-                        Ok::<_, RedisError>((
-                            Value::BulkString(addr.to_string().into_bytes()),
-                            result,
-                        ))
+                        Ok::<_, RedisError>((Value::BulkString(addr.to_string().into()), result))
                     }))
                     .await
                     .into_iter()

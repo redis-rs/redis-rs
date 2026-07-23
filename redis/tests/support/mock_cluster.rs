@@ -130,7 +130,7 @@ pub fn respond_startup(name: &str, cmd: &[u8]) -> Result<(), RedisResult<Value>>
             Value::Int(0),
             Value::Int(16383),
             Value::Array(vec![
-                Value::BulkString(name.as_bytes().to_vec()),
+                Value::BulkString(name.as_bytes().to_vec().into()),
                 Value::Int(6379),
             ]),
         ])])))
@@ -196,13 +196,13 @@ pub fn respond_startup_with_replica_using_config(
                     Value::Int(slot_config.slot_range.start as i64),
                     Value::Int(slot_config.slot_range.end as i64),
                     Value::Array(vec![
-                        Value::BulkString(name.as_bytes().to_vec()),
+                        Value::BulkString(name.as_bytes().to_vec().into()),
                         Value::Int(slot_config.primary_port as i64),
                     ]),
                 ];
                 for replica_port in slot_config.replica_ports {
                     entry.push(Value::Array(vec![
-                        Value::BulkString(name.as_bytes().to_vec()),
+                        Value::BulkString(name.as_bytes().to_vec().into()),
                         Value::Int(replica_port as i64),
                     ]));
                 }

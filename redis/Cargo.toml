@@ -36,8 +36,8 @@ sha1_smol = { version = "1.0", optional = true }
 
 combine = { version = "4.6", default-features = false, features = ["std"] }
 
-# Only needed for AIO
-bytes = { version = "1", optional = true }
+# `Value` stores its textual/binary payloads as `Bytes`, so this is a core dependency.
+bytes = { version = "1" }
 cfg-if = { version = "1", optional = true }
 futures-util = { version = "0.3.31", default-features = false, features = [
   "std",
@@ -124,6 +124,9 @@ default = ["acl", "streams", "geospatial", "script", "num-bigint"]
 acl = []
 bloom = []
 geospatial = []
+# `bytes` is now a mandatory dependency; this no-op feature is kept so existing
+# `#[cfg(feature = "bytes")]`-gated impls and downstream `features = ["bytes"]` keep working.
+bytes = []
 json = ["dep:serde", "serde/derive", "dep:serde_json"]
 vector-sets = ["dep:serde", "serde/derive", "dep:serde_json"]
 cluster = ["dep:crc16", "dep:rand"]
@@ -162,6 +165,10 @@ entra-id = [
 
 # Instead of specifying "aio", use either "tokio-comp" or "smol-comp".
 aio = [
+  # `bytes` is a mandatory dependency now, but the `bytes` feature still gates
+  # the public `BufMut`/`FromRedisValue for Bytes` impls. `aio` enabled it
+  # transitively before `bytes` became mandatory; keep doing so, otherwise those
+  # impls silently disappear for every async downstream.
   "bytes",
   "dep:pin-project-lite",
   "dep:futures-util",
@@ -169,6 +176,7 @@ aio = [
   "dep:tokio-util",
   "dep:async-lock",
   "tokio-util/codec",
+  "tokio/io-util",
   "combine/tokio",
   "dep:cfg-if",
 ]
@@ -239,6 +247,11 @@ harness = false
 name = "bench_basic"
 harness = false
 required-features = ["tokio-comp"]
+
+# Parser/decoding microbenchmarks. No server required.
+[[bench]]
+name = "bench_decode"
+harness = false
 
 [[bench]]
 name = "bench_cluster"

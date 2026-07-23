@@ -2315,7 +2315,7 @@ impl Msg {
     /// in the raw bytes in it.
     pub fn get_payload_bytes(&self) -> &[u8] {
         match self.payload {
-            Value::BulkString(ref bytes) => bytes,
+            Value::BulkString(ref bytes) => bytes.as_ref(),
             _ => b"",
         }
     }
