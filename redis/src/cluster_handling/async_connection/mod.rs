@@ -96,19 +96,21 @@ use std::{
     future::Future,
     io,
     ops::Deref,
-    pin::Pin,
+    pin::{Pin, pin},
     sync::{Arc, Mutex},
     task::{self, Poll},
     time::Duration,
 };
 
+mod addressed_push_sender;
 mod request;
 mod routing;
 use crate::{
-    AsyncConnectionConfig, Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, RedisError,
-    RedisFuture, RedisResult, ToRedisArgs, Value,
+    AsyncConnectionConfig, Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, PushInfo,
+    RedisError, RedisFuture, RedisResult, ToRedisArgs, Value,
     aio::{ConnectionLike, HandleContainer, MultiplexedConnection, Runtime},
     check_resp3,
+    cluster_async::{addressed_push_sender::AddressedPushSender, request::ResultExpectation},
     cluster_handling::{
         NodeAddress,
         client::ClusterParams,
@@ -129,8 +131,9 @@ use crate::{
 use crate::ProtocolVersion;
 #[cfg(feature = "cache-aio")]
 use crate::caching::{CacheManager, CacheStatistics};
+use futures_channel::mpsc::UnboundedSender;
 use futures_util::{
-    future::{self, BoxFuture, FutureExt},
+    future::{self, BoxFuture, FutureExt, select},
     ready,
     sink::Sink,
     stream::{self, Stream, StreamExt},
@@ -185,27 +188,61 @@ where
 
     pub(crate) fn new_inner(
         initial_nodes: &[ConnectionInfo],
-        cluster_params: ClusterParams,
+        mut cluster_params: ClusterParams,
     ) -> (ClusterConnection<C>, oneshot::Receiver<RedisResult<()>>) {
         let protocol = cluster_params.protocol.unwrap_or_default();
         let overall_response_timeout = cluster_params.overall_response_timeout;
         #[cfg(feature = "cache-aio")]
         let cache_manager = cluster_params.cache_manager.clone();
         let runtime = Runtime::locate();
-        let mut inner = ClusterConnInner::new(initial_nodes, cluster_params);
+
+        let (push_sender, mut push_receiver) = futures_channel::mpsc::unbounded();
+        let external_push_sender = cluster_params.async_push_sender.take();
+        let has_push_sender = external_push_sender.is_some();
+        let (sender, mut receiver) = mpsc::channel::<Message<_>>(100);
+        let weak_sender = sender.downgrade();
+
+        let mut inner =
+            ClusterConnInner::new(initial_nodes, cluster_params, push_sender, has_push_sender);
+
+        let reconnect_from_pushes_task = if protocol.supports_resp3() {
+            async move {
+                while let Some((addr, msg)) = push_receiver.next().await {
+                    if msg.kind == crate::PushKind::Disconnection
+                        && let Some(sender) = weak_sender.upgrade()
+                    {
+                        _ = sender
+                            .send(Message {
+                                cmd: CmdArg::Reconnect(addr.clone()),
+                                sender: ResultExpectation::Internal,
+                            })
+                            .await;
+                    }
+                    if let Some(push_sender) = &external_push_sender {
+                        _ = push_sender.send(msg);
+                    }
+                }
+            }
+            .boxed()
+        } else {
+            future::pending().boxed()
+        };
 
         let (connect_sender, connect_receiver) = oneshot::channel::<RedisResult<()>>();
-        let (sender, mut receiver) = mpsc::channel::<Message<_>>(100);
-        let stream = async move {
+        let request_stream = async move {
             let connect_result = inner.wait_for_initial_connection().await;
-            let _ = connect_sender.send(connect_result);
+            let _ = connect_sender
+                .send(connect_result)
+                .inspect_err(|e| debug!("failed internal sending with {e:?}"));
 
             let _ = stream::poll_fn(move |cx| receiver.poll_recv(cx))
                 .map(Ok)
                 .forward(inner)
                 .await;
         };
-        let _task_handle = HandleContainer::new(runtime.spawn(stream));
+        let _task_handle = HandleContainer::new(runtime.spawn(async move {
+            select(pin!(request_stream), pin!(reconnect_from_pushes_task)).await;
+        }));
 
         (
             ClusterConnection {
@@ -234,7 +271,7 @@ where
                         cmd: Arc::new(cmd),
                         routing: routing.into(),
                     },
-                    sender,
+                    sender: ResultExpectation::External(sender),
                 })
                 .await
                 .map_err(|_| {
@@ -283,7 +320,7 @@ where
                         count,
                         route: route.into(),
                     },
-                    sender,
+                    sender: ResultExpectation::External(sender),
                 })
                 .await
                 .map_err(|_| closed_connection_error())?;
@@ -442,6 +479,16 @@ enum ConnState<C> {
     Connecting,
 }
 
+impl<C> std::fmt::Debug for ConnState<C> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Connected(_) => f.debug_tuple("Connected").finish(),
+            Self::Reconnecting(_) => f.debug_tuple("Reconnecting").finish(),
+            Self::Connecting => write!(f, "Connecting"),
+        }
+    }
+}
+
 impl<C> ConnState<C> {
     fn connected(&self) -> Option<C>
     where
@@ -497,6 +544,7 @@ struct InnerCore<C> {
     initial_nodes: Vec<ConnectionInfo>,
     subscription_tracker: Option<Mutex<SubscriptionTracker>>,
     routing_strategy: Option<Box<dyn ReadRoutingStrategy>>,
+    push_sender: UnboundedSender<(NodeAddress, PushInfo)>,
 }
 
 /// This is a clonable wrapper.
@@ -833,6 +881,13 @@ where
 
     async fn try_request(self, cmd: CmdArg<C>) -> OperationResult {
         match cmd {
+            CmdArg::Reconnect(addr) => (
+                OperationTarget::Node {
+                    address: addr.clone(),
+                },
+                // this is intended to make the caller trigger reconnection
+                Err(RedisError::from((ErrorKind::Io, "connection dropped"))),
+            ),
             CmdArg::Cmd { cmd, routing } => self.try_cmd_request(cmd, routing).await,
             CmdArg::Pipeline {
                 pipeline,
@@ -873,7 +928,7 @@ where
                 return match read_guard.0.get(&address).and_then(ConnState::connected) {
                     Some(conn) => Ok((address, conn)),
                     None => Err((
-                        ErrorKind::Client,
+                        ErrorKind::ClusterConnectionNotFound,
                         "Requested connection not found",
                         address.to_string(),
                     )
@@ -947,7 +1002,7 @@ where
     }
 
     async fn connect_check_and_add(&self, addr: &NodeAddress) -> RedisResult<C> {
-        let conn = connect_and_check::<C>(addr, &self.cluster_params).await?;
+        let conn = connect_and_check::<C>(addr, &self.cluster_params, &self.push_sender).await?;
         self.conn_lock
             .write()
             .await
@@ -995,7 +1050,8 @@ where
         if !found {
             for (addr, state) in &mut *connections {
                 let prev = std::mem::replace(state, ConnState::Connecting).into_conn();
-                match get_or_create_conn(addr, prev, &self.cluster_params).await {
+                match get_or_create_conn(addr, prev, &self.cluster_params, &self.push_sender).await
+                {
                     Ok(mut conn) => {
                         let res = Self::query_slots(&mut conn, addr, slots).await;
                         *state = ConnState::Connected(conn);
@@ -1042,7 +1098,13 @@ where
             .map(|addr| {
                 let connection = connections.remove(&addr).and_then(ConnState::into_conn);
                 async move {
-                    let res = get_or_create_conn(&addr, connection, &self.cluster_params).await;
+                    let res = get_or_create_conn(
+                        &addr,
+                        connection,
+                        &self.cluster_params,
+                        &self.push_sender,
+                    )
+                    .await;
                     (addr, res)
                 }
             })
@@ -1059,7 +1121,7 @@ where
             .await;
     }
 
-    fn resubscribe(&self) {
+    fn resubscribe_all(&self) {
         let Some(subscription_tracker) = self.subscription_tracker.as_ref() else {
             return;
         };
@@ -1083,8 +1145,73 @@ where
                 },
             }
         });
+
         for request in requests {
-            let _ = self.pending_requests_tx.send(request);
+            let _ = self
+                .pending_requests_tx
+                .send(request)
+                .inspect_err(|err| debug!("failed internal send {err}"));
+        }
+    }
+
+    fn resubscribe_node(&self, reconnected_addr: &NodeAddress) {
+        let Some(subscription_tracker) = self.subscription_tracker.as_ref() else {
+            return;
+        };
+
+        // Determine if there are other connected nodes
+        let guard = self.conn_lock.try_read().ok();
+        let other_nodes_connected = if let Some(guard) = &guard {
+            guard.0.iter().any(|(addr, state)| {
+                addr != reconnected_addr && matches!(state, ConnState::Connected(_))
+            })
+        } else {
+            false
+        };
+
+        let subscription_pipe = subscription_tracker
+            .lock()
+            .unwrap()
+            .get_subscription_pipeline();
+
+        let requests = subscription_pipe.into_cmd_iter().filter_map(|cmd| {
+            let routing = RoutingInfo::for_routable(&cmd)
+                .unwrap_or(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random));
+
+            match &routing {
+                RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route)) => {
+                    // For specific node routing (like SSUBSCRIBE/shard pubsub),
+                    // only send if it routes to the reconnected_addr.
+                    let target_addr = guard.as_ref().and_then(|g| {
+                        g.1.slot_addr_for_route(route, self.routing_strategy.as_deref())
+                    });
+                    if target_addr != Some(reconnected_addr) {
+                        return None;
+                    }
+                }
+                // For random/any-node routing (like SUBSCRIBE/PSUBSCRIBE),
+                // only send if this is the first connected node.
+                _ if other_nodes_connected => {
+                    return None;
+                }
+                _ => {}
+            }
+
+            Some(PendingRequest {
+                retry: 0,
+                sender: request::ResultExpectation::Internal,
+                cmd: CmdArg::Cmd {
+                    cmd: Arc::new(cmd),
+                    routing: routing.into(),
+                },
+            })
+        });
+
+        for request in requests {
+            let _ = self
+                .pending_requests_tx
+                .send(request)
+                .inspect_err(|e| debug!("Failed internal send {e:?}"));
         }
     }
 }
@@ -1097,7 +1224,7 @@ struct ClusterConnInner<C> {
     state: ConnectionState,
     #[allow(clippy::complexity)]
     in_flight_requests: stream::FuturesUnordered<Pin<Box<Request<C>>>>,
-    reconnect_futures: stream::FuturesUnordered<BoxFuture<'static, ()>>,
+    reconnect_futures: stream::FuturesUnordered<BoxFuture<'static, NodeAddress>>,
     pending_requests_rx: mpsc::UnboundedReceiver<PendingRequest<C>>,
     refresh_error: Option<RedisError>,
 }
@@ -1105,17 +1232,18 @@ struct ClusterConnInner<C> {
 // Keep trying to repair `addr` until it is re-connected, or the node
 // has left the topology.
 // This is a continuous attempt to reconnect rather than one-shot.
-async fn reconnect_loop<C>(core: Core<C>, addr: NodeAddress)
+async fn reconnect_loop<C>(core: Core<C>, addr: NodeAddress) -> NodeAddress
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
 {
     {
         let mut guard = core.conn_lock.write().await;
+
         if matches!(
             guard.0.get(&addr),
             Some(ConnState::Reconnecting(_) | ConnState::Connecting)
         ) {
-            return;
+            return addr;
         }
         mark_reconnecting(&mut guard.0, addr.clone());
     }
@@ -1134,15 +1262,17 @@ where
 
             if !in_topology {
                 core.conn_lock.write().await.0.remove(&addr);
+
                 break;
             }
             prev_conn
         };
 
-        match get_or_create_conn(&addr, prev, &core.cluster_params).await {
+        match get_or_create_conn(&addr, prev, &core.cluster_params, &core.push_sender).await {
             Ok(conn) => {
                 let newly_installed = {
                     let mut guard = core.conn_lock.write().await;
+
                     if matches!(guard.0.get(&addr), Some(ConnState::Connected(_))) {
                         false
                     } else {
@@ -1150,12 +1280,13 @@ where
                         true
                     }
                 };
+
                 if newly_installed {
-                    info!("ClusterConnInner: reconnected to {addr:?}");
+                    info!("ClusterConnInner: reconnected to {addr:?} ");
                     // TODO: make the resubscribe semantic more granular.
                     // Right now resubscribe() re-sends every subscription across all nodes.
                     // We should re-subscribe for the newly repaired node.
-                    core.resubscribe();
+                    core.resubscribe_node(&addr);
                 }
                 break;
             }
@@ -1167,6 +1298,7 @@ where
         boxed_sleep(backoff).await;
         backoff = (backoff * 2).min(Duration::from_secs(1));
     }
+    addr
 }
 
 fn boxed_sleep(duration: Duration) -> BoxFuture<'static, ()> {
@@ -1194,7 +1326,7 @@ impl From<NodeAddress> for OperationTarget {
 
 struct Message<C> {
     cmd: CmdArg<C>,
-    sender: oneshot::Sender<RedisResult<Response>>,
+    sender: ResultExpectation,
 }
 
 enum RecoverFuture {
@@ -1231,8 +1363,13 @@ impl<C> ClusterConnInner<C>
 where
     C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
 {
-    fn new(initial_nodes: &[ConnectionInfo], cluster_params: ClusterParams) -> Self {
-        let subscription_tracker = if cluster_params.async_push_sender.is_some() {
+    fn new(
+        initial_nodes: &[ConnectionInfo],
+        cluster_params: ClusterParams,
+        push_sender: UnboundedSender<(NodeAddress, PushInfo)>,
+        has_push_sender: bool,
+    ) -> Self {
+        let subscription_tracker = if has_push_sender {
             Some(Mutex::new(SubscriptionTracker::default()))
         } else {
             None
@@ -1251,6 +1388,7 @@ where
             initial_nodes: initial_nodes.to_vec(),
             subscription_tracker,
             routing_strategy,
+            push_sender,
         });
         let core = Core(inner);
         let mut inner = ClusterConnInner {
@@ -1270,11 +1408,12 @@ where
     async fn create_initial_connections(
         initial_nodes: &[ConnectionInfo],
         params: &ClusterParams,
+        push_sender: &UnboundedSender<(NodeAddress, PushInfo)>,
     ) -> RedisResult<ConnectionMap<C>> {
         let (connections, error) = stream::iter(initial_nodes.iter().cloned())
             .map(async move |info| {
                 let addr = NodeAddress::try_from(&info.addr)?;
-                let result = connect_and_check(&addr, params).await;
+                let result = connect_and_check(&addr, params, push_sender).await;
                 match result {
                     Ok(conn) => Ok((addr, conn)),
                     Err(e) => {
@@ -1322,9 +1461,12 @@ where
         debug!("Received request to reconnect to initial nodes");
         let inner = self.inner.clone();
         async move {
-            let connection_map =
-                Self::create_initial_connections(&inner.initial_nodes, &inner.cluster_params)
-                    .await?;
+            let connection_map = Self::create_initial_connections(
+                &inner.initial_nodes,
+                &inner.cluster_params,
+                &inner.push_sender,
+            )
+            .await?;
             *inner.conn_lock.write().await = (connection_map, SlotMap::new());
             inner.refresh_slots().await?;
             Ok(())
@@ -1353,7 +1495,7 @@ where
     }
 
     fn poll_reconnects(&mut self, cx: &mut task::Context<'_>) {
-        while let Poll::Ready(Some(())) = Pin::new(&mut self.reconnect_futures).poll_next(cx) {}
+        while let Poll::Ready(Some(_)) = Pin::new(&mut self.reconnect_futures).poll_next(cx) {}
     }
 
     async fn wait_for_initial_connection(&mut self) -> RedisResult<()> {
@@ -1402,7 +1544,7 @@ where
             }
         };
         if res.is_ok() {
-            self.inner.resubscribe();
+            self.inner.resubscribe_all();
         }
         Poll::Ready(res)
     }
@@ -1528,17 +1670,17 @@ async fn get_or_create_conn<C>(
     addr: &NodeAddress,
     conn_option: Option<C>,
     params: &ClusterParams,
+    push_sender: &UnboundedSender<(NodeAddress, PushInfo)>,
 ) -> RedisResult<C>
 where
     C: Connect + ConnectionLike + Clone + Send + Sync + 'static,
 {
-    if let Some(mut conn) = conn_option {
-        match check_connection(&mut conn).await {
-            Ok(_) => Ok(conn),
-            Err(_) => connect_and_check(addr, params).await,
-        }
+    if let Some(mut conn) = conn_option
+        && check_connection(&mut conn).await.is_ok()
+    {
+        Ok(conn)
     } else {
-        connect_and_check(addr, params).await
+        connect_and_check(addr, params, push_sender).await
     }
 }
 
@@ -1588,7 +1730,7 @@ where
 
         let _ = self.inner.pending_requests_tx.send(PendingRequest {
             retry: 0,
-            sender: request::ResultExpectation::External(sender),
+            sender,
             cmd,
         });
         Ok(())
@@ -1707,7 +1849,11 @@ impl Connect for MultiplexedConnection {
     }
 }
 
-async fn connect_and_check<C>(node: &NodeAddress, params: &ClusterParams) -> RedisResult<C>
+async fn connect_and_check<C>(
+    node: &NodeAddress,
+    params: &ClusterParams,
+    push_sender: &UnboundedSender<(NodeAddress, PushInfo)>,
+) -> RedisResult<C>
 where
     C: ConnectionLike + Connect + Send + 'static,
 {
@@ -1716,8 +1862,9 @@ where
         AsyncConnectionConfig::default().set_connection_timeout(Some(params.connection_timeout));
     config = config.set_response_timeout(params.response_timeout);
 
-    if let Some(push_sender) = &params.async_push_sender {
-        config = config.set_push_sender_internal(push_sender.clone());
+    if info.redis.protocol.supports_resp3() {
+        config =
+            config.set_push_sender(AddressedPushSender::new(node.clone(), push_sender.clone()));
     }
     if let Some(resolver) = &params.async_dns_resolver {
         config = config.set_dns_resolver_internal(resolver.clone());

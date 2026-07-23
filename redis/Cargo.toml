@@ -147,7 +147,7 @@ connection-manager = [
   "dep:backon",
 ]
 streams = []
-cluster-async = ["aio", "cluster", "dep:log"]
+cluster-async = ["aio", "cluster", "dep:log", "dep:futures-channel"]
 sentinel = ["dep:log", "dep:rand"]
 num-bigint = ["dep:num-bigint"]
 cache-aio = ["aio", "dep:lru"]

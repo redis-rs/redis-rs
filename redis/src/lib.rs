@@ -445,6 +445,8 @@
 //! # Ok(()) }
 //! ```
 //!
+#![deny(clippy::disallowed_macros)]
+#![cfg_attr(test, allow(clippy::disallowed_macros))]
 #![cfg_attr(
     feature = "script",
     doc = r##"
