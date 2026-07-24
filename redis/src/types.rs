@@ -2629,31 +2629,37 @@ impl<T: AsRef<str>> From<T> for ValueType {
 
 impl From<ValueType> for String {
     fn from(v: ValueType) -> Self {
+        <&ValueType as Into<&str>>::into(&v).to_string()
+    }
+}
+
+impl<'a> From<&'a ValueType> for &'a str {
+    fn from(v: &'a ValueType) -> &'a str {
         match v {
-            ValueType::None => "none".to_string(),
-            ValueType::String => "string".to_string(),
-            ValueType::List => "list".to_string(),
-            ValueType::Set => "set".to_string(),
-            ValueType::ZSet => "zset".to_string(),
-            ValueType::Hash => "hash".to_string(),
-            ValueType::Stream => "stream".to_string(),
-            ValueType::VectorSet => "vectorset".to_string(),
+            ValueType::None => "none",
+            ValueType::String => "string",
+            ValueType::List => "list",
+            ValueType::Set => "set",
+            ValueType::ZSet => "zset",
+            ValueType::Hash => "hash",
+            ValueType::Stream => "stream",
+            ValueType::VectorSet => "vectorset",
             // JSON module
-            ValueType::JSON => "ReJSON-RL".to_string(),
+            ValueType::JSON => "ReJSON-RL",
             // Bloom module (Redis)
-            ValueType::BloomFilterRedis => "MBbloom--".to_string(),
-            ValueType::CuckooFilter => "MBbloomCF".to_string(),
-            ValueType::TDigest => "TDIS-TYPE".to_string(),
-            ValueType::TopK => "TopK-TYPE".to_string(),
-            ValueType::CountMin => "CMSk-TYPE".to_string(),
+            ValueType::BloomFilterRedis => "MBbloom--",
+            ValueType::CuckooFilter => "MBbloomCF",
+            ValueType::TDigest => "TDIS-TYPE",
+            ValueType::TopK => "TopK-TYPE",
+            ValueType::CountMin => "CMSk-TYPE",
             // Search module
-            ValueType::Trie => "trietype0".to_string(),
+            ValueType::Trie => "trietype0",
             // Timeseries module
-            ValueType::TimeSeries => "TSDB-TYPE".to_string(),
+            ValueType::TimeSeries => "TSDB-TYPE",
             // Bloom module (ValKey)
-            ValueType::BloomFilterValKey => "bloomfltr".to_string(),
+            ValueType::BloomFilterValKey => "bloomfltr",
             // Fallback
-            ValueType::Unknown(s) => s,
+            ValueType::Unknown(s) => s.as_str(),
         }
     }
 }
@@ -2671,6 +2677,16 @@ impl FromRedisValue for ValueType {
             Value::SimpleString(s) => Ok(s.into()),
             _ => crate::errors::invalid_type_error!(v, "Value type should be a simple string"),
         }
+    }
+}
+
+impl ToRedisArgs for ValueType {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        let as_str = <&ValueType as Into<&str>>::into(self);
+        out.write_arg(as_str.as_bytes());
     }
 }
 

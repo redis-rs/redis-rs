@@ -6,7 +6,7 @@ use crate::pipeline::Pipeline;
 use crate::types::{
     ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, IntegerReplyOrNoOp,
     NumericBehavior, RedisResult, RedisWrite, SetExpiry, ToRedisArgs, ToSingleRedisArg,
-    ValueComparison,
+    ValueComparison, ValueType,
 };
 
 #[cfg(feature = "vector-sets")]
@@ -3353,7 +3353,7 @@ impl PubSubCommands for Connection {
 pub struct ScanOptions {
     pattern: Option<String>,
     count: Option<usize>,
-    scan_type: Option<String>,
+    scan_type: Option<ValueType>,
 }
 
 impl ScanOptions {
@@ -3370,8 +3370,8 @@ impl ScanOptions {
     }
 
     /// Limit the results to those with the given Redis type
-    pub fn with_type(mut self, t: impl Into<String>) -> Self {
-        self.scan_type = Some(t.into());
+    pub fn with_type(mut self, t: ValueType) -> Self {
+        self.scan_type = Some(t);
         self
     }
 }
@@ -3393,7 +3393,7 @@ impl ToRedisArgs for ScanOptions {
 
         if let Some(t) = &self.scan_type {
             out.write_arg(b"TYPE");
-            out.write_arg_fmt(t);
+            t.write_redis_args(out);
         }
     }
 
