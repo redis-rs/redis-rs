@@ -30,7 +30,10 @@ fn assert_no_index_and_index_missing_exclusivity_for_field(
 
 #[test]
 fn test_ft_create_with_an_empty_index_name() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
+    let ctx = run_test_if_version_supported!(
+        [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]],
+        &[Module::Search]
+    );
     let mut con = ctx.connection();
     let empty_index_name = "";
     let options = CreateOptions::new();
@@ -71,13 +74,19 @@ where
 
 #[test]
 fn test_simple_ft_create() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
+    let ctx = run_test_if_version_supported!(
+        [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]],
+        &[Module::Search]
+    );
     run_simple_ft_create(&mut ctx.connection(), "index", |_| {});
 }
 
 #[test]
 fn test_ft_create_create_options() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
+    let ctx = run_test_if_version_supported!(
+        [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]],
+        &[Module::Search]
+    );
     let mut con = ctx.connection();
     let schema = schema! {
         TEXT_FIELD_NAME => SchemaTextField::new()
@@ -227,7 +236,10 @@ where
 
 #[test]
 fn test_ft_create_schema_text_field() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
+    let ctx = run_test_if_version_supported!(
+        [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]],
+        &[Module::Search]
+    );
     run_ft_create_schema_text_field(&mut ctx.connection(), |_| {});
 }
 
@@ -323,7 +335,10 @@ where
 
 #[test]
 fn test_ft_create_schema_tag_field() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
+    let ctx = run_test_if_version_supported!(
+        [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]],
+        &[Module::Search]
+    );
     run_ft_create_schema_tag_field(&mut ctx.connection(), |_| {});
 }
 
@@ -414,7 +429,10 @@ where
 
 #[test]
 fn test_ft_create_schema_numeric_field() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
+    let ctx = run_test_if_version_supported!(
+        [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]],
+        &[Module::Search]
+    );
     run_ft_create_schema_numeric_field(&mut ctx.connection(), |_| {});
 }
 
@@ -505,7 +523,10 @@ where
 
 #[test]
 fn test_ft_create_schema_geo_field() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
+    let ctx = run_test_if_version_supported!(
+        [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]],
+        &[Module::Search]
+    );
     run_ft_create_schema_geo_field(&mut ctx.connection(), |_| {});
 }
 
@@ -620,7 +641,10 @@ where
 
 #[test]
 fn test_ft_create_schema_flat_vector_field() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
+    let ctx = run_test_if_version_supported!(
+        [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]],
+        &[Module::Search]
+    );
     run_ft_create_schema_flat_vector_field(&mut ctx.connection(), |_| {});
 }
 
@@ -737,7 +761,10 @@ where
 
 #[test]
 fn test_ft_create_schema_hnsw_vector_field() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
+    let ctx = run_test_if_version_supported!(
+        [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]],
+        &[Module::Search]
+    );
     run_ft_create_schema_hnsw_vector_field(&mut ctx.connection(), |_| {});
 }
 
@@ -901,7 +928,10 @@ where
 #[test]
 fn test_ft_create_schema_vamana_vector_field() {
     // The VAMANA index was introduced in Redis 8.2
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_2, &[Module::Search]);
+    let ctx = run_test_if_version_supported!(
+        [&[REDIS_CE_8_2][..], &[REDIS_SEARCH_8_2]],
+        &[Module::Search]
+    );
     run_ft_create_schema_vamana_vector_field(&mut ctx.connection(), |_| {});
 }
 
@@ -995,7 +1025,10 @@ where
 
 #[test]
 fn test_ft_create_schema_geoshape_field() {
-    let ctx = run_test_if_version_supported!(&REDIS_VERSION_CE_8_0, &[Module::Search]);
+    let ctx = run_test_if_version_supported!(
+        [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]],
+        &[Module::Search]
+    );
     run_ft_create_schema_geoshape_field(&mut ctx.connection(), |_| {});
 }
 
@@ -1003,6 +1036,9 @@ fn test_ft_create_schema_geoshape_field() {
 mod cluster {
     use super::*;
     use redis_test::cluster::RedisClusterConfiguration;
+
+    /// Per-peer shard connection states from `_FT.DEBUG SHARD_CONNECTION_STATES`: `(peer, states)` pairs.
+    type ShardConnectionStates = Vec<(String, Vec<String>)>;
 
     /// Build a 3-primary cluster with the search module loaded on every node.
     fn setup_cluster_with_search_module() -> TestClusterContext {
@@ -1040,9 +1076,9 @@ mod cluster {
 
         let deadline = std::time::Instant::now() + TIMEOUT;
         loop {
-            let mut pending: Option<(redis::ConnectionAddr, Vec<(String, Vec<String>)>)> = None;
+            let mut pending: Option<(redis::ConnectionAddr, ShardConnectionStates)> = None;
             for (addr, con) in &mut connections {
-                let states: Vec<(String, Vec<String>)> = redis::cmd("_FT.DEBUG")
+                let states: ShardConnectionStates = redis::cmd("_FT.DEBUG")
                     .arg("SHARD_CONNECTION_STATES")
                     .query(con)
                     .unwrap();
@@ -1118,8 +1154,8 @@ mod cluster {
 
     #[test]
     fn test_simple_ft_create() {
-        run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_0);
         let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]]);
         let mut primaries = PrimaryConnections::from_cluster(&ctx);
         run_simple_ft_create(&mut ctx.connection(), "index", |name| {
             primaries.assert_index_propagated(name);
@@ -1128,8 +1164,8 @@ mod cluster {
 
     #[test]
     fn test_ft_create_schema_text_field() {
-        run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_0);
         let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]]);
         let mut primaries = PrimaryConnections::from_cluster(&ctx);
         run_ft_create_schema_text_field(&mut ctx.connection(), |name| {
             primaries.assert_index_propagated(name);
@@ -1138,8 +1174,8 @@ mod cluster {
 
     #[test]
     fn test_ft_create_schema_tag_field() {
-        run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_0);
         let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]]);
         let mut primaries = PrimaryConnections::from_cluster(&ctx);
         run_ft_create_schema_tag_field(&mut ctx.connection(), |name| {
             primaries.assert_index_propagated(name);
@@ -1148,8 +1184,8 @@ mod cluster {
 
     #[test]
     fn test_ft_create_schema_numeric_field() {
-        run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_0);
         let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]]);
         let mut primaries = PrimaryConnections::from_cluster(&ctx);
         run_ft_create_schema_numeric_field(&mut ctx.connection(), |name| {
             primaries.assert_index_propagated(name);
@@ -1158,8 +1194,8 @@ mod cluster {
 
     #[test]
     fn test_ft_create_schema_geo_field() {
-        run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_0);
         let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]]);
         let mut primaries = PrimaryConnections::from_cluster(&ctx);
         run_ft_create_schema_geo_field(&mut ctx.connection(), |name| {
             primaries.assert_index_propagated(name);
@@ -1168,8 +1204,8 @@ mod cluster {
 
     #[test]
     fn test_ft_create_schema_geoshape_field() {
-        run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_0);
         let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]]);
         let mut primaries = PrimaryConnections::from_cluster(&ctx);
         run_ft_create_schema_geoshape_field(&mut ctx.connection(), |name| {
             primaries.assert_index_propagated(name);
@@ -1178,8 +1214,8 @@ mod cluster {
 
     #[test]
     fn test_ft_create_schema_flat_vector_field() {
-        run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_0);
         let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]]);
         let mut primaries = PrimaryConnections::from_cluster(&ctx);
         run_ft_create_schema_flat_vector_field(&mut ctx.connection(), |name| {
             primaries.assert_index_propagated(name);
@@ -1188,8 +1224,8 @@ mod cluster {
 
     #[test]
     fn test_ft_create_schema_hnsw_vector_field() {
-        run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_0);
         let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]]);
         let mut primaries = PrimaryConnections::from_cluster(&ctx);
         run_ft_create_schema_hnsw_vector_field(&mut ctx.connection(), |name| {
             primaries.assert_index_propagated(name);
@@ -1199,8 +1235,8 @@ mod cluster {
     #[test]
     fn test_ft_create_schema_vamana_vector_field() {
         // The VAMANA index was introduced in Redis 8.2.
-        run_test_if_redis_binary_version_supported!(&REDIS_VERSION_CE_8_2);
         let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_2][..], &[REDIS_SEARCH_8_2]]);
         let mut primaries = PrimaryConnections::from_cluster(&ctx);
         run_ft_create_schema_vamana_vector_field(&mut ctx.connection(), |name| {
             primaries.assert_index_propagated(name);
