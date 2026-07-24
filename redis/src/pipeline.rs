@@ -259,7 +259,9 @@ impl Pipeline {
 }
 
 fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
-    let mut rv = vec![];
+    let cmds_len: usize = cmds.iter().map(cmd_len).sum();
+    let extra = if atomic { 32 } else { 0 };
+    let mut rv = Vec::with_capacity(cmds_len + extra);
     write_pipeline(&mut rv, cmds, atomic);
     rv
 }
