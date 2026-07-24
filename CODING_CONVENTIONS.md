@@ -1,5 +1,11 @@
 # Coding Conventions
 
+## General
+
+* All `struct`s with public members and `enum`s have to be marked as `#[non_exhaustive]`.
+
+  (This helps with semantic versioning when extending the `struct`s/`enum`s)
+
 ## Redis Commands
 
 * Don't add new options to existing Redis commands. Instead build an `_options` variant with a dedicated type that manages the options.
