@@ -1280,12 +1280,12 @@ mod basic {
         let values: Vec<_> = values.collect();
         assert_eq!(values.len(), 41);
         // scan with type string
-        let opts = ScanOptions::default().with_type("string");
+        let opts = ScanOptions::default().with_type(ValueType::String);
         let values = con.scan_options::<String>(opts).unwrap();
         let values: Vec<_> = values.collect();
         assert_eq!(values.len(), 40);
         // scan with type hash
-        let opts = ScanOptions::default().with_type("hash");
+        let opts = ScanOptions::default().with_type(ValueType::Hash);
         let values = con.scan_options::<String>(opts).unwrap();
         let values: Vec<_> = values.collect();
         assert_eq!(values.len(), 1);
