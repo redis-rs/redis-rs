@@ -73,6 +73,139 @@ pub fn get_push_kind(kind: String) -> PushKind {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Hand-written RESP fast-path decoder.
+//
+// Profiling the client read path showed most of the CPU spent inside `combine`'s
+// partial-state parser-combinator machinery. That machinery exists to resume a
+// parse across a buffer boundary,
+// but for the overwhelmingly common case — a *complete* reply already sitting
+// in the buffer — it is pure overhead.
+//
+// `fast_parse_value` decodes one complete RESP value directly from a byte
+// slice for the high-frequency types (`+ - : $ * _`). It returns
+// `Some((value, consumed))` ONLY when it fully parses a supported, well-formed
+// value with semantics identical to the `combine` grammar below. For anything
+// else — an incomplete buffer, an unsupported RESP3 type (`% ~ | , # ! = ( >`),
+// or malformed input — it returns `None`, and the caller falls back to the
+// `combine` parser, which remains the single source of truth for correctness
+// and error reporting. This keeps the fast path a pure accelerator that can
+// only ever agree with `combine`, never diverge from it.
+
+/// Index of the `\r` of the first `\r\n` at or after `from`, or `None` if the
+/// buffer does not yet contain a line terminator.
+#[inline]
+fn find_crlf(buf: &[u8], from: usize) -> Option<usize> {
+    let mut i = from;
+    while let Some(off) = buf[i..].iter().position(|&b| b == b'\r') {
+        let cr = i + off;
+        match buf.get(cr + 1) {
+            Some(b'\n') => return Some(cr),
+            Some(_) => i = cr + 1,
+            None => return None,
+        }
+    }
+    None
+}
+
+/// Read a `\r\n`-terminated line starting at `pos`. Returns the content (without
+/// the terminator) and the position just past the `\r\n`.
+#[inline]
+fn read_line(buf: &[u8], pos: usize) -> Option<(&[u8], usize)> {
+    let cr = find_crlf(buf, pos)?;
+    Some((&buf[pos..cr], cr + 2))
+}
+
+/// Parse one RESP value from `buf` starting at `pos`. Returns `(value, new_pos)`
+/// on success. `depth` guards against unbounded recursion, matching the
+/// `combine` grammar's `MAX_RECURSE_DEPTH` behavior (fall back on excess).
+fn fast_parse_at(buf: &[u8], pos: usize, depth: usize) -> Option<(Value, usize)> {
+    if depth > MAX_RECURSE_DEPTH {
+        return None;
+    }
+    let marker = *buf.get(pos)?;
+    let body = pos + 1;
+    match marker {
+        b'+' => {
+            let (line, np) = read_line(buf, body)?;
+            let s = str::from_utf8(line).ok()?;
+            let v = if s == "OK" {
+                Value::Okay
+            } else {
+                Value::SimpleString(s.into())
+            };
+            Some((v, np))
+        }
+        b'-' => {
+            let (line, np) = read_line(buf, body)?;
+            let s = str::from_utf8(line).ok()?;
+            Some((Value::ServerError(err_parser(s)), np))
+        }
+        b':' => {
+            let (line, np) = read_line(buf, body)?;
+            let s = str::from_utf8(line).ok()?;
+            let n = s.trim().parse::<i64>().ok()?;
+            Some((Value::Int(n), np))
+        }
+        b'_' => {
+            // RESP3 null. combine's `null()` runs through the same UTF-8-validating
+            // `line()` as every other type, so a non-UTF-8 body is rejected there;
+            // validate here too (else the fast path would accept `_\xff\r\n` as Nil
+            // while combine errors). The content is otherwise ignored.
+            let (line, np) = read_line(buf, body)?;
+            str::from_utf8(line).ok()?;
+            Some((Value::Nil, np))
+        }
+        b'$' => {
+            let (line, np) = read_line(buf, body)?;
+            let s = str::from_utf8(line).ok()?;
+            let size = s.trim().parse::<i64>().ok()?;
+            if size < 0 {
+                return Some((Value::Nil, np));
+            }
+            let size = size as usize;
+            let end = np.checked_add(size)?;
+            // Need the payload plus its trailing CRLF.
+            if end + 2 > buf.len() {
+                return None;
+            }
+            if &buf[end..end + 2] != b"\r\n" {
+                return None; // malformed → let combine report it
+            }
+            Some((Value::BulkString(buf[np..end].to_vec()), end + 2))
+        }
+        b'*' => {
+            let (line, np) = read_line(buf, body)?;
+            let s = str::from_utf8(line).ok()?;
+            let len = s.trim().parse::<i64>().ok()?;
+            if len < 0 {
+                return Some((Value::Nil, np));
+            }
+            let len = len as usize;
+            // Cap the pre-allocation so a bogus length can't trigger a huge
+            // up-front allocation; the real bound is the buffer contents.
+            let mut out = Vec::with_capacity(len.min(1024));
+            let mut cur = np;
+            for _ in 0..len {
+                let (v, next) = fast_parse_at(buf, cur, depth + 1)?;
+                out.push(v);
+                cur = next;
+            }
+            Some((Value::Array(out), cur))
+        }
+        _ => None, // unsupported RESP3 type → fall back to combine
+    }
+}
+
+/// Fast-path entry point: decode one complete supported RESP value from the
+/// start of `buf`. See the module note above for the contract.
+#[inline]
+fn fast_parse_value(buf: &[u8]) -> Option<(Value, usize)> {
+    // Start at depth 1 to match the `combine` grammar, whose recursion `count`
+    // starts at 1 and errors when it exceeds MAX_RECURSE_DEPTH.
+    fast_parse_at(buf, 0, 1)
+}
+
 fn value<'a, I>(
     count: Option<usize>,
 ) -> impl combine::Parser<I, Output = Value, PartialState = AnySendSyncPartialState>
@@ -360,10 +493,23 @@ mod aio_support {
     #[derive(Default)]
     pub struct ValueCodec {
         state: AnySendSyncPartialState,
+        // true while `combine` holds partial state from an earlier
+        // incomplete decode. The fast path is only tried when this is false, so
+        // a fast-path success can never be interleaved into a `combine`
+        // resume-across-reads sequence (which would strand `state`).
+        partial: bool,
     }
 
     impl ValueCodec {
         fn decode_stream(&mut self, bytes: &mut BytesMut, eof: bool) -> RedisResult<Option<Value>> {
+            // Fast path: only safe when combine is not mid-parse. It consumes
+            // exactly one complete value; Framed will call us again for the next.
+            if !self.partial
+                && let Some((value, consumed)) = fast_parse_value(&bytes[..])
+            {
+                bytes.advance(consumed);
+                return Ok(Some(value));
+            }
             let (opt, removed_len) = {
                 let buffer = &bytes[..];
                 let mut stream =
@@ -371,6 +517,11 @@ mod aio_support {
                 match combine::stream::decode_tokio(value(None), &mut stream, &mut self.state) {
                     Ok(x) => x,
                     Err(err) => {
+                        // A parse error tears down the connection today, but reset
+                        // the flag anyway so the fast-path invariant (partial ⇔
+                        // combine holds live state) is self-enforcing rather than
+                        // relying on the caller not reusing the codec.
+                        self.partial = false;
                         let err = err
                             .map_position(|pos| pos.translate_position(buffer))
                             .map_range(|range| format!("{range:?}"))
@@ -382,8 +533,18 @@ mod aio_support {
 
             bytes.advance(removed_len);
             match opt {
-                Some(result) => Ok(Some(result)),
-                None => Ok(None),
+                Some(result) => {
+                    // combine finished a value; its partial state is reset, so
+                    // the fast path is eligible again next call.
+                    self.partial = false;
+                    Ok(Some(result))
+                }
+                None => {
+                    // combine consumed the buffer without completing a value and
+                    // retained partial state; defer to combine until it finishes.
+                    self.partial = true;
+                    Ok(None)
+                }
             }
         }
     }
@@ -477,6 +638,11 @@ impl Parser {
 /// This is the most straightforward way to parse something into a low
 /// level redis value instead of having to use a whole parser.
 pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
+    // Fast path: a complete slice is the ideal case for the hand-written
+    // decoder. Fall back to `combine` for unsupported types / malformed input.
+    if let Some((value, _consumed)) = fast_parse_value(bytes) {
+        return Ok(value);
+    }
     let mut parser = Parser::new();
     parser.parse_value(bytes)
 }
@@ -486,6 +652,190 @@ mod tests {
     use super::*;
     use crate::errors::ErrorKind;
     use assert_matches::assert_matches;
+
+    /// Differential fuzz. `parse_redis_value` (fast path + combine
+    /// fallback) must be observationally identical to pure `combine` on ANY
+    /// input — same value on success, and error ⇔ error. This catches the fast
+    /// path accepting something combine rejects (e.g. a non-UTF-8 `_` null line),
+    /// not just value mismatches.
+    ///
+    /// Inputs are biased toward RESP shapes (leading marker + short, possibly
+    /// non-UTF-8 body + optional CRLF) so the fast path's type arms and their
+    /// edge cases are actually exercised — plain random bytes almost never form
+    /// a parseable frame.
+    #[derive(Clone, Debug)]
+    struct RespishBytes(Vec<u8>);
+
+    impl quickcheck::Arbitrary for RespishBytes {
+        fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+            const MARKERS: &[u8] = b"+-:$*_%~,#!=(>";
+            let mut out = Vec::new();
+            let lines = (usize::arbitrary(g) % 4) + 1;
+            for _ in 0..lines {
+                out.push(*g.choose(MARKERS).unwrap());
+                for _ in 0..(usize::arbitrary(g) % 6) {
+                    out.push(u8::arbitrary(g));
+                }
+                if bool::arbitrary(g) {
+                    out.extend_from_slice(b"\r\n");
+                }
+            }
+            RespishBytes(out)
+        }
+    }
+
+    #[test]
+    fn fast_path_never_diverges_from_combine_fuzz() {
+        fn prop(input: RespishBytes) -> bool {
+            let data = &input.0;
+            let via_fast = parse_redis_value(data); // fast path + combine fallback
+            let via_combine = Parser::new().parse_value(&data[..]); // pure combine
+            match (via_fast, via_combine) {
+                (Ok(a), Ok(b)) => a == b,
+                (Err(_), Err(_)) => true,
+                _ => false, // one accepted, one rejected → divergence
+            }
+        }
+        quickcheck::QuickCheck::new()
+            .tests(100_000)
+            .quickcheck(prop as fn(RespishBytes) -> bool);
+    }
+
+    /// The fast path must agree with the `combine` grammar on every
+    /// input it claims (`Some`), and must decline (`None`) unsupported RESP3
+    /// types so `combine` handles them. Guards against the fast path silently
+    /// diverging from the canonical parser.
+    #[test]
+    fn fast_path_matches_combine() {
+        // Supported types + edge cases: the fast path must fully parse these
+        // and agree with the combine reference.
+        let supported: &[&[u8]] = &[
+            b"+OK\r\n",
+            b"+hello world\r\n",
+            b"-ERR bad\r\n",
+            b"-MOVED 1234 127.0.0.1:6379\r\n",
+            b":12345\r\n",
+            b":-9\r\n",
+            b"$5\r\nhello\r\n",
+            b"$0\r\n\r\n",
+            b"$-1\r\n",
+            b"_\r\n",
+            b"*3\r\n$3\r\nfoo\r\n:1\r\n+OK\r\n",
+            b"*-1\r\n",
+            b"*0\r\n",
+            b"*2\r\n*1\r\n:1\r\n$1\r\na\r\n",
+        ];
+        for input in supported {
+            let fast = fast_parse_value(input).map(|(v, _)| v);
+            let reference = Parser::new().parse_value(*input).ok();
+            assert_eq!(
+                fast, reference,
+                "fast path disagrees with combine on {input:?}"
+            );
+            assert!(fast.is_some(), "fast path should handle {input:?}");
+        }
+
+        // Unsupported RESP3 types: the fast path must decline so combine parses
+        // them (and still produce the same value via parse_redis_value).
+        let deferred: &[&[u8]] = &[
+            b"%1\r\n+a\r\n:1\r\n",
+            b"~2\r\n:1\r\n:2\r\n",
+            b",3.14\r\n",
+            b"#t\r\n",
+            b"(12345\r\n",
+            b">2\r\n$7\r\nmessage\r\n$1\r\nx\r\n",
+        ];
+        for input in deferred {
+            assert!(
+                fast_parse_value(input).is_none(),
+                "fast path should decline unsupported type {input:?}"
+            );
+            // parse_redis_value must still succeed (via the combine fallback).
+            assert!(
+                parse_redis_value(input).is_ok(),
+                "combine fallback for {input:?}"
+            );
+        }
+
+        // Incomplete buffers: the fast path must decline (return None), leaving
+        // the caller to wait for / fall back for more bytes.
+        let incomplete: &[&[u8]] = &[b"$5\r\nhel", b"*2\r\n:1\r\n", b"+OK\r", b":12"];
+        for input in incomplete {
+            assert!(
+                fast_parse_value(input).is_none(),
+                "fast path should decline incomplete {input:?}"
+            );
+        }
+
+        // Malformed line bodies: combine validates UTF-8 in `line()` for every
+        // line-based type, so a non-UTF-8 body must be *rejected*. The fast path
+        // must decline (→ combine errors), never accept it as a value. Regression
+        // for the `_` null arm, which originally skipped this check.
+        let non_utf8: &[&[u8]] = &[
+            b"_\xff\r\n",
+            b"+\xff\r\n",
+            b":\xff\r\n",
+            b"-\xff\r\n",
+            b"$\xff\r\n",
+            b"*\xff\r\n",
+        ];
+        for input in non_utf8 {
+            assert!(
+                fast_parse_value(input).is_none(),
+                "fast path must decline non-utf8 line {input:?}"
+            );
+            assert!(
+                Parser::new().parse_value(&input[..]).is_err(),
+                "combine rejects non-utf8 line {input:?} (so the fast path must too)"
+            );
+        }
+    }
+
+    /// Exercise the async `ValueCodec` fast-path ↔ combine-partial
+    /// interleaving across EVERY chunk boundary. At chunk size == wire length
+    /// every frame is fully buffered (fast path handles all); at chunk size 1
+    /// every frame arrives a byte at a time (combine partial-resume handles all);
+    /// sizes in between mix the two. In all cases the decoded sequence must match
+    /// exactly and no bytes may be stranded — i.e. no drop, duplicate, or
+    /// stranded `partial`/`state`.
+    #[cfg(feature = "aio")]
+    #[test]
+    fn codec_fast_path_and_partial_interleave() {
+        use bytes::BytesMut;
+        use tokio_util::codec::Decoder;
+
+        let wire: &[u8] =
+            b"$5\r\nhello\r\n+OK\r\n:42\r\n*2\r\n:1\r\n:2\r\n_\r\n$-1\r\n-ERR boom\r\n";
+        let expected = vec![
+            Value::BulkString(b"hello".to_vec()),
+            Value::Okay,
+            Value::Int(42),
+            Value::Array(vec![Value::Int(1), Value::Int(2)]),
+            Value::Nil,
+            Value::Nil,
+            Value::ServerError(err_parser("ERR boom")),
+        ];
+
+        for chunk in 1..=wire.len() {
+            let mut codec = ValueCodec::default();
+            let mut buf = BytesMut::new();
+            let mut got = Vec::new();
+            for piece in wire.chunks(chunk) {
+                buf.extend_from_slice(piece);
+                while let Some(v) = codec.decode(&mut buf).unwrap() {
+                    got.push(v);
+                }
+            }
+            while let Some(v) = codec.decode_eof(&mut buf).unwrap() {
+                got.push(v);
+            }
+            assert_eq!(
+                got, expected,
+                "decoded sequence mismatch at chunk size {chunk}"
+            );
+            assert!(buf.is_empty(), "stranded bytes at chunk size {chunk}");
+        }
+    }
 
     #[cfg(feature = "aio")]
     #[test]
