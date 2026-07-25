@@ -2534,6 +2534,7 @@ impl ToRedisArgs for ExpireOption {
     }
 }
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 /// A push message from the server.
 pub struct PushInfo {
@@ -2544,6 +2545,17 @@ pub struct PushInfo {
 }
 
 impl PushInfo {
+    /// Builds a new instance
+    pub fn new(kind: PushKind) -> Self {
+        Self { kind, data: vec![] }
+    }
+
+    /// Sets the message's data
+    pub fn data(mut self, data: Vec<Value>) -> Self {
+        self.data = data;
+        self
+    }
+
     pub(crate) fn disconnect() -> Self {
         Self {
             kind: crate::PushKind::Disconnection,

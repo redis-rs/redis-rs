@@ -2825,20 +2825,16 @@ mod cluster_async {
             let push: PushInfo = get_push(rx).await.unwrap();
             assert_eq!(
                 push,
-                PushInfo {
-                    kind: PushKind::Subscribe,
-                    data: vec![redis_value!("regular-phonewave"), redis_value!(1)]
-                }
+                PushInfo::new(PushKind::Subscribe)
+                    .data(vec![redis_value!("regular-phonewave"), redis_value!(1)])
             );
 
             let _: () = pubsub_conn.psubscribe("phonewave*").await.unwrap();
             let push = get_push(rx).await.unwrap();
             assert_eq!(
                 push,
-                PushInfo {
-                    kind: PushKind::PSubscribe,
-                    data: vec![redis_value!("phonewave*"), redis_value!(2)]
-                }
+                PushInfo::new(PushKind::PSubscribe)
+                    .data(vec![redis_value!("phonewave*"), redis_value!(2)])
             );
 
             if supports_redis_7 {
@@ -2846,10 +2842,8 @@ mod cluster_async {
                 let push = get_push(rx).await.unwrap();
                 assert_eq!(
                     push,
-                    PushInfo {
-                        kind: PushKind::SSubscribe,
-                        data: vec![redis_value!("sphonewave"), redis_value!(1)]
-                    }
+                    PushInfo::new(PushKind::SSubscribe)
+                        .data(vec![redis_value!("sphonewave"), redis_value!(1)])
                 );
             }
         }
@@ -2881,10 +2875,10 @@ mod cluster_async {
             let push = get_push(rx).await.unwrap();
             assert_eq!(
                 push,
-                PushInfo {
-                    kind: PushKind::Message,
-                    data: vec![redis_value!("regular-phonewave"), redis_value!("banana"),]
-                }
+                PushInfo::new(PushKind::Message).data(vec![
+                    redis_value!("regular-phonewave"),
+                    redis_value!("banana"),
+                ])
             );
 
             let _: () = publish_conn
@@ -2894,14 +2888,11 @@ mod cluster_async {
             let push = get_push(rx).await.unwrap();
             assert_eq!(
                 push,
-                PushInfo {
-                    kind: PushKind::PMessage,
-                    data: vec![
-                        redis_value!("phonewave*"),
-                        redis_value!("phonewave-pattern"),
-                        redis_value!("banana"),
-                    ]
-                }
+                PushInfo::new(PushKind::PMessage).data(vec![
+                    redis_value!("phonewave*"),
+                    redis_value!("phonewave-pattern"),
+                    redis_value!("banana"),
+                ])
             );
 
             if supports_redis_7 {
@@ -2909,10 +2900,8 @@ mod cluster_async {
                 let push = get_push(rx).await.unwrap();
                 assert_eq!(
                     push,
-                    PushInfo {
-                        kind: PushKind::SMessage,
-                        data: vec![redis_value!("sphonewave"), redis_value!("banana"),]
-                    }
+                    PushInfo::new(PushKind::SMessage)
+                        .data(vec![redis_value!("sphonewave"), redis_value!("banana"),])
                 );
             }
         }
@@ -2998,38 +2987,30 @@ mod cluster_async {
             let push = get_push(&mut rx).await.unwrap();
             assert_eq!(
                 push,
-                PushInfo {
-                    kind: PushKind::Subscribe,
-                    data: vec![redis_value!("regular-phonewave"), redis_value!(1)]
-                }
+                PushInfo::new(PushKind::Subscribe)
+                    .data(vec![redis_value!("regular-phonewave"), redis_value!(1)])
             );
             let _: () = pubsub_conn.unsubscribe("regular-phonewave").await.unwrap();
             let push = get_push(&mut rx).await.unwrap();
             assert_eq!(
                 push,
-                PushInfo {
-                    kind: PushKind::Unsubscribe,
-                    data: vec![redis_value!("regular-phonewave"), redis_value!(0)]
-                }
+                PushInfo::new(PushKind::Unsubscribe)
+                    .data(vec![redis_value!("regular-phonewave"), redis_value!(0)])
             );
 
             let _: () = pubsub_conn.psubscribe("phonewave*").await.unwrap();
             let push = get_push(&mut rx).await.unwrap();
             assert_eq!(
                 push,
-                PushInfo {
-                    kind: PushKind::PSubscribe,
-                    data: vec![redis_value!("phonewave*"), redis_value!(1)]
-                }
+                PushInfo::new(PushKind::PSubscribe)
+                    .data(vec![redis_value!("phonewave*"), redis_value!(1)])
             );
             let _: () = pubsub_conn.punsubscribe("phonewave*").await.unwrap();
             let push = get_push(&mut rx).await.unwrap();
             assert_eq!(
                 push,
-                PushInfo {
-                    kind: PushKind::PUnsubscribe,
-                    data: vec![redis_value!("phonewave*"), redis_value!(0)]
-                }
+                PushInfo::new(PushKind::PUnsubscribe)
+                    .data(vec![redis_value!("phonewave*"), redis_value!(0)])
             );
 
             if supports_redis_7 {
@@ -3037,19 +3018,15 @@ mod cluster_async {
                 let push = get_push(&mut rx).await.unwrap();
                 assert_eq!(
                     push,
-                    PushInfo {
-                        kind: PushKind::SSubscribe,
-                        data: vec![redis_value!("sphonewave"), redis_value!(1)]
-                    }
+                    PushInfo::new(PushKind::SSubscribe)
+                        .data(vec![redis_value!("sphonewave"), redis_value!(1)])
                 );
                 let _: () = pubsub_conn.sunsubscribe("sphonewave").await.unwrap();
                 let push = get_push(&mut rx).await.unwrap();
                 assert_eq!(
                     push,
-                    PushInfo {
-                        kind: PushKind::SUnsubscribe,
-                        data: vec![redis_value!("sphonewave"), redis_value!(0)]
-                    }
+                    PushInfo::new(PushKind::SUnsubscribe)
+                        .data(vec![redis_value!("sphonewave"), redis_value!(0)])
                 );
             }
 
@@ -3125,13 +3102,10 @@ mod cluster_async {
                 let push = get_push(&mut rx).await.unwrap();
                 assert_eq!(
                     push,
-                    PushInfo {
-                        kind: PushKind::Subscribe,
-                        data: vec![
-                            redis_value!(format!("regular-phonewave{i}")),
-                            redis_value!(i),
-                        ]
-                    }
+                    PushInfo::new(PushKind::Subscribe).data(vec![
+                        redis_value!(format!("regular-phonewave{i}")),
+                        redis_value!(i),
+                    ])
                 );
             }
             let _: () = pubsub_conn
@@ -3142,13 +3116,10 @@ mod cluster_async {
                 let push = get_push(&mut rx).await.unwrap();
                 assert_eq!(
                     push,
-                    PushInfo {
-                        kind: PushKind::Unsubscribe,
-                        data: vec![
-                            redis_value!(format!("regular-phonewave{i}")),
-                            redis_value!(3 - i),
-                        ]
-                    }
+                    PushInfo::new(PushKind::Unsubscribe).data(vec![
+                        redis_value!(format!("regular-phonewave{i}")),
+                        redis_value!(3 - i),
+                    ])
                 );
             }
 
@@ -3160,10 +3131,10 @@ mod cluster_async {
                 let push = get_push(&mut rx).await.unwrap();
                 assert_eq!(
                     push,
-                    PushInfo {
-                        kind: PushKind::PSubscribe,
-                        data: vec![redis_value!(format!("phonewave*{i}")), redis_value!(i)]
-                    }
+                    PushInfo::new(PushKind::PSubscribe).data(vec![
+                        redis_value!(format!("phonewave*{i}")),
+                        redis_value!(i)
+                    ])
                 );
             }
 
@@ -3175,10 +3146,10 @@ mod cluster_async {
                 let push = get_push(&mut rx).await.unwrap();
                 assert_eq!(
                     push,
-                    PushInfo {
-                        kind: PushKind::PUnsubscribe,
-                        data: vec![redis_value!(format!("phonewave*{i}")), redis_value!(3 - i)]
-                    }
+                    PushInfo::new(PushKind::PUnsubscribe).data(vec![
+                        redis_value!(format!("phonewave*{i}")),
+                        redis_value!(3 - i)
+                    ])
                 );
             }
             if supports_redis_7 {
@@ -3191,10 +3162,10 @@ mod cluster_async {
                     let push = get_push(&mut rx).await.unwrap();
                     assert_eq!(
                         push,
-                        PushInfo {
-                            kind: PushKind::SSubscribe,
-                            data: vec![redis_value!(format!("{{sphonewave}}{i}")), redis_value!(i)]
-                        }
+                        PushInfo::new(PushKind::SSubscribe).data(vec![
+                            redis_value!(format!("{{sphonewave}}{i}")),
+                            redis_value!(i)
+                        ])
                     );
                 }
 
@@ -3206,13 +3177,10 @@ mod cluster_async {
                     let push = get_push(&mut rx).await.unwrap();
                     assert_eq!(
                         push,
-                        PushInfo {
-                            kind: PushKind::SUnsubscribe,
-                            data: vec![
-                                redis_value!(format!("{{sphonewave}}{i}")),
-                                redis_value!(3 - i),
-                            ]
-                        }
+                        PushInfo::new(PushKind::SUnsubscribe).data(vec![
+                            redis_value!(format!("{{sphonewave}}{i}")),
+                            redis_value!(3 - i),
+                        ])
                     );
                 }
             }
@@ -3251,13 +3219,7 @@ mod cluster_async {
             // we expect 1 disconnect per connection to node. 2 connections * 3 node = 6 disconnects.
             for _ in 0..6 {
                 let push = get_push(&mut rx).await.unwrap();
-                assert_eq!(
-                    push,
-                    PushInfo {
-                        kind: PushKind::Disconnection,
-                        data: vec![]
-                    }
-                );
+                assert_eq!(push, PushInfo::new(PushKind::Disconnection));
             }
 
             // recreate cluster
@@ -3282,20 +3244,26 @@ mod cluster_async {
             }
             // we expect only 3 resubscriptions.
             assert_matches!(rx.try_recv(), Err(_));
-            assert!(pushes.contains(&PushInfo {
-                kind: PushKind::Subscribe,
-                data: vec![redis_value!("regular-phonewave"), redis_value!(1)]
-            }));
-            assert!(pushes.contains(&PushInfo {
-                kind: PushKind::PSubscribe,
-                data: vec![redis_value!("phonewave*"), redis_value!(2)]
-            }));
+            assert!(
+                pushes.contains(
+                    &PushInfo::new(PushKind::Subscribe)
+                        .data(vec![redis_value!("regular-phonewave"), redis_value!(1)])
+                )
+            );
+            assert!(
+                pushes.contains(
+                    &PushInfo::new(PushKind::PSubscribe)
+                        .data(vec![redis_value!("phonewave*"), redis_value!(2)])
+                )
+            );
 
             if supports_redis_7 {
-                assert!(pushes.contains(&PushInfo {
-                    kind: PushKind::SSubscribe,
-                    data: vec![redis_value!("sphonewave"), redis_value!(1)]
-                }));
+                assert!(
+                    pushes.contains(
+                        &PushInfo::new(PushKind::SSubscribe)
+                            .data(vec![redis_value!("sphonewave"), redis_value!(1)])
+                    )
+                );
             }
 
             check_publishing(&mut publish_conn, &mut rx, supports_redis_7).await;
@@ -3332,13 +3300,7 @@ mod cluster_async {
                     .timeout(futures_time::time::Duration::from_millis(5))
                     .await
                     .unwrap();
-                assert_eq!(
-                    push,
-                    Some(PushInfo {
-                        kind: PushKind::Disconnection,
-                        data: vec![]
-                    })
-                );
+                assert_eq!(push, Some(PushInfo::new(PushKind::Disconnection)));
             }
 
             // recreate cluster
