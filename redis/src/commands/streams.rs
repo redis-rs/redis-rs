@@ -174,6 +174,7 @@ impl ToRedisArgs for StreamTrimOptions {
 ///
 /// Supports idempotent message processing to prevent duplicate entries.
 /// See [Redis Streams Idempotency](https://redis.io/docs/latest/develop/data-types/streams/idempotency/)
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum StreamIdempotencyMode {
     /// Manual mode: Producer provides both producer ID (pid) and idempotent ID (iid)
@@ -709,6 +710,7 @@ impl ToRedisArgs for StreamReadOptions {
 ///
 /// [`xautoclaim_options`]: ../trait.Commands.html#method.xautoclaim_options
 ///
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamAutoClaimReply {
     /// The next stream id to use as the start argument for the next xautoclaim
@@ -728,6 +730,7 @@ pub struct StreamAutoClaimReply {
 /// [`xread`]: ../trait.Commands.html#method.xread
 /// [`xread_options`]: ../trait.Commands.html#method.xread_options
 ///
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamReadReply {
     /// Complex data structure containing a payload for each key in this array
@@ -745,6 +748,7 @@ pub struct StreamReadReply {
 /// [`xrevrange_count`]: ../trait.Commands.html#method.xrevrange_count
 /// [`xrevrange_all`]: ../trait.Commands.html#method.xrevrange_all
 ///
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamRangeReply {
     /// Complex data structure containing a payload for each ID in this array
@@ -757,6 +761,7 @@ pub struct StreamRangeReply {
 ///
 /// [`xclaim`]: ../trait.Commands.html#method.xclaim
 ///
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamClaimReply {
     /// Complex data structure containing a payload for each ID in this array
@@ -793,6 +798,7 @@ impl StreamPendingReply {
 /// Inner reply type when an [`xpending`] command has data.
 ///
 /// [`xpending`]: ../trait.Commands.html#method.xpending
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamPendingData {
     /// Limit on the number of messages to return per call.
@@ -816,6 +822,7 @@ pub struct StreamPendingData {
 /// [`xpending_count`]: ../trait.Commands.html#method.xpending_count
 /// [`xpending_consumer_count`]: ../trait.Commands.html#method.xpending_consumer_count
 ///
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamPendingCountReply {
     /// An array of structs containing information about
@@ -836,6 +843,7 @@ pub struct StreamPendingCountReply {
 /// [`xinfo_stream`]: ../trait.Commands.html#method.xinfo_stream
 /// [`xinfo_stream_with_idempotency`]: ../trait.Commands.html#method.xinfo_stream_with_idempotency
 ///
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamInfoStreamReply {
     /// The last generated ID that may not be the same as the last
@@ -906,6 +914,7 @@ pub struct StreamInfoStreamReplyWithIdempotency {
 ///
 /// [`xinfo_consumer`]: ../trait.Commands.html#method.xinfo_consumer
 ///
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamInfoConsumersReply {
     /// An array of every consumer in a specific consumer group.
@@ -919,6 +928,7 @@ pub struct StreamInfoConsumersReply {
 ///
 /// [`xinfo_groups`]: ../trait.Commands.html#method.xinfo_groups
 ///
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamInfoGroupsReply {
     /// All the consumer groups associated with the stream.
@@ -929,6 +939,7 @@ pub struct StreamInfoGroupsReply {
 ///
 /// [`xinfo_consumers`]: ../trait.Commands.html#method.xinfo_consumers
 ///
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamInfoConsumer {
     /// Name of the consumer group.
@@ -943,6 +954,7 @@ pub struct StreamInfoConsumer {
 ///
 /// [`xinfo_groups`]: ../trait.Commands.html#method.xinfo_groups
 ///
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamInfoGroup {
     /// The group name.
@@ -964,6 +976,7 @@ pub struct StreamInfoGroup {
 /// Represents a pending message parsed from [`xpending`] methods.
 ///
 /// [`xpending`]: ../trait.Commands.html#method.xpending
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamPendingId {
     /// The ID of the message.
@@ -980,6 +993,7 @@ pub struct StreamPendingId {
 }
 
 /// Represents a stream `key` and its `id`'s parsed from `xread` methods.
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamKey {
     /// The stream `key`.
@@ -990,6 +1004,7 @@ pub struct StreamKey {
 
 /// Represents a stream `id` and its field/values as a `HashMap`
 /// Also contains optional PEL information if the message was fetched with XREADGROUP with a `claim` option
+#[non_exhaustive]
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct StreamId {
     /// The stream `id` (entry ID) of this particular message.
