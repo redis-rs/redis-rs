@@ -47,6 +47,7 @@ impl ToSingleRedisArg for Unit {}
 /// * You may want to use either `f64` or `f32` if you want to perform mathematical operations.
 /// * To keep the raw value from Redis, use `String`.
 #[allow(clippy::derive_partial_eq_without_eq)] // allow f32/f64 here, which don't implement Eq
+#[non_exhaustive]
 #[derive(Debug, PartialEq)]
 pub struct Coord<T> {
     /// Longitude
@@ -272,6 +273,7 @@ impl ToRedisArgs for RadiusOptions {
 ///
 /// [1]: ../trait.Commands.html#method.geo_radius
 /// [2]: ../trait.Commands.html#method.geo_radius_by_member
+#[non_exhaustive]
 pub struct RadiusSearchResult {
     /// The name that was found.
     pub name: String,

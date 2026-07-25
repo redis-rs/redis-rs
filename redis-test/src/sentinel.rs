@@ -204,6 +204,7 @@ fn spawn_sentinel_server(
         })
 }
 
+#[non_exhaustive]
 pub struct SentinelError;
 
 pub fn wait_for_master_server(
