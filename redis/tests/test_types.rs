@@ -279,16 +279,8 @@ mod types {
                 Role::Primary {
                     replication_offset: 3129659,
                     replicas: vec![
-                        ReplicaInfo {
-                            ip: "127.0.0.1".to_string(),
-                            port: 9001,
-                            replication_offset: 3129242,
-                        },
-                        ReplicaInfo {
-                            ip: "127.0.0.1".to_string(),
-                            port: 9002,
-                            replication_offset: 3129543,
-                        },
+                        ReplicaInfo::new("127.0.0.1", 9001, 3129242),
+                        ReplicaInfo::new("127.0.0.1", 9002, 3129543),
                     ],
                 },
             ),
