@@ -23,6 +23,7 @@ The affected structs are:
 * `BloomFilterDumpChunk`
 * `CacheStatistics`
 * `Coord`
+* `FlushAllOptions`
 * `RadiusSearchResult`
 * `SendError`
 * `SentinelError`
