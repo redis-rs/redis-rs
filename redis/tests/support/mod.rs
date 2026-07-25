@@ -516,10 +516,7 @@ pub fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> TlsCertificates {
         .expect("Unable to read key file");
 
     TlsCertificates {
-        client_tls: Some(ClientTlsConfig {
-            client_cert: client_cert_vec,
-            client_key: client_key_vec,
-        }),
+        client_tls: Some(ClientTlsConfig::new(client_cert_vec, client_key_vec)),
         root_cert: Some(root_cert_vec),
     }
 }
@@ -574,10 +571,7 @@ pub(crate) fn build_single_client_with_separate_client_cert<T: redis::IntoConnec
     redis::Client::build_with_tls(
         connection_info,
         TlsCertificates {
-            client_tls: Some(ClientTlsConfig {
-                client_cert: client_cert_vec,
-                client_key: client_key_vec,
-            }),
+            client_tls: Some(ClientTlsConfig::new(client_cert_vec, client_key_vec)),
             root_cert: Some(root_cert_vec),
         },
     )

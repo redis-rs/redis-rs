@@ -125,10 +125,7 @@ impl Client {
     ///     let client = Client::build_with_tls(
     ///         url,
     ///         TlsCertificates {
-    ///             client_tls: Some(ClientTlsConfig{
-    ///                 client_cert: client_cert_vec,
-    ///                 client_key: client_key_vec,
-    ///             }),
+    ///             client_tls: Some(ClientTlsConfig::new(client_cert_vec, client_key_vec)),
     ///             root_cert: Some(root_cert_vec),
     ///         }
     ///     )
