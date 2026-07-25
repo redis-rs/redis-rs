@@ -1654,7 +1654,7 @@ mod basic_async {
         #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
         #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
         fn test_should_connect_mtls(#[case] runtime: RuntimeType) {
-            let ctx = TestContext::new_with_mtls();
+            let ctx = TestContextBuilder::new().mtls(true).build();
 
             let client =
                 build_single_client(ctx.server.connection_info(), &ctx.server.tls_paths, true)
@@ -1681,7 +1681,7 @@ mod basic_async {
         #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
         #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
         fn test_should_not_connect_if_tls_active(#[case] runtime: RuntimeType) {
-            let ctx = TestContext::new_with_mtls();
+            let ctx = TestContextBuilder::new().mtls(true).build();
 
             let client =
                 build_single_client(ctx.server.connection_info(), &ctx.server.tls_paths, false)
