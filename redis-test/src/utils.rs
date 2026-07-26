@@ -143,6 +143,14 @@ impl CommandMultiArgs for OpensslCommand {
     }
 }
 
+fn generate_key<S: AsRef<std::ffi::OsStr>>(file: S, size: usize, purpose: &str) {
+    OpensslCommand::new(&format!("generate {purpose} key"))
+        .arg("genrsa")
+        .arg2("-out", file)
+        .arg(size.to_string())
+        .spawn();
+}
+
 pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
     build_keys_and_certs_for_tls_ext(tempdir, true)
 }
@@ -165,19 +173,11 @@ pub fn build_keys_and_certs_for_tls_with_hostname(
     let redis_key = tempdir.path().join("redis.key");
     let ext_file = tempdir.path().join("openssl.cnf");
 
-    fn make_key<S: AsRef<std::ffi::OsStr>>(name: S, size: usize) {
-        OpensslCommand::new("generate key")
-            .arg("genrsa")
-            .arg2("-out", name)
-            .arg(size.to_string())
-            .spawn();
-    }
+    // Generate the key for the CA
+    generate_key(&ca_key, 4096, "CA");
 
-    // Build CA Key
-    make_key(&ca_key, 4096);
-
-    // Build redis key
-    make_key(&redis_key, 2048);
+    // Generate the key for the Redis server
+    generate_key(&redis_key, 2048, "server");
 
     // Build CA Cert
     OpensslCommand::new("self-certify CA")
@@ -276,11 +276,7 @@ pub fn build_client_cert_with_custom_cn(
     let ca_serial = tempdir.path().join("ca.txt");
 
     // Generate client private key
-    OpensslCommand::new("generate client key")
-        .arg("genrsa")
-        .arg2("-out", &client_key)
-        .arg("2048")
-        .spawn();
+    generate_key(&client_key, 2048, "client");
 
     // Create a basic extensions file for X.509 v3 client certificate
     let client_ext_file = tempdir.path().join("client_ext.cnf");
