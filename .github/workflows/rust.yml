@@ -10,6 +10,9 @@ env:
   CARGO_TERM_COLOR: always
   REDISRS_REDIS_JSON_PATH: "/tmp/librejson.so"
   REDISRS_REDIS_BLOOM_PATH: "/tmp/redisbloom.so"
+  REDISRS_TLS_KEY_CA: "/tmp/tls-ca.key"
+  REDISRS_TLS_KEY_SERVER: "/tmp/tls-server.key"
+  REDISRS_TLS_KEY_CLIENT: "/tmp/tls-client.key"
 
 concurrency:
   group: "${{ github.workflow }}-${{ github.head_ref || github.run_id || github.ref }}"
@@ -87,6 +90,12 @@ jobs:
         uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # v2.82.10
         with:
           tool: nextest
+
+      - name: Build re-usable TLS keys
+        run: |
+          openssl genrsa -out "$REDISRS_TLS_KEY_CA" 4096
+          openssl genrsa -out "$REDISRS_TLS_KEY_SERVER" 2048
+          openssl genrsa -out "$REDISRS_TLS_KEY_CLIENT" 2048
 
       - name: Run tests
         run: make test
