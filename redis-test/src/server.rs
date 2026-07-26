@@ -4,7 +4,9 @@ use std::path::Path;
 use std::{env, fs, path::PathBuf, process};
 use tempfile::TempDir;
 
-use crate::utils::{TlsFilePaths, build_keys_and_certs_for_tls, get_random_available_port};
+use crate::utils::{
+    CommandMultiArgs, TlsFilePaths, build_keys_and_certs_for_tls, get_random_available_port,
+};
 
 pub fn use_protocol() -> ProtocolVersion {
     if env::var("PROTOCOL").unwrap_or_default() == "RESP3" {
@@ -405,57 +407,6 @@ impl RedisServerCommand {
         Self { cmd }
     }
 
-    /// Appends a new argument to the command
-    pub fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
-        self.cmd.arg(arg);
-        self
-    }
-
-    /// Appends two new arguments to the command
-    ///
-    /// This method is purely convenience to get more readable argument setting as it allows to
-    /// re-write
-    ///
-    /// ```rust,no_run
-    /// # use redis_test::server::RedisServerCommand;
-    /// # let mut redis_cmd = RedisServerCommand::new();
-    /// redis_cmd
-    ///     .arg("--foo")
-    ///     .arg("some-value-for-foo")
-    ///     .arg("--bar")
-    ///     .arg("some-value-for-bar")
-    ///     .arg("--baz")
-    ///     .arg("some-value-for-baz");
-    /// ```
-    ///
-    /// in a more readable fashion:
-    ///
-    /// ```rust,no_run
-    /// # use redis_test::server::RedisServerCommand;
-    /// # let mut redis_cmd = RedisServerCommand::new();
-    /// redis_cmd
-    ///     .arg2("--foo", "some-value-for-foo")
-    ///     .arg2("--bar", "some-value-for-bar")
-    ///     .arg2("--baz", "some-value-for-baz");
-    /// ```
-    pub fn arg2<S1: AsRef<OsStr>, S2: AsRef<OsStr>>(&mut self, arg1: S1, arg2: S2) -> &mut Self {
-        self.cmd.arg(arg1).arg(arg2);
-        self
-    }
-
-    /// Appends three new arguments to the command
-    ///
-    /// This method is purely convenience to get more readable argument setting (cf. [`arg2`](Self::arg2)).
-    pub fn arg3<S1: AsRef<OsStr>, S2: AsRef<OsStr>, S3: AsRef<OsStr>>(
-        &mut self,
-        arg1: S1,
-        arg2: S2,
-        arg3: S3,
-    ) -> &mut Self {
-        self.cmd.arg(arg1).arg(arg2).arg(arg3);
-        self
-    }
-
     /// Set the directory to run the command in
     pub fn current_dir<P: AsRef<Path>>(&mut self, dir: P) -> &mut Self {
         self.cmd.current_dir(dir);
@@ -521,6 +472,13 @@ impl RedisServerCommand {
                 }
             };
         }
+    }
+}
+
+impl CommandMultiArgs for RedisServerCommand {
+    fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
+        self.cmd.arg(arg);
+        self
     }
 }
 

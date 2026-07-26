@@ -7,6 +7,58 @@ use std::process::{Command, Output};
 use std::{fs, process};
 use tempfile::TempDir;
 
+pub trait CommandMultiArgs {
+    /// Appends a new argument to the command
+    fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self;
+
+    /// Appends two new arguments to the command
+    ///
+    /// This method is purely convenience to get more readable argument setting as it allows to
+    /// re-write
+    ///
+    /// ```rust,no_run
+    /// # use redis_test::server::RedisServerCommand;
+    /// # use redis_test::utils::CommandMultiArgs;
+    /// # let mut redis_cmd = RedisServerCommand::new();
+    /// redis_cmd
+    ///     .arg("--foo")
+    ///     .arg("some-value-for-foo")
+    ///     .arg("--bar")
+    ///     .arg("some-value-for-bar")
+    ///     .arg("--baz")
+    ///     .arg("some-value-for-baz");
+    /// ```
+    ///
+    /// in a more readable fashion:
+    ///
+    /// ```rust,no_run
+    /// # use redis_test::server::RedisServerCommand;
+    /// # use redis_test::utils::CommandMultiArgs;
+    /// # let mut redis_cmd = RedisServerCommand::new();
+    /// redis_cmd
+    ///     .arg2("--foo", "some-value-for-foo")
+    ///     .arg2("--bar", "some-value-for-bar")
+    ///     .arg2("--baz", "some-value-for-baz");
+    /// ```
+    fn arg2<S1: AsRef<OsStr>, S2: AsRef<OsStr>>(&mut self, arg: S1, arg2: S2) -> &mut Self {
+        self.arg(arg).arg(arg2);
+        self
+    }
+
+    /// Appends three new arguments to the command
+    ///
+    /// This method is purely convenience to get more readable argument setting (cf. [`arg2`](Self::arg2)).
+    fn arg3<S1: AsRef<OsStr>, S2: AsRef<OsStr>, S3: AsRef<OsStr>>(
+        &mut self,
+        arg: S1,
+        arg2: S2,
+        arg3: S3,
+    ) -> &mut Self {
+        self.arg(arg).arg(arg2).arg(arg3);
+        self
+    }
+}
+
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct TlsFilePaths {
@@ -38,10 +90,6 @@ impl OpensslCommand {
         }
     }
 
-    pub fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
-        self.cmd.arg(arg.as_ref());
-        self
-    }
     pub fn stdin(&mut self, stdin: Vec<u8>) -> &mut Self {
         self.stdin = Some(stdin);
         self
@@ -88,6 +136,13 @@ impl OpensslCommand {
     }
 }
 
+impl CommandMultiArgs for OpensslCommand {
+    fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
+        self.cmd.arg(arg.as_ref());
+        self
+    }
+}
+
 pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
     build_keys_and_certs_for_tls_ext(tempdir, true)
 }
@@ -113,9 +168,8 @@ pub fn build_keys_and_certs_for_tls_with_hostname(
     fn make_key<S: AsRef<std::ffi::OsStr>>(name: S, size: usize) {
         OpensslCommand::new("generate key")
             .arg("genrsa")
-            .arg("-out")
-            .arg(name)
-            .arg(format!("{size}"))
+            .arg2("-out", name)
+            .arg(size.to_string())
             .spawn();
     }
 
@@ -132,14 +186,10 @@ pub fn build_keys_and_certs_for_tls_with_hostname(
         .arg("-new")
         .arg("-nodes")
         .arg("-sha256")
-        .arg("-key")
-        .arg(&ca_key)
-        .arg("-days")
-        .arg("3650")
-        .arg("-subj")
-        .arg("/O=Redis Test/CN=Certificate Authority")
-        .arg("-out")
-        .arg(&ca_crt)
+        .arg2("-key", &ca_key)
+        .arg2("-days", "3650")
+        .arg2("-subj", "/O=Redis Test/CN=Certificate Authority")
+        .arg2("-out", &ca_crt)
         .spawn();
 
     let hostname = dns_hostname.unwrap_or("localhost.example.com");
@@ -181,10 +231,8 @@ pub fn build_keys_and_certs_for_tls_with_hostname(
         .arg("req")
         .arg("-new")
         .arg("-sha256")
-        .arg("-subj")
-        .arg("/O=Redis Test/CN=Generic-cert")
-        .arg("-key")
-        .arg(&redis_key)
+        .arg2("-subj", "/O=Redis Test/CN=Generic-cert")
+        .arg2("-key", &redis_key)
         .spawn();
 
     // build redis cert
@@ -193,23 +241,17 @@ pub fn build_keys_and_certs_for_tls_with_hostname(
         .arg("x509")
         .arg("-req")
         .arg("-sha256")
-        .arg("-CA")
-        .arg(&ca_crt)
-        .arg("-CAkey")
-        .arg(&ca_key)
-        .arg("-CAserial")
-        .arg(&ca_serial)
+        .arg2("-CA", &ca_crt)
+        .arg2("-CAkey", &ca_key)
+        .arg2("-CAserial", &ca_serial)
         .arg("-CAcreateserial")
-        .arg("-days")
-        .arg("365")
-        .arg("-extfile")
-        .arg(&ext_file);
+        .arg2("-days", "365")
+        .arg2("-extfile", &ext_file);
     if !with_ip_alts {
-        command2.arg("-extensions").arg("v3_req");
+        command2.arg2("-extensions", "v3_req");
     }
     command2
-        .arg("-out")
-        .arg(&redis_crt)
+        .arg2("-out", &redis_crt)
         .stdin(key_cmd.stdout)
         .spawn();
 
@@ -236,8 +278,7 @@ pub fn build_client_cert_with_custom_cn(
     // Generate client private key
     OpensslCommand::new("generate client key")
         .arg("genrsa")
-        .arg("-out")
-        .arg(&client_key)
+        .arg2("-out", &client_key)
         .arg("2048")
         .spawn();
 
@@ -255,10 +296,8 @@ pub fn build_client_cert_with_custom_cn(
         .arg("req")
         .arg("-new")
         .arg("-sha256")
-        .arg("-subj")
-        .arg(format!("/O=Redis Test/CN={common_name}"))
-        .arg("-key")
-        .arg(&client_key)
+        .arg2("-subj", format!("/O=Redis Test/CN={common_name}"))
+        .arg2("-key", &client_key)
         .spawn();
 
     // Sign the certificate with CA (X.509 v3)
@@ -266,19 +305,13 @@ pub fn build_client_cert_with_custom_cn(
         .arg("x509")
         .arg("-req")
         .arg("-sha256")
-        .arg("-CA")
-        .arg(ca_crt)
-        .arg("-CAkey")
-        .arg(ca_key)
-        .arg("-CAserial")
-        .arg(&ca_serial)
+        .arg2("-CA", ca_crt)
+        .arg2("-CAkey", ca_key)
+        .arg2("-CAserial", &ca_serial)
         .arg("-CAcreateserial")
-        .arg("-days")
-        .arg("365")
-        .arg("-extfile")
-        .arg(&client_ext_file)
-        .arg("-out")
-        .arg(&client_crt)
+        .arg2("-days", "365")
+        .arg2("-extfile", &client_ext_file)
+        .arg2("-out", &client_crt)
         .stdin(csr_cmd.stdout)
         .spawn();
 

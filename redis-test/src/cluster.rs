@@ -3,6 +3,7 @@ use std::{env, process, thread::sleep, time::Duration};
 use tempfile::TempDir;
 
 use crate::server::RedisServerBuilder;
+use crate::utils::CommandMultiArgs;
 use crate::{
     server::{Module, RedisServer},
     utils::{TlsFilePaths, build_keys_and_certs_for_tls_with_hostname, get_random_available_port},
