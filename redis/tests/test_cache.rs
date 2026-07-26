@@ -629,7 +629,7 @@ async fn test_connection_manager_maintains_statistics_after_crashes(test_with_op
     assert!(result.unwrap_err().is_unrecoverable_error());
 
     // Start a new server, re-using the previous address
-    let _ctx = TestContext::new_with_addr(addr);
+    let _ctx = TestContextBuilder::new().address(addr).build();
 
     loop {
         if manager.send_packed_command(&get).await.is_ok() {
