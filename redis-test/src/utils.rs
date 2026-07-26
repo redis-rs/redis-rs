@@ -1,8 +1,10 @@
+use socket2::{Domain, Socket, Type};
+use std::ffi::OsStr;
+use std::io::Write;
 use std::net::{SocketAddr, TcpListener};
 use std::path::PathBuf;
+use std::process::{Command, Output};
 use std::{fs, process};
-
-use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
 
 #[derive(Clone, Debug)]
@@ -19,6 +21,71 @@ pub struct TlsFilePaths {
 pub struct ClientCertPaths {
     pub client_crt: PathBuf,
     pub client_key: PathBuf,
+}
+
+pub struct OpensslCommand {
+    purpose: String,
+    cmd: Command,
+    stdin: Option<Vec<u8>>,
+}
+
+impl OpensslCommand {
+    pub fn new(purpose: &str) -> Self {
+        Self {
+            purpose: purpose.to_string(),
+            cmd: Command::new("openssl"),
+            stdin: None,
+        }
+    }
+
+    pub fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
+        self.cmd.arg(arg.as_ref());
+        self
+    }
+    pub fn stdin(&mut self, stdin: Vec<u8>) -> &mut Self {
+        self.stdin = Some(stdin);
+        self
+    }
+
+    pub fn spawn(&mut self) -> Output {
+        // Spawn the child process
+        let mut child = self
+            .cmd
+            .stdin(process::Stdio::piped())
+            .stdout(process::Stdio::piped())
+            .stderr(process::Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|e| panic!("failed to spawn openssl ({}): {e}", self.purpose));
+
+        // Feed in stdin
+        if let Some(stdin_data) = self.stdin.take() {
+            let mut child_stdin = child
+                .stdin
+                .take()
+                .unwrap_or_else(|| panic!("failed to get openssl's stdin ({})", self.purpose));
+            let purpose = self.purpose.clone();
+            let _ = std::thread::spawn(move || {
+                child_stdin.write_all(&stdin_data).unwrap_or_else(|e| {
+                    panic!("failed to write to openssl's stdin ({purpose}): {e}")
+                });
+            });
+        };
+
+        // Wait until the program finishes
+        let output = child
+            .wait_with_output()
+            .unwrap_or_else(|e| panic!("failed to wait for openssl ({}): {e}", self.purpose));
+
+        // Check exit code
+        assert!(
+            output.status.success(),
+            "openssl returned {}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    }
 }
 
 pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
@@ -44,17 +111,12 @@ pub fn build_keys_and_certs_for_tls_with_hostname(
     let ext_file = tempdir.path().join("openssl.cnf");
 
     fn make_key<S: AsRef<std::ffi::OsStr>>(name: S, size: usize) {
-        process::Command::new("openssl")
+        OpensslCommand::new("generate key")
             .arg("genrsa")
             .arg("-out")
             .arg(name)
             .arg(format!("{size}"))
-            .stdout(process::Stdio::piped())
-            .stderr(process::Stdio::piped())
-            .spawn()
-            .expect("failed to spawn openssl")
-            .wait()
-            .expect("failed to create key");
+            .spawn();
     }
 
     // Build CA Key
@@ -64,7 +126,7 @@ pub fn build_keys_and_certs_for_tls_with_hostname(
     make_key(&redis_key, 2048);
 
     // Build CA Cert
-    let status = process::Command::new("openssl")
+    OpensslCommand::new("self-certify CA")
         .arg("req")
         .arg("-x509")
         .arg("-new")
@@ -78,16 +140,7 @@ pub fn build_keys_and_certs_for_tls_with_hostname(
         .arg("/O=Redis Test/CN=Certificate Authority")
         .arg("-out")
         .arg(&ca_crt)
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::piped())
-        .spawn()
-        .expect("failed to spawn openssl")
-        .wait()
-        .expect("failed to create CA cert");
-    assert!(
-        status.success(),
-        "`openssl req` failed to create CA cert: {status}"
-    );
+        .spawn();
 
     let hostname = dns_hostname.unwrap_or("localhost.example.com");
 
@@ -124,7 +177,7 @@ pub fn build_keys_and_certs_for_tls_with_hostname(
     fs::write(&ext_file, ext).expect("failed to create x509v3 extensions file");
 
     // Read redis key
-    let mut key_cmd = process::Command::new("openssl")
+    let key_cmd = OpensslCommand::new("request server key certification")
         .arg("req")
         .arg("-new")
         .arg("-sha256")
@@ -132,13 +185,10 @@ pub fn build_keys_and_certs_for_tls_with_hostname(
         .arg("/O=Redis Test/CN=Generic-cert")
         .arg("-key")
         .arg(&redis_key)
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::piped())
-        .spawn()
-        .expect("failed to spawn openssl");
+        .spawn();
 
     // build redis cert
-    let mut command2 = process::Command::new("openssl");
+    let mut command2 = OpensslCommand::new("sign server key certification request");
     command2
         .arg("x509")
         .arg("-req")
@@ -157,24 +207,11 @@ pub fn build_keys_and_certs_for_tls_with_hostname(
     if !with_ip_alts {
         command2.arg("-extensions").arg("v3_req");
     }
-    let status2 = command2
+    command2
         .arg("-out")
         .arg(&redis_crt)
-        .stdin(key_cmd.stdout.take().expect("should have stdout"))
-        .spawn()
-        .expect("failed to spawn openssl")
-        .wait()
-        .expect("failed to create redis cert");
-
-    let status = key_cmd.wait().expect("failed to create redis key");
-    assert!(
-        status.success(),
-        "`openssl req` failed to create request for Redis cert: {status}"
-    );
-    assert!(
-        status2.success(),
-        "`openssl x509` failed to create Redis cert: {status2}"
-    );
+        .stdin(key_cmd.stdout)
+        .spawn();
 
     TlsFilePaths {
         redis_crt,
@@ -197,21 +234,12 @@ pub fn build_client_cert_with_custom_cn(
     let ca_serial = tempdir.path().join("ca.txt");
 
     // Generate client private key
-    let status = process::Command::new("openssl")
+    OpensslCommand::new("generate client key")
         .arg("genrsa")
         .arg("-out")
         .arg(&client_key)
         .arg("2048")
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::piped())
-        .spawn()
-        .expect("failed to spawn openssl")
-        .wait()
-        .expect("failed to create client key");
-    assert!(
-        status.success(),
-        "`openssl genrsa` failed to create client key: {status}"
-    );
+        .spawn();
 
     // Create a basic extensions file for X.509 v3 client certificate
     let client_ext_file = tempdir.path().join("client_ext.cnf");
@@ -223,7 +251,7 @@ pub fn build_client_cert_with_custom_cn(
         .expect("failed to create client extensions file");
 
     // Create certificate signing request with custom CN
-    let mut csr_cmd = process::Command::new("openssl")
+    let csr_cmd = OpensslCommand::new("request client key certification")
         .arg("req")
         .arg("-new")
         .arg("-sha256")
@@ -231,13 +259,10 @@ pub fn build_client_cert_with_custom_cn(
         .arg(format!("/O=Redis Test/CN={common_name}"))
         .arg("-key")
         .arg(&client_key)
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::piped())
-        .spawn()
-        .expect("failed to spawn openssl for CSR");
+        .spawn();
 
     // Sign the certificate with CA (X.509 v3)
-    let cert_status = process::Command::new("openssl")
+    OpensslCommand::new("sign client key certification request")
         .arg("x509")
         .arg("-req")
         .arg("-sha256")
@@ -254,21 +279,8 @@ pub fn build_client_cert_with_custom_cn(
         .arg(&client_ext_file)
         .arg("-out")
         .arg(&client_crt)
-        .stdin(csr_cmd.stdout.take().expect("should have stdout"))
-        .spawn()
-        .expect("failed to spawn openssl for certificate signing")
-        .wait()
-        .expect("failed to sign client certificate");
-
-    let csr_status = csr_cmd.wait().expect("failed to create CSR");
-    assert!(
-        csr_status.success(),
-        "`openssl req` failed to create CSR: {csr_status}"
-    );
-    assert!(
-        cert_status.success(),
-        "`openssl x509` failed to sign client certificate"
-    );
+        .stdin(csr_cmd.stdout)
+        .spawn();
 
     ClientCertPaths {
         client_crt,
