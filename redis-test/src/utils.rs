@@ -143,7 +143,35 @@ impl CommandMultiArgs for OpensslCommand {
     }
 }
 
-fn generate_key<S: AsRef<std::ffi::OsStr>>(file: S, size: usize, purpose: &str) {
+/// Generate an RSA key
+///
+/// # Arguments:
+///
+/// * `file` - The key gets written to this file
+/// * `size` - Generate a key with this bit size
+/// * `purpose` - The name to use for this key in error messages
+/// * `env_name` - If there is an environment variable of this name that has a non-empty value, load
+///   the key from the file at this value instead of generating the key afresh.
+// The `env_name` could get inferred from `purpose`. But we don't infer it to allow grepping for the
+// full environment variable and landing at the callers.
+fn generate_key(file: &PathBuf, size: usize, purpose: &str, env_name: &str) {
+    if let Ok(env_value) = std::env::var(env_name)
+        && !env_value.is_empty()
+    {
+        // The environment signals to re-use an existing key instead of generating a new one.
+
+        // Read the key data
+        let key = fs::read_to_string(&env_value)
+            .unwrap_or_else(|e| panic!("failed to read {purpose} key from '{env_value}': {e}"));
+
+        // Write the key data to the expected place
+        fs::write(file, key)
+            .unwrap_or_else(|e| panic!("failed to write {purpose} key to '{file:?}': {e}"));
+
+        return;
+    }
+
+    // Call OpenSSL to generate the key
     OpensslCommand::new(&format!("generate {purpose} key"))
         .arg("genrsa")
         .arg2("-out", file)
@@ -151,14 +179,42 @@ fn generate_key<S: AsRef<std::ffi::OsStr>>(file: S, size: usize, purpose: &str) 
         .spawn();
 }
 
+/// Builds CA and server certs keys etc. for TLS connections with `CN` and `alt_names`
+///
+/// The server certificate will have a `CN` and `alt_name` `DNS.1` of `localhost.example.com`
+///
+/// # Caveat
+///
+/// This function creates new keys for each call. On entropy/resource-limited hosts, this quickly
+/// becomes time consuming. See the [TLS helpers section](crate#tls-helpers) on how to precompute
+/// keys once and then re-use them to speed up calls.
 pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
     build_keys_and_certs_for_tls_ext(tempdir, true)
 }
 
+/// Builds CA and server certs keys etc. for TLS connections and optional `alt_names`/`CN`
+///
+/// If `with_ip_alts` is `true`, the server certificate will have a `CN` and `alt_name` `DNS.1` of
+/// localhost.example.com`. Otherwise, only `alt_names` `IP.1` of `127.0.0.1`.
+///
+/// # Caveat
+///
+/// This function creates new keys for each call. On entropy/resource-limited hosts, this quickly
+/// becomes time consuming. See the [TLS helpers section](crate#tls-helpers) on how to precompute
+/// keys once and then re-use them to speed up calls.
 pub fn build_keys_and_certs_for_tls_ext(tempdir: &TempDir, with_ip_alts: bool) -> TlsFilePaths {
     build_keys_and_certs_for_tls_with_hostname(tempdir, with_ip_alts, None)
 }
 
+/// Builds CA and server certs keys etc. for TLS connections and optional `alt_names` and `hostname`
+///
+/// The given `dns_hostname` is only respected if `with_ip_alts` is `true`.
+///
+/// # Caveat
+///
+/// This function creates new keys for each call. On entropy/resource-limited hosts, this quickly
+/// becomes time consuming. See the [TLS helpers section](crate#tls-helpers) on how to precompute
+/// keys once and then re-use them to speed up calls.
 pub fn build_keys_and_certs_for_tls_with_hostname(
     tempdir: &TempDir,
     with_ip_alts: bool,
@@ -174,10 +230,10 @@ pub fn build_keys_and_certs_for_tls_with_hostname(
     let ext_file = tempdir.path().join("openssl.cnf");
 
     // Generate the key for the CA
-    generate_key(&ca_key, 4096, "CA");
+    generate_key(&ca_key, 4096, "CA", "REDISRS_TLS_KEY_CA");
 
     // Generate the key for the Redis server
-    generate_key(&redis_key, 2048, "server");
+    generate_key(&redis_key, 2048, "server", "REDISRS_TLS_KEY_SERVER");
 
     // Build CA Cert
     OpensslCommand::new("self-certify CA")
@@ -263,8 +319,15 @@ pub fn build_keys_and_certs_for_tls_with_hostname(
 }
 
 /// Build a client certificate with a custom common name (CN) field
+///
 /// Redis 8.6+ allows certificate-based authentication where the common name (CN)
 /// is mapped to an ACL username
+///
+/// # Caveat
+///
+/// This function creates new keys for each call. On entropy/resource-limited hosts, this quickly
+/// becomes time consuming. See the [TLS helpers section](crate#tls-helpers) on how to precompute
+/// keys once and then re-use them to speed up calls.
 pub fn build_client_cert_with_custom_cn(
     tempdir: &TempDir,
     common_name: &str,
@@ -276,7 +339,7 @@ pub fn build_client_cert_with_custom_cn(
     let ca_serial = tempdir.path().join("ca.txt");
 
     // Generate client private key
-    generate_key(&client_key, 2048, "client");
+    generate_key(&client_key, 2048, "client", "REDISRS_TLS_KEY_CLIENT");
 
     // Create a basic extensions file for X.509 v3 client certificate
     let client_ext_file = tempdir.path().join("client_ext.cnf");

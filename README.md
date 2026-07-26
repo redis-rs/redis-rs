@@ -353,6 +353,29 @@ If the fuzzer finds a crash, in order to reproduce it, run:
     $ cd afl/<target>/
     $ cargo run --bin reproduce -- out/crashes/<crashfile>
 
+### Speeding up TLS tests
+
+TLS tests per-default create fresh keys for each tests. On entropy/resource-limited hosts, this might be time consuming.
+
+To instead re-use the same keys, first generate the needed keys beforehand (this needs to be done only once):
+
+```sh
+mkdir -p "$HOME/redis-rs-keys"
+openssl genrsa -out "$HOME/redis-rs-keys/ca.key" 4096
+openssl genrsa -out "$HOME/redis-rs-keys/client.key" 2048
+openssl genrsa -out "$HOME/redis-rs-keys/server.key" 2048
+```
+
+Then tell your environment to use them for testing (this needs to be executed in each terminal that runs the tests):
+
+```sh
+export REDISRS_TLS_KEY_CA="$HOME/redis-rs-keys/ca.key"
+export REDISRS_TLS_KEY_CLIENT="$HOME/redis-rs-keys/client.key"
+export REDISRS_TLS_KEY_SERVER="$HOME/redis-rs-keys/server.key"
+```
+
+Now `make test` will pick the pre-generated keys up, and TLS tests should breeze through.
+
 ### AI contributions
 
 This is not a firm policy, but for the time being, PRs get evaluated on their
