@@ -16,8 +16,6 @@ use redis_test::server::{
     Module, RedisServer, RedisServerBuilder, RedisServerCommand, use_protocol,
 };
 use redis_test::utils::TlsFilePaths;
-#[cfg(feature = "tls-rustls")]
-use redis_test::utils::get_random_available_port;
 use std::path::PathBuf;
 #[cfg(feature = "tls-rustls")]
 use std::{
@@ -275,66 +273,6 @@ impl Default for TestContext {
 impl TestContext {
     pub fn new() -> TestContext {
         TestContextBuilder::new().build()
-    }
-
-    #[cfg(feature = "tls-rustls")]
-    pub fn new_with_cert_auth(tls_files: TlsFilePaths) -> TestContext {
-        Self::new_with_cert_auth_field(tls_files, "CN")
-    }
-
-    #[cfg(feature = "tls-rustls")]
-    pub fn new_with_cert_auth_field(tls_files: TlsFilePaths, cert_field: &str) -> TestContext {
-        start_tls_crypto_provider();
-        let redis_port = get_random_available_port();
-        let addr = RedisServer::get_addr(redis_port);
-
-        // TLS certificate-based authentication requires TLS connection.
-        let addr = match addr {
-            ConnectionAddr::Tcp(host, port) => ConnectionAddr::TcpTls {
-                host,
-                port,
-                insecure: true,
-                tls_params: None,
-            },
-            ConnectionAddr::TcpTls { .. } => addr, // Already TLS
-            ConnectionAddr::Unix(_) => {
-                // Unix sockets don't support TLS - fall back to TCP+TLS
-                // Use the same default host that get_addr() would use for TCP
-                ConnectionAddr::TcpTls {
-                    host: redis_test::server::get_default_host(),
-                    port: redis_port,
-                    insecure: true,
-                    tls_params: None,
-                }
-            }
-            _ => {
-                panic!("Unsupported ConnectionAddr variant for cert-based authentication: {addr:?}")
-            }
-        };
-
-        Self::with_modules_addr_tls_and_cert_auth(
-            &[],
-            true,
-            addr,
-            Some(tls_files),
-            Some(cert_field),
-        )
-    }
-
-    fn with_modules_addr_tls_and_cert_auth(
-        modules: &[Module],
-        mtls_enabled: bool,
-        addr: ConnectionAddr,
-        tls_files: Option<TlsFilePaths>,
-        cert_auth_field: Option<&str>,
-    ) -> Self {
-        TestContextBuilder::new()
-            .modules(modules)
-            .mtls(mtls_enabled)
-            .address(addr)
-            .tls_paths_opt(tls_files)
-            .cert_auth_field_opt(cert_auth_field)
-            .build()
     }
 
     /// Builds a new instance from a [`RedisServer`]
