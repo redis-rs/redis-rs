@@ -4,6 +4,7 @@ use redis::{Client, ConnectionAddr, FromRedisValue, RedisResult};
 use tempfile::TempDir;
 
 use crate::server::RedisServerBuilder;
+use crate::utils::CommandMultiArgs;
 use crate::{
     server::{Module, RedisServer},
     utils::{TlsFilePaths, build_keys_and_certs_for_tls, get_random_available_port},
