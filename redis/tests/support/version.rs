@@ -326,7 +326,7 @@ macro_rules! skip_if_context_does_not_support {
 #[macro_export]
 macro_rules! run_test_if_version_supported {
     ($component:expr) => {{
-        let ctx = $crate::support::TestContext::new();
+        let ctx = $crate::support::TestContext::default();
 
         $crate::skip_if_context_does_not_support!(ctx, $component);
 

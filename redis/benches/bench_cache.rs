@@ -41,7 +41,7 @@ async fn benchmark_executer(
     per_key_command: u32,
     key_count: u32,
 ) {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let con = if is_cache_enabled {
         ctx.async_connection_with_cache_config(CacheConfig::new())
             .await

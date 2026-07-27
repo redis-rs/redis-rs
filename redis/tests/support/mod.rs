@@ -271,10 +271,6 @@ impl Default for TestContext {
 }
 
 impl TestContext {
-    pub fn new() -> TestContext {
-        TestContextBuilder::new().build()
-    }
-
     /// Builds a new instance from a [`RedisServer`]
     // We intentionally do _not_ implement `From<RedisServer>` as that would be public.
     //
