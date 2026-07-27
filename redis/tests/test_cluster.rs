@@ -1269,6 +1269,8 @@ mod cluster {
     #[cfg(feature = "tls-rustls")]
     #[test]
     fn test_cluster_node_address_map_fixes_tls_hostname_mismatch() {
+        use redis_test::cluster::ClusterType;
+
         if ClusterType::get_intended() != ClusterType::TcpTls {
             return;
         }
