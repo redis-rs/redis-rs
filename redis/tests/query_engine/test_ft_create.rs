@@ -106,11 +106,9 @@ fn test_ft_create_create_options() {
         }),
         ("score", |opts| opts.score(1.0)),
         ("score_field", |opts| opts.score_field("score_field")),
-        ("max_text_fields", |opts| opts.max_text_fields()),
         ("no_offsets", |opts| opts.no_offsets()),
         ("temporary", |opts| opts.temporary(1)),
         ("no_highlight", |opts| opts.no_highlight()),
-        ("no_fields", |opts| opts.no_fields()),
         ("no_freqs", |opts| opts.no_freqs()),
         ("single_stopword", |opts| opts.stopword("stopword1")),
         ("multiple_stopwords", |opts| {
@@ -119,8 +117,15 @@ fn test_ft_create_create_options() {
         ("skip_initial_scan", |opts| opts.skip_initial_scan()),
     ];
 
+    // `max_text_fields` (MAXTEXTFIELDS) and `no_fields` (NOFIELDS) are mutually exclusive on
+    // newer versions of RediSearch, so they are shouldn't be combined with each other.
+    let mutually_exclusive_modifiers: Vec<(&'static str, CreateOptionsModifier)> = vec![
+        ("max_text_fields", |opts| opts.max_text_fields()),
+        ("no_fields", |opts| opts.no_fields()),
+    ];
+
     // Test each option individually
-    for (suffix, modifier) in &option_modifiers {
+    for (suffix, modifier) in option_modifiers.iter().chain(&mutually_exclusive_modifiers) {
         let index_name = format!("index_with_{suffix}");
         let options = modifier(CreateOptions::new());
 
@@ -130,7 +135,7 @@ fn test_ft_create_create_options() {
         );
     }
 
-    // Test all options combined
+    // Combine all non-mutually-exclusive options cumulatively
     let mut combined_options = CreateOptions::new();
     for (suffix, modifier) in &option_modifiers {
         let combined_index_name = format!("combined_index_until_{suffix}");
@@ -138,6 +143,17 @@ fn test_ft_create_create_options() {
 
         assert_eq!(
             con.ft_create(&combined_index_name, &combined_options, &schema),
+            Ok("OK".to_string())
+        );
+    }
+
+    // Add each mutually exclusive option onto the fully combined base individually
+    for (suffix, modifier) in &mutually_exclusive_modifiers {
+        let combined_index_name = format!("combined_index_with_{suffix}");
+        let options = modifier(combined_options.clone());
+
+        assert_eq!(
+            con.ft_create(&combined_index_name, &options, &schema),
             Ok("OK".to_string())
         );
     }
