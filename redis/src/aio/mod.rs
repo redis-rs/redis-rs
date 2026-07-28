@@ -221,6 +221,16 @@ impl AsyncPushSender for std::sync::mpsc::Sender<PushInfo> {
     }
 }
 
+#[cfg(feature = "cluster-async")]
+impl AsyncPushSender for futures_channel::mpsc::UnboundedSender<PushInfo> {
+    fn send(&self, info: PushInfo) -> Result<(), SendError> {
+        match self.unbounded_send(info) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(SendError),
+        }
+    }
+}
+
 impl<T> AsyncPushSender for std::sync::Arc<T>
 where
     T: AsyncPushSender + ?Sized,

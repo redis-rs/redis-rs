@@ -35,6 +35,7 @@ pub(super) enum CmdArg<C> {
         count: usize,
         route: InternalSingleNodeRouting<C>,
     },
+    Reconnect(NodeAddress),
 }
 
 pub(super) enum Retry<C> {
@@ -54,6 +55,7 @@ impl<C> CmdArg<C> {
     fn set_redirect(&mut self, redirect: Option<Redirect>) {
         if let Some(redirect) = redirect {
             match self {
+                CmdArg::Reconnect(_) => {}
                 CmdArg::Cmd { routing, .. } => match routing {
                     InternalRoutingInfo::SingleNode(route) => {
                         let redirect = InternalSingleNodeRouting::Redirect {
@@ -96,6 +98,7 @@ impl<C> CmdArg<C> {
             }
         };
         match self {
+            CmdArg::Reconnect(_) => {}
             CmdArg::Cmd { routing, .. } => {
                 if let InternalRoutingInfo::SingleNode(route) = routing {
                     fix_route(route);
@@ -166,6 +169,16 @@ pub(crate) fn choose_response<C>(
     mut request: PendingRequest<C>,
     retry_params: &RetryParams,
 ) -> (Option<Retry<C>>, PollFlushAction) {
+    // Reconnect requests are internal signals - just trigger reconnect, no retry.
+    if let CmdArg::Reconnect(addr) = &request.cmd {
+        let addr = addr.clone();
+        request.sender.send(Ok(Response::Single(crate::Value::Nil)));
+        return (
+            None,
+            PollFlushAction::Reconnect(std::collections::HashSet::from([addr])),
+        );
+    }
+
     let (target, result) = result;
     let err = match result {
         Ok(item) => {
@@ -356,6 +369,7 @@ mod tests {
                 InternalSingleNodeRouting::Redirect { redirect, .. } => Some(redirect.clone()),
                 _ => None,
             },
+            CmdArg::Reconnect(_) => None,
         }
     }
 

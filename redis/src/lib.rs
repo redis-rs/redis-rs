@@ -445,6 +445,8 @@
 //! # Ok(()) }
 //! ```
 //!
+#![deny(clippy::disallowed_macros)]
+#![cfg_attr(test, allow(clippy::disallowed_macros))]
 #![cfg_attr(
     feature = "script",
     doc = r##"
@@ -746,7 +748,7 @@ pub mod bloom;
 
 #[cfg(feature = "json")]
 #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-pub use crate::commands::JsonCommands;
+pub use crate::commands::{JsonCommands, json};
 
 #[cfg(all(feature = "json", feature = "aio"))]
 #[cfg_attr(docsrs, doc(cfg(all(feature = "json", feature = "aio"))))]
