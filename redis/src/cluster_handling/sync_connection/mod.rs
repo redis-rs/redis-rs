@@ -275,7 +275,7 @@ impl ClusterConfig {
     /// let messages = Arc::new(Mutex::new(Vec::new()));
     /// let config = ClusterConfig::new().set_push_sender(move |msg|{
     ///     let Ok(mut messages) = messages.lock() else {
-    ///         return Err(redis::aio::SendError);
+    ///         return Err(());
     ///     };
     ///     messages.push(msg);
     ///     Ok(())
