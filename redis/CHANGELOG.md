@@ -1,3 +1,19 @@
+### 1.5.0 (2026-07-29)
+
+#### Changes & Bug fixes
+
+* docs: Remove remarks about Redis docs to `BF.MEXISTS` being wrong ([#2231](https://github.com/redis-rs/redis-rs/pull/2231) by @somechris)
+* Cluster connection: Add logs to indicate when recovery future starts and completes ([#2240](https://github.com/redis-rs/redis-rs/pull/2240) by @virratanasangpunth)
+* feat(cluster): add node address map for TLS hostname remapping ([#2155](https://github.com/redis-rs/redis-rs/pull/2155) by @DhineshKrishnan1206)
+* Async cluster connection: Reconnect after receiving push disconnection. ([#2242](https://github.com/redis-rs/redis-rs/pull/2242) by @nihohit)
+* docs: Add the need for `non_exhaustive` for `enum`s and `struct`s ([#2247](https://github.com/redis-rs/redis-rs/pull/2247) by @somechris)
+* Add support for the new FPHA storage hint ([#2114](https://github.com/redis-rs/redis-rs/pull/2114) by @StefanPalashev)
+
+#### CI & operational improvements
+
+* Fix nightly linter ([#2258](https://github.com/redis-rs/redis-rs/pull/2258) by @StefanPalashev)
+* Versioning improvements to test infra ([#2197](https://github.com/redis-rs/redis-rs/pull/2197) by @StefanPalashev)
+
 ### 1.4.1 (2026-07-17)
 
 #### Changes & Bug fixes
