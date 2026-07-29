@@ -10,6 +10,22 @@ redis = "2"
 
 ## Breaking Changes
 
+### Several `struct`s and `enum`s are now marked `#[non_exhaustive]` (Breaking Change)
+
+The `#[non_exhaustive]` will allow us to add fields without having to trigger version bumps, hence help with maintenance.
+
+You can no longer build them directly with a [`StructExpression`](https://doc.rust-lang.org/reference/expressions/struct-expr.html#grammar-StructExpression).
+
+When decomposing them, you need to adapt to ignore fields potentially added in the future by adding `, ..`.
+
+The affected structs are:
+
+* `BloomFilterDumpChunk`
+* `CacheStatistics`
+* `Coord`
+* `RadiusSearchResult`
+* `SentinelError`
+
 ### `ScanOptions::with_type` takes `ValueType` instead of `Into<String>` (Breaking Change)
 
 To increase type safety, `ScanOptions::with_type` now takes a `ValueType`.
