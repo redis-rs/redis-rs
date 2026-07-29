@@ -200,7 +200,7 @@ required-features = ["tokio-comp"]
 
 [[test]]
 name = "parser"
-required-features = ["aio"]
+required-features = ["tokio-comp"]
 
 [[test]]
 name = "test_acl"
