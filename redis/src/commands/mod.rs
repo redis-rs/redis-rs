@@ -2044,8 +2044,18 @@ implement_commands! {
     /// the next `XREADGROUP ... CLAIM`. `ids` not present in the PEL are
     /// silently skipped; the returned count reflects only ids actually NACKed.
     ///
-    /// `mode` selects how the per-message delivery counter is adjusted:
-    /// see [`streams::StreamNackMode`].
+    /// `options` carries the required NACK mode, which selects how the per-message
+    /// delivery counter is adjusted. See [`streams::StreamNackMode`] and [`streams::StreamNackOptions`].
+    ///
+    /// ```no_run
+    /// use redis::{Commands, RedisResult};
+    /// use redis::streams::{StreamNackMode, StreamNackOptions};
+    /// let client = redis::Client::open("redis://127.0.0.1/0").unwrap();
+    /// let mut con = client.get_connection().unwrap();
+    ///
+    /// let opts = StreamNackOptions::new(StreamNackMode::Fail);
+    /// let nacked: RedisResult<usize> = con.xnack("k1", "g1", &["1-1", "1-2"], &opts);
+    /// ```
     ///
     /// ```text
     /// XNACK <key> <group> <SILENT|FAIL|FATAL> IDS <numids> <id> [<id> ...]
@@ -2053,16 +2063,16 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/XNACK)
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
-    fn xnack<K: ToRedisArgs, G: ToRedisArgs, ID: ToRedisArgs>(
+    fn xnack<K: ToSingleRedisArg, G: ToSingleRedisArg, ID: ToSingleRedisArg>(
         key: K,
         group: G,
-        mode: streams::StreamNackMode,
-        ids: &'a [ID]
+        ids: &'a [ID],
+        options: &'a streams::StreamNackOptions
     ) -> (usize) {
         cmd("XNACK")
             .arg(key)
             .arg(group)
-            .arg(mode)
+            .arg(options)
             .arg("IDS")
             .arg(ids.len())
             .arg(ids)

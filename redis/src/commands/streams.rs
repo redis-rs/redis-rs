@@ -1562,6 +1562,44 @@ impl ToRedisArgs for StreamNackMode {
 #[cfg(feature = "streams")]
 impl ToSingleRedisArg for StreamNackMode {}
 
+/// Builder options for the [`xnack`] command.
+///
+/// The NACK [`mode`](StreamNackMode) is required by the server, so it is taken by
+/// [`StreamNackOptions::new`] rather than defaulted.
+///
+/// ```rust
+/// use redis::streams::{StreamNackMode, StreamNackOptions};
+///
+/// let opts = StreamNackOptions::new(StreamNackMode::Fail);
+/// ```
+///
+/// [`xnack`]: ../trait.Commands.html#method.xnack
+#[cfg(feature = "streams")]
+#[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+#[derive(Debug)]
+pub struct StreamNackOptions {
+    /// Set the `<SILENT|FAIL|FATAL>` cmd arg.
+    mode: StreamNackMode,
+}
+
+#[cfg(feature = "streams")]
+impl StreamNackOptions {
+    /// Create options for NACKing with the given `mode`.
+    pub fn new(mode: StreamNackMode) -> Self {
+        Self { mode }
+    }
+}
+
+#[cfg(feature = "streams")]
+impl ToRedisArgs for StreamNackOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        self.mode.write_redis_args(out);
+    }
+}
+
 /// Status codes returned by the `XACKDEL` command
 #[cfg(feature = "streams")]
 #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
