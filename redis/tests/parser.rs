@@ -197,3 +197,15 @@ quickcheck! {
         );
     }
 }
+
+quickcheck! {
+    // Differential fuzz (structured): `parse_redis_value` routes through
+    // the hand-written fast path first. For every arbitrary RESP value tree it
+    // must reproduce the original value exactly — i.e. the fast path agrees with
+    // the ground truth on the whole supported grammar under randomized input.
+    fn fast_path_roundtrip_matches_value(input: ArbitraryValue) -> () {
+        let mut encoded = Vec::new();
+        encode_value(&input.0, &mut encoded).unwrap();
+        assert_eq!(redis::parse_redis_value(&encoded).unwrap(), input.0);
+    }
+}
