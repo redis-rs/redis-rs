@@ -30,6 +30,34 @@
 //! let result = my_exists(&mut mock_connection, "foo").unwrap();
 //! assert_eq!(result, true);
 //! ```
+//!
+//! # TLS helpers
+//!
+//! The TLS helpers [`utils::build_key_*`](utils::build_keys_and_certs_for_tls) and
+//! [`utils::build_client_cert_*`](utils::build_client_cert_with_custom_cn) generate new keys on
+//! each call. When using them heavily on entropy/resource-limited hosts, this quickly becomes time
+//! consuming.
+//!
+//! To instead re-use the same keys for each call, first generate the needed keys beforehand (this
+//! needs to be done only once):
+//!
+//! ```sh
+//! mkdir -p "$HOME/redis-rs-keys"
+//! openssl genrsa -out "$HOME/redis-rs-keys/ca.key" 4096
+//! openssl genrsa -out "$HOME/redis-rs-keys/client.key" 2048
+//! openssl genrsa -out "$HOME/redis-rs-keys/server.key" 2048
+//! ```
+//!
+//! Then tell your environment to use them for testing (this needs to be executed in each terminal
+//! that runs the tests):
+//!
+//! ```sh
+//! export REDISRS_TLS_KEY_CA="$HOME/redis-rs-keys/ca.key"
+//! export REDISRS_TLS_KEY_CLIENT="$HOME/redis-rs-keys/client.key"
+//! export REDISRS_TLS_KEY_SERVER="$HOME/redis-rs-keys/server.key"
+//! ```
+//!
+//! Now the TLS helpers will pick the pre-generated keys up, and perform better.
 
 pub mod cluster;
 pub mod sentinel;
