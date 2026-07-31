@@ -38,9 +38,14 @@ test:
 	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=unix RUST_BACKTRACE=1 cargo nextest run --locked -p redis --all-features --profile unix
 
 	@echo "===================================================================="
-	@echo "Testing redis-test"
+	@echo "Testing redis-test without features"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run --locked -p redis-test
+	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run --locked -p redis-test --no-default-features
+
+	@echo "===================================================================="
+	@echo "Testing redis-test with all features"
+	@echo "===================================================================="
+	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run --locked -p redis-test --all-features
 
 test-module-json:
 	@echo "===================================================================="
