@@ -77,6 +77,10 @@ docs:
 upload-docs: docs
 	@./upload-docs.sh
 
+flag-frenzy:
+#	# This requires nihohit's flag-frenzy variant from https://github.com/nihohit/flag-frenzy.git
+	flag-frenzy --package redis
+
 style-check:
 	@rustup component add rustfmt 2> /dev/null
 	cargo fmt --all -- --check
