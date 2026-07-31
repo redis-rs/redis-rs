@@ -24,6 +24,7 @@ The affected structs are:
 * `CacheStatistics`
 * `Coord`
 * `RadiusSearchResult`
+* `SendError`
 * `SentinelError`
 
 ### `ScanOptions::with_type` takes `ValueType` instead of `Into<String>` (Breaking Change)
