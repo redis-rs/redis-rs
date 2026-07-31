@@ -63,6 +63,9 @@ pub mod cluster;
 pub mod sentinel;
 pub mod server;
 pub mod utils;
+#[macro_use]
+pub mod version;
+pub mod test_context;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -76,6 +79,13 @@ use futures::{FutureExt, future};
 
 #[cfg(feature = "aio")]
 use redis::{RedisFuture, aio::ConnectionLike as AioConnectionLike};
+
+pub use test_context::{TestContext, TestContextBuilder};
+pub use version::{
+    AvailableComponents, REDIS_BLOOM_ANY, REDIS_CE_6_0, REDIS_CE_7_0, REDIS_CE_7_2, REDIS_CE_7_4,
+    REDIS_CE_8_0, REDIS_CE_8_2, REDIS_CE_8_4, REDIS_CE_8_6, REDIS_CE_8_8, REDIS_JSON_8_8,
+    TestContextVersioning, VALKEY_8_1, VALKEY_9_0, VALKEY_9_1,
+};
 
 /// Helper trait for converting test values into a `redis::Value` returned from a
 /// `MockRedisConnection`. This is necessary because neither `redis::types::ToRedisArgs`

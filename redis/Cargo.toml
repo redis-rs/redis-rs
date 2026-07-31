@@ -129,7 +129,7 @@ vector-sets = ["dep:serde", "serde/derive", "dep:serde_json"]
 cluster = ["dep:crc16", "dep:rand"]
 script = ["dep:sha1_smol"]
 tls-native-tls = ["dep:native-tls"]
-tls-rustls = ["dep:rustls", "rustls/std", "dep:rustls-native-certs"]
+tls-rustls = ["dep:rustls", "rustls/std", "dep:rustls-native-certs", "redis-test/tls-rustls"]
 tls-rustls-insecure = ["tls-rustls"]
 tls-rustls-webpki-roots = ["tls-rustls", "dep:webpki-roots"]
 smol-comp = ["aio", "dep:smol", "dep:smol-timeout", "dep:async-io"]
@@ -171,6 +171,7 @@ aio = [
   "tokio-util/codec",
   "combine/tokio",
   "dep:cfg-if",
+  "redis-test/aio",
 ]
 
 [dev-dependencies]
