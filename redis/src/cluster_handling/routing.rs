@@ -610,6 +610,7 @@ enum RouteBy {
     StreamsIndex,
     ThirdArgAfterKeyCount,
     Undefined,
+    Unsupported(&'static str),
 }
 
 fn base_routing(cmd: &[u8]) -> RouteBy {
@@ -674,6 +675,12 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         b"JSON.MSET" => RouteBy::MultiShard(MultiSlotArgPattern::KeyWithTwoArgTriples),
         // TODO - special handling - b"SCAN"
         b"SCAN" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" => RouteBy::Undefined,
+
+        // Cluster client requires that the configured numbered database be immutable
+        // throughout its lifetime. Hence SELECT is not supported.
+        b"SELECT" => RouteBy::Unsupported(
+            "SELECT is not supported on cluster connections; configure the database via ClusterClientBuilder::database_id",
+        ),
 
         b"BLMPOP" | b"BZMPOP" | b"EVAL" | b"EVALSHA" | b"EVALSHA_RO" | b"EVAL_RO" | b"FCALL"
         | b"FCALL_RO" => RouteBy::ThirdArgAfterKeyCount,
@@ -771,7 +778,20 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
 
 impl RoutingInfo {
     /// Returns the routing info for `r`.
-    pub(crate) fn for_routable<R>(r: &R) -> Option<RoutingInfo>
+    /// An error here means that the command is forbidden for the cluster client.
+    pub(crate) fn for_routable<R>(r: &R) -> RedisResult<Option<RoutingInfo>>
+    where
+        R: Routable + ?Sized,
+    {
+        if let Some(command) = r.command()
+            && let RouteBy::Unsupported(reason) = base_routing(&command)
+        {
+            return Err((ErrorKind::Client, reason).into());
+        }
+        Ok(Self::for_routable_inner(r))
+    }
+
+    fn for_routable_inner<R>(r: &R) -> Option<RoutingInfo>
     where
         R: Routable + ?Sized,
     {
@@ -840,7 +860,7 @@ impl RoutingInfo {
                 None => Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)),
             },
 
-            RouteBy::Undefined => None,
+            RouteBy::Undefined | RouteBy::Unsupported(_) => None,
         }
     }
 
@@ -1037,6 +1057,20 @@ mod tests_routing {
     use core::panic;
 
     #[test]
+    fn test_select_command_must_reject_cluster_client() {
+        assert!(RoutingInfo::for_routable(cmd("SELECT").arg(1)).is_err());
+        assert!(RoutingInfo::for_routable(cmd("select").arg(1)).is_err());
+    }
+
+    #[test]
+    fn test_supported_commands_are_not_rejected() {
+        assert!(RoutingInfo::for_routable(cmd("GET").arg("key")).is_ok());
+        assert!(RoutingInfo::for_routable(cmd("SET").arg("key").arg("val")).is_ok());
+        // not SELECT despite the prefix
+        assert!(RoutingInfo::for_routable(cmd("SELECTOR").arg("x")).is_ok());
+    }
+
+    #[test]
     fn test_routing_info_mixed_capatalization() {
         let mut upper = cmd("XREAD");
         upper.arg("STREAMS").arg("foo").arg(0);
@@ -1114,7 +1148,7 @@ mod tests_routing {
 
         for cmd in [cmd("FLUSHALL"), cmd("FLUSHDB"), cmd("PING")] {
             assert_eq!(
-                RoutingInfo::for_routable(&cmd),
+                RoutingInfo::for_routable(&cmd).unwrap(),
                 Some(RoutingInfo::MultiNode((
                     MultipleNodeRoutingInfo::AllMasters,
                     Some(ResponsePolicy::AllSucceeded)
@@ -1123,7 +1157,7 @@ mod tests_routing {
         }
 
         assert_eq!(
-            RoutingInfo::for_routable(&cmd("DBSIZE")),
+            RoutingInfo::for_routable(&cmd("DBSIZE")).unwrap(),
             Some(RoutingInfo::MultiNode((
                 MultipleNodeRoutingInfo::AllMasters,
                 Some(ResponsePolicy::Aggregate(AggregateOp::Sum))
@@ -1131,7 +1165,7 @@ mod tests_routing {
         );
 
         assert_eq!(
-            RoutingInfo::for_routable(&cmd("SCRIPT KILL")),
+            RoutingInfo::for_routable(&cmd("SCRIPT KILL")).unwrap(),
             Some(RoutingInfo::MultiNode((
                 MultipleNodeRoutingInfo::AllNodes,
                 Some(ResponsePolicy::OneSucceeded)
@@ -1139,7 +1173,7 @@ mod tests_routing {
         );
 
         assert_eq!(
-            RoutingInfo::for_routable(&cmd("INFO")),
+            RoutingInfo::for_routable(&cmd("INFO")).unwrap(),
             Some(RoutingInfo::MultiNode((
                 MultipleNodeRoutingInfo::AllMasters,
                 Some(ResponsePolicy::Special)
@@ -1147,7 +1181,7 @@ mod tests_routing {
         );
 
         assert_eq!(
-            RoutingInfo::for_routable(&cmd("KEYS")),
+            RoutingInfo::for_routable(&cmd("KEYS")).unwrap(),
             Some(RoutingInfo::MultiNode((
                 MultipleNodeRoutingInfo::AllMasters,
                 Some(ResponsePolicy::CombineArrays)
@@ -1161,7 +1195,7 @@ mod tests_routing {
             cmd("REPLICAOF"),
         ] {
             assert_eq!(
-                RoutingInfo::for_routable(&cmd),
+                RoutingInfo::for_routable(&cmd).unwrap(),
                 None,
                 "{}",
                 std::str::from_utf8(cmd.arg_idx(0).unwrap()).unwrap()
@@ -1173,14 +1207,14 @@ mod tests_routing {
             cmd("EVALSHA").arg(r#"redis.call("PING");"#).arg(0),
         ] {
             assert_eq!(
-                RoutingInfo::for_routable(cmd),
+                RoutingInfo::for_routable(cmd).unwrap(),
                 Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
             );
         }
 
         // While FCALL with N keys is expected to be routed to a specific node
         assert_eq!(
-            RoutingInfo::for_routable(cmd("FCALL").arg("foo").arg(1).arg("mykey")),
+            RoutingInfo::for_routable(cmd("FCALL").arg("foo").arg(1).arg("mykey")).unwrap(),
             Some(RoutingInfo::SingleNode(
                 SingleNodeRoutingInfo::SpecificNode(Route::with_key(b"mykey", SlotAddr::Master))
             ))
@@ -1251,7 +1285,7 @@ mod tests_routing {
             ),
         ] {
             assert_eq!(
-                RoutingInfo::for_routable(cmd),
+                RoutingInfo::for_routable(cmd).unwrap(),
                 expected,
                 "{}",
                 std::str::from_utf8(cmd.arg_idx(0).unwrap()).unwrap()
@@ -1264,28 +1298,28 @@ mod tests_routing {
         assert_matches!(RoutingInfo::for_routable(&parse_redis_value(&[
                 42, 50, 13, 10, 36, 54, 13, 10, 69, 88, 73, 83, 84, 83, 13, 10, 36, 49, 54, 13, 10,
                 244, 93, 23, 40, 126, 127, 253, 33, 89, 47, 185, 204, 171, 249, 96, 139, 13, 10
-            ]).unwrap()), Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route(slot, SlotAddr::ReplicaOptional)))) if slot == 964);
+            ]).unwrap()).unwrap(), Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route(slot, SlotAddr::ReplicaOptional)))) if slot == 964);
 
         assert_matches!(RoutingInfo::for_routable(&parse_redis_value(&[
                 42, 54, 13, 10, 36, 51, 13, 10, 83, 69, 84, 13, 10, 36, 49, 54, 13, 10, 36, 241,
                 197, 111, 180, 254, 5, 175, 143, 146, 171, 39, 172, 23, 164, 145, 13, 10, 36, 52,
                 13, 10, 116, 114, 117, 101, 13, 10, 36, 50, 13, 10, 78, 88, 13, 10, 36, 50, 13, 10,
                 80, 88, 13, 10, 36, 55, 13, 10, 49, 56, 48, 48, 48, 48, 48, 13, 10
-            ]).unwrap()), Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route(slot, SlotAddr::Master)))) if slot == 8352);
+            ]).unwrap()).unwrap(), Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route(slot, SlotAddr::Master)))) if slot == 8352);
 
         assert_matches!(RoutingInfo::for_routable(&parse_redis_value(&[
                 42, 54, 13, 10, 36, 51, 13, 10, 83, 69, 84, 13, 10, 36, 49, 54, 13, 10, 169, 233,
                 247, 59, 50, 247, 100, 232, 123, 140, 2, 101, 125, 221, 66, 170, 13, 10, 36, 52,
                 13, 10, 116, 114, 117, 101, 13, 10, 36, 50, 13, 10, 78, 88, 13, 10, 36, 50, 13, 10,
                 80, 88, 13, 10, 36, 55, 13, 10, 49, 56, 48, 48, 48, 48, 48, 13, 10
-            ]).unwrap()), Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route(slot, SlotAddr::Master)))) if slot == 5210);
+            ]).unwrap()).unwrap(), Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route(slot, SlotAddr::Master)))) if slot == 5210);
     }
 
     #[test]
     fn test_multi_shard_keys_only() {
         let mut cmd = cmd("DEL");
         cmd.arg("foo").arg("bar").arg("baz").arg("{bar}vaz");
-        let routing = RoutingInfo::for_routable(&cmd);
+        let routing = RoutingInfo::for_routable(&cmd).unwrap();
         let mut expected = std::collections::HashMap::new();
         expected.insert(Route(4813, SlotAddr::Master), vec![2]);
         expected.insert(Route(5061, SlotAddr::Master), vec![1, 3]);
@@ -1301,7 +1335,7 @@ mod tests_routing {
 
         let mut cmd = crate::cmd("MGET");
         cmd.arg("foo").arg("bar").arg("baz").arg("{bar}vaz");
-        let routing = RoutingInfo::for_routable(&cmd);
+        let routing = RoutingInfo::for_routable(&cmd).unwrap();
         let mut expected = std::collections::HashMap::new();
         expected.insert(Route(4813, SlotAddr::ReplicaOptional), vec![2]);
         expected.insert(Route(5061, SlotAddr::ReplicaOptional), vec![1, 3]);
@@ -1325,7 +1359,7 @@ mod tests_routing {
             .arg("bar2")    // value
             .arg("{foo}foo3") // key slot 12182
             .arg("bar3"); // value
-        let routing = RoutingInfo::for_routable(&cmd);
+        let routing = RoutingInfo::for_routable(&cmd).unwrap();
         let mut expected = std::collections::HashMap::new();
         expected.insert(Route(1044, SlotAddr::Master), vec![2, 3]);
         expected.insert(Route(12182, SlotAddr::Master), vec![0, 1, 4, 5]);
@@ -1347,7 +1381,7 @@ mod tests_routing {
             .arg("baz") // key slot 4813
             .arg("{bar}vaz") // key slot 5061
             .arg("$.f.a"); // path
-        let routing = RoutingInfo::for_routable(&cmd);
+        let routing = RoutingInfo::for_routable(&cmd).unwrap();
         let mut expected = std::collections::HashMap::new();
         expected.insert(Route(4813, SlotAddr::ReplicaOptional), vec![2, 4]);
         expected.insert(Route(5061, SlotAddr::ReplicaOptional), vec![1, 3, 4]);
@@ -1375,7 +1409,7 @@ mod tests_routing {
             .arg("{foo}foo3") // key slot 12182
             .arg("$.f.a") // path
             .arg("bar3"); // value
-        let routing = RoutingInfo::for_routable(&cmd);
+        let routing = RoutingInfo::for_routable(&cmd).unwrap();
         let mut expected = std::collections::HashMap::new();
         expected.insert(Route(1044, SlotAddr::Master), vec![3, 4, 5]);
         expected.insert(Route(12182, SlotAddr::Master), vec![0, 1, 2, 6, 7, 8]);
@@ -1397,7 +1431,7 @@ mod tests_routing {
             .arg("bar")
             .arg("baz")
             .arg("{bar}vaz");
-        let routing = RoutingInfo::for_routable(&original_cmd);
+        let routing = RoutingInfo::for_routable(&original_cmd).unwrap();
         let expected = [vec![0], vec![1, 3], vec![2]];
 
         let mut indices: Vec<_> = match routing {
@@ -1424,7 +1458,7 @@ mod tests_routing {
     fn test_combine_multi_shard_to_single_node_when_all_keys_are_in_same_slot() {
         let mut cmd = cmd("DEL");
         cmd.arg("foo").arg("{foo}bar").arg("{foo}baz");
-        let routing = RoutingInfo::for_routable(&cmd);
+        let routing = RoutingInfo::for_routable(&cmd).unwrap();
 
         assert!(
             matches!(

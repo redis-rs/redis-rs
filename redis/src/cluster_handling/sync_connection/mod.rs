@@ -579,7 +579,7 @@ where
             Ok(slot_addr.clone())
         };
 
-        match RoutingInfo::for_routable(cmd) {
+        match RoutingInfo::for_routable(cmd)? {
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => Ok(addr_for_slot(
                 Route::with_slot(Slot::new_random(), SlotAddr::Master),
             )?),
@@ -966,7 +966,7 @@ where
         // retry logic that handles these cases.
         for retry_idx in to_retry {
             let cmd = &cmds[retry_idx];
-            let routing = RoutingInfo::for_routable(cmd);
+            let routing = RoutingInfo::for_routable(cmd)?;
             results[retry_idx] = self.request(Input::Cmd(cmd), routing)?.into();
         }
         Ok(results)
@@ -1029,7 +1029,7 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
         if cmd.is_empty() {
             return Err(RedisError::make_empty_command());
         }
-        let routing = RoutingInfo::for_routable(cmd);
+        let routing = RoutingInfo::for_routable(cmd)?;
         self.request(Input::Cmd(cmd), routing).map(|res| res.into())
     }
 
@@ -1043,7 +1043,7 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
             cmd
         };
         let value = parse_redis_value(actual_cmd)?;
-        let routing = RoutingInfo::for_routable(&value);
+        let routing = RoutingInfo::for_routable(&value)?;
         self.request(
             Input::Slice {
                 cmd,
@@ -1069,7 +1069,7 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
             cmd
         };
         let value = parse_redis_value(actual_cmd)?;
-        let route = match RoutingInfo::for_routable(&value) {
+        let route = match RoutingInfo::for_routable(&value)? {
             // we don't allow routing multiple commands to multiple nodes.
             Some(RoutingInfo::MultiNode(_)) => None,
             Some(RoutingInfo::SingleNode(route)) => Some(route),
