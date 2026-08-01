@@ -3720,14 +3720,15 @@ impl ToRedisArgs for MSetOptions {
 /// fn flushall_sync(
 ///     con: &mut redis::Connection,
 /// ) -> RedisResult<()> {
-///     let opts = FlushAllOptions{blocking: true};
+///     let opts = FlushAllOptions::default().blocking(true);
 ///     con.flushall_options(&opts)
 /// }
 /// ```
+#[non_exhaustive]
 #[derive(Clone, Copy, Default)]
 pub struct FlushAllOptions {
     /// Blocking (`SYNC`) waits for completion, non-blocking (`ASYNC`) runs in the background
-    pub blocking: bool,
+    blocking: bool,
 }
 
 impl FlushAllOptions {
