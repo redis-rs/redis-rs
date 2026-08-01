@@ -21,11 +21,7 @@ socket2 = "0.6"
 rand = "0.10"
 
 [features]
-aio = ["futures", "redis/aio"]
+aio = ["futures", "redis/aio", "redis/tokio-comp"]
 
 [dev-dependencies]
-redis = { version = "2.0.0-rc.1", path = "../redis", features = [
-    "aio",
-    "tokio-comp",
-] }
 tokio = { workspace = true }
