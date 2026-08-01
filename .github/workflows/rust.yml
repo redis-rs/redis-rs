@@ -47,7 +47,7 @@ jobs:
           ]
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Cache RedisJSON
         if: matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
@@ -93,7 +93,7 @@ jobs:
 
       - name: Checkout RedisJSON
         if: steps.cache-redisjson.outputs.cache-hit != 'true' && matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: "RedisJSON/RedisJSON"
           path: "./__ci/redis-json"
@@ -206,7 +206,7 @@ jobs:
       matrix: *db-matrix
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install DB
         uses: ./.github/actions/install-db
@@ -290,7 +290,7 @@ jobs:
           {toolchain: 1.88.0},
         ]
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: lint
         uses: ./.github/actions/lint-and-check
         with:
@@ -336,7 +336,7 @@ jobs:
     env:
       rust_ver: stable
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install DB
         uses: ./.github/actions/install-db
@@ -362,13 +362,13 @@ jobs:
           critcmp base changes
 
       # We check out again, because we switched branches in the last step.
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
   flag-frenzy:
     needs: [lint, build-and-test]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
@@ -383,7 +383,7 @@ jobs:
     runs-on: windows-2022  # Locked to `2022` because of #2124
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install OpenSSL
         shell: powershell
