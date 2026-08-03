@@ -22,6 +22,7 @@ The affected structs are:
 
 * `BloomFilterDumpChunk`
 * `CacheStatistics`
+* `ClientTlsConfig`
 * `Coord`
 * `FlushAllOptions`
 * `RadiusSearchResult`
