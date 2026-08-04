@@ -101,24 +101,15 @@ mod entra_id_tests {
     }
 
     fn setup_provider_with_client_certificate_and_scopes() -> EntraIdCredentialsProvider {
-        use base64::Engine;
         use std::fs;
 
         let certificate_path = get_env_var(AZURE_CLIENT_CERTIFICATE_PATH);
-        let certificate_data =
-            fs::read(&certificate_path).expect("Failed to read client certificate");
-
-        // Convert the certificate data to base64
-        let certificate_base64 =
-            base64::engine::general_purpose::STANDARD.encode(&certificate_data);
+        let certificate_data = fs::read(&certificate_path).unwrap();
 
         EntraIdCredentialsProvider::new_client_certificate_with_scopes(
             get_env_var(AZURE_TENANT_ID),
             get_env_var(AZURE_CLIENT_ID),
-            ClientCertificate {
-                base64_pkcs12: certificate_base64,
-                password: None,
-            },
+            ClientCertificate::new(certificate_data),
             get_redis_scopes().clone(),
             None,
         )
