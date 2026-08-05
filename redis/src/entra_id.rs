@@ -856,6 +856,12 @@ mod tests {
             ClientCertificate::new(encoded),
         );
         assert!(provider.is_err());
+        assert!(
+            provider
+                .unwrap_err()
+                .to_string()
+                .contains("deserializing PKCS12 from DER failed")
+        );
     }
 
     #[test]
@@ -866,6 +872,12 @@ mod tests {
             ClientCertificate::new(PKCS12_WITH_PASSWORD.clone()),
         );
         assert!(provider.is_err());
+        assert!(
+            provider
+                .unwrap_err()
+                .to_string()
+                .contains("PKCS12 parsing failed")
+        );
 
         let provider = EntraIdCredentialsProvider::new_client_certificate(
             TENANT_ID.to_string(),
