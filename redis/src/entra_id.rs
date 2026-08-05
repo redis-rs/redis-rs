@@ -40,6 +40,12 @@
 //!
 //! Add the `entra-id` feature to your `Cargo.toml`.
 //!
+//! The feature depends on `azure_identity` and `azure_core`, which use `rustls` together with the
+//! platform's certificate store for the HTTPS requests to the Entra ID token endpoint.
+//! That is independent of the TLS backend used for the connection to the server, so combining `entra-id`
+//! with `tls-native-tls` links both TLS implementations into the binary. Keep in mind that `rustls`
+//! validates certificates more strictly than OpenSSL, which can matter in environments that intercept TLS traffic.
+//!
 //! ## Basic Usage with DeveloperToolsCredential
 //!
 //! ```rust,no_run
@@ -114,19 +120,13 @@
 //! # use std::fs;
 //! # fn example() -> RedisResult<()> {
 //! // Load certificate from file
-//! let certificate_base64 = fs::read_to_string("path/to/base64_pkcs12_certificate")
-//!     .expect("Base64 PKCS12 certificate not found.")
-//!     .trim()
-//!     .to_string();
+//! let certificate = fs::read("path/to/pkcs12_certificate")?;
 //!
 //! // Create the credentials provider using service principal with client certificate
 //! let mut provider = EntraIdCredentialsProvider::new_client_certificate(
 //!     "your-tenant-id".to_string(),
 //!     "your-client-id".to_string(),
-//!     ClientCertificate {
-//!         base64_pkcs12: certificate_base64, // Base64 encoded PKCS12 data
-//!         password: None,
-//!     },
+//!     ClientCertificate::new(certificate), // Raw PKCS12 data
 //! )?;
 //! provider.start(RetryConfig::default());
 //! # Ok(())
@@ -263,14 +263,40 @@ const TOKEN_REFRESH_BUFFER_SECS: u64 = 240;
 
 /// A client certificate in PKCS12 (PFX) that can be used for client certificate authentication.
 ///
-/// The certificate data should be base64-encoded PKCS12 content.
-/// If the PKCS12 archive is password-protected, provide the password via `password`.
-#[derive(Debug, Clone)]
+/// The certificate data should be the raw bytes of the PKCS12 (PFX) archive,
+/// which has to contain the certificate together with its RSA private key.
+/// If the PKCS12 archive is password-protected, provide the password via [`set_password`](ClientCertificate::set_password).
+#[derive(Clone)]
 pub struct ClientCertificate {
-    /// Base64-encoded PKCS12 certificate data
-    pub base64_pkcs12: String,
+    /// Raw PKCS12 certificate data
+    pkcs12: Vec<u8>,
     /// The certificate's password if any
-    pub password: Option<String>,
+    password: Option<String>,
+}
+
+impl ClientCertificate {
+    /// Create a client certificate from raw PKCS12 (PFX) data
+    pub fn new(pkcs12: impl Into<Vec<u8>>) -> Self {
+        Self {
+            pkcs12: pkcs12.into(),
+            password: None,
+        }
+    }
+
+    /// Set the password protecting the PKCS12 archive
+    pub fn set_password(mut self, password: impl Into<String>) -> Self {
+        self.password = Some(password.into());
+        self
+    }
+}
+
+impl std::fmt::Debug for ClientCertificate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClientCertificate")
+            .field("pkcs12", &"<PKCS12>")
+            .field("password", &self.password.as_ref().map(|_| "<password>"))
+            .finish()
+    }
 }
 
 type Subscriptions = Vec<Sender<RedisResult<BasicAuth>>>;
@@ -561,7 +587,7 @@ impl EntraIdCredentialsProvider {
         let credential_provider = ClientCertificateCredential::new(
             tenant_id,
             client_id,
-            client_certificate.base64_pkcs12.into(),
+            client_certificate.pkcs12.into(),
             options,
         )
         .map_err(Self::convert_error)?;
@@ -692,6 +718,56 @@ impl std::fmt::Debug for EntraIdCredentialsProvider {
 #[cfg(all(feature = "entra-id", test))]
 mod tests {
     use super::*;
+    use redis_test::utils::{CommandMultiArgs, OpensslCommand};
+    use std::fs;
+    use std::sync::LazyLock;
+    use tempfile::TempDir;
+
+    const TENANT_ID: &str = "tenant";
+    const CLIENT_ID: &str = "client";
+    const CLIENT_SECRET: &str = "secret";
+
+    const PKCS12_PASSWORD: &str = "pkcs12-password";
+
+    /// A PKCS12 archives holding a self-signed certificate and its RSA key.
+    static PKCS12: LazyLock<Vec<u8>> = LazyLock::new(|| create_pkcs12(None));
+    static PKCS12_WITH_PASSWORD: LazyLock<Vec<u8>> =
+        LazyLock::new(|| create_pkcs12(Some(PKCS12_PASSWORD)));
+
+    /// Creates a PKCS12 (PFX) archive with a self-signed certificate and its RSA private key.
+    fn create_pkcs12(password: Option<&str>) -> Vec<u8> {
+        let tempdir = TempDir::new().unwrap();
+        let key = tempdir.path().join("certificate.key");
+        let certificate = tempdir.path().join("certificate.crt");
+        let archive = tempdir.path().join("certificate.pfx");
+
+        OpensslCommand::new("self-sign client certificate")
+            .arg("req")
+            .arg("-x509")
+            .arg("-nodes")
+            .arg2("-newkey", "rsa:2048")
+            .arg2("-keyout", &key)
+            .arg2("-out", &certificate)
+            .arg2("-days", "365")
+            .arg2("-subj", "/CN=redis-rs-entra-id-test")
+            .spawn();
+
+        // The PBE algorithms are set explicitly because OpenSSL 1.x defaults to RC2,
+        // which OpenSSL 3.x refuses to read without the legacy provider.
+        OpensslCommand::new("export client certificate to PKCS12")
+            .arg("pkcs12")
+            .arg("-export")
+            .arg2("-inkey", &key)
+            .arg2("-in", &certificate)
+            .arg2("-out", &archive)
+            .arg2("-passout", format!("pass:{}", password.unwrap_or_default()))
+            .arg2("-keypbe", "aes-256-cbc")
+            .arg2("-certpbe", "aes-256-cbc")
+            .arg2("-macalg", "sha256")
+            .spawn();
+
+        fs::read(&archive).unwrap()
+    }
 
     #[test]
     fn test_entra_id_provider_creation() {
@@ -700,9 +776,9 @@ mod tests {
         assert!(_default_provider.is_ok());
 
         let _client_secret_provider = EntraIdCredentialsProvider::new_client_secret(
-            "tenant".to_string(),
-            "client".to_string(),
-            "secret".to_string(),
+            TENANT_ID.to_string(),
+            CLIENT_ID.to_string(),
+            CLIENT_SECRET.to_string(),
         );
         assert!(_client_secret_provider.is_ok());
 
@@ -757,6 +833,67 @@ mod tests {
         )
         .unwrap();
         assert_eq!(provider.scopes, custom_scopes);
+    }
+
+    #[test]
+    fn test_client_certificate_accepts_raw_pkcs12() {
+        let provider = EntraIdCredentialsProvider::new_client_certificate(
+            TENANT_ID.to_string(),
+            CLIENT_ID.to_string(),
+            ClientCertificate::new(PKCS12.clone()),
+        );
+        assert!(provider.is_ok());
+    }
+
+    #[test]
+    fn test_client_certificate_rejects_base64_pkcs12() {
+        use base64::Engine;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(PKCS12.as_slice());
+
+        let provider = EntraIdCredentialsProvider::new_client_certificate(
+            TENANT_ID.to_string(),
+            CLIENT_ID.to_string(),
+            ClientCertificate::new(encoded),
+        );
+        assert!(provider.is_err());
+        assert!(
+            provider
+                .unwrap_err()
+                .to_string()
+                .contains("deserializing PKCS12 from DER failed")
+        );
+    }
+
+    #[test]
+    fn test_client_certificate_password() {
+        let provider = EntraIdCredentialsProvider::new_client_certificate(
+            TENANT_ID.to_string(),
+            CLIENT_ID.to_string(),
+            ClientCertificate::new(PKCS12_WITH_PASSWORD.clone()),
+        );
+        assert!(provider.is_err());
+        assert!(
+            provider
+                .unwrap_err()
+                .to_string()
+                .contains("PKCS12 parsing failed")
+        );
+
+        let provider = EntraIdCredentialsProvider::new_client_certificate(
+            TENANT_ID.to_string(),
+            CLIENT_ID.to_string(),
+            ClientCertificate::new(PKCS12_WITH_PASSWORD.clone()).set_password(PKCS12_PASSWORD),
+        );
+        assert!(provider.is_ok());
+    }
+
+    #[test]
+    fn test_client_certificate_debug_hides_secrets() {
+        let certificate = ClientCertificate::new(PKCS12.clone()).set_password(PKCS12_PASSWORD);
+
+        let debug = format!("{certificate:?}");
+        assert!(!debug.contains(PKCS12_PASSWORD));
+        assert!(!debug.contains(&format!("{:?}", PKCS12.as_slice())));
     }
 }
 
