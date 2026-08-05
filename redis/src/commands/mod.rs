@@ -2036,6 +2036,49 @@ implement_commands! {
             .take()
     }
 
+    /// Negatively acknowledge (NACK) one or more pending stream messages.
+    ///
+    /// `ids` that are present in the consumer group's PEL are moved to the
+    /// head of the PEL and marked as unowned (last consumer is set to an
+    /// empty string), so they are prioritized over idle pending messages on
+    /// the next `XREADGROUP ... CLAIM`. `ids` not present in the PEL are
+    /// silently skipped; the returned count reflects only ids actually NACKed.
+    ///
+    /// `options` carries the required NACK mode, which selects how the per-message
+    /// delivery counter is adjusted. See [`streams::StreamNackMode`] and [`streams::StreamNackOptions`].
+    ///
+    /// ```no_run
+    /// use redis::{Commands, RedisResult};
+    /// use redis::streams::{StreamNackMode, StreamNackOptions};
+    /// let client = redis::Client::open("redis://127.0.0.1/0").unwrap();
+    /// let mut con = client.get_connection().unwrap();
+    ///
+    /// let opts = StreamNackOptions::new(StreamNackMode::Fail);
+    /// let nacked: RedisResult<usize> = con.xnack("k1", "g1", &["1-1", "1-2"], &opts);
+    /// ```
+    ///
+    /// ```text
+    /// XNACK <key> <group> <SILENT|FAIL|FATAL> IDS <numids> <id> [<id> ...]
+    /// ```
+    /// [Redis Docs](https://redis.io/commands/XNACK)
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xnack<K: ToSingleRedisArg, G: ToSingleRedisArg, ID: ToSingleRedisArg>(
+        key: K,
+        group: G,
+        ids: &'a [ID],
+        options: &'a streams::StreamNackOptions
+    ) -> (usize) {
+        cmd("XNACK")
+            .arg(key)
+            .arg(group)
+            .arg(options)
+            .arg("IDS")
+            .arg(ids.len())
+            .arg(ids)
+            .take()
+    }
+
 
     /// Add a stream message by `key`. Use `*` as the `id` for the current timestamp.
     ///
