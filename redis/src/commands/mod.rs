@@ -45,6 +45,10 @@ pub mod acl;
 #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
 pub mod vector_sets;
 
+#[cfg(feature = "search")]
+#[cfg_attr(docsrs, doc(cfg(feature = "search")))]
+pub mod search;
+
 pub mod hotkeys;
 
 #[cfg(any(feature = "cluster", feature = "cache-aio"))]
