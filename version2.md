@@ -135,6 +135,13 @@ part of the rewrite: its first argument is now a `&mut bytes::BytesMut` read
 buffer instead of a `combine::stream::Decoder`. Call it with a `BytesMut` you
 own and reuse across calls.
 
+The `bytes` feature is gone: `bytes` is now an unconditional dependency, so the
+`FromRedisValue for bytes::Bytes` and `RedisWrite::bufmut_for_next_arg` impls it
+used to gate are always available. Remove `"bytes"` from your `features` list —
+Cargo errors on features that no longer exist. Code that needs to *name*
+`Bytes`/`BytesMut` (rather than rely on `.into()` and `Deref<Target = [u8]>`)
+should add `bytes = "1"` to its own `Cargo.toml`.
+
 ### Why it's faster
 
 The new parser allocates a small, constant number of times per response rather

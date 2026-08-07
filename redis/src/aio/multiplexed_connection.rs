@@ -599,7 +599,7 @@ impl MultiplexedConnection {
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
-        let mut codec = ValueCodec.framed(stream);
+        let mut codec = ValueCodec::default().framed(stream);
         if let Some(boundary) = config.write_backpressure_boundary {
             codec.set_backpressure_boundary(boundary);
         }
@@ -1071,7 +1071,7 @@ mod tests {
         let (server_read, mut server_write) = tokio::io::split(server_half);
 
         tokio::spawn(async move {
-            let mut reader = FramedRead::new(server_read, ValueCodec);
+            let mut reader = FramedRead::new(server_read, ValueCodec::default());
             while let Some(Ok(_)) = reader.next().await {
                 let _ = cmd_received_tx.send(()).await;
             }
@@ -1356,7 +1356,7 @@ mod tests {
         // becomes Pending — the general "server stops reading once its
         // own write is back-pressured" behavior the deadlock requires.
         let server_task = tokio::spawn(async move {
-            let mut reader = FramedRead::new(server_read, ValueCodec);
+            let mut reader = FramedRead::new(server_read, ValueCodec::default());
             loop {
                 match reader.next().await {
                     Some(Ok(_)) => {}
@@ -1426,7 +1426,7 @@ mod tests {
         let (server_read, mut server_write) = tokio::io::split(server_half);
 
         tokio::spawn(async move {
-            let mut reader = FramedRead::new(server_read, ValueCodec);
+            let mut reader = FramedRead::new(server_read, ValueCodec::default());
             while let Some(Ok(_)) = reader.next().await {
                 let _ = cmd_received_tx.send(()).await;
             }

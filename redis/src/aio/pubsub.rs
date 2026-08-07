@@ -385,7 +385,7 @@ impl PubSub {
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
-        let mut codec = ValueCodec.framed(stream);
+        let mut codec = ValueCodec::default().framed(stream);
         setup_connection(
             &mut codec,
             connection_info,

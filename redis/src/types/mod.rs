@@ -1,3 +1,7 @@
+mod str;
+
+pub use str::Str;
+
 use crate::errors::ParsingError;
 #[cfg(feature = "ahash")]
 pub(crate) use ahash::AHashMap as HashMap;
@@ -137,179 +141,6 @@ pub enum NumericBehavior {
     NumberIsInteger,
     /// This argument is a floating point value.
     NumberIsFloat,
-}
-
-/// A cheaply-cloneable, UTF-8 string backed by [`bytes::Bytes`].
-///
-/// `Str` is used by [`Value`] for textual responses (simple strings, verbatim
-/// strings, push kinds, …). It holds a `Bytes` buffer that is guaranteed to be
-/// valid UTF-8 by construction, so dereferencing to `&str` is zero-cost.
-///
-/// Because the backing storage is `Bytes`, cloning a `Str` is a cheap
-/// reference-count bump rather than an allocation, and the parser can produce
-/// one as a zero-copy slice into the response buffer.
-#[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Str(Bytes);
-
-impl std::hash::Hash for Str {
-    #[inline]
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // Hash as a `str`, not as the raw `Bytes`. `<str as Hash>` and
-        // `<[u8] as Hash>` produce different values (str writes a trailing
-        // `0xff`, the slice writes a length prefix), so deriving `Hash` from
-        // `Bytes` while also implementing `Borrow<str>` would break the
-        // `Borrow`/`Hash` contract and make `HashMap<Str, _>::get(&str)` miss
-        // present keys.
-        self.as_str().hash(state);
-    }
-}
-
-impl Str {
-    /// Wraps a `Bytes` buffer as a `Str`, validating that it is UTF-8.
-    pub fn from_utf8(bytes: Bytes) -> Result<Self, std::str::Utf8Error> {
-        from_utf8(&bytes)?;
-        Ok(Str(bytes))
-    }
-
-    /// Creates a `Str` from a static string slice without copying.
-    pub const fn from_static(s: &'static str) -> Self {
-        Str(Bytes::from_static(s.as_bytes()))
-    }
-
-    /// Wraps a `Bytes` buffer as a `Str` without checking that it is UTF-8.
-    ///
-    /// # Safety
-    /// The caller must ensure that `bytes` contains valid UTF-8.
-    pub(crate) unsafe fn from_utf8_unchecked(bytes: Bytes) -> Self {
-        Str(bytes)
-    }
-
-    /// Returns the string contents as a `&str`.
-    #[inline]
-    pub fn as_str(&self) -> &str {
-        // SAFETY: the `Bytes` are guaranteed to be valid UTF-8 by construction.
-        unsafe { std::str::from_utf8_unchecked(&self.0) }
-    }
-
-    /// Returns the underlying bytes.
-    #[inline]
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.0
-    }
-
-    /// Consumes the `Str`, returning the underlying `Bytes`.
-    #[inline]
-    pub fn into_bytes(self) -> Bytes {
-        self.0
-    }
-}
-
-impl Deref for Str {
-    type Target = str;
-    #[inline]
-    fn deref(&self) -> &str {
-        self.as_str()
-    }
-}
-
-impl AsRef<str> for Str {
-    #[inline]
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
-}
-
-impl AsRef<[u8]> for Str {
-    #[inline]
-    fn as_ref(&self) -> &[u8] {
-        self.as_bytes()
-    }
-}
-
-impl std::borrow::Borrow<str> for Str {
-    #[inline]
-    fn borrow(&self) -> &str {
-        self.as_str()
-    }
-}
-
-impl fmt::Display for Str {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl fmt::Debug for Str {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(self.as_str(), f)
-    }
-}
-
-impl From<&str> for Str {
-    fn from(s: &str) -> Self {
-        Str(Bytes::copy_from_slice(s.as_bytes()))
-    }
-}
-
-impl From<String> for Str {
-    fn from(s: String) -> Self {
-        Str(Bytes::from(s.into_bytes()))
-    }
-}
-
-impl From<&String> for Str {
-    fn from(s: &String) -> Self {
-        Str::from(s.as_str())
-    }
-}
-
-impl From<Str> for String {
-    fn from(s: Str) -> Self {
-        // SAFETY: the `Bytes` are guaranteed to be valid UTF-8 by construction.
-        unsafe { String::from_utf8_unchecked(s.0.into()) }
-    }
-}
-
-impl From<Str> for Bytes {
-    fn from(s: Str) -> Self {
-        s.0
-    }
-}
-
-impl PartialEq<str> for Str {
-    fn eq(&self, other: &str) -> bool {
-        self.as_str() == other
-    }
-}
-
-impl PartialEq<&str> for Str {
-    fn eq(&self, other: &&str) -> bool {
-        self.as_str() == *other
-    }
-}
-
-impl PartialEq<String> for Str {
-    fn eq(&self, other: &String) -> bool {
-        self.as_str() == other.as_str()
-    }
-}
-
-impl PartialEq<Str> for str {
-    fn eq(&self, other: &Str) -> bool {
-        self == other.as_str()
-    }
-}
-
-impl PartialEq<Str> for &str {
-    fn eq(&self, other: &Str) -> bool {
-        *self == other.as_str()
-    }
-}
-
-impl PartialEq<Str> for String {
-    fn eq(&self, other: &Str) -> bool {
-        self.as_str() == other.as_str()
-    }
 }
 
 /// Internal low-level redis value enum.
@@ -1103,7 +934,6 @@ pub trait RedisWrite {
         let _do_nothing = additional;
     }
 
-    #[cfg(feature = "bytes")]
     /// Appends an empty argument to the command, and returns a
     /// [`bytes::BufMut`] instance that can write to it.
     ///
@@ -1196,7 +1026,6 @@ impl RedisWrite for Vec<Vec<u8>> {
         self.reserve(additional.into_iter().count());
     }
 
-    #[cfg(feature = "bytes")]
     fn bufmut_for_next_arg(&mut self, capacity: usize) -> impl bytes::BufMut + '_ {
         self.push(Vec::with_capacity(capacity));
         self.last_mut().unwrap()
@@ -2607,7 +2436,6 @@ impl<T: FromRedisValue> FromRedisValue for Option<T> {
     }
 }
 
-#[cfg(feature = "bytes")]
 impl FromRedisValue for bytes::Bytes {
     fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
         let v = get_inner_value(v);
@@ -2976,58 +2804,5 @@ impl PartialEq<u32> for IntegerReplyOrNoOp {
             IntegerReplyOrNoOp::IntegerReply(s) => *s as u32 == *other,
             _ => false,
         }
-    }
-}
-
-#[cfg(test)]
-mod str_tests {
-    use super::Str;
-    use std::collections::{BTreeMap, HashMap};
-
-    #[test]
-    fn hashmap_lookup_by_str_borrow() {
-        // `Str: Borrow<str>` requires `str`-consistent hashing; otherwise a
-        // `HashMap<Str, _>` lookup by `&str` would miss the present key.
-        let mut map: HashMap<Str, i32> = HashMap::new();
-        map.insert(Str::from("hello"), 1);
-        assert_eq!(map.get("hello"), Some(&1));
-    }
-
-    #[test]
-    fn str_is_ordered_like_str() {
-        let (apple, banana) = (Str::from("apple"), Str::from("banana"));
-        assert!(apple < banana);
-        // Usable as a BTreeMap key, matching what `String` previously allowed.
-        let mut m: BTreeMap<Str, i32> = BTreeMap::new();
-        m.insert(Str::from("b"), 2);
-        m.insert(Str::from("a"), 1);
-        assert_eq!(m.keys().map(|s| s.as_str()).collect::<Vec<_>>(), ["a", "b"]);
-    }
-
-    #[test]
-    fn str_from_redis_value_is_zero_copy() {
-        use super::{FromRedisValue, Value};
-        use bytes::Bytes;
-
-        // Owned BulkString -> Str reuses the same allocation (no copy).
-        let bytes = Bytes::from_static(b"payload");
-        let ptr = bytes.as_ptr();
-        let s = Str::from_redis_value(Value::BulkString(bytes)).unwrap();
-        assert_eq!(s.as_str(), "payload");
-        assert_eq!(s.as_bytes().as_ptr(), ptr, "BulkString -> Str copied");
-
-        // SimpleString is already a Str: moved out unchanged.
-        assert_eq!(
-            Str::from_redis_value(Value::SimpleString("OK".into())).unwrap(),
-            Str::from("OK")
-        );
-        // Numeric and Okay conversions still work.
-        assert_eq!(
-            Str::from_redis_value(Value::Int(7)).unwrap(),
-            Str::from("7")
-        );
-        assert_eq!(Str::from_redis_value(Value::Okay).unwrap(), Str::from("OK"));
-        // Non-string types are rejected.
-        assert!(Str::from_redis_value(Value::Nil).is_err());
     }
 }

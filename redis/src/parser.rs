@@ -40,7 +40,7 @@ enum ValueRange {
     Int(i64),
     BulkString(Range<usize>),
     Array(Vec<ValueRange>),
-    SimpleString(Range<usize>),
+    SimpleString(StrRange),
     Okay,
     Map(Vec<(ValueRange, ValueRange)>),
     Attribute {
@@ -52,7 +52,7 @@ enum ValueRange {
     Boolean(bool),
     VerbatimString {
         format: VerbatimFormatRange,
-        text: Range<usize>,
+        text: StrRange,
     },
     #[cfg(feature = "num-bigint")]
     BigNumber(num_bigint::BigInt),
@@ -67,15 +67,15 @@ enum ValueRange {
 enum VerbatimFormatRange {
     Text,
     Markdown,
-    Unknown(Range<usize>),
+    Unknown(StrRange),
 }
 
 struct ServerErrorRange {
     /// `Some` for a known error kind, `None` for an extension error (in which
     /// case `code` holds the error code).
     kind: Option<ServerErrorKind>,
-    code: Range<usize>,
-    detail: Option<Range<usize>>,
+    code: StrRange,
+    detail: Option<StrRange>,
 }
 
 /// Computes the offset range of `slice` within the buffer that starts at `base`.
@@ -85,6 +85,26 @@ struct ServerErrorRange {
 fn range_of(slice: &[u8], base: usize) -> Range<usize> {
     let start = slice.as_ptr() as usize - base;
     start..start + slice.len()
+}
+
+/// The offset range of a buffer sub-slice that is known to hold valid UTF-8.
+///
+/// This is the only range type [`slice_str`] accepts, and [`StrRange::of`] is
+/// its only constructor. That constructor takes a `&str`, so the *type* is the
+/// proof: every `&str` in this parser comes out of a `str::from_utf8` call (see
+/// `line`, `verbatim` and `blob_error` in [`value`]), and safe Rust cannot hand
+/// out a `&str` that is not valid UTF-8. A new `Str`-valued reply kind therefore
+/// cannot reach the `unsafe` in `slice_str` without going through a UTF-8 check.
+struct StrRange(Range<usize>);
+
+impl StrRange {
+    /// Records the offset range of `s` within the buffer that starts at `base`.
+    ///
+    /// `s` must be a sub-slice of that buffer (same requirement as [`range_of`]).
+    #[inline]
+    fn of(s: &str, base: usize) -> Self {
+        StrRange(range_of(s.as_bytes(), base))
+    }
 }
 
 fn err_parser(line: &str, base: usize) -> ServerErrorRange {
@@ -109,10 +129,11 @@ fn err_parser(line: &str, base: usize) -> ServerErrorRange {
     };
     ServerErrorRange {
         kind,
-        code: range_of(code.as_bytes(), base),
-        detail: pieces
-            .next()
-            .map(|detail| range_of(detail.as_bytes(), base)),
+        // `code` and `detail` are sub-slices of `line`, which the caller
+        // obtained from `str::from_utf8`; splitting a `&str` on an ASCII byte
+        // keeps both halves valid UTF-8.
+        code: StrRange::of(code, base),
+        detail: pieces.next().map(|detail| StrRange::of(detail, base)),
     }
 }
 
@@ -122,12 +143,25 @@ fn err_parser(line: &str, base: usize) -> ServerErrorRange {
 
 /// Slices `frame` at `range`, wrapping it as a [`Str`] without re-validating.
 ///
-/// All ranges that reach this helper were validated as UTF-8 during parsing.
+/// This is the crate's only `Str::from_utf8_unchecked` call site. It is
+/// unreachable without a [`StrRange`], which can only be built from a `&str`,
+/// so "was this validated?" is answered by the signature rather than by a
+/// comment at the call site.
 #[inline]
-fn slice_str(frame: &Bytes, range: Range<usize>) -> Str {
-    // SAFETY: the parser only produces `Str` ranges from input that has already
-    // been validated as UTF-8.
-    unsafe { Str::from_utf8_unchecked(frame.slice(range)) }
+fn slice_str(frame: &Bytes, range: StrRange) -> Str {
+    let bytes = frame.slice(range.0);
+    // Belt and braces: `StrRange`'s constructor makes non-UTF-8 unrepresentable,
+    // but the offsets themselves are computed with pointer arithmetic
+    // (`range_of`), which the type system cannot check. Re-validate in debug and
+    // test builds — including under the `afl/parser` fuzz target — so a future
+    // bookkeeping bug fails loudly instead of becoming silent UB in release.
+    debug_assert!(
+        str::from_utf8(&bytes).is_ok(),
+        "StrRange pointed at non-UTF-8 bytes: {bytes:?}"
+    );
+    // SAFETY: `bytes` is the byte range of a `&str` that borrowed this frame;
+    // see `StrRange`.
+    unsafe { Str::from_utf8_unchecked(bytes) }
 }
 
 fn materialize(range: ValueRange, frame: &Bytes) -> Result<Value, ParsingError> {
@@ -194,7 +228,7 @@ fn materialize_format(format: VerbatimFormatRange, frame: &Bytes) -> VerbatimFor
 /// Copying a few bytes here keeps the hot data path zero-copy while giving
 /// errors an independent lifetime.
 #[inline]
-fn detached_str(frame: &Bytes, range: Range<usize>) -> Str {
+fn detached_str(frame: &Bytes, range: StrRange) -> Str {
     Str::from(slice_str(frame, range).as_str())
 }
 
@@ -218,9 +252,10 @@ fn materialize_push(items: Vec<ValueRange>, frame: &Bytes) -> Result<Value, Pars
         });
     };
     let kind = match first {
-        ValueRange::BulkString(range) | ValueRange::SimpleString(range) => {
-            get_push_kind(frame.slice(range))?
-        }
+        // A bulk string is arbitrary bytes, so the kind has to be validated here.
+        ValueRange::BulkString(range) => get_push_kind(frame.slice(range))?,
+        // A simple string was already validated by the parser's `line`.
+        ValueRange::SimpleString(range) => push_kind_from_str(slice_str(frame, range)),
         _ => return Err(ParsingError::from("parse error when decoding push")),
     };
     let data = it
@@ -232,6 +267,11 @@ fn materialize_push(items: Vec<ValueRange>, frame: &Bytes) -> Result<Value, Pars
 fn get_push_kind(name: Bytes) -> Result<PushKind, ParsingError> {
     let name =
         Str::from_utf8(name).map_err(|_| ParsingError::from("parse error when decoding push"))?;
+    Ok(push_kind_from_str(name))
+}
+
+/// Maps an already-validated push-kind name onto a [`PushKind`].
+fn push_kind_from_str(name: Str) -> PushKind {
     let known = match name.as_str() {
         "invalidate" => Some(PushKind::Invalidate),
         "message" => Some(PushKind::Message),
@@ -245,7 +285,7 @@ fn get_push_kind(name: Bytes) -> Result<PushKind, ParsingError> {
         "ssubscribe" => Some(PushKind::SSubscribe),
         _ => None,
     };
-    Ok(known.unwrap_or_else(|| PushKind::Other(name)))
+    known.unwrap_or_else(|| PushKind::Other(name))
 }
 
 // ------------------------------------------------------------------
@@ -286,7 +326,8 @@ where
                         if line == "OK" {
                             ValueRange::Okay
                         } else {
-                            ValueRange::SimpleString(range_of(line.as_bytes(), base))
+                            // `line` came from `str::from_utf8` above.
+                            ValueRange::SimpleString(StrRange::of(line, base))
                         }
                     })
                 };
@@ -440,14 +481,11 @@ where
                                     let format = match format {
                                         "txt" => VerbatimFormatRange::Text,
                                         "mkd" => VerbatimFormatRange::Markdown,
-                                        x => VerbatimFormatRange::Unknown(range_of(
-                                            x.as_bytes(),
-                                            base,
-                                        )),
+                                        x => VerbatimFormatRange::Unknown(StrRange::of(x, base)),
                                     };
                                     Ok(ValueRange::VerbatimString {
                                         format,
-                                        text: range_of(text.as_bytes(), base),
+                                        text: StrRange::of(text, base),
                                     })
                                 } else {
                                     Err(StreamErrorFor::<I>::message_static_message(
@@ -497,21 +535,71 @@ where
     ))
 }
 
-/// Attempts to parse a single value from `buffer`.
+/// Resumable state for the value currently being parsed out of a buffer.
 ///
-/// Parsing always starts from the beginning of `buffer` with fresh state, so
-/// the offsets recorded in the returned [`ValueRange`] are valid relative to
-/// the start of `buffer`. Returns `Ok(None)` if `buffer` does not yet contain a
-/// complete value (and `complete` is `false`, i.e. more data may still arrive).
-fn decode_value_range(buffer: &[u8], complete: bool) -> RedisResult<Option<(ValueRange, usize)>> {
+/// A reply can span many reads. `combine` supports resuming a parse where it
+/// stopped, which is what keeps parsing linear in the size of the reply instead
+/// of re-scanning the whole buffer on every read.
+///
+/// Retaining that state puts one requirement on the buffer: `combine` resumes
+/// at the point it stopped, and its state holds already-produced
+/// [`ValueRange`]s whose offsets are indices from the start of the buffer.
+/// So while `committed != 0` the buffer may only be *appended* to — index 0
+/// has to keep denoting the same byte. Growing a [`BytesMut`] preserves
+/// indices, so appending is fine; splitting bytes off the front is not, and
+/// only ever happens once a value is complete and the state has been reset.
+#[derive(Default)]
+struct ParseState {
+    /// `combine`'s resumable parser state.
+    partial: AnySendSyncPartialState,
+    /// How many leading buffer bytes `combine` has already consumed for the
+    /// value in progress. They have to stay in the buffer, because the
+    /// finished value will slice into them, so instead of removing them we
+    /// hand `combine` only the suffix that follows.
+    committed: usize,
+}
+
+impl ParseState {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+/// Attempts to parse a single value from `buffer`, resuming from `state`.
+///
+/// On success returns the value's offsets — indices from the start of
+/// `buffer` — together with the total number of bytes it occupies, and resets
+/// `state`. Returns `Ok(None)` if `buffer` does not yet contain a complete
+/// value (and `complete` is `false`, i.e. more data may still arrive), in
+/// which case `state` records how far the parse got so the next call resumes
+/// there rather than starting over. See [`ParseState`] for the invariant this
+/// places on `buffer`.
+fn decode_value_range(
+    buffer: &[u8],
+    state: &mut ParseState,
+    complete: bool,
+) -> RedisResult<Option<(ValueRange, usize)>> {
     let base = buffer.as_ptr() as usize;
-    let mut state = AnySendSyncPartialState::default();
-    let mut stream = combine::easy::Stream(combine::stream::MaybePartialStream(buffer, !complete));
-    match combine::stream::decode_tokio(value(base, None), &mut stream, &mut state) {
-        Ok((opt, removed_len)) => Ok(opt.map(|value| (value, removed_len))),
+    let committed = state.committed;
+    // `combine` picks up where it left off, so it is shown only the bytes it
+    // has not consumed yet. This is the same token sequence it would have seen
+    // had the consumed prefix been dropped from the buffer; `base` is still the
+    // start of the whole buffer, so recorded offsets stay absolute.
+    let rest = &buffer[committed..];
+    let mut stream = combine::easy::Stream(combine::stream::MaybePartialStream(rest, !complete));
+    match combine::stream::decode_tokio(value(base, None), &mut stream, &mut state.partial) {
+        Ok((Some(value), removed_len)) => {
+            state.reset();
+            Ok(Some((value, committed + removed_len)))
+        }
+        Ok((None, removed_len)) => {
+            state.committed = committed + removed_len;
+            Ok(None)
+        }
         Err(err) => {
+            state.reset();
             let err = err
-                .map_position(|pos| pos.translate_position(buffer))
+                .map_position(|pos| committed + pos.translate_position(rest))
                 .map_range(|range| format!("{range:?}"))
                 .to_string();
             Err(RedisError::from(ParsingError::from(err)))
@@ -524,8 +612,12 @@ fn decode_value_range(buffer: &[u8], complete: bool) -> RedisResult<Option<(Valu
 /// On success the consumed prefix is frozen into a [`Bytes`] and the value's
 /// leaves are produced as cheap, reference-counted slices into it; the
 /// remaining bytes are left in `buffer` for the next value.
-fn parse_buffer(buffer: &mut BytesMut, complete: bool) -> RedisResult<Option<Value>> {
-    let Some((range, consumed)) = decode_value_range(&buffer[..], complete)? else {
+fn parse_buffer(
+    buffer: &mut BytesMut,
+    state: &mut ParseState,
+    complete: bool,
+) -> RedisResult<Option<Value>> {
+    let Some((range, consumed)) = decode_value_range(&buffer[..], state, complete)? else {
         return Ok(None);
     };
     let frame = buffer.split_to(consumed).freeze();
@@ -540,27 +632,28 @@ fn parse_buffer(buffer: &mut BytesMut, complete: bool) -> RedisResult<Option<Val
 /// [`RedisError::is_connection_dropped`] recognizes), matching the pre-2.0
 /// behavior; genuinely malformed data is still an `Err`. The codec path
 /// (`decode_eof`) deliberately keeps returning the parse error instead.
-fn parse_final_value(buffer: &mut BytesMut) -> RedisResult<Option<Value>> {
+fn parse_final_value(buffer: &mut BytesMut, state: &mut ParseState) -> RedisResult<Option<Value>> {
     let base = buffer.as_ptr() as usize;
-    let mut state = AnySendSyncPartialState::default();
+    let committed = state.committed;
     let (range, consumed) = {
-        let mut stream =
-            combine::easy::Stream(combine::stream::MaybePartialStream(&buffer[..], false));
-        match combine::stream::decode_tokio(value(base, None), &mut stream, &mut state) {
-            Ok((Some(value), removed_len)) => (value, removed_len),
+        let rest = &buffer[committed..];
+        let mut stream = combine::easy::Stream(combine::stream::MaybePartialStream(rest, false));
+        match combine::stream::decode_tokio(value(base, None), &mut stream, &mut state.partial) {
+            Ok((Some(value), removed_len)) => (value, committed + removed_len),
             Ok((None, _)) => return Ok(None),
             // Input ended in the middle of a value: a truncated reply, not a
             // protocol error.
             Err(ref err) if err.errors.iter().any(is_end_of_input) => return Ok(None),
             Err(err) => {
                 let err = err
-                    .map_position(|pos| pos.translate_position(&buffer[..]))
+                    .map_position(|pos| committed + pos.translate_position(rest))
                     .map_range(|range| format!("{range:?}"))
                     .to_string();
                 return Err(RedisError::from(ParsingError::from(err)));
             }
         }
     };
+    state.reset();
     let frame = buffer.split_to(consumed).freeze();
     Ok(Some(materialize(range, &frame)?))
 }
@@ -577,8 +670,16 @@ mod aio_support {
     use tokio::io::{AsyncRead, AsyncReadExt};
     use tokio_util::codec::{Decoder, Encoder};
 
+    /// Decodes a stream of RESP replies.
+    ///
+    /// Holds the parse state of the reply currently in flight, so a reply that
+    /// arrives over several reads is parsed once rather than re-parsed from the
+    /// start on every read.
     #[derive(Default)]
-    pub struct ValueCodec;
+    pub struct ValueCodec {
+        /// Visible to the parent module so tests can assert on parse progress.
+        pub(super) state: ParseState,
+    }
 
     impl Encoder<Vec<u8>> for ValueCodec {
         type Error = RedisError;
@@ -593,11 +694,11 @@ mod aio_support {
         type Error = RedisError;
 
         fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-            parse_buffer(bytes, false)
+            parse_buffer(bytes, &mut self.state, false)
         }
 
         fn decode_eof(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-            parse_buffer(bytes, true)
+            parse_buffer(bytes, &mut self.state, true)
         }
     }
 
@@ -613,17 +714,22 @@ mod aio_support {
     where
         R: AsyncRead + std::marker::Unpin,
     {
+        // One `ParseState` for the whole read loop: the reply may need several
+        // reads, and each read must resume the parse instead of restarting it.
+        // It does not need to outlive this call, because it is always reset once
+        // a value completes.
+        let mut state = ParseState::default();
         loop {
-            if let Some(value) = parse_buffer(buffer, false)? {
+            if let Some(value) = parse_buffer(buffer, &mut state, false)? {
                 return Ok(value);
             }
             // Keep a sane minimum read granularity: `read_buf` only fills the
             // buffer's spare capacity, which after a `split_to`/`freeze` can be
             // arbitrarily small (the frozen prefix may still share the backing
             // allocation). Without this, reads can degrade to tiny chunks.
-            buffer.reserve(8 * 1024);
+            buffer.reserve(READ_CHUNK_SIZE);
             if read.read_buf(buffer).await? == 0 {
-                return match parse_final_value(buffer)? {
+                return match parse_final_value(buffer, &mut state)? {
                     Some(value) => Ok(value),
                     None => Err(RedisError::from(io::Error::from(
                         io::ErrorKind::UnexpectedEof,
@@ -638,9 +744,15 @@ mod aio_support {
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 pub use self::aio_support::*;
 
+/// Minimum read granularity for both the sync and the async parse loops.
+const READ_CHUNK_SIZE: usize = 8 * 1024;
+
 /// The internal redis response parser.
 pub struct Parser {
     buffer: BytesMut,
+    /// Scratch space for `parse_value`'s reads. Kept alive between calls so
+    /// that the read granularity doesn't have to be re-zeroed every time.
+    chunk: Box<[u8]>,
 }
 
 impl Default for Parser {
@@ -661,6 +773,7 @@ impl Parser {
     pub fn new() -> Parser {
         Parser {
             buffer: BytesMut::new(),
+            chunk: vec![0u8; READ_CHUNK_SIZE].into_boxed_slice(),
         }
     }
 
@@ -668,21 +781,22 @@ impl Parser {
 
     /// Parses synchronously into a single value from the reader.
     pub fn parse_value<T: Read>(&mut self, mut reader: T) -> RedisResult<Value> {
+        // See `parse_redis_value_async`: one resumable state for the read loop.
+        let mut state = ParseState::default();
         loop {
-            if let Some(value) = parse_buffer(&mut self.buffer, false)? {
+            if let Some(value) = parse_buffer(&mut self.buffer, &mut state, false)? {
                 return Ok(value);
             }
-            let mut chunk = [0u8; 8 * 1024];
-            let read = reader.read(&mut chunk)?;
+            let read = reader.read(&mut self.chunk)?;
             if read == 0 {
-                return match parse_final_value(&mut self.buffer)? {
+                return match parse_final_value(&mut self.buffer, &mut state)? {
                     Some(value) => Ok(value),
                     None => Err(RedisError::from(io::Error::from(
                         io::ErrorKind::UnexpectedEof,
                     ))),
                 };
             }
-            self.buffer.extend_from_slice(&chunk[..read]);
+            self.buffer.extend_from_slice(&self.chunk[..read]);
         }
     }
 }
@@ -693,7 +807,7 @@ impl Parser {
 /// level redis value instead of having to use a whole parser.
 pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
     let mut buffer = BytesMut::from(bytes);
-    match parse_final_value(&mut buffer)? {
+    match parse_final_value(&mut buffer, &mut ParseState::default())? {
         Some(value) => Ok(value),
         None => Err(RedisError::from(io::Error::from(
             io::ErrorKind::UnexpectedEof,
@@ -711,7 +825,7 @@ mod tests {
     #[test]
     fn decode_eof_returns_none_at_eof() {
         use tokio_util::codec::Decoder;
-        let mut codec = ValueCodec;
+        let mut codec = ValueCodec::default();
 
         let mut bytes = bytes::BytesMut::from(&b"+GET 123\r\n"[..]);
         assert_eq!(
@@ -726,7 +840,7 @@ mod tests {
     #[test]
     fn decode_eof_returns_error_inside_array_and_can_parse_more_inputs() {
         use tokio_util::codec::Decoder;
-        let mut codec = ValueCodec;
+        let mut codec = ValueCodec::default();
 
         let mut bytes =
             bytes::BytesMut::from(b"*3\r\n+OK\r\n-LOADING server is loading\r\n+OK\r\n".as_slice());
@@ -889,14 +1003,183 @@ mod tests {
         assert!(err.is_connection_dropped());
     }
 
+    // The `unsafe` in `slice_str` rests on two halves: a `StrRange` can only be
+    // built from a `&str` (enforced by the type system), and the parser really
+    // does run `str::from_utf8` before it has such a `&str`. The tests below pin
+    // that second half — one case per `StrRange::of` call site — plus the
+    // separate check on push kinds, which arrive as raw bytes.
+
     #[test]
-    fn invalid_utf8_in_verbatim_and_blob_error_is_rejected() {
-        // Both verbatim strings and blob errors are now decoded with strict
-        // `str::from_utf8` (previously `from_utf8_lossy`), so a non-UTF-8 body
-        // must surface as a parse error rather than silently gaining U+FFFD
-        // replacement characters.
-        assert_matches!(parse_redis_value(b"=5\r\ntxt:\xff\r\n"), Err(_));
-        assert_matches!(parse_redis_value(b"!4\r\nER\xff\xff\r\n"), Err(_));
+    fn non_utf8_is_rejected_in_every_str_carrying_position() {
+        // Each of these must fail with a *UTF-8* parse error: not a lossy
+        // U+FFFD replacement, and not some unrelated error that happens to also
+        // reject the input.
+        let cases: [(&str, &[u8]); 8] = [
+            // `simple_string()` -> `ValueRange::SimpleString`; checked by `line()`.
+            ("simple string", b"+\xff\r\n"),
+            ("simple string, bad byte mid-line", b"+ab\xffcd\r\n"),
+            // `error()` -> `err_parser` code and detail; checked by `line()`.
+            ("inline error code", b"-\xff\r\n"),
+            ("inline error detail", b"-ERR \xff\r\n"),
+            // `blob_error()` -> `err_parser` code and detail. Blob errors are
+            // length-prefixed rather than line-based, so they carry their own
+            // `str::from_utf8`.
+            ("blob error code", b"!4\r\nER\xff\xff\r\n"),
+            ("blob error detail", b"!8\r\nERR a\xffbc\r\n"),
+            // `verbatim()` -> the text, and the `Unknown` format prefix.
+            ("verbatim text", b"=5\r\ntxt:\xff\r\n"),
+            ("verbatim format prefix", b"=5\r\n\xff\xfff:a\r\n"),
+        ];
+        for (label, payload) in cases {
+            let Err(err) = parse_redis_value(payload) else {
+                panic!("{label}: non-UTF-8 payload was accepted");
+            };
+            assert_eq!(err.kind(), ErrorKind::Parse, "{label}: wrong error kind");
+            assert!(
+                err.to_string().contains("invalid utf-8 sequence"),
+                "{label}: expected a UTF-8 error, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn non_utf8_push_kind_is_rejected() {
+        // A push kind sent as a bulk string is arbitrary bytes, so it is not
+        // covered by `line()`; `get_push_kind` validates it separately.
+        let err = parse_redis_value(b">2\r\n$2\r\n\xff\xff\r\n:1\r\n").unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Parse);
+        assert!(
+            err.to_string().contains("parse error when decoding push"),
+            "unexpected error: {err}"
+        );
+
+        // Sent as a simple string it is rejected earlier, by `line()`.
+        let err = parse_redis_value(b">2\r\n+\xff\r\n:1\r\n").unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Parse);
+        assert!(
+            err.to_string().contains("invalid utf-8 sequence"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn multibyte_utf8_round_trips_through_every_str_variant() {
+        // A 2-byte char, a combining mark and a non-BMP 4-byte char, so every
+        // UTF-8 sequence length appears and the content is not slice-at-any-
+        // byte-offset safe. Any off-by-one in `range_of` shows up as a mismatch
+        // (and, in debug builds, trips the `debug_assert!` in `slice_str`).
+        const S: &str = "h\u{e9}llo\u{301}\u{1F680}";
+
+        assert_eq!(
+            parse_redis_value(format!("+{S}\r\n").as_bytes()).unwrap(),
+            Value::SimpleString(Str::from(S)),
+            "simple string"
+        );
+
+        assert_eq!(
+            parse_redis_value(format!("={}\r\ntxt:{S}\r\n", 4 + S.len()).as_bytes()).unwrap(),
+            Value::VerbatimString {
+                format: VerbatimFormat::Text,
+                text: Str::from(S),
+            },
+            "verbatim string, known format"
+        );
+
+        // An unknown format prefix is a `StrRange` of its own, so make it
+        // multi-byte too.
+        let format = "x\u{177}z";
+        assert_eq!(
+            parse_redis_value(
+                format!("={}\r\n{format}:{S}\r\n", format.len() + 1 + S.len()).as_bytes()
+            )
+            .unwrap(),
+            Value::VerbatimString {
+                format: VerbatimFormat::Unknown(Str::from(format)),
+                text: Str::from(S),
+            },
+            "verbatim string, unknown format"
+        );
+
+        assert_eq!(
+            parse_redis_value(format!("-ERR {S}\r\n").as_bytes()).unwrap(),
+            Value::ServerError(ServerError(Repr::Known {
+                kind: ServerErrorKind::ResponseError,
+                detail: Some(Str::from(S)),
+            })),
+            "inline error detail"
+        );
+
+        // An extension error keeps both its code and its detail, so this covers
+        // both `StrRange`s built by `err_parser`.
+        let code = "WEIRD\u{e9}";
+        assert_eq!(
+            parse_redis_value(
+                format!("!{}\r\n{code} {S}\r\n", code.len() + 1 + S.len()).as_bytes()
+            )
+            .unwrap(),
+            Value::ServerError(ServerError(Repr::Extension {
+                code: Str::from(code),
+                detail: Some(Str::from(S)),
+            })),
+            "blob error code and detail"
+        );
+
+        assert_eq!(
+            parse_redis_value(format!(">2\r\n+{S}\r\n:1\r\n").as_bytes()).unwrap(),
+            Value::Push {
+                kind: PushKind::Other(Str::from(S)),
+                data: vec![Value::Int(1)],
+            },
+            "push kind"
+        );
+    }
+
+    #[test]
+    fn byte_sweep_over_str_positions_upholds_the_utf8_invariant() {
+        // Sweep every byte value through each position that becomes a `Str`.
+        // Whatever the byte, parsing must either succeed or fail cleanly — and
+        // in debug/test builds the `debug_assert!` in `slice_str` re-validates
+        // every `Str` it produces, so this also catches a range-bookkeeping bug
+        // that the type system cannot see. Any `Str` that does come out must be
+        // valid UTF-8 by construction; we assert it explicitly anyway.
+        fn check(value: &Value) {
+            match value {
+                Value::SimpleString(s) | Value::VerbatimString { text: s, .. } => {
+                    assert!(str::from_utf8(s.as_bytes()).is_ok(), "{s:?}");
+                }
+                Value::Push { kind, data } => {
+                    if let PushKind::Other(s) = kind {
+                        assert!(str::from_utf8(s.as_bytes()).is_ok(), "{s:?}");
+                    }
+                    data.iter().for_each(check);
+                }
+                Value::ServerError(err) => {
+                    assert!(str::from_utf8(err.code().as_bytes()).is_ok());
+                }
+                Value::Array(items) | Value::Set(items) => items.iter().for_each(check),
+                _ => {}
+            }
+        }
+
+        for byte in 0u8..=u8::MAX {
+            if byte == b'\r' || byte == b'\n' {
+                continue; // would re-frame the reply rather than exercise a `Str`
+            }
+            let b = &[byte][..];
+            let inputs: [Vec<u8>; 6] = [
+                [b"+x", b, b"y\r\n"].concat(),
+                [b"-ERR x", b, b"y\r\n"].concat(),
+                [b"!7\r\nERR x", b, b"y\r\n"].concat(),
+                [b"=7\r\ntxt:x", b, b"y\r\n"].concat(),
+                [b"=7\r\nx", b, b"y:abc\r\n"].concat(),
+                [b">2\r\n+x", b, b"y\r\n:1\r\n"].concat(),
+            ];
+            for input in inputs {
+                if let Ok(value) = parse_redis_value(&input) {
+                    check(&value);
+                }
+            }
+        }
     }
 
     #[cfg(feature = "aio")]
@@ -907,7 +1190,7 @@ mod tests {
         // not pin the whole response buffer alive. We check this by asserting
         // the detail bytes live outside the original buffer's allocation.
         use tokio_util::codec::Decoder;
-        let mut codec = ValueCodec;
+        let mut codec = ValueCodec::default();
         let mut buf = bytes::BytesMut::from(b"!21\r\nSYNTAX invalid syntax\r\n".as_slice());
         let base = buf.as_ptr() as usize;
         let cap = buf.capacity();
@@ -929,6 +1212,70 @@ mod tests {
             outside(err.details().expect("detail present")),
             "error detail is a slice into the reply buffer (frame-pinning regression)"
         );
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn chunked_decode_resumes_instead_of_rescanning() {
+        // A reply that arrives over many reads must be parsed once, not
+        // re-parsed from byte 0 on every read -- that is quadratic in the size
+        // of the reply.
+        //
+        // The check is direct: after every `decode`, the bytes the parser
+        // reports as consumed are overwritten with garbage. A parser that
+        // resumes never looks at them again and still returns the right shape;
+        // a parser that restarts trips over the garbage and errors out.
+        use tokio_util::codec::Decoder;
+
+        const ELEMENTS: usize = 200;
+        let element = |i: usize| format!("$8\r\nvalue{i:03}\r\n");
+
+        let mut codec = ValueCodec::default();
+        let mut buf = BytesMut::new();
+        let mut fed = 0;
+
+        let feed = |codec: &mut ValueCodec, buf: &mut BytesMut, chunk: &str| {
+            buf.extend_from_slice(chunk.as_bytes());
+            let parsed = codec.decode(buf).expect("consumed bytes were re-parsed");
+            // Everything delivered so far is part of the value in progress and
+            // has been consumed, so the parser must never read it again.
+            let poison = codec.state.committed;
+            buf[..poison].fill(b'!');
+            parsed
+        };
+
+        assert_eq!(feed(&mut codec, &mut buf, "*200\r\n"), None);
+        fed += "*200\r\n".len();
+        assert_eq!(codec.state.committed, fed, "array header was not consumed");
+
+        for i in 0..ELEMENTS - 1 {
+            let element = element(i);
+            assert_eq!(feed(&mut codec, &mut buf, &element), None);
+            fed += element.len();
+            assert_eq!(
+                codec.state.committed, fed,
+                "element {i} left bytes behind for a later call to re-scan"
+            );
+        }
+
+        // The last element completes the array.
+        buf.extend_from_slice(element(ELEMENTS - 1).as_bytes());
+        let value = codec
+            .decode(&mut buf)
+            .expect("consumed bytes were re-parsed")
+            .expect("array is complete");
+        let Value::Array(items) = value else {
+            panic!("expected an array");
+        };
+        assert_eq!(items.len(), ELEMENTS);
+        // Only the final element's bytes were never poisoned, so it is the one
+        // whose contents can still be asserted.
+        assert_eq!(
+            items[ELEMENTS - 1],
+            Value::BulkString(format!("value{:03}", ELEMENTS - 1).into())
+        );
+        assert_eq!(codec.state.committed, 0, "state was not reset");
+        assert!(buf.is_empty(), "buffer should be fully consumed");
     }
 
     #[test]
@@ -1011,6 +1358,43 @@ mod tests {
         match parse_redis_value(&ba) {
             Ok(_) => panic!("Expected ParseError"),
             Err(e) => assert_matches!(e.kind(), ErrorKind::Parse),
+        }
+    }
+    #[test]
+    fn multibyte_at_every_offset_round_trips_and_upholds_the_invariant() {
+        // Slide a multi-byte char across every offset of a fixed-length payload.
+        // An off-by-one in `range_of`/`StrRange::of` either changes the content
+        // (caught by the `assert_eq!`) or starts/ends the range inside a UTF-8
+        // sequence (caught by the `debug_assert!` in `slice_str`). This is the
+        // check the type system cannot make, since the offsets come from
+        // pointer arithmetic.
+        for ch in ['\u{e9}', '\u{20ac}', '\u{1F680}'] {
+            for offset in 0..8 {
+                let text = format!("{}{ch}{}", "a".repeat(offset), "b".repeat(7 - offset));
+
+                assert_eq!(
+                    parse_redis_value(format!("+{text}\r\n").as_bytes()).unwrap(),
+                    Value::SimpleString(Str::from(text.as_str())),
+                    "simple string, {ch:?} at offset {offset}"
+                );
+                assert_eq!(
+                    parse_redis_value(format!("={}\r\ntxt:{text}\r\n", 4 + text.len()).as_bytes())
+                        .unwrap(),
+                    Value::VerbatimString {
+                        format: VerbatimFormat::Text,
+                        text: Str::from(text.as_str()),
+                    },
+                    "verbatim string, {ch:?} at offset {offset}"
+                );
+                assert_eq!(
+                    parse_redis_value(format!("-ERR {text}\r\n").as_bytes()).unwrap(),
+                    Value::ServerError(ServerError(Repr::Known {
+                        kind: ServerErrorKind::ResponseError,
+                        detail: Some(Str::from(text.as_str())),
+                    })),
+                    "inline error detail, {ch:?} at offset {offset}"
+                );
+            }
         }
     }
 }

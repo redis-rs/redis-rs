@@ -149,6 +149,22 @@ fn report_allocations(payloads: &[(&'static str, Vec<u8>)]) {
     println!();
 }
 
+/// A reader that hands out at most `chunk` bytes per `read`, to simulate a
+/// reply arriving over many socket reads.
+struct Chunked<'a> {
+    data: &'a [u8],
+    chunk: usize,
+}
+
+impl std::io::Read for Chunked<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.data.len().min(self.chunk).min(buf.len());
+        buf[..n].copy_from_slice(&self.data[..n]);
+        self.data = &self.data[n..];
+        Ok(n)
+    }
+}
+
 fn bench_parse(c: &mut Criterion) {
     let payloads = payloads();
     report_allocations(&payloads);
@@ -166,5 +182,44 @@ fn bench_parse(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_parse);
+/// Parses one large reply that is delivered in small pieces, the way a real
+/// socket delivers it.
+///
+/// This is the case `parse_redis_value` above cannot see: the parser has to
+/// resume where it stopped on each read. If it instead restarts from the
+/// beginning of the buffer, cost becomes quadratic in the size of the reply and
+/// these timings blow up as `chunk` shrinks, while the whole-buffer benchmark
+/// stays flat.
+fn bench_parse_chunked(c: &mut Criterion) {
+    // ~1 MiB array of 5000 small bulk strings.
+    let payload = {
+        let mut v = Vec::new();
+        array_header(&mut v, 5000);
+        let data = vec![b'x'; 200];
+        for _ in 0..5000 {
+            bulk(&mut v, &data);
+        }
+        v
+    };
+
+    let mut group = c.benchmark_group("parse_chunked_1mb_array");
+    for chunk in [1024usize, 4 * 1024, 8 * 1024] {
+        group.throughput(Throughput::Bytes(payload.len() as u64));
+        group.bench_function(format!("chunk_{chunk}"), |b| {
+            b.iter(|| {
+                let mut parser = redis::Parser::new();
+                let value = parser
+                    .parse_value(Chunked {
+                        data: black_box(&payload),
+                        chunk,
+                    })
+                    .unwrap();
+                black_box(value);
+            })
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_parse, bench_parse_chunked);
 criterion_main!(benches);

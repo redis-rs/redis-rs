@@ -583,7 +583,6 @@ mod types {
         }
     }
 
-    #[cfg(feature = "bytes")]
     #[test]
     fn test_bytes() {
         use bytes::Bytes;
