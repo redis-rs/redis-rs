@@ -597,6 +597,15 @@ fn decode_value_range(
 ) -> RedisResult<Option<(ValueRange, usize)>> {
     let base = buffer.as_ptr() as usize;
     let committed = state.committed;
+    // A `ParseState` belongs to one buffer: resuming against a different (or
+    // truncated) one would silently mis-slice, so fail with a useful message
+    // instead of an opaque out-of-range panic below.
+    debug_assert!(
+        committed <= buffer.len(),
+        "resumed a parse against a buffer that lost the {committed} bytes already consumed \
+         (len is {})",
+        buffer.len()
+    );
     // `combine` picks up where it left off, so it is shown only the bytes it
     // has not consumed yet. This is the same token sequence it would have seen
     // had the consumed prefix been dropped from the buffer; `base` is still the
@@ -656,15 +665,25 @@ fn parse_final_value(buffer: &mut BytesMut, state: &mut ParseState) -> RedisResu
         let mut stream = combine::easy::Stream(combine::stream::MaybePartialStream(rest, false));
         match combine::stream::decode_tokio(value(base, None), &mut stream, &mut state.partial) {
             Ok((Some(value), removed_len)) => (value, committed + removed_len),
-            Ok((None, _)) => return Ok(None),
+            // Every exit from here on is terminal for this value, so the state
+            // is reset rather than left with `committed` and `partial`
+            // disagreeing about how far the parse got.
+            Ok((None, _)) => {
+                state.reset();
+                return Ok(None);
+            }
             // Input ended in the middle of a value: a truncated reply, not a
             // protocol error.
-            Err(ref err) if err.errors.iter().any(is_end_of_input) => return Ok(None),
+            Err(ref err) if err.errors.iter().any(is_end_of_input) => {
+                state.reset();
+                return Ok(None);
+            }
             Err(err) => {
                 let err = err
                     .map_position(|pos| committed + pos.translate_position(rest))
                     .map_range(|range| format!("{range:?}"))
                     .to_string();
+                state.reset();
                 return Err(RedisError::from(ParsingError::from(err)));
             }
         }
@@ -1035,6 +1054,79 @@ mod tests {
 
         // The null bulk string still parses.
         assert_eq!(parse_redis_value(b"$-1\r\n").unwrap(), Value::Nil);
+    }
+
+    #[test]
+    fn null_aggregates_and_empty_payloads() {
+        // `-1` lengths are the RESP2 null encodings and must not be confused
+        // with their empty counterparts.
+        assert_eq!(parse_redis_value(b"*-1\r\n").unwrap(), Value::Nil);
+        assert_eq!(parse_redis_value(b"~-1\r\n").unwrap(), Value::Nil);
+        assert_eq!(parse_redis_value(b"$-1\r\n").unwrap(), Value::Nil);
+        assert_eq!(parse_redis_value(b"_\r\n").unwrap(), Value::Nil);
+
+        assert_eq!(parse_redis_value(b"*0\r\n").unwrap(), Value::Array(vec![]));
+        assert_eq!(parse_redis_value(b"~0\r\n").unwrap(), Value::Set(vec![]));
+        assert_eq!(
+            parse_redis_value(b"$0\r\n\r\n").unwrap(),
+            Value::BulkString(Bytes::new())
+        );
+        assert_eq!(
+            parse_redis_value(b"+\r\n").unwrap(),
+            Value::SimpleString(Str::default())
+        );
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn codec_recovers_after_a_parse_error() {
+        // A parse error must leave no resumable state behind, so a codec that is
+        // handed a fresh buffer afterwards starts clean rather than resuming into
+        // the bytes of the reply that failed.
+        use tokio_util::codec::Decoder;
+
+        let mut codec = ValueCodec::default();
+        let mut buf = BytesMut::from(b"*2\r\n:1\r\n#x\r\n".as_slice());
+        assert_eq!(codec.decode(&mut buf).unwrap_err().kind(), ErrorKind::Parse);
+        assert_eq!(codec.state.committed, 0, "state outlived the failed value");
+
+        let mut next = BytesMut::from(b"+OK\r\n".as_slice());
+        assert_eq!(codec.decode(&mut next).unwrap(), Some(Value::Okay));
+    }
+
+    #[test]
+    fn sync_parser_resumes_across_single_byte_reads() {
+        // `Parser::parse_value` is the sync connection's read loop. Feeding it one
+        // byte at a time exercises resumption there, and reusing the same `Parser`
+        // for a second reply checks the state is reset between values.
+        struct OneByteAtATime<'a>(&'a [u8]);
+        impl Read for OneByteAtATime<'_> {
+            fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+                match self.0.split_first() {
+                    Some((byte, rest)) if !out.is_empty() => {
+                        out[0] = *byte;
+                        self.0 = rest;
+                        Ok(1)
+                    }
+                    _ => Ok(0),
+                }
+            }
+        }
+
+        let mut reader = OneByteAtATime(b"*2\r\n+h\xc3\xa9llo\r\n$5\r\nworld\r\n+second\r\n");
+        let mut parser = Parser::new();
+
+        assert_eq!(
+            parser.parse_value(&mut reader).unwrap(),
+            Value::Array(vec![
+                Value::SimpleString("héllo".into()),
+                Value::BulkString(Bytes::from_static(b"world")),
+            ])
+        );
+        assert_eq!(
+            parser.parse_value(&mut reader).unwrap(),
+            Value::SimpleString("second".into())
+        );
     }
 
     // The `unsafe` in `slice_str` rests on two halves: a `StrRange` can only be

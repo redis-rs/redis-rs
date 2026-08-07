@@ -196,18 +196,28 @@ the previous `Vec`/`String`-based one:
 | Array of 5000 small bulks    | 7509 → **16** (469×)         | 548 µs → 367 µs (1.5×)        |
 | Array of 500 × 1 KiB bulks   | 2022 → **11** (184×)         | 160.7 µs → 45.6 µs (**3.5×**) |
 | Array of 5000 simple strings | 7152 → **16** (447×)         | 411 µs → 263 µs (1.6×)        |
-| Map of 1000 key/value pairs  | 2933 → **13** (226×)         | 206 µs → 149 µs (1.4×)        |
+| Array of 1000 key/value pairs | 2933 → **13** (226×)        | 206 µs → 149 µs (1.4×)        |
 
-In short: **1.4×–4.1× faster parsing and 10×–470× fewer heap allocations**, with
-the largest wins on responses that contain many elements. Cloning a `Value` (or
-any `Str`/`BulkString` inside it) is now a reference-count bump rather than a
-deep copy.
+So **1.4×–4.1× faster and 10×–470× fewer heap allocations on large multi-element
+responses**, which is what these benchmarks cover. Small replies are a different
+story: the per-reply bookkeeping (one reference-counted frame per response) is a
+fixed cost that the saved allocations no longer pay for, so a single `+OK` or
+`:1` does not get faster and may be slightly slower. Cloning a `Value` (or any
+`Str`/`BulkString` inside it) is now a reference-count bump rather than a deep
+copy.
 
 ### Trade-offs to be aware of
 
+- **Peak read-buffer size:** a reply is now parsed out of one contiguous buffer
+  that cannot be drained until the reply is complete, so while a large response
+  is arriving the read buffer grows to hold all of it (roughly 1.4× the reply
+  size, since it grows by doubling). Previously the buffer stayed near the read
+  size. A 100 MB `LRANGE` therefore costs ~140 MB resident on that connection
+  while it streams in.
 - **Memory retention:** every `Bytes`/`Str` leaf is a reference-counted slice of
-  the response it arrived in, so holding on to one small field keeps that whole
-  response's buffer alive (one buffer per reply, not per connection). If you
+  the buffer it arrived in, so holding on to one small field keeps that whole
+  buffer alive — and because replies that arrive in the same read share one
+  allocation, that can be more than just the reply you kept a field from. If you
   extract a small piece of a large response and store it long-term, copy it out
   (e.g. `Vec::from(&bytes[..])` or `str.to_string()`). Server errors are already
   copied out by the parser for exactly this reason — storing an error never pins
