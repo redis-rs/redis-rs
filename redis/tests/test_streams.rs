@@ -378,7 +378,7 @@ fn test_assorted_2() {
     assert_eq!(data_reply.count(), 3);
 
     if let StreamPendingReply::Data(data) = data_reply {
-        assert_stream_pending_data(data)
+        assert_stream_pending_data(data);
     } else {
         panic!("Expected StreamPendingReply::Data but got Empty");
     }
@@ -804,10 +804,8 @@ fn test_xreadgroup_with_claim_option() {
     let consumer2 = "consumer2";
 
     // Create a consumer group and add 10 messages to the stream
-    assert!(
-        con.xgroup_create_mkstream(stream_name, group_name, "$")
-            .is_ok()
-    );
+    con.xgroup_create_mkstream(stream_name, group_name, "$")
+        .unwrap();
     xadd_keyrange(&mut con, stream_name, 0, 10);
 
     // Consumer1 reads all messages without acking them
@@ -906,10 +904,8 @@ fn test_xreadgroup_claim_with_idle_and_incoming_messages() {
     let consumer2 = "consumer2";
 
     // Create a consumer group and add 2 messages to the stream
-    assert!(
-        con.xgroup_create_mkstream(stream_name, group_name, "$")
-            .is_ok()
-    );
+    con.xgroup_create_mkstream(stream_name, group_name, "$")
+        .unwrap();
     xadd_keyrange(&mut con, stream_name, 0, 2);
 
     // Consumer1 reads the 2 messages without acking them (these will become idle pending messages)
@@ -1041,10 +1037,8 @@ fn test_xreadgroup_claim_multiple_streams() {
 
     // Create consumer groups for all three streams with 5 messages in each stream
     for stream_name in [stream1, stream2, stream3] {
-        assert!(
-            con.xgroup_create_mkstream(stream_name, group_name, "$")
-                .is_ok()
-        );
+        con.xgroup_create_mkstream(stream_name, group_name, "$")
+            .unwrap();
 
         xadd_keyrange(&mut con, stream_name, 0, 5);
     }

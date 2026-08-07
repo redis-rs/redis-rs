@@ -154,7 +154,7 @@ impl From<Output> for Value {
     fn from(value: Output) -> Self {
         match value {
             Output::Single(value) => value,
-            Output::Multi(values) => Value::Array(values),
+            Output::Multi(values) => Self::Array(values),
         }
     }
 }
@@ -539,7 +539,7 @@ where
     fn get_connection<'a>(
         &self,
         connections: &'a mut HashMap<NodeAddress, C>,
-        route: &Route,
+        route: Route,
     ) -> (NodeAddress, RedisResult<&'a mut C>) {
         let slots = self.slots.borrow();
         if let Some(addr) = slots.slot_addr_for_route(route, self.routing_strategy.as_deref()) {
@@ -574,7 +574,7 @@ where
 
         let addr_for_slot = |route: Route| -> RedisResult<NodeAddress> {
             let slot_addr = slots
-                .slot_addr_for_route(&route, self.routing_strategy.as_deref())
+                .slot_addr_for_route(route, self.routing_strategy.as_deref())
                 .ok_or((ErrorKind::Client, "Missing slot coverage"))?;
             Ok(slot_addr.clone())
         };
@@ -663,10 +663,8 @@ where
             .addresses_for_multi_slot(routes, self.routing_strategy.as_deref())
             .enumerate()
             .map(|(index, addr)| {
-                let addr = addr.ok_or(RedisError::from((
-                    ErrorKind::Io,
-                    "Couldn't find connection",
-                )))?;
+                let addr = addr
+                    .ok_or_else(|| RedisError::from((ErrorKind::Io, "Couldn't find connection")))?;
                 let connection = self.get_connection_by_addr(connections, addr)?;
                 let (_, indices) = routes.get(index).unwrap();
                 let cmd =
@@ -707,13 +705,13 @@ where
                 }
 
                 last_result
-                    .ok_or(
+                    .ok_or_else(|| {
                         (
                             ErrorKind::ClusterConnectionNotFound,
                             "No results received for multi-node operation",
                         )
-                            .into(),
-                    )
+                            .into()
+                    })
                     .map(|(_, res)| res)
             }
             Some(ResponsePolicy::OneSucceeded) => {
@@ -844,7 +842,7 @@ where
                             get_random_connection_or_error(&mut connections)
                         }
                         SingleNodeRoutingInfo::SpecificNode(route) => {
-                            self.get_connection(&mut connections, route)
+                            self.get_connection(&mut connections, *route)
                         }
                         SingleNodeRoutingInfo::ByAddress { host, port } => {
                             let address = NodeAddress::new(host.as_str(), *port);
@@ -852,7 +850,7 @@ where
                             (address, conn)
                         }
                         SingleNodeRoutingInfo::RandomPrimary => {
-                            self.get_connection(&mut connections, &Route::new_random_primary())
+                            self.get_connection(&mut connections, Route::new_random_primary())
                         }
                     }
                 };
@@ -1116,8 +1114,8 @@ struct NodeCmd {
 }
 
 impl NodeCmd {
-    fn new(a: NodeAddress) -> NodeCmd {
-        NodeCmd {
+    fn new(a: NodeAddress) -> Self {
+        Self {
             indexes: vec![],
             pipe: vec![],
             addr: a,

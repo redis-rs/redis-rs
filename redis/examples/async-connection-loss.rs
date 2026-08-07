@@ -70,6 +70,6 @@ async fn main() -> RedisResult<()> {
     match mode {
         Mode::Default => run_multi(client.get_multiplexed_async_connection().await?).await?,
         Mode::Reconnect => run_multi(client.get_connection_manager().await?).await?,
-    };
+    }
     Ok(())
 }

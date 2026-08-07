@@ -1271,7 +1271,7 @@ pub mod bb8_pool_tests {
 
         // since max_size is 5 and we haven't freed any connection this try should fail
         let try_conn = pool.get().await;
-        assert!(try_conn.is_err());
+        try_conn.unwrap_err();
 
         let mut client_id_set = HashSet::new();
 
@@ -1292,11 +1292,11 @@ pub mod bb8_pool_tests {
                 .query_async(&mut *conn)
                 .await
                 .unwrap();
-            assert_is_master_role(info)
+            assert_is_master_role(info);
         }
 
         // since previous connections are freed, this should work
         let try_conn = pool.get().await;
-        assert!(try_conn.is_ok());
+        try_conn.unwrap();
     }
 }

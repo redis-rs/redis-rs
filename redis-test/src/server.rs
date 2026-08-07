@@ -58,15 +58,15 @@ pub struct RedisServer {
 }
 
 impl ServerType {
-    fn get_intended() -> ServerType {
+    fn get_intended() -> Self {
         match env::var("REDISRS_SERVER_TYPE")
             .ok()
             .as_ref()
             .map(|x| &x[..])
         {
-            Some("tcp+tls") => ServerType::Tcp { tls: true },
-            Some("unix") => ServerType::Unix,
-            Some("tcp") | None => ServerType::Tcp { tls: false },
+            Some("tcp+tls") => Self::Tcp { tls: true },
+            Some("unix") => Self::Unix,
+            Some("tcp") | None => Self::Tcp { tls: false },
             Some(val) => {
                 panic!("Unknown server type {val:?}");
             }
@@ -76,7 +76,7 @@ impl ServerType {
 
 impl Drop for RedisServer {
     fn drop(&mut self) {
-        self.stop()
+        self.stop();
     }
 }
 
@@ -87,12 +87,12 @@ impl Default for RedisServer {
 }
 
 impl RedisServer {
-    pub fn new() -> RedisServer {
-        RedisServer::with_modules(&[], false)
+    pub fn new() -> Self {
+        Self::with_modules(&[], false)
     }
 
-    pub fn new_with_mtls() -> RedisServer {
-        RedisServer::with_modules(&[], true)
+    pub fn new_with_mtls() -> Self {
+        Self::with_modules(&[], true)
     }
 
     pub fn log_file_contents(&self) -> Option<String> {
@@ -122,13 +122,13 @@ impl RedisServer {
         }
     }
 
-    pub fn with_modules(modules: &[Module], mtls_enabled: bool) -> RedisServer {
+    pub fn with_modules(modules: &[Module], mtls_enabled: bool) -> Self {
         // this is technically a race but we can't do better with
         // the tools that redis gives us :(
         let redis_port = get_random_available_port();
-        let addr = RedisServer::get_addr(redis_port);
+        let addr = Self::get_addr(redis_port);
 
-        RedisServer::new_with_addr_tls_modules_and_spawner(
+        Self::new_with_addr_tls_modules_and_spawner(
             addr,
             None,
             None,
@@ -146,8 +146,8 @@ impl RedisServer {
         addr: redis::ConnectionAddr,
         modules: &[Module],
         mtls_enabled: bool,
-    ) -> RedisServer {
-        RedisServer::new_with_addr_tls_modules_and_spawner(
+    ) -> Self {
+        Self::new_with_addr_tls_modules_and_spawner(
             addr,
             None,
             None,
@@ -171,7 +171,7 @@ impl RedisServer {
         cert_auth_field: Option<&str>,
         modules: &[Module],
         spawner: F,
-    ) -> RedisServer {
+    ) -> Self {
         let bin = env::var("REDISRS_SERVER_BIN").unwrap_or_else(|_| "redis-server".to_string());
         let mut redis_cmd = process::Command::new(&bin);
 
@@ -215,7 +215,7 @@ impl RedisServer {
 
                     redis_cmd.arg("--loadmodule").arg(path);
                 }
-            };
+            }
         }
 
         redis_cmd
@@ -238,7 +238,7 @@ impl RedisServer {
                     .arg("--bind")
                     .arg(bind);
 
-                RedisServer {
+                Self {
                     process: spawner(&mut redis_cmd),
                     log_file,
                     tempdir,
@@ -285,7 +285,7 @@ impl RedisServer {
                     tls_params: None,
                 };
 
-                RedisServer {
+                Self {
                     process: spawner(&mut redis_cmd),
                     log_file,
                     tempdir,
@@ -299,7 +299,7 @@ impl RedisServer {
                     .arg("0")
                     .arg("--unixsocket")
                     .arg(path);
-                RedisServer {
+                Self {
                     process: spawner(&mut redis_cmd),
                     log_file,
                     tempdir,

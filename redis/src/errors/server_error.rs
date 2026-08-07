@@ -38,7 +38,7 @@ pub enum ServerErrorKind {
 }
 
 impl ServerErrorKind {
-    pub(crate) fn code(&self) -> &'static str {
+    pub(crate) fn code(self) -> &'static str {
         match self {
             Self::ResponseError => "ERR",
             Self::ExecAbort => "EXECABORT",
@@ -57,7 +57,7 @@ impl ServerErrorKind {
         }
     }
 
-    pub(crate) fn retry_method(&self) -> RetryMethod {
+    pub(crate) fn retry_method(self) -> RetryMethod {
         match self {
             Self::Moved => RetryMethod::MovedRedirect,
             Self::Ask => RetryMethod::AskRedirect,

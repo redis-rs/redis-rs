@@ -17,15 +17,11 @@ pub struct TestSentinelContext {
 }
 
 impl TestSentinelContext {
-    pub fn new(nodes: u16, replicas: u16, sentinels: u16) -> TestSentinelContext {
+    pub fn new(nodes: u16, replicas: u16, sentinels: u16) -> Self {
         Self::new_with_cluster_client_builder(nodes, replicas, sentinels)
     }
 
-    pub fn new_with_cluster_client_builder(
-        nodes: u16,
-        replicas: u16,
-        sentinels: u16,
-    ) -> TestSentinelContext {
+    pub fn new_with_cluster_client_builder(nodes: u16, replicas: u16, sentinels: u16) -> Self {
         start_tls_crypto_provider();
         let cluster = RedisSentinelCluster::new(nodes, replicas, sentinels);
         let initial_nodes: Vec<ConnectionInfo> = cluster
@@ -35,7 +31,7 @@ impl TestSentinelContext {
         let sentinel = redis::sentinel::Sentinel::build(initial_nodes.clone());
         let sentinel = sentinel.unwrap();
 
-        let mut context = TestSentinelContext {
+        let mut context = Self {
             cluster,
             sentinel,
             sentinels_connection_info: initial_nodes,

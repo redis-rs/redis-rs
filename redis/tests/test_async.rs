@@ -150,7 +150,7 @@ mod basic_async {
                 )
                 .await
                 .unwrap();
-            test(conn).await
+            test(conn).await;
         };
     }
 
@@ -701,7 +701,7 @@ mod basic_async {
                 assert!(b);
             })
             .await
-            .unwrap()
+            .unwrap();
     }
 
     // Allowing `nth(0)` for similarity with the following `nth(1)`.
@@ -883,7 +883,7 @@ mod basic_async {
                         return Err(u64::from_redis_value(v).unwrap_err());
                     }
 
-                    Ok(Container(text))
+                    Ok(Self(text))
                 }
             }
 
@@ -912,7 +912,7 @@ mod basic_async {
                         panic!("Encountered multiple errors");
                     }
                     Err(e) => error = Some(e.kind()),
-                };
+                }
             }
 
             // Assert that the number of visited keys is all keys minus
@@ -1996,7 +1996,7 @@ mod basic_async {
             drop(ctx);
 
             let result: RedisResult<String> = manager.get("key").await;
-            assert!(result.is_err());
+            result.unwrap_err();
 
             let _ctx = TestContext::new_with_addr(addr);
 

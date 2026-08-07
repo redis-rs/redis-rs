@@ -51,7 +51,7 @@ impl ShardedLRU {
             shards.push(std::sync::Mutex::new(shard));
         }
         let statistics = Arc::new(Statistics::default());
-        ShardedLRU {
+        Self {
             shards,
             statistics,
             last_epoch: AtomicUsize::new(0),
@@ -85,7 +85,7 @@ impl ShardedLRU {
                 self.statistics.increase_miss(1);
                 lru_cache.pop(redis_key);
                 return None;
-            };
+            }
             // Found redis key in cache, but KEY,CMD combination also must be in the cache otherwise, it will be fetched from server.
             for entry in &cache_item.value_list {
                 if entry.cmd == redis_cmd {
