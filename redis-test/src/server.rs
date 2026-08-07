@@ -64,13 +64,12 @@ impl ServerType {
             .as_ref()
             .map(|x| &x[..])
         {
-            Some("tcp") => ServerType::Tcp { tls: false },
             Some("tcp+tls") => ServerType::Tcp { tls: true },
             Some("unix") => ServerType::Unix,
+            Some("tcp") | None => ServerType::Tcp { tls: false },
             Some(val) => {
                 panic!("Unknown server type {val:?}");
             }
-            None => ServerType::Tcp { tls: false },
         }
     }
 }
@@ -318,8 +317,9 @@ impl RedisServer {
 
     pub fn host_and_port(&self) -> Option<(&str, u16)> {
         match &self.addr {
-            ConnectionAddr::Tcp(host, port) => Some((host, *port)),
-            ConnectionAddr::TcpTls { host, port, .. } => Some((host, *port)),
+            ConnectionAddr::Tcp(host, port) | ConnectionAddr::TcpTls { host, port, .. } => {
+                Some((host, *port))
+            }
             _ => None,
         }
     }

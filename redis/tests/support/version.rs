@@ -35,7 +35,7 @@ pub struct ComponentMatcher<'a> {
     conjunctive_parts: Vec<Vec<Component<'a>>>,
 }
 
-impl<'a> ComponentMatcher<'a> {
+impl ComponentMatcher<'_> {
     /// Checks if this matcher matches the given available components
     ///
     /// # Arguments

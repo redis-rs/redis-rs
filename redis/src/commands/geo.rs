@@ -244,8 +244,7 @@ impl ToRedisArgs for RadiusOptions {
             n += 2;
         }
         match self.order {
-            RadiusOrder::Asc => n += 1,
-            RadiusOrder::Desc => n += 1,
+            RadiusOrder::Asc | RadiusOrder::Desc => n += 1,
             _ => {}
         };
         n += 1 + self.store.as_ref().map(|v| v.len()).unwrap_or(0);

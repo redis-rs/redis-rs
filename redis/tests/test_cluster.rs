@@ -1134,7 +1134,7 @@ mod cluster {
         drop(cluster);
 
         // recreate cluster
-        let _cluster: RedisCluster = RedisCluster::new(RedisClusterConfiguration {
+        let _cluster = RedisCluster::new(RedisClusterConfiguration {
             ports,
             ..Default::default()
         });

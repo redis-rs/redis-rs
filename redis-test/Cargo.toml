@@ -29,3 +29,6 @@ redis = { version = "1", path = "../redis", features = [
     "tokio-comp",
 ] }
 tokio = { workspace = true }
+
+[lints]
+workspace = true

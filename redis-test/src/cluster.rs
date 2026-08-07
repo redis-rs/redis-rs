@@ -67,12 +67,11 @@ impl ClusterType {
             .as_ref()
             .map(|x| &x[..])
         {
-            Some("tcp") => ClusterType::Tcp,
             Some("tcp+tls") => ClusterType::TcpTls,
+            Some("tcp") | None => ClusterType::Tcp,
             Some(val) => {
                 panic!("Unknown server type {val:?}");
             }
-            None => ClusterType::Tcp,
         }
     }
 
@@ -279,7 +278,7 @@ impl RedisCluster {
                     match verify_server(&mut server) {
                         Ok(_) => {
                             let addr = format!("127.0.0.1:{port}");
-                            addrs.push(addr.clone());
+                            addrs.push(addr);
                             return server;
                         }
                         Err(err) => eprintln!("{err}"),

@@ -301,3 +301,6 @@ required-features = ["tokio-comp", "cache-aio"]
 [[example]]
 name = "latency-aware-routing"
 required-features = ["cluster-async", "tokio-comp"]
+
+[lints]
+workspace = true

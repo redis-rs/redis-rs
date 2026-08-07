@@ -8,10 +8,14 @@ use std::ops::Add;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub(crate) enum PrepareCacheResult<'a> {
+pub(crate) enum PrepCacheItem<'a> {
     Cached(Value),
     NotCached(CacheableCommand<'a>),
     NotCacheable,
+}
+
+pub(crate) enum CachingResult<'a> {
+    Item(PrepCacheItem<'a>),
     Ignored,
 }
 
@@ -84,7 +88,7 @@ impl CacheManager {
         }
     }
 
-    pub(crate) fn get_cached_cmd<'a>(&self, cmd: &'a Cmd) -> PrepareCacheResult<'a> {
+    pub(crate) fn get_cached_cmd<'a>(&self, cmd: &'a Cmd) -> PrepCacheItem<'a> {
         match self.cache_config.mode {
             CacheMode::All => self.get_cached_cmd_inner(cmd),
             CacheMode::OptIn => {
@@ -95,7 +99,7 @@ impl CacheManager {
                 if has_opt_in {
                     self.get_cached_cmd_inner(cmd)
                 } else {
-                    PrepareCacheResult::NotCacheable
+                    PrepCacheItem::NotCacheable
                 }
             }
         }
@@ -181,7 +185,7 @@ impl CacheManager {
         command_name_str: &'a str,
         single_command_name: &[u8],
         client_side_expire: Instant,
-    ) -> PrepareCacheResult<'a> {
+    ) -> PrepCacheItem<'a> {
         let mut commands = Vec::new();
         let mut tail_args: Vec<&'a [u8]> = Vec::new();
         let mut response = Vec::new();
@@ -198,10 +202,10 @@ impl CacheManager {
         );
 
         if commands.is_empty() {
-            return PrepareCacheResult::Cached(Value::Array(response));
+            return PrepCacheItem::Cached(Value::Array(response));
         }
 
-        PrepareCacheResult::NotCached(CacheableCommand::Multiple {
+        PrepCacheItem::NotCached(CacheableCommand::Multiple {
             command_name: command_name_str,
             commands,
             response,
@@ -214,19 +218,19 @@ impl CacheManager {
         &self,
         cmd: &'a Cmd,
         client_side_expire: Instant,
-    ) -> PrepareCacheResult<'a> {
+    ) -> PrepCacheItem<'a> {
         let redis_key = match cmd.arg_idx(1) {
             Some(key) => key,
-            None => return PrepareCacheResult::NotCacheable,
+            None => return PrepCacheItem::NotCacheable,
         };
 
         let cmd_key = cmd.data.as_slice();
 
         if let Some(value) = self.get(redis_key, cmd_key) {
-            return PrepareCacheResult::Cached(value);
+            return PrepCacheItem::Cached(value);
         }
 
-        PrepareCacheResult::NotCached(CacheableCommand::Single(
+        PrepCacheItem::NotCached(CacheableCommand::Single(
             crate::caching::cmd::SingleCachedCommand {
                 redis_key,
                 cmd_key,
@@ -237,18 +241,18 @@ impl CacheManager {
     }
 
     /// Checks if there is enough information to resolve Cmd exists in cache,
-    /// if it exists then returns PrepareCacheResult::Cached.
+    /// if it exists then returns PrepCacheItem::Cached.
     /// If there isn't enough information in cache but Cmd is cacheable then packs enough information
-    /// into CacheableCommand and returns PrepareCacheResult::NotCached.
-    /// If Cmd doesn't support client side caching then it returns PrepareCacheResult::NotCacheable.
-    fn get_cached_cmd_inner<'a>(&self, cmd: &'a Cmd) -> PrepareCacheResult<'a> {
+    /// into CacheableCommand and returns PrepCacheItem::NotCached.
+    /// If Cmd doesn't support client side caching then it returns PrepCacheItem::NotCacheable.
+    fn get_cached_cmd_inner<'a>(&self, cmd: &'a Cmd) -> PrepCacheItem<'a> {
         if cmd_len(cmd) < 2 {
-            return PrepareCacheResult::NotCacheable;
+            return PrepCacheItem::NotCacheable;
         }
 
         let command_name = match cmd.arg_idx(0) {
             Some(name) => name,
-            None => return PrepareCacheResult::NotCacheable,
+            None => return PrepCacheItem::NotCacheable,
         };
 
         let client_side_expire = self.calculate_expiration_time(cmd);
@@ -266,7 +270,7 @@ impl CacheManager {
             return self.handle_single_key_command(cmd, client_side_expire);
         }
 
-        PrepareCacheResult::NotCacheable
+        PrepCacheItem::NotCacheable
     }
 
     /// Creates new Pipeline and stores enough information in CacheablePipeline
@@ -281,24 +285,22 @@ impl CacheManager {
 
         for (idx, cmd) in requested_pipeline.commands.iter().enumerate() {
             if requested_pipeline.ignored_commands.contains(&idx) {
-                commands.push(PrepareCacheResult::Ignored);
+                commands.push(CachingResult::Ignored);
                 packed_pipeline.add_command(cmd.clone());
                 continue;
             }
             let cacheable_command = self.get_cached_cmd(cmd);
             match cacheable_command {
-                PrepareCacheResult::Cached(_) => {}
-                PrepareCacheResult::NotCached(ref cc) => {
+                PrepCacheItem::Cached(_) => {}
+                PrepCacheItem::NotCached(ref cc) => {
                     cc.pack_command(self, &mut packed_pipeline);
                 }
-                PrepareCacheResult::NotCacheable => {
+                PrepCacheItem::NotCacheable => {
                     // It must be added to packed_pipeline manually, since it's not packed via pack_command.
                     packed_pipeline.add_command(cmd.clone());
                 }
-                // PrepareCacheResult::Ignored shouldn't return by get_cached_cmd
-                _ => panic!("Unexpected result is given from get_cached_cmd"),
             };
-            commands.push(cacheable_command);
+            commands.push(CachingResult::Item(cacheable_command));
         }
 
         let pipeline_response_counts = if transaction_mode {

@@ -44,8 +44,8 @@ fn assert_replica_role_and_master_addr(replication_info: String, expected_master
     assert_eq!(info_map.get("role"), Some(&"slave"));
 
     let (master_host, master_port) = match expected_master.addr() {
-        ConnectionAddr::Tcp(host, port) => (host, port),
-        ConnectionAddr::TcpTls {
+        ConnectionAddr::Tcp(host, port)
+        | ConnectionAddr::TcpTls {
             host,
             port,
             insecure: _,
@@ -500,7 +500,7 @@ fn test_sentinel_client_not_sentinel_error() {
         .cluster
         .servers
         .iter()
-        .map(|redis_server| redis_server.connection_info().clone())
+        .map(|redis_server| redis_server.connection_info())
         .collect::<Vec<_>>();
     let mut master_client = SentinelClient::build(
         context.sentinels_connection_info().clone(),
@@ -876,7 +876,7 @@ pub mod async_tests {
             .cluster
             .servers
             .iter()
-            .map(|redis_server| redis_server.connection_info().clone())
+            .map(|redis_server| redis_server.connection_info())
             .collect::<Vec<_>>();
         let mut master_client = SentinelClient::build(
             context.sentinels_connection_info().clone(),

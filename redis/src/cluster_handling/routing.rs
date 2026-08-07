@@ -582,16 +582,16 @@ impl ResponsePolicy {
             // This isn't based on response_tips, but on the discussion here - https://github.com/redis/redis/issues/12410
             b"RANDOMKEY" => Some(ResponsePolicy::FirstSucceededNonEmptyOrAllEmpty),
 
-            b"LATENCY GRAPH" | b"LATENCY HISTOGRAM" | b"LATENCY HISTORY" | b"LATENCY DOCTOR"
-            | b"LATENCY LATEST" => Some(ResponsePolicy::Special),
-
-            b"FUNCTION STATS" => Some(ResponsePolicy::Special),
-
-            b"MEMORY MALLOC-STATS" | b"MEMORY DOCTOR" | b"MEMORY STATS" => {
-                Some(ResponsePolicy::Special)
-            }
-
-            b"INFO" => Some(ResponsePolicy::Special),
+            b"LATENCY GRAPH"
+            | b"LATENCY HISTOGRAM"
+            | b"LATENCY HISTORY"
+            | b"LATENCY DOCTOR"
+            | b"LATENCY LATEST"
+            | b"FUNCTION STATS"
+            | b"MEMORY MALLOC-STATS"
+            | b"MEMORY DOCTOR"
+            | b"MEMORY STATS"
+            | b"INFO" => Some(ResponsePolicy::Special),
 
             _ => None,
         }

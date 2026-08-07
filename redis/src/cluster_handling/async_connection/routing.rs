@@ -99,16 +99,16 @@ impl<C> From<SingleNodeRoutingInfo> for InternalSingleNodeRouting<C> {
 pub(super) fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Option<Route>> {
     fn route_for_command(cmd: &Cmd) -> Option<Route> {
         match RoutingInfo::for_routable(cmd) {
-            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => None,
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
                 Some(route)
             }
-            Some(RoutingInfo::MultiNode(_)) => None,
-            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress { .. })) => None,
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::RandomPrimary)) => {
                 Some(Route::new_random_primary())
             }
-            None => None,
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+            | Some(RoutingInfo::MultiNode(_))
+            | Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress { .. }))
+            | None => None,
         }
     }
 

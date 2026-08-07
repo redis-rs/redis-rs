@@ -1,6 +1,6 @@
 use super::{AsyncPushSender, ConnectionLike, Runtime, SharedHandleContainer, TaskHandle};
 #[cfg(feature = "cache-aio")]
-use crate::caching::{CacheManager, CacheStatistics, PrepareCacheResult};
+use crate::caching::{CacheManager, CacheStatistics, PrepCacheItem};
 use crate::{
     AsyncConnectionConfig, ProtocolVersion, PushInfo, RedisConnectionInfo, ServerError,
     ToRedisArgs,
@@ -770,8 +770,8 @@ impl MultiplexedConnection {
         #[cfg(feature = "cache-aio")]
         if let Some(cache_manager) = &self.cache_manager {
             match cache_manager.get_cached_cmd(cmd) {
-                PrepareCacheResult::Cached(value) => return Ok(value),
-                PrepareCacheResult::NotCached(cacheable_command) => {
+                PrepCacheItem::Cached(value) => return Ok(value),
+                PrepCacheItem::NotCached(cacheable_command) => {
                     let mut pipeline = crate::Pipeline::new();
                     cacheable_command.pack_command(cache_manager, &mut pipeline);
 
@@ -792,7 +792,7 @@ impl MultiplexedConnection {
                     let replies: Vec<Value> = crate::types::from_redis_value(result)?;
                     return cacheable_command.resolve(cache_manager, replies.into_iter());
                 }
-                _ => (),
+                PrepCacheItem::NotCacheable => (),
             }
         }
         self.pipeline

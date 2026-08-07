@@ -467,8 +467,7 @@ impl Value {
     /// Returns an `&[Value]` if `self` is compatible with a sequence type
     pub fn as_sequence(&self) -> Option<&[Value]> {
         match self {
-            Value::Array(items) => Some(&items[..]),
-            Value::Set(items) => Some(&items[..]),
+            Value::Array(items) | Value::Set(items) => Some(&items[..]),
             Value::Nil => Some(&[]),
             _ => None,
         }
@@ -478,8 +477,7 @@ impl Value {
     /// otherwise returns `Err(self)`.
     pub fn into_sequence(self) -> Result<Vec<Value>, Value> {
         match self {
-            Value::Array(items) => Ok(items),
-            Value::Set(items) => Ok(items),
+            Value::Array(items) | Value::Set(items) => Ok(items),
             Value::Nil => Ok(vec![]),
             _ => Err(self),
         }
@@ -552,9 +550,8 @@ impl Value {
 
     fn is_collection_of_len(&self, len: usize) -> bool {
         match self {
-            Value::Array(values) => values.len() == len,
+            Value::Array(values) | Value::Set(values) => values.len() == len,
             Value::Map(items) => items.len() * 2 == len,
-            Value::Set(values) => values.len() == len,
             _ => false,
         }
     }
