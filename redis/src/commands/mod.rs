@@ -3,6 +3,8 @@
 use crate::cmd::{Cmd, Iter, cmd};
 use crate::connection::{Connection, ConnectionLike, Msg, RedisConnectionInfo};
 use crate::pipeline::Pipeline;
+#[cfg(feature = "search_unfinished")]
+use crate::search::{CreateOptions, NonEmpty, SearchSchema};
 use crate::types::{
     ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, IntegerReplyOrNoOp,
     NumericBehavior, RedisResult, RedisWrite, SetExpiry, ToRedisArgs, ToSingleRedisArg,
@@ -2944,6 +2946,54 @@ implement_commands! {
         options: &'a streams::StreamConfigOptions
     ) -> String {
         cmd("XCFGSET").arg(key).arg(options).take()
+    }
+
+    // Search commands
+
+    /// Create a search index.
+    ///
+    /// ```text
+    /// FT.CREATE index [ON HASH | JSON] [PREFIX count prefix [prefix ...]] [FILTER {filter}]
+    /// [LANGUAGE default_lang] [LANGUAGE_FIELD lang_attribute]
+    /// [SCORE default_score] [SCORE_FIELD score_attribute]
+    /// [PAYLOAD_FIELD payload_attribute] [MAXTEXTFIELDS] [TEMPORARY seconds]
+    /// [NOOFFSETS] [NOHL] [NOFIELDS] [NOFREQS]
+    /// [STOPWORDS count [stopword ...]] [SKIPINITIALSCAN]
+    /// SCHEMA field_name [AS alias] TEXT | TAG | NUMERIC | GEO | VECTOR | GEOSHAPE [ SORTABLE [UNF]]
+    /// [NOINDEX] [ field_name [AS alias] TEXT | TAG | NUMERIC | GEO | VECTOR | GEOSHAPE [ SORTABLE [UNF]] [NOINDEX] ...]
+    /// ```
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use redis::{schema, Commands, search::*};
+    ///
+    /// # fn example() -> redis::RedisResult<String> {
+    /// # let client = redis::Client::open("redis://127.0.0.1/")?;
+    /// # let mut con = client.get_connection()?;
+    /// let schema = schema! {
+    ///     "title" => SchemaTextField::new().weight(2.0),
+    ///     "subtitle" => SchemaTextField::new()
+    /// };
+    ///
+    /// let options = CreateOptions::new()
+    ///     .on(IndexDataType::Hash)
+    ///     .prefix("product:");
+    ///
+    /// let result: String = con.ft_create("products", &options, &schema)?;
+    /// # Ok(result)
+    /// # }
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/ft.create)
+    #[cfg(feature = "search_unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "search_unfinished")))]
+    fn ft_create<K: ToSingleRedisArg>(
+        index_name: K,
+        options: &'a CreateOptions,
+        schema: &'a SearchSchema<NonEmpty>
+    ) -> (String) {
+        cmd("FT.CREATE").arg(index_name).arg(options).arg("SCHEMA").arg(schema).take()
     }
 
     // script commands
