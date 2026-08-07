@@ -301,3 +301,11 @@ required-features = ["tokio-comp", "cache-aio"]
 [[example]]
 name = "latency-aware-routing"
 required-features = ["cluster-async", "tokio-comp"]
+
+[lints.clippy]
+all = "warn"
+perf = "warn"               # Critical for a fast I/O library
+style = "warn"              # Enforces idiomatic Rust styles
+dbg_macro = "warn"          # Never leak debug macros to production
+rc_buffer = "warn"          # Buffers (like Vec) shouldn't be wrapped in Rc/Arc
+read_zero_byte_vec = "warn" # Prevents infinite socket reading bugs
