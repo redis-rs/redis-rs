@@ -216,13 +216,10 @@ deep copy.
   `from_redis_value::<Vec<u8>>` now perform their copy at conversion time rather
   than at parse time (the total number of copies is unchanged — one). Code that
   reads payloads by reference performs no copy at all.
-- **Fragmented arrival of huge multi-element responses:** the parser re-parses
-  the buffered prefix when a response arrives across many reads (parse state is
-  not kept between reads, which is what makes the zero-copy offsets sound).
-  For typical responses over typical networks this is a handful of cheap
-  attempts; a response with a very large number of elements arriving in many
-  small fragments does more repeated work than before. Bulk-string payloads are
-  skipped in O(1) regardless of size.
+- **Lossy UTF-8 decoding is now strict:** verbatim strings and blob errors were
+  previously decoded with `from_utf8_lossy`, silently substituting U+FFFD for
+  invalid bytes. They are now validated, so a non-UTF-8 payload in one of those
+  reply types fails the reply with a parse error instead of being corrupted.
 
 ### Removed `zinterstore_*` and `zunionstore_*` commands in favor of `zinterstore`, `zinterstore_with_weights`, `zunionstore`, and `zunionstore_with_weights`
 

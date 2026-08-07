@@ -167,13 +167,7 @@ aio = [
   "dep:tokio-util",
   "dep:async-lock",
   "tokio-util/codec",
-  # `parse_redis_value_async` reads through `AsyncReadExt::read_buf`, which is
-  # what lets it fill the buffer's spare capacity without an intermediate copy.
-  # Both `AsyncReadExt` and `read_buf` are gated behind tokio's `io-util`, and
-  # nothing else in this feature list enables it (`tokio-util/codec` is
-  # feature-less, and `combine/tokio` takes tokio with default-features = false).
-  # Careful: `cargo tree` shows `io-util` on regardless, because our
-  # dev-dependency on tokio enables it -- that only covers test/bench builds.
+  # for `AsyncReadExt::read_buf`, used by `parse_redis_value_async`
   "tokio/io-util",
   "combine/tokio",
   "dep:cfg-if",

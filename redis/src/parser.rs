@@ -90,23 +90,44 @@ fn range_of(slice: &[u8], base: usize) -> Range<usize> {
     start..start + slice.len()
 }
 
-/// The offset range of a buffer sub-slice that is known to hold valid UTF-8.
-///
-/// This is the only range type [`slice_str`] accepts, and [`StrRange::of`] is
-/// its only constructor. That constructor takes a `&str`, so the *type* is the
-/// proof: every `&str` in this parser comes out of a `str::from_utf8` call (see
-/// `line`, `verbatim` and `blob_error` in [`value`]), and safe Rust cannot hand
-/// out a `&str` that is not valid UTF-8. A new `Str`-valued reply kind therefore
-/// cannot reach the `unsafe` in `slice_str` without going through a UTF-8 check.
-struct StrRange(Range<usize>);
+use str_range::StrRange;
 
-impl StrRange {
-    /// Records the offset range of `s` within the buffer that starts at `base`.
+/// Wraps [`StrRange`] so that its field is unreachable from the rest of this
+/// module: the only way to build one is [`StrRange::of`], which requires a
+/// `&str`.
+mod str_range {
+    use super::range_of;
+    use std::ops::Range;
+
+    /// The offset range of a buffer sub-slice that is known to hold valid UTF-8.
     ///
-    /// `s` must be a sub-slice of that buffer (same requirement as [`range_of`]).
-    #[inline]
-    fn of(s: &str, base: usize) -> Self {
-        StrRange(range_of(s.as_bytes(), base))
+    /// This is the only range type `slice_str` accepts, which is what makes its
+    /// `unsafe` sound. Two things have to hold, and the type only carries the
+    /// first:
+    ///
+    /// - **Valid UTF-8** — guaranteed. [`StrRange::of`] takes a `&str`, and safe
+    ///   Rust cannot produce a `&str` that is not valid UTF-8. Every `&str` in
+    ///   this parser comes out of a `str::from_utf8` call (`line`, `verbatim`,
+    ///   `blob_error`), so a new `Str`-valued reply kind cannot skip the check.
+    /// - **Provenance** — *not* checked by the type. `of` erases the borrow into
+    ///   an offset against a bare `base` address, so passing a `&str` that does
+    ///   not point into the buffer yields a meaningless range. `slice_str`
+    ///   re-validates in debug builds to catch that.
+    pub(super) struct StrRange(Range<usize>);
+
+    impl StrRange {
+        /// Records the offset range of `s` within the buffer that starts at `base`.
+        ///
+        /// `s` must be a sub-slice of that buffer.
+        #[inline]
+        pub(super) fn of(s: &str, base: usize) -> Self {
+            StrRange(range_of(s.as_bytes(), base))
+        }
+
+        #[inline]
+        pub(super) fn into_range(self) -> Range<usize> {
+            self.0
+        }
     }
 }
 
@@ -140,24 +161,14 @@ fn err_parser(line: &str, base: usize) -> ServerErrorRange {
     }
 }
 
-// ------------------------------------------------------------------
-// Materialization: `ValueRange` + the response buffer -> `Value`.
-// ------------------------------------------------------------------
-
 /// Slices `frame` at `range`, wrapping it as a [`Str`] without re-validating.
 ///
-/// This is the crate's only `Str::from_utf8_unchecked` call site. It is
-/// unreachable without a [`StrRange`], which can only be built from a `&str`,
-/// so "was this validated?" is answered by the signature rather than by a
-/// comment at the call site.
+/// The crate's only `Str::from_utf8_unchecked` call site; see [`StrRange`].
 #[inline]
 fn slice_str(frame: &Bytes, range: StrRange) -> Str {
-    let bytes = frame.slice(range.0);
-    // Belt and braces: `StrRange`'s constructor makes non-UTF-8 unrepresentable,
-    // but the offsets themselves are computed with pointer arithmetic
-    // (`range_of`), which the type system cannot check. Re-validate in debug and
-    // test builds — including under the `afl/parser` fuzz target — so a future
-    // bookkeeping bug fails loudly instead of becoming silent UB in release.
+    let bytes = frame.slice(range.into_range());
+    // `StrRange` cannot carry non-UTF-8, but its offsets come from pointer
+    // arithmetic that no type can check, so re-validate outside release builds.
     debug_assert!(
         str::from_utf8(&bytes).is_ok(),
         "StrRange pointed at non-UTF-8 bytes: {bytes:?}"
@@ -291,10 +302,6 @@ fn push_kind_from_str(name: Str) -> PushKind {
     known.unwrap_or_else(|| PushKind::Other(name))
 }
 
-// ------------------------------------------------------------------
-// The combine-based parser. Produces `ValueRange` (offsets), not `Value`.
-// ------------------------------------------------------------------
-
 fn value<'a, I>(
     base: usize,
     count: Option<usize>,
@@ -342,6 +349,16 @@ where
                                 "Expected integer, got garbage",
                             )
                         })
+                    })
+                };
+
+                // Reply kinds with no null form. Casting a negative length to
+                // `usize` would ask for ~2^64 bytes, so the decoder would buffer
+                // forever waiting for them instead of failing.
+                let non_negative_len = |message: &'static str| {
+                    int().and_then(move |size| {
+                        usize::try_from(size)
+                            .map_err(|_| StreamErrorFor::<I>::message_static_message(message))
                     })
                 };
 
@@ -464,8 +481,8 @@ where
                     })
                 };
                 let blob_error = || {
-                    int().then_partial(move |&mut size| {
-                        take(size as usize)
+                    non_negative_len("negative blob error length").then_partial(move |&mut size| {
+                        take(size)
                             .and_then(move |bs: &[u8]| {
                                 let line =
                                     str::from_utf8(bs).map_err(StreamErrorFor::<I>::other)?;
@@ -475,29 +492,33 @@ where
                     })
                 };
                 let verbatim = || {
-                    int().then_partial(move |&mut size| {
-                        take(size as usize)
-                            .and_then(move |bs: &[u8]| {
-                                let line =
-                                    str::from_utf8(bs).map_err(StreamErrorFor::<I>::other)?;
-                                if let Some((format, text)) = line.split_once(':') {
-                                    let format = match format {
-                                        "txt" => VerbatimFormatRange::Text,
-                                        "mkd" => VerbatimFormatRange::Markdown,
-                                        x => VerbatimFormatRange::Unknown(StrRange::of(x, base)),
-                                    };
-                                    Ok(ValueRange::VerbatimString {
-                                        format,
-                                        text: StrRange::of(text, base),
-                                    })
-                                } else {
-                                    Err(StreamErrorFor::<I>::message_static_message(
-                                        "parse error when decoding verbatim string",
-                                    ))
-                                }
-                            })
-                            .skip(crlf())
-                    })
+                    non_negative_len("negative verbatim string length").then_partial(
+                        move |&mut size| {
+                            take(size)
+                                .and_then(move |bs: &[u8]| {
+                                    let line =
+                                        str::from_utf8(bs).map_err(StreamErrorFor::<I>::other)?;
+                                    if let Some((format, text)) = line.split_once(':') {
+                                        let format = match format {
+                                            "txt" => VerbatimFormatRange::Text,
+                                            "mkd" => VerbatimFormatRange::Markdown,
+                                            x => {
+                                                VerbatimFormatRange::Unknown(StrRange::of(x, base))
+                                            }
+                                        };
+                                        Ok(ValueRange::VerbatimString {
+                                            format,
+                                            text: StrRange::of(text, base),
+                                        })
+                                    } else {
+                                        Err(StreamErrorFor::<I>::message_static_message(
+                                            "parse error when decoding verbatim string",
+                                        ))
+                                    }
+                                })
+                                .skip(crlf())
+                        },
+                    )
                 };
                 let big_number = || {
                     line().and_then(move |line| {
@@ -538,27 +559,19 @@ where
     ))
 }
 
-/// Resumable state for the value currently being parsed out of a buffer.
+/// Resumable state for the value currently being parsed, so that a reply
+/// spanning many reads is parsed once instead of re-scanned on every read.
 ///
-/// A reply can span many reads. `combine` supports resuming a parse where it
-/// stopped, which is what keeps parsing linear in the size of the reply instead
-/// of re-scanning the whole buffer on every read.
-///
-/// Retaining that state puts one requirement on the buffer: `combine` resumes
-/// at the point it stopped, and its state holds already-produced
-/// [`ValueRange`]s whose offsets are indices from the start of the buffer.
-/// So while `committed != 0` the buffer may only be *appended* to — index 0
-/// has to keep denoting the same byte. Growing a [`BytesMut`] preserves
-/// indices, so appending is fine; splitting bytes off the front is not, and
-/// only ever happens once a value is complete and the state has been reset.
+/// Because the retained state holds [`ValueRange`] offsets that are indices from
+/// the start of the buffer, the buffer may only be *appended* to while
+/// `committed != 0`; splitting bytes off the front would shift index 0. That
+/// only happens once a value is complete and the state has been reset.
 #[derive(Default)]
 struct ParseState {
-    /// `combine`'s resumable parser state.
     partial: AnySendSyncPartialState,
-    /// How many leading buffer bytes `combine` has already consumed for the
-    /// value in progress. They have to stay in the buffer, because the
-    /// finished value will slice into them, so instead of removing them we
-    /// hand `combine` only the suffix that follows.
+    /// Leading bytes `combine` has already consumed for the value in progress.
+    /// They stay in the buffer because the finished value slices into them, so
+    /// `combine` is handed only the suffix that follows.
     committed: usize,
 }
 
@@ -1006,6 +1019,24 @@ mod tests {
         assert!(err.is_connection_dropped());
     }
 
+    #[cfg(feature = "aio")]
+    #[test]
+    fn negative_length_is_rejected_rather_than_awaited() {
+        // `$-1` is the null bulk string, but there is no null verbatim string or
+        // blob error. Casting those lengths to `usize` would ask for ~2^64 bytes,
+        // so the decoder would keep buffering forever instead of failing.
+        use tokio_util::codec::Decoder;
+
+        for reply in [&b"=-1\r\n"[..], &b"!-1\r\n"[..]] {
+            let mut codec = ValueCodec::default();
+            let mut buf = BytesMut::from(reply);
+            assert_matches!(codec.decode(&mut buf), Err(_), "{reply:?} was not rejected");
+        }
+
+        // The null bulk string still parses.
+        assert_eq!(parse_redis_value(b"$-1\r\n").unwrap(), Value::Nil);
+    }
+
     // The `unsafe` in `slice_str` rests on two halves: a `StrRange` can only be
     // built from a `&str` (enforced by the type system), and the parser really
     // does run `str::from_utf8` before it has such a `&str`. The tests below pin
@@ -1212,7 +1243,7 @@ mod tests {
             "error code is a slice into the reply buffer (frame-pinning regression)"
         );
         assert!(
-            outside(err.details().expect("detail present")),
+            outside(err.details().unwrap()),
             "error detail is a slice into the reply buffer (frame-pinning regression)"
         );
     }
@@ -1239,7 +1270,7 @@ mod tests {
 
         let feed = |codec: &mut ValueCodec, buf: &mut BytesMut, chunk: &str| {
             buf.extend_from_slice(chunk.as_bytes());
-            let parsed = codec.decode(buf).expect("consumed bytes were re-parsed");
+            let parsed = codec.decode(buf).unwrap();
             // Everything delivered so far is part of the value in progress and
             // has been consumed, so the parser must never read it again.
             let poison = codec.state.committed;
@@ -1263,10 +1294,7 @@ mod tests {
 
         // The last element completes the array.
         buf.extend_from_slice(element(ELEMENTS - 1).as_bytes());
-        let value = codec
-            .decode(&mut buf)
-            .expect("consumed bytes were re-parsed")
-            .expect("array is complete");
+        let value = codec.decode(&mut buf).unwrap().unwrap();
         let Value::Array(items) = value else {
             panic!("expected an array");
         };
