@@ -17,6 +17,8 @@ use crate::{TlsMode, cluster};
 use arcstr::ArcStr;
 use rand::RngExt;
 use std::collections::HashMap;
+#[cfg(feature = "cluster-async")]
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -74,6 +76,8 @@ struct BuilderParams {
     #[cfg(feature = "cluster-async")]
     write_backpressure_boundary: Option<usize>,
     node_address_map: Option<HashMap<NodeAddress, NodeAddress>>,
+    #[cfg(feature = "cluster-async")]
+    max_connection_attempts: Option<NonZeroUsize>,
 }
 
 #[derive(Clone)]
@@ -163,6 +167,8 @@ pub(crate) struct ClusterParams {
     #[cfg(feature = "cluster-async")]
     pub(crate) write_backpressure_boundary: Option<usize>,
     pub(crate) node_address_map: Option<HashMap<NodeAddress, NodeAddress>>,
+    #[cfg(feature = "cluster-async")]
+    pub(crate) max_connection_attempts: Option<NonZeroUsize>,
 }
 
 impl ClusterParams {
@@ -230,6 +236,7 @@ impl ClusterParams {
             #[cfg(feature = "cluster-async")]
             write_backpressure_boundary: value.write_backpressure_boundary,
             node_address_map: value.node_address_map,
+            max_connection_attempts: value.max_connection_attempts,
         })
     }
 
@@ -724,6 +731,16 @@ impl ClusterClientBuilder {
         P: StreamingCredentialsProvider + 'static,
     {
         self.builder_params.credentials_provider = Some(std::sync::Arc::new(provider));
+        self
+    }
+
+    /// Sets the maximum number of connection attempts to a cluster node before giving up, and removing the
+    /// node from the cluster. This is useful for clusters with a large number of nodes, where some nodes may be temporarily unavailable.
+    /// Removed nodes will be re-added to the cluster after a topology refresh.
+    /// If the value isn't set, reconnect attempts will continue indefinitely until the node is available again.
+    #[cfg(feature = "cluster-async")]
+    pub fn max_connection_attempts(mut self, max_attempts: NonZeroUsize) -> ClusterClientBuilder {
+        self.builder_params.max_connection_attempts = Some(max_attempts);
         self
     }
 }

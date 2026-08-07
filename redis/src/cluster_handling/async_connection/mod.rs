@@ -1246,7 +1246,17 @@ where
     }
 
     let mut backoff = Duration::from_millis(50);
+    let mut attempts = 0;
     loop {
+        attempts += 1;
+        if core
+            .cluster_params
+            .max_connection_attempts
+            .is_some_and(|max| max.get() < attempts)
+        {
+            core.conn_lock.write().await.0.remove(&addr);
+            break;
+        }
         let prev = {
             let guard = core.conn_lock.read().await;
             let in_topology = guard.1.addresses_for_all_nodes().contains(&addr);
@@ -1308,6 +1318,7 @@ pub(crate) enum Response {
     Multiple(Vec<Value>),
 }
 
+#[derive(Debug)]
 enum OperationTarget {
     Node { address: NodeAddress },
     NotFound,
