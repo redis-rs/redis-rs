@@ -14,6 +14,7 @@ pub const REDIS_CE_8_4: Component = ("redis", (8, 3, 224));
 pub const REDIS_CE_8_6: Component = ("redis", (8, 6, 0));
 pub const REDIS_CE_8_8: Component = ("redis", (8, 8, 0));
 
+pub const REDIS_JSON_8_8: Component = ("ReJSON", (8, 8, 0));
 pub const REDIS_BLOOM_ANY: Component = ("redis:bf", (0, 0, 0));
 
 // Valkey forked off at Redis 7.2.4 and still reports its Redis version 7.2.4. So tests that run
@@ -83,35 +84,22 @@ impl<'a> From<&[&[Component<'a>]]> for ComponentMatcher<'a> {
     }
 }
 
-/// Macros to provide array implementations for matchers' slice implementations
+/// Coercing array implementations for matchers' slice implementations
 ///
-/// Rust can auto-coerce array to slices. But with generic arguments, this
+/// Rust can auto-coerce arrays to slices. But with generic arguments, this
 /// array-to-slice-auto-coercion does not kick in. So one would have to convert manually. To avoid
-/// this for the common cases, this macro implements coercing `From`s. for a given array length
-///
-/// # Arguments
-///
-/// * `$n` - The array lengths to implement coercing `From`s for.
-macro_rules! matcher_array_impls {
-    ($n:expr) => {
-        impl<'a> From<[Component<'a>; $n]> for ComponentMatcher<'a> {
-            fn from(value: [Component<'a>; $n]) -> Self {
-                let coerced_value: &[Component<'a>] = &value;
-                Self::from(coerced_value)
-            }
-        }
-
-        impl<'a> From<[&[Component<'a>]; $n]> for ComponentMatcher<'a> {
-            fn from(value: [&[Component<'a>]; $n]) -> Self {
-                let coerced_value: &[&[Component<'a>]] = &value;
-                Self::from(coerced_value)
-            }
-        }
-    };
+/// this, these const-generic `From`s coerce arrays of any length to the corresponding slice matcher.
+impl<'a, const N: usize> From<[Component<'a>; N]> for ComponentMatcher<'a> {
+    fn from(value: [Component<'a>; N]) -> Self {
+        Self::from(value.as_slice())
+    }
 }
-matcher_array_impls!(1);
-matcher_array_impls!(2);
-matcher_array_impls!(3);
+
+impl<'a, const N: usize> From<[&[Component<'a>]; N]> for ComponentMatcher<'a> {
+    fn from(value: [&[Component<'a>]; N]) -> Self {
+        Self::from(value.as_slice())
+    }
+}
 
 #[derive(Clone)]
 pub struct AvailableComponents {
@@ -336,10 +324,25 @@ macro_rules! skip_if_context_does_not_support {
 /// # Returns
 ///
 /// A [`TestContext`], if `$component` is available
+///
+/// # Example
+///
+/// Without modules:
+/// ```ignore
+/// let ctx = run_test_if_version_supported!(REDIS_CE_8_0);
+/// ```
+///
+/// With modules:
+/// ```ignore
+/// let ctx = run_test_if_version_supported!(REDIS_CE_8_0, &[Module::Search]);
+/// ```
 #[macro_export]
 macro_rules! run_test_if_version_supported {
-    ($component:expr) => {{
-        let ctx = $crate::support::TestContext::new();
+    ($component:expr) => {{ run_test_if_version_supported!($component, &[]) }};
+    ($component:expr, $modules:expr) => {{
+        let ctx = $crate::support::TestContextBuilder::default()
+            .modules($modules)
+            .build();
 
         $crate::skip_if_context_does_not_support!(ctx, $component);
 

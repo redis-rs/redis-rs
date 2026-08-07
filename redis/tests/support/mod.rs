@@ -2,25 +2,27 @@
 
 #[cfg(feature = "aio")]
 use futures::Future;
+#[cfg(feature = "cache-aio")]
+use redis::caching::CacheConfig;
+#[cfg(feature = "tls-rustls")]
+use redis::{ClientTlsConfig, TlsCertificates};
 use redis::{
     Commands, ConnectionAddr, ErrorKind, Pipeline, ProtocolVersion, RedisResult, ServerErrorKind,
     Value,
 };
 #[cfg(feature = "aio")]
 use redis::{aio, cmd};
-use redis_test::server::{Module, RedisServer, RedisServerBuilder, use_protocol};
-use redis_test::utils::{TlsFilePaths, get_random_available_port};
+use redis_test::server::{
+    Module, RedisServer, RedisServerBuilder, RedisServerCommand, use_protocol,
+};
+use redis_test::utils::TlsFilePaths;
+use std::path::PathBuf;
 #[cfg(feature = "tls-rustls")]
 use std::{
     fs::File,
     io::{BufReader, Read},
 };
 use std::{io, thread::sleep, time::Duration};
-
-#[cfg(feature = "cache-aio")]
-use redis::caching::CacheConfig;
-#[cfg(feature = "tls-rustls")]
-use redis::{ClientTlsConfig, TlsCertificates};
 
 #[macro_use]
 mod version;
@@ -139,6 +141,115 @@ mod sentinel;
 #[allow(unused_imports)]
 pub use self::sentinel::*;
 
+/// A builder for [`TestContext`]
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use tests::support::TestContextBuilder;
+///
+/// let ctx = TestContextBuilder::new().module(Module::Json).build();
+/// let connection = ctx.connection();
+/// // Use `connection` to run commands
+/// ```
+// Note that this builder is an owned-builder as we want to build in a single chain anyway and do
+// not have to build multiple instances from the same builder. Also, this spares us cloning
+// considerations.
+#[derive(Default)]
+pub struct TestContextBuilder {
+    server_builder: RedisServerBuilder,
+}
+
+impl TestContextBuilder {
+    /// Starts a fresh builder
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn address(mut self, address: ConnectionAddr) -> Self {
+        self.server_builder = self.server_builder.address(address);
+        self
+    }
+
+    pub fn config(mut self, config_file: PathBuf) -> Self {
+        self.server_builder = self.server_builder.config(config_file);
+        self
+    }
+
+    pub fn cert_auth_field(mut self, cert_auth_field: impl Into<String>) -> Self {
+        self.server_builder = self.server_builder.cert_auth_field(cert_auth_field);
+        self
+    }
+
+    pub fn cert_auth_field_opt(mut self, opt_cert_auth_field: Option<impl Into<String>>) -> Self {
+        self.server_builder = self.server_builder.cert_auth_field_opt(opt_cert_auth_field);
+        self
+    }
+
+    pub fn module(mut self, module: Module) -> Self {
+        self.server_builder = self.server_builder.module(module);
+        self
+    }
+
+    pub fn modules(mut self, modules: &[Module]) -> Self {
+        self.server_builder = self.server_builder.modules(modules);
+        self
+    }
+
+    pub fn mtls(mut self, enable_mtls: bool) -> Self {
+        self.server_builder = self.server_builder.mtls(enable_mtls);
+        self
+    }
+
+    pub fn tls_paths(mut self, tls_paths: TlsFilePaths) -> Self {
+        self.server_builder = self.server_builder.tls_paths(tls_paths);
+        self
+    }
+
+    pub fn tls_paths_opt(mut self, opt_tls_paths: Option<TlsFilePaths>) -> Self {
+        self.server_builder = self.server_builder.tls_paths_opt(opt_tls_paths);
+        self
+    }
+
+    /// Builds the [`TestContext`] for this instance
+    pub fn build(self) -> TestContext {
+        self.refine_and_build(|_| {})
+    }
+
+    /// Builds the [`TestContext`] for this instance after refining the arguments for the server
+    ///
+    /// # Arguments
+    ///
+    /// * `refiner` - See [`RedisServerBuilder::refine_and_build`]
+    pub fn refine_and_build(self, refiner: impl FnOnce(&mut RedisServerCommand)) -> TestContext {
+        let server = self.server_builder.refine_and_build(refiner);
+        TestContext::from_server(server)
+    }
+}
+
+/// Utility wrapper for a standalone Redis server instance for testing.
+///
+/// # Example
+///
+/// Use `default()` to build a [`TestContext`] with default settings:
+///
+/// ```rust,no_run
+/// use tests::support::TestContext;
+///
+/// let ctx = TestContext::default();
+/// let connection = ctx.connection();
+/// // Use `connection` to run commands
+/// ```
+///
+/// If you need a custom setup, use [`TestContextBuilder`]:
+///
+/// ```rust,no_run
+/// use tests::support::TestContextBuilder;
+///
+/// let ctx = TestContextBuilder::new().module(Module::Json).build();
+/// let connection = ctx.connection();
+/// // Use `connection` to run commands
+/// ```
 pub struct TestContext {
     pub server: RedisServer,
     pub client: redis::Client,
@@ -153,105 +264,25 @@ pub(crate) fn start_tls_crypto_provider() {
     }
 }
 
+impl Default for TestContext {
+    fn default() -> Self {
+        TestContextBuilder::new().build()
+    }
+}
+
 impl TestContext {
-    pub fn new() -> TestContext {
-        TestContext::with_modules(&[])
-    }
-
-    #[cfg(feature = "tls-rustls")]
-    pub fn new_with_mtls() -> TestContext {
-        Self::with_modules_and_tls(&[], true, None)
-    }
-
-    #[cfg(feature = "tls-rustls")]
-    pub fn new_with_cert_auth(tls_files: TlsFilePaths) -> TestContext {
-        Self::new_with_cert_auth_field(tls_files, "CN")
-    }
-
-    #[cfg(feature = "tls-rustls")]
-    pub fn new_with_cert_auth_field(tls_files: TlsFilePaths, cert_field: &str) -> TestContext {
-        start_tls_crypto_provider();
-        let redis_port = get_random_available_port();
-        let addr = RedisServer::get_addr(redis_port);
-
-        // TLS certificate-based authentication requires TLS connection.
-        let addr = match addr {
-            ConnectionAddr::Tcp(host, port) => ConnectionAddr::TcpTls {
-                host,
-                port,
-                insecure: true,
-                tls_params: None,
-            },
-            ConnectionAddr::TcpTls { .. } => addr, // Already TLS
-            ConnectionAddr::Unix(_) => {
-                // Unix sockets don't support TLS - fall back to TCP+TLS
-                // Use the same default host that get_addr() would use for TCP
-                ConnectionAddr::TcpTls {
-                    host: redis_test::server::get_default_host(),
-                    port: redis_port,
-                    insecure: true,
-                    tls_params: None,
-                }
-            }
-            _ => {
-                panic!("Unsupported ConnectionAddr variant for cert-based authentication: {addr:?}")
-            }
-        };
-
-        Self::with_modules_addr_tls_and_cert_auth(
-            &[],
-            true,
-            addr,
-            Some(tls_files),
-            Some(cert_field),
-        )
-    }
-
-    pub fn with_modules(modules: &[Module]) -> TestContext {
-        Self::with_modules_and_tls(modules, false, None)
-    }
-
-    pub fn new_with_addr(addr: ConnectionAddr) -> Self {
-        Self::with_modules_addr_and_tls(&[], false, addr, None)
-    }
-
-    fn with_modules_and_tls(
-        modules: &[Module],
-        mtls_enabled: bool,
-        tls_files: Option<TlsFilePaths>,
-    ) -> Self {
-        start_tls_crypto_provider();
-        let redis_port = get_random_available_port();
-        let addr = RedisServer::get_addr(redis_port);
-        Self::with_modules_addr_and_tls(modules, mtls_enabled, addr, tls_files)
-    }
-
-    fn with_modules_addr_and_tls(
-        modules: &[Module],
-        mtls_enabled: bool,
-        addr: ConnectionAddr,
-        tls_files: Option<TlsFilePaths>,
-    ) -> Self {
-        Self::with_modules_addr_tls_and_cert_auth(modules, mtls_enabled, addr, tls_files, None)
-    }
-
-    fn with_modules_addr_tls_and_cert_auth(
-        modules: &[Module],
-        mtls_enabled: bool,
-        addr: ConnectionAddr,
-        tls_files: Option<TlsFilePaths>,
-        cert_auth_field: Option<&str>,
-    ) -> Self {
-        let server = RedisServerBuilder::new()
-            .address(addr)
-            .tls_paths_opt(tls_files)
-            .mtls(mtls_enabled)
-            .cert_auth_field_opt(cert_auth_field)
-            .modules(modules)
-            .build();
-
+    /// Builds a new instance from a [`RedisServer`]
+    // We intentionally do _not_ implement `From<RedisServer>` as that would be public.
+    //
+    // Instead, users should to go through `TestContextBuilder` to limit the points of entry and
+    // hence help us with maintenance.
+    fn from_server(server: RedisServer) -> Self {
         let client =
-            build_single_client(server.connection_info(), &server.tls_paths, mtls_enabled).unwrap();
+            build_single_client(server.connection_info(), &server.tls_paths, server.mtls).unwrap();
+
+        if server.tls_paths.is_some() {
+            start_tls_crypto_provider();
+        }
 
         let mut con;
 
@@ -465,7 +496,7 @@ where
 }
 
 #[cfg(feature = "tls-rustls")]
-fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> TlsCertificates {
+pub fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> TlsCertificates {
     let ca_file = File::open(&tls_file_paths.ca_crt).expect("Cannot open CA cert file");
     let mut root_cert_vec = Vec::new();
     BufReader::new(ca_file)
@@ -485,10 +516,7 @@ fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> TlsCertificates {
         .expect("Unable to read key file");
 
     TlsCertificates {
-        client_tls: Some(ClientTlsConfig {
-            client_cert: client_cert_vec,
-            client_key: client_key_vec,
-        }),
+        client_tls: Some(ClientTlsConfig::new(client_cert_vec, client_key_vec)),
         root_cert: Some(root_cert_vec),
     }
 }
@@ -543,10 +571,7 @@ pub(crate) fn build_single_client_with_separate_client_cert<T: redis::IntoConnec
     redis::Client::build_with_tls(
         connection_info,
         TlsCertificates {
-            client_tls: Some(ClientTlsConfig {
-                client_cert: client_cert_vec,
-                client_key: client_key_vec,
-            }),
+            client_tls: Some(ClientTlsConfig::new(client_cert_vec, client_key_vec)),
             root_cert: Some(root_cert_vec),
         },
     )

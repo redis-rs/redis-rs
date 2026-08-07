@@ -1,6 +1,6 @@
 [package]
 name = "redis-test"
-version = "2.0.0"
+version = "2.0.0-rc.1"
 edition = "2024"
 description = "Testing helpers for the `redis` crate"
 homepage = "https://github.com/redis-rs/redis-rs"
@@ -21,11 +21,7 @@ socket2 = "0.6"
 rand = "0.10"
 
 [features]
-aio = ["futures", "redis/aio"]
+aio = ["futures", "redis/aio", "redis/tokio-comp"]
 
 [dev-dependencies]
-redis = { version = "2.0.0-rc.1", path = "../redis", features = [
-    "aio",
-    "tokio-comp",
-] }
 tokio = { workspace = true }

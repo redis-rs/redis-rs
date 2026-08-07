@@ -6,7 +6,7 @@ use crate::pipeline::Pipeline;
 use crate::types::{
     ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, IntegerReplyOrNoOp,
     NumericBehavior, RedisResult, RedisWrite, SetExpiry, ToRedisArgs, ToSingleRedisArg,
-    ValueComparison,
+    ValueComparison, ValueType,
 };
 
 #[cfg(feature = "vector-sets")]
@@ -21,7 +21,7 @@ mod macros;
 
 #[cfg(feature = "json")]
 #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-mod json;
+pub mod json;
 
 #[cfg(feature = "json")]
 pub use json::JsonCommands;
@@ -3164,8 +3164,7 @@ assert_eq!(invok_2_res, 5);
     /// # Caveats
     ///
     /// If `key` is not a Bloom filter, Redis' module yields an array of `false`s as if all items
-    /// were missing (although its documentation as of 2026-04-16 claims to raise an error), while
-    /// Valkey yields a `WRONGKEY` error.
+    /// were missing, while Valkey yields a `WRONGTYPE` error.
     ///
     /// [Redis Docs](https://redis.io/commands/BF.MEXISTS)
     /// [Valkey Docs](https://valkey.io/commands/bf.mexists/)
@@ -3354,7 +3353,7 @@ impl PubSubCommands for Connection {
 pub struct ScanOptions {
     pattern: Option<String>,
     count: Option<usize>,
-    scan_type: Option<String>,
+    scan_type: Option<ValueType>,
 }
 
 impl ScanOptions {
@@ -3371,8 +3370,8 @@ impl ScanOptions {
     }
 
     /// Limit the results to those with the given Redis type
-    pub fn with_type(mut self, t: impl Into<String>) -> Self {
-        self.scan_type = Some(t.into());
+    pub fn with_type(mut self, t: ValueType) -> Self {
+        self.scan_type = Some(t);
         self
     }
 }
@@ -3394,7 +3393,7 @@ impl ToRedisArgs for ScanOptions {
 
         if let Some(t) = &self.scan_type {
             out.write_arg(b"TYPE");
-            out.write_arg_fmt(t);
+            t.write_redis_args(out);
         }
     }
 
@@ -3721,14 +3720,15 @@ impl ToRedisArgs for MSetOptions {
 /// fn flushall_sync(
 ///     con: &mut redis::Connection,
 /// ) -> RedisResult<()> {
-///     let opts = FlushAllOptions{blocking: true};
+///     let opts = FlushAllOptions::default().blocking(true);
 ///     con.flushall_options(&opts)
 /// }
 /// ```
+#[non_exhaustive]
 #[derive(Clone, Copy, Default)]
 pub struct FlushAllOptions {
     /// Blocking (`SYNC`) waits for completion, non-blocking (`ASYNC`) runs in the background
-    pub blocking: bool,
+    blocking: bool,
 }
 
 impl FlushAllOptions {

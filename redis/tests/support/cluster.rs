@@ -32,30 +32,23 @@ pub struct TestClusterContext {
 
 impl TestClusterContext {
     pub fn new() -> TestClusterContext {
-        Self::new_with_config(RedisClusterConfiguration {
-            tls_insecure: false,
-            ..Default::default()
-        })
+        Self::new_with_config(RedisClusterConfiguration::default().insecure_tls())
     }
 
     pub fn new_with_mtls() -> TestClusterContext {
         Self::new_with_config_and_builder(
-            RedisClusterConfiguration {
-                mtls_enabled: true,
-                tls_insecure: false,
-                ..Default::default()
-            },
+            RedisClusterConfiguration::default()
+                .mtls_enabled()
+                .insecure_tls(),
             identity,
         )
     }
 
     pub fn new_without_ip_alts() -> TestClusterContext {
         Self::new_with_config_and_builder(
-            RedisClusterConfiguration {
-                tls_insecure: false,
-                certs_with_ip_alts: false,
-                ..Default::default()
-            },
+            RedisClusterConfiguration::default()
+                .insecure_tls()
+                .certs_without_ip_alts(),
             identity,
         )
     }
@@ -69,10 +62,7 @@ impl TestClusterContext {
         F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
     {
         Self::new_with_config_and_builder(
-            RedisClusterConfiguration {
-                tls_insecure: false,
-                ..Default::default()
-            },
+            RedisClusterConfiguration::default().insecure_tls(),
             initializer,
         )
     }
@@ -93,8 +83,8 @@ impl TestClusterContext {
     {
         start_tls_crypto_provider();
         #[cfg(feature = "tls-rustls")]
-        let tls_insecure = cluster_config.tls_insecure;
-        let mtls_enabled = cluster_config.mtls_enabled;
+        let secure_tls = cluster_config.get_require_secure_tls();
+        let mtls_enabled = cluster_config.get_mtls_enabled();
         let cluster = RedisCluster::new(cluster_config);
         let initial_nodes: Vec<ConnectionInfo> = cluster
             .iter_servers()
@@ -104,7 +94,7 @@ impl TestClusterContext {
             .use_protocol(use_protocol());
 
         #[cfg(feature = "tls-rustls")]
-        if (mtls_enabled || (ClusterType::get_intended() == ClusterType::TcpTls && !tls_insecure))
+        if (mtls_enabled || (ClusterType::get_intended() == ClusterType::TcpTls && !secure_tls))
             && let Some(tls_file_paths) = &cluster.tls_paths
         {
             builder = builder.certs(load_certs_from_file(tls_file_paths));

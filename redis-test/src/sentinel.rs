@@ -4,6 +4,7 @@ use redis::{Client, ConnectionAddr, FromRedisValue, RedisResult};
 use tempfile::TempDir;
 
 use crate::server::RedisServerBuilder;
+use crate::utils::CommandMultiArgs;
 use crate::{
     server::{Module, RedisServer},
     utils::{TlsFilePaths, build_keys_and_certs_for_tls, get_random_available_port},
@@ -25,6 +26,7 @@ use crate::{
 /// let mut sentinel_client = redis::sentinel::SentinelClient::build(sentinel_addresses, String::from("master0"), None, redis::sentinel::SentinelServerType::Master).unwrap();
 /// let mut connection = sentinel_client.get_connection().unwrap();
 /// ```
+#[non_exhaustive]
 pub struct RedisSentinelCluster {
     pub servers: Vec<RedisServer>,
     pub sentinel_servers: Vec<RedisServer>,
@@ -202,6 +204,7 @@ fn spawn_sentinel_server(
         })
 }
 
+#[non_exhaustive]
 pub struct SentinelError;
 
 pub fn wait_for_master_server(

@@ -102,7 +102,7 @@ fn test_assorted_1() {
     // xread
     // xlen
 
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     xadd(&mut con);
@@ -171,7 +171,7 @@ fn test_xgroup_create() {
     // xgroup_create
     // xinfo_groups
 
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     xadd(&mut con);
@@ -210,7 +210,7 @@ fn test_xgroup_createconsumer() {
     // Tests the following command....
     // xgroup_createconsumer
 
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     xadd(&mut con);
@@ -275,7 +275,7 @@ fn test_assorted_2() {
     // xpending_count
     // xpending_consumer_count
 
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     xadd(&mut con);
@@ -414,7 +414,7 @@ fn assert_stream_pending_data(data: StreamPendingData) {
 
 #[test]
 fn test_xadd_maxlen_map() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     for i in 0..10 {
@@ -435,7 +435,7 @@ fn test_xadd_maxlen_map() {
 
 #[test]
 fn test_xadd_options() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // NoMKStream will return a nil when the stream does not exist
@@ -511,7 +511,7 @@ fn test_xadd_options() {
 #[test]
 fn test_xread_options_deleted_pel_entry() {
     // Test xread_options behaviour with deleted entry
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
     let result = con.xgroup_create_mkstream("k1", "g1", "$");
     assert_matches!(result, Ok(_));
@@ -568,7 +568,7 @@ fn create_group_add_and_read(con: &mut Connection) -> StreamReadReply {
 fn test_xautoclaim() {
     // Tests the following command....
     // xautoclaim_options
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // xautoclaim test basic idea:
@@ -634,7 +634,7 @@ fn test_xclaim() {
     // Tests the following commands....
     // xclaim
     // xclaim_options
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // xclaim test basic idea:
@@ -719,7 +719,7 @@ fn test_xclaim() {
 
 #[test]
 fn test_xclaim_last_id() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     let result = con.xgroup_create_mkstream("k1", "g1", "$");
@@ -1106,7 +1106,7 @@ fn test_xreadgroup_claim_multiple_streams() {
 fn test_xdel() {
     // Tests the following commands....
     // xdel
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // add some keys
@@ -2103,7 +2103,7 @@ fn test_xack_del() {
 fn test_xtrim() {
     // Tests the following commands....
     // xtrim
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // add some keys
@@ -2122,7 +2122,7 @@ fn test_xtrim() {
 fn test_xtrim_options() {
     // Tests the following commands....
     // xtrim_options
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // add some keys
@@ -2171,7 +2171,7 @@ fn test_xgroup() {
     // xgroup_destroy
     // xgroup_delconsumer
 
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // test xgroup create w/ mkstream @ 0
@@ -2215,7 +2215,7 @@ fn test_xrange() {
     // xrange_all
     // xrange_count
 
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     xadd(&mut con);
@@ -2241,7 +2241,7 @@ fn test_xrevrange() {
     // xrevrange_all
     // xrevrange_count
 
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     xadd(&mut con);
@@ -2269,7 +2269,7 @@ fn test_xautoclaim_invalid_pel_entries_claiming_full_entries() {
     // See https://github.com/redis-rs/redis-rs/issues/1798
     // Note that this issue also applies to xclaim.
 
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // xautoclaim-invalid basic idea:
@@ -2321,7 +2321,7 @@ fn test_xautoclaim_invalid_pel_entries_claiming_just_ids() {
     // See https://github.com/redis-rs/redis-rs/issues/1798
     // Note that this issue also applies to xclaim.
 
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // xautoclaim-invalid basic idea:

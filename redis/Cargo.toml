@@ -109,10 +109,10 @@ arcstr = "1.2.0"
 socket2 = { version = "0.6", features = ["all"] }
 
 # Only needed for Entra ID authentication
-azure_identity = { version = "0.31", optional = true, features = [
+azure_identity = { version = "1.0.0", optional = true, features = [
   "client_certificate",
 ] }
-azure_core = { version = "0.31", optional = true }
+azure_core = { version = "1.1.0", optional = true }
 base64 = { version = "0.22.1", optional = true }
 
 [target.'cfg(all(target_os = "wasi", target_env = "p2"))'.dependencies]
@@ -144,7 +144,7 @@ connection-manager = [
   "dep:backon",
 ]
 streams = []
-cluster-async = ["aio", "cluster", "dep:log"]
+cluster-async = ["aio", "cluster", "dep:log", "dep:futures-channel"]
 sentinel = ["dep:log", "dep:rand"]
 num-bigint = ["dep:num-bigint"]
 cache-aio = ["aio", "dep:lru"]
@@ -198,6 +198,7 @@ rustls = { version = "0.23", features = ["ring"] }
 test-macros = { path = "../test-macros" }
 assert_matches = "1.5.0"
 env_logger = "0.11.10"
+futures-channel = "0.3.31"
 
 [[test]]
 name = "test_async"
@@ -205,7 +206,7 @@ required-features = ["tokio-comp"]
 
 [[test]]
 name = "parser"
-required-features = ["aio"]
+required-features = ["tokio-comp"]
 
 [[test]]
 name = "test_acl"

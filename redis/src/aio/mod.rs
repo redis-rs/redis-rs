@@ -176,7 +176,16 @@ pub use runtime::prefer_tokio;
 pub(super) use runtime::*;
 
 /// An error showing that the receiver
+#[derive(Default)]
+#[non_exhaustive]
 pub struct SendError;
+
+impl SendError {
+    /// Builds a new instance
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
 
 /// A trait for sender parts of a channel that can be used for sending push messages from async
 /// connection.
@@ -215,6 +224,16 @@ impl<T, Func: Fn(PushInfo) -> Result<(), T> + Send + Sync + 'static> AsyncPushSe
 impl AsyncPushSender for std::sync::mpsc::Sender<PushInfo> {
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         match self.send(info) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(SendError),
+        }
+    }
+}
+
+#[cfg(feature = "cluster-async")]
+impl AsyncPushSender for futures_channel::mpsc::UnboundedSender<PushInfo> {
+    fn send(&self, info: PushInfo) -> Result<(), SendError> {
+        match self.unbounded_send(info) {
             Ok(_) => Ok(()),
             Err(_) => Err(SendError),
         }

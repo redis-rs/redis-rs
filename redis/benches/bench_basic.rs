@@ -8,7 +8,7 @@ use support::*;
 mod support;
 
 fn bench_simple_getsetdel(b: &mut Bencher) {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     b.iter(|| {
@@ -20,7 +20,7 @@ fn bench_simple_getsetdel(b: &mut Bencher) {
 }
 
 fn bench_simple_getsetdel_async(b: &mut Bencher) {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let runtime = current_thread_runtime();
     let mut con = runtime.block_on(ctx.async_connection()).unwrap();
 
@@ -42,7 +42,7 @@ fn bench_simple_getsetdel_async(b: &mut Bencher) {
 }
 
 fn bench_simple_getsetdel_pipeline(b: &mut Bencher) {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     b.iter(|| {
@@ -63,7 +63,7 @@ fn bench_simple_getsetdel_pipeline(b: &mut Bencher) {
 }
 
 fn bench_simple_getsetdel_pipeline_precreated(b: &mut Bencher) {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
     let key = "test_key";
     let mut pipe = redis::pipe();
@@ -94,7 +94,7 @@ fn long_pipeline() -> redis::Pipeline {
 }
 
 fn bench_long_pipeline(b: &mut Bencher) {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     let pipe = long_pipeline();
@@ -105,7 +105,7 @@ fn bench_long_pipeline(b: &mut Bencher) {
 }
 
 fn bench_async_long_pipeline(b: &mut Bencher) {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let runtime = current_thread_runtime();
     let mut con = runtime.block_on(ctx.async_connection()).unwrap();
 
@@ -119,7 +119,7 @@ fn bench_async_long_pipeline(b: &mut Bencher) {
 }
 
 fn bench_multiplexed_async_long_pipeline(b: &mut Bencher) {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let runtime = current_thread_runtime();
     let mut con = runtime
         .block_on(ctx.multiplexed_async_connection_tokio())
@@ -135,7 +135,7 @@ fn bench_multiplexed_async_long_pipeline(b: &mut Bencher) {
 }
 
 fn bench_multiplexed_async_implicit_pipeline(b: &mut Bencher) {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let runtime = current_thread_runtime();
     let con = runtime
         .block_on(ctx.multiplexed_async_connection_tokio())

@@ -228,6 +228,7 @@ impl ToRedisArgs for BloomFilterInsertOptions {
 }
 
 /// Single chunk of a Bloom filter scan dump
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub struct BloomFilterDumpChunk {
     /// The iterator associated to the [`data`](Self::data)

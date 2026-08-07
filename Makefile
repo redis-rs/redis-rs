@@ -38,9 +38,14 @@ test:
 	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=unix RUST_BACKTRACE=1 cargo nextest run --locked -p redis --all-features --profile unix
 
 	@echo "===================================================================="
-	@echo "Testing redis-test"
+	@echo "Testing redis-test without features"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run --locked -p redis-test
+	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run --locked -p redis-test --no-default-features
+
+	@echo "===================================================================="
+	@echo "Testing redis-test with all features"
+	@echo "===================================================================="
+	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run --locked -p redis-test --all-features
 
 test-module-json:
 	@echo "===================================================================="
@@ -51,7 +56,7 @@ test-module-json:
 	@echo "===================================================================="
 	@echo "Testing RESP3 with RedisJSON module"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 PROTOCOL=RESP3 cargo nextest run -p redis --all-features --profile module_json
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 PROTOCOL=RESP3 cargo nextest run -p redis --locked --all-features --profile module_json
 
 test-module-bloom:
 	@echo "===================================================================="
@@ -62,7 +67,7 @@ test-module-bloom:
 	@echo "===================================================================="
 	@echo "Testing RESP3 with RedisBloom module"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 PROTOCOL=RESP3 cargo nextest run -p redis --all-features --profile module_bloom
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 PROTOCOL=RESP3 cargo nextest run -p redis --locked --all-features --profile module_bloom
 
 test-modules: test-module-json test-module-bloom
 
@@ -76,6 +81,10 @@ docs:
 
 upload-docs: docs
 	@./upload-docs.sh
+
+flag-frenzy:
+#	# This requires nihohit's flag-frenzy variant from https://github.com/nihohit/flag-frenzy.git
+	flag-frenzy --config .config/flag-frenzy --package redis
 
 style-check:
 	@rustup component add rustfmt 2> /dev/null

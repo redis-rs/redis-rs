@@ -20,7 +20,7 @@ const KEY_3: &str = "test_bloom_3";
 /// Tries to assure single value updates work
 #[test]
 fn test_module_bloom_single_value_updates() {
-    let ctx = TestContext::with_modules(&[Module::Bloom]);
+    let ctx = TestContextBuilder::new().module(Module::Bloom).build();
     let mut con = ctx.connection();
 
     // Add a single value, and check containment
@@ -56,7 +56,7 @@ fn test_module_bloom_single_value_updates() {
 /// Tries to assure that multi-value updates work
 #[test]
 fn test_module_bloom_multiple_value_updates() {
-    let ctx = TestContext::with_modules(&[Module::Bloom]);
+    let ctx = TestContextBuilder::new().module(Module::Bloom).build();
     let mut con = ctx.connection();
 
     // Init the key by adding multiple values at once
@@ -98,7 +98,7 @@ fn test_module_bloom_multiple_value_updates() {
 /// Tries to assure that information functions work
 #[test]
 fn test_module_bloom_infos() {
-    let ctx = TestContext::with_modules(&[Module::Bloom]);
+    let ctx = TestContextBuilder::new().module(Module::Bloom).build();
     let mut con = ctx.connection();
 
     // Check that getting infos on a not yet existing key does not panic
@@ -107,9 +107,6 @@ fn test_module_bloom_infos() {
     assert_matches!(con.bf_info(KEY_1).unwrap_err().detail(), Some(d) if d.contains("not found"));
     assert_matches!(con.bf_info_type(KEY_1, BloomFilterInfoType::Items).unwrap_err().detail(), Some(d) if d.contains("not found"));
     assert_eq!(con.bf_exists(KEY_1, "foo"), Ok(false));
-    // As of 2026-04-16, the following command should produce an error according to
-    // https://redis.io/docs/latest/commands/bf.mexists/
-    // as the key is missing. But instead it returns a proper array result
     assert_eq!(
         con.bf_mexists(KEY_1, &["foo", "bar", "baz"]),
         Ok(vec![false, false, false])
@@ -204,9 +201,6 @@ fn test_module_bloom_infos() {
     // to non-Bloom filter keys.
     if ctx.supports(REDIS_BLOOM_ANY) {
         assert_eq!(res_exists, Ok(false));
-        // As of 2026-04-16, the following command should produce an error according to
-        // https://redis.io/docs/latest/commands/bf.mexists/
-        // as the key is of the wrong type. But instead it returns a proper array result
         assert_eq!(res_mexists, Ok(vec![false, false, false]));
     } else {
         assert_eq!(res_exists.unwrap_err().code(), Some("WRONGTYPE"));
@@ -219,7 +213,7 @@ fn test_module_bloom_infos() {
 /// Tries to assure that reserving is effective
 #[test]
 fn test_module_bloom_reserving() {
-    let ctx = TestContext::with_modules(&[Module::Bloom]);
+    let ctx = TestContextBuilder::new().module(Module::Bloom).build();
     let mut con = ctx.connection();
 
     // Reserving without options
@@ -259,7 +253,7 @@ fn test_module_bloom_reserving() {
 /// Tries to assure that dumping/loading works
 #[test]
 fn test_module_bloom_dump_and_load() {
-    let ctx = TestContext::with_modules(&[Module::Bloom]);
+    let ctx = TestContextBuilder::new().module(Module::Bloom).build();
     skip_if_context_does_not_support!(ctx, REDIS_BLOOM_ANY);
     let mut con = ctx.connection();
 
@@ -313,7 +307,7 @@ fn test_module_bloom_dump_and_load() {
 /// Tries to assure that dumping through an iterator works
 #[test]
 fn test_module_bloom_dump_iterator() {
-    let ctx = TestContext::with_modules(&[Module::Bloom]);
+    let ctx = TestContextBuilder::new().module(Module::Bloom).build();
     skip_if_context_does_not_support!(ctx, REDIS_BLOOM_ANY);
     let mut con = ctx.connection();
 

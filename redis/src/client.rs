@@ -125,10 +125,7 @@ impl Client {
     ///     let client = Client::build_with_tls(
     ///         url,
     ///         TlsCertificates {
-    ///             client_tls: Some(ClientTlsConfig{
-    ///                 client_cert: client_cert_vec,
-    ///                 client_key: client_key_vec,
-    ///             }),
+    ///             client_tls: Some(ClientTlsConfig::new(client_cert_vec, client_key_vec)),
     ///             root_cert: Some(root_cert_vec),
     ///         }
     ///     )
@@ -263,7 +260,7 @@ impl AsyncConnectionConfig {
     /// let messages = Arc::new(Mutex::new(Vec::new()));
     /// let config = AsyncConnectionConfig::new().set_push_sender(move |msg|{
     ///     let Ok(mut messages) = messages.lock() else {
-    ///         return Err(redis::aio::SendError);
+    ///         return Err(());
     ///     };
     ///     messages.push(msg);
     ///     Ok(())

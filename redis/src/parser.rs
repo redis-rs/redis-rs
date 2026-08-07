@@ -1,6 +1,9 @@
 // TODO remove this `allow` once `combine` released a fix. Upstream bug: https://github.com/Marwes/combine/issues/372
+// `combine`'s foreign `opaque!` macro trips the nightly-only `semicolon_in_expressions_from_non_local_macros` lint.
+// `unknown_lints` is applied so the other toolchains, which do not know that lint, ignore it instead of failing under `-D warnings`.
+#![allow(unknown_lints)]
 #![allow(
-    semicolon_in_expressions_from_macros,
+    semicolon_in_expressions_from_non_local_macros,
     reason = "This lint is on in nightly since 2026-07-16, but `combine-4.6.7` violates it in `opaque`. As we cannot decorate directly, we allow it for the whole module for now"
 )]
 use std::{

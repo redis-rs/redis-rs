@@ -10,6 +10,46 @@ redis = "2"
 
 ## Breaking Changes
 
+### Several `struct`s and `enum`s are now marked `#[non_exhaustive]` (Breaking Change)
+
+The `#[non_exhaustive]` will allow us to add fields without having to trigger version bumps, hence help with maintenance.
+
+You can no longer build them directly with a [`StructExpression`](https://doc.rust-lang.org/reference/expressions/struct-expr.html#grammar-StructExpression).
+
+When decomposing them, you need to adapt to ignore fields potentially added in the future by adding `, ..`.
+
+The affected structs are:
+
+* `BloomFilterDumpChunk`
+* `CacheStatistics`
+* `ClientTlsConfig`
+* `Coord`
+* `FlushAllOptions`
+* `RadiusSearchResult`
+* `SendError`
+* `SentinelError`
+
+### `ScanOptions::with_type` takes `ValueType` instead of `Into<String>` (Breaking Change)
+
+To increase type safety, `ScanOptions::with_type` now takes a `ValueType`.
+This allows to check at compile time that correct type names are used, and hence helps to avoid accidental typos.
+
+It also gives more readable code, as `ValueType::CountMin` is easier to understand than `CMSk-TYPE`.
+
+For types that lack a `ValueType` dedicated variant, any `String`-like value converts `into` `ValueType`.
+
+**Migration:** Switch from `String`, `&str`, or `Into<String>` to `ValueType`
+
+```rust
+// Before:
+let opts1 = ScanOptions::default().with_type("ReJSON-RL"); // Has a `ValueType`; we switch to it.
+let opts2 = ScanOptions::default().with_type("your-custom-type"); // Does not have a `ValueType`; we convert into it.
+
+// After:
+let opts1 = ScanOptions::default().with_type(ValueType::JSON); // Use `ValueType`
+let opts2 = ScanOptions::default().with_type("your-custom-type".into()); // Convert to `ValueType`
+```
+
 ### `RedisServer::new...` got removed; use `RedisServerBuilder` instead (Breaking Change)
 
 Over time `RedisServer::new...` methods grew in parameters and made them hard to use.
@@ -276,3 +316,49 @@ pipe.reserve_for_commands(16).reserve_for_args(48);
 ```
 
 `Pipeline::new()` and `pipe()` are unchanged.
+
+### `ClientCertificate` holds the raw PKCS12 archive and is built through `ClientCertificate::new` (Breaking Change)
+
+The `entra-id` feature moved from `azure_identity` 0.31 to 1.0, whose `ClientCertificateCredential` expects the decoded PKCS12 (PFX) archive rather than a base64-encoded one. As a result, `ClientCertificate` changed and the `base64_pkcs12: String` field became `pkcs12: Vec<u8>`.
+Both fields are private now, so a certificate is built with `ClientCertificate::new`, and a password-protected archive gets its password through `ClientCertificate::set_password`.
+
+`ClientCertificate` continues to implement `Debug`, but it prints neither the certificate data nor the password.
+
+**Migration:** Replace the struct expression with `ClientCertificate::new` and hand it the decoded archive:
+
+```rust
+// Before:
+let certificate_base64 = fs::read_to_string("path/to/base64_pkcs12_certificate")?;
+let certificate = ClientCertificate {
+    base64_pkcs12: certificate_base64,
+    password: None,
+};
+
+// After:
+let certificate = ClientCertificate::new(fs::read("path/to/pkcs12_certificate")?);
+```
+
+For a password-protected archive:
+
+```rust
+// Before:
+let certificate = ClientCertificate {
+    base64_pkcs12: certificate_base64,
+    password: Some("your-password".to_string()),
+};
+
+// After:
+let certificate =
+    ClientCertificate::new(fs::read("path/to/pkcs12_certificate")?).set_password("your-password");
+```
+
+### `entra-id` uses `rustls` for the requests to the Entra ID token endpoint (Breaking Change)
+
+The bump to `azure_identity` 1.0 and `azure_core` 1.1 switches their HTTP stack from `native-tls` to `rustls` together with the platform's certificate store. This concerns only the HTTPS requests that fetch the tokens from Entra ID. The TLS backend for the connection to the server is unaffected and is still selected through the `tls-native-tls` and `tls-rustls` features.
+
+That has two consequences:
+
+* Enabling `entra-id` alongside `tls-native-tls` links both TLS implementations into the binary.
+* `rustls` validates certificates more strictly than OpenSSL, so fetching a token can start failing in environments that intercept TLS traffic.
+
+**Migration:** No code changes are needed. In an environment that intercepts TLS traffic, make sure that the intercepting certificate authority is installed in the platform's certificate store and that its chain is one that `rustls` accepts.

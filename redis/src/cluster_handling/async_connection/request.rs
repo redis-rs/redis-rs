@@ -35,6 +35,7 @@ pub(super) enum CmdArg<C> {
         count: usize,
         route: InternalSingleNodeRouting<C>,
     },
+    Reconnect(NodeAddress),
 }
 
 pub(super) enum Retry<C> {
@@ -54,6 +55,7 @@ impl<C> CmdArg<C> {
     fn set_redirect(&mut self, redirect: Option<Redirect>) {
         if let Some(redirect) = redirect {
             match self {
+                CmdArg::Reconnect(_) => {}
                 CmdArg::Cmd { routing, .. } => match routing {
                     InternalRoutingInfo::SingleNode(route) => {
                         let redirect = InternalSingleNodeRouting::Redirect {
@@ -96,6 +98,7 @@ impl<C> CmdArg<C> {
             }
         };
         match self {
+            CmdArg::Reconnect(_) => {}
             CmdArg::Cmd { routing, .. } => {
                 if let InternalRoutingInfo::SingleNode(route) = routing {
                     fix_route(route);
@@ -166,6 +169,16 @@ pub(crate) fn choose_response<C>(
     mut request: PendingRequest<C>,
     retry_params: &RetryParams,
 ) -> (Option<Retry<C>>, PollFlushAction) {
+    // Reconnect requests are internal signals - just trigger reconnect, no retry.
+    if let CmdArg::Reconnect(addr) = &request.cmd {
+        let addr = addr.clone();
+        request.sender.send(Ok(Response::Single(crate::Value::Nil)));
+        return (
+            None,
+            PollFlushAction::Reconnect(std::collections::HashSet::from([addr])),
+        );
+    }
+
     let (target, result) = result;
     let err = match result {
         Ok(item) => {
@@ -268,10 +281,7 @@ pub(crate) fn choose_response<C>(
                 // No redirect address is available (e.g. READONLY), so re-route by slot
                 // against the refreshed topology.
                 request.cmd.reset_routing();
-                Retry::AfterSleep {
-                    request,
-                    sleep_duration,
-                }
+                Retry::MoveToPending { request }
             });
             (retry, PollFlushAction::RebuildSlots)
         }
@@ -359,6 +369,7 @@ mod tests {
                 InternalSingleNodeRouting::Redirect { redirect, .. } => Some(redirect.clone()),
                 _ => None,
             },
+            CmdArg::Reconnect(_) => None,
         }
     }
 
@@ -460,10 +471,10 @@ mod tests {
 
         // READONLY has no redirect address, so the request keeps its (slot-based) routing
         // and is retried after a sleep once the slot map has been rebuilt.
-        if let Some(super::Retry::AfterSleep { request, .. }) = retry {
+        if let Some(super::Retry::MoveToPending { request }) = retry {
             assert!(get_redirect(&request).is_none());
         } else {
-            panic!("Expected a sleep-then-retry");
+            panic!("Expected a move-to-pending");
         };
         assert_eq!(next, PollFlushAction::RebuildSlots);
         assert_matches!(receiver.try_recv(), Err(_));
