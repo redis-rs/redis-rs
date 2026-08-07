@@ -642,6 +642,7 @@ let primary = sentinel.get_async_connection().await.unwrap();
 )]
 #![cfg_attr(not(test), forbid(clippy::print_stdout))]
 #![cfg_attr(not(test), forbid(clippy::panic))]
+#![cfg_attr(not(test), forbid(clippy::infinite_loop))]
 
 // public api
 #[cfg(feature = "aio")]
