@@ -41,10 +41,12 @@
 mod fields;
 mod options;
 mod schema;
+mod vector;
 
 pub use fields::*;
 pub use options::*;
 pub use schema::*;
+pub use vector::*;
 
 use crate::Cmd;
 

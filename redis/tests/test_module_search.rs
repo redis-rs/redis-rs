@@ -11,6 +11,7 @@ static TEXT_FIELD_NAME: &str = "title";
 static NUMERIC_FIELD_NAME: &str = "price";
 static TAG_FIELD_NAME: &str = "condition";
 static GEO_FIELD_NAME: &str = "location";
+static VECTOR_FIELD_NAME: &str = "embedding";
 static GEOSHAPE_FIELD_NAME: &str = "area";
 
 fn assert_no_index_and_index_missing_exclusivity_for_field(
@@ -538,6 +539,124 @@ fn test_module_search_ft_create_schema_geo_field() {
         &[Module::Search]
     );
     run_ft_create_schema_geo_field(&mut ctx.connection(), |_| {});
+}
+
+type VectorFieldModifier = fn(VectorField) -> VectorField;
+
+fn run_ft_create_schema_flat_vector_field<C, F>(con: &mut C, mut on_created: F)
+where
+    C: redis::ConnectionLike,
+    F: FnMut(&str),
+{
+    const DIM: u32 = 128;
+
+    type FlatVectorFieldBuilderModifier = fn(FlatVectorFieldBuilder) -> FlatVectorFieldBuilder;
+    // FLAT-specific builder modifiers (applied before .build())
+    let builder_modifiers: Vec<(&'static str, FlatVectorFieldBuilderModifier)> =
+        vec![("block_size", |builder| builder.block_size(1000))];
+
+    // Common field modifiers (applied after .build()) - not mutually exclusive
+    let field_modifiers: Vec<(&'static str, VectorFieldModifier)> = vec![
+        ("alias", |field| field.alias("vector_alias")),
+        ("index_missing", |field| field.index_missing(true)),
+    ];
+
+    // For each Vector type
+    for (vector_type_name, vector_type) in [
+        ("float32", VectorType::Float32),
+        ("float64", VectorType::Float64),
+        ("bfloat16", VectorType::BFloat16),
+        ("float16", VectorType::Float16),
+        ("int8", VectorType::Int8),
+        ("uint8", VectorType::UInt8),
+    ] {
+        // For each distance metric
+        for (distance_metric_name, distance_metric) in [
+            ("l2", DistanceMetric::L2),
+            ("ip", DistanceMetric::IP),
+            ("cosine", DistanceMetric::Cosine),
+        ] {
+            let base_name = format!("idx_flat_{vector_type_name}_{distance_metric_name}");
+
+            // 1. Test each builder modifier individually
+            for (builder_suffix, builder_modifier) in &builder_modifiers {
+                let index_name = format!("{base_name}_builder_{builder_suffix}");
+                let schema = schema! {
+                    VECTOR_FIELD_NAME => builder_modifier(VectorField::flat(vector_type, DIM, distance_metric)).build()
+                };
+                assert_eq!(
+                    con.ft_create(&index_name, &CreateOptions::new(), &schema),
+                    Ok("OK".to_string())
+                );
+                on_created(&index_name);
+            }
+
+            // 2. Test each common field modifier individually
+            for (field_suffix, field_modifier) in &field_modifiers {
+                let index_name = format!("{base_name}_field_{field_suffix}");
+                let schema = schema! {
+                    VECTOR_FIELD_NAME => field_modifier(VectorField::flat(vector_type, DIM, distance_metric).build())
+                };
+                assert_eq!(
+                    con.ft_create(&index_name, &CreateOptions::new(), &schema),
+                    Ok("OK".to_string())
+                );
+                on_created(&index_name);
+            }
+
+            // 3. Test all builder modifiers combined progressively
+            let mut combined_builder = VectorField::flat(vector_type, DIM, distance_metric);
+            for (builder_suffix, builder_modifier) in &builder_modifiers {
+                combined_builder = builder_modifier(combined_builder);
+                let index_name = format!("{base_name}_builders_until_{builder_suffix}");
+                let schema = schema! {
+                    VECTOR_FIELD_NAME => combined_builder.clone().build()
+                };
+                assert_eq!(
+                    con.ft_create(&index_name, &CreateOptions::new(), &schema),
+                    Ok("OK".to_string())
+                );
+                on_created(&index_name);
+            }
+
+            // 4. Test all builder modifiers + each field modifier
+            for (field_suffix, field_modifier) in &field_modifiers {
+                let index_name = format!("{base_name}_all_builders_with_{field_suffix}");
+                let schema = schema! {
+                    VECTOR_FIELD_NAME => field_modifier(combined_builder.clone().build())
+                };
+                assert_eq!(
+                    con.ft_create(&index_name, &CreateOptions::new(), &schema),
+                    Ok("OK".to_string())
+                );
+                on_created(&index_name);
+            }
+
+            // 5. Test all builder modifiers + all field modifiers combined progressively
+            let mut combined_field = combined_builder.clone().build();
+            for (field_suffix, field_modifier) in &field_modifiers {
+                combined_field = field_modifier(combined_field);
+                let index_name = format!("{base_name}_all_builders_fields_until_{field_suffix}");
+                let schema = schema! {
+                    VECTOR_FIELD_NAME => combined_field.clone()
+                };
+                assert_eq!(
+                    con.ft_create(&index_name, &CreateOptions::new(), &schema),
+                    Ok("OK".to_string())
+                );
+                on_created(&index_name);
+            }
+        }
+    }
+}
+
+#[test]
+fn test_module_search_ft_create_schema_flat_vector_field() {
+    let ctx = run_test_if_version_supported!(
+        [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]],
+        &[Module::Search]
+    );
+    run_ft_create_schema_flat_vector_field(&mut ctx.connection(), |_| {});
 }
 
 fn run_ft_create_schema_geoshape_field<C, F>(con: &mut C, mut on_created: F)
