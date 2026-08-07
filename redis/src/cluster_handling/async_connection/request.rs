@@ -14,7 +14,7 @@ use crate::{
 };
 
 use futures_util::{future::BoxFuture, ready};
-use log::trace;
+use log::{trace, warn};
 use pin_project_lite::pin_project;
 use tokio::sync::oneshot;
 
@@ -66,7 +66,8 @@ impl<C> CmdArg<C> {
                         *routing = redirect;
                     }
                     InternalRoutingInfo::MultiNode(_) => {
-                        panic!("Cannot redirect multinode requests")
+                        // Cannot redirect a multi-node request, so just ignore the redirect.
+                        warn!("Received a redirect for a multi-node request, ignoring it");
                     }
                 },
                 CmdArg::Pipeline { route, .. } => {
