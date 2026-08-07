@@ -451,35 +451,32 @@ mod basic_async {
         );
     }
 
-    fn test_cmd(con: impl AsyncCommands + Clone, i: i32) -> impl Future<Output = ()> + Send {
-        let mut con = con.clone();
-        async move {
-            let key = format!("key{i}");
-            let key_2 = key.clone();
-            let key2 = format!("key{i}_2");
-            let key2_2 = key2.clone();
+    async fn test_cmd(mut con: impl AsyncCommands + Clone, i: i32) {
+        let key = format!("key{i}");
+        let key_2 = key.clone();
+        let key2 = format!("key{i}_2");
+        let key2_2 = key2.clone();
 
-            let foo_val = format!("foo{i}");
+        let foo_val = format!("foo{i}");
 
-            redis::cmd("SET")
-                .arg(&key[..])
-                .arg(foo_val.as_bytes())
-                .exec_async(&mut con)
-                .await
-                .unwrap();
-            redis::cmd("SET")
-                .arg(&[&key2, "bar"])
-                .exec_async(&mut con)
-                .await
-                .unwrap();
-            redis::cmd("MGET")
-                .arg(&[&key_2, &key2_2])
-                .query_async(&mut con)
-                .map(|result| {
-                    assert_eq!(Ok((foo_val, b"bar".to_vec())), result);
-                })
-                .await;
-        }
+        redis::cmd("SET")
+            .arg(&key[..])
+            .arg(foo_val.as_bytes())
+            .exec_async(&mut con)
+            .await
+            .unwrap();
+        redis::cmd("SET")
+            .arg(&[&key2, "bar"])
+            .exec_async(&mut con)
+            .await
+            .unwrap();
+        redis::cmd("MGET")
+            .arg(&[&key_2, &key2_2])
+            .query_async(&mut con)
+            .map(|result| {
+                assert_eq!(Ok((foo_val, b"bar".to_vec())), result);
+            })
+            .await;
     }
 
     #[async_test]

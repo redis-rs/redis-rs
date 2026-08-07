@@ -882,9 +882,7 @@ where
     async fn try_request(self, cmd: CmdArg<C>) -> OperationResult {
         match cmd {
             CmdArg::Reconnect(addr) => (
-                OperationTarget::Node {
-                    address: addr.clone(),
-                },
+                OperationTarget::Node { address: addr },
                 // this is intended to make the caller trigger reconnection
                 Err(RedisError::from((ErrorKind::Io, "connection dropped"))),
             ),
@@ -979,8 +977,7 @@ where
     async fn get_redirected_connection(&self, redirect: Redirect) -> RedisResult<(NodeAddress, C)> {
         let asking = matches!(redirect, Redirect::Ask(_));
         let addr = match redirect {
-            Redirect::Moved(addr) => addr,
-            Redirect::Ask(addr) => addr,
+            Redirect::Moved(addr) | Redirect::Ask(addr) => addr,
         };
         let read_guard = self.conn_lock.read().await;
         let conn = read_guard.0.get(&addr).and_then(ConnState::connected);
@@ -1392,7 +1389,7 @@ where
         });
         let core = Core(inner);
         let mut inner = ClusterConnInner {
-            inner: core.clone(),
+            inner: core,
             in_flight_requests: Default::default(),
             reconnect_futures: Default::default(),
             pending_requests_rx,
@@ -1503,8 +1500,9 @@ where
             std::mem::replace(&mut self.state, ConnectionState::PollComplete)
         {
             match fut {
-                RecoverFuture::RecoverSlots(fut) => fut.await?,
-                RecoverFuture::ReconnectInitial(fut) => fut.await?,
+                RecoverFuture::RecoverSlots(fut) | RecoverFuture::ReconnectInitial(fut) => {
+                    fut.await?
+                }
             }
         }
         Ok(())
@@ -1695,8 +1693,7 @@ enum PollFlushAction {
 impl PollFlushAction {
     fn change_state(self, next_state: PollFlushAction) -> PollFlushAction {
         match (self, next_state) {
-            (PollFlushAction::None, next_state) => next_state,
-            (next_state, PollFlushAction::None) => next_state,
+            (PollFlushAction::None, next_state) | (next_state, PollFlushAction::None) => next_state,
             (PollFlushAction::ReconnectFromInitialConnections, _)
             | (_, PollFlushAction::ReconnectFromInitialConnections) => {
                 PollFlushAction::ReconnectFromInitialConnections
@@ -1782,9 +1779,8 @@ where
     ) -> Poll<Result<(), Self::Error>> {
         // Try to drive any in flight requests to completion
         match self.poll_complete(cx) {
-            Poll::Ready(PollFlushAction::None) => (),
+            Poll::Ready(PollFlushAction::None) | Poll::Pending => (),
             Poll::Ready(_) => Err(())?,
-            Poll::Pending => (),
         };
         // If we no longer have any requests in flight we are done (skips any reconnection
         // attempts)

@@ -417,7 +417,7 @@ mod hotkeys_cluster {
         };
 
         // Build a ClusterClient with the requested protocol.
-        let client = ClusterClientBuilder::new(cluster_ctx.nodes.clone())
+        let client = ClusterClientBuilder::new(cluster_ctx.nodes)
             .use_protocol(protocol)
             .build()
             .unwrap();
@@ -448,9 +448,7 @@ mod hotkeys_cluster {
         // GET via route_command and parse manually.
         let mut get_cmd = cmd("HOTKEYS");
         get_cmd.arg("GET");
-        let get_value = cluster_con
-            .route_command(&get_cmd, routing.clone())
-            .unwrap();
+        let get_value = cluster_con.route_command(&get_cmd, routing).unwrap();
         let snapshot: Option<HotkeysResponse> = from_redis_value(get_value).unwrap();
         let snapshot = snapshot.expect("session is active");
 

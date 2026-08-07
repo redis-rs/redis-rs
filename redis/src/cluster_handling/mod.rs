@@ -226,7 +226,7 @@ mod tests {
         let mapped = NodeAddress::new("node1.westeurope.redis.azure.net", 8501);
 
         let mut map = std::collections::HashMap::new();
-        map.insert(node.clone(), mapped.clone());
+        map.insert(node.clone(), mapped);
 
         let params = ClusterParams {
             node_address_map: Some(map),

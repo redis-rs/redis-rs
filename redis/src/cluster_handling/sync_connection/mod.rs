@@ -1071,9 +1071,8 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
         let value = parse_redis_value(actual_cmd)?;
         let route = match RoutingInfo::for_routable(&value) {
             // we don't allow routing multiple commands to multiple nodes.
-            Some(RoutingInfo::MultiNode(_)) => None,
             Some(RoutingInfo::SingleNode(route)) => Some(route),
-            None => None,
+            Some(RoutingInfo::MultiNode(_)) | None => None,
         }
         .unwrap_or(SingleNodeRoutingInfo::Random);
         self.request(

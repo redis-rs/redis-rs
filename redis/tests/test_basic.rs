@@ -4284,7 +4284,7 @@ mod basic {
             );
         }
         let (new_tx, new_rx) = std::sync::mpsc::channel();
-        con.set_push_sender(new_tx.clone());
+        con.set_push_sender(new_tx);
         drop(rx);
         let _: RedisResult<()> = pipe.query(&mut con);
         con.get_int("key_1").unwrap();
@@ -4313,7 +4313,7 @@ mod basic {
 
         let mut con = client.get_connection().unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
-        con.set_push_sender(tx.clone());
+        con.set_push_sender(tx);
 
         let _: () = con.set("A", "1").unwrap();
         assert_eq!(

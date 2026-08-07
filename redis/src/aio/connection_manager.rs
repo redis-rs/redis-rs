@@ -454,7 +454,7 @@ impl ConnectionManager {
 
         // Trigger the connection by loading and awaiting it
         let guard = manager.0.connection.load();
-        (**guard).clone().await.map_err(|e| e.clone())?;
+        (**guard).clone().await?;
 
         Ok(manager)
     }
@@ -693,7 +693,7 @@ impl ConnectionManager {
     pub async fn send_packed_command(&mut self, cmd: &Cmd) -> RedisResult<Value> {
         // Clone connection to avoid having to lock the ArcSwap in write mode
         let guard = self.0.connection.load();
-        let connection_result = (**guard).clone().await.map_err(|e| e.clone());
+        let connection_result = (**guard).clone().await;
         reconnect_if_io_error!(self, connection_result, guard);
         let result = connection_result?.send_packed_command(cmd).await;
         reconnect_if_dropped!(self, &result, guard);
@@ -711,7 +711,7 @@ impl ConnectionManager {
     ) -> RedisResult<Vec<Value>> {
         // Clone shared connection future to avoid having to lock the ArcSwap in write mode
         let guard = self.0.connection.load();
-        let connection_result = (**guard).clone().await.map_err(|e| e.clone());
+        let connection_result = (**guard).clone().await;
         reconnect_if_io_error!(self, connection_result, guard);
         let result = connection_result?
             .send_packed_commands(cmd, offset, count)

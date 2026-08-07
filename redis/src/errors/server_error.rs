@@ -62,22 +62,21 @@ impl ServerErrorKind {
             Self::Moved => RetryMethod::MovedRedirect,
             Self::Ask => RetryMethod::AskRedirect,
 
-            Self::TryAgain => RetryMethod::WaitAndRetry,
-            Self::MasterDown => RetryMethod::WaitAndRetry,
-            Self::ClusterDown => RetryMethod::WaitAndRetry,
-            Self::BusyLoading => RetryMethod::WaitAndRetry,
+            Self::TryAgain | Self::MasterDown | Self::ClusterDown | Self::BusyLoading => {
+                RetryMethod::WaitAndRetry
+            }
 
             // A write that lands on a node demoted to replica during failover returns READONLY.
             // The slot map is stale, so refresh topology and retry against the new master.
             Self::ReadOnly => RetryMethod::RefreshSlotsAndRetry,
 
-            Self::ResponseError => RetryMethod::NoRetry,
-            Self::ExecAbort => RetryMethod::NoRetry,
-            Self::NoScript => RetryMethod::NoRetry,
-            Self::CrossSlot => RetryMethod::NoRetry,
-            Self::NotBusy => RetryMethod::NoRetry,
-            Self::NoSub => RetryMethod::NoRetry,
-            Self::NoPerm => RetryMethod::NoRetry,
+            Self::ResponseError
+            | Self::ExecAbort
+            | Self::NoScript
+            | Self::CrossSlot
+            | Self::NotBusy
+            | Self::NoSub
+            | Self::NoPerm => RetryMethod::NoRetry,
         }
     }
 }

@@ -245,8 +245,7 @@ impl RedisError {
     /// Returns the kind of the error.
     pub fn kind(&self) -> ErrorKind {
         match &self.repr {
-            ErrorRepr::General(kind, _, _) => *kind,
-            ErrorRepr::Internal { kind, .. } => *kind,
+            ErrorRepr::General(kind, _, _) | ErrorRepr::Internal { kind, .. } => *kind,
             ErrorRepr::Parsing(_) => ErrorKind::Parse,
             ErrorRepr::Server(err) => match err.kind() {
                 Some(kind) => ErrorKind::Server(kind),
@@ -394,15 +393,14 @@ impl RedisError {
     pub fn is_unrecoverable_error(&self) -> bool {
         let retry_method = self.retry_method();
         match retry_method {
-            RetryMethod::Reconnect => true,
-            RetryMethod::ReconnectFromInitialConnections => true,
+            RetryMethod::Reconnect | RetryMethod::ReconnectFromInitialConnections => true,
 
-            RetryMethod::NoRetry => false,
-            RetryMethod::RetryImmediately => false,
-            RetryMethod::WaitAndRetry => false,
-            RetryMethod::AskRedirect => false,
-            RetryMethod::MovedRedirect => false,
-            RetryMethod::RefreshSlotsAndRetry => false,
+            RetryMethod::NoRetry
+            | RetryMethod::RetryImmediately
+            | RetryMethod::WaitAndRetry
+            | RetryMethod::AskRedirect
+            | RetryMethod::MovedRedirect
+            | RetryMethod::RefreshSlotsAndRetry => false,
         }
     }
 
@@ -454,8 +452,9 @@ impl RedisError {
                 } else {
                     self.as_io_error()
                         .map(|err| match err.kind() {
-                            io::ErrorKind::PermissionDenied => RetryMethod::NoRetry,
-                            io::ErrorKind::Unsupported => RetryMethod::NoRetry,
+                            io::ErrorKind::PermissionDenied | io::ErrorKind::Unsupported => {
+                                RetryMethod::NoRetry
+                            }
 
                             _ => RetryMethod::RetryImmediately,
                         })
