@@ -76,8 +76,8 @@ impl ClusterTopology {
         let mut seen = std::collections::HashSet::new();
         self.slots
             .values()
-            .map(|shard| shard.as_ref())
-            .filter(move |shard| seen.insert(std::ptr::addr_of!(*shard)))
+            .filter(move |shard| seen.insert(Arc::as_ptr(shard)))
+            .map(|arc| arc.as_ref())
     }
 }
 
