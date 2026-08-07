@@ -17,6 +17,9 @@ pub const REDIS_CE_8_8: Component = ("redis", (8, 8, 0));
 pub const REDIS_JSON_8_8: Component = ("ReJSON", (8, 8, 0));
 pub const REDIS_BLOOM_ANY: Component = ("redis:bf", (0, 0, 0));
 
+pub const REDIS_SEARCH_8_0: Component = ("search", (8, 0, 0));
+pub const REDIS_SEARCH_8_2: Component = ("search", (8, 2, 0));
+
 // Valkey forked off at Redis 7.2.4 and still reports its Redis version 7.2.4. So tests that run
 // on Redis<=7.2.4 automatically also run on any Valkey server, and we only need version guards for
 // later versions.
@@ -338,7 +341,7 @@ macro_rules! skip_if_context_does_not_support {
 /// ```
 #[macro_export]
 macro_rules! run_test_if_version_supported {
-    ($component:expr) => {{ run_test_if_version_supported!($component, &[]) }};
+    ($component:expr) => {{ $crate::run_test_if_version_supported!($component, &[]) }};
     ($component:expr, $modules:expr) => {{
         let ctx = $crate::support::TestContext::with_modules($modules);
 

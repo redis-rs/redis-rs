@@ -34,6 +34,7 @@ enum ServerType {
 pub enum Module {
     Bloom,
     Json,
+    Search,
 }
 
 /// A standalone Redis server instance for testing.
@@ -212,6 +213,13 @@ impl RedisServer {
                 Module::Bloom => {
                     let path = env::var("REDISRS_REDIS_BLOOM_PATH").expect(
                         "Unable to find path to RedisBloom at REDISRS_REDIS_BLOOM_PATH, is it set?",
+                    );
+
+                    redis_cmd.arg("--loadmodule").arg(path);
+                }
+                Module::Search => {
+                    let path = env::var("REDISRS_REDIS_SEARCH_PATH").expect(
+                        "Unable to find path to RediSearch at REDISRS_REDIS_SEARCH_PATH, is it set?",
                     );
 
                     redis_cmd.arg("--loadmodule").arg(path);
