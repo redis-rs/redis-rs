@@ -1332,6 +1332,11 @@ struct Message<C> {
 enum RecoverFuture {
     RecoverSlots(BoxFuture<'static, RedisResult<()>>),
     ReconnectInitial(BoxFuture<'static, RedisResult<()>>),
+    /// Targeted blocking reconnection of specific nodes. Used when no
+    /// healthy connections remain and background repair would fail because
+    /// the retry loop would exhaust across stale nodes before any background
+    /// reconnect_loop is polled.
+    Reconnect(BoxFuture<'static, RedisResult<()>>),
 }
 
 enum ConnectionState {
@@ -1505,6 +1510,7 @@ where
             match fut {
                 RecoverFuture::RecoverSlots(fut) => fut.await?,
                 RecoverFuture::ReconnectInitial(fut) => fut.await?,
+                RecoverFuture::Reconnect(fut) => fut.await?,
             }
         }
         Ok(())
@@ -1536,6 +1542,20 @@ where
                     Err(err) => {
                         error!(
                             "async cluster client recovery: reconnect to initial nodes failed: `{err}`"
+                        );
+                    }
+                }
+                self.state = ConnectionState::PollComplete;
+                Ok(())
+            }
+            RecoverFuture::Reconnect(future) => {
+                match ready!(future.as_mut().poll(cx)) {
+                    Ok(()) => {
+                        info!("async cluster client recovery: targeted reconnection complete");
+                    }
+                    Err(err) => {
+                        error!(
+                            "async cluster client recovery: targeted reconnection failed: `{err}`"
                         );
                     }
                 }
@@ -1764,7 +1784,74 @@ where
                     )));
                 }
                 PollFlushAction::Reconnect(addrs) => {
-                    self.register_reconnect_futures(addrs);
+                    // Check whether there are healthy (Connected) nodes remaining
+                    // after accounting for the nodes that are about to be marked as
+                    // Reconnecting. If no healthy nodes will remain, the background
+                    // reconnect_loop approach fails because every retry in the retry
+                    // loop will hit another stale node, exhausting the retry budget
+                    // before any background repair task is polled. In that case we
+                    // escalate to blocking recovery.
+                    let should_block = self.inner.conn_lock.try_read().ok().is_some_and(|guard| {
+                        let total = guard.0.len();
+                        let healthy_count = guard.0.iter().filter(|(addr, state)| {
+                            matches!(state, ConnState::Connected(_)) && !addrs.contains(*addr)
+                        }).count();
+                        // Escalate to blocking recovery if no healthy nodes remain,
+                        // OR if less than half the cluster is healthy (indicating
+                        // widespread connection loss). The latter case prevents retry
+                        // exhaustion in large clusters where nodes > retries.
+                        total > 0 && healthy_count * 2 < total
+                    });
+
+                    if should_block {
+                        warn!(
+                            "async cluster client recovery: no healthy connections remain, \
+                             escalating to blocking reconnection for {} nodes",
+                            addrs.len()
+                        );
+                        let inner = self.inner.clone();
+                        self.state = ConnectionState::Recover(RecoverFuture::Reconnect(
+                            Box::pin(async move {
+                                // Gather ALL nodes that need reconnection (not just the
+                                // ones from this Reconnect action). This includes nodes
+                                // already marked Reconnecting by earlier iterations.
+                                let mut all_addrs = addrs;
+                                {
+                                    let guard = inner.conn_lock.read().await;
+                                    for (addr, state) in guard.0.iter() {
+                                        if !matches!(state, ConnState::Connected(_)) {
+                                            all_addrs.insert(addr.clone());
+                                        }
+                                    }
+                                }
+                                // Retry until at least one connection is established.
+                                let mut backoff = Duration::from_millis(10);
+                                loop {
+                                    {
+                                        let mut connections = inner.conn_lock.write().await;
+                                        inner
+                                            .refresh_connections_locked(
+                                                &mut connections.0,
+                                                all_addrs.clone(),
+                                            )
+                                            .await;
+                                        // Check if at least one node is now Connected
+                                        let any_connected = connections.0.values().any(|state| {
+                                            matches!(state, ConnState::Connected(_))
+                                        });
+                                        if any_connected {
+                                            break;
+                                        }
+                                    }
+                                    boxed_sleep(backoff).await;
+                                    backoff = (backoff * 2).min(Duration::from_secs(1));
+                                }
+                                Ok(())
+                            }),
+                        ));
+                    } else {
+                        self.register_reconnect_futures(addrs);
+                    }
                 }
                 PollFlushAction::ReconnectFromInitialConnections => {
                     warn!("async cluster client recovery: beginning reconnect to initial nodes");

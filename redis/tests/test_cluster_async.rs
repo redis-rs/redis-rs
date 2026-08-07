@@ -3512,4 +3512,270 @@ mod cluster_async {
             check_unwatched(&mut con.clone()).await;
         }
     }
+
+    // ===================================================================
+    // Regression reproducer for redis-rs#2120 (merged in v1.4.0)
+    //
+    // PR #2120 changed cluster reconnection from blocking (synchronous) to
+    // background (asynchronous). This fixed head-of-line blocking when a
+    // SINGLE replica goes down (#2092), but introduced a regression: when
+    // ALL connections go stale simultaneously (e.g., after an idle timeout
+    // or network blip), retries exhaust before the background repair can
+    // complete, causing commands to fail with BrokenPipe.
+    //
+    // Production scenario (observed with clusters of hundreds of nodes):
+    //   1. All TCP connections go idle and are closed server-side
+    //   2. Next command hits a stale connection -> BrokenPipe
+    //   3. Background reconnect_loop spawns for that node
+    //   4. Retry picks another "Connected" node (still stale) -> BrokenPipe
+    //   5. Repeat until retries exhausted (default=16, but N < num_nodes)
+    //   6. Command fails, even though nodes would accept a fresh connection
+    //
+    // Before PR #2120: the cluster would BLOCK while creating a fresh
+    // connection (refresh_connections), the fresh connection succeeds, and
+    // the retry works. After PR #2120: the fresh connection is created in
+    // a background task that hasn't been polled yet when retries fire.
+    //
+    // The mock simulates this by:
+    //   - Tracking a "stale" flag and per-port reconnection counters
+    //   - First READONLY/PING per port fails (stale TCP socket -> BrokenPipe)
+    //   - Subsequent READONLY/PING succeeds (fresh TCP socket -> OK)
+    //   - Data commands succeed only AFTER a port has been "healed" (reconnected)
+    //   - In the old code, blocking refresh_connections creates a fresh connection
+    //     synchronously, heals the port, so the retry succeeds.
+    //   - In the new code, the background reconnect_loop would also heal the port,
+    //     but it hasn't been polled yet when the retry fires.
+    // ===================================================================
+
+    /// Reproducer: 2 nodes, retries=3. ALL connections go stale simultaneously.
+    /// Nodes are healthy (accept fresh connections) but old connections are dead.
+    ///
+    /// Pre-PR#2120: PASSES (blocking refresh_connections heals port before retry)
+    /// Post-PR#2120: FAILS (background repair not polled, retries hit stale ports)
+    #[test]
+    fn test_repro_all_connections_stale_retries_exhaust_before_recovery() {
+        let name = "test_repro_all_stale_2_nodes";
+
+        let stale_phase = Arc::new(AtomicBool::new(false));
+        let stale_phase_clone = stale_phase.clone();
+
+        // Track per-port connection check attempts (READONLY/PING calls).
+        //
+        // In the mock, reconnect_loop completes synchronously (no real I/O),
+        // so we must force it to FAIL on its first iteration so that it sleeps
+        // (yielding the executor). The sleep gives dispatch_pending a chance to
+        // fire the retry before the port is healed.
+        //
+        // Attempts 0 and 1: fail (stale socket PING + stale socket READONLY)
+        //   -> reconnect_loop's first get_or_create_conn fails, triggers backoff sleep
+        // Attempt 2+: succeed (fresh socket after sleep)
+        //   -> reconnect_loop's second iteration heals the port
+        //
+        // The key: between the first failure and the sleep wakeup, the retry
+        // fires and hits another (or the same) unhealed port.
+        let port_6379_checks = Arc::new(AtomicU32::new(0));
+        let port_6380_checks = Arc::new(AtomicU32::new(0));
+
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(2),
+            name,
+            {
+                let stale_phase = stale_phase.clone();
+                let p6379 = port_6379_checks.clone();
+                let p6380 = port_6380_checks.clone();
+                move |cmd: &[u8], port| {
+                    if !stale_phase.load(Ordering::SeqCst) {
+                        // Setup phase: everything works normally.
+                        respond_startup_two_nodes(name, cmd)?;
+                        Err(Ok(redis_value!("OK")))
+                    } else {
+                        let checks = match port {
+                            6379 => &p6379,
+                            6380 => &p6380,
+                            _ => panic!("unexpected port"),
+                        };
+
+                        if is_connection_check(cmd) {
+                            let attempt = checks.fetch_add(1, Ordering::SeqCst);
+                            if attempt < 2 {
+                                // Attempts 0-1: fail. This forces reconnect_loop to
+                                // fail on its first iteration (PING fail + READONLY
+                                // fail = get_or_create_conn returns Err), triggering
+                                // a backoff sleep which YIELDS the executor.
+                                Err(Err(broken_pipe_error()))
+                            } else {
+                                // Attempt 2+: fresh connection succeeds (after sleep)
+                                Err(Ok(Value::SimpleString("OK".into())))
+                            }
+                        } else if contains_slice(cmd, b"CLUSTER")
+                            && contains_slice(cmd, b"SLOTS")
+                        {
+                            // CLUSTER SLOTS: works only after port is healed.
+                            if checks.load(Ordering::SeqCst) > 2 {
+                                respond_startup_two_nodes(name, cmd)?;
+                                Err(Ok(redis_value!("OK")))
+                            } else {
+                                Err(Err(broken_pipe_error()))
+                            }
+                        } else {
+                            // Data commands: succeed only if port has been healed.
+                            // check_count > 2 means reconnect_loop completed its
+                            // second iteration successfully.
+                            if checks.load(Ordering::SeqCst) > 2 {
+                                Err(Ok(redis_value!("OK")))
+                            } else {
+                                Err(Err(broken_pipe_error()))
+                            }
+                        }
+                    }
+                }
+            },
+        );
+
+        // Enter the stale phase: all existing connections are now dead.
+        stale_phase_clone.store(true, Ordering::SeqCst);
+
+        let result = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<Option<String>>(&mut connection),
+        );
+
+        // Pre-PR#2120: PASSES -- blocking refresh_connections heals the port,
+        //   the retry uses the healed connection.
+        // Post-PR#2120: FAILS -- background repair hasn't been polled,
+        //   retries exhaust against stale connections.
+        assert!(
+            result.is_ok(),
+            "Expected command to succeed after reconnection, but got: {:?}\n\
+             This demonstrates the regression: background repair hasn't been \
+             polled when retries fire, so all retries hit stale connections.",
+            result.unwrap_err()
+        );
+    }
+
+    /// Scale reproducer: 20 nodes with default retries (16).
+    /// This models production clusters (hundreds of nodes, 16 retries) where there are
+    /// always more stale-but-"Connected" nodes than retries. Each retry hits a
+    /// different stale node and burns a retry counter. After 16 retries, only
+    /// 16 of 20 nodes have been marked Reconnecting; 4 remain "Connected" (but
+    /// stale). ClusterConnectionNotFound is never reached, so the blocking
+    /// recovery path never activates. The request simply fails.
+    ///
+    /// Pre-PR#2120: PASSES (each Reconnect action blocks on refresh_connections,
+    ///   healing the node before the next retry fires)
+    /// Post-PR#2120: FAILS (background repair sleeps, retries fire instantly
+    ///   against remaining stale nodes)
+    #[test]
+    fn test_repro_all_connections_stale_many_nodes_retries_exhausted() {
+        let name = "test_repro_all_stale_20_nodes";
+
+        let stale_phase = Arc::new(AtomicBool::new(false));
+        let stale_phase_clone = stale_phase.clone();
+
+        // 20 ports: 6379..6398. More nodes than retries (16) means
+        // ClusterConnectionNotFound is never triggered.
+        const NUM_NODES: usize = 20;
+        let check_counts: Arc<Vec<AtomicU32>> = Arc::new(
+            (0..NUM_NODES).map(|_| AtomicU32::new(0)).collect(),
+        );
+
+        // Distribute hash slots evenly across 20 nodes.
+        let slots_per_node = 16384 / NUM_NODES as u16;
+        let slots_config: Vec<MockSlotRange> = (0..NUM_NODES)
+            .map(|i| {
+                let start = i as u16 * slots_per_node;
+                let end = if i == NUM_NODES - 1 {
+                    16383
+                } else {
+                    (i as u16 + 1) * slots_per_node - 1
+                };
+                MockSlotRange {
+                    primary_port: 6379 + i as u16,
+                    replica_ports: vec![],
+                    slot_range: (start..end),
+                }
+            })
+            .collect();
+
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            // Default retries = 16. With 20 nodes, retries exhaust before all
+            // nodes are marked Reconnecting.
+            ClusterClient::builder(vec![&*format!("redis://{name}")]),
+            name,
+            {
+                let stale_phase = stale_phase.clone();
+                let slots_config = slots_config.clone();
+                let check_counts = check_counts.clone();
+                move |cmd: &[u8], port| {
+                    if !stale_phase.load(Ordering::SeqCst) {
+                        respond_startup_with_replica_using_config(
+                            name,
+                            cmd,
+                            Some(slots_config.clone()),
+                        )?;
+                        Err(Ok(redis_value!("OK")))
+                    } else {
+                        let idx = (port - 6379) as usize;
+                        let checks = &check_counts[idx];
+
+                        if is_connection_check(cmd) {
+                            let attempt = checks.fetch_add(1, Ordering::SeqCst);
+                            if attempt < 2 {
+                                Err(Err(broken_pipe_error()))
+                            } else {
+                                Err(Ok(Value::SimpleString("OK".into())))
+                            }
+                        } else if contains_slice(cmd, b"CLUSTER")
+                            && contains_slice(cmd, b"SLOTS")
+                        {
+                            if checks.load(Ordering::SeqCst) > 2 {
+                                respond_startup_with_replica_using_config(
+                                    name,
+                                    cmd,
+                                    Some(slots_config.clone()),
+                                )?;
+                                Err(Ok(redis_value!("OK")))
+                            } else {
+                                Err(Err(broken_pipe_error()))
+                            }
+                        } else {
+                            if checks.load(Ordering::SeqCst) > 2 {
+                                Err(Ok(redis_value!("OK")))
+                            } else {
+                                Err(Err(broken_pipe_error()))
+                            }
+                        }
+                    }
+                }
+            },
+        );
+
+        stale_phase_clone.store(true, Ordering::SeqCst);
+
+        let result = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<Option<String>>(&mut connection),
+        );
+
+        assert!(
+            result.is_ok(),
+            "Expected command to succeed after reconnection, but got: {:?}\n\
+             With 20 nodes and 16 retries (default), retries exhaust across \
+             stale nodes without ever triggering blocking recovery. This models \
+             the production scenario (hundreds of nodes, 16 retries).",
+            result.unwrap_err()
+        );
+    }
 }
