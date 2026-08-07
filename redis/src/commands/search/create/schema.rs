@@ -1,5 +1,7 @@
 //! Defines the schema passed to the FT.CREATE command.
-use super::fields::SchemaTextField;
+use super::fields::{
+    SchemaGeoField, SchemaGeoShapeField, SchemaNumericField, SchemaTagField, SchemaTextField,
+};
 use crate::{RedisWrite, ToRedisArgs};
 use std::marker::PhantomData;
 
@@ -9,6 +11,14 @@ use std::marker::PhantomData;
 pub enum FieldDefinition {
     /// Text field
     Text(SchemaTextField),
+    /// Numeric field
+    Numeric(SchemaNumericField),
+    /// Geo field
+    Geo(SchemaGeoField),
+    /// Tag field
+    Tag(SchemaTagField),
+    /// Geo shape field
+    GeoShape(SchemaGeoShapeField),
 }
 
 impl ToRedisArgs for FieldDefinition {
@@ -18,6 +28,10 @@ impl ToRedisArgs for FieldDefinition {
     {
         match self {
             FieldDefinition::Text(tf) => tf.write_redis_args(out),
+            FieldDefinition::Numeric(nf) => nf.write_redis_args(out),
+            FieldDefinition::Geo(gf) => gf.write_redis_args(out),
+            FieldDefinition::Tag(tf) => tf.write_redis_args(out),
+            FieldDefinition::GeoShape(gs) => gs.write_redis_args(out),
         }
     }
 }
@@ -25,6 +39,30 @@ impl ToRedisArgs for FieldDefinition {
 impl From<SchemaTextField> for FieldDefinition {
     fn from(field: SchemaTextField) -> Self {
         FieldDefinition::Text(field)
+    }
+}
+
+impl From<SchemaNumericField> for FieldDefinition {
+    fn from(field: SchemaNumericField) -> Self {
+        FieldDefinition::Numeric(field)
+    }
+}
+
+impl From<SchemaGeoField> for FieldDefinition {
+    fn from(field: SchemaGeoField) -> Self {
+        FieldDefinition::Geo(field)
+    }
+}
+
+impl From<SchemaTagField> for FieldDefinition {
+    fn from(field: SchemaTagField) -> Self {
+        FieldDefinition::Tag(field)
+    }
+}
+
+impl From<SchemaGeoShapeField> for FieldDefinition {
+    fn from(field: SchemaGeoShapeField) -> Self {
+        FieldDefinition::GeoShape(field)
     }
 }
 
@@ -50,13 +88,13 @@ pub struct NonEmpty;
 /// // Using the macro (recommended)
 /// let schema = schema! {
 ///     "title" => SchemaTextField::new(),
-///     "subtitle" => SchemaTextField::new()
+///     "price" => SchemaNumericField::new()
 /// };
 ///
 /// // Using the builder pattern
 /// let schema = SearchSchema::new()
 ///     .insert("title", SchemaTextField::new())
-///     .insert("subtitle", SchemaTextField::new());
+///     .insert("price", SchemaNumericField::new());
 /// ```
 #[must_use = "Schema has no effect unless passed to a command"]
 #[derive(Debug, Clone)]
@@ -129,7 +167,8 @@ impl ToRedisArgs for SearchSchema<NonEmpty> {
 ///
 /// let schema = schema! {
 ///     "title" => SchemaTextField::new().weight(2.0),
-///     "subtitle" => SchemaTextField::new(),
+///     "price" => SchemaNumericField::new(),
+///     "tags" => SchemaTagField::new().separator(','),
 /// };
 /// ```
 #[macro_export]
@@ -150,17 +189,20 @@ mod tests {
 
     static INDEX_NAME: &str = "index";
     static TEXT_FIELD_NAME: &str = "title";
+    static NUMERIC_FIELD_NAME: &str = "price";
+    static TAG_FIELD_NAME: &str = "condition";
 
     #[test]
     fn test_multiple_fields() {
         let schema = SearchSchema::new()
             .insert(TEXT_FIELD_NAME, SchemaTextField::new().weight(2.0))
-            .insert("subtitle", SchemaTextField::new());
+            .insert(NUMERIC_FIELD_NAME, SchemaNumericField::new())
+            .insert(TAG_FIELD_NAME, SchemaTagField::new().separator(','));
 
         let ft_create = FtCreateCommand::new(INDEX_NAME).schema(schema);
         assert_eq!(
             ft_create.into_args(),
-            "FT.CREATE index SCHEMA title TEXT WEIGHT 2.0 subtitle TEXT"
+            "FT.CREATE index SCHEMA title TEXT WEIGHT 2.0 price NUMERIC condition TAG SEPARATOR ,"
         );
     }
 

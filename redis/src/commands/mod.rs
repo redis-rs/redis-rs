@@ -2973,7 +2973,8 @@ implement_commands! {
     /// # let mut con = client.get_connection()?;
     /// let schema = schema! {
     ///     "title" => SchemaTextField::new().weight(2.0),
-    ///     "subtitle" => SchemaTextField::new()
+    ///     "price" => SchemaNumericField::new(),
+    ///     "condition" => SchemaTagField::new().separator(',')
     /// };
     ///
     /// let options = CreateOptions::new()
