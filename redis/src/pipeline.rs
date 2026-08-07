@@ -40,13 +40,13 @@ pub struct Pipeline {
 impl Pipeline {
     /// Creates an empty pipeline.  For consistency with the `cmd`
     /// api a `pipe` function is provided as alias.
-    pub fn new() -> Pipeline {
+    pub fn new() -> Self {
         Self::with_capacity(0)
     }
 
     /// Creates an empty pipeline with pre-allocated capacity.
-    pub fn with_capacity(capacity: usize) -> Pipeline {
-        Pipeline {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
             commands: Vec::with_capacity(capacity),
             transaction_mode: false,
             ignored_commands: HashSet::new(),
@@ -68,7 +68,7 @@ impl Pipeline {
     ///     .cmd("GET").arg("key_2").query(&mut con).unwrap();
     /// ```
     #[inline]
-    pub fn atomic(&mut self) -> &mut Pipeline {
+    pub fn atomic(&mut self) -> &mut Self {
         self.transaction_mode = true;
         self
     }
@@ -118,7 +118,7 @@ impl Pipeline {
     /// assert!(results[2].is_ok()); // get succeeded
     /// ```
     #[inline]
-    pub fn ignore_errors(&mut self) -> &mut Pipeline {
+    pub fn ignore_errors(&mut self) -> &mut Self {
         self.ignore_errors = true;
         self
     }

@@ -62,7 +62,7 @@ pub enum Rule {
     ResetChannels,
     /// Selector entries (returned by Redis under `(selectors)`).
     /// Only supported in Redis 7.2 and later
-    Selector(Vec<Rule>),
+    Selector(Vec<Self>),
 
     /// Performs the following actions: `resetpass`, `resetkeys`, `off`, `-@all`.
     /// The user returns to the same state it has immediately after its creation.
@@ -117,7 +117,7 @@ impl ToRedisArgs for Rule {
             Reset => out.write_arg(b"reset"),
 
             Other(rule) => out.write_arg(rule.as_bytes()),
-        };
+        }
     }
 }
 
@@ -335,7 +335,7 @@ impl AclInfo {
                     Value::Array(arr) | Value::Set(arr) => arr
                         .iter()
                         .map(|pat| {
-                            let acl: AclInfo = FromRedisValue::from_redis_value_ref(pat)?;
+                            let acl: Self = FromRedisValue::from_redis_value_ref(pat)?;
                             let selector = acl
                                 .flags
                                 .into_iter()
@@ -362,7 +362,7 @@ impl AclInfo {
 }
 impl FromRedisValue for AclInfo {
     fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
-        let mut acl = AclInfo::default();
+        let mut acl = Self::default();
         // handle a single key/value pair (borrowed)
         // First, try RESP3 map/attribute forms using as_map_iter (borrowed iterator)
         if let Some(map_iter) = v.as_map_iter() {

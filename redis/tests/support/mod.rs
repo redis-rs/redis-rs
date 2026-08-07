@@ -154,22 +154,22 @@ pub(crate) fn start_tls_crypto_provider() {
 }
 
 impl TestContext {
-    pub fn new() -> TestContext {
-        TestContext::with_modules(&[])
+    pub fn new() -> Self {
+        Self::with_modules(&[])
     }
 
     #[cfg(feature = "tls-rustls")]
-    pub fn new_with_mtls() -> TestContext {
+    pub fn new_with_mtls() -> Self {
         Self::with_modules_and_tls(&[], true, None)
     }
 
     #[cfg(feature = "tls-rustls")]
-    pub fn new_with_cert_auth(tls_files: TlsFilePaths) -> TestContext {
+    pub fn new_with_cert_auth(tls_files: TlsFilePaths) -> Self {
         Self::new_with_cert_auth_field(tls_files, "CN")
     }
 
     #[cfg(feature = "tls-rustls")]
-    pub fn new_with_cert_auth_field(tls_files: TlsFilePaths, cert_field: &str) -> TestContext {
+    pub fn new_with_cert_auth_field(tls_files: TlsFilePaths, cert_field: &str) -> Self {
         start_tls_crypto_provider();
         let redis_port = get_random_available_port();
         let addr = RedisServer::get_addr(redis_port);
@@ -207,11 +207,11 @@ impl TestContext {
         )
     }
 
-    pub fn with_tls(tls_files: TlsFilePaths, mtls_enabled: bool) -> TestContext {
+    pub fn with_tls(tls_files: TlsFilePaths, mtls_enabled: bool) -> Self {
         Self::with_modules_and_tls(&[], mtls_enabled, Some(tls_files))
     }
 
-    pub fn with_modules(modules: &[Module]) -> TestContext {
+    pub fn with_modules(modules: &[Module]) -> Self {
         Self::with_modules_and_tls(modules, false, None)
     }
 
@@ -320,7 +320,7 @@ impl TestContext {
             }
         }
 
-        TestContext {
+        Self {
             server,
             client,
             protocol: use_protocol(),

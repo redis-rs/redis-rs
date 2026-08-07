@@ -168,7 +168,7 @@ where
                                         let mut x = vec![];
                                         for _ in 0..kv_length {
                                             if let (Some(k), Some(v)) = (it.next(), it.next()) {
-                                                x.push((k, v))
+                                                x.push((k, v));
                                             }
                                         }
                                         Value::Map(x)
@@ -193,7 +193,7 @@ where
                                         let mut attributes = vec![];
                                         for _ in 0..kv_length {
                                             if let (Some(k), Some(v)) = (it.next(), it.next()) {
-                                                attributes.push((k, v))
+                                                attributes.push((k, v));
                                             }
                                         }
                                         Value::Attribute {
@@ -441,7 +441,7 @@ pub struct Parser {
 
 impl Default for Parser {
     fn default() -> Self {
-        Parser::new()
+        Self::new()
     }
 }
 
@@ -454,8 +454,8 @@ impl Parser {
     /// than one value can be behind the reader in which case the parser can
     /// be invoked multiple times.  In other words: the stream does not have
     /// to be terminated.
-    pub fn new() -> Parser {
-        Parser {
+    pub fn new() -> Self {
+        Self {
             decoder: Decoder::new(),
         }
     }

@@ -41,28 +41,28 @@ impl ToRedisArgs for BloomFilterInfoType {
         W: ?Sized + RedisWrite,
     {
         match *self {
-            BloomFilterInfoType::Capacity => {
+            Self::Capacity => {
                 out.write_arg(b"CAPACITY");
             }
-            BloomFilterInfoType::Expansion => {
+            Self::Expansion => {
                 out.write_arg(b"EXPANSION");
             }
-            BloomFilterInfoType::Filters => {
+            Self::Filters => {
                 out.write_arg(b"FILTERS");
             }
-            BloomFilterInfoType::Items => {
+            Self::Items => {
                 out.write_arg(b"ITEMS");
             }
-            BloomFilterInfoType::Size => {
+            Self::Size => {
                 out.write_arg(b"SIZE");
             }
-            BloomFilterInfoType::Error => {
+            Self::Error => {
                 out.write_arg(b"ERROR");
             }
-            BloomFilterInfoType::Tightening => {
+            Self::Tightening => {
                 out.write_arg(b"TIGHTENING");
             }
-            BloomFilterInfoType::MaximumScaledCapacity => {
+            Self::MaximumScaledCapacity => {
                 out.write_arg(b"MAXSCALEDCAPACITY");
             }
         }
@@ -157,11 +157,11 @@ impl ToRedisArgs for BloomFilterScalingOptions {
         W: ?Sized + RedisWrite,
     {
         match *self {
-            BloomFilterScalingOptions::ExpansionRate(expansion) => {
+            Self::ExpansionRate(expansion) => {
                 out.write_arg(b"EXPANSION");
                 expansion.write_redis_args(out);
             }
-            BloomFilterScalingOptions::NonScaling => {
+            Self::NonScaling => {
                 out.write_arg(b"NONSCALING");
             }
         }
@@ -264,7 +264,7 @@ impl FromRedisValue for BloomFilterDumpChunk {
         }
 
         // Yield the chunk
-        Ok(BloomFilterDumpChunk { iterator, data })
+        Ok(Self { iterator, data })
     }
 }
 

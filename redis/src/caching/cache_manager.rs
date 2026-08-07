@@ -30,7 +30,7 @@ impl CacheManager {
     pub(crate) fn new(cache_config: CacheConfig) -> Self {
         let lru = Arc::new(ShardedLRU::new(cache_config.size));
         let epoch = lru.increase_epoch();
-        CacheManager {
+        Self {
             lru,
             cache_config,
             epoch,
@@ -41,8 +41,8 @@ impl CacheManager {
     // this will eventually remove all keys created with previous
     // CacheManager's epoch.
     #[cfg(any(feature = "connection-manager", feature = "cluster-async"))]
-    pub(crate) fn clone_and_increase_epoch(&self) -> CacheManager {
-        CacheManager {
+    pub(crate) fn clone_and_increase_epoch(&self) -> Self {
+        Self {
             lru: self.lru.clone(),
             cache_config: self.cache_config,
             epoch: self.lru.increase_epoch(),
@@ -84,7 +84,7 @@ impl CacheManager {
             && let Some(redis_key) = redis_key.first()
             && let Ok(redis_key) = FromRedisValue::from_redis_value_ref(redis_key)
         {
-            self.lru.invalidate(&redis_key)
+            self.lru.invalidate(&redis_key);
         }
     }
 
@@ -299,7 +299,7 @@ impl CacheManager {
                     // It must be added to packed_pipeline manually, since it's not packed via pack_command.
                     packed_pipeline.add_command(cmd.clone());
                 }
-            };
+            }
             commands.push(CachingResult::Item(cacheable_command));
         }
 

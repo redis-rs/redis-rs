@@ -32,10 +32,10 @@ pub struct Script {
 /// ```
 impl Script {
     /// Creates a new script object.
-    pub fn new(code: &str) -> Script {
+    pub fn new(code: &str) -> Self {
         let mut hash = Sha1::new();
         hash.update(code.as_bytes());
-        Script {
+        Self {
             code: code.to_string(),
             hash: hash.digest().to_string(),
         }
@@ -153,7 +153,7 @@ impl<'a> ScriptInvocation<'a> {
     /// Adds a regular argument to the invocation.  This ends up as `ARGV[i]`
     /// in the script.
     #[inline]
-    pub fn arg<'b, T: ToRedisArgs>(&'b mut self, arg: T) -> &'b mut ScriptInvocation<'a>
+    pub fn arg<'b, T: ToRedisArgs>(&'b mut self, arg: T) -> &'b mut Self
     where
         'a: 'b,
     {
@@ -164,7 +164,7 @@ impl<'a> ScriptInvocation<'a> {
     /// Adds a key argument to the invocation.  This ends up as `KEYS[i]`
     /// in the script.
     #[inline]
-    pub fn key<'b, T: ToRedisArgs>(&'b mut self, key: T) -> &'b mut ScriptInvocation<'a>
+    pub fn key<'b, T: ToRedisArgs>(&'b mut self, key: T) -> &'b mut Self
     where
         'a: 'b,
     {

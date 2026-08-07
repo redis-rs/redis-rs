@@ -37,7 +37,7 @@ fn bench_simple_getsetdel_async(b: &mut Bencher) {
                 redis::cmd("DEL").arg(key).exec_async(&mut con).await?;
                 Ok::<_, RedisError>(())
             })
-            .unwrap()
+            .unwrap();
     });
 }
 

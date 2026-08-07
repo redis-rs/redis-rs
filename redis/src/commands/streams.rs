@@ -28,8 +28,8 @@ impl ToRedisArgs for StreamMaxlen {
         W: ?Sized + RedisWrite,
     {
         let (ch, val) = match *self {
-            StreamMaxlen::Equals(v) => ("=", v),
-            StreamMaxlen::Approx(v) => ("~", v),
+            Self::Equals(v) => ("=", v),
+            Self::Approx(v) => ("~", v),
         };
         out.write_arg(b"MAXLEN");
         out.write_arg(ch.as_bytes());
@@ -56,7 +56,7 @@ impl ToRedisArgs for StreamTrimmingMode {
         match self {
             Self::Exact => out.write_arg(b"="),
             Self::Approx => out.write_arg(b"~"),
-        };
+        }
     }
 }
 
@@ -86,8 +86,8 @@ impl StreamTrimStrategy {
     /// Set a limit to the number of records to trim in a single operation
     pub fn limit(self, limit: usize) -> Self {
         match self {
-            StreamTrimStrategy::MaxLen(m, t, _) => StreamTrimStrategy::MaxLen(m, t, Some(limit)),
-            StreamTrimStrategy::MinId(m, t, _) => StreamTrimStrategy::MinId(m, t, Some(limit)),
+            Self::MaxLen(m, t, _) => Self::MaxLen(m, t, Some(limit)),
+            Self::MinId(m, t, _) => Self::MinId(m, t, Some(limit)),
         }
     }
 }
@@ -98,13 +98,13 @@ impl ToRedisArgs for StreamTrimStrategy {
         W: ?Sized + RedisWrite,
     {
         let limit = match self {
-            StreamTrimStrategy::MaxLen(m, t, limit) => {
+            Self::MaxLen(m, t, limit) => {
                 out.write_arg(b"MAXLEN");
                 m.write_redis_args(out);
                 t.write_redis_args(out);
                 limit
             }
-            StreamTrimStrategy::MinId(m, t, limit) => {
+            Self::MinId(m, t, limit) => {
                 out.write_arg(b"MINID");
                 m.write_redis_args(out);
                 t.write_redis_args(out);
@@ -200,7 +200,7 @@ impl ToRedisArgs for StreamIdempotencyMode {
         W: ?Sized + RedisWrite,
     {
         match self {
-            StreamIdempotencyMode::Manual {
+            Self::Manual {
                 producer_id,
                 idempotent_id,
             } => {
@@ -208,7 +208,7 @@ impl ToRedisArgs for StreamIdempotencyMode {
                 out.write_arg(producer_id.as_bytes());
                 out.write_arg(idempotent_id.as_bytes());
             }
-            StreamIdempotencyMode::Automatic { producer_id } => {
+            Self::Automatic { producer_id } => {
                 out.write_arg(b"IDMPAUTO");
                 out.write_arg(producer_id.as_bytes());
             }
@@ -784,8 +784,8 @@ impl StreamPendingReply {
     /// Returns how many records are in the reply.
     pub fn count(&self) -> usize {
         match self {
-            StreamPendingReply::Empty => 0,
-            StreamPendingReply::Data(x) => x.count,
+            Self::Empty => 0,
+            Self::Data(x) => x.count,
         }
     }
 }
@@ -1005,7 +1005,7 @@ pub struct StreamId {
 impl StreamId {
     /// Converts a `Value::Array` into a `StreamId`.
     fn from_array_value(v: Value) -> Result<Self, ParsingError> {
-        let mut stream_id = StreamId::default();
+        let mut stream_id = Self::default();
         if let Value::Array(mut values) = v {
             if let Some(v) = values.first_mut() {
                 stream_id.id = from_redis_value(std::mem::take(v))?;
@@ -1168,7 +1168,7 @@ impl StreamReadReply {
                 })
             })
             .collect();
-        StreamReadReply { keys }
+        Self { keys }
     }
 
     fn from_claim_rows(rows: SRClaimRows) -> Self {
@@ -1193,7 +1193,7 @@ impl StreamReadReply {
                 })
             })
             .collect();
-        StreamReadReply { keys }
+        Self { keys }
     }
 }
 
@@ -1211,7 +1211,7 @@ impl FromRedisValue for StreamRangeReply {
                 })
             })
             .collect();
-        Ok(StreamRangeReply { ids })
+        Ok(Self { ids })
     }
 }
 
@@ -1229,7 +1229,7 @@ impl FromRedisValue for StreamClaimReply {
                 })
             })
             .collect();
-        Ok(StreamClaimReply { ids })
+        Ok(Self { ids })
     }
 }
 
@@ -1244,7 +1244,7 @@ impl FromRedisValue for StreamPendingReply {
         let (count, start, end, consumer_data): SPRInner = from_redis_value(v)?;
 
         if count == 0 {
-            Ok(StreamPendingReply::Empty)
+            Ok(Self::Empty)
         } else {
             let mut result = StreamPendingData::default();
 
@@ -1274,14 +1274,14 @@ impl FromRedisValue for StreamPendingReply {
                 })
                 .collect();
 
-            Ok(StreamPendingReply::Data(result))
+            Ok(Self::Data(result))
         }
     }
 }
 
 impl FromRedisValue for StreamPendingCountReply {
     fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
-        let mut reply = StreamPendingCountReply::default();
+        let mut reply = Self::default();
         match v {
             Value::Array(outer_tuple) => {
                 for outer in outer_tuple {
@@ -1317,7 +1317,7 @@ impl FromRedisValue for StreamPendingCountReply {
             _ => fail!(ParsingError::from(arcstr::literal!(
                 "Cannot parse redis data (1)"
             ))),
-        };
+        }
         Ok(reply)
     }
 }
@@ -1325,7 +1325,7 @@ impl FromRedisValue for StreamPendingCountReply {
 impl FromRedisValue for StreamInfoStreamReply {
     fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let mut map: HashMap<String, Value> = from_redis_value(v)?;
-        let mut reply = StreamInfoStreamReply::default();
+        let mut reply = Self::default();
         if let Some(v) = map.remove("last-generated-id") {
             reply.last_generated_id = from_redis_value(v)?;
         }
@@ -1374,7 +1374,7 @@ impl FromRedisValue for StreamInfoStreamReplyWithIdempotency {
         }
 
         // Parse idempotency fields
-        let mut reply = StreamInfoStreamReplyWithIdempotency {
+        let mut reply = Self {
             base,
             ..Default::default()
         };
@@ -1405,7 +1405,7 @@ impl FromRedisValue for StreamInfoStreamReplyWithIdempotency {
 impl FromRedisValue for StreamInfoConsumersReply {
     fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let consumers: Vec<HashMap<String, Value>> = from_redis_value(v)?;
-        let mut reply = StreamInfoConsumersReply::default();
+        let mut reply = Self::default();
         for mut map in consumers {
             let mut c = StreamInfoConsumer::default();
             if let Some(v) = map.remove("name") {
@@ -1427,7 +1427,7 @@ impl FromRedisValue for StreamInfoConsumersReply {
 impl FromRedisValue for StreamInfoGroupsReply {
     fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let groups: Vec<HashMap<String, Value>> = from_redis_value(v)?;
-        let mut reply = StreamInfoGroupsReply::default();
+        let mut reply = Self::default();
         for mut map in groups {
             let mut g = StreamInfoGroup::default();
             if let Some(v) = map.remove("name") {
@@ -1481,9 +1481,9 @@ impl ToRedisArgs for StreamDeletionPolicy {
         W: ?Sized + RedisWrite,
     {
         match self {
-            StreamDeletionPolicy::KeepRef => out.write_arg(b"KEEPREF"),
-            StreamDeletionPolicy::DelRef => out.write_arg(b"DELREF"),
-            StreamDeletionPolicy::Acked => out.write_arg(b"ACKED"),
+            Self::KeepRef => out.write_arg(b"KEEPREF"),
+            Self::DelRef => out.write_arg(b"DELREF"),
+            Self::Acked => out.write_arg(b"ACKED"),
         }
     }
 }
@@ -1509,9 +1509,9 @@ impl FromRedisValue for XDelExStatusCode {
     fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         match v {
             Value::Int(code) => match code {
-                -1 => Ok(XDelExStatusCode::IdNotFound),
-                1 => Ok(XDelExStatusCode::Deleted),
-                2 => Ok(XDelExStatusCode::NotDeletedUnacknowledgedOrStillReferenced),
+                -1 => Ok(Self::IdNotFound),
+                1 => Ok(Self::Deleted),
+                2 => Ok(Self::NotDeletedUnacknowledgedOrStillReferenced),
                 _ => Err(format!("Invalid XDelExStatusCode status code: {code}").into()),
             },
             _ => Err(arcstr::literal!("Response type not XAckDelStatusCode compatible").into()),
@@ -1552,10 +1552,10 @@ impl ToRedisArgs for StreamNackMode {
         W: ?Sized + RedisWrite,
     {
         match self {
-            StreamNackMode::Silent => out.write_arg(b"SILENT"),
-            StreamNackMode::Fail => out.write_arg(b"FAIL"),
-            StreamNackMode::Fatal => out.write_arg(b"FATAL"),
-        };
+            Self::Silent => out.write_arg(b"SILENT"),
+            Self::Fail => out.write_arg(b"FAIL"),
+            Self::Fatal => out.write_arg(b"FATAL"),
+        }
     }
 }
 
@@ -1619,9 +1619,9 @@ impl FromRedisValue for XAckDelStatusCode {
     fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         match v {
             Value::Int(code) => match code {
-                -1 => Ok(XAckDelStatusCode::IdNotFound),
-                1 => Ok(XAckDelStatusCode::AcknowledgedAndDeleted),
-                2 => Ok(XAckDelStatusCode::AcknowledgedNotDeletedStillReferenced),
+                -1 => Ok(Self::IdNotFound),
+                1 => Ok(Self::AcknowledgedAndDeleted),
+                2 => Ok(Self::AcknowledgedNotDeletedStillReferenced),
                 _ => Err(arcstr::literal!("Invalid XAckDelStatusCode status code: {code}").into()),
             },
             _ => Err(arcstr::literal!("Response type not XAckDelStatusCode compatible").into()),

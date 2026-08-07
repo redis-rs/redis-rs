@@ -69,12 +69,12 @@ struct PipelineResponseExpectation {
 impl ResponseAggregate {
     fn new(expectation: Option<PipelineResponseExpectation>) -> Self {
         match expectation {
-            Some(expectation) => ResponseAggregate::Pipeline {
+            Some(expectation) => Self::Pipeline {
                 buffer: Vec::new(),
                 error_or_errors: ErrorOrErrors::Errors(Vec::new()),
                 expectation,
             },
-            None => ResponseAggregate::SingleCommand,
+            None => Self::SingleCommand,
         }
     }
 }
@@ -136,7 +136,7 @@ pin_project! {
 fn send_push(push_sender: &Option<Arc<dyn AsyncPushSender>>, info: PushInfo) {
     if let Some(sender) = push_sender {
         let _ = sender.send(info);
-    };
+    }
 }
 
 pub(crate) fn send_disconnect(push_sender: &Option<Arc<dyn AsyncPushSender>>) {
@@ -155,7 +155,7 @@ where
     where
         T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
     {
-        PipelineSink {
+        Self {
             sink_stream,
             in_flight: VecDeque::new(),
             error: None,
@@ -259,7 +259,7 @@ where
                     }
                     Err(err) => {
                         if matches!(error_or_errors, ErrorOrErrors::Errors(_)) {
-                            *error_or_errors = ErrorOrErrors::FirstError(err)
+                            *error_or_errors = ErrorOrErrors::FirstError(err);
                         }
                     }
                 }
@@ -434,7 +434,7 @@ impl Pipeline {
             .map(Ok)
             .forward(sink)
             .map(|_| ());
-        (Pipeline { sender }, f)
+        (Self { sender }, f)
     }
 
     async fn send_recv(
@@ -554,7 +554,7 @@ pub struct MultiplexedConnection {
 
 impl Debug for MultiplexedConnection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let MultiplexedConnection {
+        let Self {
             pipeline,
             db,
             response_timeout,
@@ -686,7 +686,7 @@ impl MultiplexedConnection {
 
         let concurrency_limiter = build_concurrency_limiter(config.concurrency_limit)?;
 
-        let con = MultiplexedConnection {
+        let con = Self {
             pipeline,
             db: connection_info.db,
             response_timeout: config.response_timeout,

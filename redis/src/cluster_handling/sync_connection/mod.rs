@@ -154,7 +154,7 @@ impl From<Output> for Value {
     fn from(value: Output) -> Self {
         match value {
             Output::Single(value) => value,
-            Output::Multi(values) => Value::Array(values),
+            Output::Multi(values) => Self::Array(values),
         }
     }
 }
@@ -1116,8 +1116,8 @@ struct NodeCmd {
 }
 
 impl NodeCmd {
-    fn new(a: NodeAddress) -> NodeCmd {
-        NodeCmd {
+    fn new(a: NodeAddress) -> Self {
+        Self {
             indexes: vec![],
             pipe: vec![],
             addr: a,

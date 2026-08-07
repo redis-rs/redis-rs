@@ -180,7 +180,7 @@ impl SlotAddrs {
     }
 
     pub(crate) fn from_slot(slot: SlotRange) -> Self {
-        SlotAddrs::new(slot.master, slot.replicas)
+        Self::new(slot.master, slot.replicas)
     }
 }
 

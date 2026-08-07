@@ -55,8 +55,8 @@ impl<C> CmdArg<C> {
     fn set_redirect(&mut self, redirect: Option<Redirect>) {
         if let Some(redirect) = redirect {
             match self {
-                CmdArg::Reconnect(_) => {}
-                CmdArg::Cmd { routing, .. } => match routing {
+                Self::Reconnect(_) => {}
+                Self::Cmd { routing, .. } => match routing {
                     InternalRoutingInfo::SingleNode(route) => {
                         let redirect = InternalSingleNodeRouting::Redirect {
                             redirect,
@@ -70,7 +70,7 @@ impl<C> CmdArg<C> {
                         warn!("Received a redirect for a multi-node request, ignoring it");
                     }
                 },
-                CmdArg::Pipeline { route, .. } => {
+                Self::Pipeline { route, .. } => {
                     let redirect = InternalSingleNodeRouting::Redirect {
                         redirect,
                         previous_routing: Box::new(std::mem::take(route)),
@@ -99,13 +99,13 @@ impl<C> CmdArg<C> {
             }
         };
         match self {
-            CmdArg::Reconnect(_) => {}
-            CmdArg::Cmd { routing, .. } => {
+            Self::Reconnect(_) => {}
+            Self::Cmd { routing, .. } => {
                 if let InternalRoutingInfo::SingleNode(route) = routing {
                     fix_route(route);
                 }
             }
-            CmdArg::Pipeline { route, .. } => {
+            Self::Pipeline { route, .. } => {
                 fix_route(route);
             }
         }
@@ -137,15 +137,15 @@ pub(super) enum ResultExpectation {
 impl ResultExpectation {
     pub(super) fn send(self, result: RedisResult<Response>) {
         let _ = match self {
-            ResultExpectation::External(sender) => sender.send(result),
-            ResultExpectation::Internal => Ok(()),
+            Self::External(sender) => sender.send(result),
+            Self::Internal => Ok(()),
         };
     }
 
     pub(super) fn is_closed(&self) -> bool {
         match self {
-            ResultExpectation::External(sender) => sender.is_closed(),
-            ResultExpectation::Internal => false,
+            Self::External(sender) => sender.is_closed(),
+            Self::Internal => false,
         }
     }
 }
@@ -316,7 +316,7 @@ impl<C> Future for Request<C> {
         let mut this = self.as_mut().project();
         if this.request.is_none() || this.request.as_ref().unwrap().sender.is_closed() {
             return Poll::Ready((None, PollFlushAction::None));
-        };
+        }
 
         let future = match this.future.as_mut().project() {
             RequestStateProj::Future { future } => future,

@@ -30,8 +30,8 @@ fn bench_cluster_async(
                     Ok::<_, RedisError>(())
                 })
                 .unwrap();
-            black_box(())
-        })
+            black_box(());
+        });
     });
 
     group.bench_function("parallel_requests", |b| {
@@ -53,7 +53,7 @@ fn bench_cluster_async(
                         .await
                 })
                 .unwrap();
-            black_box(())
+            black_box(());
         });
     });
 
@@ -70,7 +70,7 @@ fn bench_cluster_async(
             runtime
                 .block_on(async { pipe.exec_async(con).await })
                 .unwrap();
-            black_box(())
+            black_box(());
         });
     });
 

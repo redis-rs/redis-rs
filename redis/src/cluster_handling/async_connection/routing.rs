@@ -26,15 +26,15 @@ impl<C> std::fmt::Debug for InternalRoutingInfo<C> {
 impl<C> From<RoutingInfo> for InternalRoutingInfo<C> {
     fn from(value: RoutingInfo) -> Self {
         match value {
-            RoutingInfo::SingleNode(route) => InternalRoutingInfo::SingleNode(route.into()),
-            RoutingInfo::MultiNode(routes) => InternalRoutingInfo::MultiNode(routes),
+            RoutingInfo::SingleNode(route) => Self::SingleNode(route.into()),
+            RoutingInfo::MultiNode(routes) => Self::MultiNode(routes),
         }
     }
 }
 
 impl<C> From<InternalSingleNodeRouting<C>> for InternalRoutingInfo<C> {
     fn from(value: InternalSingleNodeRouting<C>) -> Self {
-        InternalRoutingInfo::SingleNode(value)
+        Self::SingleNode(value)
     }
 }
 
@@ -50,7 +50,7 @@ pub(super) enum InternalSingleNodeRouting<C> {
     },
     Redirect {
         redirect: Redirect,
-        previous_routing: Box<InternalSingleNodeRouting<C>>,
+        previous_routing: Box<Self>,
     },
 }
 
@@ -82,16 +82,12 @@ impl<C> std::fmt::Debug for InternalSingleNodeRouting<C> {
 impl<C> From<SingleNodeRoutingInfo> for InternalSingleNodeRouting<C> {
     fn from(value: SingleNodeRoutingInfo) -> Self {
         match value {
-            SingleNodeRoutingInfo::Random => InternalSingleNodeRouting::Random,
-            SingleNodeRoutingInfo::SpecificNode(route) => {
-                InternalSingleNodeRouting::SpecificNode(route)
-            }
+            SingleNodeRoutingInfo::Random => Self::Random,
+            SingleNodeRoutingInfo::SpecificNode(route) => Self::SpecificNode(route),
             SingleNodeRoutingInfo::ByAddress { host, port } => {
-                InternalSingleNodeRouting::ByAddress(NodeAddress::new(host, port))
+                Self::ByAddress(NodeAddress::new(host, port))
             }
-            SingleNodeRoutingInfo::RandomPrimary => {
-                InternalSingleNodeRouting::SpecificNode(Route::new_random_primary())
-            }
+            SingleNodeRoutingInfo::RandomPrimary => Self::SpecificNode(Route::new_random_primary()),
         }
     }
 }

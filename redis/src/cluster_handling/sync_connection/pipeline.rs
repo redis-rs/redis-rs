@@ -73,13 +73,13 @@ pub struct ClusterPipeline {
 /// ```
 impl ClusterPipeline {
     /// Create an empty pipeline.
-    pub fn new() -> ClusterPipeline {
+    pub fn new() -> Self {
         Self::with_capacity(0)
     }
 
     /// Creates an empty pipeline with pre-allocated capacity.
-    pub fn with_capacity(capacity: usize) -> ClusterPipeline {
-        ClusterPipeline {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
             commands: Vec::with_capacity(capacity),
             ignored_commands: HashSet::new(),
             ignore_errors: false,

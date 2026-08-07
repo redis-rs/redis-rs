@@ -303,7 +303,7 @@ impl MockCmd {
         C: IntoRedisCmdBytes,
         V: IntoRedisValue,
     {
-        MockCmd {
+        Self {
             cmd_bytes: cmd.into_redis_cmd_bytes(),
             responses: response.map(|r| vec![r.into_redis_value()]),
         }
@@ -316,7 +316,7 @@ impl MockCmd {
         C: IntoRedisCmdBytes,
         V: IntoRedisValue,
     {
-        MockCmd {
+        Self {
             cmd_bytes: cmd.into_redis_cmd_bytes(),
             responses: responses.map(|xs| xs.into_iter().map(|x| x.into_redis_value()).collect()),
         }
@@ -337,7 +337,7 @@ impl MockRedisConnection {
     where
         I: IntoIterator<Item = MockCmd>,
     {
-        MockRedisConnection {
+        Self {
             commands: Arc::new(Mutex::new(VecDeque::from_iter(commands))),
             assert_is_empty_on_drop: false,
         }
@@ -460,10 +460,7 @@ impl ConnectionLike for MockRedisConnection {
 impl AioConnectionLike for MockRedisConnection {
     fn req_packed_command<'a>(&'a mut self, cmd: &'a Cmd) -> RedisFuture<'a, Value> {
         let packed_cmd = cmd.get_packed_command();
-        let response = <MockRedisConnection as ConnectionLike>::req_packed_command(
-            self,
-            packed_cmd.as_slice(),
-        );
+        let response = <Self as ConnectionLike>::req_packed_command(self, packed_cmd.as_slice());
         future::ready(response).boxed()
     }
 
@@ -474,7 +471,7 @@ impl AioConnectionLike for MockRedisConnection {
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
         let packed_cmd = cmd.get_packed_pipeline();
-        let response = <MockRedisConnection as ConnectionLike>::req_packed_commands(
+        let response = <Self as ConnectionLike>::req_packed_commands(
             self,
             packed_cmd.as_slice(),
             offset,

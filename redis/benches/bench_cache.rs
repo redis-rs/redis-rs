@@ -123,7 +123,7 @@ fn bench_cache(c: &mut Criterion) {
                     read_ratio,
                     per_key_command,
                     total_key_count,
-                )
+                );
             });
         }
         group.finish();

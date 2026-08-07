@@ -170,7 +170,7 @@ where
     pub(crate) async fn new(
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
-    ) -> RedisResult<ClusterConnection<C>> {
+    ) -> RedisResult<Self> {
         let (connection, connect_receiver) = Self::new_inner(initial_nodes, cluster_params);
         connect_receiver.await.map_err(|_| {
             RedisError::from((ErrorKind::Io, "Cluster connection task were dropped"))
@@ -181,7 +181,7 @@ where
     pub(crate) fn new_pending(
         initial_nodes: &[ConnectionInfo],
         cluster_params: ClusterParams,
-    ) -> ClusterConnection<C> {
+    ) -> Self {
         let (connection, _connect_receiver) = Self::new_inner(initial_nodes, cluster_params);
         connection
     }
@@ -189,7 +189,7 @@ where
     pub(crate) fn new_inner(
         initial_nodes: &[ConnectionInfo],
         mut cluster_params: ClusterParams,
-    ) -> (ClusterConnection<C>, oneshot::Receiver<RedisResult<()>>) {
+    ) -> (Self, oneshot::Receiver<RedisResult<()>>) {
         let protocol = cluster_params.protocol.unwrap_or_default();
         let overall_response_timeout = cluster_params.overall_response_timeout;
         #[cfg(feature = "cache-aio")]
@@ -245,7 +245,7 @@ where
         }));
 
         (
-            ClusterConnection {
+            Self {
                 sender,
                 state: Arc::new(ClientSideState {
                     protocol,
@@ -495,8 +495,8 @@ impl<C> ConnState<C> {
         C: Clone,
     {
         match self {
-            ConnState::Connected(conn) => Some(conn.clone()),
-            ConnState::Reconnecting(_) | ConnState::Connecting => None,
+            Self::Connected(conn) => Some(conn.clone()),
+            Self::Reconnecting(_) | Self::Connecting => None,
         }
     }
 
@@ -506,15 +506,15 @@ impl<C> ConnState<C> {
         C: Clone,
     {
         match self {
-            ConnState::Connected(conn) | ConnState::Reconnecting(conn) => Some(conn.clone()),
-            ConnState::Connecting => None,
+            Self::Connected(conn) | Self::Reconnecting(conn) => Some(conn.clone()),
+            Self::Connecting => None,
         }
     }
 
     fn into_conn(self) -> Option<C> {
         match self {
-            ConnState::Connected(conn) | ConnState::Reconnecting(conn) => Some(conn),
-            ConnState::Connecting => None,
+            Self::Connected(conn) | Self::Reconnecting(conn) => Some(conn),
+            Self::Connecting => None,
         }
     }
 }
@@ -1328,7 +1328,7 @@ type OperationResult = (OperationTarget, Result<Response, RedisError>);
 
 impl From<NodeAddress> for OperationTarget {
     fn from(address: NodeAddress) -> Self {
-        OperationTarget::Node { address }
+        Self::Node { address }
     }
 }
 
@@ -1353,8 +1353,8 @@ impl fmt::Debug for ConnectionState {
             f,
             "{}",
             match self {
-                ConnectionState::PollComplete => "PollComplete",
-                ConnectionState::Recover(_) => "Recover",
+                Self::PollComplete => "PollComplete",
+                Self::Recover(_) => "Recover",
             }
         )
     }
@@ -1377,11 +1377,8 @@ where
         push_sender: UnboundedSender<(NodeAddress, PushInfo)>,
         has_push_sender: bool,
     ) -> Self {
-        let subscription_tracker = if has_push_sender {
-            Some(Mutex::new(SubscriptionTracker::default()))
-        } else {
-            None
-        };
+        let subscription_tracker =
+            has_push_sender.then(|| Mutex::new(SubscriptionTracker::default()));
 
         let routing_strategy = cluster_params
             .read_routing_factory
@@ -1702,7 +1699,7 @@ enum PollFlushAction {
 }
 
 impl PollFlushAction {
-    fn change_state(self, next_state: PollFlushAction) -> PollFlushAction {
+    fn change_state(self, next_state: Self) -> Self {
         match (self, next_state) {
             (PollFlushAction::None, next_state) | (next_state, PollFlushAction::None) => next_state,
             (PollFlushAction::ReconnectFromInitialConnections, _)
@@ -1710,11 +1707,9 @@ impl PollFlushAction {
                 PollFlushAction::ReconnectFromInitialConnections
             }
 
-            (PollFlushAction::RebuildSlots, _) | (_, PollFlushAction::RebuildSlots) => {
-                PollFlushAction::RebuildSlots
-            }
+            (Self::RebuildSlots, _) | (_, Self::RebuildSlots) => Self::RebuildSlots,
 
-            (PollFlushAction::Reconnect(mut addrs), PollFlushAction::Reconnect(new_addrs)) => {
+            (Self::Reconnect(mut addrs), Self::Reconnect(new_addrs)) => {
                 addrs.extend(new_addrs);
                 Self::Reconnect(addrs)
             }

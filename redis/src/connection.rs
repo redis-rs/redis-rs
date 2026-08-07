@@ -142,24 +142,22 @@ pub enum ConnectionAddr {
 impl PartialEq for ConnectionAddr {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (ConnectionAddr::Tcp(host1, port1), ConnectionAddr::Tcp(host2, port2)) => {
-                host1 == host2 && port1 == port2
-            }
+            (Self::Tcp(host1, port1), Self::Tcp(host2, port2)) => host1 == host2 && port1 == port2,
             (
-                ConnectionAddr::TcpTls {
+                Self::TcpTls {
                     host: host1,
                     port: port1,
                     insecure: insecure1,
                     tls_params: _,
                 },
-                ConnectionAddr::TcpTls {
+                Self::TcpTls {
                     host: host2,
                     port: port2,
                     insecure: insecure2,
                     tls_params: _,
                 },
             ) => port1 == port2 && host1 == host2 && insecure1 == insecure2,
-            (ConnectionAddr::Unix(path1), ConnectionAddr::Unix(path2)) => path1 == path2,
+            (Self::Unix(path1), Self::Unix(path2)) => path1 == path2,
             _ => false,
         }
     }
@@ -180,11 +178,11 @@ impl ConnectionAddr {
     ///   (either `tls-native-tls` or `tls-rustls`).
     pub fn is_supported(&self) -> bool {
         match *self {
-            ConnectionAddr::Tcp(_, _) => true,
-            ConnectionAddr::TcpTls { .. } => {
+            Self::Tcp(_, _) => true,
+            Self::TcpTls { .. } => {
                 cfg!(any(feature = "tls-native-tls", feature = "tls-rustls"))
             }
-            ConnectionAddr::Unix(_) => cfg!(unix),
+            Self::Unix(_) => cfg!(unix),
         }
     }
 
@@ -198,7 +196,7 @@ impl ConnectionAddr {
     /// vulnerability to man-in-the-middle attacks.
     #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
     pub fn set_danger_accept_invalid_hostnames(&mut self, insecure: bool) {
-        if let ConnectionAddr::TcpTls { tls_params, .. } = self {
+        if let Self::TcpTls { tls_params, .. } = self {
             if let Some(params) = tls_params {
                 params.danger_accept_invalid_hostnames = insecure;
             } else if insecure {
@@ -216,7 +214,7 @@ impl ConnectionAddr {
     #[cfg(feature = "cluster")]
     pub(crate) fn tls_mode(&self) -> Option<TlsMode> {
         match self {
-            ConnectionAddr::TcpTls { insecure, .. } => {
+            Self::TcpTls { insecure, .. } => {
                 if *insecure {
                     Some(TlsMode::Insecure)
                 } else {
@@ -388,7 +386,7 @@ impl RedisConnectionInfo {
 
 impl std::fmt::Debug for RedisConnectionInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let RedisConnectionInfo {
+        let Self {
             db,
             username,
             password,
@@ -868,7 +866,7 @@ impl ActualConnection {
         addr: &ConnectionAddr,
         timeout: Option<Duration>,
         tcp_settings: &TcpSettings,
-    ) -> RedisResult<ActualConnection> {
+    ) -> RedisResult<Self> {
         Ok(match *addr {
             ConnectionAddr::Tcp(ref host, ref port) => {
                 if is_wildcard_address(host) {
@@ -892,7 +890,7 @@ impl ActualConnection {
                                 Err(e) => {
                                     last_error = Some(e);
                                 }
-                            };
+                            }
                         }
                         match (tcp, last_error) {
                             (Some(tcp), _) => tcp,
@@ -908,7 +906,7 @@ impl ActualConnection {
                         }
                     }
                 };
-                ActualConnection::Tcp(TcpConnection {
+                Self::Tcp(TcpConnection {
                     reader: tcp,
                     open: true,
                 })
@@ -1007,7 +1005,7 @@ impl ActualConnection {
                                 Err(e) => {
                                     last_error = Some(e);
                                 }
-                            };
+                            }
                         }
                         match (tcp, last_error) {
                             (Some(tcp), _) => StreamOwned::new(conn, tcp),
@@ -1024,7 +1022,7 @@ impl ActualConnection {
                     }
                 };
 
-                ActualConnection::TcpRustls(Box::new(TcpRustlsConnection { reader, open: true }))
+                Self::TcpRustls(Box::new(TcpRustlsConnection { reader, open: true }))
             }
             #[cfg(not(any(feature = "tls-native-tls", feature = "tls-rustls")))]
             ConnectionAddr::TcpTls { .. } => {
@@ -1034,7 +1032,7 @@ impl ActualConnection {
                 ));
             }
             #[cfg(unix)]
-            ConnectionAddr::Unix(ref path) => ActualConnection::Unix(UnixConnection {
+            ConnectionAddr::Unix(ref path) => Self::Unix(UnixConnection {
                 sock: UnixStream::connect(path)?,
                 open: true,
             }),
@@ -1051,7 +1049,7 @@ impl ActualConnection {
 
     pub fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
         match *self {
-            ActualConnection::Tcp(ref mut connection) => {
+            Self::Tcp(ref mut connection) => {
                 let res = connection.reader.write_all(bytes).map_err(RedisError::from);
                 match res {
                     Err(e) => {
@@ -1077,7 +1075,7 @@ impl ActualConnection {
                 }
             }
             #[cfg(feature = "tls-rustls")]
-            ActualConnection::TcpRustls(ref mut connection) => {
+            Self::TcpRustls(ref mut connection) => {
                 let res = connection.reader.write_all(bytes).map_err(RedisError::from);
                 match res {
                     Err(e) => {
@@ -1090,7 +1088,7 @@ impl ActualConnection {
                 }
             }
             #[cfg(unix)]
-            ActualConnection::Unix(ref mut connection) => {
+            Self::Unix(ref mut connection) => {
                 let result = connection.sock.write_all(bytes).map_err(RedisError::from);
                 match result {
                     Err(e) => {
@@ -1107,7 +1105,7 @@ impl ActualConnection {
 
     pub fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         match *self {
-            ActualConnection::Tcp(TcpConnection { ref reader, .. }) => {
+            Self::Tcp(TcpConnection { ref reader, .. }) => {
                 reader.set_write_timeout(dur)?;
             }
             #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
@@ -1116,12 +1114,12 @@ impl ActualConnection {
                 reader.get_ref().set_write_timeout(dur)?;
             }
             #[cfg(feature = "tls-rustls")]
-            ActualConnection::TcpRustls(ref boxed_tls_connection) => {
+            Self::TcpRustls(ref boxed_tls_connection) => {
                 let reader = &(boxed_tls_connection.reader);
                 reader.get_ref().set_write_timeout(dur)?;
             }
             #[cfg(unix)]
-            ActualConnection::Unix(UnixConnection { ref sock, .. }) => {
+            Self::Unix(UnixConnection { ref sock, .. }) => {
                 sock.set_write_timeout(dur)?;
             }
         }
@@ -1130,7 +1128,7 @@ impl ActualConnection {
 
     pub fn set_read_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         match *self {
-            ActualConnection::Tcp(TcpConnection { ref reader, .. }) => {
+            Self::Tcp(TcpConnection { ref reader, .. }) => {
                 reader.set_read_timeout(dur)?;
             }
             #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
@@ -1139,12 +1137,12 @@ impl ActualConnection {
                 reader.get_ref().set_read_timeout(dur)?;
             }
             #[cfg(feature = "tls-rustls")]
-            ActualConnection::TcpRustls(ref boxed_tls_connection) => {
+            Self::TcpRustls(ref boxed_tls_connection) => {
                 let reader = &(boxed_tls_connection.reader);
                 reader.get_ref().set_read_timeout(dur)?;
             }
             #[cfg(unix)]
-            ActualConnection::Unix(UnixConnection { ref sock, .. }) => {
+            Self::Unix(UnixConnection { ref sock, .. }) => {
                 sock.set_read_timeout(dur)?;
             }
         }
@@ -1153,13 +1151,13 @@ impl ActualConnection {
 
     pub fn is_open(&self) -> bool {
         match *self {
-            ActualConnection::Tcp(TcpConnection { open, .. }) => open,
+            Self::Tcp(TcpConnection { open, .. }) => open,
             #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
             ActualConnection::TcpNativeTls(ref boxed_tls_connection) => boxed_tls_connection.open,
             #[cfg(feature = "tls-rustls")]
-            ActualConnection::TcpRustls(ref boxed_tls_connection) => boxed_tls_connection.open,
+            Self::TcpRustls(ref boxed_tls_connection) => boxed_tls_connection.open,
             #[cfg(unix)]
-            ActualConnection::Unix(UnixConnection { open, .. }) => open,
+            Self::Unix(UnixConnection { open, .. }) => open,
         }
     }
 }
@@ -1814,7 +1812,7 @@ impl Connection {
     }
 
     fn send_disconnect(&self) {
-        self.send_push(PushInfo::disconnect())
+        self.send_push(PushInfo::disconnect());
     }
 
     fn close_connection(&mut self) {
@@ -2257,8 +2255,8 @@ impl Msg {
             } else {
                 return None;
             }
-        };
-        Some(Msg {
+        }
+        Some(Self {
             payload,
             channel,
             pattern,
@@ -2283,7 +2281,7 @@ impl Msg {
             return None;
         }
 
-        Some(Msg {
+        Some(Self {
             payload,
             channel,
             pattern,
@@ -2413,7 +2411,7 @@ pub fn resp2_is_pub_sub_state_cleared(
         Some(&b'u') => *received_unsub = true,
         Some(&b'p') => *received_punsub = true,
         _ => (),
-    };
+    }
     *received_unsub && *received_punsub && num == 0
 }
 
@@ -2428,7 +2426,7 @@ pub fn resp3_is_pub_sub_state_cleared(
         PushKind::Unsubscribe => *received_unsub = true,
         PushKind::PUnsubscribe => *received_punsub = true,
         _ => (),
-    };
+    }
     *received_unsub && *received_punsub && num == 0
 }
 

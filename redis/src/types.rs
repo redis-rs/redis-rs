@@ -54,23 +54,23 @@ impl ToRedisArgs for SetExpiry {
     {
         let mut buf = ::itoa::Buffer::new();
         match self {
-            SetExpiry::EX(secs) => {
+            Self::EX(secs) => {
                 out.write_arg(b"EX");
                 out.write_arg(buf.format(*secs).as_bytes());
             }
-            SetExpiry::PX(millis) => {
+            Self::PX(millis) => {
                 out.write_arg(b"PX");
                 out.write_arg(buf.format(*millis).as_bytes());
             }
-            SetExpiry::EXAT(unix_time) => {
+            Self::EXAT(unix_time) => {
                 out.write_arg(b"EXAT");
                 out.write_arg(buf.format(*unix_time).as_bytes());
             }
-            SetExpiry::PXAT(unix_time) => {
+            Self::PXAT(unix_time) => {
                 out.write_arg(b"PXAT");
                 out.write_arg(buf.format(*unix_time).as_bytes());
             }
-            SetExpiry::KEEPTTL => {
+            Self::KEEPTTL => {
                 out.write_arg(b"KEEPTTL");
             }
         }
@@ -93,10 +93,10 @@ impl ToRedisArgs for ExistenceCheck {
         W: ?Sized + RedisWrite,
     {
         match self {
-            ExistenceCheck::NX => {
+            Self::NX => {
                 out.write_arg(b"NX");
             }
-            ExistenceCheck::XX => {
+            Self::XX => {
                 out.write_arg(b"XX");
             }
         }
@@ -119,8 +119,8 @@ impl ToRedisArgs for FieldExistenceCheck {
         W: ?Sized + RedisWrite,
     {
         match self {
-            FieldExistenceCheck::FNX => out.write_arg(b"FNX"),
-            FieldExistenceCheck::FXX => out.write_arg(b"FXX"),
+            Self::FNX => out.write_arg(b"FNX"),
+            Self::FXX => out.write_arg(b"FXX"),
         }
     }
 }
@@ -154,22 +154,22 @@ pub enum Value {
     BulkString(Vec<u8>),
     /// A response containing an array with more data. This is generally used by redis
     /// to express nested structures.
-    Array(Vec<Value>),
+    Array(Vec<Self>),
     /// A simple string response, without line breaks and not binary safe.
     SimpleString(String),
     /// A status response which represents the string "OK".
     Okay,
     /// Unordered key,value list from the server. Use `as_map_iter` function.
-    Map(Vec<(Value, Value)>),
+    Map(Vec<(Self, Self)>),
     /// Attribute value from the server. Client will give data instead of whole Attribute type.
     Attribute {
         /// Data that attributes belong to.
-        data: Box<Value>,
+        data: Box<Self>,
         /// Key,Value list of attributes.
-        attributes: Vec<(Value, Value)>,
+        attributes: Vec<(Self, Self)>,
     },
     /// Unordered set value from the server.
-    Set(Vec<Value>),
+    Set(Vec<Self>),
     /// A floating number response from the server.
     Double(f64),
     /// A boolean response from the server.
@@ -192,7 +192,7 @@ pub enum Value {
         /// Push Kind
         kind: PushKind,
         /// Remaining data from push message
-        data: Vec<Value>,
+        data: Vec<Self>,
     },
     /// Represents an error message from the server
     ServerError(ServerError),
@@ -231,7 +231,7 @@ impl ValueComparison {
     /// For SET: Sets the key only if its current value matches. Non-existent keys are not created.
     /// For DEL_EX: Deletes the key only if its current value matches. Non-existent keys are ignored.
     pub fn ifeq(value: impl ToSingleRedisArg) -> Self {
-        ValueComparison::IFEQ(Self::arg_to_string(value))
+        Self::IFEQ(Self::arg_to_string(value))
     }
 
     /// Create a new IFNE (if not equal) comparison
@@ -241,7 +241,7 @@ impl ValueComparison {
     /// For SET: Sets the key only if its current value doesn't match. Non-existent keys are created.
     /// For DEL_EX: Deletes the key only if its current value doesn't match. Non-existent keys are ignored.
     pub fn ifne(value: impl ToSingleRedisArg) -> Self {
-        ValueComparison::IFNE(Self::arg_to_string(value))
+        Self::IFNE(Self::arg_to_string(value))
     }
 
     /// Create a new IFDEQ (if digest equal) comparison
@@ -253,7 +253,7 @@ impl ValueComparison {
     ///
     /// Use [`calculate_value_digest`] to compute the digest of a value.
     pub fn ifdeq(digest: impl ToSingleRedisArg) -> Self {
-        ValueComparison::IFDEQ(Self::arg_to_string(digest))
+        Self::IFDEQ(Self::arg_to_string(digest))
     }
 
     /// Create a new IFDNE (if digest not equal) comparison
@@ -265,7 +265,7 @@ impl ValueComparison {
     ///
     /// Use [`calculate_value_digest`] to compute the digest of a value.
     pub fn ifdne(digest: impl ToSingleRedisArg) -> Self {
-        ValueComparison::IFDNE(Self::arg_to_string(digest))
+        Self::IFDNE(Self::arg_to_string(digest))
     }
 
     fn arg_to_string(value: impl ToSingleRedisArg) -> String {
@@ -280,19 +280,19 @@ impl ToRedisArgs for ValueComparison {
         W: ?Sized + RedisWrite,
     {
         match self {
-            ValueComparison::IFEQ(value) => {
+            Self::IFEQ(value) => {
                 out.write_arg(b"IFEQ");
                 out.write_arg(value.as_bytes());
             }
-            ValueComparison::IFNE(value) => {
+            Self::IFNE(value) => {
                 out.write_arg(b"IFNE");
                 out.write_arg(value.as_bytes());
             }
-            ValueComparison::IFDEQ(digest) => {
+            Self::IFDEQ(digest) => {
                 out.write_arg(b"IFDEQ");
                 out.write_arg(digest.as_bytes());
             }
-            ValueComparison::IFDNE(digest) => {
+            Self::IFDNE(digest) => {
                 out.write_arg(b"IFDNE");
                 out.write_arg(digest.as_bytes());
             }
@@ -347,12 +347,12 @@ impl PushKind {
     pub(crate) fn has_reply(&self) -> bool {
         matches!(
             self,
-            &PushKind::Unsubscribe
-                | &PushKind::PUnsubscribe
-                | &PushKind::SUnsubscribe
-                | &PushKind::Subscribe
-                | &PushKind::PSubscribe
-                | &PushKind::SSubscribe
+            &Self::Unsubscribe
+                | &Self::PUnsubscribe
+                | &Self::SUnsubscribe
+                | &Self::Subscribe
+                | &Self::PSubscribe
+                | &Self::SSubscribe
         )
     }
 }
@@ -360,9 +360,9 @@ impl PushKind {
 impl fmt::Display for VerbatimFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            VerbatimFormat::Markdown => write!(f, "mkd"),
-            VerbatimFormat::Unknown(val) => write!(f, "{val}"),
-            VerbatimFormat::Text => write!(f, "txt"),
+            Self::Markdown => write!(f, "mkd"),
+            Self::Unknown(val) => write!(f, "{val}"),
+            Self::Text => write!(f, "txt"),
         }
     }
 }
@@ -370,18 +370,18 @@ impl fmt::Display for VerbatimFormat {
 impl fmt::Display for PushKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PushKind::Other(kind) => write!(f, "{kind}"),
-            PushKind::Invalidate => write!(f, "invalidate"),
-            PushKind::Message => write!(f, "message"),
-            PushKind::PMessage => write!(f, "pmessage"),
-            PushKind::SMessage => write!(f, "smessage"),
-            PushKind::Unsubscribe => write!(f, "unsubscribe"),
-            PushKind::PUnsubscribe => write!(f, "punsubscribe"),
-            PushKind::SUnsubscribe => write!(f, "sunsubscribe"),
-            PushKind::Subscribe => write!(f, "subscribe"),
-            PushKind::PSubscribe => write!(f, "psubscribe"),
-            PushKind::SSubscribe => write!(f, "ssubscribe"),
-            PushKind::Disconnection => write!(f, "disconnection"),
+            Self::Other(kind) => write!(f, "{kind}"),
+            Self::Invalidate => write!(f, "invalidate"),
+            Self::Message => write!(f, "message"),
+            Self::PMessage => write!(f, "pmessage"),
+            Self::SMessage => write!(f, "smessage"),
+            Self::Unsubscribe => write!(f, "unsubscribe"),
+            Self::PUnsubscribe => write!(f, "punsubscribe"),
+            Self::SUnsubscribe => write!(f, "sunsubscribe"),
+            Self::Subscribe => write!(f, "subscribe"),
+            Self::PSubscribe => write!(f, "psubscribe"),
+            Self::SSubscribe => write!(f, "ssubscribe"),
+            Self::Disconnection => write!(f, "disconnection"),
         }
     }
 }
@@ -424,18 +424,18 @@ impl Iterator for OwnedMapIter {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            OwnedMapIter::Array(iter) => Some((iter.next()?, iter.next()?)),
-            OwnedMapIter::Map(iter) => iter.next(),
+            Self::Array(iter) => Some((iter.next()?, iter.next()?)),
+            Self::Map(iter) => iter.next(),
         }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         match self {
-            OwnedMapIter::Array(iter) => {
+            Self::Array(iter) => {
                 let (low, high) = iter.size_hint();
                 (low / 2, high.map(|h| h / 2))
             }
-            OwnedMapIter::Map(iter) => iter.size_hint(),
+            Self::Map(iter) => iter.size_hint(),
         }
     }
 }
@@ -454,18 +454,18 @@ impl Value {
     /// array response.
     pub fn looks_like_cursor(&self) -> bool {
         match *self {
-            Value::Array(ref items) => {
+            Self::Array(ref items) => {
                 if items.len() != 2 {
                     return false;
                 }
-                matches!(items[0], Value::BulkString(_)) && matches!(items[1], Value::Array(_))
+                matches!(items[0], Self::BulkString(_)) && matches!(items[1], Self::Array(_))
             }
             _ => false,
         }
     }
 
     /// Returns an `&[Value]` if `self` is compatible with a sequence type
-    pub fn as_sequence(&self) -> Option<&[Value]> {
+    pub fn as_sequence(&self) -> Option<&[Self]> {
         match self {
             Value::Array(items) | Value::Set(items) => Some(&items[..]),
             Value::Nil => Some(&[]),
@@ -475,7 +475,7 @@ impl Value {
 
     /// Returns a `Vec<Value>` if `self` is compatible with a sequence type,
     /// otherwise returns `Err(self)`.
-    pub fn into_sequence(self) -> Result<Vec<Value>, Value> {
+    pub fn into_sequence(self) -> Result<Vec<Self>, Self> {
         match self {
             Value::Array(items) | Value::Set(items) => Ok(items),
             Value::Nil => Ok(vec![]),
@@ -486,30 +486,24 @@ impl Value {
     /// Returns an iterator of `(&Value, &Value)` if `self` is compatible with a map type
     pub fn as_map_iter(&self) -> Option<MapIter<'_>> {
         match self {
-            Value::Array(items) => {
-                if items.len() % 2 == 0 {
-                    Some(MapIter::Array(items.iter()))
-                } else {
-                    None
-                }
-            }
-            Value::Map(items) => Some(MapIter::Map(items.iter())),
+            Self::Array(items) => (items.len() % 2 == 0).then(|| MapIter::Array(items.iter())),
+            Self::Map(items) => Some(MapIter::Map(items.iter())),
             _ => None,
         }
     }
 
     /// Returns an iterator of `(Value, Value)` if `self` is compatible with a map type.
     /// If not, returns `Err(self)`.
-    pub fn into_map_iter(self) -> Result<OwnedMapIter, Value> {
+    pub fn into_map_iter(self) -> Result<OwnedMapIter, Self> {
         match self {
-            Value::Array(items) => {
+            Self::Array(items) => {
                 if items.len() % 2 == 0 {
                     Ok(OwnedMapIter::Array(items.into_iter()))
                 } else {
-                    Err(Value::Array(items))
+                    Err(Self::Array(items))
                 }
             }
-            Value::Map(items) => Ok(OwnedMapIter::Map(items.into_iter())),
+            Self::Map(items) => Ok(OwnedMapIter::Map(items.into_iter())),
             _ => Err(self),
         }
     }
@@ -522,14 +516,14 @@ impl Value {
             Self::Attribute { data, attributes } => {
                 let data = Box::new((*data).extract_error()?);
                 let attributes = Self::extract_error_map(attributes)?;
-                Ok(Value::Attribute { data, attributes })
+                Ok(Self::Attribute { data, attributes })
             }
             Self::Set(set) => Ok(Self::Set(Self::extract_error_vec(set)?)),
             Self::Push { kind, data } => Ok(Self::Push {
                 kind,
                 data: Self::extract_error_vec(data)?,
             }),
-            Value::ServerError(err) => Err(err.into()),
+            Self::ServerError(err) => Err(err.into()),
             _ => Ok(self),
         }
     }
@@ -565,32 +559,32 @@ impl Value {
 impl fmt::Debug for Value {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            Value::Nil => write!(fmt, "nil"),
-            Value::Int(val) => write!(fmt, "int({val:?})"),
-            Value::BulkString(ref val) => match from_utf8(val) {
+            Self::Nil => write!(fmt, "nil"),
+            Self::Int(val) => write!(fmt, "int({val:?})"),
+            Self::BulkString(ref val) => match from_utf8(val) {
                 Ok(x) => write!(fmt, "bulk-string('{x:?}')"),
                 Err(_) => write!(fmt, "binary-data({val:?})"),
             },
-            Value::Array(ref values) => write!(fmt, "array({values:?})"),
-            Value::Push { ref kind, ref data } => write!(fmt, "push({kind:?}, {data:?})"),
-            Value::Okay => write!(fmt, "ok"),
-            Value::SimpleString(ref s) => write!(fmt, "simple-string({s:?})"),
-            Value::Map(ref values) => write!(fmt, "map({values:?})"),
-            Value::Attribute {
+            Self::Array(ref values) => write!(fmt, "array({values:?})"),
+            Self::Push { ref kind, ref data } => write!(fmt, "push({kind:?}, {data:?})"),
+            Self::Okay => write!(fmt, "ok"),
+            Self::SimpleString(ref s) => write!(fmt, "simple-string({s:?})"),
+            Self::Map(ref values) => write!(fmt, "map({values:?})"),
+            Self::Attribute {
                 ref data,
                 attributes: _,
             } => write!(fmt, "attribute({data:?})"),
-            Value::Set(ref values) => write!(fmt, "set({values:?})"),
-            Value::Double(ref d) => write!(fmt, "double({d:?})"),
-            Value::Boolean(ref b) => write!(fmt, "boolean({b:?})"),
-            Value::VerbatimString {
+            Self::Set(ref values) => write!(fmt, "set({values:?})"),
+            Self::Double(ref d) => write!(fmt, "double({d:?})"),
+            Self::Boolean(ref b) => write!(fmt, "boolean({b:?})"),
+            Self::VerbatimString {
                 ref format,
                 ref text,
             } => {
                 write!(fmt, "verbatim-string({format:?},{text:?})")
             }
-            Value::BigNumber(ref m) => write!(fmt, "big-number({m:?})"),
-            Value::ServerError(ref err) => match err.details() {
+            Self::BigNumber(ref m) => write!(fmt, "big-number({m:?})"),
+            Self::ServerError(ref err) => match err.details() {
                 Some(details) => write!(fmt, "Server error: `{}: {details}`", err.code()),
                 None => write!(fmt, "Server error: `{}`", err.code()),
             },
@@ -657,7 +651,7 @@ impl InfoDict {
     /// the INFO command.  Each line is a key, value pair with the
     /// key and value separated by a colon (`:`).  Lines starting with a
     /// hash (`#`) are ignored.
-    pub fn new(kvpairs: &str) -> InfoDict {
+    pub fn new(kvpairs: &str) -> Self {
         let mut map = HashMap::new();
         for line in kvpairs.lines() {
             if line.is_empty() || line.starts_with('#') {
@@ -670,7 +664,7 @@ impl InfoDict {
             };
             map.insert(k, Value::SimpleString(v));
         }
-        InfoDict { map }
+        Self { map }
     }
 
     /// Fetches a value by key and converts it into the given type.
@@ -766,13 +760,16 @@ impl FromRedisValue for ReplicaInfo {
             Err(v) => crate::errors::invalid_type_error!(v, "Replica response should be an array"),
         };
         if v.len() < 3 {
-            crate::errors::invalid_type_error!(v, "Replica array is too short, expected 3 elements")
+            crate::errors::invalid_type_error!(
+                v,
+                "Replica array is too short, expected 3 elements"
+            );
         }
         let mut v = v.into_iter();
         let ip = from_redis_value(v.next().expect("len was checked"))?;
         let port = from_redis_value(v.next().expect("len was checked"))?;
         let offset = from_redis_value(v.next().expect("len was checked"))?;
-        Ok(ReplicaInfo {
+        Ok(Self {
             ip,
             port,
             replication_offset: offset,
@@ -794,13 +791,13 @@ impl FromRedisValue for Role {
             crate::errors::invalid_type_error!(
                 v,
                 "Role array is too short, expected at least 2 elements"
-            )
+            );
         }
         match &v[0] {
             Value::BulkString(role) => match role.as_slice() {
-                b"master" => Role::new_primary(v),
-                b"slave" => Role::new_replica(v),
-                b"sentinel" => Role::new_sentinel(v),
+                b"master" => Self::new_primary(v),
+                b"slave" => Self::new_replica(v),
+                b"sentinel" => Self::new_sentinel(v),
                 _ => crate::errors::invalid_type_error!(
                     v,
                     "Role type is not master, slave or sentinel"
@@ -817,7 +814,7 @@ impl Role {
             crate::errors::invalid_type_error!(
                 values,
                 "Role primary response too short, expected 3 elements"
-            )
+            );
         }
 
         let mut values = values.into_iter();
@@ -826,7 +823,7 @@ impl Role {
         let replication_offset = from_redis_value(values.next().expect("len was checked"))?;
         let replicas = from_redis_value(values.next().expect("len was checked"))?;
 
-        Ok(Role::Primary {
+        Ok(Self::Primary {
             replication_offset,
             replicas,
         })
@@ -837,7 +834,7 @@ impl Role {
             crate::errors::invalid_type_error!(
                 values,
                 "Role replica response too short, expected 5 elements"
-            )
+            );
         }
 
         let mut values = values.into_iter();
@@ -848,7 +845,7 @@ impl Role {
         let replication_state = from_redis_value(values.next().expect("len was checked"))?;
         let data_received = from_redis_value(values.next().expect("len was checked"))?;
 
-        Ok(Role::Replica {
+        Ok(Self::Replica {
             primary_ip,
             primary_port,
             replication_state,
@@ -861,11 +858,11 @@ impl Role {
             crate::errors::invalid_type_error!(
                 values,
                 "Role sentinel response too short, expected at least 2 elements"
-            )
+            );
         }
         let second_val = values.into_iter().nth(1).expect("len was checked");
         let primary_names = from_redis_value(second_val)?;
-        Ok(Role::Sentinel { primary_names })
+        Ok(Self::Sentinel { primary_names })
     }
 }
 
@@ -876,7 +873,7 @@ pub trait RedisWrite {
 
     /// Accepts a serialized redis command.
     fn write_arg_fmt(&mut self, arg: impl fmt::Display) {
-        self.write_arg(arg.to_string().as_bytes())
+        self.write_arg(arg.to_string().as_bytes());
     }
 
     /// Appends an empty argument to the command, and returns a
@@ -986,7 +983,7 @@ pub trait RedisWrite {
         }
         impl Drop for Wrapper<'_> {
             fn drop(&mut self) {
-                self.writer.write_all(&self.buf).unwrap()
+                self.writer.write_all(&self.buf).unwrap();
             }
         }
 
@@ -1003,7 +1000,7 @@ impl RedisWrite for Vec<Vec<u8>> {
     }
 
     fn write_arg_fmt(&mut self, arg: impl fmt::Display) {
-        self.push(arg.to_string().into_bytes())
+        self.push(arg.to_string().into_bytes());
     }
 
     fn writer_for_next_arg(&mut self) -> impl io::Write + '_ {
@@ -1080,7 +1077,7 @@ pub trait ToRedisArgs: Sized {
     where
         W: ?Sized + RedisWrite,
     {
-        Self::make_arg_iter_ref(items.iter(), out)
+        Self::make_arg_iter_ref(items.iter(), out);
     }
 
     /// This only exists internally as a workaround for the lack of
@@ -1173,17 +1170,17 @@ impl ToRedisArgs for u8 {
     {
         let mut buf = ::itoa::Buffer::new();
         let s = buf.format(*self);
-        out.write_arg(s.as_bytes())
+        out.write_arg(s.as_bytes());
     }
 
-    fn write_args_from_slice<W>(items: &[u8], out: &mut W)
+    fn write_args_from_slice<W>(items: &[Self], out: &mut W)
     where
         W: ?Sized + RedisWrite,
     {
         out.write_arg(items);
     }
 
-    fn is_single_vec_arg(_items: &[u8]) -> bool {
+    fn is_single_vec_arg(_items: &[Self]) -> bool {
         true
     }
 }
@@ -1252,7 +1249,7 @@ impl ToRedisArgs for bool {
     where
         W: ?Sized + RedisWrite,
     {
-        out.write_arg(if *self { b"1" } else { b"0" })
+        out.write_arg(if *self { b"1" } else { b"0" });
     }
 }
 
@@ -1263,7 +1260,7 @@ impl ToRedisArgs for String {
     where
         W: ?Sized + RedisWrite,
     {
-        out.write_arg(self.as_bytes())
+        out.write_arg(self.as_bytes());
     }
 }
 impl ToSingleRedisArg for String {}
@@ -1273,7 +1270,7 @@ impl ToRedisArgs for &str {
     where
         W: ?Sized + RedisWrite,
     {
-        out.write_arg(self.as_bytes())
+        out.write_arg(self.as_bytes());
     }
 }
 
@@ -1548,7 +1545,7 @@ impl<T: ToRedisArgs, const N: usize> ToRedisArgs for &[T; N] {
     where
         W: ?Sized + RedisWrite,
     {
-        ToRedisArgs::write_args_from_slice(self.as_slice(), out)
+        ToRedisArgs::write_args_from_slice(self.as_slice(), out);
     }
 
     fn num_of_args(&self) -> usize {
@@ -1743,8 +1740,8 @@ macro_rules! from_redis_value_for_num {
 }
 
 impl FromRedisValue for u8 {
-    fn from_redis_value_ref(v: &Value) -> Result<u8, ParsingError> {
-        from_redis_value_for_num_internal!(u8, v)
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
+        from_redis_value_for_num_internal!(Self, v)
     }
 
     fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
@@ -1752,10 +1749,10 @@ impl FromRedisValue for u8 {
     }
 
     // this hack allows us to specialize Vec<u8> to work with binary data.
-    fn from_byte_slice(vec: &[u8]) -> Option<Vec<u8>> {
+    fn from_byte_slice(vec: &[u8]) -> Option<Vec<Self>> {
         Some(vec.to_vec())
     }
-    fn from_byte_vec(vec: Vec<u8>) -> Result<Vec<u8>, ParsingError> {
+    fn from_byte_vec(vec: Vec<u8>) -> Result<Vec<Self>, ParsingError> {
         Ok(vec)
     }
 }
@@ -1828,7 +1825,7 @@ from_redis_value_for_bignum!(num_bigint::BigInt);
 from_redis_value_for_bignum!(num_bigint::BigUint);
 
 impl FromRedisValue for bool {
-    fn from_redis_value_ref(v: &Value) -> Result<bool, ParsingError> {
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
         let v = get_inner_value(v);
         match *v {
             Value::Nil => Ok(false),
@@ -1863,21 +1860,21 @@ impl FromRedisValue for bool {
 }
 
 impl FromRedisValue for CString {
-    fn from_redis_value_ref(v: &Value) -> Result<CString, ParsingError> {
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
         let v = get_inner_value(v);
         match *v {
-            Value::BulkString(ref bytes) => Ok(CString::new(bytes.as_slice())?),
-            Value::Okay => Ok(CString::new("OK")?),
-            Value::SimpleString(ref val) => Ok(CString::new(val.as_bytes())?),
+            Value::BulkString(ref bytes) => Ok(Self::new(bytes.as_slice())?),
+            Value::Okay => Ok(Self::new("OK")?),
+            Value::SimpleString(ref val) => Ok(Self::new(val.as_bytes())?),
             _ => crate::errors::invalid_type_error!(v, "Response type not CString compatible."),
         }
     }
-    fn from_redis_value(v: Value) -> Result<CString, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let v = get_owned_inner_value(v);
         match v {
-            Value::BulkString(bytes) => Ok(CString::new(bytes)?),
-            Value::Okay => Ok(CString::new("OK")?),
-            Value::SimpleString(val) => Ok(CString::new(val)?),
+            Value::BulkString(bytes) => Ok(Self::new(bytes)?),
+            Value::Okay => Ok(Self::new("OK")?),
+            Value::SimpleString(val) => Ok(Self::new(val)?),
             _ => crate::errors::invalid_type_error!(v, "Response type not CString compatible."),
         }
     }
@@ -2125,7 +2122,7 @@ impl_from_redis_value_for_set!(
 );
 
 impl FromRedisValue for Value {
-    fn from_redis_value_ref(v: &Value) -> Result<Value, ParsingError> {
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
         Ok(v.clone())
     }
 
@@ -2355,27 +2352,27 @@ from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9
 from_redis_value_for_tuple! { #[doc(hidden)], T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, }
 
 impl FromRedisValue for InfoDict {
-    fn from_redis_value_ref(v: &Value) -> Result<InfoDict, ParsingError> {
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
         let v = get_inner_value(v);
         let s: String = from_redis_value_ref(v)?;
-        Ok(InfoDict::new(&s))
+        Ok(Self::new(&s))
     }
-    fn from_redis_value(v: Value) -> Result<InfoDict, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let v = get_owned_inner_value(v);
         let s: String = from_redis_value(v)?;
-        Ok(InfoDict::new(&s))
+        Ok(Self::new(&s))
     }
 }
 
 impl<T: FromRedisValue> FromRedisValue for Option<T> {
-    fn from_redis_value_ref(v: &Value) -> Result<Option<T>, ParsingError> {
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
         let v = get_inner_value(v);
         if *v == Value::Nil {
             return Ok(None);
         }
         Ok(Some(from_redis_value_ref(v)?))
     }
-    fn from_redis_value(v: Value) -> Result<Option<T>, ParsingError> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         let v = get_owned_inner_value(v);
         if v == Value::Nil {
             return Ok(None);
@@ -2389,7 +2386,7 @@ impl FromRedisValue for bytes::Bytes {
     fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
         let v = get_inner_value(v);
         match v {
-            Value::BulkString(bytes_vec) => Ok(bytes::Bytes::copy_from_slice(bytes_vec.as_ref())),
+            Value::BulkString(bytes_vec) => Ok(Self::copy_from_slice(bytes_vec.as_ref())),
             _ => crate::errors::invalid_type_error!(v, "Not a bulk string"),
         }
     }
@@ -2406,7 +2403,7 @@ impl FromRedisValue for bytes::Bytes {
 impl FromRedisValue for uuid::Uuid {
     fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
         match *v {
-            Value::BulkString(ref bytes) => Ok(uuid::Uuid::from_slice(bytes)?),
+            Value::BulkString(ref bytes) => Ok(Self::from_slice(bytes)?),
             _ => crate::errors::invalid_type_error!(v, "Response type not uuid compatible."),
         }
     }
@@ -2496,7 +2493,7 @@ pub enum ProtocolVersion {
 impl ProtocolVersion {
     /// Returns true if the protocol can support RESP3 features.
     pub fn supports_resp3(&self) -> bool {
-        !matches!(self, ProtocolVersion::RESP2)
+        !matches!(self, Self::RESP2)
     }
 }
 
@@ -2522,10 +2519,10 @@ impl ToRedisArgs for ExpireOption {
         W: ?Sized + RedisWrite,
     {
         match self {
-            ExpireOption::NX => out.write_arg(b"NX"),
-            ExpireOption::XX => out.write_arg(b"XX"),
-            ExpireOption::GT => out.write_arg(b"GT"),
-            ExpireOption::LT => out.write_arg(b"LT"),
+            Self::NX => out.write_arg(b"NX"),
+            Self::XX => out.write_arg(b"XX"),
+            Self::GT => out.write_arg(b"GT"),
+            Self::LT => out.write_arg(b"LT"),
             _ => {}
         }
     }
@@ -2542,7 +2539,7 @@ pub struct PushInfo {
 
 impl PushInfo {
     pub(crate) fn disconnect() -> Self {
-        PushInfo {
+        Self {
             kind: crate::PushKind::Disconnection,
             data: vec![],
         }
@@ -2596,30 +2593,30 @@ pub enum ValueType {
 impl<T: AsRef<str>> From<T> for ValueType {
     fn from(s: T) -> Self {
         match s.as_ref() {
-            "none" => ValueType::None,
-            "string" => ValueType::String,
-            "list" => ValueType::List,
-            "set" => ValueType::Set,
-            "zset" => ValueType::ZSet,
-            "hash" => ValueType::Hash,
-            "stream" => ValueType::Stream,
-            "vectorset" => ValueType::VectorSet,
+            "none" => Self::None,
+            "string" => Self::String,
+            "list" => Self::List,
+            "set" => Self::Set,
+            "zset" => Self::ZSet,
+            "hash" => Self::Hash,
+            "stream" => Self::Stream,
+            "vectorset" => Self::VectorSet,
             // JSON module
-            "ReJSON-RL" => ValueType::JSON,
+            "ReJSON-RL" => Self::JSON,
             // Bloom module (Redis)
-            "CMSk-TYPE" => ValueType::CountMin,
-            "MBbloom--" => ValueType::BloomFilterRedis,
-            "MBbloomCF" => ValueType::CuckooFilter,
-            "TDIS-TYPE" => ValueType::TDigest,
-            "TopK-TYPE" => ValueType::TopK,
+            "CMSk-TYPE" => Self::CountMin,
+            "MBbloom--" => Self::BloomFilterRedis,
+            "MBbloomCF" => Self::CuckooFilter,
+            "TDIS-TYPE" => Self::TDigest,
+            "TopK-TYPE" => Self::TopK,
             // Search module
-            "trietype0" => ValueType::Trie,
+            "trietype0" => Self::Trie,
             // Timeseries module
-            "TSDB-TYPE" => ValueType::TimeSeries,
+            "TSDB-TYPE" => Self::TimeSeries,
             // Bloom module (ValKey)
-            "bloomfltr" => ValueType::BloomFilterValKey,
+            "bloomfltr" => Self::BloomFilterValKey,
             // Fallback
-            s => ValueType::Unknown(s.to_string()),
+            s => Self::Unknown(s.to_string()),
         }
     }
 }
@@ -2687,9 +2684,9 @@ impl IntegerReplyOrNoOp {
     /// Returns the integer value of the reply.
     pub fn raw(&self) -> isize {
         match self {
-            IntegerReplyOrNoOp::IntegerReply(s) => *s as isize,
-            IntegerReplyOrNoOp::NotExists => -2,
-            IntegerReplyOrNoOp::ExistsButNotRelevant => -1,
+            Self::IntegerReply(s) => *s as isize,
+            Self::NotExists => -2,
+            Self::ExistsButNotRelevant => -1,
         }
     }
 }
@@ -2698,9 +2695,9 @@ impl FromRedisValue for IntegerReplyOrNoOp {
     fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
         match v {
             Value::Int(s) => match s {
-                -2 => Ok(IntegerReplyOrNoOp::NotExists),
-                -1 => Ok(IntegerReplyOrNoOp::ExistsButNotRelevant),
-                _ => Ok(IntegerReplyOrNoOp::IntegerReply(*s as usize)),
+                -2 => Ok(Self::NotExists),
+                -1 => Ok(Self::ExistsButNotRelevant),
+                _ => Ok(Self::IntegerReply(*s as usize)),
             },
             _ => crate::errors::invalid_type_error!(v, "Value should be an integer"),
         }
@@ -2709,9 +2706,9 @@ impl FromRedisValue for IntegerReplyOrNoOp {
     fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
         match v {
             Value::Int(s) => match s {
-                -2 => Ok(IntegerReplyOrNoOp::NotExists),
-                -1 => Ok(IntegerReplyOrNoOp::ExistsButNotRelevant),
-                _ => Ok(IntegerReplyOrNoOp::IntegerReply(s as usize)),
+                -2 => Ok(Self::NotExists),
+                -1 => Ok(Self::ExistsButNotRelevant),
+                _ => Ok(Self::IntegerReply(s as usize)),
             },
             _ => crate::errors::invalid_type_error!(v, "Value should be an integer"),
         }
@@ -2721,9 +2718,9 @@ impl FromRedisValue for IntegerReplyOrNoOp {
 impl PartialEq<isize> for IntegerReplyOrNoOp {
     fn eq(&self, other: &isize) -> bool {
         match self {
-            IntegerReplyOrNoOp::IntegerReply(s) => *s as isize == *other,
-            IntegerReplyOrNoOp::NotExists => *other == -2,
-            IntegerReplyOrNoOp::ExistsButNotRelevant => *other == -1,
+            Self::IntegerReply(s) => *s as isize == *other,
+            Self::NotExists => *other == -2,
+            Self::ExistsButNotRelevant => *other == -1,
         }
     }
 }
@@ -2731,7 +2728,7 @@ impl PartialEq<isize> for IntegerReplyOrNoOp {
 impl PartialEq<usize> for IntegerReplyOrNoOp {
     fn eq(&self, other: &usize) -> bool {
         match self {
-            IntegerReplyOrNoOp::IntegerReply(s) => *s == *other,
+            Self::IntegerReply(s) => *s == *other,
             _ => false,
         }
     }
@@ -2740,9 +2737,9 @@ impl PartialEq<usize> for IntegerReplyOrNoOp {
 impl PartialEq<i32> for IntegerReplyOrNoOp {
     fn eq(&self, other: &i32) -> bool {
         match self {
-            IntegerReplyOrNoOp::IntegerReply(s) => *s as i32 == *other,
-            IntegerReplyOrNoOp::NotExists => *other == -2,
-            IntegerReplyOrNoOp::ExistsButNotRelevant => *other == -1,
+            Self::IntegerReply(s) => *s as i32 == *other,
+            Self::NotExists => *other == -2,
+            Self::ExistsButNotRelevant => *other == -1,
         }
     }
 }
@@ -2750,7 +2747,7 @@ impl PartialEq<i32> for IntegerReplyOrNoOp {
 impl PartialEq<u32> for IntegerReplyOrNoOp {
     fn eq(&self, other: &u32) -> bool {
         match self {
-            IntegerReplyOrNoOp::IntegerReply(s) => *s as u32 == *other,
+            Self::IntegerReply(s) => *s as u32 == *other,
             _ => false,
         }
     }

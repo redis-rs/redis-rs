@@ -58,7 +58,7 @@ impl cluster_async::Connect for MockConnection {
             redis::ConnectionAddr::Tcp(addr, port) => (addr, *port),
             _ => unreachable!(),
         };
-        Box::pin(future::ok(MockConnection {
+        Box::pin(future::ok(Self {
             handler: HANDLERS
                 .read()
                 .unwrap()
@@ -81,7 +81,7 @@ impl cluster::Connect for MockConnection {
             redis::ConnectionAddr::Tcp(addr, port) => (addr, *port),
             _ => unreachable!(),
         };
-        Ok(MockConnection {
+        Ok(Self {
             handler: HANDLERS
                 .read()
                 .unwrap()
@@ -351,7 +351,7 @@ impl MockEnv {
         let async_connection = runtime
             .block_on(client.get_async_generic_connection())
             .unwrap();
-        MockEnv {
+        Self {
             #[cfg(feature = "cluster-async")]
             runtime,
             client,

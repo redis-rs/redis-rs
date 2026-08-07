@@ -165,26 +165,26 @@ impl ConnectionManagerConfig {
     }
 
     /// Set the minimal delay for reconnect attempts.
-    pub fn set_min_delay(mut self, min_delay: Duration) -> ConnectionManagerConfig {
+    pub fn set_min_delay(mut self, min_delay: Duration) -> Self {
         self.min_delay = min_delay;
         self
     }
 
     /// Apply a maximum delay between connection attempts. The delay between attempts won't be longer than max_delay milliseconds.
-    pub fn set_max_delay(mut self, time: Duration) -> ConnectionManagerConfig {
+    pub fn set_max_delay(mut self, time: Duration) -> Self {
         self.max_delay = Some(time);
         self
     }
 
     /// The resulting duration is calculated by taking the base to the `n`-th power,
     /// where `n` denotes the number of past attempts.
-    pub fn set_exponent_base(mut self, base: f32) -> ConnectionManagerConfig {
+    pub fn set_exponent_base(mut self, base: f32) -> Self {
         self.exponent_base = base;
         self
     }
 
     /// number_of_retries times, with an exponentially increasing delay.
-    pub fn set_number_of_retries(mut self, amount: usize) -> ConnectionManagerConfig {
+    pub fn set_number_of_retries(mut self, amount: usize) -> Self {
         self.number_of_retries = amount;
         self
     }
@@ -192,7 +192,7 @@ impl ConnectionManagerConfig {
     /// The new connection will time out operations after `response_timeout` has passed.
     ///
     /// Set `None` if you don't want requests to time out.
-    pub fn set_response_timeout(mut self, duration: Option<Duration>) -> ConnectionManagerConfig {
+    pub fn set_response_timeout(mut self, duration: Option<Duration>) -> Self {
         self.response_timeout = duration;
         self
     }
@@ -200,7 +200,7 @@ impl ConnectionManagerConfig {
     /// Each connection attempt to the server will time out after `connection_timeout`.
     ///
     /// Set `None` if you don't want the connection attempt to time out.
-    pub fn set_connection_timeout(mut self, duration: Option<Duration>) -> ConnectionManagerConfig {
+    pub fn set_connection_timeout(mut self, duration: Option<Duration>) -> Self {
         self.connection_timeout = duration;
         self
     }
@@ -532,11 +532,9 @@ impl ConnectionManager {
                 connection_config.set_push_sender_internal(Arc::new(internal_sender));
         }
 
-        let subscription_tracker = if config.resubscribe_automatically {
-            Some(Mutex::new(SubscriptionTracker::default()))
-        } else {
-            None
-        };
+        let subscription_tracker = config
+            .resubscribe_automatically
+            .then(|| Mutex::new(SubscriptionTracker::default()));
 
         let client_clone = client.clone();
         let retry_strategy_clone = retry_strategy;
@@ -580,7 +578,7 @@ impl ConnectionManager {
                         "Failed to set automatic resubscription",
                     ))
                 })?;
-        };
+        }
 
         Ok(new_self)
     }
