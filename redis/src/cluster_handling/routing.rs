@@ -589,7 +589,7 @@ impl ResponsePolicy {
             | b"MEMORY MALLOC-STATS"
             | b"MEMORY DOCTOR"
             | b"MEMORY STATS"
-            | b"INFO" => Some(ResponsePolicy::Special),
+            | b"INFO" => Some(Self::Special),
 
             _ => None,
         }
@@ -963,12 +963,12 @@ impl Route {
     }
 
     /// Returns the slot number of the route.
-    pub(crate) fn slot(&self) -> u16 {
+    pub(crate) fn slot(self) -> u16 {
         self.0
     }
 
     /// Returns the slot address of the route.
-    pub(crate) fn slot_addr(&self) -> SlotAddr {
+    pub(crate) fn slot_addr(self) -> SlotAddr {
         self.1
     }
 

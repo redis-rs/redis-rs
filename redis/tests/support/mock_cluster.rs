@@ -174,18 +174,20 @@ pub fn respond_startup_with_replica_using_config(
     cmd: &[u8],
     slots_config: Option<Vec<MockSlotRange>>,
 ) -> Result<(), RedisResult<Value>> {
-    let slots_config = slots_config.unwrap_or(vec![
-        MockSlotRange {
-            primary_port: 6379,
-            replica_ports: vec![6380],
-            slot_range: (0..8191),
-        },
-        MockSlotRange {
-            primary_port: 6381,
-            replica_ports: vec![6382],
-            slot_range: (8192..16383),
-        },
-    ]);
+    let slots_config = slots_config.unwrap_or_else(|| {
+        vec![
+            MockSlotRange {
+                primary_port: 6379,
+                replica_ports: vec![6380],
+                slot_range: (0..8191),
+            },
+            MockSlotRange {
+                primary_port: 6381,
+                replica_ports: vec![6382],
+                slot_range: (8192..16383),
+            },
+        ]
+    });
     if is_connection_check(cmd) {
         Err(Ok(Value::SimpleString("OK".into())))
     } else if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {

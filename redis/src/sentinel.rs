@@ -592,7 +592,7 @@ async fn async_get_valid_replicas_addresses(
 ) -> RedisResult<Vec<ConnectionInfo>> {
     async fn is_replica_role_valid(connection_info: ConnectionInfo) -> Option<ConnectionInfo> {
         match async_determine_slave_from_role_or_info_replication(&connection_info).await {
-            Ok(x) => x.then(|| connection_info),
+            Ok(x) => x.then_some(connection_info),
             Err(_e) => None,
         }
     }

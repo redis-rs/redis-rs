@@ -835,11 +835,11 @@ impl ConnectionLike for ConnectionManager {
 
     fn req_packed_commands<'a>(
         &'a mut self,
-        cmd: &'a crate::Pipeline,
+        pipeline: &'a crate::Pipeline,
         offset: usize,
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
-        (async move { self.send_packed_commands(cmd, offset, count).await }).boxed()
+        (async move { self.send_packed_commands(pipeline, offset, count).await }).boxed()
     }
 
     fn get_db(&self) -> i64 {
@@ -897,7 +897,7 @@ mod tests {
             .set_concurrency_limit(128)
             .set_number_of_retries(3);
         let result = ConnectionManager::new_lazy_with_config(client, config);
-        assert!(result.is_ok());
+        result.unwrap();
     }
 
     #[tokio::test]

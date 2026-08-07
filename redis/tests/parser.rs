@@ -101,8 +101,8 @@ fn arbitrary_value(g: &mut Gen, recursive_size: usize) -> Value {
                     usize::arbitrary(g) % s
                 };
                 Value::Array(
-                    (0..size)
-                        .map(|_| arbitrary_value(g, recursive_size / size))
+                    std::iter::repeat_with(|| arbitrary_value(g, recursive_size / size))
+                        .take(size)
                         .collect(),
                 )
             }
@@ -112,13 +112,10 @@ fn arbitrary_value(g: &mut Gen, recursive_size: usize) -> Value {
                     usize::arbitrary(g) % s
                 };
 
-                let mut string = String::with_capacity(size);
-                for _ in 0..size {
-                    let c = char::arbitrary(g);
-                    if c.is_ascii_alphabetic() {
-                        string.push(c);
-                    }
-                }
+                let string = std::iter::repeat_with(|| char::arbitrary(g))
+                    .take(size)
+                    .filter(|c| c.is_ascii_alphabetic())
+                    .collect();
 
                 if string == "OK" {
                     Value::Okay

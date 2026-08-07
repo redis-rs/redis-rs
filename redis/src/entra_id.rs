@@ -697,18 +697,18 @@ mod tests {
     fn test_entra_id_provider_creation() {
         // Test that credentials providers can be created without panicking
         let _default_provider = EntraIdCredentialsProvider::new_developer_tools();
-        assert!(_default_provider.is_ok());
+        _default_provider.unwrap();
 
         let _client_secret_provider = EntraIdCredentialsProvider::new_client_secret(
             "tenant".to_string(),
             "client".to_string(),
             "secret".to_string(),
         );
-        assert!(_client_secret_provider.is_ok());
+        _client_secret_provider.unwrap();
 
         let _managed_identity_provider =
             EntraIdCredentialsProvider::new_system_assigned_managed_identity();
-        assert!(_managed_identity_provider.is_ok());
+        _managed_identity_provider.unwrap();
     }
 
     #[test]

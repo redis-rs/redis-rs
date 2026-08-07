@@ -69,7 +69,7 @@ fn run() -> RedisResult<()> {
     use std::env;
 
     // Build base redis url (may be overridden by REDIS_URL env var)
-    let redis_url = env::var("REDIS_URL").unwrap_or("redis://127.0.0.1/".to_string());
+    let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
     let client = redis::Client::open(redis_url.as_str())?;
     let mut conn = client.get_connection()?;
     let username = "tenant1";

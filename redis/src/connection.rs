@@ -230,10 +230,10 @@ impl fmt::Display for ConnectionAddr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // Cluster::get_connection_info depends on the return value from this function
         match *self {
-            ConnectionAddr::Tcp(ref host, port) | ConnectionAddr::TcpTls { ref host, port, .. } => {
+            Self::Tcp(ref host, port) | Self::TcpTls { ref host, port, .. } => {
                 write!(f, "{host}:{port}")
             }
-            ConnectionAddr::Unix(ref path) => write!(f, "{}", path.display()),
+            Self::Unix(ref path) => write!(f, "{}", path.display()),
         }
     }
 }

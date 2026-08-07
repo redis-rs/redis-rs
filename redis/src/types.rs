@@ -467,8 +467,8 @@ impl Value {
     /// Returns an `&[Value]` if `self` is compatible with a sequence type
     pub fn as_sequence(&self) -> Option<&[Self]> {
         match self {
-            Value::Array(items) | Value::Set(items) => Some(&items[..]),
-            Value::Nil => Some(&[]),
+            Self::Array(items) | Self::Set(items) => Some(&items[..]),
+            Self::Nil => Some(&[]),
             _ => None,
         }
     }
@@ -477,8 +477,8 @@ impl Value {
     /// otherwise returns `Err(self)`.
     pub fn into_sequence(self) -> Result<Vec<Self>, Self> {
         match self {
-            Value::Array(items) | Value::Set(items) => Ok(items),
-            Value::Nil => Ok(vec![]),
+            Self::Array(items) | Self::Set(items) => Ok(items),
+            Self::Nil => Ok(vec![]),
             _ => Err(self),
         }
     }
@@ -544,8 +544,8 @@ impl Value {
 
     fn is_collection_of_len(&self, len: usize) -> bool {
         match self {
-            Value::Array(values) | Value::Set(values) => values.len() == len,
-            Value::Map(items) => items.len() * 2 == len,
+            Self::Array(values) | Self::Set(values) => values.len() == len,
+            Self::Map(items) => items.len() * 2 == len,
             _ => false,
         }
     }
@@ -557,36 +557,36 @@ impl Value {
 }
 
 impl fmt::Debug for Value {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            Self::Nil => write!(fmt, "nil"),
-            Self::Int(val) => write!(fmt, "int({val:?})"),
+            Self::Nil => write!(f, "nil"),
+            Self::Int(val) => write!(f, "int({val:?})"),
             Self::BulkString(ref val) => match from_utf8(val) {
-                Ok(x) => write!(fmt, "bulk-string('{x:?}')"),
-                Err(_) => write!(fmt, "binary-data({val:?})"),
+                Ok(x) => write!(f, "bulk-string('{x:?}')"),
+                Err(_) => write!(f, "binary-data({val:?})"),
             },
-            Self::Array(ref values) => write!(fmt, "array({values:?})"),
-            Self::Push { ref kind, ref data } => write!(fmt, "push({kind:?}, {data:?})"),
-            Self::Okay => write!(fmt, "ok"),
-            Self::SimpleString(ref s) => write!(fmt, "simple-string({s:?})"),
-            Self::Map(ref values) => write!(fmt, "map({values:?})"),
+            Self::Array(ref values) => write!(f, "array({values:?})"),
+            Self::Push { ref kind, ref data } => write!(f, "push({kind:?}, {data:?})"),
+            Self::Okay => write!(f, "ok"),
+            Self::SimpleString(ref s) => write!(f, "simple-string({s:?})"),
+            Self::Map(ref values) => write!(f, "map({values:?})"),
             Self::Attribute {
                 ref data,
                 attributes: _,
-            } => write!(fmt, "attribute({data:?})"),
-            Self::Set(ref values) => write!(fmt, "set({values:?})"),
-            Self::Double(ref d) => write!(fmt, "double({d:?})"),
-            Self::Boolean(ref b) => write!(fmt, "boolean({b:?})"),
+            } => write!(f, "attribute({data:?})"),
+            Self::Set(ref values) => write!(f, "set({values:?})"),
+            Self::Double(ref d) => write!(f, "double({d:?})"),
+            Self::Boolean(ref b) => write!(f, "boolean({b:?})"),
             Self::VerbatimString {
                 ref format,
                 ref text,
             } => {
-                write!(fmt, "verbatim-string({format:?},{text:?})")
+                write!(f, "verbatim-string({format:?},{text:?})")
             }
-            Self::BigNumber(ref m) => write!(fmt, "big-number({m:?})"),
+            Self::BigNumber(ref m) => write!(f, "big-number({m:?})"),
             Self::ServerError(ref err) => match err.details() {
-                Some(details) => write!(fmt, "Server error: `{}: {details}`", err.code()),
-                None => write!(fmt, "Server error: `{}`", err.code()),
+                Some(details) => write!(f, "Server error: `{}: {details}`", err.code()),
+                None => write!(f, "Server error: `{}`", err.code()),
             },
         }
     }
@@ -596,17 +596,17 @@ impl fmt::Debug for Value {
 pub type RedisResult<T> = Result<T, RedisError>;
 
 impl<T: FromRedisValue> FromRedisValue for RedisResult<T> {
-    fn from_redis_value_ref(value: &Value) -> Result<Self, ParsingError> {
-        match value {
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
+        match v {
             Value::ServerError(err) => Ok(Err(err.clone().into())),
-            _ => from_redis_value_ref(value).map(|result| Ok(result)),
+            _ => from_redis_value_ref(v).map(|result| Ok(result)),
         }
     }
 
-    fn from_redis_value(value: Value) -> Result<Self, ParsingError> {
-        match value {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        match v {
             Value::ServerError(err) => Ok(Err(err.into())),
-            _ => from_redis_value(value).map(|result| Ok(result)),
+            _ => from_redis_value(v).map(|result| Ok(result)),
         }
     }
 }
@@ -1578,24 +1578,24 @@ fn vec_to_array<T, const N: usize>(
 }
 
 impl<T: FromRedisValue, const N: usize> FromRedisValue for [T; N] {
-    fn from_redis_value_ref(value: &Value) -> Result<[T; N], ParsingError> {
-        match *value {
+    fn from_redis_value_ref(v: &Value) -> Result<[T; N], ParsingError> {
+        match *v {
             Value::BulkString(ref bytes) => match FromRedisValue::from_byte_slice(bytes) {
-                Some(items) => vec_to_array(items, value),
+                Some(items) => vec_to_array(items, v),
                 None => {
                     let msg = format!(
                         "Conversion to Array[{}; {N}] failed",
                         std::any::type_name::<T>()
                     );
-                    crate::errors::invalid_type_error!(value, msg)
+                    crate::errors::invalid_type_error!(v, msg)
                 }
             },
             Value::Array(ref items) => {
                 let items = FromRedisValue::from_redis_value_refs(items)?;
-                vec_to_array(items, value)
+                vec_to_array(items, v)
             }
-            Value::Nil => vec_to_array(vec![], value),
-            _ => crate::errors::invalid_type_error!(value, "Response type not array compatible"),
+            Value::Nil => vec_to_array(vec![], v),
+            _ => crate::errors::invalid_type_error!(v, "Response type not array compatible"),
         }
     }
 

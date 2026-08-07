@@ -40,7 +40,9 @@ fn bench_cluster_async(
             .map(|i| redis::cmd("SET").arg(format!("foo{i}")).arg(i).clone())
             .collect();
 
-        let mut connections = (0..num_parallel).map(|_| con.clone()).collect::<Vec<_>>();
+        let mut connections = std::iter::repeat_with(|| con.clone())
+            .take(num_parallel)
+            .collect::<Vec<_>>();
 
         b.iter(|| {
             runtime

@@ -689,13 +689,13 @@ where
                 future::try_join_all(receivers.into_iter().map(get_receiver))
                     .await
                     .and_then(|mut results| {
-                        results.pop().ok_or(
+                        results.pop().ok_or_else(|| {
                             (
                                 ErrorKind::ClusterConnectionNotFound,
                                 "No results received for multi-node operation",
                             )
-                                .into(),
-                        )
+                                .into()
+                        })
                     })
             }
             Some(ResponsePolicy::OneSucceeded) => future::select_ok(
@@ -938,7 +938,7 @@ where
         let read_guard = self.conn_lock.read().await;
         let preferred = read_guard
             .1
-            .slot_addr_for_route(&route, self.routing_strategy.as_deref())
+            .slot_addr_for_route(route, self.routing_strategy.as_deref())
             .cloned();
 
         if let Some(ref addr) = preferred
@@ -951,7 +951,7 @@ where
         // Instead of erroring or waiting we try a fallback (within the same shard).
         let fallback = read_guard
             .1
-            .shard_fallback_addrs(&route)
+            .shard_fallback_addrs(route)
             .into_iter()
             .find_map(|candidate| {
                 read_guard
@@ -1180,7 +1180,7 @@ where
                     // For specific node routing (like SSUBSCRIBE/shard pubsub),
                     // only send if it routes to the reconnected_addr.
                     let target_addr = guard.as_ref().and_then(|g| {
-                        g.1.slot_addr_for_route(route, self.routing_strategy.as_deref())
+                        g.1.slot_addr_for_route(*route, self.routing_strategy.as_deref())
                     });
                     if target_addr != Some(reconnected_addr) {
                         return None;
@@ -1396,7 +1396,7 @@ where
             push_sender,
         });
         let core = Core(inner);
-        let mut inner = ClusterConnInner {
+        let mut inner = Self {
             inner: core,
             in_flight_requests: Default::default(),
             reconnect_futures: Default::default(),
@@ -1509,7 +1509,7 @@ where
         {
             match fut {
                 RecoverFuture::RecoverSlots(fut) | RecoverFuture::ReconnectInitial(fut) => {
-                    fut.await?
+                    fut.await?;
                 }
             }
         }
@@ -1701,11 +1701,9 @@ enum PollFlushAction {
 impl PollFlushAction {
     fn change_state(self, next_state: Self) -> Self {
         match (self, next_state) {
-            (PollFlushAction::None, next_state) | (next_state, PollFlushAction::None) => next_state,
-            (PollFlushAction::ReconnectFromInitialConnections, _)
-            | (_, PollFlushAction::ReconnectFromInitialConnections) => {
-                PollFlushAction::ReconnectFromInitialConnections
-            }
+            (Self::None, next_state) | (next_state, Self::None) => next_state,
+            (Self::ReconnectFromInitialConnections, _)
+            | (_, Self::ReconnectFromInitialConnections) => Self::ReconnectFromInitialConnections,
 
             (Self::RebuildSlots, _) | (_, Self::RebuildSlots) => Self::RebuildSlots,
 
@@ -1727,9 +1725,9 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn start_send(self: Pin<&mut Self>, msg: Message<C>) -> Result<(), Self::Error> {
+    fn start_send(self: Pin<&mut Self>, item: Message<C>) -> Result<(), Self::Error> {
         trace!("start_send");
-        let Message { cmd, sender } = msg;
+        let Message { cmd, sender } = item;
 
         let _ = self.inner.pending_requests_tx.send(PendingRequest {
             retry: 0,
@@ -1787,7 +1785,7 @@ where
         match self.poll_complete(cx) {
             Poll::Ready(PollFlushAction::None) | Poll::Pending => (),
             Poll::Ready(_) => Err(())?,
-        };
+        }
         // If we no longer have any requests in flight we are done (skips any reconnection
         // attempts)
         if self.in_flight_requests.is_empty() {

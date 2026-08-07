@@ -489,6 +489,6 @@ mod tests {
             result[1]
                 .clone()
                 .is_err_and(|e| e.to_string().contains("CrossSlot"))
-        )
+        );
     }
 }

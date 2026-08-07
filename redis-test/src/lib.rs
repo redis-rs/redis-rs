@@ -466,11 +466,11 @@ impl AioConnectionLike for MockRedisConnection {
 
     fn req_packed_commands<'a>(
         &'a mut self,
-        cmd: &'a Pipeline,
+        pipeline: &'a Pipeline,
         offset: usize,
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
-        let packed_cmd = cmd.get_packed_pipeline();
+        let packed_cmd = pipeline.get_packed_pipeline();
         let response = <Self as ConnectionLike>::req_packed_commands(
             self,
             packed_cmd.as_slice(),

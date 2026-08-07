@@ -1714,7 +1714,7 @@ mod tests {
             );
             assert_eq!(reply.claimed[1].id.as_str(), "1713465536069-0");
             assert_eq!(reply.deleted_ids.len(), 1);
-            assert!(reply.deleted_ids.contains(&"123456789-0".to_string()))
+            assert!(reply.deleted_ids.contains(&"123456789-0".to_string()));
         }
 
         #[test]
@@ -1773,7 +1773,7 @@ mod tests {
             assert!(ids.contains(&"1713465533411-0"));
             assert!(ids.contains(&"1713465536069-0"));
             assert_eq!(reply.deleted_ids.len(), 1);
-            assert!(reply.deleted_ids.contains(&"123456789-0".to_string()))
+            assert!(reply.deleted_ids.contains(&"123456789-0".to_string()));
         }
 
         #[test]

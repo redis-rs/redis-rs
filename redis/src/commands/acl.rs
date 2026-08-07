@@ -374,7 +374,11 @@ impl FromRedisValue for AclInfo {
             if seq.len() % 2 != 0 {
                 return Err(not_convertible_error!(v, ""));
             }
-            for chunk in seq.chunks(2) {
+            for chunk in seq.chunks_exact(2) {
+                debug_assert!(
+                    chunk.len() == 2,
+                    "Chunk length should be 2 for key/value pair"
+                );
                 let name = &chunk[0];
                 let value = &chunk[1];
                 acl.handle_pair(name, value)?;

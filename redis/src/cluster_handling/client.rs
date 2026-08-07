@@ -734,7 +734,7 @@ impl ClusterClientBuilder {
     /// Removed nodes will be re-added to the cluster after a topology refresh.
     /// If the value isn't set, reconnect attempts will continue indefinitely until the node is available again.
     #[cfg(feature = "cluster-async")]
-    pub fn max_connection_attempts(mut self, max_attempts: NonZeroUsize) -> ClusterClientBuilder {
+    pub fn max_connection_attempts(mut self, max_attempts: NonZeroUsize) -> Self {
         self.builder_params.max_connection_attempts = Some(max_attempts);
         self
     }
@@ -981,7 +981,7 @@ mod tests {
     #[test]
     fn give_empty_initial_nodes() {
         let client = ClusterClient::new(Vec::<String>::new());
-        assert!(client.is_err())
+        assert!(client.is_err());
     }
 
     #[test]

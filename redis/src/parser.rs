@@ -403,12 +403,12 @@ mod aio_support {
         type Item = Value;
         type Error = RedisError;
 
-        fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-            self.decode_stream(bytes, false)
+        fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+            self.decode_stream(src, false)
         }
 
-        fn decode_eof(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-            self.decode_stream(bytes, true)
+        fn decode_eof(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+            self.decode_stream(buf, true)
         }
     }
 
@@ -628,7 +628,7 @@ mod tests {
                 code: arcstr::literal!("SYNTAX"),
                 detail: Some(arcstr::literal!("invalid syntax"))
             }))
-        )
+        );
     }
 
     #[test]
@@ -648,6 +648,7 @@ mod tests {
     fn decode_resp3_set() {
         let val = parse_redis_value(b"~5\r\n+orange\r\n+apple\r\n#t\r\n:100\r\n:999\r\n").unwrap();
         let v = val.as_sequence().unwrap();
+        assert!(v.len() >= 5);
         assert_eq!(Value::SimpleString("orange".to_string()), v[0]);
         assert_eq!(Value::SimpleString("apple".to_string()), v[1]);
         assert_eq!(Value::Boolean(true), v[2]);

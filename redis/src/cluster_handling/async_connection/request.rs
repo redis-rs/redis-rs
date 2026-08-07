@@ -421,7 +421,7 @@ mod tests {
             assert_eq!(get_redirect(&request), Some(Redirect::Ask(ADDRESS)));
         } else {
             panic!("Expected retry");
-        };
+        }
         assert_eq!(next, PollFlushAction::None);
 
         // try the same, without remaining retries
@@ -447,7 +447,7 @@ mod tests {
             assert_eq!(get_redirect(&request), Some(Redirect::Moved(ADDRESS)));
         } else {
             panic!("Expected retry");
-        };
+        }
         assert_eq!(next, PollFlushAction::RebuildSlots);
         assert_matches!(receiver.try_recv(), Err(_));
 
@@ -476,7 +476,7 @@ mod tests {
             assert!(get_redirect(&request).is_none());
         } else {
             panic!("Expected a move-to-pending");
-        };
+        }
         assert_eq!(next, PollFlushAction::RebuildSlots);
         assert_matches!(receiver.try_recv(), Err(_));
 
@@ -518,7 +518,7 @@ mod tests {
             assert!(get_redirect(&request).is_none());
         } else {
             panic!("Expected retry");
-        };
+        }
         assert_eq!(next, PollFlushAction::RebuildSlots);
 
         // try the same, without remaining retries
@@ -545,7 +545,7 @@ mod tests {
             assert!(get_redirect(&request).is_none());
         } else {
             panic!("Expected retry");
-        };
+        }
         assert_eq!(next, PollFlushAction::ReconnectFromInitialConnections);
 
         // try the same, with a different target
@@ -558,7 +558,7 @@ mod tests {
             assert!(get_redirect(&request).is_none());
         } else {
             panic!("Expected retry");
-        };
+        }
         assert_eq!(next, PollFlushAction::ReconnectFromInitialConnections);
 
         // and another target
@@ -571,7 +571,7 @@ mod tests {
             assert!(get_redirect(&request).is_none());
         } else {
             panic!("Expected retry");
-        };
+        }
         assert_eq!(next, PollFlushAction::ReconnectFromInitialConnections);
     }
 }
