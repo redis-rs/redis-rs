@@ -10,6 +10,7 @@ env:
   CARGO_TERM_COLOR: always
   REDISRS_REDIS_JSON_PATH: "/tmp/librejson.so"
   REDISRS_REDIS_BLOOM_PATH: "/tmp/redisbloom.so"
+  REDISRS_REDIS_SEARCH_PATH: "/tmp/redisearch.so"
 
 concurrency:
   group: "${{ github.workflow }}-${{ github.head_ref || github.run_id || github.ref }}"
@@ -34,8 +35,8 @@ jobs:
             {  db-org: redis, db-name: redis, db-version: 6.2.22 },
             {  db-org: redis, db-name: redis, db-version: 7.0.15, json-module-version: v2.6.22 },
             {  db-org: redis, db-name: redis, db-version: 7.4.9, json-module-version: v2.6.22 },
-            {  db-org: redis, db-name: redis, db-version: 8.0.6, json-module-version: bundled, bloom-module-version: bundled },
-            {  db-org: redis, db-name: redis, db-version: 8.8.0, json-module-version: bundled, bloom-module-version: bundled },
+            {  db-org: redis, db-name: redis, db-version: 8.0.6, json-module-version: bundled, bloom-module-version: bundled, search-module-version: bundled },
+            {  db-org: redis, db-name: redis, db-version: 8.8.0, json-module-version: bundled, bloom-module-version: bundled, search-module-version: bundled },
             # valkey-bloom has some quirks with Valkey <8.1, so we only test it on >=8.1
             {  db-org: valkey-io, db-name: valkey, db-version: 7.2.13, json-module-version: v2.6.22 },
             {  db-org: valkey-io, db-name: valkey, db-version: 8.0.9, json-module-version: v2.6.22 },
@@ -74,6 +75,11 @@ jobs:
         if: matrix.config.bloom-module-version == 'bundled'
         run: |
           cp "$HOME/db/redisbloom.so" "$REDISRS_REDIS_BLOOM_PATH"
+
+      - name: Copy bundled RediSearch into place
+        if: matrix.config.search-module-version == 'bundled'
+        run: |
+          cp "$HOME/db/redisearch.so" "$REDISRS_REDIS_SEARCH_PATH"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
@@ -188,6 +194,10 @@ jobs:
       - name: Run RedisBloom tests
         if: matrix.config.bloom-module-version != ''
         run: make test-module-bloom
+
+      - name: Run Search module tests
+        if: matrix.config.search-module-version != ''
+        run: make test-module-search
 
       - name: Cache RedisJSON
         if: matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
