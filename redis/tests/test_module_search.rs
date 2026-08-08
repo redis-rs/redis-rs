@@ -965,3 +965,100 @@ fn test_module_search_ft_create_schema_geoshape_field() {
     let ctx = run_test_if_version_supported!(REDIS_SEARCH_8_0, &[Module::Search]);
     run_ft_create_schema_geoshape_field(&mut ctx.connection(), |_| {});
 }
+
+// Redis only: `PrimaryConnections` relies on RediSearch's internal `_FT.DEBUG` command.
+#[cfg(feature = "cluster")]
+mod cluster {
+    use super::*;
+
+    #[test]
+    fn test_module_search_simple_ft_create() {
+        let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_simple_ft_create(&mut ctx.connection(), "index", |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_module_search_ft_create_schema_text_field() {
+        let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_text_field(&mut ctx.connection(), false, |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_module_search_ft_create_schema_tag_field() {
+        let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_tag_field(&mut ctx.connection(), false, |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_module_search_ft_create_schema_numeric_field() {
+        let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_numeric_field(&mut ctx.connection(), false, |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_module_search_ft_create_schema_geo_field() {
+        let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_geo_field(&mut ctx.connection(), |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_module_search_ft_create_schema_geoshape_field() {
+        let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_geoshape_field(&mut ctx.connection(), |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_module_search_ft_create_schema_flat_vector_field() {
+        let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_flat_vector_field(&mut ctx.connection(), false, |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_module_search_ft_create_schema_hnsw_vector_field() {
+        let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_hnsw_vector_field(&mut ctx.connection(), false, |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_module_search_ft_create_schema_vamana_vector_field() {
+        // The VAMANA index was introduced in Redis 8.2.
+        let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_2);
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_vamana_vector_field(&mut ctx.connection(), |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+}

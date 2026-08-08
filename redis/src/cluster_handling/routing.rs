@@ -748,6 +748,7 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"COMMAND"
         | b"CONFIG GET"
         | b"ECHO"
+        | b"FT.CREATE"
         | b"FUNCTION LIST"
         | b"LASTSAVE"
         | b"LOLWUT"
@@ -1265,6 +1266,38 @@ mod tests_routing {
                 std::str::from_utf8(cmd.arg_idx(0).unwrap()).unwrap()
             );
         }
+    }
+
+    #[test]
+    fn test_ft_create_is_routed_as_a_keyless_command() {
+        // The index name is not a key, so FT.CREATE must not be routed by its first argument.
+        assert_eq!(
+            RoutingInfo::for_routable(
+                cmd("FT.CREATE")
+                    .arg("idx")
+                    .arg("ON")
+                    .arg("HASH")
+                    .arg("SCHEMA")
+                    .arg("title")
+                    .arg("TEXT")
+            ),
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+        );
+    }
+
+    #[cfg(feature = "search_unfinished")]
+    #[test]
+    fn test_ft_create_command_builder_is_routed_as_a_keyless_command() {
+        use crate::schema;
+        use crate::search::{FtCreateCommand, SchemaTextField};
+
+        let cmd =
+            FtCreateCommand::new("idx", schema! { "title" => SchemaTextField::new() }).into_cmd();
+
+        assert_eq!(
+            RoutingInfo::for_routable(&cmd),
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+        );
     }
 
     #[test]
