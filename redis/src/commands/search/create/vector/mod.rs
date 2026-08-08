@@ -11,15 +11,18 @@ use crate::{RedisWrite, ToRedisArgs};
 
 mod flat;
 mod hnsw;
+mod vamana;
 
 pub use flat::*;
 pub use hnsw::*;
+pub use vamana::*;
 
 /// The indexing algorithm of a vector field, with its algorithm-specific options.
 #[derive(Debug, Clone)]
 pub(crate) enum VectorAlgorithm {
     Flat(FlatVectorOptions),
     Hnsw(HnswVectorOptions),
+    Vamana(VamanaVectorOptions),
 }
 
 impl VectorAlgorithm {
@@ -27,6 +30,7 @@ impl VectorAlgorithm {
         match self {
             Self::Flat(_) => b"FLAT",
             Self::Hnsw(_) => b"HNSW",
+            Self::Vamana(_) => b"SVS-VAMANA",
         }
     }
 
@@ -35,6 +39,7 @@ impl VectorAlgorithm {
         match self {
             Self::Flat(options) => options.num_of_args(),
             Self::Hnsw(options) => options.num_of_args(),
+            Self::Vamana(options) => options.num_of_args(),
         }
     }
 
@@ -45,6 +50,7 @@ impl VectorAlgorithm {
         match self {
             Self::Flat(options) => options.write_redis_args(out),
             Self::Hnsw(options) => options.write_redis_args(out),
+            Self::Vamana(options) => options.write_redis_args(out),
         }
     }
 }
@@ -134,6 +140,9 @@ impl VectorFieldCommon {
 /// - **FLAT**: Brute-force exact search. Best for small datasets (< 1M vectors) where perfect accuracy is required.
 /// - **HNSW**: Hierarchical Navigable Small World graph-based approximate search. Best for large datasets (> 1M vectors)
 ///   where search performance and scalability are more important than perfect accuracy.
+/// - **SVS-VAMANA**: Intel's Scalable Vector Search with graph-based approximate search and compression support.
+///   Best when you need high performance with reduced memory usage, especially on Intel hardware.
+///   More information at: <https://intel.github.io/ScalableVectorSearch/intro.html>
 ///
 /// # Examples
 ///
@@ -149,6 +158,12 @@ impl VectorFieldCommon {
 /// let hnsw_field = VectorField::hnsw(VectorType::Float32, 128, DistanceMetric::Cosine)
 ///     .m(16)
 ///     .ef_construction(200)
+///     .build();
+///
+/// // VAMANA index with compression (note: uses VamanaVectorType for type safety)
+/// let vamana_field = VectorField::vamana(VamanaVectorType::Float32, 128, DistanceMetric::Cosine)
+///     .compression(CompressionType::LVQ8)
+///     .graph_max_degree(64)
 ///     .build();
 /// ```
 #[must_use = "Vector field has no effect unless inserted into a schema"]
@@ -228,6 +243,20 @@ impl VectorField {
         HnswVectorFieldBuilder::new(VectorFieldCommon {
             base: BaseSchemaField::new(FieldType::Vector),
             vector_type,
+            dim,
+            distance_metric,
+        })
+    }
+
+    /// Create a new VAMANA vector field
+    pub fn vamana(
+        vector_type: VamanaVectorType,
+        dim: u32,
+        distance_metric: DistanceMetric,
+    ) -> VamanaVectorFieldBuilder {
+        VamanaVectorFieldBuilder::new(VectorFieldCommon {
+            base: BaseSchemaField::new(FieldType::Vector),
+            vector_type: vector_type.into(),
             dim,
             distance_metric,
         })
