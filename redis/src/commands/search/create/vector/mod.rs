@@ -10,19 +10,23 @@ use super::fields::{BaseSchemaField, FieldType};
 use crate::{RedisWrite, ToRedisArgs};
 
 mod flat;
+mod hnsw;
 
 pub use flat::*;
+pub use hnsw::*;
 
 /// The indexing algorithm of a vector field, with its algorithm-specific options.
 #[derive(Debug, Clone)]
 pub(crate) enum VectorAlgorithm {
     Flat(FlatVectorOptions),
+    Hnsw(HnswVectorOptions),
 }
 
 impl VectorAlgorithm {
     fn name(&self) -> &'static [u8] {
         match self {
             Self::Flat(_) => b"FLAT",
+            Self::Hnsw(_) => b"HNSW",
         }
     }
 
@@ -30,6 +34,7 @@ impl VectorAlgorithm {
     fn num_of_args(&self) -> usize {
         match self {
             Self::Flat(options) => options.num_of_args(),
+            Self::Hnsw(options) => options.num_of_args(),
         }
     }
 
@@ -39,6 +44,7 @@ impl VectorAlgorithm {
     {
         match self {
             Self::Flat(options) => options.write_redis_args(out),
+            Self::Hnsw(options) => options.write_redis_args(out),
         }
     }
 }
@@ -126,6 +132,8 @@ impl VectorFieldCommon {
 /// # Algorithms
 ///
 /// - **FLAT**: Brute-force exact search. Best for small datasets (< 1M vectors) where perfect accuracy is required.
+/// - **HNSW**: Hierarchical Navigable Small World graph-based approximate search. Best for large datasets (> 1M vectors)
+///   where search performance and scalability are more important than perfect accuracy.
 ///
 /// # Examples
 ///
@@ -135,6 +143,12 @@ impl VectorFieldCommon {
 /// // FLAT index for exact search
 /// let flat_field = VectorField::flat(VectorType::Float32, 128, DistanceMetric::Cosine)
 ///     .block_size(1000)
+///     .build();
+///
+/// // HNSW index for approximate search
+/// let hnsw_field = VectorField::hnsw(VectorType::Float32, 128, DistanceMetric::Cosine)
+///     .m(16)
+///     .ef_construction(200)
 ///     .build();
 /// ```
 #[must_use = "Vector field has no effect unless inserted into a schema"]
@@ -198,6 +212,20 @@ impl VectorField {
         distance_metric: DistanceMetric,
     ) -> FlatVectorFieldBuilder {
         FlatVectorFieldBuilder::new(VectorFieldCommon {
+            base: BaseSchemaField::new(FieldType::Vector),
+            vector_type,
+            dim,
+            distance_metric,
+        })
+    }
+
+    /// Create a new HNSW vector field
+    pub fn hnsw(
+        vector_type: VectorType,
+        dim: u32,
+        distance_metric: DistanceMetric,
+    ) -> HnswVectorFieldBuilder {
+        HnswVectorFieldBuilder::new(VectorFieldCommon {
             base: BaseSchemaField::new(FieldType::Vector),
             vector_type,
             dim,
