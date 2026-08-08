@@ -236,6 +236,7 @@ impl ClusterParams {
             #[cfg(feature = "cluster-async")]
             write_backpressure_boundary: value.write_backpressure_boundary,
             node_address_map: value.node_address_map,
+            #[cfg(feature = "cluster-async")]
             max_connection_attempts: value.max_connection_attempts,
         })
     }
