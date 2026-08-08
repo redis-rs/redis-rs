@@ -19,6 +19,6 @@ mod config;
 pub(crate) mod sharded_lru;
 mod statistics;
 
-pub(crate) use cache_manager::{CacheManager, PrepareCacheResult};
+pub(crate) use cache_manager::{CacheManager, CachingResult, PrepCacheItem};
 pub use config::{CacheConfig, CacheMode};
 pub use statistics::CacheStatistics;

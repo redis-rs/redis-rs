@@ -18,48 +18,48 @@ impl std::fmt::Display for ParsingError {
 impl std::error::Error for ParsingError {}
 
 impl From<NulError> for ParsingError {
-    fn from(err: NulError) -> ParsingError {
+    fn from(err: NulError) -> Self {
         format!("Value contains interior nul terminator: {err}",).into()
     }
 }
 
 impl From<Utf8Error> for ParsingError {
-    fn from(_: Utf8Error) -> ParsingError {
+    fn from(_: Utf8Error) -> Self {
         arcstr::literal!("Invalid UTF-8").into()
     }
 }
 
 #[cfg(feature = "uuid")]
 impl From<uuid::Error> for ParsingError {
-    fn from(err: uuid::Error) -> ParsingError {
+    fn from(err: uuid::Error) -> Self {
         format!("Value is not a valid UUID: {err}").into()
     }
 }
 
 impl From<FromUtf8Error> for ParsingError {
-    fn from(err: FromUtf8Error) -> ParsingError {
+    fn from(err: FromUtf8Error) -> Self {
         format!("Cannot convert from UTF-8: {err}").into()
     }
 }
 
 impl From<String> for ParsingError {
-    fn from(err: String) -> ParsingError {
-        ParsingError {
+    fn from(err: String) -> Self {
+        Self {
             description: err.into(),
         }
     }
 }
 
 impl<'a> From<&'a str> for ParsingError {
-    fn from(err: &'a str) -> ParsingError {
-        ParsingError {
+    fn from(err: &'a str) -> Self {
+        Self {
             description: err.into(),
         }
     }
 }
 
 impl From<ArcStr> for ParsingError {
-    fn from(err: ArcStr) -> ParsingError {
-        ParsingError { description: err }
+    fn from(err: ArcStr) -> Self {
+        Self { description: err }
     }
 }

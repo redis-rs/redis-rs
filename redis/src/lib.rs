@@ -640,6 +640,10 @@ let primary = sentinel.get_async_connection().await.unwrap();
         reason = "rustdoc_internals is needed for fake_variadic"
     )
 )]
+#![cfg_attr(not(test), forbid(clippy::print_stdout))]
+#![cfg_attr(not(test), forbid(clippy::panic))]
+#![cfg_attr(not(test), forbid(clippy::infinite_loop))]
+// #![cfg_attr(not(test), forbid(clippy::cast_possible_truncation))]
 
 // public api
 #[cfg(feature = "aio")]

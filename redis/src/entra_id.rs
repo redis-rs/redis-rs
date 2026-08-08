@@ -773,18 +773,18 @@ mod tests {
     fn test_entra_id_provider_creation() {
         // Test that credentials providers can be created without panicking
         let _default_provider = EntraIdCredentialsProvider::new_developer_tools();
-        assert!(_default_provider.is_ok());
+        _default_provider.unwrap();
 
         let _client_secret_provider = EntraIdCredentialsProvider::new_client_secret(
             TENANT_ID.to_string(),
             CLIENT_ID.to_string(),
             CLIENT_SECRET.to_string(),
         );
-        assert!(_client_secret_provider.is_ok());
+        _client_secret_provider.unwrap();
 
         let _managed_identity_provider =
             EntraIdCredentialsProvider::new_system_assigned_managed_identity();
-        assert!(_managed_identity_provider.is_ok());
+        _managed_identity_provider.unwrap();
     }
 
     #[test]
@@ -842,7 +842,7 @@ mod tests {
             CLIENT_ID.to_string(),
             ClientCertificate::new(PKCS12.clone()),
         );
-        assert!(provider.is_ok());
+        provider.unwrap();
     }
 
     #[test]
@@ -884,7 +884,7 @@ mod tests {
             CLIENT_ID.to_string(),
             ClientCertificate::new(PKCS12_WITH_PASSWORD.clone()).set_password(PKCS12_PASSWORD),
         );
-        assert!(provider.is_ok());
+        provider.unwrap();
     }
 
     #[test]

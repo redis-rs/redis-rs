@@ -106,7 +106,7 @@ fn bench_cache(c: &mut Criterion) {
         (0.5, 5, 100_000),
         (0.5, 1, 100_000),
     ];
-    for (read_ratio, per_key_command, total_key_count) in test_cases.clone() {
+    for (read_ratio, per_key_command, total_key_count) in test_cases {
         let group_name = format!("{read_ratio}-{per_key_command}-{total_key_count}");
         let mut group = c.benchmark_group(group_name);
         group.throughput(Throughput::Elements(
@@ -123,7 +123,7 @@ fn bench_cache(c: &mut Criterion) {
                     read_ratio,
                     per_key_command,
                     total_key_count,
-                )
+                );
             });
         }
         group.finish();

@@ -150,7 +150,7 @@ mod basic_async {
                 )
                 .await
                 .unwrap();
-            test(conn).await
+            test(conn).await;
         };
     }
 
@@ -451,35 +451,32 @@ mod basic_async {
         );
     }
 
-    fn test_cmd(con: impl AsyncCommands + Clone, i: i32) -> impl Future<Output = ()> + Send {
-        let mut con = con.clone();
-        async move {
-            let key = format!("key{i}");
-            let key_2 = key.clone();
-            let key2 = format!("key{i}_2");
-            let key2_2 = key2.clone();
+    async fn test_cmd(mut con: impl AsyncCommands + Clone, i: i32) {
+        let key = format!("key{i}");
+        let key_2 = key.clone();
+        let key2 = format!("key{i}_2");
+        let key2_2 = key2.clone();
 
-            let foo_val = format!("foo{i}");
+        let foo_val = format!("foo{i}");
 
-            redis::cmd("SET")
-                .arg(&key[..])
-                .arg(foo_val.as_bytes())
-                .exec_async(&mut con)
-                .await
-                .unwrap();
-            redis::cmd("SET")
-                .arg(&[&key2, "bar"])
-                .exec_async(&mut con)
-                .await
-                .unwrap();
-            redis::cmd("MGET")
-                .arg(&[&key_2, &key2_2])
-                .query_async(&mut con)
-                .map(|result| {
-                    assert_eq!(Ok((foo_val, b"bar".to_vec())), result);
-                })
-                .await;
-        }
+        redis::cmd("SET")
+            .arg(&key[..])
+            .arg(foo_val.as_bytes())
+            .exec_async(&mut con)
+            .await
+            .unwrap();
+        redis::cmd("SET")
+            .arg(&[&key2, "bar"])
+            .exec_async(&mut con)
+            .await
+            .unwrap();
+        redis::cmd("MGET")
+            .arg(&[&key_2, &key2_2])
+            .query_async(&mut con)
+            .map(|result| {
+                assert_eq!(Ok((foo_val, b"bar".to_vec())), result);
+            })
+            .await;
     }
 
     #[async_test]
@@ -704,7 +701,7 @@ mod basic_async {
                 assert!(b);
             })
             .await
-            .unwrap()
+            .unwrap();
     }
 
     // Allowing `nth(0)` for similarity with the following `nth(1)`.
@@ -886,7 +883,7 @@ mod basic_async {
                         return Err(u64::from_redis_value(v).unwrap_err());
                     }
 
-                    Ok(Container(text))
+                    Ok(Self(text))
                 }
             }
 
@@ -915,7 +912,7 @@ mod basic_async {
                         panic!("Encountered multiple errors");
                     }
                     Err(e) => error = Some(e.kind()),
-                };
+                }
             }
 
             // Assert that the number of visited keys is all keys minus
@@ -1993,7 +1990,7 @@ mod basic_async {
             drop(ctx);
 
             let result: RedisResult<String> = manager.get("key").await;
-            assert!(result.is_err());
+            result.unwrap_err();
 
             let _ctx = TestContextBuilder::new().address(addr).build();
 

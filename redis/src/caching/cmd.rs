@@ -1,11 +1,11 @@
 use crate::{Cmd, ErrorKind, Pipeline, RedisError, RedisResult, Value, cmd::CmdRef};
 use std::{iter::zip, time::Instant};
 
-use super::{CacheManager, CacheMode, PrepareCacheResult};
+use super::{CacheManager, CacheMode, CachingResult, PrepCacheItem};
 
 /// Holds enough information to resolve Cached Pipeline requests.
 pub(crate) struct CacheablePipeline<'a> {
-    pub(crate) commands: Vec<PrepareCacheResult<'a>>,
+    pub(crate) commands: Vec<CachingResult<'a>>,
     pub(crate) transaction_mode: bool,
 }
 
@@ -27,12 +27,12 @@ impl CacheablePipeline<'_> {
         let mut response = vec![];
         for prepared_cache_result in self.commands {
             match prepared_cache_result {
-                PrepareCacheResult::Cached(reply) => response.push(reply),
-                PrepareCacheResult::NotCached(cacheable_command) => {
+                CachingResult::Item(PrepCacheItem::Cached(reply)) => response.push(reply),
+                CachingResult::Item(PrepCacheItem::NotCached(cacheable_command)) => {
                     let reply = cacheable_command.resolve(cache_manager, &mut replies)?;
                     response.push(reply);
                 }
-                PrepareCacheResult::NotCacheable | PrepareCacheResult::Ignored => {
+                CachingResult::Item(PrepCacheItem::NotCacheable) | CachingResult::Ignored => {
                     let reply = get_next_reply(&mut replies)?;
                     response.push(reply);
                 }
@@ -166,7 +166,7 @@ impl CacheableCommand<'_> {
                     pipeline.add_command(Cmd::pttl(command.1.redis_key));
                 }
             }
-        };
+        }
     }
 }
 

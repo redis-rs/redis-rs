@@ -182,26 +182,25 @@ pub struct RedisServer {
 }
 
 impl ServerType {
-    fn get_intended() -> ServerType {
+    fn get_intended() -> Self {
         match env::var("REDISRS_SERVER_TYPE")
             .ok()
             .as_ref()
             .map(|x| &x[..])
         {
-            Some("tcp") => ServerType::Tcp { tls: false },
-            Some("tcp+tls") => ServerType::Tcp { tls: true },
-            Some("unix") => ServerType::Unix,
+            Some("tcp+tls") => Self::Tcp { tls: true },
+            Some("unix") => Self::Unix,
+            Some("tcp") | None => Self::Tcp { tls: false },
             Some(val) => {
                 panic!("Unknown server type {val:?}");
             }
-            None => ServerType::Tcp { tls: false },
         }
     }
 }
 
 impl Drop for RedisServer {
     fn drop(&mut self) {
-        self.stop()
+        self.stop();
     }
 }
 
@@ -247,7 +246,7 @@ impl RedisServer {
         cert_auth_field: Option<String>,
         modules: &[Module],
         cmd_refiner: impl FnOnce(&mut RedisServerCommand),
-    ) -> RedisServer {
+    ) -> Self {
         // Guard against unsupported settings
         if tls_paths.is_some() && !matches!(addr, ConnectionAddr::TcpTls { .. }) {
             panic!("'tls_paths' is only supported for TCP with TLS");
@@ -334,11 +333,11 @@ impl RedisServer {
                 redis_cmd.arg2("--unixsocket", path);
             }
             _ => panic!("Unknown address format: {addr:?}"),
-        };
+        }
 
         cmd_refiner(&mut redis_cmd);
 
-        RedisServer {
+        Self {
             process: redis_cmd.spawn(),
             log_file,
             tempdir,
@@ -354,8 +353,9 @@ impl RedisServer {
 
     pub fn host_and_port(&self) -> Option<(&str, u16)> {
         match &self.addr {
-            ConnectionAddr::Tcp(host, port) => Some((host, *port)),
-            ConnectionAddr::TcpTls { host, port, .. } => Some((host, *port)),
+            ConnectionAddr::Tcp(host, port) | ConnectionAddr::TcpTls { host, port, .. } => {
+                Some((host, *port))
+            }
             _ => None,
         }
     }
@@ -470,7 +470,7 @@ impl RedisServerCommand {
 
                     self.load_module(path);
                 }
-            };
+            }
         }
     }
 }

@@ -939,13 +939,8 @@ mod cluster {
                 let cmd_str = std::str::from_utf8(received_cmd).unwrap();
                 let results = ["foo", "bar", "baz"]
                     .iter()
-                    .filter_map(|expected_key| {
-                        if cmd_str.contains(expected_key) {
-                            Some(redis_value!(format!("{expected_key}-{port}")))
-                        } else {
-                            None
-                        }
-                    })
+                    .filter(|&expected_key| cmd_str.contains(expected_key))
+                    .map(|expected_key| redis_value!(format!("{expected_key}-{port}")))
                     .collect();
                 Err(Ok(Value::Array(results)))
             },
@@ -1125,8 +1120,7 @@ mod cluster {
         drop(cluster);
 
         // recreate cluster
-        let _cluster: RedisCluster =
-            RedisCluster::new(RedisClusterConfiguration::default().ports(ports));
+        let _cluster = RedisCluster::new(RedisClusterConfiguration::default().ports(ports));
 
         let cmd = cmd("PING");
         // explicitly route to all primaries and request all succeeded

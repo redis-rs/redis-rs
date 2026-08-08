@@ -50,8 +50,8 @@ impl Client {
     /// Connects to a redis server and returns a client.  This does not
     /// actually open a connection yet but it does perform some basic
     /// checks on the URL that might make the operation fail.
-    pub fn open<T: IntoConnectionInfo>(params: T) -> RedisResult<Client> {
-        Ok(Client {
+    pub fn open<T: IntoConnectionInfo>(params: T) -> RedisResult<Self> {
+        Ok(Self {
             connection_info: params.into_connection_info()?,
         })
     }
@@ -158,7 +158,7 @@ impl Client {
     pub fn build_with_tls<C: IntoConnectionInfo>(
         conn_info: C,
         tls_certs: TlsCertificates,
-    ) -> RedisResult<Client> {
+    ) -> RedisResult<Self> {
         let connection_info = conn_info.into_connection_info()?;
 
         inner_build_with_tls(connection_info, &tls_certs)

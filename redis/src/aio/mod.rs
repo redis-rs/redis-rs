@@ -85,7 +85,7 @@ pub trait ConnectionLike {
     #[doc(hidden)]
     fn req_packed_commands<'a>(
         &'a mut self,
-        cmd: &'a crate::Pipeline,
+        pipeline: &'a crate::Pipeline,
         offset: usize,
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>>;

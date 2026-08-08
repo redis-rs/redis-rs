@@ -168,7 +168,7 @@ where
                                         let mut x = vec![];
                                         for _ in 0..kv_length {
                                             if let (Some(k), Some(v)) = (it.next(), it.next()) {
-                                                x.push((k, v))
+                                                x.push((k, v));
                                             }
                                         }
                                         Value::Map(x)
@@ -193,7 +193,7 @@ where
                                         let mut attributes = vec![];
                                         for _ in 0..kv_length {
                                             if let (Some(k), Some(v)) = (it.next(), it.next()) {
-                                                attributes.push((k, v))
+                                                attributes.push((k, v));
                                             }
                                         }
                                         Value::Attribute {
@@ -403,12 +403,12 @@ mod aio_support {
         type Item = Value;
         type Error = RedisError;
 
-        fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-            self.decode_stream(bytes, false)
+        fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+            self.decode_stream(src, false)
         }
 
-        fn decode_eof(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-            self.decode_stream(bytes, true)
+        fn decode_eof(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+            self.decode_stream(buf, true)
         }
     }
 
@@ -441,7 +441,7 @@ pub struct Parser {
 
 impl Default for Parser {
     fn default() -> Self {
-        Parser::new()
+        Self::new()
     }
 }
 
@@ -454,8 +454,8 @@ impl Parser {
     /// than one value can be behind the reader in which case the parser can
     /// be invoked multiple times.  In other words: the stream does not have
     /// to be terminated.
-    pub fn new() -> Parser {
-        Parser {
+    pub fn new() -> Self {
+        Self {
             decoder: Decoder::new(),
         }
     }
@@ -628,7 +628,7 @@ mod tests {
                 code: arcstr::literal!("SYNTAX"),
                 detail: Some(arcstr::literal!("invalid syntax"))
             }))
-        )
+        );
     }
 
     #[test]
@@ -648,6 +648,7 @@ mod tests {
     fn decode_resp3_set() {
         let val = parse_redis_value(b"~5\r\n+orange\r\n+apple\r\n#t\r\n:100\r\n:999\r\n").unwrap();
         let v = val.as_sequence().unwrap();
+        assert!(v.len() >= 5);
         assert_eq!(Value::SimpleString("orange".to_string()), v[0]);
         assert_eq!(Value::SimpleString("apple".to_string()), v[1]);
         assert_eq!(Value::Boolean(true), v[2]);
