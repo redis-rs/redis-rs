@@ -22,6 +22,11 @@ mod basic {
     use redis::{RedisError, ServerErrorKind};
     use redis::{calculate_value_digest, is_valid_16_bytes_hex_digest};
 
+    #[cfg(feature = "redis-arrays")]
+    use redis::redis_arrays::{
+        ArrayAggregateOp, ArrayBound, ArrayGrepCombinator, ArrayGrepOptions, ArrayPredicate,
+        ArrayScanOptions,
+    };
     #[cfg(feature = "vector-sets")]
     use redis::vector_sets::{
         EmbeddingInput, VAddOptions, VEmbOptions, VSimOptions, VectorAddInput, VectorQuantization,
@@ -30,6 +35,8 @@ mod basic {
     use redis_test::redis_value;
     use redis_test::server::redis_settings;
     use redis_test::utils::get_listener_on_free_port;
+    #[cfg(feature = "redis-arrays")]
+    use std::num::NonZeroUsize;
 
     use assert_matches::assert_matches;
     #[cfg(feature = "vector-sets")]
@@ -4255,6 +4262,721 @@ mod basic {
         );
         let error = result.unwrap_err();
         assert_eq!(error.kind(), redis::ServerErrorKind::ResponseError.into());
+    }
+
+    /// Validates the core read/write surface of the Array data type (Redis 8.8+):
+    /// `ARSET`, `ARGET`, `ARLEN`, `ARCOUNT` and `ARDEL`, including sparse-array semantics.
+    #[cfg(feature = "redis-arrays")]
+    #[test]
+    fn test_arrays_basic_operations() {
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        let mut con = ctx.connection();
+
+        let key = "test_array";
+
+        // ARSET
+        // of a single new slot returns 1 (one previously-empty slot filled).
+        assert_eq!(con.arset(key, 0, "hello"), Ok(1));
+        // of multiple contiguous values starting at index 2 fills 3 new slots.
+        assert_eq!(con.arset(key, 2, &["a", "b", "c"]), Ok(3));
+        // Using ARSET to overwrite an existing slot returns 0 as it does not fill a new slot.
+        assert_eq!(con.arset(key, 0, "world"), Ok(0));
+
+        // ARGET returns:
+        // the value at a populated index.
+        assert_eq!(con.arget(key, 0), Ok(Some("world".to_string())));
+        assert_eq!(con.arget(key, 4), Ok(Some("c".to_string())));
+        // None for a gap in the sparse array.
+        assert_eq!(con.arget(key, 1), Ok(None));
+        // None for an out-of-range index.
+        assert_eq!(con.arget(key, 99), Ok(None));
+
+        // ARLEN is max index + 1 (sparse), not the populated count.
+        assert_eq!(con.arlen(key), Ok(5));
+        // ARCOUNT is the populated count (indices 0, 2, 3, 4), unaffected by gaps.
+        assert_eq!(con.arcount(key), Ok(4));
+
+        // ARDEL of two indices removes both and reports 2.
+        assert_eq!(con.ardel(key, &[0, 2]), Ok(2));
+        // ARGET of a deleted index returns None.
+        assert_eq!(con.arget(key, 0), Ok(None));
+        // Deleting an already-empty index counts as zero.
+        assert_eq!(con.ardel(key, &[99]), Ok(0));
+        // Deleting does not shrink the reported length, unless it is the last index, but it does reduce the populated count (indices 3, 4 remain).
+        assert_eq!(con.arlen(key), Ok(5));
+        assert_eq!(con.arcount(key), Ok(2));
+        // However, deleting the last element shrinks the array.
+        assert_eq!(con.ardel(key, &[4]), Ok(1));
+        assert_eq!(con.arlen(key), Ok(4));
+        assert_eq!(con.arcount(key), Ok(1));
+    }
+
+    /// Validates the bulk read/write commands of the Array data type (Redis 8.8+):
+    /// `ARMSET` and `ARMGET`, including non-contiguous pairs and order-preserving reads.
+    #[cfg(feature = "redis-arrays")]
+    #[test]
+    fn test_arrays_multi_operations() {
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        let mut con = ctx.connection();
+
+        let key = "test_array_multi";
+
+        // ARMSET of non-contiguous pairs fills 3 new slots.
+        assert_eq!(
+            con.armset(key, &[(0, "alpha"), (5, "beta"), (100, "gamma")]),
+            Ok(3)
+        );
+
+        // Overwriting one existing slot plus one new slot reports only the new one.
+        assert_eq!(con.armset(key, &[(0, "ALPHA"), (7, "delta")]), Ok(1));
+
+        // Sparse semantics carry over:
+        // ARLEN is max index + 1
+        assert_eq!(con.arlen(key), Ok(101));
+        // ARCOUNT is the populated count.
+        assert_eq!(con.arcount(key), Ok(4));
+
+        // ARMGET preserves request order, with None for gaps and out-of-range indices.
+        assert_eq!(
+            con.armget(key, &[0, 5, 3, 999, 100]),
+            Ok(vec![
+                Some("ALPHA".to_string()),
+                Some("beta".to_string()),
+                None,
+                None,
+                Some("gamma".to_string()),
+            ])
+        );
+    }
+
+    /// Validates the range commands of the Array data type (Redis 8.8+):
+    /// `ARGETRANGE` and `ARDELRANGE`, including reverse reads and the in-place (non-compacting) delete semantics.
+    #[cfg(feature = "redis-arrays")]
+    #[test]
+    fn test_arrays_range_operations() {
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        let mut con = ctx.connection();
+
+        let key = "test_array_range";
+        // Sparse array: indices 0, 1, 3, 5 populated (gaps at 2 and 4).
+        assert_eq!(
+            con.armset(key, &[(0, "a"), (1, "b"), (3, "d"), (5, "f")]),
+            Ok(4)
+        );
+
+        // ARGETRANGE is inclusive on both ends, with None for the gap at index 2.
+        assert_eq!(
+            con.argetrange(key, 0, 3),
+            Ok(vec![
+                Some("a".to_string()),
+                Some("b".to_string()),
+                None,
+                Some("d".to_string()),
+            ])
+        );
+
+        // start > end returns the values in reverse index order.
+        assert_eq!(
+            con.argetrange(key, 3, 0),
+            Ok(vec![
+                Some("d".to_string()),
+                None,
+                Some("b".to_string()),
+                Some("a".to_string()),
+            ])
+        );
+
+        // ARDELRANGE deletes the inclusive range and reports the count removed. Indices 0, 1 and 3 are populated within [0, 3], while index 2 is empty.
+        // The command clears the slots in place. This means that the last element ("f") is NOT shifted down.
+        assert_eq!(con.ardelrange(key, &[(0, 3)]), Ok(3));
+        assert_eq!(con.arget(key, 5), Ok(Some("f".to_string())));
+        for i in 0..4 {
+            assert_eq!(con.arget(key, i), Ok(None));
+        }
+        // ARLEN is still max-index + 1 because index 5 remains populated.
+        assert_eq!(con.arlen(key), Ok(6));
+        assert_eq!(con.arcount(key), Ok(1));
+
+        // Multiple ranges (including a reversed pair) delete each element once.
+        let key = "test_array_range_multi";
+        assert_eq!(
+            con.armset(
+                key,
+                &[(0, "a"), (1, "b"), (2, "c"), (3, "d"), (4, "e"), (5, "f")]
+            ),
+            Ok(6)
+        );
+        // Pairs (0, 1) and (5, 4) -> delete indices 0, 1, 4, 5.
+        assert_eq!(con.ardelrange(key, &[(0, 1), (5, 4)]), Ok(4));
+        assert_eq!(
+            con.argetrange(key, 0, 5),
+            Ok(vec![
+                None,
+                None,
+                Some("c".to_string()),
+                Some("d".to_string()),
+                None,
+                None,
+            ])
+        );
+        // Deleting the top elements lowers the reported length to max-index + 1.
+        assert_eq!(con.arlen(key), Ok(4));
+    }
+
+    /// Validates the write-cursor commands of the Array data type (Redis 8.8+):
+    /// `ARINSERT`, `ARNEXT`, `ARSEEK`, `ARRING` and `ARLASTITEMS`.
+    #[cfg(feature = "redis-arrays")]
+    #[test]
+    fn test_arrays_cursor_operations() {
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        let mut con = ctx.connection();
+
+        let key = "test_array_cursor";
+        // A new key's write cursor starts at 0.
+        assert_eq!(con.arnext(key), Ok(0));
+
+        // ARINSERT appends at consecutive indices and returns the last index written.
+        assert_eq!(con.arinsert(key, &["a", "b", "c"]), Ok(2));
+        // The cursor has advanced past the last write.
+        assert_eq!(con.arnext(key), Ok(3));
+        assert_eq!(
+            con.argetrange(key, 0, 2),
+            Ok(vec![
+                Some("a".to_string()),
+                Some("b".to_string()),
+                Some("c".to_string()),
+            ])
+        );
+
+        // ARSEEK moves the cursor and reports success.
+        assert_eq!(con.arseek(key, 10), Ok(true));
+        assert_eq!(con.arnext(key), Ok(10));
+        // The next insert lands there.
+        assert_eq!(con.arinsert(key, "z"), Ok(10));
+        assert_eq!(con.arget(key, 10), Ok(Some("z".to_string())));
+        assert_eq!(con.arnext(key), Ok(11));
+
+        // ARSET does not move the write cursor.
+        let key = "test_array_cursor_set";
+        con.arset(key, 5, "x").unwrap();
+        assert_eq!(con.arnext(key), Ok(0));
+
+        // ARLASTITEMS returns the most recent elements, optionally reversed, with None for recently-inserted slots that were deleted.
+        let last = "test_array_cursor_last";
+        con.arinsert(last, &["a", "b", "c", "d", "e"]).unwrap();
+        assert_eq!(
+            con.arlastitems(last, 2, false),
+            Ok(vec![Some("d".to_string()), Some("e".to_string()),])
+        );
+        assert_eq!(
+            con.arlastitems(last, 2, true),
+            Ok(vec![Some("e".to_string()), Some("d".to_string()),])
+        );
+        con.ardel(last, &[3]).unwrap();
+        assert_eq!(
+            con.arlastitems(last, 3, false),
+            Ok(vec![Some("c".to_string()), None, Some("e".to_string()),])
+        );
+
+        // ARRING wraps a fixed-size buffer, overwriting the oldest slots.
+        let ring = "test_array_cursor_ring";
+        assert_eq!(
+            con.arring(
+                ring,
+                NonZeroUsize::new(3).unwrap(),
+                &["a", "b", "c", "d", "e"]
+            ),
+            Ok(1)
+        );
+        assert_eq!(con.arlen(ring), Ok(3));
+        assert_eq!(
+            con.argetrange(ring, 0, 2),
+            Ok(vec![
+                Some("d".to_string()),
+                Some("e".to_string()),
+                Some("c".to_string()),
+            ])
+        );
+    }
+
+    /// Validates the scan / search / aggregate / introspection commands of the Array data type (Redis 8.8+):
+    /// `ARSCAN`, `AROP`, `ARGREP`, `ARINFO`.
+    #[cfg(feature = "redis-arrays")]
+    #[test]
+    fn test_arrays_scan_search_aggregate() {
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        let mut con = ctx.connection();
+
+        // ARSCAN - index-value pairs over a sparse array
+        let key = "test_array_arscan";
+        con.armset(key, &[(0, "a"), (2, "c"), (5, "f"), (9, "j")])
+            .unwrap();
+        assert_eq!(
+            con.arscan(key, 0, 10),
+            Ok(vec![
+                (0, "a".to_string()),
+                (2, "c".to_string()),
+                (5, "f".to_string()),
+                (9, "j".to_string()),
+            ])
+        );
+        // LIMIT pages the results.
+        let limit_2 = ArrayScanOptions::default().set_limit(2);
+        assert_eq!(
+            con.arscan_options(key, 0, 10, &limit_2),
+            Ok(vec![(0, "a".to_string()), (2, "c".to_string())])
+        );
+        // continue by advancing `start`.
+        assert_eq!(
+            con.arscan_options(key, 3, 10, &limit_2),
+            Ok(vec![(5, "f".to_string()), (9, "j".to_string())])
+        );
+        // start > end iterates in reverse.
+        assert_eq!(
+            con.arscan(key, 10, 0),
+            Ok(vec![
+                (9, "j".to_string()),
+                (5, "f".to_string()),
+                (2, "c".to_string()),
+                (0, "a".to_string()),
+            ])
+        );
+        // Missing key yields no pairs.
+        assert_eq!(
+            con.arscan("missing_arscan", 0, 10),
+            Ok(Vec::<(usize, String)>::new())
+        );
+
+        // AROP - aggregate operations, return type chosen per operation
+        let key = "test_array_arop";
+        con.armset(key, &[(0, "10"), (1, "20"), (2, "30"), (4, "5")])
+            .unwrap();
+        assert_eq!(con.arop::<i64, _>(key, 0, 4, ArrayAggregateOp::Sum), Ok(65));
+        assert_eq!(con.arop::<i64, _>(key, 0, 4, ArrayAggregateOp::Min), Ok(5));
+        assert_eq!(con.arop::<i64, _>(key, 0, 4, ArrayAggregateOp::Max), Ok(30));
+        assert_eq!(con.arop::<i64, _>(key, 0, 4, ArrayAggregateOp::And), Ok(0));
+        assert_eq!(con.arop::<i64, _>(key, 0, 4, ArrayAggregateOp::Or), Ok(31));
+        assert_eq!(con.arop::<i64, _>(key, 0, 4, ArrayAggregateOp::Xor), Ok(5));
+        assert_eq!(con.arop::<i64, _>(key, 0, 4, ArrayAggregateOp::Used), Ok(4));
+        assert_eq!(
+            con.arop::<i64, _>(key, 0, 4, ArrayAggregateOp::Match("20")),
+            Ok(1)
+        );
+        // A fractional SUM comes back as a float.
+        let key_float = "test_array_arop_float";
+        con.armset(key_float, &[(0, "1.5"), (1, "2.25"), (2, "3")])
+            .unwrap();
+        assert_eq!(
+            con.arop::<f64, _>(key_float, 0, 2, ArrayAggregateOp::Sum),
+            Ok(6.75)
+        );
+        // MIN/MAX on a non-numeric range is nil.
+        let key_str = "test_array_arop_str";
+        con.armset(key_str, &[(0, "foo"), (1, "bar")]).unwrap();
+        assert_eq!(
+            con.arop::<Option<i64>, _>(key_str, 0, 1, ArrayAggregateOp::Min),
+            Ok(None)
+        );
+
+        // ARGREP - textual predicates over a log-like array
+        let key = "test_array_argrep";
+        con.armset(
+            key,
+            &[
+                (0, "warn:disk"),
+                (1, "info:boot"),
+                (2, "error:net"),
+                (3, "debug:x"),
+                (4, "fatal:panic"),
+                (5, "info:ok"),
+            ],
+        )
+        .unwrap();
+        // Three predicates combined with OR, using -/+ sentinel bounds.
+        let matches: Vec<usize> = con
+            .argrep_options(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[
+                    ArrayPredicate::Glob("warn:*"),
+                    ArrayPredicate::Glob("error:*"),
+                    ArrayPredicate::Glob("fatal:*"),
+                ],
+                &ArrayGrepOptions::default().set_combinator(ArrayGrepCombinator::Or),
+            )
+            .unwrap();
+        assert_eq!(matches, vec![0, 2, 4]);
+        // Bare argrep with a single predicate (default OR), explicit indices.
+        let exact: Vec<usize> = con
+            .argrep(
+                key,
+                ArrayBound::Index(0),
+                ArrayBound::Index(5),
+                &[ArrayPredicate::Exact("debug:x")],
+            )
+            .unwrap();
+        assert_eq!(exact, vec![3]);
+        // AND across two predicates returns only elements matching both.
+        let both: Vec<usize> = con
+            .argrep_options(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Glob("info:*"), ArrayPredicate::Match("ok")],
+                &ArrayGrepOptions::default().set_combinator(ArrayGrepCombinator::And),
+            )
+            .unwrap();
+        assert_eq!(both, vec![5]);
+        // NOCASE makes EXACT case-insensitive.
+        con.arset(key, 6, "WARN:cpu").unwrap();
+        let nocase: Vec<usize> = con
+            .argrep_options(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Glob("warn:*")],
+                &ArrayGrepOptions::default().set_nocase(true),
+            )
+            .unwrap();
+        assert_eq!(nocase, vec![0, 6]);
+        // WITHVALUES returns index-value pairs.
+        let pairs: Vec<(usize, String)> = con
+            .argrep_options(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Glob("error:*")],
+                &ArrayGrepOptions::default().set_with_values(true),
+            )
+            .unwrap();
+        assert_eq!(pairs, vec![(2, "error:net".to_string())]);
+
+        //ARINFO - metadata map
+        let info = con.arinfo(key, false).unwrap();
+        assert_eq!(info.get("count"), Some(&redis::Value::Int(7)));
+        assert!(info.contains_key("len"));
+        assert!(info.contains_key("next-insert-index"));
+        // FULL adds per-slice statistics.
+        let full = con.arinfo(key, true).unwrap();
+        assert!(full.contains_key("dense-slices"));
+        assert!(full.len() > info.len());
+        // A missing key is an error, not an empty map.
+        assert!(con.arinfo("missing_arinfo", false).is_err());
+    }
+
+    /// Showcases `ARGREP` boolean compositions.
+    /// A single flat combinator applies to the whole predicate list (no grouping/precedence) and grouped logic is expressed via a single `RE` predicate instead.
+    #[cfg(feature = "redis-arrays")]
+    #[test]
+    fn test_arrays_argrep_boolean_composition() {
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        let mut con = ctx.connection();
+
+        let key = "test_array_shapes";
+        con.armset(
+            key,
+            &[
+                (0, "red circle"),
+                (1, "red square"),
+                (2, "blue circle"),
+                (3, "blue square"),
+                (4, "green circle"),
+                (5, "green square"),
+                (6, "red triangle"),
+                (7, "blue triangle"),
+                (8, "green triangle"),
+            ],
+        )
+        .unwrap();
+
+        // Helper: run ARGREP over the whole array with a flat combinator.
+        let grep = |con: &mut redis::Connection, preds: &[ArrayPredicate], comb| -> Vec<usize> {
+            con.argrep_options(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                preds,
+                &ArrayGrepOptions::default().set_combinator(comb),
+            )
+            .unwrap()
+        };
+
+        // Single substring predicates.
+        let single: Vec<usize> = con
+            .argrep(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Match("red")],
+            )
+            .unwrap();
+        assert_eq!(single, vec![0, 1, 6]);
+        let circle: Vec<usize> = con
+            .argrep(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Match("circle")],
+            )
+            .unwrap();
+        assert_eq!(circle, vec![0, 2, 4]);
+
+        // Flat OR / AND.
+        assert_eq!(
+            grep(
+                &mut con,
+                &[ArrayPredicate::Match("red"), ArrayPredicate::Match("blue")],
+                ArrayGrepCombinator::Or
+            ),
+            vec![0, 1, 2, 3, 6, 7]
+        );
+        assert_eq!(
+            grep(
+                &mut con,
+                &[
+                    ArrayPredicate::Match("red"),
+                    ArrayPredicate::Match("circle")
+                ],
+                ArrayGrepCombinator::And
+            ),
+            vec![0]
+        );
+        assert_eq!(
+            grep(
+                &mut con,
+                &[
+                    ArrayPredicate::Match("blue"),
+                    ArrayPredicate::Match("square")
+                ],
+                ArrayGrepCombinator::And
+            ),
+            vec![3]
+        );
+        assert_eq!(
+            grep(
+                &mut con,
+                &[
+                    ArrayPredicate::Match("green"),
+                    ArrayPredicate::Match("triangle")
+                ],
+                ArrayGrepCombinator::And
+            ),
+            vec![8]
+        );
+
+        // Grouped boolean logic is NOT expressible via combinators (mixed AND/OR collapses to all-AND and matches nothing) - use a single RE instead.
+        let group1: Vec<usize> = con
+            .argrep(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Re("(red|blue) triangle")],
+            )
+            .unwrap();
+        assert_eq!(group1, vec![6, 7]); // (red OR blue) AND triangle
+        let group2: Vec<usize> = con
+            .argrep(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Re("green (circle|square)")],
+            )
+            .unwrap();
+        assert_eq!(group2, vec![4, 5]); // (circle OR square) AND green
+        let group3: Vec<usize> = con
+            .argrep(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Re("red (circle|triangle)")],
+            )
+            .unwrap();
+        assert_eq!(group3, vec![0, 6]); // red AND (circle OR triangle)
+    }
+
+    /// Tests `ARGREP`'s matching semantics, including:
+    /// - `NOCASE` scope and ASCII-only case folding
+    /// - lack of backreferences and lookaround in the regex engine
+    /// - ASCII-only `\d`
+    ///
+    /// Also verifies that `AROP`'s `MATCH` option is case-sensitive.
+    #[cfg(feature = "redis-arrays")]
+    #[test]
+    fn test_arrays_argrep_engine() {
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        let mut con = ctx.connection();
+
+        // NOCASE applies across all predicate types.
+        let key = "test_array_nocase";
+        con.armset(
+            key,
+            &[
+                (0, "Hello World"),
+                (1, "hello world"),
+                (2, "HELLO WORLD"),
+                (3, "HeLLo"),
+            ],
+        )
+        .unwrap();
+        let case_each = |con: &mut redis::Connection, pred: ArrayPredicate| -> Vec<usize> {
+            con.argrep_options(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[pred],
+                &ArrayGrepOptions::default().set_nocase(true),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            case_each(&mut con, ArrayPredicate::Exact("hello world")),
+            vec![0, 1, 2]
+        );
+        assert_eq!(
+            case_each(&mut con, ArrayPredicate::Match("hello")),
+            vec![0, 1, 2, 3]
+        );
+        assert_eq!(
+            case_each(&mut con, ArrayPredicate::Glob("hello*")),
+            vec![0, 1, 2, 3]
+        );
+        // RE: NOCASE option and inline (?i) are equivalent.
+        let re_nocase: Vec<usize> = con
+            .argrep_options(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Re("^hello")],
+                &ArrayGrepOptions::default().set_nocase(true),
+            )
+            .unwrap();
+        assert_eq!(re_nocase, vec![0, 1, 2, 3]);
+        let re_inline: Vec<usize> = con
+            .argrep(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Re("(?i)^hello")],
+            )
+            .unwrap();
+        assert_eq!(re_inline, vec![0, 1, 2, 3]);
+
+        // Case folding is ASCII-only: é/É are not folded.
+        let key = "test_array_unicode";
+        con.armset(key, &[(0, "Café"), (1, "CAFÉ"), (2, "café")])
+            .unwrap();
+        // EXACT "café" NOCASE folds the ASCII C but not é, so CAFÉ (index 1) is excluded.
+        let folded: Vec<usize> = con
+            .argrep_options(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Exact("café")],
+                &ArrayGrepOptions::default().set_nocase(true),
+            )
+            .unwrap();
+        assert_eq!(folded, vec![0, 2]);
+
+        // RE engine limitations: backreferences and lookaround error.
+        let key = "test_array_re_engine";
+        con.armset(
+            key,
+            &[
+                (0, "aa"),
+                (1, "foobar"),
+                (2, "price100"),
+                (3, "no digits"),
+                (4, "٣٤٥"),
+            ],
+        )
+        .unwrap();
+        let backref: RedisResult<Vec<usize>> = con.argrep(
+            key,
+            ArrayBound::Start,
+            ArrayBound::End,
+            &[ArrayPredicate::Re(r"(.)\1")],
+        );
+        assert!(backref.is_err());
+        let lookaround: RedisResult<Vec<usize>> = con.argrep(
+            key,
+            ArrayBound::Start,
+            ArrayBound::End,
+            &[ArrayPredicate::Re("foo(?=bar)")],
+        );
+        assert!(lookaround.is_err());
+        // \d is ASCII-only: matches the ASCII-digit element, not the Arabic-Indic one.
+        let digits: Vec<usize> = con
+            .argrep(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Re(r"\d{3}")],
+            )
+            .unwrap();
+        assert_eq!(digits, vec![2]);
+        let only_digits: Vec<usize> = con
+            .argrep(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Re(r"^\d+$")],
+            )
+            .unwrap();
+        assert_eq!(only_digits, Vec::<usize>::new());
+
+        // AROP MATCH is case-sensitive (the API offers no NOCASE for it).
+        let key = "test_array_arop_match";
+        con.armset(key, &[(0, "ERROR:disk"), (1, "error:net")])
+            .unwrap();
+        assert_eq!(
+            con.arop::<i64, _>(key, 0, 1, ArrayAggregateOp::Match("ERROR:disk")),
+            Ok(1)
+        );
+        assert_eq!(
+            con.arop::<i64, _>(key, 0, 1, ArrayAggregateOp::Match("error:disk")),
+            Ok(0)
+        );
+    }
+
+    /// Validates Array behavior on missing keys, empty values, and invalid arguments.
+    #[cfg(feature = "redis-arrays")]
+    #[test]
+    fn test_arrays_edge_cases() {
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        let mut con = ctx.connection();
+
+        // Operations on a non-existent key.
+        assert_eq!(con.arlen("missing_array"), Ok(0));
+        assert_eq!(con.arcount("missing_array"), Ok(0));
+        assert_eq!(con.arget("missing_array", 0), Ok(None));
+        assert_eq!(con.ardel("missing_array", &[0]), Ok(0));
+        // ARMGET on a missing key yields a None for each requested index.
+        assert_eq!(con.armget("missing_array", &[0, 1]), Ok(vec![None, None]));
+        // ARGETRANGE on a missing key yields a None per index in the range.
+        assert_eq!(
+            con.argetrange("missing_array", 0, 2),
+            Ok(vec![None, None, None])
+        );
+        // ARDELRANGE on a missing key deletes nothing.
+        assert_eq!(con.ardelrange("missing_array", &[(0, 3)]), Ok(0));
+
+        // Empty-string values are valid and occupy a slot.
+        let key = "test_array_empty";
+        assert_eq!(con.arset(key, 0, ""), Ok(1));
+        assert_eq!(con.arget(key, 0), Ok(Some(String::new())));
+        assert_eq!(con.arlen(key), Ok(1));
+
+        // Sparse high indices extend the reported length.
+        let sparse = "test_array_sparse";
+        assert_eq!(con.arset(sparse, 1_000_000, "z"), Ok(1));
+        assert_eq!(con.arlen(sparse), Ok(1_000_001));
+
+        // AR* commands against a wrong-type key surface a WRONGTYPE error.
+        let str_key = "test_array_wrongtype";
+        con.set(str_key, "not an array").unwrap();
+        let err = con.arget(str_key, 0).unwrap_err();
+        assert_eq!(err.code(), Some("WRONGTYPE"));
     }
 
     #[test]
