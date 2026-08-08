@@ -104,8 +104,8 @@ fn payloads() -> Vec<(&'static str, Vec<u8>)> {
         v
     };
 
-    // A map-shaped reply: 1000 key/value bulk-string pairs (2000 leaves).
-    let map_1000_pairs = {
+    // A key/value reply: 1000 pairs flattened into a 2000-element array.
+    let array_1000_kv_pairs = {
         let mut v = Vec::new();
         array_header(&mut v, 2000);
         for i in 0..1000 {
@@ -119,7 +119,7 @@ fn payloads() -> Vec<(&'static str, Vec<u8>)> {
     out.push(("array_5000_small_bulks", array_5000_small_bulks));
     out.push(("array_500_1kb_bulks", array_500_1kb_bulks));
     out.push(("array_5000_simple_strings", array_5000_simple_strings));
-    out.push(("map_1000_pairs", map_1000_pairs));
+    out.push(("array_1000_kv_pairs", array_1000_kv_pairs));
     out
 }
 
