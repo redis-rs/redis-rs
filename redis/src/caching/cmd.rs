@@ -168,7 +168,7 @@ impl CacheableCommand<'_> {
                     pipeline.add_command(Cmd::pttl(command.1.redis_key));
                 }
             }
-        };
+        }
     }
 }
 

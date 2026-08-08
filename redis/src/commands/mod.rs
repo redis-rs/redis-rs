@@ -3562,8 +3562,8 @@ impl ToRedisArgs for Direction {
         W: ?Sized + RedisWrite,
     {
         let s: &[u8] = match self {
-            Direction::Left => b"LEFT",
-            Direction::Right => b"RIGHT",
+            Self::Left => b"LEFT",
+            Self::Right => b"RIGHT",
         };
         out.write_arg(s);
     }
@@ -3798,7 +3798,7 @@ impl ToRedisArgs for FlushAllOptions {
             out.write_arg(b"SYNC");
         } else {
             out.write_arg(b"ASYNC");
-        };
+        }
     }
 }
 impl ToSingleRedisArg for FlushAllOptions {}
@@ -3849,23 +3849,23 @@ impl ToRedisArgs for Expiry {
     {
         let mut buf = ::itoa::Buffer::new();
         match self {
-            Expiry::EX(sec) => {
+            Self::EX(sec) => {
                 out.write_arg(b"EX");
                 out.write_arg(buf.format(*sec).as_bytes());
             }
-            Expiry::PX(ms) => {
+            Self::PX(ms) => {
                 out.write_arg(b"PX");
                 out.write_arg(buf.format(*ms).as_bytes());
             }
-            Expiry::EXAT(timestamp_sec) => {
+            Self::EXAT(timestamp_sec) => {
                 out.write_arg(b"EXAT");
                 out.write_arg(buf.format(*timestamp_sec).as_bytes());
             }
-            Expiry::PXAT(timestamp_ms) => {
+            Self::PXAT(timestamp_ms) => {
                 out.write_arg(b"PXAT");
                 out.write_arg(buf.format(*timestamp_ms).as_bytes());
             }
-            Expiry::PERSIST => {
+            Self::PERSIST => {
                 out.write_arg(b"PERSIST");
             }
         }
@@ -3888,10 +3888,10 @@ impl ToRedisArgs for UpdateCheck {
         W: ?Sized + RedisWrite,
     {
         match self {
-            UpdateCheck::LT => {
+            Self::LT => {
                 out.write_arg(b"LT");
             }
-            UpdateCheck::GT => {
+            Self::GT => {
                 out.write_arg(b"GT");
             }
         }
@@ -3964,10 +3964,10 @@ impl ToRedisArgs for SortedSetAddOptions {
             conditional_update.write_redis_args(out);
         }
         if self.include_changed {
-            out.write_arg(b"CH")
+            out.write_arg(b"CH");
         }
         if self.increment {
-            out.write_arg(b"INCR")
+            out.write_arg(b"INCR");
         }
     }
 }

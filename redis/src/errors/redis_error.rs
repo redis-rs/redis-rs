@@ -60,8 +60,8 @@ pub struct RedisError {
 
 #[cfg(feature = "json")]
 impl From<serde_json::Error> for RedisError {
-    fn from(serde_err: serde_json::Error) -> RedisError {
-        RedisError {
+    fn from(serde_err: serde_json::Error) -> Self {
+        Self {
             repr: ErrorRepr::Internal {
                 kind: ErrorKind::Serialize,
                 err: Arc::new(serde_err),
@@ -84,7 +84,7 @@ enum ErrorRepr {
 }
 
 impl PartialEq for RedisError {
-    fn eq(&self, other: &RedisError) -> bool {
+    fn eq(&self, other: &Self) -> bool {
         match (&self.repr, &other.repr) {
             (&ErrorRepr::General(kind_a, _, _), &ErrorRepr::General(kind_b, _, _)) => {
                 kind_a == kind_b
@@ -98,8 +98,8 @@ impl PartialEq for RedisError {
 }
 
 impl From<io::Error> for RedisError {
-    fn from(err: io::Error) -> RedisError {
-        RedisError {
+    fn from(err: io::Error) -> Self {
+        Self {
             repr: ErrorRepr::Internal {
                 kind: ErrorKind::Io,
                 err: Arc::new(err),
@@ -110,8 +110,8 @@ impl From<io::Error> for RedisError {
 
 #[cfg(feature = "tls-rustls")]
 impl From<rustls::pki_types::InvalidDnsNameError> for RedisError {
-    fn from(err: rustls::pki_types::InvalidDnsNameError) -> RedisError {
-        RedisError {
+    fn from(err: rustls::pki_types::InvalidDnsNameError) -> Self {
+        Self {
             repr: ErrorRepr::Internal {
                 kind: ErrorKind::Io,
                 err: Arc::new(err),
@@ -122,8 +122,8 @@ impl From<rustls::pki_types::InvalidDnsNameError> for RedisError {
 
 #[cfg(feature = "tls-rustls")]
 impl From<rustls_native_certs::Error> for RedisError {
-    fn from(err: rustls_native_certs::Error) -> RedisError {
-        RedisError {
+    fn from(err: rustls_native_certs::Error) -> Self {
+        Self {
             repr: ErrorRepr::Internal {
                 kind: ErrorKind::Io,
                 err: Arc::new(err),
@@ -133,16 +133,16 @@ impl From<rustls_native_certs::Error> for RedisError {
 }
 
 impl From<(ErrorKind, &'static str)> for RedisError {
-    fn from((kind, desc): (ErrorKind, &'static str)) -> RedisError {
-        RedisError {
+    fn from((kind, desc): (ErrorKind, &'static str)) -> Self {
+        Self {
             repr: ErrorRepr::General(kind, desc, None),
         }
     }
 }
 
 impl From<(ErrorKind, &'static str, String)> for RedisError {
-    fn from((kind, desc, detail): (ErrorKind, &'static str, String)) -> RedisError {
-        RedisError {
+    fn from((kind, desc, detail): (ErrorKind, &'static str, String)) -> Self {
+        Self {
             repr: ErrorRepr::General(kind, desc, Some(detail.into())),
         }
     }
@@ -520,8 +520,8 @@ pub fn make_extension_error(code: String, detail: Option<String>) -> RedisError 
 
 #[cfg(feature = "tls-native-tls")]
 impl From<native_tls::Error> for RedisError {
-    fn from(err: native_tls::Error) -> RedisError {
-        RedisError {
+    fn from(err: native_tls::Error) -> Self {
+        Self {
             repr: ErrorRepr::Internal {
                 kind: ErrorKind::Client,
                 err: Arc::new(err),
@@ -532,8 +532,8 @@ impl From<native_tls::Error> for RedisError {
 
 #[cfg(feature = "tls-rustls")]
 impl From<rustls::Error> for RedisError {
-    fn from(err: rustls::Error) -> RedisError {
-        RedisError {
+    fn from(err: rustls::Error) -> Self {
+        Self {
             repr: ErrorRepr::Internal {
                 kind: ErrorKind::Client,
                 err: Arc::new(err),
@@ -552,13 +552,13 @@ impl From<ServerError> for RedisError {
 
 impl From<ServerErrorKind> for ErrorKind {
     fn from(kind: ServerErrorKind) -> Self {
-        ErrorKind::Server(kind)
+        Self::Server(kind)
     }
 }
 
 impl From<ParsingError> for RedisError {
     fn from(err: ParsingError) -> Self {
-        RedisError {
+        Self {
             repr: ErrorRepr::Parsing(err),
         }
     }
@@ -567,7 +567,7 @@ impl From<ParsingError> for RedisError {
 impl TryFrom<RedisError> for ServerError {
     type Error = RedisError;
 
-    fn try_from(err: RedisError) -> Result<ServerError, RedisError> {
+    fn try_from(err: RedisError) -> Result<Self, RedisError> {
         match err.repr {
             ErrorRepr::Server(err) => Ok(err),
             _ => Err(err),

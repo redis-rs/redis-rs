@@ -31,14 +31,14 @@ pub struct TestClusterContext {
 }
 
 impl TestClusterContext {
-    pub fn new() -> TestClusterContext {
+    pub fn new() -> Self {
         Self::new_with_config(RedisClusterConfiguration {
             tls_insecure: false,
             ..Default::default()
         })
     }
 
-    pub fn new_with_mtls() -> TestClusterContext {
+    pub fn new_with_mtls() -> Self {
         Self::new_with_config_and_builder(
             RedisClusterConfiguration {
                 mtls_enabled: true,
@@ -49,7 +49,7 @@ impl TestClusterContext {
         )
     }
 
-    pub fn new_without_ip_alts() -> TestClusterContext {
+    pub fn new_without_ip_alts() -> Self {
         Self::new_with_config_and_builder(
             RedisClusterConfiguration {
                 tls_insecure: false,
@@ -60,11 +60,11 @@ impl TestClusterContext {
         )
     }
 
-    pub fn new_with_config(cluster_config: RedisClusterConfiguration) -> TestClusterContext {
+    pub fn new_with_config(cluster_config: RedisClusterConfiguration) -> Self {
         Self::new_with_config_and_builder(cluster_config, identity)
     }
 
-    pub fn new_with_cluster_client_builder<F>(initializer: F) -> TestClusterContext
+    pub fn new_with_cluster_client_builder<F>(initializer: F) -> Self
     where
         F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
     {
@@ -77,7 +77,7 @@ impl TestClusterContext {
         )
     }
 
-    pub fn new_insecure_with_cluster_client_builder<F>(initializer: F) -> TestClusterContext
+    pub fn new_insecure_with_cluster_client_builder<F>(initializer: F) -> Self
     where
         F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
     {
@@ -87,7 +87,7 @@ impl TestClusterContext {
     pub fn new_with_config_and_builder<F>(
         cluster_config: RedisClusterConfiguration,
         initializer: F,
-    ) -> TestClusterContext
+    ) -> Self
     where
         F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
     {
@@ -114,7 +114,7 @@ impl TestClusterContext {
 
         let client = builder.build().unwrap();
 
-        TestClusterContext {
+        Self {
             cluster,
             client,
             mtls_enabled,

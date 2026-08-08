@@ -937,10 +937,10 @@ async fn test_cache_async_cluster_slot_change(migrate: bool) {
         .unwrap();
     // Without migration, key itself won't be copied over
     if migrate {
-        assert_eq!(val, Some(77))
+        assert_eq!(val, Some(77));
     } else {
         assert_eq!(val, None);
-    };
+    }
     assert_hit!(&con, 1);
     // It will miss twice because there will be retry after receiving
     // `MOVED` error from server

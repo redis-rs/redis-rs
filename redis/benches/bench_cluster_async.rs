@@ -30,8 +30,8 @@ fn bench_cluster_async(
                     Ok::<_, RedisError>(())
                 })
                 .unwrap();
-            black_box(())
-        })
+            black_box(());
+        });
     });
 
     group.bench_function("parallel_requests", |b| {
@@ -40,7 +40,9 @@ fn bench_cluster_async(
             .map(|i| redis::cmd("SET").arg(format!("foo{i}")).arg(i).clone())
             .collect();
 
-        let mut connections = (0..num_parallel).map(|_| con.clone()).collect::<Vec<_>>();
+        let mut connections = std::iter::repeat_with(|| con.clone())
+            .take(num_parallel)
+            .collect::<Vec<_>>();
 
         b.iter(|| {
             runtime
@@ -53,7 +55,7 @@ fn bench_cluster_async(
                         .await
                 })
                 .unwrap();
-            black_box(())
+            black_box(());
         });
     });
 
@@ -70,7 +72,7 @@ fn bench_cluster_async(
             runtime
                 .block_on(async { pipe.exec_async(con).await })
                 .unwrap();
-            black_box(())
+            black_box(());
         });
     });
 

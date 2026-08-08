@@ -886,7 +886,7 @@ mod types {
                         attributes: vec![(redis_value!(simple:"ttl"), redis_value!(3600))]
                     })
                 ])
-            )
+            );
         }
     }
 
