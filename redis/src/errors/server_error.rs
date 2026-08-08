@@ -1,7 +1,7 @@
-use arcstr::ArcStr;
 use std::fmt;
 
 use crate::RetryMethod;
+use crate::types::Str;
 
 /// Kinds of errors returned from the server
 #[derive(PartialEq, Debug, Clone, Copy, Eq)]
@@ -89,12 +89,12 @@ pub struct ServerError(pub(crate) Repr);
 #[derive(PartialEq, Debug, Clone)]
 pub(crate) enum Repr {
     Extension {
-        code: ArcStr,
-        detail: Option<ArcStr>,
+        code: Str,
+        detail: Option<Str>,
     },
     Known {
         kind: ServerErrorKind,
-        detail: Option<ArcStr>,
+        detail: Option<Str>,
     },
 }
 
@@ -110,7 +110,7 @@ impl ServerError {
     /// The error code returned from the server
     pub fn code(&self) -> &str {
         match &self.0 {
-            Repr::Extension { code, .. } => code,
+            Repr::Extension { code, .. } => code.as_str(),
             Repr::Known { kind, .. } => kind.code(),
         }
     }

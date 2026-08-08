@@ -4,7 +4,6 @@ use redis::RedisResult;
 fn run() -> RedisResult<()> {
     use redis::{Commands, geo};
     use std::env;
-    use std::f64;
 
     let redis_url = match env::var("REDIS_URL") {
         Ok(url) => url,
