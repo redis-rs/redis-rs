@@ -8,6 +8,63 @@ use std::ops::Add;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// Copies a parsed [`Value`]'s payloads out of the response buffer they were
+/// sliced from.
+///
+/// Parsed payloads are reference-counted slices of the connection's read buffer
+/// (see `parser::parse_buffer`), so storing one in the LRU pins that whole
+/// buffer -- including every other reply that arrived in the same read -- for as
+/// long as the entry lives. The cache is long-lived and holds up to
+/// `CacheConfig::size` entries, so its retention would be bounded by whatever
+/// traffic happened to share a read rather than by the cached values
+/// themselves. Copying at insert time bounds it by the payload again, as it was
+/// before the zero-copy parser. This is the same reasoning that makes the parser
+/// copy error payloads out (`parser::detached_str`).
+fn detached(value: Value) -> Value {
+    fn detached_str(s: crate::types::Str) -> crate::types::Str {
+        crate::types::Str::from(s.as_str())
+    }
+    let str = detached_str;
+    match value {
+        Value::BulkString(b) => Value::BulkString(bytes::Bytes::copy_from_slice(&b)),
+        Value::SimpleString(s) => Value::SimpleString(str(s)),
+        Value::VerbatimString { format, text } => Value::VerbatimString {
+            format: match format {
+                crate::VerbatimFormat::Unknown(f) => crate::VerbatimFormat::Unknown(str(f)),
+                other => other,
+            },
+            text: str(text),
+        },
+        #[cfg(not(feature = "num-bigint"))]
+        Value::BigNumber(b) => Value::BigNumber(bytes::Bytes::copy_from_slice(&b)),
+        Value::Array(v) => Value::Array(v.into_iter().map(detached).collect()),
+        Value::Set(v) => Value::Set(v.into_iter().map(detached).collect()),
+        Value::Map(v) => Value::Map(
+            v.into_iter()
+                .map(|(k, val)| (detached(k), detached(val)))
+                .collect(),
+        ),
+        Value::Attribute { data, attributes } => Value::Attribute {
+            data: Box::new(detached(*data)),
+            attributes: attributes
+                .into_iter()
+                .map(|(k, val)| (detached(k), detached(val)))
+                .collect(),
+        },
+        Value::Push { kind, data } => Value::Push {
+            // `PushKind::Other` carries a `Str` sliced from the frame too.
+            kind: match kind {
+                crate::PushKind::Other(k) => crate::PushKind::Other(str(k)),
+                other => other,
+            },
+            data: data.into_iter().map(detached).collect(),
+        },
+        // Scalars own nothing, and `ServerError` payloads are already copied out
+        // of the frame by the parser.
+        other => other,
+    }
+}
+
 pub(crate) enum PrepCacheItem<'a> {
     Cached(Value),
     NotCached(CacheableCommand<'a>),
@@ -70,8 +127,10 @@ impl CacheManager {
             }
             _ => client_side_expire_time,
         };
+        // Detach the payload from the read buffer before storing it; see
+        // `detached`.
         self.lru
-            .insert(redis_key, cmd_key, value, expire_time, self.epoch);
+            .insert(redis_key, cmd_key, detached(value), expire_time, self.epoch);
     }
 
     pub(crate) fn statistics(&self) -> CacheStatistics {
@@ -424,5 +483,50 @@ mod tests {
             cache_manager_3.get(redis_key_3, cmd_key),
             Some(Value::Int(3))
         );
+    }
+
+    /// A cached value must not keep the read buffer it was parsed out of alive.
+    ///
+    /// Parsed payloads are slices of the connection's read buffer, so a cached
+    /// 8-byte string would otherwise pin every other reply that arrived in the
+    /// same read for as long as the entry lives. Checked the same way as
+    /// `parser::tests::parsed_error_is_detached_from_reply_buffer`: the copied
+    /// payload's bytes must live outside the original frame's allocation.
+    #[test]
+    fn cached_values_do_not_pin_the_response_buffer() {
+        let mut buffer = bytes::BytesMut::with_capacity(64 * 1024);
+        buffer.extend_from_slice(b"$3\r\nfoo\r\n");
+        let frame = buffer.split_to(buffer.len()).freeze();
+        let frame_start = frame.as_ptr() as usize;
+        let frame_end = frame_start + 64 * 1024;
+        let outside = |p: usize| p < frame_start || p >= frame_end;
+
+        let sliced = Value::Array(vec![
+            Value::BulkString(frame.slice(4..7)),
+            Value::SimpleString(crate::types::Str::from("bar")),
+        ]);
+        // Sanity: the payload really does point into the frame to begin with,
+        // otherwise this test would pass for the wrong reason.
+        let Value::Array(ref pre) = sliced else {
+            unreachable!()
+        };
+        let Value::BulkString(ref pre_bytes) = pre[0] else {
+            unreachable!()
+        };
+        assert!(!outside(pre_bytes.as_ptr() as usize));
+
+        let Value::Array(items) = detached(sliced) else {
+            panic!("expected an array");
+        };
+        let Value::BulkString(ref bytes) = items[0] else {
+            panic!("expected a bulk string");
+        };
+        assert_eq!(&bytes[..], b"foo");
+        assert!(
+            outside(bytes.as_ptr() as usize),
+            "cached payload still points into the response buffer"
+        );
+        drop(frame);
+        drop(buffer);
     }
 }
