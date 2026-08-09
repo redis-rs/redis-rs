@@ -1,11 +1,14 @@
 //! [`Str`]: the cheaply-cloneable UTF-8 string used by [`Value`](crate::Value).
 
 use bytes::Bytes;
+use std::borrow::Cow;
+use std::cmp::Ordering;
+use std::convert::Infallible;
 use std::fmt;
 use std::ops::Deref;
-use std::str::from_utf8;
+use std::str::{FromStr, from_utf8};
 
-/// A cheaply-cloneable, UTF-8 string backed by [`bytes::Bytes`].
+/// A cheaply-cloneable, immutable UTF-8 string backed by [`bytes::Bytes`].
 ///
 /// `Str` is used by [`Value`](crate::Value) for textual responses (simple strings, verbatim
 /// strings, push kinds, …). It holds a `Bytes` buffer that is guaranteed to be
@@ -14,6 +17,14 @@ use std::str::from_utf8;
 /// Because the backing storage is `Bytes`, cloning a `Str` is a cheap
 /// reference-count bump rather than an allocation, and the parser can produce
 /// one as a zero-copy slice into the response buffer.
+///
+/// # Immutability
+///
+/// `Str` is deliberately immutable. The backing `Bytes` may be shared with other
+/// `Str`s and with the response buffer it was sliced from, so there is no
+/// `DerefMut` and no in-place mutation API (no `push_str`, no `Add`, no
+/// `Extend`, no [`fmt::Write`]). To build or edit text, go through [`String`]:
+/// `let mut s = String::from(str_value);` … `Str::from(s)`.
 #[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Str(Bytes);
 
@@ -129,6 +140,33 @@ impl From<&String> for Str {
     }
 }
 
+impl From<Cow<'_, str>> for Str {
+    fn from(s: Cow<'_, str>) -> Self {
+        match s {
+            // The owned half moves its allocation into the `Bytes`; only the
+            // borrowed half has to copy.
+            Cow::Owned(s) => Str::from(s),
+            Cow::Borrowed(s) => Str::from(s),
+        }
+    }
+}
+
+impl From<char> for Str {
+    fn from(c: char) -> Self {
+        let mut buf = [0u8; 4];
+        Str(Bytes::copy_from_slice(c.encode_utf8(&mut buf).as_bytes()))
+    }
+}
+
+impl FromStr for Str {
+    /// Parsing a `Str` from a `&str` cannot fail, exactly as for [`String`].
+    type Err = Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Str::from(s))
+    }
+}
+
 impl From<Str> for String {
     fn from(s: Str) -> Self {
         // SAFETY: the `Bytes` are guaranteed to be valid UTF-8 by construction.
@@ -139,6 +177,13 @@ impl From<Str> for String {
 impl From<Str> for Bytes {
     fn from(s: Str) -> Self {
         s.0
+    }
+}
+
+impl From<Str> for Vec<u8> {
+    fn from(s: Str) -> Self {
+        // `Bytes` reuses the allocation when it is uniquely owned.
+        s.0.into()
     }
 }
 
@@ -178,10 +223,74 @@ impl PartialEq<Str> for String {
     }
 }
 
+impl PartialEq<Cow<'_, str>> for Str {
+    fn eq(&self, other: &Cow<'_, str>) -> bool {
+        self.as_str() == &**other
+    }
+}
+
+impl PartialEq<Str> for Cow<'_, str> {
+    fn eq(&self, other: &Str) -> bool {
+        &**self == other.as_str()
+    }
+}
+
+// The `PartialOrd` cross-impls mirror the `PartialEq` ones above, so that
+// `Str` orders against borrowed and owned strings as well as it compares.
+// `bytes::Bytes`, which `Str` wraps, provides the same matched set.
+
+impl PartialOrd<str> for Str {
+    fn partial_cmp(&self, other: &str) -> Option<Ordering> {
+        Some(self.as_str().cmp(other))
+    }
+}
+
+impl PartialOrd<&str> for Str {
+    fn partial_cmp(&self, other: &&str) -> Option<Ordering> {
+        Some(self.as_str().cmp(*other))
+    }
+}
+
+impl PartialOrd<String> for Str {
+    fn partial_cmp(&self, other: &String) -> Option<Ordering> {
+        Some(self.as_str().cmp(other.as_str()))
+    }
+}
+
+impl PartialOrd<Cow<'_, str>> for Str {
+    fn partial_cmp(&self, other: &Cow<'_, str>) -> Option<Ordering> {
+        Some(self.as_str().cmp(&**other))
+    }
+}
+
+impl PartialOrd<Str> for str {
+    fn partial_cmp(&self, other: &Str) -> Option<Ordering> {
+        Some(self.cmp(other.as_str()))
+    }
+}
+
+impl PartialOrd<Str> for &str {
+    fn partial_cmp(&self, other: &Str) -> Option<Ordering> {
+        Some((*self).cmp(other.as_str()))
+    }
+}
+
+impl PartialOrd<Str> for String {
+    fn partial_cmp(&self, other: &Str) -> Option<Ordering> {
+        Some(self.as_str().cmp(other.as_str()))
+    }
+}
+
+impl PartialOrd<Str> for Cow<'_, str> {
+    fn partial_cmp(&self, other: &Str) -> Option<Ordering> {
+        Some((**self).cmp(other.as_str()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Str;
-    use std::borrow::Borrow;
+    use std::borrow::{Borrow, Cow};
     use std::cmp::Ordering;
     use std::collections::{BTreeMap, HashMap};
 
@@ -192,6 +301,35 @@ mod tests {
         let mut map: HashMap<Str, i32> = HashMap::new();
         map.insert(Str::from("hello"), 1);
         assert_eq!(map.get("hello"), Some(&1));
+    }
+
+    #[test]
+    fn btreemap_lookup_by_str() {
+        use std::ops::Bound;
+
+        // The `Ord`/`Borrow<str>` twin of `hashmap_lookup_by_str_borrow`: a
+        // `BTreeMap<Str, _>` lookup by `&str` needs `Str`'s ordering to agree
+        // with `str`'s, or the binary search walks the wrong way.
+        let mut map: BTreeMap<Str, i32> = BTreeMap::new();
+        for (i, key) in ["", "hello", "héllo", "🌍", "with\0nul"]
+            .into_iter()
+            .enumerate()
+        {
+            map.insert(Str::from(key), i as i32);
+        }
+        assert_eq!(map.get(""), Some(&0));
+        assert_eq!(map.get("hello"), Some(&1));
+        assert_eq!(map.get("héllo"), Some(&2));
+        assert_eq!(map.get("🌍"), Some(&3));
+        assert_eq!(map.get("with\0nul"), Some(&4));
+        assert_eq!(map.get("missing"), None);
+        // Range queries by `&str` work for the same reason.
+        assert_eq!(
+            map.range::<str, _>((Bound::Included("h"), Bound::Excluded("i")))
+                .map(|(k, _)| k.as_str())
+                .collect::<Vec<_>>(),
+            ["hello", "héllo"]
+        );
     }
 
     #[test]
@@ -412,5 +550,207 @@ mod tests {
         // Default is empty.
         assert_eq!(Str::default(), Str::from(""));
         assert!(Str::default().as_bytes().is_empty());
+    }
+
+    #[test]
+    fn sliced_str_converts_and_formats() {
+        use bytes::Bytes;
+
+        // The shape the parser actually produces: a `Str` over a *slice* of a
+        // larger, still-shared response buffer. The other conversion tests only
+        // cover `from_static`/`From<&str>`-backed values, whose `Bytes` span the
+        // whole allocation.
+        let backing = Bytes::from(b"##hello##".to_vec());
+        let s = Str::from_utf8(backing.slice(2..7)).unwrap();
+
+        // Zero-copy: the slice points two bytes into the original allocation.
+        assert_eq!(
+            s.as_bytes().as_ptr() as usize - backing.as_ptr() as usize,
+            2
+        );
+        assert_eq!(s.len(), 5);
+
+        // Every conversion must see only the slice, never its neighbours.
+        assert_eq!(s.as_str(), "hello");
+        assert_eq!(s.as_bytes(), b"hello");
+        assert_eq!(String::from(s.clone()), "hello");
+        assert_eq!(Vec::<u8>::from(s.clone()), b"hello".to_vec());
+        assert_eq!(Bytes::from(s.clone()), Bytes::from_static(b"hello"));
+        assert_eq!(s.to_string(), "hello");
+        assert_eq!(format!("{s:?}"), "\"hello\"");
+        assert_eq!(s, Str::from("hello"));
+        // `backing` is still alive here, so the `Bytes` above was shared and the
+        // owning conversions had to copy out of it rather than take it over.
+        assert_eq!(backing, Bytes::from_static(b"##hello##"));
+
+        // Same again with a multi-byte payload, sliced on char boundaries.
+        let backing = Bytes::from("##héllo → 🌍##".as_bytes().to_vec());
+        let end = backing.len() - 2;
+        let s = Str::from_utf8(backing.slice(2..end)).unwrap();
+        assert_eq!(s.as_str(), "héllo → 🌍");
+        assert_eq!(String::from(s.clone()), "héllo → 🌍");
+        assert_eq!(Vec::<u8>::from(s.clone()), "héllo → 🌍".as_bytes().to_vec());
+        assert_eq!(s.to_string(), "héllo → 🌍");
+        assert_eq!(format!("{s:?}"), "\"héllo → 🌍\"");
+
+        // A slice that splits a multi-byte sequence is rejected, not accepted
+        // and later transmuted by `as_str`.
+        assert!(Str::from_utf8(backing.slice(2..4)).is_err());
+    }
+
+    #[test]
+    fn into_vec_u8() {
+        // `let v: Vec<u8> = s.into()` used to work when this was a `String`.
+        let v: Vec<u8> = Str::from("héllo").into();
+        assert_eq!(v, "héllo".as_bytes().to_vec());
+        assert_eq!(Vec::<u8>::from(Str::default()), Vec::<u8>::new());
+        // Matches `into_bytes()`, which is the `Bytes`-returning sibling.
+        assert_eq!(
+            Vec::<u8>::from(Str::from("x")),
+            Str::from("x").into_bytes().to_vec()
+        );
+    }
+
+    #[test]
+    fn from_char_cow_and_from_str() {
+        use std::str::FromStr;
+
+        // `From<char>`, including a multi-byte one.
+        assert_eq!(Str::from('x'), Str::from("x"));
+        assert_eq!(Str::from('🌍'), Str::from("🌍"));
+        assert_eq!(Str::from('é').as_bytes(), "é".as_bytes());
+
+        // `From<Cow<str>>`, both halves.
+        assert_eq!(Str::from(Cow::Borrowed("borrowed")), Str::from("borrowed"));
+        assert_eq!(
+            Str::from(Cow::<str>::Owned(String::from("owned"))),
+            Str::from("owned")
+        );
+        // The owned half must not copy: it moves the `String`'s allocation.
+        let owned = String::from("a reasonably long owned payload, not inlined");
+        let ptr = owned.as_ptr();
+        assert_eq!(Str::from(Cow::<str>::Owned(owned)).as_bytes().as_ptr(), ptr);
+
+        // `FromStr`, so `"…".parse()` works as it does for `String`.
+        assert_eq!(Str::from_str("parsed").unwrap(), Str::from("parsed"));
+        assert_eq!("parsed".parse::<Str>().unwrap(), Str::from("parsed"));
+        assert_eq!("".parse::<Str>().unwrap(), Str::default());
+        // The error type is uninhabited, so parsing can never fail.
+        let never: Result<Str, std::convert::Infallible> = "x".parse();
+        assert!(never.is_ok());
+    }
+
+    #[test]
+    fn partial_eq_cow_cross_impls() {
+        let s = Str::from("abc");
+        // Bound to locals so `clippy::cmp_owned` does not fire.
+        let same: Cow<'_, str> = Cow::Borrowed("abc");
+        let same_owned: Cow<'_, str> = Cow::Owned(String::from("abc"));
+        let different: Cow<'_, str> = Cow::Borrowed("abd");
+
+        assert!(s == same);
+        assert!(s == same_owned);
+        assert!(same == s);
+        assert!(same_owned == s);
+        assert!(s != different);
+        assert!(different != s);
+    }
+
+    #[test]
+    fn partial_ord_cross_impls() {
+        let s = Str::from("abc");
+        // Bound to locals so `clippy::cmp_owned` does not fire; the point is to
+        // exercise the owned impls, not to compare against a temporary.
+        let lesser_string = String::from("abb");
+        let equal_string = String::from("abc");
+        let greater_string = String::from("abd");
+        let equal_cow: Cow<'_, str> = Cow::Borrowed("abc");
+        let greater_cow: Cow<'_, str> = Cow::Owned(String::from("abd"));
+
+        // Each impl is also called fully qualified, so that method resolution
+        // cannot silently route the operator forms below to a single impl and
+        // leave the others untested.
+        // `Str` on the left: PartialOrd<str>, <&str>, <String>, <Cow<str>>.
+        assert_eq!(
+            <Str as PartialOrd<str>>::partial_cmp(&s, "abb"),
+            Some(Ordering::Greater)
+        );
+        assert_eq!(
+            <Str as PartialOrd<str>>::partial_cmp(&s, "abc"),
+            Some(Ordering::Equal)
+        );
+        assert_eq!(
+            <Str as PartialOrd<&str>>::partial_cmp(&s, &"abd"),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            <Str as PartialOrd<String>>::partial_cmp(&s, &lesser_string),
+            Some(Ordering::Greater)
+        );
+        assert_eq!(
+            <Str as PartialOrd<Cow<'_, str>>>::partial_cmp(&s, &greater_cow),
+            Some(Ordering::Less)
+        );
+
+        // `Str` on the right: the reflected impls.
+        assert_eq!(
+            <str as PartialOrd<Str>>::partial_cmp("abb", &s),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            <&str as PartialOrd<Str>>::partial_cmp(&"abd", &s),
+            Some(Ordering::Greater)
+        );
+        assert_eq!(
+            <String as PartialOrd<Str>>::partial_cmp(&equal_string, &s),
+            Some(Ordering::Equal)
+        );
+        assert_eq!(
+            <Cow<'_, str> as PartialOrd<Str>>::partial_cmp(&equal_cow, &s),
+            Some(Ordering::Equal)
+        );
+
+        // The operator forms, which are what callers actually write. Kept as
+        // one assertion each so that `clippy::double_comparisons` and
+        // `clippy::manual_range_contains` do not fire on `>=` / `<=` pairs.
+        assert!(s > *"abb");
+        assert!(s < *"abd");
+        assert!(s > "abb");
+        assert!(s < "abd");
+        assert!(s >= "abc");
+        assert!(s <= "abc");
+        assert!(s > lesser_string);
+        assert!(s < greater_string);
+        assert!(s >= equal_string);
+        assert!(s <= equal_string);
+        assert!(s == equal_cow);
+        assert!(s < greater_cow);
+        assert!(*"abb" < s);
+        assert!(*"abd" > s);
+        assert!("abb" < s);
+        assert!("abd" > s);
+        assert!("abc" <= s);
+        assert!("abc" >= s);
+        assert!(lesser_string < s);
+        assert!(greater_string > s);
+        assert!(equal_string <= s);
+        assert!(equal_string >= s);
+        assert!(equal_cow <= s);
+        assert!(greater_cow > s);
+
+        // Multi-byte comparisons keep `str`'s (code-point) order, and the
+        // cross-impls agree with `Str`'s own `Ord`.
+        for (a, b) in [("", "a"), ("a", "a"), ("b", "a"), ("é", "🌍"), ("e", "é")] {
+            let (lhs, rhs) = (Str::from(a), Str::from(b));
+            let expected = lhs.cmp(&rhs);
+            assert_eq!(
+                <Str as PartialOrd<str>>::partial_cmp(&lhs, b),
+                Some(expected)
+            );
+            assert_eq!(
+                <str as PartialOrd<Str>>::partial_cmp(b, &lhs),
+                Some(expected.reverse())
+            );
+        }
     }
 }

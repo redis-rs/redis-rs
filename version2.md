@@ -146,6 +146,13 @@ string without copying the payload. `Str::from_static` and `From<String>` are
 free; `From<&str>` copies, as does `Into<String>` when the `Str` is a shared slice
 into a response — the common parser case. `Into<Bytes>` just moves the buffer.
 
+`Str` otherwise carries the borrowed-string traits of the `String` it replaced:
+`Borrow<str>`, `AsRef<str>`/`AsRef<[u8]>`, `Display`/`Debug`, `str`-consistent
+`Hash`/`Eq`/`Ord` (so it is a `HashMap`/`BTreeMap` key you can look up by `&str`),
+`From<&str>`/`String`/`&String`/`Cow<str>`/`char`, `FromStr`, and
+`Into<String>`/`Into<Bytes>`/`Into<Vec<u8>>`. It also compares and orders directly
+against `str`, `&str`, `String` and `Cow<str>` in either operand position.
+
 `Str` and `Bytes` are immutable views, so payloads can no longer be edited in
 place: convert out (`String::from(s)`, `b.to_vec()`), modify, convert back.
 Traits that other crates implement for `Vec<u8>`/`String` — quickcheck's
@@ -207,13 +214,13 @@ it used to gate are always available. Remove `"bytes"` from your `redis` feature
 `BytesMut` (rather than rely on `.into()` and `Deref<Target = [u8]>`) should add
 `bytes = "1"` to its own `Cargo.toml`.
 
-### Why it's faster
+#### Why it's faster
 
 The new parser allocates a small, constant number of times per response rather
 than once per element, and avoids copying bulk-string payloads out of the read
-buffer entirely on the async codec path. Parsing benchmarks
-(`cargo bench -p redis --bench bench_decode`) comparing the new parser against
-the previous `Vec`/`String`-based one:
+buffer entirely on the async codec path. From `cargo bench -p redis --bench
+bench_decode`; the "before" column comes from running that same benchmark file
+against 1.x, where it compiles unchanged:
 
 | Response                      | Allocations (before → after) |
 | ----------------------------- | ---------------------------- |
@@ -235,7 +242,7 @@ no longer pay for, so a single `+OK` or `:1` does not get faster and may be
 slightly slower. Cloning a `Value` payload is now a reference-count bump rather
 than a deep copy (cloning an aggregate still copies the `Vec` spine).
 
-### Trade-offs to be aware of
+#### Trade-offs to be aware of
 
 - **Peak memory is lower, but it moves into one contiguous allocation:** a large
   reply is parsed out of a single buffer that cannot be drained until the reply
