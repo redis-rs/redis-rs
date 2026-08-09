@@ -1046,10 +1046,20 @@ mod tests {
         // so the decoder would keep buffering forever instead of failing.
         use tokio_util::codec::Decoder;
 
-        for reply in [&b"=-1\r\n"[..], &b"!-1\r\n"[..]] {
+        for (reply, expected) in [
+            (&b"=-1\r\n"[..], "negative verbatim string length"),
+            (&b"!-1\r\n"[..], "negative blob error length"),
+        ] {
             let mut codec = ValueCodec::default();
             let mut buf = BytesMut::from(reply);
-            assert_matches!(codec.decode(&mut buf), Err(_), "{reply:?} was not rejected");
+            let err = codec.decode(&mut buf).unwrap_err();
+            assert_eq!(err.kind(), ErrorKind::Parse, "{reply:?}");
+            // Specifically rejected, not "need more input": a decoder that
+            // awaited the missing bytes would return `Ok(None)` here.
+            assert!(
+                err.to_string().contains(expected),
+                "{reply:?} gave the wrong error: {err}"
+            );
         }
 
         // The null bulk string still parses.
