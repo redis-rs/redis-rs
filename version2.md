@@ -264,6 +264,10 @@ than a deep copy (cloning an aggregate still copies the `Vec` spine).
   `from_redis_value::<Vec<u8>>` now perform their copy at conversion time rather
   than at parse time (the total number of copies is unchanged — one). Code that
   reads payloads by reference performs no copy at all.
+- **`Debug` output for binary payloads changed:** `Value::BulkString`'s `Debug`
+  now renders through `Bytes`, so `binary-data([255, 0, 1])` reads
+  `binary-data(b"\xff\0\x01")`. This text appears in type-mismatch error
+  messages, so anything asserting on those strings needs updating.
 - **Lossy UTF-8 decoding is now strict:** verbatim strings and blob errors were
   previously decoded with `from_utf8_lossy`, silently substituting U+FFFD for
   invalid bytes. They are now validated, so a non-UTF-8 payload in one of those

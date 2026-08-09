@@ -762,7 +762,15 @@ mod aio_support {
             // buffer's spare capacity, which after a `split_to`/`freeze` can be
             // arbitrarily small (the frozen prefix may still share the backing
             // allocation). Without this, reads can degrade to tiny chunks.
-            buffer.reserve(READ_CHUNK_SIZE);
+            //
+            // Only ask when the spare capacity is actually small, though. While
+            // a previously parsed value is still alive the buffer is shared, so
+            // `reserve` cannot reclaim in place and allocates a fresh chunk --
+            // which that reply's leaves then pin. Reserving unconditionally
+            // therefore gives every reply its own allocation.
+            if buffer.capacity() - buffer.len() < READ_CHUNK_SIZE / 8 {
+                buffer.reserve(READ_CHUNK_SIZE);
+            }
             if read.read_buf(buffer).await? == 0 {
                 return match parse_final_value(buffer, &mut state)? {
                     Some(value) => Ok(value),
