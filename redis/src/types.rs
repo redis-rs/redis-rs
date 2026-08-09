@@ -1887,7 +1887,7 @@ impl FromRedisValue for CString {
         match v {
             Value::BulkString(bytes) => Ok(Self::new(bytes)?),
             Value::Okay => Ok(Self::new("OK")?),
-            Value::SimpleString(val) => Ok(Self::new(val.into_bytes())?),
+            Value::SimpleString(val) => Ok(Self::new(val)?),
             _ => crate::errors::invalid_type_error!(v, "Response type not CString compatible."),
         }
     }
