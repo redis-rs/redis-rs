@@ -20,7 +20,7 @@ struct ArbitraryValue(Value);
 impl ::quickcheck::Arbitrary for ArbitraryValue {
     fn arbitrary(g: &mut Gen) -> Self {
         let size = g.size();
-        ArbitraryValue(arbitrary_value(g, size))
+        Self(arbitrary_value(g, size))
     }
 
     fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
@@ -35,10 +35,7 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
                     .map(ArbitraryValue),
             ),
             Value::Array(ref xs) | Value::Set(ref xs) => {
-                let ys = xs
-                    .iter()
-                    .map(|x| ArbitraryValue(x.clone()))
-                    .collect::<Vec<_>>();
+                let ys = xs.iter().map(|x| Self(x.clone())).collect::<Vec<_>>();
                 Box::new(
                     ys.shrink()
                         .map(|xs| xs.into_iter().map(|x| x.0).collect())
@@ -46,26 +43,20 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
                         .map(ArbitraryValue),
                 )
             }
-            Value::Map(ref _xs) => Box::new(vec![ArbitraryValue(Value::Map(vec![]))].into_iter()),
+            Value::Map(ref _xs) => Box::new(vec![Self(Value::Map(vec![]))].into_iter()),
             Value::Attribute {
                 ref data,
                 ref attributes,
             } => Box::new(
-                vec![ArbitraryValue(Value::Attribute {
+                vec![Self(Value::Attribute {
                     data: data.clone(),
                     attributes: attributes.clone(),
                 })]
                 .into_iter(),
             ),
             Value::Push { ref kind, ref data } => {
-                let mut ys = data
-                    .iter()
-                    .map(|x| ArbitraryValue(x.clone()))
-                    .collect::<Vec<_>>();
-                ys.insert(
-                    0,
-                    ArbitraryValue(Value::SimpleString(kind.to_string().into())),
-                );
+                let mut ys = data.iter().map(|x| Self(x.clone())).collect::<Vec<_>>();
+                ys.insert(0, Self(Value::SimpleString(kind.to_string().into())));
                 Box::new(
                     ys.shrink()
                         .map(|xs| xs.into_iter().map(|x| x.0).collect())
@@ -83,20 +74,20 @@ impl ::quickcheck::Arbitrary for ArbitraryValue {
             Value::Double(i) => Box::new(i.shrink().map(Value::Double).map(ArbitraryValue)),
             Value::Boolean(i) => Box::new(i.shrink().map(Value::Boolean).map(ArbitraryValue)),
             Value::BigNumber(ref i) => {
-                Box::new(vec![ArbitraryValue(Value::BigNumber(i.clone()))].into_iter())
+                Box::new(vec![Self(Value::BigNumber(i.clone()))].into_iter())
             }
             Value::VerbatimString {
                 ref format,
                 ref text,
             } => Box::new(
-                vec![ArbitraryValue(Value::VerbatimString {
+                vec![Self(Value::VerbatimString {
                     format: format.clone(),
                     text: text.clone(),
                 })]
                 .into_iter(),
             ),
             Value::ServerError(ref i) => {
-                Box::new(vec![ArbitraryValue(Value::ServerError(i.clone()))].into_iter())
+                Box::new(vec![Self(Value::ServerError(i.clone()))].into_iter())
             }
             _ => panic!("unknown value {:?}", self.0),
         }
@@ -118,8 +109,8 @@ fn arbitrary_value(g: &mut Gen, recursive_size: usize) -> Value {
                     usize::arbitrary(g) % s
                 };
                 Value::Array(
-                    (0..size)
-                        .map(|_| arbitrary_value(g, recursive_size / size))
+                    std::iter::repeat_with(|| arbitrary_value(g, recursive_size / size))
+                        .take(size)
                         .collect(),
                 )
             }
@@ -129,13 +120,10 @@ fn arbitrary_value(g: &mut Gen, recursive_size: usize) -> Value {
                     usize::arbitrary(g) % s
                 };
 
-                let mut string = String::with_capacity(size);
-                for _ in 0..size {
-                    let c = char::arbitrary(g);
-                    if c.is_ascii_alphabetic() {
-                        string.push(c);
-                    }
-                }
+                let string: String = std::iter::repeat_with(|| char::arbitrary(g))
+                    .take(size)
+                    .filter(|c| c.is_ascii_alphabetic())
+                    .collect();
 
                 if string == "OK" {
                     Value::Okay

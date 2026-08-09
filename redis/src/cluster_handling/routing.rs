@@ -92,7 +92,7 @@ impl From<Option<Route>> for SingleNodeRoutingInfo {
     fn from(value: Option<Route>) -> Self {
         value
             .map(SingleNodeRoutingInfo::SpecificNode)
-            .unwrap_or(SingleNodeRoutingInfo::Random)
+            .unwrap_or(Self::Random)
     }
 }
 
@@ -549,23 +549,21 @@ where
 
 impl ResponsePolicy {
     /// Parse the command for the matching response policy.
-    pub(crate) fn for_command(cmd: &[u8]) -> Option<ResponsePolicy> {
+    pub(crate) fn for_command(cmd: &[u8]) -> Option<Self> {
         match cmd {
-            b"SCRIPT EXISTS" => Some(ResponsePolicy::AggregateLogical(LogicalAggregateOp::And)),
+            b"SCRIPT EXISTS" => Some(Self::AggregateLogical(LogicalAggregateOp::And)),
 
             b"DBSIZE" | b"DEL" | b"EXISTS" | b"SLOWLOG LEN" | b"TOUCH" | b"UNLINK"
-            | b"LATENCY RESET" | b"PUBSUB NUMPAT" => {
-                Some(ResponsePolicy::Aggregate(AggregateOp::Sum))
-            }
+            | b"LATENCY RESET" | b"PUBSUB NUMPAT" => Some(Self::Aggregate(AggregateOp::Sum)),
 
-            b"WAIT" => Some(ResponsePolicy::Aggregate(AggregateOp::Min)),
+            b"WAIT" => Some(Self::Aggregate(AggregateOp::Min)),
 
             b"ACL SETUSER" | b"ACL DELUSER" | b"ACL SAVE" | b"CLIENT SETNAME"
             | b"CLIENT SETINFO" | b"CONFIG SET" | b"CONFIG RESETSTAT" | b"CONFIG REWRITE"
             | b"FLUSHALL" | b"FLUSHDB" | b"FUNCTION DELETE" | b"FUNCTION FLUSH"
             | b"FUNCTION LOAD" | b"FUNCTION RESTORE" | b"MEMORY PURGE" | b"MSET" | b"JSON.MSET"
             | b"PING" | b"SCRIPT FLUSH" | b"SCRIPT LOAD" | b"SLOWLOG RESET" | b"UNWATCH"
-            | b"WATCH" => Some(ResponsePolicy::AllSucceeded),
+            | b"WATCH" => Some(Self::AllSucceeded),
 
             b"KEYS"
             | b"FT._ALIASLIST"
@@ -574,25 +572,25 @@ impl ResponsePolicy {
             | b"JSON.MGET"
             | b"SLOWLOG GET"
             | b"PUBSUB CHANNELS"
-            | b"PUBSUB SHARDCHANNELS" => Some(ResponsePolicy::CombineArrays),
+            | b"PUBSUB SHARDCHANNELS" => Some(Self::CombineArrays),
 
-            b"PUBSUB NUMSUB" | b"PUBSUB SHARDNUMSUB" => Some(ResponsePolicy::CombineMaps),
+            b"PUBSUB NUMSUB" | b"PUBSUB SHARDNUMSUB" => Some(Self::CombineMaps),
 
-            b"FUNCTION KILL" | b"SCRIPT KILL" => Some(ResponsePolicy::OneSucceeded),
+            b"FUNCTION KILL" | b"SCRIPT KILL" => Some(Self::OneSucceeded),
 
             // This isn't based on response_tips, but on the discussion here - https://github.com/redis/redis/issues/12410
-            b"RANDOMKEY" => Some(ResponsePolicy::FirstSucceededNonEmptyOrAllEmpty),
+            b"RANDOMKEY" => Some(Self::FirstSucceededNonEmptyOrAllEmpty),
 
-            b"LATENCY GRAPH" | b"LATENCY HISTOGRAM" | b"LATENCY HISTORY" | b"LATENCY DOCTOR"
-            | b"LATENCY LATEST" => Some(ResponsePolicy::Special),
-
-            b"FUNCTION STATS" => Some(ResponsePolicy::Special),
-
-            b"MEMORY MALLOC-STATS" | b"MEMORY DOCTOR" | b"MEMORY STATS" => {
-                Some(ResponsePolicy::Special)
-            }
-
-            b"INFO" => Some(ResponsePolicy::Special),
+            b"LATENCY GRAPH"
+            | b"LATENCY HISTOGRAM"
+            | b"LATENCY HISTORY"
+            | b"LATENCY DOCTOR"
+            | b"LATENCY LATEST"
+            | b"FUNCTION STATS"
+            | b"MEMORY MALLOC-STATS"
+            | b"MEMORY DOCTOR"
+            | b"MEMORY STATS"
+            | b"INFO" => Some(Self::Special),
 
             _ => None,
         }
@@ -772,25 +770,25 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
 
 impl RoutingInfo {
     /// Returns the routing info for `r`.
-    pub(crate) fn for_routable<R>(r: &R) -> Option<RoutingInfo>
+    pub(crate) fn for_routable<R>(r: &R) -> Option<Self>
     where
         R: Routable + ?Sized,
     {
         let cmd = &r.command()?[..];
         match base_routing(cmd) {
-            RouteBy::AllNodes => Some(RoutingInfo::MultiNode((
+            RouteBy::AllNodes => Some(Self::MultiNode((
                 MultipleNodeRoutingInfo::AllNodes,
                 ResponsePolicy::for_command(cmd),
             ))),
 
-            RouteBy::AllPrimaries => Some(RoutingInfo::MultiNode((
+            RouteBy::AllPrimaries => Some(Self::MultiNode((
                 MultipleNodeRoutingInfo::AllMasters,
                 ResponsePolicy::for_command(cmd),
             ))),
 
             RouteBy::MultiShard(arg_pattern) => multi_shard(r, cmd, 1, arg_pattern),
 
-            RouteBy::Random => Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)),
+            RouteBy::Random => Some(Self::SingleNode(SingleNodeRoutingInfo::Random)),
 
             RouteBy::ThirdArgAfterKeyCount => {
                 let key_count = r
@@ -798,13 +796,13 @@ impl RoutingInfo {
                     .and_then(|x| std::str::from_utf8(x).ok())
                     .and_then(|x| x.parse::<u64>().ok())?;
                 if key_count == 0 {
-                    Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                    Some(Self::SingleNode(SingleNodeRoutingInfo::Random))
                 } else {
-                    r.arg_idx(3).map(|key| RoutingInfo::for_key(cmd, key))
+                    r.arg_idx(3).map(|key| Self::for_key(cmd, key))
                 }
             }
 
-            RouteBy::SecondArg => r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key)),
+            RouteBy::SecondArg => r.arg_idx(2).map(|key| Self::for_key(cmd, key)),
 
             RouteBy::SecondArgAfterKeyCount => {
                 let key_count = r
@@ -812,41 +810,41 @@ impl RoutingInfo {
                     .and_then(|x| std::str::from_utf8(x).ok())
                     .and_then(|x| x.parse::<u64>().ok())?;
                 if key_count == 0 {
-                    Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                    Some(Self::SingleNode(SingleNodeRoutingInfo::Random))
                 } else {
-                    r.arg_idx(2).map(|key| RoutingInfo::for_key(cmd, key))
+                    r.arg_idx(2).map(|key| Self::for_key(cmd, key))
                 }
             }
 
             RouteBy::StreamsIndex => {
                 let streams_position = r.position(b"STREAMS")?;
                 r.arg_idx(streams_position + 1)
-                    .map(|key| RoutingInfo::for_key(cmd, key))
+                    .map(|key| Self::for_key(cmd, key))
             }
 
-            RouteBy::SecondArgSlot => {
-                r.arg_idx(2)
-                    .and_then(|arg| std::str::from_utf8(arg).ok())
-                    .and_then(|slot| slot.parse::<u16>().ok())
-                    .and_then(Slot::new)
-                    .map(|slot| {
-                        RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(
-                            Route::with_slot(slot, SlotAddr::Master),
-                        ))
-                    })
-            }
+            RouteBy::SecondArgSlot => r
+                .arg_idx(2)
+                .and_then(|arg| std::str::from_utf8(arg).ok())
+                .and_then(|slot| slot.parse::<u16>().ok())
+                .and_then(Slot::new)
+                .map(|slot| {
+                    Self::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route::with_slot(
+                        slot,
+                        SlotAddr::Master,
+                    )))
+                }),
 
             RouteBy::FirstKey => match r.arg_idx(1) {
-                Some(key) => Some(RoutingInfo::for_key(cmd, key)),
-                None => Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)),
+                Some(key) => Some(Self::for_key(cmd, key)),
+                None => Some(Self::SingleNode(SingleNodeRoutingInfo::Random)),
             },
 
             RouteBy::Undefined => None,
         }
     }
 
-    fn for_key(cmd: &[u8], key: &[u8]) -> RoutingInfo {
-        RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(get_route(
+    fn for_key(cmd: &[u8], key: &[u8]) -> Self {
+        Self::SingleNode(SingleNodeRoutingInfo::SpecificNode(get_route(
             is_readonly_cmd(cmd),
             key,
         )))
@@ -918,8 +916,8 @@ impl Routable for CmdRef<'_> {
 impl Routable for Value {
     fn arg_idx(&self, idx: usize) -> Option<&[u8]> {
         match self {
-            Value::Array(args) => match args.get(idx) {
-                Some(Value::BulkString(data)) => Some(&data[..]),
+            Self::Array(args) => match args.get(idx) {
+                Some(Self::BulkString(data)) => Some(&data[..]),
                 _ => None,
             },
             _ => None,
@@ -928,8 +926,8 @@ impl Routable for Value {
 
     fn position(&self, candidate: &[u8]) -> Option<usize> {
         match self {
-            Value::Array(args) => args.iter().position(|a| match a {
-                Value::BulkString(d) => d.eq_ignore_ascii_case(candidate),
+            Self::Array(args) => args.iter().position(|a| match a {
+                Self::BulkString(d) => d.eq_ignore_ascii_case(candidate),
                 _ => false,
             }),
             _ => None,
@@ -979,12 +977,12 @@ impl Route {
     }
 
     /// Returns the slot number of the route.
-    pub(crate) fn slot(&self) -> u16 {
+    pub(crate) fn slot(self) -> u16 {
         self.0
     }
 
     /// Returns the slot address of the route.
-    pub(crate) fn slot_addr(&self) -> SlotAddr {
+    pub(crate) fn slot_addr(self) -> SlotAddr {
         self.1
     }
 

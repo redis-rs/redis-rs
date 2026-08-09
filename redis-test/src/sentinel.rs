@@ -91,7 +91,7 @@ impl RedisSentinelCluster {
                     }
                 }
                 Err(e) => {
-                    println!("Failed to execute redis-cli SENTINEL GET-MASTER-ADDR-BY-NAME: {e}")
+                    println!("Failed to execute redis-cli SENTINEL GET-MASTER-ADDR-BY-NAME: {e}");
                 }
             }
 
@@ -223,7 +223,7 @@ pub fn wait_for_master_server(
                         println!("found master");
                         return Ok(());
                     } else {
-                        println!("failed check for master role - current role: {r:?}")
+                        println!("failed check for master role - current role: {r:?}");
                     }
                 }
                 Err(err) => {
@@ -236,7 +236,7 @@ pub fn wait_for_master_server(
                 }
             },
             Err(err) => {
-                println!("failed to get master client: {err:?}",)
+                println!("failed to get master client: {err:?}",);
             }
         }
 
@@ -263,7 +263,7 @@ pub fn wait_for_replica(
                         println!("found replica");
                         return Ok(());
                     } else {
-                        println!("failed check for replica role - current role: {r:?}")
+                        println!("failed check for replica role - current role: {r:?}");
                     }
                 }
                 Err(err) => {
@@ -276,7 +276,7 @@ pub fn wait_for_replica(
                 }
             },
             Err(err) => {
-                println!("failed to get replica client: {err:?}")
+                println!("failed to get replica client: {err:?}");
             }
         }
 
@@ -314,8 +314,8 @@ fn wait_for_replicas_to_sync(cluster: &RedisSentinelCluster, masters: u16) {
 }
 
 impl RedisSentinelCluster {
-    pub fn new(masters: u16, replicas_per_master: u16, sentinels: u16) -> RedisSentinelCluster {
-        RedisSentinelCluster::with_modules(masters, replicas_per_master, sentinels, &[])
+    pub fn new(masters: u16, replicas_per_master: u16, sentinels: u16) -> Self {
+        Self::with_modules(masters, replicas_per_master, sentinels, &[])
     }
 
     pub fn with_modules(
@@ -323,7 +323,7 @@ impl RedisSentinelCluster {
         replicas_per_master: u16,
         sentinels: u16,
         modules: &[Module],
-    ) -> RedisSentinelCluster {
+    ) -> Self {
         let mut servers = vec![];
         let mut folders = vec![];
         let mut master_ports = vec![];
@@ -335,20 +335,19 @@ impl RedisSentinelCluster {
         }
         let mut available_ports: Vec<_> = available_ports.into_iter().collect();
 
-        let tlspaths = if matches!(
+        let tlspaths = matches!(
             RedisServer::get_addr(available_ports[0]),
             ConnectionAddr::TcpTls { .. }
-        ) {
+        )
+        .then(|| {
             let tempdir = tempfile::Builder::new()
                 .prefix("redistls")
                 .tempdir()
                 .expect("failed to create tempdir");
             let tlspaths = build_keys_and_certs_for_tls(&tempdir);
             folders.push(tempdir);
-            Some(tlspaths)
-        } else {
-            None
-        };
+            tlspaths
+        });
 
         for _ in 0..masters {
             let port = available_ports.pop().unwrap();
@@ -395,7 +394,7 @@ impl RedisSentinelCluster {
             folders.push(tempdir);
         }
 
-        let cluster = RedisSentinelCluster {
+        let cluster = Self {
             servers,
             sentinel_servers,
             folders,
@@ -423,6 +422,6 @@ impl RedisSentinelCluster {
 
 impl Drop for RedisSentinelCluster {
     fn drop(&mut self) {
-        self.stop()
+        self.stop();
     }
 }

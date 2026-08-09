@@ -552,7 +552,7 @@ impl FromRedisValue for HotkeysResponse {
             }
         };
 
-        let mut response = HotkeysResponse::default();
+        let mut response = Self::default();
 
         // Parse required fields
         if let Some(v) = fields.remove("tracking-active") {

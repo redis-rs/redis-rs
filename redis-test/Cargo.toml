@@ -25,3 +25,6 @@ aio = ["futures", "redis/aio", "redis/tokio-comp"]
 
 [dev-dependencies]
 tokio = { workspace = true }
+
+[lints]
+workspace = true

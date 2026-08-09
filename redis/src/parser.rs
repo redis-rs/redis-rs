@@ -42,15 +42,15 @@ enum ValueRange {
     Nil,
     Int(i64),
     BulkString(Range<usize>),
-    Array(Vec<ValueRange>),
+    Array(Vec<Self>),
     SimpleString(StrRange),
     Okay,
-    Map(Vec<(ValueRange, ValueRange)>),
+    Map(Vec<(Self, Self)>),
     Attribute {
-        data: Box<ValueRange>,
-        attributes: Vec<(ValueRange, ValueRange)>,
+        data: Box<Self>,
+        attributes: Vec<(Self, Self)>,
     },
-    Set(Vec<ValueRange>),
+    Set(Vec<Self>),
     Double(f64),
     Boolean(bool),
     VerbatimString {
@@ -63,7 +63,7 @@ enum ValueRange {
     BigNumber(Range<usize>),
     /// The parsed elements of a push message. The first element, if any, is the
     /// push kind; the rest is the data.
-    Push(Vec<ValueRange>),
+    Push(Vec<Self>),
     ServerError(ServerErrorRange),
 }
 
@@ -121,7 +121,7 @@ mod str_range {
         /// `s` must be a sub-slice of that buffer.
         #[inline]
         pub(super) fn of(s: &str, base: usize) -> Self {
-            StrRange(range_of(s.as_bytes(), base))
+            Self(range_of(s.as_bytes(), base))
         }
 
         #[inline]
@@ -398,7 +398,7 @@ where
                                         let mut x = Vec::with_capacity(kv_length as usize);
                                         for _ in 0..kv_length {
                                             if let (Some(k), Some(v)) = (it.next(), it.next()) {
-                                                x.push((k, v))
+                                                x.push((k, v));
                                             }
                                         }
                                         ValueRange::Map(x)
@@ -423,7 +423,7 @@ where
                                         let mut attributes = Vec::with_capacity(kv_length as usize);
                                         for _ in 0..kv_length {
                                             if let (Some(k), Some(v)) = (it.next(), it.next()) {
-                                                attributes.push((k, v))
+                                                attributes.push((k, v));
                                             }
                                         }
                                         ValueRange::Attribute {
@@ -728,12 +728,12 @@ mod aio_support {
         type Item = Value;
         type Error = RedisError;
 
-        fn decode(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-            parse_buffer(bytes, &mut self.state, false)
+        fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+            parse_buffer(src, &mut self.state, false)
         }
 
-        fn decode_eof(&mut self, bytes: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-            parse_buffer(bytes, &mut self.state, true)
+        fn decode_eof(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+            parse_buffer(buf, &mut self.state, true)
         }
     }
 
@@ -792,7 +792,7 @@ pub struct Parser {
 
 impl Default for Parser {
     fn default() -> Self {
-        Parser::new()
+        Self::new()
     }
 }
 
@@ -805,8 +805,8 @@ impl Parser {
     /// than one value can be behind the reader in which case the parser can
     /// be invoked multiple times.  In other words: the stream does not have
     /// to be terminated.
-    pub fn new() -> Parser {
-        Parser {
+    pub fn new() -> Self {
+        Self {
             buffer: BytesMut::new(),
             chunk: vec![0u8; READ_CHUNK_SIZE].into_boxed_slice(),
         }
@@ -994,7 +994,7 @@ mod tests {
                 code: Str::from_static("SYNTAX"),
                 detail: Some(Str::from_static("invalid syntax"))
             }))
-        )
+        );
     }
 
     #[test]
@@ -1101,10 +1101,10 @@ mod tests {
         // for a second reply checks the state is reset between values.
         struct OneByteAtATime<'a>(&'a [u8]);
         impl Read for OneByteAtATime<'_> {
-            fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
                 match self.0.split_first() {
-                    Some((byte, rest)) if !out.is_empty() => {
-                        out[0] = *byte;
+                    Some((byte, rest)) if !buf.is_empty() => {
+                        buf[0] = *byte;
                         self.0 = rest;
                         Ok(1)
                     }
@@ -1280,7 +1280,7 @@ mod tests {
                     data.iter().for_each(check);
                 }
                 Value::ServerError(err) => {
-                    assert!(str::from_utf8(err.code().as_bytes()).is_ok());
+                    str::from_utf8(err.code().as_bytes()).unwrap();
                 }
                 Value::Array(items) | Value::Set(items) => items.iter().for_each(check),
                 _ => {}
@@ -1420,6 +1420,7 @@ mod tests {
     fn decode_resp3_set() {
         let val = parse_redis_value(b"~5\r\n+orange\r\n+apple\r\n#t\r\n:100\r\n:999\r\n").unwrap();
         let v = val.as_sequence().unwrap();
+        assert!(v.len() >= 5);
         assert_eq!(Value::SimpleString("orange".into()), v[0]);
         assert_eq!(Value::SimpleString("apple".into()), v[1]);
         assert_eq!(Value::Boolean(true), v[2]);

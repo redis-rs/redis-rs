@@ -31,7 +31,7 @@ fn main() {
 
     demo_group_reads(&client);
 
-    clean_up(&client)
+    clean_up(&client);
 }
 
 fn demo_group_reads(client: &redis::Client) {
@@ -49,7 +49,7 @@ fn demo_group_reads(client: &redis::Client) {
         let slowness = 1;
         for _ in 0..repeat {
             add_records(&cc).expect("add");
-            thread::sleep(Duration::from_millis(random_wait_millis(slowness)))
+            thread::sleep(Duration::from_millis(random_wait_millis(slowness)));
         }
     }));
 
@@ -79,7 +79,7 @@ fn demo_group_reads(client: &redis::Client) {
             for key in STREAMS {
                 let created: Result<(), _> = con.xgroup_create_mkstream(*key, GROUP_NAME, "$");
                 if let Err(e) = created {
-                    println!("Group already exists: {e:?}")
+                    println!("Group already exists: {e:?}");
                 }
             }
 
@@ -105,14 +105,15 @@ fn demo_group_reads(client: &redis::Client) {
                     // acknowledge each stream and message ID once all messages are
                     // correctly processed
                     let id_strs: Vec<&String> = ids.iter().map(|StreamId { id, .. }| id).collect();
-                    con.xack(key, GROUP_NAME, &id_strs).expect("ack")
+                    con.xack::<_, _, _, ()>(key, GROUP_NAME, &id_strs)
+                        .expect("ack");
                 }
             }
-        }))
+        }));
     }
 
     for h in handles {
-        h.join().expect("Join")
+        h.join().expect("Join");
     }
 }
 
@@ -223,7 +224,7 @@ fn read_records(client: &redis::Client) -> RedisResult<()> {
             for (n, s) in map {
                 if let Value::BulkString(bytes) = s {
                     let value = String::from_utf8(bytes.into()).expect("utf8");
-                    println!("\t\t{n}: {value}")
+                    println!("\t\t{n}: {value}");
                 } else {
                     panic!("Weird data")
                 }

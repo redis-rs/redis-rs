@@ -25,10 +25,10 @@ impl ToRedisArgs for Unit {
         W: ?Sized + RedisWrite,
     {
         let unit = match *self {
-            Unit::Meters => "m",
-            Unit::Kilometers => "km",
-            Unit::Miles => "mi",
-            Unit::Feet => "ft",
+            Self::Meters => "m",
+            Self::Kilometers => "km",
+            Self::Miles => "mi",
+            Self::Feet => "ft",
         };
         out.write_arg(unit.as_bytes());
     }
@@ -58,8 +58,8 @@ pub struct Coord<T> {
 
 impl<T> Coord<T> {
     /// Create a new Coord with the (longitude, latitude)
-    pub fn lon_lat(longitude: T, latitude: T) -> Coord<T> {
-        Coord {
+    pub fn lon_lat(longitude: T, latitude: T) -> Self {
+        Self {
             longitude,
             latitude,
         }
@@ -74,7 +74,7 @@ impl<T: FromRedisValue> FromRedisValue for Coord<T> {
             (Some(longitude), Some(latitude), None) => (longitude, latitude),
             _ => invalid_type_error!(v, "Expect a pair of numbers"),
         };
-        Ok(Coord {
+        Ok(Self {
             longitude,
             latitude,
         })
@@ -227,7 +227,7 @@ impl ToRedisArgs for RadiusOptions {
             RadiusOrder::Asc => out.write_arg(b"ASC"),
             RadiusOrder::Desc => out.write_arg(b"DESC"),
             _ => (),
-        };
+        }
 
         if let Some(ref store) = self.store {
             out.write_arg(b"STORE");
@@ -259,10 +259,9 @@ impl ToRedisArgs for RadiusOptions {
             n += 2;
         }
         match self.order {
-            RadiusOrder::Asc => n += 1,
-            RadiusOrder::Desc => n += 1,
+            RadiusOrder::Asc | RadiusOrder::Desc => n += 1,
             _ => {}
-        };
+        }
         n += 1 + self.store.as_ref().map(|v| v.len()).unwrap_or(0);
         n += 1 + self.store_dist.as_ref().map(|v| v.len()).unwrap_or(0);
         n
@@ -290,14 +289,14 @@ impl FromRedisValue for RadiusSearchResult {
         match v {
             Value::BulkString(b) => {
                 let s = String::from_utf8(b.into())?;
-                Ok(RadiusSearchResult {
+                Ok(Self {
                     name: s,
                     coord: None,
                     dist: None,
                     hash: None,
                 })
             }
-            Value::Array(items) => RadiusSearchResult::parse_multi_values(items),
+            Value::Array(items) => Self::parse_multi_values(items),
             _ => invalid_type_error!(v, "Response type not RadiusSearchResult compatible."),
         }
     }
@@ -349,10 +348,10 @@ impl RadiusSearchResult {
 
         // We should have parsed all that's there. So we flag an error, if there is more.
         if opt_value.is_some() {
-            invalid_type_error!("Response type not RadiusSearchResult compatible.")
-        };
+            invalid_type_error!("Response type not RadiusSearchResult compatible.");
+        }
 
-        Ok(RadiusSearchResult {
+        Ok(Self {
             name,
             coord,
             dist,

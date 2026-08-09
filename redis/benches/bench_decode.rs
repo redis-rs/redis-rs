@@ -176,7 +176,7 @@ fn bench_parse(c: &mut Criterion) {
             b.iter(|| {
                 let value = parse_redis_value(black_box(bytes)).unwrap();
                 black_box(value);
-            })
+            });
         });
     }
     group.finish();
@@ -215,7 +215,7 @@ fn bench_parse_chunked(c: &mut Criterion) {
                     })
                     .unwrap();
                 black_box(value);
-            })
+            });
         });
     }
     group.finish();

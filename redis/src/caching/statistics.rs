@@ -37,7 +37,7 @@ impl Statistics {
 
 impl From<Arc<Statistics>> for CacheStatistics {
     fn from(value: Arc<Statistics>) -> Self {
-        CacheStatistics {
+        Self {
             hit: value.hit.load(Ordering::Relaxed),
             miss: value.miss.load(Ordering::Relaxed),
             invalidate: value.invalidate.load(Ordering::Relaxed),

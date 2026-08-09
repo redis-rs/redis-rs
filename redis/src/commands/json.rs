@@ -337,10 +337,10 @@ impl ToRedisArgs for FphaType {
         W: ?Sized + RedisWrite,
     {
         match self {
-            FphaType::Bf16 => out.write_arg(b"BF16"),
-            FphaType::Fp16 => out.write_arg(b"FP16"),
-            FphaType::Fp32 => out.write_arg(b"FP32"),
-            FphaType::Fp64 => out.write_arg(b"FP64"),
+            Self::Bf16 => out.write_arg(b"BF16"),
+            Self::Fp16 => out.write_arg(b"FP16"),
+            Self::Fp32 => out.write_arg(b"FP32"),
+            Self::Fp64 => out.write_arg(b"FP64"),
         }
     }
 }

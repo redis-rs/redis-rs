@@ -48,9 +48,9 @@ mod hotkeys {
     impl Metric {
         pub(super) fn options(self) -> HotkeysOptions {
             match self {
-                Metric::Cpu => HotkeysOptions::new_with_cpu(),
-                Metric::Net => HotkeysOptions::new_with_net(),
-                Metric::All => HotkeysOptions::new_with_cpu().and_net(),
+                Self::Cpu => HotkeysOptions::new_with_cpu(),
+                Self::Net => HotkeysOptions::new_with_net(),
+                Self::All => HotkeysOptions::new_with_cpu().and_net(),
             }
         }
     }
@@ -58,9 +58,9 @@ mod hotkeys {
     impl std::fmt::Display for Metric {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.write_str(match self {
-                Metric::Cpu => "CPU",
-                Metric::Net => "NET",
-                Metric::All => "CPU+NET",
+                Self::Cpu => "CPU",
+                Self::Net => "NET",
+                Self::All => "CPU+NET",
             })
         }
     }
@@ -79,12 +79,12 @@ mod hotkeys {
         //  STOP returns false
         assert!(!con.hotkeys_stop().unwrap());
         //  RESET succeeds as a no-op
-        assert!(con.hotkeys_reset().is_ok());
+        con.hotkeys_reset().unwrap();
         //  GET returns None
         assert!(con.hotkeys_get().unwrap().is_none());
 
         // Start a tracking session by CPU.
-        assert!(con.hotkeys_start(HotkeysOptions::new_with_cpu()).is_ok());
+        con.hotkeys_start(HotkeysOptions::new_with_cpu()).unwrap();
         // When there is a running tracking session START returns an error.
         assert!(con.hotkeys_start(HotkeysOptions::new_with_net()).is_err());
 
@@ -119,7 +119,7 @@ mod hotkeys {
         assert!(final_snapshot.by_net_bytes.is_none());
 
         // Verify that starting a new session will override any existing tracking state.
-        assert!(con.hotkeys_start(HotkeysOptions::new_with_cpu()).is_ok());
+        con.hotkeys_start(HotkeysOptions::new_with_cpu()).unwrap();
         let new_session_snapshot = con.hotkeys_get().unwrap();
         assert!(new_session_snapshot.is_some());
         let new_session_snapshot = new_session_snapshot.unwrap();
@@ -134,7 +134,7 @@ mod hotkeys {
         assert!(con.hotkeys_stop().unwrap());
 
         // Clear the state and verify that GET returns None.
-        assert!(con.hotkeys_reset().is_ok());
+        con.hotkeys_reset().unwrap();
         assert!(con.hotkeys_get().unwrap().is_none());
     }
 
@@ -152,7 +152,7 @@ mod hotkeys {
 
         println!("Starting test_hotkeys_with_metric - Metric: {metric}, Protocol: {protocol:?}");
 
-        assert!(con.hotkeys_start(metric.options()).is_ok());
+        con.hotkeys_start(metric.options()).unwrap();
         setup_test_keys_and_make_hot_keys(&mut con);
 
         let result = con.hotkeys_get().unwrap().unwrap();
@@ -179,15 +179,13 @@ mod hotkeys {
 
         println!("Starting test_hotkeys_options_with_duration_and_count - Protocol: {protocol:?}");
 
-        assert!(
-            con.hotkeys_start(
-                HotkeysOptions::new_with_cpu()
-                    .with_count(2)
-                    .unwrap()
-                    .with_duration_secs(2)
-            )
-            .is_ok()
-        );
+        con.hotkeys_start(
+            HotkeysOptions::new_with_cpu()
+                .with_count(2)
+                .unwrap()
+                .with_duration_secs(2),
+        )
+        .unwrap();
         setup_test_keys_and_make_hot_keys(&mut con);
         let result = con.hotkeys_get().unwrap().unwrap();
         assert!(result.tracking_active);
@@ -213,10 +211,8 @@ mod hotkeys {
         println!("Starting test_hotkeys_options_with_sample_ratio - Protocol: {protocol:?}");
 
         const SAMPLE_RATIO: u64 = 100;
-        assert!(
-            con.hotkeys_start(HotkeysOptions::new_with_cpu().with_sample_ratio(SAMPLE_RATIO))
-                .is_ok()
-        );
+        con.hotkeys_start(HotkeysOptions::new_with_cpu().with_sample_ratio(SAMPLE_RATIO))
+            .unwrap();
 
         let result = con.hotkeys_get().unwrap().unwrap();
         assert!(result.tracking_active);
@@ -417,7 +413,7 @@ mod hotkeys_cluster {
         };
 
         // Build a ClusterClient with the requested protocol.
-        let client = ClusterClientBuilder::new(cluster_ctx.nodes.clone())
+        let client = ClusterClientBuilder::new(cluster_ctx.nodes)
             .use_protocol(protocol)
             .build()
             .unwrap();
@@ -448,9 +444,7 @@ mod hotkeys_cluster {
         // GET via route_command and parse manually.
         let mut get_cmd = cmd("HOTKEYS");
         get_cmd.arg("GET");
-        let get_value = cluster_con
-            .route_command(&get_cmd, routing.clone())
-            .unwrap();
+        let get_value = cluster_con.route_command(&get_cmd, routing).unwrap();
         let snapshot: Option<HotkeysResponse> = from_redis_value(get_value).unwrap();
         let snapshot = snapshot.expect("session is active");
 
@@ -653,16 +647,14 @@ mod async_hotkeys {
                 //  STOP returns false
                 assert!(!con.hotkeys_stop().await.unwrap());
                 //  RESET succeeds as a no-op
-                assert!(con.hotkeys_reset().await.is_ok());
+                con.hotkeys_reset().await.unwrap();
                 //  GET returns None
                 assert!(con.hotkeys_get().await.unwrap().is_none());
 
                 // Start a tracking session by CPU.
-                assert!(
-                    con.hotkeys_start(HotkeysOptions::new_with_cpu())
-                        .await
-                        .is_ok()
-                );
+                con.hotkeys_start(HotkeysOptions::new_with_cpu())
+                    .await
+                    .unwrap();
                 // When there is a running tracking session START returns an error.
                 assert!(
                     con.hotkeys_start(HotkeysOptions::new_with_net())
@@ -692,11 +684,9 @@ mod async_hotkeys {
                 assert!(final_snapshot.by_net_bytes.is_none());
 
                 // Starting a new session overrides any existing tracking state.
-                assert!(
-                    con.hotkeys_start(HotkeysOptions::new_with_cpu())
-                        .await
-                        .is_ok()
-                );
+                con.hotkeys_start(HotkeysOptions::new_with_cpu())
+                    .await
+                    .unwrap();
                 let new_snapshot = con.hotkeys_get().await.unwrap().unwrap();
                 assert!(new_snapshot.tracking_active);
                 assert!(new_snapshot.by_cpu_time_us.is_some());
@@ -704,7 +694,7 @@ mod async_hotkeys {
                 assert!(new_snapshot.by_net_bytes.is_none());
 
                 assert!(con.hotkeys_stop().await.unwrap());
-                assert!(con.hotkeys_reset().await.is_ok());
+                con.hotkeys_reset().await.unwrap();
                 assert!(con.hotkeys_get().await.unwrap().is_none());
             },
             runtime,
@@ -730,7 +720,7 @@ mod async_hotkeys {
             async move {
                 let mut con = setup_async_connection_with_protocol(&ctx, protocol).await;
 
-                assert!(con.hotkeys_start(metric.options()).await.is_ok());
+                con.hotkeys_start(metric.options()).await.unwrap();
                 setup_test_keys_and_make_hot_keys(&mut con).await;
 
                 let result = con.hotkeys_get().await.unwrap().unwrap();
@@ -767,16 +757,14 @@ mod async_hotkeys {
             async move {
                 let mut con = setup_async_connection_with_protocol(&ctx, protocol).await;
 
-                assert!(
-                    con.hotkeys_start(
-                        HotkeysOptions::new_with_cpu()
-                            .with_count(2)
-                            .unwrap()
-                            .with_duration_secs(2),
-                    )
-                    .await
-                    .is_ok()
-                );
+                con.hotkeys_start(
+                    HotkeysOptions::new_with_cpu()
+                        .with_count(2)
+                        .unwrap()
+                        .with_duration_secs(2),
+                )
+                .await
+                .unwrap();
                 setup_test_keys_and_make_hot_keys(&mut con).await;
                 let result = con.hotkeys_get().await.unwrap().unwrap();
                 assert!(result.tracking_active);
@@ -811,13 +799,9 @@ mod async_hotkeys {
                 let mut con = setup_async_connection_with_protocol(&ctx, protocol).await;
 
                 const SAMPLE_RATIO: u64 = 100;
-                assert!(
-                    con.hotkeys_start(
-                        HotkeysOptions::new_with_cpu().with_sample_ratio(SAMPLE_RATIO)
-                    )
+                con.hotkeys_start(HotkeysOptions::new_with_cpu().with_sample_ratio(SAMPLE_RATIO))
                     .await
-                    .is_ok()
-                );
+                    .unwrap();
 
                 let result = con.hotkeys_get().await.unwrap().unwrap();
                 assert!(result.tracking_active);

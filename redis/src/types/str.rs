@@ -45,12 +45,12 @@ impl Str {
     /// Wraps a `Bytes` buffer as a `Str`, validating that it is UTF-8.
     pub fn from_utf8(bytes: Bytes) -> Result<Self, std::str::Utf8Error> {
         from_utf8(&bytes)?;
-        Ok(Str(bytes))
+        Ok(Self(bytes))
     }
 
     /// Creates a `Str` from a static string slice without copying.
     pub const fn from_static(s: &'static str) -> Self {
-        Str(Bytes::from_static(s.as_bytes()))
+        Self(Bytes::from_static(s.as_bytes()))
     }
 
     /// Wraps a `Bytes` buffer as a `Str` without checking that it is UTF-8.
@@ -58,7 +58,7 @@ impl Str {
     /// # Safety
     /// The caller must ensure that `bytes` contains valid UTF-8.
     pub(crate) unsafe fn from_utf8_unchecked(bytes: Bytes) -> Self {
-        Str(bytes)
+        Self(bytes)
     }
 
     /// Returns the string contents as a `&str`.
@@ -124,19 +124,19 @@ impl fmt::Debug for Str {
 
 impl From<&str> for Str {
     fn from(s: &str) -> Self {
-        Str(Bytes::copy_from_slice(s.as_bytes()))
+        Self(Bytes::copy_from_slice(s.as_bytes()))
     }
 }
 
 impl From<String> for Str {
     fn from(s: String) -> Self {
-        Str(Bytes::from(s.into_bytes()))
+        Self(Bytes::from(s.into_bytes()))
     }
 }
 
 impl From<&String> for Str {
     fn from(s: &String) -> Self {
-        Str::from(s.as_str())
+        Self::from(s.as_str())
     }
 }
 
@@ -145,8 +145,8 @@ impl From<Cow<'_, str>> for Str {
         match s {
             // The owned half moves its allocation into the `Bytes`; only the
             // borrowed half has to copy.
-            Cow::Owned(s) => Str::from(s),
-            Cow::Borrowed(s) => Str::from(s),
+            Cow::Owned(s) => Self::from(s),
+            Cow::Borrowed(s) => Self::from(s),
         }
     }
 }
@@ -154,7 +154,7 @@ impl From<Cow<'_, str>> for Str {
 impl From<char> for Str {
     fn from(c: char) -> Self {
         let mut buf = [0u8; 4];
-        Str(Bytes::copy_from_slice(c.encode_utf8(&mut buf).as_bytes()))
+        Self(Bytes::copy_from_slice(c.encode_utf8(&mut buf).as_bytes()))
     }
 }
 
@@ -163,14 +163,14 @@ impl FromStr for Str {
     type Err = Infallible;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Str::from(s))
+        Ok(Self::from(s))
     }
 }
 
 impl From<Str> for String {
     fn from(s: Str) -> Self {
         // SAFETY: the `Bytes` are guaranteed to be valid UTF-8 by construction.
-        unsafe { String::from_utf8_unchecked(s.0.into()) }
+        unsafe { Self::from_utf8_unchecked(s.0.into()) }
     }
 }
 
@@ -367,7 +367,7 @@ mod tests {
         );
         assert_eq!(Str::from_redis_value(Value::Okay).unwrap(), Str::from("OK"));
         // Non-string types are rejected.
-        assert!(Str::from_redis_value(Value::Nil).is_err());
+        Str::from_redis_value(Value::Nil).unwrap_err();
     }
 
     #[test]
@@ -392,7 +392,7 @@ mod tests {
         let err = Str::from_utf8(Bytes::from_static(&[0xE2, 0x82])).unwrap_err();
         assert_eq!(err.valid_up_to(), 0);
         // An over-long / invalid lead byte is rejected.
-        assert!(Str::from_utf8(Bytes::from_static(&[0xC0, 0x80])).is_err());
+        Str::from_utf8(Bytes::from_static(&[0xC0, 0x80])).unwrap_err();
     }
 
     #[test]
@@ -406,7 +406,7 @@ mod tests {
         assert_eq!(s.as_str(), "verbatim");
         assert_eq!(s.as_bytes(), b"verbatim");
         assert_eq!(s.as_bytes().as_ptr(), ptr, "from_utf8_unchecked copied");
-        assert_eq!(s.clone().into_bytes(), Bytes::from_static(b"verbatim"));
+        assert_eq!(s.into_bytes(), Bytes::from_static(b"verbatim"));
     }
 
     #[test]
@@ -595,7 +595,7 @@ mod tests {
 
         // A slice that splits a multi-byte sequence is rejected, not accepted
         // and later transmuted by `as_str`.
-        assert!(Str::from_utf8(backing.slice(2..4)).is_err());
+        Str::from_utf8(backing.slice(2..4)).unwrap_err();
     }
 
     #[test]
@@ -637,7 +637,7 @@ mod tests {
         assert_eq!("".parse::<Str>().unwrap(), Str::default());
         // The error type is uninhabited, so parsing can never fail.
         let never: Result<Str, std::convert::Infallible> = "x".parse();
-        assert!(never.is_ok());
+        never.unwrap();
     }
 
     #[test]

@@ -17,3 +17,33 @@ tokio = { version = "1", features = [
   "test-util",
   "time",
 ] }
+
+[workspace.lints.clippy]
+all = "warn"
+perf = "warn"
+style = "warn"
+dbg_macro = "warn"
+rc_buffer = "warn"
+read_zero_byte_vec = "warn"
+elidable_lifetime_names = "warn"
+empty_drop = "warn"
+empty_enum_variants_with_brackets = "warn"
+empty_structs_with_brackets = "warn"
+match_same_arms = "warn"
+non_zero_suggestions = "warn"
+redundant_clone = "warn"
+redundant_type_annotations = "warn"
+todo = "warn"
+unimplemented = "warn"
+unused_async = "warn"
+uninlined_format_args = "warn"
+assertions_on_result_states = "warn"
+if_then_some_else_none = "warn"
+map_with_unused_argument_over_ranges = "warn"
+missing_asserts_for_indexing = "warn"
+or_fun_call = "warn"
+renamed_function_params = "warn"
+semicolon_if_nothing_returned = "warn"
+trivially_copy_pass_by_ref = "warn"
+unnecessary_semicolon = "warn"
+use_self = "warn"

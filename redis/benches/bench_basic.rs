@@ -37,7 +37,7 @@ fn bench_simple_getsetdel_async(b: &mut Bencher) {
                 redis::cmd("DEL").arg(key).exec_async(&mut con).await?;
                 Ok::<_, RedisError>(())
             })
-            .unwrap()
+            .unwrap();
     });
 }
 
@@ -145,8 +145,8 @@ fn bench_multiplexed_async_implicit_pipeline(b: &mut Bencher) {
         .map(|i| redis::cmd("SET").arg(format!("foo{i}")).arg(i).clone())
         .collect();
 
-    let mut connections = (0..PIPELINE_QUERIES)
-        .map(|_| con.clone())
+    let mut connections = std::iter::repeat_with(|| con.clone())
+        .take(PIPELINE_QUERIES)
         .collect::<Vec<_>>();
 
     b.iter(|| {

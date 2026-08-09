@@ -134,7 +134,7 @@ mod basic {
             .unwrap();
 
         let result: String = cmd("ACL").arg("whoami").query(&mut conn).unwrap();
-        assert_eq!(result, username)
+        assert_eq!(result, username);
     }
 
     #[test]
@@ -1817,7 +1817,7 @@ mod basic {
                 received_values.push((kind, channel_name));
             }
             for val in expected_values {
-                assert!(received_values.contains(&val))
+                assert!(received_values.contains(&val));
             }
         }
     }
@@ -4169,7 +4169,7 @@ mod basic {
                 let point_key = redis_value!(point_of_interest);
                 let score = results_map
                     .iter()
-                    .find_map(|(k, v)| if k == &point_key { Some(v) } else { None });
+                    .find_map(|(k, v)| (k == &point_key).then_some(v));
 
                 assert!(
                     score.is_some(),
@@ -4613,7 +4613,7 @@ mod basic {
             );
         }
         let (new_tx, new_rx) = std::sync::mpsc::channel();
-        con.set_push_sender(new_tx.clone());
+        con.set_push_sender(new_tx);
         drop(rx);
         let _: RedisResult<()> = pipe.query(&mut con);
         con.get_int("key_1").unwrap();
@@ -4642,7 +4642,7 @@ mod basic {
 
         let mut con = client.get_connection().unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
-        con.set_push_sender(tx.clone());
+        con.set_push_sender(tx);
 
         let _: () = con.set("A", "1").unwrap();
         assert_eq!(

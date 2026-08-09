@@ -24,13 +24,9 @@ pub(crate) enum SubscriptionAction {
 impl SubscriptionAction {
     fn additive(&self) -> bool {
         match self {
-            SubscriptionAction::Subscribe
-            | SubscriptionAction::PSubscribe
-            | SubscriptionAction::SSubscribe => true,
+            Self::Subscribe | Self::PSubscribe | Self::SSubscribe => true,
 
-            SubscriptionAction::Unsubscribe
-            | SubscriptionAction::PUnsubscribe
-            | SubscriptionAction::Sunsubscribe => false,
+            Self::Unsubscribe | Self::PUnsubscribe | Self::Sunsubscribe => false,
         }
     }
 }

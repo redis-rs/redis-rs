@@ -80,8 +80,8 @@ impl ClusterPipeline {
     /// [`reserve_for_commands`](Self::reserve_for_commands),
     /// [`reserve_for_args`](Self::reserve_for_args), and
     /// [`reserve_for_data`](Self::reserve_for_data) methods.
-    pub fn new() -> ClusterPipeline {
-        ClusterPipeline {
+    pub fn new() -> Self {
+        Self {
             data: Vec::new(),
             args: Vec::new(),
             commands: Vec::new(),

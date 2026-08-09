@@ -124,25 +124,24 @@ pub enum ClusterType {
 }
 
 impl ClusterType {
-    pub fn get_intended() -> ClusterType {
+    pub fn get_intended() -> Self {
         match env::var("REDISRS_SERVER_TYPE")
             .ok()
             .as_ref()
             .map(|x| &x[..])
         {
-            Some("tcp") => ClusterType::Tcp,
-            Some("tcp+tls") => ClusterType::TcpTls,
+            Some("tcp+tls") => Self::TcpTls,
+            Some("tcp") | None => Self::Tcp,
             Some(val) => {
                 panic!("Unknown server type {val:?}");
             }
-            None => ClusterType::Tcp,
         }
     }
 
     fn build_addr(port: u16) -> redis::ConnectionAddr {
-        match ClusterType::get_intended() {
-            ClusterType::Tcp => redis::ConnectionAddr::Tcp("127.0.0.1".into(), port),
-            ClusterType::TcpTls => redis::ConnectionAddr::TcpTls {
+        match Self::get_intended() {
+            Self::Tcp => redis::ConnectionAddr::Tcp("127.0.0.1".into(), port),
+            Self::TcpTls => redis::ConnectionAddr::TcpTls {
                 host: "127.0.0.1".into(),
                 port,
                 insecure: true,
@@ -197,7 +196,7 @@ impl RedisCluster {
         "world"
     }
 
-    pub fn new(configuration: RedisClusterConfiguration) -> RedisCluster {
+    pub fn new(configuration: RedisClusterConfiguration) -> Self {
         let RedisClusterConfiguration {
             num_nodes: nodes,
             num_replicas: replicas,
@@ -334,7 +333,7 @@ impl RedisCluster {
                     match verify_server(&mut server) {
                         Ok(_) => {
                             let addr = format!("127.0.0.1:{port}");
-                            addrs.push(addr.clone());
+                            addrs.push(addr);
                             return server;
                         }
                         Err(err) => eprintln!("{err}"),
@@ -394,7 +393,7 @@ impl RedisCluster {
             }
         }
 
-        let cluster = RedisCluster {
+        let cluster = Self {
             servers,
             folders,
             tls_paths,
@@ -467,6 +466,6 @@ fn wait_for_status_ok(cluster: &RedisCluster) {
 
 impl Drop for RedisCluster {
     fn drop(&mut self) {
-        self.stop()
+        self.stop();
     }
 }

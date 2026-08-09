@@ -2028,6 +2028,49 @@ implement_commands! {
             .take()
     }
 
+    /// Negatively acknowledge (NACK) one or more pending stream messages.
+    ///
+    /// `ids` that are present in the consumer group's PEL are moved to the
+    /// head of the PEL and marked as unowned (last consumer is set to an
+    /// empty string), so they are prioritized over idle pending messages on
+    /// the next `XREADGROUP ... CLAIM`. `ids` not present in the PEL are
+    /// silently skipped; the returned count reflects only ids actually NACKed.
+    ///
+    /// `options` carries the required NACK mode, which selects how the per-message
+    /// delivery counter is adjusted. See [`streams::StreamNackMode`] and [`streams::StreamNackOptions`].
+    ///
+    /// ```no_run
+    /// use redis::{Commands, RedisResult};
+    /// use redis::streams::{StreamNackMode, StreamNackOptions};
+    /// let client = redis::Client::open("redis://127.0.0.1/0").unwrap();
+    /// let mut con = client.get_connection().unwrap();
+    ///
+    /// let opts = StreamNackOptions::new(StreamNackMode::Fail);
+    /// let nacked: RedisResult<usize> = con.xnack("k1", "g1", &["1-1", "1-2"], &opts);
+    /// ```
+    ///
+    /// ```text
+    /// XNACK <key> <group> <SILENT|FAIL|FATAL> IDS <numids> <id> [<id> ...]
+    /// ```
+    /// [Redis Docs](https://redis.io/commands/XNACK)
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xnack<K: ToSingleRedisArg, G: ToSingleRedisArg, ID: ToSingleRedisArg>(
+        key: K,
+        group: G,
+        ids: &'a [ID],
+        options: &'a streams::StreamNackOptions
+    ) -> (usize) {
+        cmd("XNACK")
+            .arg(key)
+            .arg(group)
+            .arg(options)
+            .arg("IDS")
+            .arg(ids.len())
+            .arg(ids)
+            .take()
+    }
+
 
     /// Add a stream message by `key`. Use `*` as the `id` for the current timestamp.
     ///
@@ -3511,8 +3554,8 @@ impl ToRedisArgs for Direction {
         W: ?Sized + RedisWrite,
     {
         let s: &[u8] = match self {
-            Direction::Left => b"LEFT",
-            Direction::Right => b"RIGHT",
+            Self::Left => b"LEFT",
+            Self::Right => b"RIGHT",
         };
         out.write_arg(s);
     }
@@ -3748,7 +3791,7 @@ impl ToRedisArgs for FlushAllOptions {
             out.write_arg(b"SYNC");
         } else {
             out.write_arg(b"ASYNC");
-        };
+        }
     }
 }
 impl ToSingleRedisArg for FlushAllOptions {}
@@ -3799,23 +3842,23 @@ impl ToRedisArgs for Expiry {
     {
         let mut buf = ::itoa::Buffer::new();
         match self {
-            Expiry::EX(sec) => {
+            Self::EX(sec) => {
                 out.write_arg(b"EX");
                 out.write_arg(buf.format(*sec).as_bytes());
             }
-            Expiry::PX(ms) => {
+            Self::PX(ms) => {
                 out.write_arg(b"PX");
                 out.write_arg(buf.format(*ms).as_bytes());
             }
-            Expiry::EXAT(timestamp_sec) => {
+            Self::EXAT(timestamp_sec) => {
                 out.write_arg(b"EXAT");
                 out.write_arg(buf.format(*timestamp_sec).as_bytes());
             }
-            Expiry::PXAT(timestamp_ms) => {
+            Self::PXAT(timestamp_ms) => {
                 out.write_arg(b"PXAT");
                 out.write_arg(buf.format(*timestamp_ms).as_bytes());
             }
-            Expiry::PERSIST => {
+            Self::PERSIST => {
                 out.write_arg(b"PERSIST");
             }
         }
@@ -3838,10 +3881,10 @@ impl ToRedisArgs for UpdateCheck {
         W: ?Sized + RedisWrite,
     {
         match self {
-            UpdateCheck::LT => {
+            Self::LT => {
                 out.write_arg(b"LT");
             }
-            UpdateCheck::GT => {
+            Self::GT => {
                 out.write_arg(b"GT");
             }
         }
@@ -3914,10 +3957,10 @@ impl ToRedisArgs for SortedSetAddOptions {
             conditional_update.write_redis_args(out);
         }
         if self.include_changed {
-            out.write_arg(b"CH")
+            out.write_arg(b"CH");
         }
         if self.increment {
-            out.write_arg(b"INCR")
+            out.write_arg(b"INCR");
         }
     }
 }
@@ -3948,10 +3991,10 @@ impl ToRedisArgs for Aggregate {
         W: ?Sized + RedisWrite,
     {
         let s: &[u8] = match self {
-            Aggregate::Sum => b"SUM",
-            Aggregate::Min => b"MIN",
-            Aggregate::Max => b"MAX",
-            Aggregate::Count => b"COUNT",
+            Self::Sum => b"SUM",
+            Self::Min => b"MIN",
+            Self::Max => b"MAX",
+            Self::Count => b"COUNT",
         };
         out.write_arg(s);
     }

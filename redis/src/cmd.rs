@@ -152,7 +152,7 @@ impl<'a> CmdRef<'a> {
 
     /// Writes the packed command to `dst`, appending to it.
     pub fn write_packed_command(&self, dst: &mut Vec<u8>) {
-        write_command_to_vec(dst, self.args_iter(), self.cursor.unwrap_or(0))
+        write_command_to_vec(dst, self.args_iter(), self.cursor.unwrap_or(0));
     }
 
     /// Reconstructs an owned [`Cmd`] from this view.
@@ -288,7 +288,7 @@ impl<T: FromRedisValue> Iterator for CheckedIter<'_, T> {
         loop {
             if let Some(value) = self.batch.next() {
                 return Some(value.map_err(|err| err.into()));
-            };
+            }
 
             if self.cmd.cursor? == 0 {
                 return None;
@@ -344,7 +344,7 @@ impl<'a, T: FromRedisValue + 'a> AsyncIterInner<'a, T> {
         loop {
             if let Some(v) = self.batch.next() {
                 return Some(v.map_err(|err| err.into()));
-            };
+            }
 
             if self.cmd.cursor? == 0 {
                 return None;
@@ -483,7 +483,7 @@ where
 
     cmd.reserve(totlen);
 
-    write_command(cmd, args, cursor)
+    write_command(cmd, args, cursor);
 }
 
 pub(crate) fn write_command<'a, I>(cmd: &mut Vec<u8>, args: I, cursor: u64)
@@ -600,8 +600,8 @@ impl RedisWrite for Cmd {
 }
 
 impl Default for Cmd {
-    fn default() -> Cmd {
-        Cmd::new()
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -634,8 +634,8 @@ impl Default for Cmd {
 /// ```
 impl Cmd {
     /// Creates a new empty command.
-    pub fn new() -> Cmd {
-        Cmd {
+    pub fn new() -> Self {
+        Self {
             data: vec![],
             args: vec![],
             cursor: None,
@@ -647,8 +647,8 @@ impl Cmd {
     }
 
     /// Creates a new empty command, with at least the requested capacity.
-    pub fn with_capacity(arg_count: usize, size_of_data: usize) -> Cmd {
-        Cmd {
+    pub fn with_capacity(arg_count: usize, size_of_data: usize) -> Self {
+        Self {
             data: Vec::with_capacity(size_of_data),
             args: Vec::with_capacity(arg_count),
             cursor: None,
@@ -710,7 +710,7 @@ impl Cmd {
     /// redis::cmd("SET").arg("my_key").arg(b"my_value");
     /// ```
     #[inline]
-    pub fn arg<T: ToRedisArgs>(&mut self, arg: T) -> &mut Cmd {
+    pub fn arg<T: ToRedisArgs>(&mut self, arg: T) -> &mut Self {
         arg.write_redis_args(self);
         self
     }
@@ -740,7 +740,7 @@ impl Cmd {
     /// }
     /// ```
     #[inline]
-    pub fn cursor_arg(&mut self, cursor: u64) -> &mut Cmd {
+    pub fn cursor_arg(&mut self, cursor: u64) -> &mut Self {
         self.cursor = Some(cursor);
         self.args.push(Arg::Cursor);
         self
@@ -770,7 +770,7 @@ impl Cmd {
     /// [`get_packed_command`]: Self::get_packed_command.
     #[inline]
     pub fn write_packed_command(&self, dst: &mut Vec<u8>) {
-        write_command_to_vec(dst, self.args_iter(), self.cursor.unwrap_or(0))
+        write_command_to_vec(dst, self.args_iter(), self.cursor.unwrap_or(0));
     }
 
     /// Returns true if the command is in scan mode.
@@ -951,7 +951,7 @@ impl Cmd {
     /// This is mostly set internally. The user can set it if they know that a certain command doesn't return a response, or if they use an async connection and don't want to wait for the server response.
     /// For sync connections, setting this wrongly can affect the connection's correctness, and should be avoided.
     #[inline]
-    pub fn set_no_response(&mut self, nr: bool) -> &mut Cmd {
+    pub fn set_no_response(&mut self, nr: bool) -> &mut Self {
         self.no_response = nr;
         self
     }
@@ -965,7 +965,7 @@ impl Cmd {
     /// Changes caching behaviour for this specific command.
     #[cfg(feature = "cache-aio")]
     #[cfg_attr(docsrs, doc(cfg(feature = "cache-aio")))]
-    pub fn set_cache_config(&mut self, command_cache_config: CommandCacheConfig) -> &mut Cmd {
+    pub fn set_cache_config(&mut self, command_cache_config: CommandCacheConfig) -> &mut Self {
         self.cache = Some(command_cache_config);
         self
     }
