@@ -117,7 +117,7 @@ impl OpensslCommand {
                     panic!("failed to write to openssl's stdin ({purpose}): {e}")
                 });
             });
-        };
+        }
 
         // Wait until the program finishes
         let output = child

@@ -8,6 +8,7 @@ mod cluster_async {
     use redis_test::cluster::ClusterType;
     use std::{
         collections::HashMap,
+        num::NonZeroUsize,
         sync::{
             Arc, LazyLock,
             atomic::{self, AtomicBool, AtomicI32, AtomicU16, AtomicU32, Ordering},
@@ -709,7 +710,7 @@ mod cluster_async {
                 let inner = MultiplexedConnection::connect_with_config(info, config)
                     .await
                     .unwrap();
-                Ok(ErrorConnection { inner })
+                Ok(Self { inner })
             })
         }
     }
@@ -2029,13 +2030,8 @@ mod cluster_async {
                 let cmd_str = std::str::from_utf8(received_cmd).unwrap();
                 let results = ["foo", "bar", "baz"]
                     .iter()
-                    .filter_map(|expected_key| {
-                        if cmd_str.contains(expected_key) {
-                            Some(redis_value!(format!("{expected_key}-{port}").into_bytes()))
-                        } else {
-                            None
-                        }
-                    })
+                    .filter(|&expected_key| cmd_str.contains(expected_key))
+                    .map(|expected_key| redis_value!(format!("{expected_key}-{port}").into_bytes()))
                     .collect();
                 Err(Ok(Value::Array(results)))
             },
@@ -2076,13 +2072,8 @@ mod cluster_async {
                 }
                 let results = ["foo", "bar", "baz"]
                     .iter()
-                    .filter_map(|expected_key| {
-                        if cmd_str.contains(expected_key) {
-                            Some(redis_value!(format!("{expected_key}-{port}")))
-                        } else {
-                            None
-                        }
-                    })
+                    .filter(|&expected_key| cmd_str.contains(expected_key))
+                    .map(|expected_key| redis_value!(format!("{expected_key}-{port}")))
                     .collect();
                 Err(Ok(Value::Array(results)))
             },
@@ -2573,6 +2564,62 @@ mod cluster_async {
         // If you need to change the number here due to a change in the cluster, you probably also need to adjust the test.
         // See the PING counts above to explain why 5 is the target number.
         assert_eq!(ping_attempts.load(Ordering::Acquire), 5);
+    }
+
+    #[test]
+    fn test_async_cluster_limit_reconnection_attempts() {
+        let name = "test_async_cluster_limit_reconnection_attempts";
+        let reconnects_attempts = Arc::new(AtomicI32::new(0));
+        let reconnects_attempts_clone = reconnects_attempts.clone();
+
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .retries(0)
+                .max_connection_attempts(NonZeroUsize::new(1).unwrap()),
+            name,
+            move |cmd: &[u8], port| {
+                if port == 6380 {
+                    respond_startup_two_nodes(name, cmd)?;
+                    return Err(parse_redis_value(
+                        format!("-ASK 123 {name}:6379\r\n").as_bytes(),
+                    ));
+                }
+                if port != 6379 {
+                    panic!("Unexpected port {port}");
+                }
+
+                if is_connection_check(cmd) {
+                    let past_attempts = reconnects_attempts_clone.fetch_add(1, Ordering::Relaxed);
+
+                    if past_attempts < 3 {
+                        respond_startup_two_nodes(name, cmd)?;
+                    }
+                    if past_attempts > 4 {
+                        panic!("Too many attempts!");
+                    }
+                    Err(Err(broken_pipe_error()))
+                } else {
+                    respond_startup_two_nodes(name, cmd)?;
+                    Err(Err(broken_pipe_error()))
+                }
+            },
+        );
+
+        let value = runtime.block_on(
+            cmd("GET")
+                .arg("test")
+                .query_async::<Option<i32>>(&mut connection),
+        );
+
+        assert_matches!(value, Err(err) if err.is_connection_dropped());
+        runtime.block_on(sleep(Duration::from_millis(1000).into()));
+
+        assert_eq!(reconnects_attempts.load(Ordering::Acquire), 5);
     }
 
     #[async_test]

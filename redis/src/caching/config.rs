@@ -78,6 +78,6 @@ impl CacheConfig {
 impl Default for CacheConfig {
     /// Creates new CacheConfig with default values (10_000 LRU size and 30 minutes of client ttl)
     fn default() -> Self {
-        CacheConfig::new()
+        Self::new()
     }
 }

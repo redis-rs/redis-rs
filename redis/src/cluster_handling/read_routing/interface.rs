@@ -74,13 +74,10 @@ impl ClusterTopology {
     /// Iterates over all unique shards in the topology.
     pub fn shards(&self) -> impl Iterator<Item = &Shard> {
         let mut seen = std::collections::HashSet::new();
-        self.slots.values().filter_map(move |shard| {
-            if seen.insert(Arc::as_ptr(shard)) {
-                Some(shard.as_ref())
-            } else {
-                None
-            }
-        })
+        self.slots
+            .values()
+            .filter(move |shard| seen.insert(Arc::as_ptr(shard)))
+            .map(|arc| arc.as_ref())
     }
 }
 

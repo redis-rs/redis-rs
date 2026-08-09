@@ -88,7 +88,7 @@ impl TryFrom<&ConnectionAddr> for NodeAddress {
     fn try_from(addr: &ConnectionAddr) -> Result<Self, Self::Error> {
         match addr {
             ConnectionAddr::Tcp(host, port) | ConnectionAddr::TcpTls { host, port, .. } => {
-                Ok(NodeAddress::new(host.as_str(), *port))
+                Ok(Self::new(host.as_str(), *port))
             }
             ConnectionAddr::Unix(_) => Err(RedisError::from((
                 ErrorKind::InvalidClientConfig,
@@ -100,7 +100,7 @@ impl TryFrom<&ConnectionAddr> for NodeAddress {
 
 impl PartialEq<str> for NodeAddress {
     fn eq(&self, other: &str) -> bool {
-        if let Ok(parsed) = NodeAddress::try_from(other) {
+        if let Ok(parsed) = Self::try_from(other) {
             self == &parsed
         } else {
             false
@@ -226,7 +226,7 @@ mod tests {
         let mapped = NodeAddress::new("node1.westeurope.redis.azure.net", 8501);
 
         let mut map = std::collections::HashMap::new();
-        map.insert(node.clone(), mapped.clone());
+        map.insert(node.clone(), mapped);
 
         let params = ClusterParams {
             node_address_map: Some(map),

@@ -64,8 +64,8 @@ impl Pipeline {
     /// [`reserve_for_commands`](Self::reserve_for_commands),
     /// [`reserve_for_args`](Self::reserve_for_args), and
     /// [`reserve_for_data`](Self::reserve_for_data) methods.
-    pub fn new() -> Pipeline {
-        Pipeline {
+    pub fn new() -> Self {
+        Self {
             data: Vec::new(),
             args: Vec::new(),
             commands: Vec::new(),
@@ -88,7 +88,7 @@ impl Pipeline {
     ///     .cmd("GET").arg("key_2").query(&mut con).unwrap();
     /// ```
     #[inline]
-    pub fn atomic(&mut self) -> &mut Pipeline {
+    pub fn atomic(&mut self) -> &mut Self {
         self.transaction_mode = true;
         self
     }
@@ -138,7 +138,7 @@ impl Pipeline {
     /// assert!(results[2].is_ok()); // get succeeded
     /// ```
     #[inline]
-    pub fn ignore_errors(&mut self) -> &mut Pipeline {
+    pub fn ignore_errors(&mut self) -> &mut Self {
         self.ignore_errors = true;
         self
     }
@@ -684,6 +684,6 @@ mod tests {
             result[1]
                 .clone()
                 .is_err_and(|e| e.to_string().contains("CrossSlot"))
-        )
+        );
     }
 }

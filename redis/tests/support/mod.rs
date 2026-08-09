@@ -342,7 +342,7 @@ impl TestContext {
             }
         }
 
-        TestContext {
+        Self {
             server,
             client,
             protocol: use_protocol(),

@@ -165,7 +165,7 @@ fn test_module_bloom_infos() {
     // Adding the first value again should not change infos, as that value was already added before.
     assert_eq!(con.bf_add(KEY_1, "foo"), Ok(false));
     assert_eq!(con.bf_card(KEY_1), Ok(2));
-    assert_eq!(con.key_type(KEY_1), Ok(bf_type.clone()));
+    assert_eq!(con.key_type(KEY_1), Ok(bf_type));
     assert_eq!(
         con.bf_info(KEY_1)
             .unwrap()

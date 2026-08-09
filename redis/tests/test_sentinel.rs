@@ -44,8 +44,8 @@ fn assert_replica_role_and_master_addr(replication_info: String, expected_master
     assert_eq!(info_map.get("role"), Some(&"slave"));
 
     let (master_host, master_port) = match expected_master.addr() {
-        ConnectionAddr::Tcp(host, port) => (host, port),
-        ConnectionAddr::TcpTls {
+        ConnectionAddr::Tcp(host, port)
+        | ConnectionAddr::TcpTls {
             host,
             port,
             insecure: _,
@@ -500,7 +500,7 @@ fn test_sentinel_client_not_sentinel_error() {
         .cluster
         .servers
         .iter()
-        .map(|redis_server| redis_server.connection_info().clone())
+        .map(|redis_server| redis_server.connection_info())
         .collect::<Vec<_>>();
     let mut master_client = SentinelClient::build(
         context.sentinels_connection_info().clone(),
@@ -876,7 +876,7 @@ pub mod async_tests {
             .cluster
             .servers
             .iter()
-            .map(|redis_server| redis_server.connection_info().clone())
+            .map(|redis_server| redis_server.connection_info())
             .collect::<Vec<_>>();
         let mut master_client = SentinelClient::build(
             context.sentinels_connection_info().clone(),
@@ -1271,7 +1271,7 @@ pub mod bb8_pool_tests {
 
         // since max_size is 5 and we haven't freed any connection this try should fail
         let try_conn = pool.get().await;
-        assert!(try_conn.is_err());
+        try_conn.unwrap_err();
 
         let mut client_id_set = HashSet::new();
 
@@ -1292,11 +1292,11 @@ pub mod bb8_pool_tests {
                 .query_async(&mut *conn)
                 .await
                 .unwrap();
-            assert_is_master_role(info)
+            assert_is_master_role(info);
         }
 
         // since previous connections are freed, this should work
         let try_conn = pool.get().await;
-        assert!(try_conn.is_ok());
+        try_conn.unwrap();
     }
 }
