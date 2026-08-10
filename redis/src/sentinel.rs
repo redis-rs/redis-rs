@@ -1209,15 +1209,17 @@ impl SentinelClient {
             "Couldn't open connection to a sentinel node.",
         )));
 
-        for connection_info in &self.sentinel.sentinels_connection_info {
+        for (connection_info, cached_connection) in self
+            .sentinel
+            .sentinels_connection_info
+            .iter()
+            .zip(self.sentinel.connections_cache.iter_mut())
+        {
             if let Ok(client) = Client::open(connection_info.clone()) {
                 match try_single_sentinel::<Role>(
                     cmd::cmd("ROLE"),
                     connection_info,
-                    self.sentinel
-                        .connections_cache
-                        .first_mut()
-                        .unwrap_or(&mut None),
+                    cached_connection,
                 ) {
                     Ok(Role::Sentinel { .. }) => {
                         return Ok(client);
@@ -1288,15 +1290,17 @@ impl SentinelClient {
             "Couldn't open connection to a sentinel node.",
         )));
 
-        for connection_info in &self.sentinel.sentinels_connection_info {
+        for (connection_info, cached_connection) in self
+            .sentinel
+            .sentinels_connection_info
+            .iter()
+            .zip(self.sentinel.async_connections_cache.iter_mut())
+        {
             if let Ok(client) = Client::open(connection_info.clone()) {
                 match async_try_single_sentinel::<Role>(
                     cmd::cmd("ROLE"),
                     connection_info,
-                    self.sentinel
-                        .async_connections_cache
-                        .first_mut()
-                        .unwrap_or(&mut None),
+                    cached_connection,
                 )
                 .await
                 {
