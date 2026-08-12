@@ -15,7 +15,7 @@ use std::{
 use crate::errors::{ParsingError, RedisError, Repr, ServerError, ServerErrorKind};
 use crate::types::{PushKind, RedisResult, Str, Value, VerbatimFormat};
 
-use bytes::{Bytes, BytesMut};
+use bytes::{Buf, Bytes, BytesMut};
 
 use combine::{
     Parser as _, any,
@@ -637,6 +637,39 @@ fn decode_value_range(
 /// On success the consumed prefix is frozen into a [`Bytes`] and the value's
 /// leaves are produced as cheap, reference-counted slices into it; the
 /// remaining bytes are left in `buffer` for the next value.
+/// Whether materializing this range needs to slice the response buffer.
+///
+/// Replies made only of scalars -- `+OK`, `:1`, `_`, `#t`, `,1.5`, and any
+/// aggregate of them -- carry no payload that borrows the frame, so freezing it
+/// would hand out a reference-counted handle nobody reads. Freezing is not free:
+/// it makes the buffer shared, so every such reply pays an atomic increment and
+/// decrement (~24ns here) plus, whenever the buffer had been reclaimed since,
+/// the allocation that promotes it to shared.
+fn needs_frame(range: &ValueRange) -> bool {
+    match range {
+        ValueRange::Nil
+        | ValueRange::Int(_)
+        | ValueRange::Okay
+        | ValueRange::Double(_)
+        | ValueRange::Boolean(_) => false,
+        #[cfg(feature = "num-bigint")]
+        ValueRange::BigNumber(_) => false,
+        ValueRange::Array(items) | ValueRange::Set(items) | ValueRange::Push(items) => {
+            items.iter().any(needs_frame)
+        }
+        ValueRange::Map(pairs) => pairs.iter().any(|(k, v)| needs_frame(k) || needs_frame(v)),
+        ValueRange::Attribute { data, attributes } => {
+            needs_frame(data)
+                || attributes
+                    .iter()
+                    .any(|(k, v)| needs_frame(k) || needs_frame(v))
+        }
+        // Everything else borrows the frame: bulk/simple/verbatim strings, server
+        // errors, and (without `num-bigint`) big numbers.
+        _ => true,
+    }
+}
+
 fn parse_buffer(
     buffer: &mut BytesMut,
     state: &mut ParseState,
@@ -645,6 +678,10 @@ fn parse_buffer(
     let Some((range, consumed)) = decode_value_range(&buffer[..], state, complete)? else {
         return Ok(None);
     };
+    if !needs_frame(&range) {
+        buffer.advance(consumed);
+        return Ok(Some(materialize(range, &Bytes::new())?));
+    }
     let frame = buffer.split_to(consumed).freeze();
     Ok(Some(materialize(range, &frame)?))
 }
@@ -1072,6 +1109,64 @@ mod tests {
 
         // The null bulk string still parses.
         assert_eq!(parse_redis_value(b"$-1\r\n").unwrap(), Value::Nil);
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn scalar_only_replies_skip_the_frame_and_still_pipeline() {
+        // Replies with no payload borrowing the buffer take the `advance` path
+        // instead of `split_to(..).freeze()`. That must not change what is
+        // parsed, and must leave the buffer correctly positioned for the next
+        // reply -- `advance` and `split_to` have to consume exactly the same
+        // number of bytes.
+        use tokio_util::codec::Decoder;
+
+        for (reply, expected) in [
+            (&b"+OK\r\n"[..], Value::Okay),
+            (&b":42\r\n"[..], Value::Int(42)),
+            (&b"_\r\n"[..], Value::Nil),
+            (&b"#t\r\n"[..], Value::Boolean(true)),
+            (
+                &b"*3\r\n:1\r\n:2\r\n:3\r\n"[..],
+                Value::Array(vec![Value::Int(1), Value::Int(2), Value::Int(3)]),
+            ),
+        ] {
+            assert!(!needs_frame(
+                &decode_value_range(reply, &mut ParseState::default(), true)
+                    .unwrap()
+                    .unwrap()
+                    .0
+            ));
+            assert_eq!(parse_redis_value(reply).unwrap(), expected, "{reply:?}");
+        }
+
+        // A frame-borrowing reply is still detected as such.
+        assert!(needs_frame(
+            &decode_value_range(b"*2\r\n:1\r\n+hi\r\n", &mut ParseState::default(), true)
+                .unwrap()
+                .unwrap()
+                .0
+        ));
+
+        // Scalars and payload-carrying replies interleaved through one codec:
+        // if `advance` consumed the wrong count the later replies would desync.
+        let mut codec = ValueCodec::default();
+        let mut buf = BytesMut::from(&b"+OK\r\n:7\r\n$3\r\nfoo\r\n_\r\n+bye\r\n"[..]);
+        let mut got = Vec::new();
+        while let Some(value) = codec.decode(&mut buf).unwrap() {
+            got.push(value);
+        }
+        assert_eq!(
+            got,
+            vec![
+                Value::Okay,
+                Value::Int(7),
+                Value::BulkString(Bytes::from_static(b"foo")),
+                Value::Nil,
+                Value::SimpleString("bye".into()),
+            ]
+        );
+        assert!(buf.is_empty(), "buffer not fully consumed");
     }
 
     #[test]
