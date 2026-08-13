@@ -1,0 +1,45 @@
+name: PR 2305 one-shot format fix
+
+on:
+  push:
+    branches:
+      - fix-bug-1
+
+permissions:
+  contents: write
+
+jobs:
+  fix-formatting:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix-bug-1
+          fetch-depth: 0
+
+      - name: Install nightly rustfmt
+        run: rustup toolchain install nightly --component rustfmt --profile minimal --no-self-update
+
+      - name: Apply rustfmt
+        run: cargo +nightly fmt --all
+
+      - name: Verify scope and commit
+        shell: bash
+        run: |
+          rm -f .github/workflows/pr2305-format-fix.yml
+
+          unexpected=$(git diff --name-only | grep -Ev '^(redis/src/cluster_handling/async_connection/mod.rs|redis/tests/regression_async_asking_error.rs|\.github/workflows/pr2305-format-fix.yml)$' || true)
+          if [ -n "$unexpected" ]; then
+            echo "Unexpected files changed by rustfmt:"
+            echo "$unexpected"
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add redis/src/cluster_handling/async_connection/mod.rs \
+                  redis/tests/regression_async_asking_error.rs \
+                  .github/workflows/pr2305-format-fix.yml
+          git commit -m "style: satisfy nightly rustfmt"
+          git push origin HEAD:fix-bug-1
