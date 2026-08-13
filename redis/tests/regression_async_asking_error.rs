@@ -3,13 +3,13 @@
 mod support;
 
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
-use redis::{cluster::ClusterClient, parse_redis_value, Value};
+use redis::{Value, cluster::ClusterClient, parse_redis_value};
 
-use crate::support::{contains_slice, respond_startup, MockEnv};
+use crate::support::{MockEnv, contains_slice, respond_startup};
 
 #[test]
 fn async_ask_redirect_propagates_asking_failure() {
@@ -28,12 +28,13 @@ fn async_ask_redirect_propagates_asking_failure() {
             respond_startup(name, cmd)?;
 
             match port {
-                6379 if contains_slice(cmd, b"GET") => Err(Ok(
-                    parse_redis_value(format!("-ASK 123 {name}:6380\r\n").as_bytes()).unwrap(),
-                )),
-                6380 if contains_slice(cmd, b"ASKING") => Err(Ok(
-                    parse_redis_value(b"-ERR ASKING failed\r\n").unwrap(),
-                )),
+                6379 if contains_slice(cmd, b"GET") => Err(Ok(parse_redis_value(
+                    format!("-ASK 123 {name}:6380\r\n").as_bytes(),
+                )
+                .unwrap())),
+                6380 if contains_slice(cmd, b"ASKING") => {
+                    Err(Ok(parse_redis_value(b"-ERR ASKING failed\r\n").unwrap()))
+                }
                 6380 if contains_slice(cmd, b"GET") => {
                     redirected_command_sent_in_handler.store(true, Ordering::SeqCst);
                     Err(Ok(Value::BulkString(b"unexpected-success".to_vec())))
