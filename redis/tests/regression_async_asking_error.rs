@@ -47,6 +47,7 @@ fn async_ask_redirect_propagates_asking_failure() {
         },
     );
 
+    // An ASKING failure must abort the redirect before the original command is sent.
     let result = runtime.block_on(
         redis::cmd("GET")
             .arg("key")
