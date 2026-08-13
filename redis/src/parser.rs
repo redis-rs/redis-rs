@@ -639,35 +639,27 @@ fn decode_value_range(
 /// remaining bytes are left in `buffer` for the next value.
 /// Whether materializing this range needs to slice the response buffer.
 ///
-/// Replies made only of scalars -- `+OK`, `:1`, `_`, `#t`, `,1.5`, and any
-/// aggregate of them -- carry no payload that borrows the frame, so freezing it
-/// would hand out a reference-counted handle nobody reads. Freezing is not free:
-/// it makes the buffer shared, so every such reply pays an atomic increment and
-/// decrement (~24ns here) plus, whenever the buffer had been reclaimed since,
-/// the allocation that promotes it to shared.
+/// Replies that are a single scalar -- `+OK`, `:1`, `_`, `#t`, `,1.5` -- carry no
+/// payload that borrows the frame, so freezing it would hand out a
+/// reference-counted handle nobody reads. Freezing is not free: it makes the
+/// buffer shared, so every such reply pays an atomic increment and decrement
+/// (~22ns measured) plus, whenever the buffer had been reclaimed since, the
+/// allocation that promotes it back to shared.
+///
+/// This deliberately does not recurse into aggregates. An array of scalars could
+/// also skip the frame, but measuring it showed no gain -- the two `Vec`
+/// allocations an aggregate needs dominate the atomic pair -- while the walk cost
+/// ~2% on a 1000-element integer array and at nesting depth 50+. An O(1) check
+/// keeps the wins and drops the losses.
 fn needs_frame(range: &ValueRange) -> bool {
-    match range {
+    !matches!(
+        range,
         ValueRange::Nil
-        | ValueRange::Int(_)
-        | ValueRange::Okay
-        | ValueRange::Double(_)
-        | ValueRange::Boolean(_) => false,
-        #[cfg(feature = "num-bigint")]
-        ValueRange::BigNumber(_) => false,
-        ValueRange::Array(items) | ValueRange::Set(items) | ValueRange::Push(items) => {
-            items.iter().any(needs_frame)
-        }
-        ValueRange::Map(pairs) => pairs.iter().any(|(k, v)| needs_frame(k) || needs_frame(v)),
-        ValueRange::Attribute { data, attributes } => {
-            needs_frame(data)
-                || attributes
-                    .iter()
-                    .any(|(k, v)| needs_frame(k) || needs_frame(v))
-        }
-        // Everything else borrows the frame: bulk/simple/verbatim strings, server
-        // errors, and (without `num-bigint`) big numbers.
-        _ => true,
-    }
+            | ValueRange::Int(_)
+            | ValueRange::Okay
+            | ValueRange::Double(_)
+            | ValueRange::Boolean(_)
+    )
 }
 
 fn parse_buffer(
@@ -1126,10 +1118,7 @@ mod tests {
             (&b":42\r\n"[..], Value::Int(42)),
             (&b"_\r\n"[..], Value::Nil),
             (&b"#t\r\n"[..], Value::Boolean(true)),
-            (
-                &b"*3\r\n:1\r\n:2\r\n:3\r\n"[..],
-                Value::Array(vec![Value::Int(1), Value::Int(2), Value::Int(3)]),
-            ),
+            (&b",1.5\r\n"[..], Value::Double(1.5)),
         ] {
             assert!(!needs_frame(
                 &decode_value_range(reply, &mut ParseState::default(), true)
@@ -1140,13 +1129,20 @@ mod tests {
             assert_eq!(parse_redis_value(reply).unwrap(), expected, "{reply:?}");
         }
 
-        // A frame-borrowing reply is still detected as such.
-        assert!(needs_frame(
-            &decode_value_range(b"*2\r\n:1\r\n+hi\r\n", &mut ParseState::default(), true)
-                .unwrap()
-                .unwrap()
-                .0
-        ));
+        // Anything carrying a payload still takes the frame path -- including
+        // aggregates, which are deliberately not inspected element by element.
+        for reply in [
+            &b"$3\r\nfoo\r\n"[..],
+            &b"+hi\r\n"[..],
+            &b"*3\r\n:1\r\n:2\r\n:3\r\n"[..],
+        ] {
+            assert!(needs_frame(
+                &decode_value_range(reply, &mut ParseState::default(), true)
+                    .unwrap()
+                    .unwrap()
+                    .0
+            ));
+        }
 
         // Scalars and payload-carrying replies interleaved through one codec:
         // if `advance` consumed the wrong count the later replies would desync.
