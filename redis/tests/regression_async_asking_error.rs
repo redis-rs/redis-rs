@@ -3,13 +3,13 @@
 mod support;
 
 use std::sync::{
-    Arc,
     atomic::{AtomicBool, Ordering},
+    Arc,
 };
 
-use redis::{Value, cluster::ClusterClient, parse_redis_value};
+use redis::{cluster::ClusterClient, parse_redis_value, Value};
 
-use crate::support::{MockEnv, contains_slice, respond_startup};
+use crate::support::{contains_slice, respond_startup, MockEnv};
 
 #[test]
 fn async_ask_redirect_propagates_asking_failure() {
