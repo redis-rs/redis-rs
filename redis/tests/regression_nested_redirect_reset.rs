@@ -53,21 +53,24 @@ fn nested_redirects_are_fully_reset_before_slot_refresh_retry() {
 
             if refreshed_in_handler.load(Ordering::SeqCst) && port != 6382 {
                 stale_route_used_in_handler.store(true, Ordering::SeqCst);
-                return Err(Ok(
-                    parse_redis_value(b"-ERR stale redirect reused after refresh\r\n").unwrap(),
-                ));
+                return Err(Ok(parse_redis_value(
+                    b"-ERR stale redirect reused after refresh\r\n",
+                )
+                .unwrap()));
             }
 
             match port {
-                6379 if contains_slice(cmd, b"GET") => Err(Ok(
-                    parse_redis_value(format!("-ASK 123 {name}:6380\r\n").as_bytes()).unwrap(),
-                )),
+                6379 if contains_slice(cmd, b"GET") => Err(Ok(parse_redis_value(
+                    format!("-ASK 123 {name}:6380\r\n").as_bytes(),
+                )
+                .unwrap())),
                 6380 | 6381 if contains_slice(cmd, b"ASKING") => {
                     Err(Ok(Value::SimpleString("OK".into())))
                 }
-                6380 if contains_slice(cmd, b"GET") => Err(Ok(
-                    parse_redis_value(format!("-ASK 123 {name}:6381\r\n").as_bytes()).unwrap(),
-                )),
+                6380 if contains_slice(cmd, b"GET") => Err(Ok(parse_redis_value(
+                    format!("-ASK 123 {name}:6381\r\n").as_bytes(),
+                )
+                .unwrap())),
                 6381 if contains_slice(cmd, b"GET") => {
                     refreshed_in_handler.store(true, Ordering::SeqCst);
                     Err(Ok(parse_redis_value(
@@ -75,9 +78,7 @@ fn nested_redirects_are_fully_reset_before_slot_refresh_retry() {
                     )
                     .unwrap()))
                 }
-                6382 if contains_slice(cmd, b"GET") => {
-                    Err(Ok(Value::BulkString(b"ok".to_vec())))
-                }
+                6382 if contains_slice(cmd, b"GET") => Err(Ok(Value::BulkString(b"ok".to_vec()))),
                 _ => panic!(
                     "unexpected command on port {port}: {}",
                     String::from_utf8_lossy(cmd)
