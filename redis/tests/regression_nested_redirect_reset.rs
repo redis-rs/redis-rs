@@ -33,6 +33,7 @@ fn nested_redirects_are_fully_reset_before_slot_refresh_retry() {
     let MockEnv {
         runtime,
         async_connection: mut connection,
+        handler: _handler,
         ..
     } = MockEnv::with_client_builder(
         ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(4),
