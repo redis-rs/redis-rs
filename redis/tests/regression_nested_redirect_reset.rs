@@ -62,15 +62,12 @@ fn nested_redirects_are_fully_reset_before_slot_refresh_retry() {
                 6379 if contains_slice(cmd, b"GET") => Err(Ok(
                     parse_redis_value(format!("-ASK 123 {name}:6380\r\n").as_bytes()).unwrap(),
                 )),
-                6380 if contains_slice(cmd, b"ASKING") => {
+                6380 | 6381 if contains_slice(cmd, b"ASKING") => {
                     Err(Ok(Value::SimpleString("OK".into())))
                 }
                 6380 if contains_slice(cmd, b"GET") => Err(Ok(
                     parse_redis_value(format!("-ASK 123 {name}:6381\r\n").as_bytes()).unwrap(),
                 )),
-                6381 if contains_slice(cmd, b"ASKING") => {
-                    Err(Ok(Value::SimpleString("OK".into())))
-                }
                 6381 if contains_slice(cmd, b"GET") => {
                     refreshed_in_handler.store(true, Ordering::SeqCst);
                     Err(Ok(parse_redis_value(
