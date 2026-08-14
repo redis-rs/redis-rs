@@ -74,6 +74,18 @@ macro_rules! implement_command_sync {
     };
 }
 
+macro_rules! write_pipeline_command {
+    ($self:expr, ready_cmd!($name:expr $(, $arg:expr)*)) => {{
+        $self.start_command();
+        $self.arg($name);
+        $($self.arg($arg);)*
+        $self
+    }};
+    ($self:expr, $cmd:expr) => {{
+        $self.add_command($cmd)
+    }};
+}
+
 macro_rules! implement_iterators {
     ($iter:expr, $ret:ty) => {
         /// Incrementally iterate the keys space.
@@ -358,7 +370,7 @@ macro_rules! implement_commands {
                 pub fn $name<$lifetime, $($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
                 ) -> &mut Self {
-                    self.add_command($body)
+                    write_pipeline_command!(self, $body)
                 }
             )*
         }
@@ -375,7 +387,7 @@ macro_rules! implement_commands {
                 pub fn $name<$lifetime, $($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
                 ) -> &mut Self {
-                    self.add_command($body)
+                    write_pipeline_command!(self, $body)
                 }
             )*
         }
