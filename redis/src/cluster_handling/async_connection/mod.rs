@@ -989,10 +989,9 @@ where
         if asking {
             let mut asking_cmd = crate::cmd::cmd("ASKING");
             asking_cmd.skip_concurrency_limit = true;
-            let _ = conn
-                .req_packed_command(&asking_cmd)
+            conn.req_packed_command(&asking_cmd)
                 .await
-                .and_then(|value| value.extract_error());
+                .and_then(|value| value.extract_error())?;
         }
 
         Ok((addr, conn))
