@@ -90,13 +90,8 @@ impl<C> CmdArg<C> {
                 *route = std::mem::take(previous_routing.as_mut());
             }
 
-            match route {
-                // If a specific connection is specified, then reconnecting without resetting the routing
-                // will mean that the request is still routed to the old connection.
-                InternalSingleNodeRouting::Connection { identifier, .. } => {
-                    *route = InternalSingleNodeRouting::ByAddress(std::mem::take(identifier));
-                }
-                _ => {}
+            if let InternalSingleNodeRouting::Connection { identifier, .. } = route {
+                *route = InternalSingleNodeRouting::ByAddress(std::mem::take(identifier));
             }
         };
         match self {
