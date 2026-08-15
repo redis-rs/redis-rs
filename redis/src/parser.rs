@@ -207,21 +207,29 @@ fn materialize(range: ValueRange, frame: &Bytes) -> Result<Value, ParsingError> 
     })
 }
 
+/// Collecting into a `Result` reports a size-hint lower bound of zero, because
+/// the iterator may short-circuit. So `collect()` here would start the output at
+/// capacity 4 and double its way up, which for a 100-element array is five
+/// reallocations and most of the parse's allocation count. The element count is
+/// known up front, so reserve it.
 fn materialize_vec(items: Vec<ValueRange>, frame: &Bytes) -> Result<Vec<Value>, ParsingError> {
-    items
-        .into_iter()
-        .map(|item| materialize(item, frame))
-        .collect()
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        out.push(materialize(item, frame)?);
+    }
+    Ok(out)
 }
 
+/// See [`materialize_vec`] for why this reserves rather than collecting.
 fn materialize_pairs(
     pairs: Vec<(ValueRange, ValueRange)>,
     frame: &Bytes,
 ) -> Result<Vec<(Value, Value)>, ParsingError> {
-    pairs
-        .into_iter()
-        .map(|(k, v)| Ok((materialize(k, frame)?, materialize(v, frame)?)))
-        .collect()
+    let mut out = Vec::with_capacity(pairs.len());
+    for (k, v) in pairs {
+        out.push((materialize(k, frame)?, materialize(v, frame)?));
+    }
+    Ok(out)
 }
 
 fn materialize_format(format: VerbatimFormatRange, frame: &Bytes) -> VerbatimFormat {

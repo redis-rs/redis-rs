@@ -225,12 +225,12 @@ against 1.x, where it compiles unchanged:
 | Response                      | Allocations (before → after) |
 | ----------------------------- | ---------------------------- |
 | Single 1 MiB bulk string      | 154 → **2** (77×)            |
-| Array of 5000 small bulks     | 7509 → **16** (469×)         |
-| Array of 500 × 1 KiB bulks    | 2022 → **11** (184×)         |
-| Array of 5000 simple strings  | 7152 → **16** (447×)         |
-| Array of 1000 key/value pairs | 2933 → **13** (226×)         |
+| Array of 5000 small bulks     | 7509 → **5** (1502×)         |
+| Array of 500 × 1 KiB bulks    | 2022 → **4** (506×)          |
+| Array of 5000 simple strings  | 7152 → **5** (1430×)         |
+| Array of 1000 key/value pairs | 2933 → **4** (733×)          |
 
-That is **77×–470× fewer heap allocations** on large multi-element responses.
+That is **77×–1500× fewer heap allocations** on large multi-element responses.
 Allocation counts are deterministic, so those numbers reproduce anywhere; the
 timings that go with them are hardware-dependent and are in
 [#2199](https://github.com/redis-rs/redis-rs/pull/2199) rather than here, where
