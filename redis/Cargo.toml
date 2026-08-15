@@ -110,7 +110,7 @@ arcstr = "1.2.0"
 socket2 = { version = "0.6", features = ["all"] }
 
 # Only needed for Entra ID authentication
-azure_identity = { version = "0.31", optional = true, features = [
+azure_identity = { version = "0.32", optional = true, features = [
   "client_certificate",
 ] }
 azure_core = { version = "0.31", optional = true }
