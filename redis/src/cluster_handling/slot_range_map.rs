@@ -28,6 +28,19 @@ impl<V> SlotRangeMap<V> {
         )
     }
 
+    /// Bounds of the range containing `slot`, if any.
+    pub fn range_containing(&self, slot: u16) -> Option<(u16, u16)> {
+        self.inner
+            .range(slot..)
+            .next()
+            .and_then(|(&end, (start, _))| (slot >= *start).then_some((*start, end)))
+    }
+
+    /// Remove the range ending at `end`, returning its start and value.
+    pub fn remove_range(&mut self, end: u16) -> Option<(u16, V)> {
+        self.inner.remove(&end)
+    }
+
     /// Iterate over all values (one per range entry, in slot order).
     pub fn values(&self) -> impl Iterator<Item = &V> {
         self.inner.values().map(|(_, v)| v)
@@ -77,6 +90,32 @@ mod tests {
         assert_eq!(m.get(99), None);
         assert_eq!(m.get(250), None);
         assert_eq!(m.get(401), None);
+    }
+
+    #[test]
+    fn range_containing_reports_bounds_or_none() {
+        let mut m = SlotRangeMap::new();
+        m.insert(100, 200, "a");
+        m.insert(300, 400, "b");
+
+        assert_eq!(m.range_containing(100), Some((100, 200)));
+        assert_eq!(m.range_containing(150), Some((100, 200)));
+        assert_eq!(m.range_containing(200), Some((100, 200)));
+        assert_eq!(m.range_containing(400), Some((300, 400)));
+        assert_eq!(m.range_containing(250), None);
+        assert_eq!(m.range_containing(401), None);
+    }
+
+    #[test]
+    fn remove_range_takes_the_entry_by_end() {
+        let mut m = SlotRangeMap::new();
+        m.insert(100, 200, "a");
+        m.insert(300, 400, "b");
+
+        assert_eq!(m.remove_range(200), Some((100, "a")));
+        assert_eq!(m.get(150), None);
+        assert_eq!(m.get(350), Some(&"b"));
+        assert_eq!(m.remove_range(200), None);
     }
 
     #[test]

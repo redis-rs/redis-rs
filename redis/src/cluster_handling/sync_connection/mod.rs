@@ -66,7 +66,7 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use arcstr::ArcStr;
 
@@ -100,7 +100,7 @@ use crate::errors::{ErrorKind, RedisError, RetryMethod};
 use crate::parser::parse_redis_value;
 use crate::types::{HashMap, RedisResult, Value};
 use pipeline::UNROUTABLE_ERROR;
-use rand::{rng, seq::IteratorRandom};
+use rand::{Rng, rng, seq::IteratorRandom};
 
 pub use pipeline::{ClusterPipeline, cluster_pipe};
 
@@ -334,6 +334,10 @@ pub struct ClusterConnection<C = Connection> {
     routing_strategy: Option<Box<dyn ReadRoutingStrategy>>,
     read_fallback_enabled: bool,
     az_discovery: Arc<NodeAvailabilityZoneDiscoveryState>,
+    /// Earliest instant at which a rate-limited caller may refetch the whole slot
+    /// map. `None` means one is allowed now. See
+    /// [`Self::refresh_slots_rate_limited`].
+    next_slot_refresh: RefCell<Option<Instant>>,
     cluster_params: ClusterParams,
 }
 
@@ -394,6 +398,7 @@ where
             routing_strategy,
             read_fallback_enabled,
             az_discovery: Arc::new(NodeAvailabilityZoneDiscoveryState::default()),
+            next_slot_refresh: RefCell::new(None),
             initial_nodes: initial_nodes.to_vec(),
             cluster_params,
         };
@@ -530,8 +535,51 @@ where
         Ok(())
     }
 
+    /// Refreshes the whole slot map, unless one was refreshed recently.
+    ///
+    /// Only for callers that have another way to reach the right node — a MOVED
+    /// whose hint has already been recorded by [`SlotMap::update_slot`], or a
+    /// retry that will follow its own redirect. For those, refetching all 16384
+    /// mappings is not what makes the request correct; it only refreshes replica
+    /// sets, picks up nodes joining or leaving, and compacts a map that
+    /// incremental updates have split. Skipping it costs at worst one extra
+    /// redirect on some *other* slot that also moved, which is far cheaper than
+    /// the `CLUSTER SLOTS` it saves on a fragmented cluster.
+    ///
+    /// Callers with no other recovery path must use [`Self::refresh_slots`].
+    fn refresh_slots_rate_limited(&self) -> RedisResult<()> {
+        if !self.cluster_params.min_slot_refresh_interval.is_zero() {
+            if let Some(next) = *self.next_slot_refresh.borrow() {
+                if Instant::now() < next {
+                    return Ok(());
+                }
+            }
+        }
+        self.refresh_slots()
+    }
+
+    /// Arms the deadline checked by [`Self::refresh_slots_rate_limited`].
+    ///
+    /// Every full refresh arms it, whatever triggered it, because the thing being
+    /// rate-limited is refetching the whole map — a MOVED arriving just after a
+    /// reconnect-driven refresh has nothing new to learn. Arming it *before* the
+    /// refresh runs also means a slow or failing refresh cannot be re-entered in a
+    /// tight loop by the redirects that arrive while it is in flight.
+    fn arm_slot_refresh_deadline(&self) {
+        let interval = self.cluster_params.min_slot_refresh_interval;
+        if interval.is_zero() {
+            return;
+        }
+        // Jittered because pooled connections are typically constructed together:
+        // an exact interval keeps their deadlines in phase and turns a steady
+        // trickle of refreshes into a synchronised burst.
+        let jitter = rng().random_range(0.5..1.5);
+        *self.next_slot_refresh.borrow_mut() = Some(Instant::now() + interval.mul_f64(jitter));
+    }
+
     // Query a node to discover slot-> master mappings.
     fn refresh_slots(&self) -> RedisResult<()> {
+        self.arm_slot_refresh_deadline();
         let mut new_slots = self.create_new_slots()?;
 
         if let Some(ref strategy) = self.routing_strategy {
@@ -1463,12 +1511,36 @@ where
                             });
                         }
                         RetryMethod::MovedRedirect => {
-                            // Refresh slots.
-                            self.refresh_slots()?;
-                            // Request again.
-                            redirected = err.redirect_node().and_then(|(node, _slot)| {
-                                NodeAddress::try_from(node).ok().map(Redirect::Moved)
+                            let moved_to = err.redirect_node().and_then(|(node, slot)| {
+                                NodeAddress::try_from(node).ok().map(|addr| (addr, slot))
                             });
+                            match moved_to {
+                                Some((addr, slot)) => {
+                                    // A MOVED is authoritative about one slot's new
+                                    // owner, so record it instead of discarding it and
+                                    // asking the cluster to describe all 16384 slots
+                                    // again. This arm is MOVED-only: the ASK arm below
+                                    // must never do this, because an ASK slot is still
+                                    // owned by the node that issued the redirect.
+                                    //
+                                    // The borrow is scoped to this statement so it ends
+                                    // before the refresh borrows `slots` again.
+                                    self.slots.borrow_mut().update_slot(slot, addr.clone());
+                                    // Having learned the mapping first-hand, the full
+                                    // refresh is now only about replica and node-set
+                                    // freshness, so it is safe to rate limit.
+                                    self.refresh_slots_rate_limited()?;
+                                    redirected = Some(Redirect::Moved(addr));
+                                }
+                                None => {
+                                    // A redirect we cannot parse teaches us nothing and
+                                    // leaves us no node to retry against, so the full
+                                    // refresh is the only way to make progress. Never
+                                    // rate limit this one.
+                                    self.refresh_slots()?;
+                                    redirected = None;
+                                }
+                            }
                         }
                         RetryMethod::WaitAndRetry => {
                             // Sleep and retry.
@@ -1540,8 +1612,11 @@ where
             return Ok(results);
         }
 
-        // Refresh the slots to ensure that we have a clean slate for the retry attempts.
-        self.refresh_slots()?;
+        // Refresh the slots to give the retry attempts a clean slate. Rate limited
+        // because it is an optimisation rather than the recovery mechanism: each
+        // command below is retried through `request`, which follows its own
+        // redirects and falls back to an unthrottled refresh when it cannot.
+        self.refresh_slots_rate_limited()?;
 
         // Given that there are commands that need to be retried, it means something in the cluster
         // topology changed. Execute each command separately to take advantage of the existing

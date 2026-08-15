@@ -540,6 +540,239 @@ mod cluster {
         assert_eq!(value, Ok(vec!["OK".to_string(), "val1".to_string()]));
     }
 
+    /// CRC16("test") % 16384, i.e. the slot `GET test` routes to. Owned by 6379
+    /// under `respond_startup_two_nodes`.
+    const TEST_KEY_SLOT: u16 = 6918;
+
+    #[test]
+    fn test_cluster_moved_updates_slot_map_without_a_full_refresh() {
+        let name = "moved_updates_slot_map";
+        let slot_refreshes = Arc::new(atomic::AtomicUsize::new(0));
+        let moveds = Arc::new(atomic::AtomicUsize::new(0));
+        let requests_to_6380 = Arc::new(atomic::AtomicUsize::new(0));
+
+        let MockEnv {
+            mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                // Long enough that only the connection-time refresh may run, so
+                // anything the client still routes correctly it learned from the
+                // MOVED itself rather than from a refetched map.
+                .min_slot_refresh_interval(std::time::Duration::from_secs(3600)),
+            name,
+            {
+                let slot_refreshes = slot_refreshes.clone();
+                let moveds = moveds.clone();
+                let requests_to_6380 = requests_to_6380.clone();
+                move |cmd: &[u8], port| {
+                    if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
+                        slot_refreshes.fetch_add(1, Ordering::SeqCst);
+                    }
+                    respond_startup_two_nodes(name, cmd)?;
+                    match port {
+                        // 6379 still believes it owns the slot and always redirects.
+                        6379 => {
+                            moveds.fetch_add(1, Ordering::SeqCst);
+                            Err(parse_redis_value(
+                                format!("-MOVED {TEST_KEY_SLOT} {name}:6380\r\n").as_bytes(),
+                            ))
+                        }
+                        6380 => {
+                            requests_to_6380.fetch_add(1, Ordering::SeqCst);
+                            Err(Ok(redis_value!("123")))
+                        }
+                        _ => panic!("Wrong node"),
+                    }
+                }
+            },
+        );
+
+        let refreshes_after_connect = slot_refreshes.load(Ordering::SeqCst);
+
+        assert_eq!(
+            cmd("GET").arg("test").query::<Option<i32>>(&mut connection),
+            Ok(Some(123))
+        );
+        assert_eq!(moveds.load(Ordering::SeqCst), 1);
+
+        // Every later request for the same slot must go straight to the new owner.
+        for _ in 0..5 {
+            assert_eq!(
+                cmd("GET").arg("test").query::<Option<i32>>(&mut connection),
+                Ok(Some(123))
+            );
+        }
+        assert_eq!(
+            moveds.load(Ordering::SeqCst),
+            1,
+            "slot map did not learn the new owner from the MOVED"
+        );
+        assert_eq!(requests_to_6380.load(Ordering::SeqCst), 6);
+        assert_eq!(
+            slot_refreshes.load(Ordering::SeqCst),
+            refreshes_after_connect,
+            "MOVED triggered a full CLUSTER SLOTS despite the refresh interval"
+        );
+    }
+
+    #[test]
+    fn test_cluster_ask_does_not_update_slot_map() {
+        let name = "ask_does_not_update_slot_map";
+        let asks = Arc::new(atomic::AtomicUsize::new(0));
+
+        let MockEnv {
+            mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .min_slot_refresh_interval(std::time::Duration::from_secs(3600)),
+            name,
+            {
+                let asks = asks.clone();
+                move |cmd: &[u8], port| {
+                    respond_startup_two_nodes(name, cmd)?;
+                    match port {
+                        6379 => {
+                            asks.fetch_add(1, Ordering::SeqCst);
+                            Err(parse_redis_value(
+                                format!("-ASK {TEST_KEY_SLOT} {name}:6380\r\n").as_bytes(),
+                            ))
+                        }
+                        6380 => {
+                            if contains_slice(cmd, b"ASKING") {
+                                Err(Ok(Value::Okay))
+                            } else {
+                                Err(Ok(redis_value!("123")))
+                            }
+                        }
+                        _ => panic!("Wrong node"),
+                    }
+                }
+            },
+        );
+
+        // An ASK is a one-request instruction about a slot that is still owned by
+        // the node issuing it, so it must not be recorded in the slot map. If it
+        // were, this slot's not-yet-migrated keys would be sent to a node that
+        // does not serve them. Every request must therefore still start at 6379.
+        for i in 1..=5 {
+            assert_eq!(
+                cmd("GET").arg("test").query::<Option<i32>>(&mut connection),
+                Ok(Some(123))
+            );
+            assert_eq!(
+                asks.load(Ordering::SeqCst),
+                i,
+                "an ASK redirect was written into the slot map"
+            );
+        }
+    }
+
+    #[test]
+    fn test_cluster_moved_without_an_address_still_forces_a_refresh() {
+        let name = "moved_without_address";
+        let slot_refreshes = Arc::new(atomic::AtomicUsize::new(0));
+        let started = Arc::new(atomic::AtomicBool::new(false));
+        let requests = Arc::new(atomic::AtomicUsize::new(0));
+
+        let MockEnv {
+            mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .min_slot_refresh_interval(std::time::Duration::from_secs(3600)),
+            name,
+            {
+                let slot_refreshes = slot_refreshes.clone();
+                let started = started.clone();
+                let requests = requests.clone();
+                move |cmd: &[u8], port| {
+                    if !started.load(Ordering::SeqCst) {
+                        respond_startup(name, cmd)?;
+                    }
+                    started.store(true, Ordering::SeqCst);
+                    if is_connection_check(cmd) {
+                        return Err(Ok(redis_value!(simple:"OK")));
+                    }
+                    match requests.fetch_add(1, Ordering::SeqCst) {
+                        // A MOVED carrying no address: nothing to record, and no node
+                        // to redirect to.
+                        0 => Err(parse_redis_value(b"-MOVED 123\r\n")),
+                        1 => {
+                            slot_refreshes.fetch_add(1, Ordering::SeqCst);
+                            Err(Ok(redis_value!([
+                                [0, 1, [name, 6379]],
+                                [2, 16383, [name, 6380]]
+                            ])))
+                        }
+                        _ => {
+                            assert_eq!(port, 6380);
+                            Err(Ok(redis_value!("123")))
+                        }
+                    }
+                }
+            },
+        );
+
+        // The refresh interval must not apply here. Rate limiting is only earned by
+        // having learned the mapping from the redirect itself; when the redirect is
+        // unusable, a full refresh is the only way the client can make progress, and
+        // throttling it strands the request until retries run out.
+        assert_eq!(
+            cmd("GET").arg("test").query::<Option<i32>>(&mut connection),
+            Ok(Some(123))
+        );
+        assert_eq!(slot_refreshes.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_cluster_zero_refresh_interval_refreshes_on_every_moved() {
+        let name = "zero_refresh_interval";
+        let slot_refreshes = Arc::new(atomic::AtomicUsize::new(0));
+
+        let MockEnv {
+            mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .min_slot_refresh_interval(std::time::Duration::ZERO),
+            name,
+            {
+                let slot_refreshes = slot_refreshes.clone();
+                move |cmd: &[u8], port| {
+                    if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
+                        slot_refreshes.fetch_add(1, Ordering::SeqCst);
+                    }
+                    respond_startup_two_nodes(name, cmd)?;
+                    match port {
+                        6379 => Err(parse_redis_value(
+                            format!("-MOVED {TEST_KEY_SLOT} {name}:6380\r\n").as_bytes(),
+                        )),
+                        6380 => Err(Ok(redis_value!("123"))),
+                        _ => panic!("Wrong node"),
+                    }
+                }
+            },
+        );
+
+        // The escape hatch back to the historical behaviour has to keep working:
+        // the refreshed map re-points the slot at 6379, so each request MOVEDs
+        // again and each MOVED refetches the whole map.
+        let before = slot_refreshes.load(Ordering::SeqCst);
+        for _ in 0..3 {
+            assert_eq!(
+                cmd("GET").arg("test").query::<Option<i32>>(&mut connection),
+                Ok(Some(123))
+            );
+        }
+        assert_eq!(slot_refreshes.load(Ordering::SeqCst) - before, 3);
+    }
+
     #[test]
     fn test_cluster_ask_redirect() {
         let name = "test_cluster_ask_redirect";

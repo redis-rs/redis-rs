@@ -42,6 +42,60 @@ impl SlotMap {
         }
     }
 
+    /// Point a single slot at `primary`, splitting whatever range covers it.
+    ///
+    /// A `MOVED <slot> <addr>` reply carries exactly the information a full
+    /// `CLUSTER SLOTS` would have supplied *for that one slot*, so this lets the
+    /// caller repair its map from the redirect it already received instead of
+    /// refetching all 16384 mappings.
+    ///
+    /// Splitting rather than overwriting is load-bearing. [`SlotRangeMap`] is
+    /// keyed on range *end*, so inserting `[slot, slot]` into the middle of
+    /// `[a, b]` without re-inserting `[a, slot - 1]` would leave every slot
+    /// below `slot` resolving to `None` — silently unrouted, not merely stale.
+    ///
+    /// Only ever call this for MOVED. An ASK redirect is a per-key, per-request
+    /// instruction for a slot that is still mid-migration and still owned by the
+    /// source node; recording it here would send that slot's not-yet-migrated
+    /// keys to a node that does not serve them.
+    pub(crate) fn update_slot(&mut self, slot: u16, primary: NodeAddress) {
+        // Replicas are a property of the shard, not of the individual slot: every
+        // range a given primary owns reports the same replica set. Carrying that
+        // set over keeps replica reads working for this slot instead of pinning
+        // them to the primary until the next full refresh. The scan is O(ranges)
+        // and only runs on a redirect; a denormalised primary→replicas cache
+        // would be faster but would have to be kept consistent in every place
+        // that builds a map, which is more room for error than it is worth.
+        let replicas = self
+            .slots
+            .values()
+            .find(|addrs| addrs.primary == primary)
+            .map(|addrs| addrs.replicas.clone())
+            .unwrap_or_default();
+
+        let Some((start, end)) = self.slots.range_containing(slot) else {
+            self.slots
+                .insert(slot, slot, SlotAddrs::new(primary, replicas));
+            return;
+        };
+        let Some((_, old)) = self.slots.remove_range(end) else {
+            return;
+        };
+        if start < slot {
+            self.slots.insert(
+                start,
+                slot - 1,
+                SlotAddrs::new(old.primary.clone(), old.replicas.clone()),
+            );
+        }
+        if slot < end {
+            self.slots
+                .insert(slot + 1, end, SlotAddrs::new(old.primary, old.replicas));
+        }
+        self.slots
+            .insert(slot, slot, SlotAddrs::new(primary, replicas));
+    }
+
     pub fn slot_addr_for_route(
         &self,
         route: &Route,
@@ -289,6 +343,138 @@ mod tests {
 
     fn addr(s: &str) -> NodeAddress {
         NodeAddress::try_from(s).unwrap()
+    }
+
+    fn primary_for(map: &SlotMap, slot: u16) -> Option<String> {
+        map.slot_addr_for_route(&Route::new(slot, SlotAddr::Master), None)
+            .map(|a| a.to_string())
+    }
+
+    fn replica_for(map: &SlotMap, slot: u16) -> Option<String> {
+        map.slot_addr_for_route(&Route::new(slot, SlotAddr::ReplicaRequired), None)
+            .map(|a| a.to_string())
+    }
+
+    /// n1 owns 0-999, n2 owns 1000-1999, n3 owns 2000-2999, each with one replica.
+    fn three_shards() -> SlotMap {
+        SlotMap::from_slots(vec![
+            SlotRange::new(0, 999, addr("n1:6379"), vec![addr("r1:6379")]),
+            SlotRange::new(1000, 1999, addr("n2:6379"), vec![addr("r2:6379")]),
+            SlotRange::new(2000, 2999, addr("n3:6379"), vec![addr("r3:6379")]),
+        ])
+    }
+
+    #[test]
+    fn update_slot_splits_a_range_without_orphaning_its_neighbours() {
+        let mut map = three_shards();
+        map.update_slot(1500, addr("n3:6379"));
+
+        assert_eq!(primary_for(&map, 1500).as_deref(), Some("n3:6379"));
+        // Both halves of the split range must still resolve to the old owner. This
+        // is the regression the range-end keying invites.
+        for slot in [1000, 1234, 1499, 1501, 1800, 1999] {
+            assert_eq!(
+                primary_for(&map, slot).as_deref(),
+                Some("n2:6379"),
+                "slot {slot} lost its mapping"
+            );
+        }
+        assert_eq!(primary_for(&map, 999).as_deref(), Some("n1:6379"));
+        assert_eq!(primary_for(&map, 2000).as_deref(), Some("n3:6379"));
+    }
+
+    #[test]
+    fn update_slot_handles_both_range_edges() {
+        let mut map = three_shards();
+        map.update_slot(1000, addr("n1:6379"));
+        assert_eq!(primary_for(&map, 1000).as_deref(), Some("n1:6379"));
+        assert_eq!(primary_for(&map, 1001).as_deref(), Some("n2:6379"));
+        assert_eq!(primary_for(&map, 999).as_deref(), Some("n1:6379"));
+
+        let mut map = three_shards();
+        map.update_slot(1999, addr("n1:6379"));
+        assert_eq!(primary_for(&map, 1999).as_deref(), Some("n1:6379"));
+        assert_eq!(primary_for(&map, 1998).as_deref(), Some("n2:6379"));
+        assert_eq!(primary_for(&map, 2000).as_deref(), Some("n3:6379"));
+    }
+
+    #[test]
+    fn update_slot_inherits_the_new_primarys_replicas() {
+        let mut map = three_shards();
+        map.update_slot(1500, addr("n3:6379"));
+        // n3's replica is known from the range it already owns, so replica reads
+        // for the moved slot keep working instead of falling back to the primary.
+        assert_eq!(replica_for(&map, 1500).as_deref(), Some("r3:6379"));
+        assert_eq!(replica_for(&map, 1501).as_deref(), Some("r2:6379"));
+    }
+
+    #[test]
+    fn update_slot_to_an_unknown_node_falls_back_to_the_primary() {
+        let mut map = three_shards();
+        map.update_slot(1500, addr("new:6379"));
+        assert_eq!(primary_for(&map, 1500).as_deref(), Some("new:6379"));
+        // No replica set is knowable for a node that owns nothing else yet;
+        // reads must degrade to the primary rather than to a stale replica.
+        assert_eq!(replica_for(&map, 1500).as_deref(), Some("new:6379"));
+    }
+
+    #[test]
+    fn repeated_updates_keep_every_slot_correctly_mapped() {
+        let mut map = three_shards();
+        let mut expected: Vec<&str> = (0..3000u16)
+            .map(|slot| {
+                if slot < 1000 {
+                    "n1:6379"
+                } else if slot < 2000 {
+                    "n2:6379"
+                } else {
+                    "n3:6379"
+                }
+            })
+            .collect();
+
+        // Walk a pseudo-random sequence of slots to new owners, then assert the
+        // whole keyspace. A split that drops a neighbour would show up here as a
+        // silently misrouted slot rather than as an error.
+        let mut state: u64 = 7;
+        for i in 0..1000 {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let slot = ((state >> 33) % 3000) as u16;
+            let owner = if i % 2 == 0 { "n1:6379" } else { "nX:6379" };
+            map.update_slot(slot, addr(owner));
+            expected[slot as usize] = owner;
+        }
+        for (slot, want) in expected.iter().enumerate() {
+            assert_eq!(
+                primary_for(&map, slot as u16).as_deref(),
+                Some(*want),
+                "slot {slot} misrouted"
+            );
+        }
+    }
+
+    #[test]
+    fn update_slot_on_an_empty_map_inserts_a_single_slot() {
+        let mut map = SlotMap::new();
+        map.update_slot(42, addr("n1:6379"));
+        assert_eq!(primary_for(&map, 42).as_deref(), Some("n1:6379"));
+        assert_eq!(primary_for(&map, 43), None);
+    }
+
+    #[test]
+    fn a_full_refresh_discards_incremental_updates() {
+        let mut map = three_shards();
+        map.update_slot(1500, addr("n3:6379"));
+        // A later CLUSTER SLOTS is authoritative and must win, including undoing
+        // an update that has since become wrong.
+        map = SlotMap::from_slots(vec![
+            SlotRange::new(0, 999, addr("n1:6379"), vec![addr("r1:6379")]),
+            SlotRange::new(1000, 1999, addr("n2:6379"), vec![addr("r2:6379")]),
+            SlotRange::new(2000, 2999, addr("n3:6379"), vec![addr("r3:6379")]),
+        ]);
+        assert_eq!(primary_for(&map, 1500).as_deref(), Some("n2:6379"));
     }
 
     /// Always picks the first replica.

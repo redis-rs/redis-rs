@@ -54,6 +54,23 @@ use crate::cluster_async;
 #[cfg(feature = "tls-rustls")]
 use crate::tls::{TlsCertificates, retrieve_tls_certificates};
 
+/// How long a connection waits between full `CLUSTER SLOTS` refreshes triggered
+/// by MOVED redirects.
+///
+/// A MOVED already tells the client which slot moved and where, and the sync
+/// client applies that directly (see [`SlotMap::update_slot`]), so the full
+/// refresh is no longer what keeps routing correct — it exists to pick up
+/// replica-set and node-set changes, and to compact a slot map that incremental
+/// updates have fragmented. Those tolerate tens of seconds of staleness.
+///
+/// Refreshing on *every* MOVED, as this client used to, is pathological during a
+/// resharding: `CLUSTER SLOTS` costs O(slot ranges), the slot map is at its most
+/// fragmented mid-reshard, and every pooled connection pays independently.
+/// Set to [`Duration::ZERO`] via
+/// [`ClusterClientBuilder::min_slot_refresh_interval`] to restore the old
+/// behaviour.
+const DEFAULT_MIN_SLOT_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+
 /// Parameters specific to builder, so that
 /// builder parameters may have different types
 /// than final ClusterParams
@@ -69,6 +86,7 @@ struct BuilderParams {
     #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
     danger_accept_invalid_hostnames: bool,
     retries_configuration: RetryParams,
+    min_slot_refresh_interval: Option<Duration>,
     connection_timeout: Option<Duration>,
     response_timeout: Option<Duration>,
     protocol: Option<ProtocolVersion>,
@@ -137,6 +155,7 @@ pub(crate) struct ClusterParams {
     /// When None, connections do not use tls.
     pub(crate) tls: Option<TlsMode>,
     pub(crate) retry_params: RetryParams,
+    pub(crate) min_slot_refresh_interval: Duration,
     pub(crate) tls_params: Option<TlsConnParams>,
     pub(crate) connection_timeout: Duration,
     pub(crate) response_timeout: Option<Duration>,
@@ -197,6 +216,9 @@ impl ClusterParams {
             client_name_factory: None,
             tls: value.tls,
             retry_params: value.retries_configuration,
+            min_slot_refresh_interval: value
+                .min_slot_refresh_interval
+                .unwrap_or(DEFAULT_MIN_SLOT_REFRESH_INTERVAL),
             tls_params,
             connection_timeout: value
                 .connection_timeout
@@ -379,6 +401,23 @@ impl ClusterClientBuilder {
     /// Sets number of retries for the new ClusterClient.
     pub fn retries(mut self, retries: u32) -> ClusterClientBuilder {
         self.builder_params.retries_configuration.number_of_retries = retries;
+        self
+    }
+
+    /// Sets the minimum time between MOVED-triggered `CLUSTER SLOTS` refreshes.
+    ///
+    /// Defaults to 30 seconds. A MOVED redirect updates the affected slot in the
+    /// local map directly, so this only bounds how often the *whole* map is
+    /// refetched. The actual wait is jittered around this value so that a pool of
+    /// connections created together does not refresh in lockstep.
+    ///
+    /// [`Duration::ZERO`] refreshes on every MOVED, which is the historical
+    /// behaviour and is very expensive against a resharding cluster.
+    ///
+    /// This does not affect refreshes triggered by anything other than a MOVED —
+    /// a lost connection still refreshes immediately.
+    pub fn min_slot_refresh_interval(mut self, interval: Duration) -> ClusterClientBuilder {
+        self.builder_params.min_slot_refresh_interval = Some(interval);
         self
     }
 
