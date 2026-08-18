@@ -76,13 +76,13 @@ impl ToRedisArgs for Sortable {
 #[non_exhaustive]
 pub enum Phonetic {
     /// Double metaphone for English
-    DmEn,
+    DmEnglish,
     /// Double metaphone for French
-    DmFr,
+    DmFrench,
     /// Double metaphone for Portuguese
-    DmPt,
+    DmPortuguese,
     /// Double metaphone for Spanish
-    DmEs,
+    DmSpanish,
 }
 
 impl ToRedisArgs for Phonetic {
@@ -91,10 +91,10 @@ impl ToRedisArgs for Phonetic {
         W: ?Sized + RedisWrite,
     {
         out.write_arg(match self {
-            Self::DmEn => b"dm:en",
-            Self::DmFr => b"dm:fr",
-            Self::DmPt => b"dm:pt",
-            Self::DmEs => b"dm:es",
+            Self::DmEnglish => b"dm:en",
+            Self::DmFrench => b"dm:fr",
+            Self::DmPortuguese => b"dm:pt",
+            Self::DmSpanish => b"dm:es",
         });
     }
 }
@@ -341,7 +341,7 @@ mod tests {
         let schema = schema! {
             TEXT_FIELD_NAME => SchemaTextField::new(),
         };
-        let ft_create = FtCreateCommand::new(INDEX_NAME).schema(schema);
+        let ft_create = FtCreateCommand::new(INDEX_NAME, schema);
         assert_eq!(ft_create.into_args(), "FT.CREATE index SCHEMA title TEXT");
     }
 
@@ -350,7 +350,7 @@ mod tests {
         let schema = schema! {
             TEXT_FIELD_NAME => SchemaTextField::new().no_stem(true),
         };
-        let ft_create = FtCreateCommand::new(INDEX_NAME).schema(schema);
+        let ft_create = FtCreateCommand::new(INDEX_NAME, schema);
         assert_eq!(
             ft_create.into_args(),
             "FT.CREATE index SCHEMA title TEXT NOSTEM"
@@ -362,7 +362,7 @@ mod tests {
         let schema = schema! {
             TEXT_FIELD_NAME => SchemaTextField::new().weight(1.0),
         };
-        let ft_create = FtCreateCommand::new(INDEX_NAME).schema(schema);
+        let ft_create = FtCreateCommand::new(INDEX_NAME, schema);
         assert_eq!(
             ft_create.into_args(),
             "FT.CREATE index SCHEMA title TEXT WEIGHT 1.0"
@@ -372,9 +372,9 @@ mod tests {
     #[test]
     fn test_text_field_with_phonetic() {
         let schema = schema! {
-            TEXT_FIELD_NAME => SchemaTextField::new().phonetic(Phonetic::DmEn),
+            TEXT_FIELD_NAME => SchemaTextField::new().phonetic(Phonetic::DmEnglish),
         };
-        let ft_create = FtCreateCommand::new(INDEX_NAME).schema(schema);
+        let ft_create = FtCreateCommand::new(INDEX_NAME, schema);
         assert_eq!(
             ft_create.into_args(),
             "FT.CREATE index SCHEMA title TEXT PHONETIC dm:en"
@@ -386,7 +386,7 @@ mod tests {
         let schema = schema! {
             TEXT_FIELD_NAME => SchemaTextField::new().with_suffix_trie(true),
         };
-        let ft_create = FtCreateCommand::new(INDEX_NAME).schema(schema);
+        let ft_create = FtCreateCommand::new(INDEX_NAME, schema);
         assert_eq!(
             ft_create.into_args(),
             "FT.CREATE index SCHEMA title TEXT WITHSUFFIXTRIE"
@@ -398,7 +398,7 @@ mod tests {
         let schema = schema! {
             TEXT_FIELD_NAME => SchemaTextField::new().index_empty(true),
         };
-        let ft_create = FtCreateCommand::new(INDEX_NAME).schema(schema);
+        let ft_create = FtCreateCommand::new(INDEX_NAME, schema);
         assert_eq!(
             ft_create.into_args(),
             "FT.CREATE index SCHEMA title TEXT INDEXEMPTY"
@@ -410,7 +410,7 @@ mod tests {
         let schema = schema! {
             TEXT_FIELD_NAME => SchemaTextField::new().alias(CUSTOM_ALIAS),
         };
-        let ft_create = FtCreateCommand::new(INDEX_NAME).schema(schema);
+        let ft_create = FtCreateCommand::new(INDEX_NAME, schema);
         assert_eq!(
             ft_create.into_args(),
             "FT.CREATE index SCHEMA title AS custom_alias TEXT"
@@ -422,7 +422,7 @@ mod tests {
         let schema = schema! {
             TEXT_FIELD_NAME => SchemaTextField::new().index_missing(true),
         };
-        let ft_create = FtCreateCommand::new(INDEX_NAME).schema(schema);
+        let ft_create = FtCreateCommand::new(INDEX_NAME, schema);
         assert_eq!(
             ft_create.into_args(),
             "FT.CREATE index SCHEMA title TEXT INDEXMISSING"
@@ -434,7 +434,7 @@ mod tests {
         let schema = schema! {
             TEXT_FIELD_NAME => SchemaTextField::new().sortable(Sortable::Yes),
         };
-        let ft_create = FtCreateCommand::new(INDEX_NAME).schema(schema);
+        let ft_create = FtCreateCommand::new(INDEX_NAME, schema);
         assert_eq!(
             ft_create.into_args(),
             "FT.CREATE index SCHEMA title TEXT SORTABLE"
@@ -446,7 +446,7 @@ mod tests {
         let schema = schema! {
             TEXT_FIELD_NAME => SchemaTextField::new().sortable(Sortable::Unf),
         };
-        let ft_create = FtCreateCommand::new(INDEX_NAME).schema(schema);
+        let ft_create = FtCreateCommand::new(INDEX_NAME, schema);
         assert_eq!(
             ft_create.into_args(),
             "FT.CREATE index SCHEMA title TEXT SORTABLE UNF"
@@ -458,7 +458,7 @@ mod tests {
         let schema = schema! {
             TEXT_FIELD_NAME => SchemaTextField::new().no_index(true),
         };
-        let ft_create = FtCreateCommand::new(INDEX_NAME).schema(schema);
+        let ft_create = FtCreateCommand::new(INDEX_NAME, schema);
         assert_eq!(
             ft_create.into_args(),
             "FT.CREATE index SCHEMA title TEXT NOINDEX"
@@ -470,23 +470,29 @@ mod tests {
         let field = SchemaTextField::new()
             .no_stem(true)
             .weight(1.0)
-            .phonetic(Phonetic::DmEn)
+            .phonetic(Phonetic::DmEnglish)
             .with_suffix_trie(true)
             .index_empty(true)
             .alias(CUSTOM_ALIAS)
             .index_missing(true)
             .sortable(Sortable::Unf);
-        let ft_create = FtCreateCommand::new(INDEX_NAME).schema(schema! {
-            TEXT_FIELD_NAME => field.clone(),
-        });
+        let ft_create = FtCreateCommand::new(
+            INDEX_NAME,
+            schema! {
+                TEXT_FIELD_NAME => field.clone(),
+            },
+        );
         assert_eq!(
             ft_create.into_args(),
             "FT.CREATE index SCHEMA title AS custom_alias TEXT INDEXMISSING NOSTEM WEIGHT 1.0 PHONETIC dm:en WITHSUFFIXTRIE INDEXEMPTY SORTABLE UNF"
         );
         // Index missing and no index are mutually exclusive
-        let ft_create = FtCreateCommand::new(INDEX_NAME).schema(schema! {
-            TEXT_FIELD_NAME => field.index_missing(false).no_index(true),
-        });
+        let ft_create = FtCreateCommand::new(
+            INDEX_NAME,
+            schema! {
+                TEXT_FIELD_NAME => field.index_missing(false).no_index(true),
+            },
+        );
         assert_eq!(
             ft_create.into_args(),
             "FT.CREATE index SCHEMA title AS custom_alias TEXT NOSTEM WEIGHT 1.0 PHONETIC dm:en WITHSUFFIXTRIE INDEXEMPTY SORTABLE UNF NOINDEX"

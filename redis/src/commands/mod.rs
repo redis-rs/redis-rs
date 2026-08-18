@@ -4,7 +4,7 @@ use crate::cmd::{Cmd, Iter, cmd};
 use crate::connection::{Connection, ConnectionLike, Msg, RedisConnectionInfo};
 use crate::pipeline::Pipeline;
 #[cfg(feature = "search_unfinished")]
-use crate::search::{CreateOptions, NonEmpty, SearchSchema};
+use crate::search::{CreateOptions, SearchSchema};
 use crate::types::{
     ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, IntegerReplyOrNoOp,
     NumericBehavior, RedisResult, RedisWrite, SetExpiry, ToRedisArgs, ToSingleRedisArg,
@@ -2991,7 +2991,7 @@ implement_commands! {
     fn ft_create<K: ToSingleRedisArg>(
         index_name: K,
         options: &'a CreateOptions,
-        schema: &'a SearchSchema<NonEmpty>
+        schema: &'a SearchSchema
     ) -> (String) {
         cmd("FT.CREATE").arg(index_name).arg(options).arg("SCHEMA").arg(schema).take()
     }

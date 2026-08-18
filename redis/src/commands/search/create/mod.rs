@@ -9,11 +9,11 @@
 //! FieldDefinition
 //!       │ inserted by the schema! macro or by insert()
 //!       ▼
-//! SearchSchema<Empty> ──insert()──> SearchSchema<NonEmpty>
+//! SearchSchema (always holds at least one field)
 //!       │
 //!       │ every type along the way implements ToRedisArgs
 //!       ▼
-//! FtCreateCommand<NoSchema> ──schema()──> FtCreateCommand<SearchSchema<NonEmpty>>
+//! FtCreateCommand
 //!       │
 //!       └── into_cmd() yields a redis::Cmd
 //! ```
@@ -30,13 +30,12 @@
 //! };
 //!
 //! // Create an FT.CREATE command
-//! let ft_create = FtCreateCommand::new("index")
+//! let ft_create = FtCreateCommand::new("index", schema)
 //!     .options(
 //!         CreateOptions::new()
 //!             .on(IndexDataType::Hash)
 //!             .prefix("doc:")
-//!     )
-//!     .schema(schema);
+//!     );
 //! ```
 mod fields;
 mod options;
@@ -48,69 +47,38 @@ pub use schema::*;
 
 use crate::Cmd;
 
-/// Marker type indicating no schema has been set yet.
-pub struct NoSchema;
-
 /// FT.CREATE command builder.
 ///
-/// Uses the typestate pattern to enforce at compile time that a schema
-/// is set before the command can be built. The schema state is encoded
-/// directly in the generic parameter: before a schema is set the builder
-/// holds a [`NoSchema`] marker, and after the schema is set it holds the
-/// [`SearchSchema<NonEmpty>`] itself.
-///
-/// # Type States
-/// - `FtCreateCommand<NoSchema>` - No schema set yet, `into_cmd()` not available
-/// - `FtCreateCommand<SearchSchema<NonEmpty>>` - Schema set, `into_cmd()` available
+/// The schema is required by `FT.CREATE`, so [`FtCreateCommand::new`] takes it
+/// as a mandatory argument rather than exposing it through a builder method.
+/// Together with [`SearchSchema`] requiring at least one field, this makes the
+/// server's requirements compile-time guarantees: the schema is always present
+/// and never empty.
 ///
 /// # Example
 /// ```rust
 /// use redis::{schema, search::*};
 ///
-/// let cmd = FtCreateCommand::new("my_index")
+/// let cmd = FtCreateCommand::new("my_index", schema! { "title" => SchemaTextField::new() })
 ///     .options(CreateOptions::new().on(IndexDataType::Hash))
-///     .schema(schema! { "title" => SchemaTextField::new() })
 ///     .into_cmd();
 /// ```
-pub struct FtCreateCommand<S = NoSchema> {
+pub struct FtCreateCommand {
     index: String,
     options: CreateOptions,
-    schema: S,
+    schema: SearchSchema,
 }
 
-impl FtCreateCommand<NoSchema> {
-    /// Create a new FT.CREATE command for the given index
-    pub fn new<S: Into<String>>(index: S) -> Self {
+impl FtCreateCommand {
+    /// Create a new FT.CREATE command for the given index and schema.
+    pub fn new<S: Into<String>>(index: S, schema: SearchSchema) -> Self {
         Self {
             index: index.into(),
             options: CreateOptions::default(),
-            schema: NoSchema,
-        }
-    }
-
-    /// Set the options for the command
-    pub fn options(mut self, options: CreateOptions) -> Self {
-        self.options = options;
-        self
-    }
-
-    /// Set the schema for the command.
-    ///
-    /// The schema must be non-empty (contain at least one field).
-    /// This is enforced at compile time by the type system.
-    ///
-    /// This transitions the builder from `FtCreateCommand<NoSchema>` to
-    /// `FtCreateCommand<SearchSchema<NonEmpty>>`, making `into_cmd()` available.
-    pub fn schema(self, schema: SearchSchema<NonEmpty>) -> FtCreateCommand<SearchSchema<NonEmpty>> {
-        FtCreateCommand {
-            index: self.index,
-            options: self.options,
             schema,
         }
     }
-}
 
-impl FtCreateCommand<SearchSchema<NonEmpty>> {
     /// Set the options for the command
     pub fn options(mut self, options: CreateOptions) -> Self {
         self.options = options;
@@ -155,19 +123,24 @@ mod tests {
     #[test]
     fn test_empty_index_name() {
         // Empty index names are valid in Redis
-        let ft_create = FtCreateCommand::new("").schema(schema! {
-            TEXT_FIELD_NAME => SchemaTextField::new()
-        });
+        let ft_create = FtCreateCommand::new(
+            "",
+            schema! {
+                TEXT_FIELD_NAME => SchemaTextField::new()
+            },
+        );
         assert_eq!(ft_create.into_args(), "FT.CREATE  SCHEMA title TEXT");
     }
 
     #[test]
-    fn test_options_can_be_set_after_the_schema() {
-        let ft_create = FtCreateCommand::new(INDEX_NAME)
-            .schema(schema! {
+    fn test_options_are_emitted_before_the_schema() {
+        let ft_create = FtCreateCommand::new(
+            INDEX_NAME,
+            schema! {
                 TEXT_FIELD_NAME => SchemaTextField::new()
-            })
-            .options(CreateOptions::new().on(IndexDataType::Hash));
+            },
+        )
+        .options(CreateOptions::new().on(IndexDataType::Hash));
         assert_eq!(
             ft_create.into_args(),
             "FT.CREATE index ON HASH SCHEMA title TEXT"
@@ -186,16 +159,18 @@ mod tests {
         Index authors whose names start with G.
         FT.CREATE g-authors-idx ON HASH PREFIX 1 author:details FILTER 'startswith(@name, "G")' SCHEMA name TEXT
         */
-        let ft_create = FtCreateCommand::new("g-authors-idx")
-            .options(
-                CreateOptions::new()
-                    .on(IndexDataType::Hash)
-                    .prefix("author:details")
-                    .filter("startswith(@name, \"G\")"),
-            )
-            .schema(schema! {
+        let ft_create = FtCreateCommand::new(
+            "g-authors-idx",
+            schema! {
                 "name" =>  SchemaTextField::new(),
-            });
+            },
+        )
+        .options(
+            CreateOptions::new()
+                .on(IndexDataType::Hash)
+                .prefix("author:details")
+                .filter("startswith(@name, \"G\")"),
+        );
 
         assert_eq!(
             ft_create.into_args(),
@@ -206,16 +181,18 @@ mod tests {
         Index only books that have a subtitle.
         FT.CREATE subtitled-books-idx ON HASH PREFIX 1 book:details FILTER '@subtitle != ""' SCHEMA title TEXT
         */
-        let ft_create = FtCreateCommand::new("subtitled-books-idx")
-            .options(
-                CreateOptions::new()
-                    .on(IndexDataType::Hash)
-                    .prefix("book:details")
-                    .filter("@subtitle != \"\""),
-            )
-            .schema(schema! {
+        let ft_create = FtCreateCommand::new(
+            "subtitled-books-idx",
+            schema! {
                 "title" =>  SchemaTextField::new(),
-            });
+            },
+        )
+        .options(
+            CreateOptions::new()
+                .on(IndexDataType::Hash)
+                .prefix("book:details")
+                .filter("@subtitle != \"\""),
+        );
 
         assert_eq!(
             ft_create.into_args(),
