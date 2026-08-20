@@ -214,13 +214,13 @@ pub enum Value {
 #[non_exhaustive]
 pub enum ValueComparison {
     /// Value is equal
-    IFEQ(String),
+    IFEQ(Vec<u8>),
     /// Value is not equal
-    IFNE(String),
+    IFNE(Vec<u8>),
     /// Value's digest is equal
-    IFDEQ(String),
+    IFDEQ(Vec<u8>),
     /// Value's digest is not equal
-    IFDNE(String),
+    IFDNE(Vec<u8>),
 }
 
 impl ValueComparison {
@@ -231,7 +231,7 @@ impl ValueComparison {
     /// For SET: Sets the key only if its current value matches. Non-existent keys are not created.
     /// For DEL_EX: Deletes the key only if its current value matches. Non-existent keys are ignored.
     pub fn ifeq(value: impl ToSingleRedisArg) -> Self {
-        Self::IFEQ(Self::arg_to_string(value))
+        Self::IFEQ(to_single_arg(value))
     }
 
     /// Create a new IFNE (if not equal) comparison
@@ -241,7 +241,7 @@ impl ValueComparison {
     /// For SET: Sets the key only if its current value doesn't match. Non-existent keys are created.
     /// For DEL_EX: Deletes the key only if its current value doesn't match. Non-existent keys are ignored.
     pub fn ifne(value: impl ToSingleRedisArg) -> Self {
-        Self::IFNE(Self::arg_to_string(value))
+        Self::IFNE(to_single_arg(value))
     }
 
     /// Create a new IFDEQ (if digest equal) comparison
@@ -253,7 +253,7 @@ impl ValueComparison {
     ///
     /// Use [`calculate_value_digest`] to compute the digest of a value.
     pub fn ifdeq(digest: impl ToSingleRedisArg) -> Self {
-        Self::IFDEQ(Self::arg_to_string(digest))
+        Self::IFDEQ(to_single_arg(digest))
     }
 
     /// Create a new IFDNE (if digest not equal) comparison
@@ -265,13 +265,18 @@ impl ValueComparison {
     ///
     /// Use [`calculate_value_digest`] to compute the digest of a value.
     pub fn ifdne(digest: impl ToSingleRedisArg) -> Self {
-        Self::IFDNE(Self::arg_to_string(digest))
+        Self::IFDNE(to_single_arg(digest))
     }
+}
 
-    fn arg_to_string(value: impl ToSingleRedisArg) -> String {
-        let args = value.to_redis_args();
-        String::from_utf8_lossy(&args[0]).into_owned()
-    }
+fn to_single_arg(value: impl ToSingleRedisArg) -> Vec<u8> {
+    let mut vec = value.to_redis_args();
+    debug_assert_eq!(
+        vec.len(),
+        1,
+        "Value implementing ToSingleRedisArg has to become a single argument"
+    );
+    vec.pop().unwrap_or_default()
 }
 
 impl ToRedisArgs for ValueComparison {
@@ -282,19 +287,19 @@ impl ToRedisArgs for ValueComparison {
         match self {
             Self::IFEQ(value) => {
                 out.write_arg(b"IFEQ");
-                out.write_arg(value.as_bytes());
+                out.write_arg(value);
             }
             Self::IFNE(value) => {
                 out.write_arg(b"IFNE");
-                out.write_arg(value.as_bytes());
+                out.write_arg(value);
             }
             Self::IFDEQ(digest) => {
                 out.write_arg(b"IFDEQ");
-                out.write_arg(digest.as_bytes());
+                out.write_arg(digest);
             }
             Self::IFDNE(digest) => {
                 out.write_arg(b"IFDNE");
-                out.write_arg(digest.as_bytes());
+                out.write_arg(digest);
             }
         }
     }

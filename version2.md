@@ -267,3 +267,7 @@ That has two consequences:
 * `rustls` validates certificates more strictly than OpenSSL, so fetching a token can start failing in environments that intercept TLS traffic.
 
 **Migration:** No code changes are needed. In an environment that intercepts TLS traffic, make sure that the intercepting certificate authority is installed in the platform's certificate store and that its chain is one that `rustls` accepts.
+
+### `ValueComparison` no longer forces utf8 (Minor breaking Change)
+
+As [this ticket](https://github.com/redis-rs/redis-rs/issues/2315) demonstrates, `ValueComparison` performed unnecessary UTF8 string coercion. Now this behavior was removed. This is a technically breaking change, while for most users this should be an improvement in correctness.
