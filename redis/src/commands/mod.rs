@@ -19,19 +19,6 @@ use std::collections::HashSet;
 #[macro_use]
 mod macros;
 
-macro_rules! ready_cmd {
-    ($name:expr $(, $arg:expr)*) => {{
-        let name = $name;
-        let mut cmd = Cmd::with_capacity(
-            1usize $( + $arg.num_of_args())*,
-            name.len() $( + $arg.args_size())*,
-        );
-        cmd.arg(name);
-        $(cmd.arg($arg);)*
-        cmd
-    }};
-}
-
 #[cfg(feature = "json")]
 #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
 pub mod json;
