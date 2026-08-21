@@ -15,15 +15,42 @@ fn is_bool_type(ty: &syn::Type) -> bool {
     type_str == "bool"
 }
 
-fn parse_module_from_attr(attr: &TokenStream) -> proc_macro2::TokenStream {
+/// Parsed macro attributes shared across test macros.
+struct MacroAttrs {
+    module_expr: proc_macro2::TokenStream,
+    /// If Some, only generate a single variant for this runtime instead of the full matrix.
+    runtime: Option<String>,
+}
+
+fn parse_attrs(attr: &TokenStream) -> MacroAttrs {
     let attr_str = attr.to_string();
-    if attr_str.contains("json") {
+    let module_expr = if attr_str.contains("json") {
         quote! { .module(redis_test::server::Module::Json) }
     } else if attr_str.contains("bloom") {
         quote! { .module(redis_test::server::Module::Bloom) }
     } else {
         quote! {}
+    };
+    // Parse `runtime = tokio` or `runtime = smol`
+    let runtime = if attr_str.contains("runtime") {
+        if attr_str.contains("tokio") {
+            Some("tokio".to_string())
+        } else if attr_str.contains("smol") {
+            Some("smol".to_string())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    MacroAttrs {
+        module_expr,
+        runtime,
     }
+}
+
+fn parse_module_from_attr(attr: &TokenStream) -> proc_macro2::TokenStream {
+    parse_attrs(attr).module_expr
 }
 
 fn generate_sync_call(
@@ -246,7 +273,7 @@ pub fn single_server_test(attr: TokenStream, input: TokenStream) -> TokenStream 
 pub fn async_single_server_test(attr: TokenStream, input: TokenStream) -> TokenStream {
     let mut item = parse_macro_input!(input as syn::ItemFn);
     let test_function_name = item.sig.ident.clone();
-    let module_expr = parse_module_from_attr(&attr);
+    let MacroAttrs { module_expr, runtime } = parse_attrs(&attr);
 
     item.sig.ident = syn::Ident::new(
         &format!("{test_function_name}_internal"),
@@ -254,6 +281,27 @@ pub fn async_single_server_test(attr: TokenStream, input: TokenStream) -> TokenS
     );
     let function_name = item.sig.ident.clone();
     let call_expr = generate_async_call(&function_name, &item.sig.inputs);
+
+    // When `runtime = tokio` is specified, generate a single tokio::test variant (TCP, default protocol).
+    if runtime.as_deref() == Some("tokio") {
+        let expanded = quote! {
+            mod #test_function_name {
+                use super::*;
+                #item
+
+                #[tokio::test]
+                #[cfg(feature = "tokio-comp")]
+                async fn tokio() {
+                    let mut ctx = crate::support::TestContextBuilder::new()
+                        #module_expr
+                        .server_type(redis_test::server::ServerType::Tcp { tls: false })
+                        .build();
+                    #call_expr
+                }
+            }
+        };
+        return expanded.into();
+    }
 
     let expanded = quote! {
         mod #test_function_name {
@@ -694,6 +742,7 @@ pub fn sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
 pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
     let mut item = parse_macro_input!(input as syn::ItemFn);
     let test_function_name = item.sig.ident.clone();
+    let MacroAttrs { runtime, .. } = parse_attrs(&_attr);
 
     item.sig.ident = syn::Ident::new(
         &format!("{test_function_name}_internal"),
@@ -701,6 +750,30 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
     );
     let function_name = item.sig.ident.clone();
     let call_expr = generate_async_call(&function_name, &item.sig.inputs);
+
+    // When `runtime = tokio` is specified, generate a single tokio::test variant (TCP, default protocol).
+    if runtime.as_deref() == Some("tokio") {
+        let expanded = quote! {
+            mod #test_function_name {
+                use super::*;
+                #item
+
+                #[tokio::test]
+                #[cfg(all(feature = "sentinel", feature = "tokio-comp"))]
+                async fn tokio() {
+                    let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
+                        2,
+                        1,
+                        3,
+                        redis_test::server::ServerType::Tcp { tls: false },
+                        redis_test::server::use_protocol(),
+                    );
+                    #call_expr
+                }
+            }
+        };
+        return expanded.into();
+    }
 
     let expanded = quote! {
         mod #test_function_name {

@@ -3,6 +3,8 @@
 ## Objective
 Redesign the testing infrastructure in `redis-rs` to eliminate repeated recompilations and multi-run invocations in the `Makefile` driven by `REDISRS_SERVER_TYPE` and `PROTOCOL` environment variables. Replace environment-variable-driven test runs with Rust proc-macros in `test-macros/src/lib.rs` that generate test matrices (different protocols, server/cluster/sentinel types, and async runtimes) directly within the Rust test framework.
 
+all tests that use a test context need to use the macros. If there are edge cases, take them as arguments to the macro - for example, in order to replace #[tokio::test] maybe take a runtime = tokio argument in the macro, in order to specify the runtime.chat
+
 ---
 
 ## Key Components & Architecture
