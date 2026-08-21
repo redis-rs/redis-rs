@@ -37,7 +37,7 @@ mod cluster_async {
     use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
     use redis_test::redis_value;
     use redis_test::server::use_protocol;
-    use test_macros::async_test;
+    use test_macros::async_cluster_test as async_test;
     use tokio::{join, sync::mpsc::UnboundedReceiver};
 
     use crate::support::*;

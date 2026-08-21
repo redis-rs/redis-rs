@@ -6,6 +6,7 @@ mod support;
 #[cfg(test)]
 mod basic {
     use crate::{assert_args, support::*};
+    use test_macros::single_server_test;
     use assert_approx_eq::assert_approx_eq;
     use rand::distr::Alphanumeric;
     use rand::prelude::IndexedRandom;
@@ -85,9 +86,8 @@ mod basic {
         let _info: ConnectionInfo = "redis://127.0.0.1:1234/0".parse().unwrap();
     }
 
-    #[test]
-    fn test_args() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_args(ctx: TestContext) {
         let mut con = ctx.connection();
 
         redis::cmd("SET")
@@ -106,9 +106,8 @@ mod basic {
         );
     }
 
-    #[test]
-    fn test_can_authenticate_with_username_and_password() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_can_authenticate_with_username_and_password(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let username = "foo";
@@ -137,9 +136,8 @@ mod basic {
         assert_eq!(result, username);
     }
 
-    #[test]
-    fn test_getset() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_getset(ctx: TestContext) {
         let mut con = ctx.connection();
 
         redis::cmd("SET").arg("foo").arg(42).exec(&mut con).unwrap();
@@ -157,9 +155,8 @@ mod basic {
     }
 
     //unit test for key_type function
-    #[test]
-    fn test_key_type() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_key_type(ctx: TestContext) {
         let mut con = ctx.connection();
 
         // The key does not have a value
@@ -212,10 +209,9 @@ mod basic {
         assert_eq!(hash_key_type, ValueType::Hash);
     }
 
-    #[test]
-    fn test_client_tracking_doesnt_block_execution() {
+    #[single_server_test]
+    fn test_client_tracking_doesnt_block_execution(ctx: TestContext) {
         //It checks if the library distinguish a push-type message from the others and continues its normal operation.
-        let ctx = TestContext::default();
         let mut con = ctx.connection();
         let (k1, k2): (i32, i32) = redis::pipe()
             .cmd("CLIENT")
@@ -249,18 +245,16 @@ mod basic {
         assert_eq!(num, 45);
     }
 
-    #[test]
-    fn test_incr() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_incr(ctx: TestContext) {
         let mut con = ctx.connection();
 
         redis::cmd("SET").arg("foo").arg(42).exec(&mut con).unwrap();
         assert_eq!(redis::cmd("INCR").arg("foo").query(&mut con), Ok(43usize));
     }
 
-    #[test]
-    fn test_ping() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_ping(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let res: String = con.ping_message("foobar").unwrap();
@@ -269,9 +263,8 @@ mod basic {
         assert_eq!(&res, "PONG");
     }
 
-    #[test]
-    fn test_getdel() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_getdel(ctx: TestContext) {
         let mut con = ctx.connection();
 
         redis::cmd("SET").arg("foo").arg(42).exec(&mut con).unwrap();
@@ -284,9 +277,8 @@ mod basic {
         );
     }
 
-    #[test]
-    fn test_getex() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_getex(ctx: TestContext) {
         let mut con = ctx.connection();
 
         redis::cmd("SET")
@@ -327,9 +319,8 @@ mod basic {
         assert_eq!(delayed_get, Some(420));
     }
 
-    #[test]
-    fn test_info() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_info(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let info: redis::InfoDict = redis::cmd("INFO").query(&mut con).unwrap();
@@ -340,9 +331,8 @@ mod basic {
         assert!(info.contains_key(&"role"));
     }
 
-    #[test]
-    fn test_hash_ops() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_hash_ops(ctx: TestContext) {
         let mut con = ctx.connection();
 
         redis::cmd("HSET")
@@ -1072,9 +1062,8 @@ mod basic {
     // Requires redis-server >= 4.0.0.
     // Not supported with the current appveyor/windows binary deployed.
     #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn test_unlink() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_unlink(ctx: TestContext) {
         let mut con = ctx.connection();
 
         redis::cmd("SET").arg("foo").arg(42).exec(&mut con).unwrap();
@@ -1086,9 +1075,8 @@ mod basic {
         assert_eq!(con.unlink(&["foo", "bar"]), Ok(2));
     }
 
-    #[test]
-    fn test_set_ops() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_set_ops(ctx: TestContext) {
         let mut con = ctx.connection();
 
         assert_eq!(con.sadd("foo", &[1, 2, 3]), Ok(3));
@@ -1111,9 +1099,8 @@ mod basic {
         assert!(set.contains(&3i32));
     }
 
-    #[test]
-    fn test_scan() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_scan(ctx: TestContext) {
         let mut con = ctx.connection();
 
         assert_eq!(con.sadd("foo", &[1, 2, 3]), Ok(3));
@@ -1129,9 +1116,8 @@ mod basic {
         assert_eq!(&s, &[1, 2, 3]);
     }
 
-    #[test]
-    fn test_optionals() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_optionals(ctx: TestContext) {
         let mut con = ctx.connection();
 
         redis::cmd("SET").arg("foo").arg(1).exec(&mut con).unwrap();
@@ -1151,9 +1137,8 @@ mod basic {
         assert_eq!(a, 0i32);
     }
 
-    #[test]
-    fn test_scanning() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_scanning(ctx: TestContext) {
         let mut con = ctx.connection();
         let mut unseen = HashSet::new();
 
@@ -1179,11 +1164,9 @@ mod basic {
         assert_eq!(unseen.len(), 0);
     }
 
-    #[test]
-    fn test_checked_scanning_error() {
+    #[single_server_test]
+    fn test_checked_scanning_error(ctx: TestContext) {
         const KEY_COUNT: u32 = 1000;
-
-        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         // Insert a bunch of keys with legit UTF-8 first
@@ -1232,9 +1215,8 @@ mod basic {
         assert_eq!(error_kind, Some(ErrorKind::Parse));
     }
 
-    #[test]
-    fn test_filtered_scanning() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_filtered_scanning(ctx: TestContext) {
         let mut con = ctx.connection();
         let mut unseen = HashSet::new();
 
@@ -1259,9 +1241,8 @@ mod basic {
         assert_eq!(unseen.len(), 0);
     }
 
-    #[test]
-    fn test_scan_with_options_works() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_scan_with_options_works(ctx: TestContext) {
         let mut con = ctx.connection();
         for i in 0..20usize {
             con.append(format!("test/{i}"), i).unwrap();
@@ -1291,9 +1272,8 @@ mod basic {
         assert_eq!(values.len(), 1);
     }
 
-    #[test]
-    fn test_pipeline() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_pipeline(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let ((k1, k2),): ((i32, i32),) = redis::pipe()
@@ -1314,9 +1294,8 @@ mod basic {
         assert_eq!(k2, 43);
     }
 
-    #[test]
-    fn test_pipeline_with_err() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_pipeline_with_err(ctx: TestContext) {
         let mut con = ctx.connection();
 
         redis::cmd("SET")
@@ -1354,9 +1333,8 @@ mod basic {
         assert_eq!(res, "x-value");
     }
 
-    #[test]
-    fn test_pipeline_returns_server_errors() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_pipeline_returns_server_errors(ctx: TestContext) {
         let mut con = ctx.connection();
         let mut pipe = redis::pipe();
         pipe.set("x", "x-value")
@@ -1373,17 +1351,15 @@ mod basic {
         );
     }
 
-    #[test]
-    fn test_empty_pipeline() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_empty_pipeline(ctx: TestContext) {
         let mut con = ctx.connection();
 
         redis::pipe().cmd("PING").ignore().exec(&mut con).unwrap();
     }
 
-    #[test]
-    fn test_pipeline_transaction() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_pipeline_transaction(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let ((k1, k2),): ((i32, i32),) = redis::pipe()
@@ -1405,9 +1381,8 @@ mod basic {
         assert_eq!(k2, 43);
     }
 
-    #[test]
-    fn test_pipeline_transaction_with_errors() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_pipeline_transaction_with_errors(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let _: () = con.set("x", 42).unwrap();
@@ -1442,9 +1417,8 @@ mod basic {
         assert_eq!(x, 42);
     }
 
-    #[test]
-    fn test_pipeline_reuse_query() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_pipeline_reuse_query(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let mut pl = redis::pipe();
@@ -1480,9 +1454,8 @@ mod basic {
         assert_eq!(k3, 43);
     }
 
-    #[test]
-    fn test_pipeline_reuse_query_clear() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_pipeline_reuse_query_clear(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let mut pl = redis::pipe();
@@ -1535,9 +1508,8 @@ mod basic {
         assert!(!pl.is_empty());
     }
 
-    #[test]
-    fn test_real_transaction() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_real_transaction(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let key = "the_key";
@@ -1569,9 +1541,8 @@ mod basic {
         }
     }
 
-    #[test]
-    fn test_real_transaction_highlevel() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_real_transaction_highlevel(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let key = "the_key";
@@ -1592,10 +1563,9 @@ mod basic {
         assert_eq!(response, (43,));
     }
 
-    #[test]
-    fn test_pubsub() {
+    #[single_server_test]
+    fn test_pubsub(ctx: TestContext) {
         use std::sync::{Arc, Barrier};
-        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         // Connection for subscriber api
@@ -1664,9 +1634,8 @@ mod basic {
         }
     }
 
-    #[test]
-    fn test_pubsub_handles_timeout() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_pubsub_handles_timeout(ctx: TestContext) {
         let mut con = ctx.connection();
 
         // Connection for subscriber api
@@ -1687,10 +1656,9 @@ mod basic {
         assert_eq!(msg.get_payload(), Ok("bar".to_string()));
     }
 
-    #[test]
-    fn test_pubsub_send_ping() {
+    #[single_server_test]
+    fn test_pubsub_send_ping(ctx: TestContext) {
         use std::sync::{Arc, Barrier};
-        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         // Connection for subscriber api
@@ -1753,9 +1721,8 @@ mod basic {
         thread.join().expect("Something went wrong");
     }
 
-    #[test]
-    fn pub_sub_subscription_to_multiple_channels() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn pub_sub_subscription_to_multiple_channels(ctx: TestContext) {
         let mut conn = ctx.connection();
         let mut pubsub_conn = conn.as_pubsub();
         pubsub_conn.subscribe(&["phonewave", "foo", "bar"]).unwrap();
@@ -1770,9 +1737,8 @@ mod basic {
         assert_eq!("foobar".to_string(), msg_payload);
     }
 
-    #[test]
-    fn test_pubsub_unsubscribe() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_pubsub_unsubscribe(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let (tx, rx) = std::sync::mpsc::channel();
@@ -1822,9 +1788,8 @@ mod basic {
         }
     }
 
-    #[test]
-    fn test_pubsub_subscribe_while_messages_are_sent() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_pubsub_subscribe_while_messages_are_sent(ctx: TestContext) {
         let mut conn_external = ctx.connection();
         let mut conn_internal = ctx.connection();
         let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1880,9 +1845,8 @@ mod basic {
         );
     }
 
-    #[test]
-    fn test_pubsub_unsubscribe_no_subs() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_pubsub_unsubscribe_no_subs(ctx: TestContext) {
         let mut con = ctx.connection();
 
         {
@@ -1895,9 +1859,8 @@ mod basic {
         assert_eq!(&value[..], "bar");
     }
 
-    #[test]
-    fn test_pubsub_unsubscribe_one_sub() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_pubsub_unsubscribe_one_sub(ctx: TestContext) {
         let mut con = ctx.connection();
 
         {
@@ -1911,9 +1874,8 @@ mod basic {
         assert_eq!(&value[..], "bar");
     }
 
-    #[test]
-    fn test_pubsub_unsubscribe_one_sub_one_psub() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_pubsub_unsubscribe_one_sub_one_psub(ctx: TestContext) {
         let mut con = ctx.connection();
 
         {
@@ -1928,9 +1890,8 @@ mod basic {
         assert_eq!(&value[..], "bar");
     }
 
-    #[test]
-    fn scoped_pubsub() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn scoped_pubsub(ctx: TestContext) {
         let mut con = ctx.connection();
 
         // Connection for subscriber api
@@ -1980,9 +1941,8 @@ mod basic {
         assert_eq!(&value[..], "bar");
     }
 
-    #[test]
-    fn test_tuple_args() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_tuple_args(ctx: TestContext) {
         let mut con = ctx.connection();
 
         redis::cmd("HMSET")
@@ -2007,9 +1967,8 @@ mod basic {
         );
     }
 
-    #[test]
-    fn test_nice_api() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_nice_api(ctx: TestContext) {
         let mut con = ctx.connection();
 
         assert_matches!(con.set("my_key", 42), Ok(_));
@@ -2030,9 +1989,8 @@ mod basic {
         assert_eq!(k2, 43);
     }
 
-    #[test]
-    fn test_auto_m_versions() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_auto_m_versions(ctx: TestContext) {
         let mut con = ctx.connection();
 
         assert_matches!(con.mset(&[("key1", 1), ("key2", 2)]), Ok(_));
@@ -2047,9 +2005,8 @@ mod basic {
         );
     }
 
-    #[test]
-    fn test_nice_hash_api() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_nice_hash_api(ctx: TestContext) {
         let mut con = ctx.connection();
 
         assert_eq!(
@@ -2110,9 +2067,8 @@ mod basic {
         assert!(found.contains(&("f4".to_string(), 8)));
     }
 
-    #[test]
-    fn test_nice_list_api() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_nice_list_api(ctx: TestContext) {
         let mut con = ctx.connection();
 
         assert_eq!(con.rpush("my_list", &[1, 2, 3, 4]), Ok(4));
@@ -2145,9 +2101,8 @@ mod basic {
         }
     }
 
-    #[test]
-    fn test_tuple_decoding_regression() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_tuple_decoding_regression(ctx: TestContext) {
         let mut con = ctx.connection();
 
         assert_matches!(con.del("my_zset"), Ok(_));
@@ -2163,10 +2118,9 @@ mod basic {
         assert_eq!(vec.len(), 0);
     }
 
-    #[test]
-    fn test_tuple_decoding_from_iter() {
+    #[single_server_test]
+    fn test_tuple_decoding_from_iter(ctx: TestContext) {
         const KEY: &str = "my_iter_tuple";
-        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         let map = HashMap::from([("one", 1), ("two", 2), ("three", 3)]);
@@ -2197,18 +2151,16 @@ mod basic {
         assert_eq!(map.len(), counter);
     }
 
-    #[test]
-    fn test_setbit_and_getbit_single_offset() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_setbit_and_getbit_single_offset(ctx: TestContext) {
         let mut con = ctx.connection();
 
         assert_eq!(con.setbit("bitvec", 10, true), Ok(false));
         assert_eq!(con.getbit("bitvec", 10), Ok(true));
     }
 
-    #[test]
-    fn test_bit_operations() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_bit_operations(ctx: TestContext) {
         let mut con = ctx.connection();
 
         fn perform_bitwise_operation<F>(str1: &str, str2: &str, op: F) -> String
@@ -2314,9 +2266,8 @@ mod basic {
         assert_eq!(one_result, vec![0x00]); // 00000000
     }
 
-    #[test]
-    fn test_redis_server_down() {
-        let mut ctx = TestContext::default();
+    #[single_server_test]
+    fn test_redis_server_down(mut ctx: TestContext) {
         let mut con = ctx.connection();
 
         let ping = redis::cmd("PING").query::<String>(&mut con);
@@ -2331,9 +2282,8 @@ mod basic {
         assert!(!con.is_open());
     }
 
-    #[test]
-    fn test_zinterstore_zunionstore() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_zinterstore_zunionstore(ctx: TestContext) {
         let mut con = ctx.connection();
 
         // Shared members (one, two) have different scores in each set so that
@@ -2533,9 +2483,8 @@ mod basic {
         );
     }
 
-    #[test]
-    fn test_zinter_zunion() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_zinter_zunion(ctx: TestContext) {
         let mut con = ctx.connection();
 
         // Shared members (one, two) have different scores in each set so that
@@ -2767,9 +2716,8 @@ mod basic {
         );
     }
 
-    #[test]
-    fn test_zrembylex() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_zrembylex(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let setname = "myzset";
@@ -2799,9 +2747,8 @@ mod basic {
     // Requires redis-server >= 6.2.0.
     // Not supported with the current appveyor/windows binary deployed.
     #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn test_zrandmember() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_zrandmember(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let setname = "myzrandset";
@@ -2847,9 +2794,8 @@ mod basic {
         assert_eq!(results.len(), 5);
     }
 
-    #[test]
-    fn test_sismember() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_sismember(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let setname = "myset";
@@ -2865,9 +2811,8 @@ mod basic {
     // Requires redis-server >= 6.2.0.
     // Not supported with the current appveyor/windows binary deployed.
     #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn test_smismember() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_smismember(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let setname = "myset";
@@ -2876,9 +2821,8 @@ mod basic {
         assert_eq!(results, vec![false, true, true, true, false]);
     }
 
-    #[test]
-    fn test_object_freq_command() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_object_freq_command(ctx: TestContext) {
         let mut con = ctx.connection();
 
         // Enable an LFU `maxmemory-policy`. This is required for `OBJECT FREQ` to work.
@@ -2905,9 +2849,8 @@ mod basic {
         // test `redis-rs`, not Redis, we don't test further access frequency increases.
     }
 
-    #[test]
-    fn test_object_idletime_command() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_object_idletime_command(ctx: TestContext) {
         let mut con = ctx.connection();
 
         con.set("object_key_str", "object_value_str").unwrap();
@@ -2927,9 +2870,8 @@ mod basic {
         assert_eq!(con.object_refcount("object_key_str").unwrap().unwrap(), 1);
     }
 
-    #[test]
-    fn test_mget() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_mget(ctx: TestContext) {
         let mut con = ctx.connection();
 
         con.set(1, "1").unwrap();
@@ -2957,9 +2899,8 @@ mod basic {
         assert_eq!(data, vec![Some("2".to_string()), None]);
     }
 
-    #[test]
-    fn test_variable_length_get() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_variable_length_get(ctx: TestContext) {
         let mut con = ctx.connection();
 
         con.set(1, "1").unwrap();
@@ -2969,9 +2910,8 @@ mod basic {
         assert_eq!(data, vec!["1"]);
     }
 
-    #[test]
-    fn test_multi_generics() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_multi_generics(ctx: TestContext) {
         let mut con = ctx.connection();
 
         assert_eq!(con.sadd(b"set1", vec![5, 42]), Ok(2));
@@ -2980,9 +2920,8 @@ mod basic {
         assert_eq!(con.sunionstore("res", &[b"set1", b"set2"]), Ok(3));
     }
 
-    #[test]
-    fn test_set_options_with_get() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_set_options_with_get(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let opts = SetOptions::default().get(true);
@@ -3688,9 +3627,8 @@ mod basic {
         assert_args!(&opts, "DB", "123", "REPLACE");
     }
 
-    #[test]
-    fn test_copy() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_copy(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let opts = CopyOptions::default();
@@ -3751,9 +3689,8 @@ mod basic {
         assert_eq!(expire_time_milliseconds, now * 1000 + 12_000);
     }
 
-    #[test]
-    fn test_timeout_leaves_usable_connection() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_timeout_leaves_usable_connection(ctx: TestContext) {
         let mut con = ctx.connection();
 
         con.set("key", "value").unwrap();
@@ -3848,9 +3785,8 @@ mod basic {
         assert_eq!(value, "key2");
     }
 
-    #[test]
-    fn test_blocking_sorted_set_api() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_blocking_sorted_set_api(ctx: TestContext) {
         let mut con = ctx.connection();
 
         assert_matches!(con.zadd("a", "1a", 1), Ok(_));
@@ -3883,9 +3819,8 @@ mod basic {
         }
     }
 
-    #[test]
-    fn test_sorted_set_add_options() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_sorted_set_add_options(ctx: TestContext) {
         let mut con = ctx.connection();
 
         // Scenario 1
@@ -4586,9 +4521,8 @@ mod basic {
         assert_eq!(error.kind(), redis::ServerErrorKind::ResponseError.into());
     }
 
-    #[test]
-    fn test_push_manager() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_push_manager(ctx: TestContext) {
         let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);
         let connection_info = ctx.server.connection_info().set_redis_settings(redis);
 
@@ -4633,9 +4567,8 @@ mod basic {
         }
     }
 
-    #[test]
-    fn test_push_manager_disconnection() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_push_manager_disconnection(ctx: TestContext) {
         let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);
         let connection_info = ctx.server.connection_info().set_redis_settings(redis);
         let client = redis::Client::open(connection_info).unwrap();
@@ -4655,10 +4588,9 @@ mod basic {
         assert_eq!(rx.try_recv().unwrap().kind, PushKind::Disconnection);
     }
 
-    #[test]
-    fn test_raw_pubsub_with_push_manager() {
+    #[single_server_test]
+    fn test_raw_pubsub_with_push_manager(ctx: TestContext) {
         // Tests PubSub usage with raw connection.
-        let ctx = TestContext::default();
         if !ctx.protocol.supports_resp3() {
             return;
         }
@@ -4751,9 +4683,8 @@ mod basic {
         rx.try_recv().unwrap_err();
     }
 
-    #[test]
-    fn test_select_db() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_select_db(ctx: TestContext) {
         let redis = redis_settings().set_db(5);
         let connection_info = ctx.server.connection_info().set_redis_settings(redis);
 
@@ -4766,9 +4697,8 @@ mod basic {
         assert!(info.contains("db=5"));
     }
 
-    #[test]
-    fn test_client_getname() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_client_getname(ctx: TestContext) {
         let mut con = ctx.connection();
         redis::cmd("CLIENT")
             .arg("SETNAME")
@@ -4779,33 +4709,29 @@ mod basic {
         assert_eq!(res, "connection-name");
     }
 
-    #[test]
-    fn test_client_id() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_client_id(ctx: TestContext) {
         let mut con = ctx.connection();
         let _num = con.client_id().unwrap();
     }
 
-    #[test]
-    fn test_client_setname() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_client_setname(ctx: TestContext) {
         let mut con = ctx.connection();
         assert_eq!(con.client_setname("connection-name"), Ok(()));
         let res: String = redis::cmd("CLIENT").arg("GETNAME").query(&mut con).unwrap();
         assert_eq!(res, "connection-name");
     }
 
-    #[test]
-    fn test_role_primary() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_role_primary(ctx: TestContext) {
         let mut con = ctx.connection();
         let ret = redis::cmd("ROLE").query::<Role>(&mut con).unwrap();
         assert_matches!(ret, Role::Primary { .. });
     }
 
-    #[test]
-    fn test_connection_timeout_on_busy_server() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_connection_timeout_on_busy_server(ctx: TestContext) {
         let mut con = ctx.connection();
         // we stop the server on another thread, in order to move forwardd while the server is stopped.
         let handle = thread::spawn(move || {
@@ -4830,9 +4756,8 @@ mod basic {
         handle.join().unwrap();
     }
 
-    #[test]
-    fn fail_on_empty_command() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn fail_on_empty_command(ctx: TestContext) {
         let mut connection = ctx.connection();
 
         let error: RedisError = redis::Pipeline::new()

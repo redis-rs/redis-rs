@@ -158,12 +158,23 @@ pub use self::sentinel::*;
 #[derive(Default)]
 pub struct TestContextBuilder {
     server_builder: RedisServerBuilder,
+    protocol: Option<ProtocolVersion>,
 }
 
 impl TestContextBuilder {
     /// Starts a fresh builder
     pub fn new() -> Self {
         Default::default()
+    }
+
+    pub fn server_type(mut self, server_type: redis_test::server::ServerType) -> Self {
+        self.server_builder = self.server_builder.server_type(server_type);
+        self
+    }
+
+    pub fn protocol(mut self, protocol: ProtocolVersion) -> Self {
+        self.protocol = Some(protocol);
+        self
     }
 
     pub fn address(mut self, address: ConnectionAddr) -> Self {
@@ -222,8 +233,9 @@ impl TestContextBuilder {
     ///
     /// * `refiner` - See [`RedisServerBuilder::refine_and_build`]
     pub fn refine_and_build(self, refiner: impl FnOnce(&mut RedisServerCommand)) -> TestContext {
+        let protocol = self.protocol.unwrap_or_else(use_protocol);
         let server = self.server_builder.refine_and_build(refiner);
-        TestContext::from_server(server)
+        TestContext::from_server_and_protocol(server, protocol)
     }
 }
 
@@ -277,8 +289,16 @@ impl TestContext {
     // Instead, users should to go through `TestContextBuilder` to limit the points of entry and
     // hence help us with maintenance.
     fn from_server(server: RedisServer) -> Self {
-        let client =
-            build_single_client(server.connection_info(), &server.tls_paths, server.mtls).unwrap();
+        Self::from_server_and_protocol(server, use_protocol())
+    }
+
+    fn from_server_and_protocol(server: RedisServer, protocol: ProtocolVersion) -> Self {
+        let client = build_single_client(
+            server.connection_info_with_protocol(protocol),
+            &server.tls_paths,
+            server.mtls,
+        )
+        .unwrap();
 
         if server.tls_paths.is_some() {
             start_tls_crypto_provider();
@@ -345,7 +365,7 @@ impl TestContext {
         Self {
             server,
             client,
-            protocol: use_protocol(),
+            protocol,
         }
     }
 

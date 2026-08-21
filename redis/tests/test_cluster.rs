@@ -13,6 +13,7 @@ mod cluster {
     };
 
     use crate::support::*;
+    use test_macros::cluster_test;
     use assert_matches::assert_matches;
     use redis::{
         Commands, ConnectionLike, ErrorKind, RedisError, ServerErrorKind, Value,
@@ -46,9 +47,8 @@ mod cluster {
         );
     }
 
-    #[test]
-    fn test_cluster_basics() {
-        let cluster = TestClusterContext::new();
+    #[cluster_test]
+    fn test_cluster_basics(cluster: TestClusterContext) {
         smoke_test_connection(cluster.connection());
     }
 
@@ -187,9 +187,8 @@ mod cluster {
         );
     }
 
-    #[test]
-    fn test_cluster_eval() {
-        let cluster = TestClusterContext::new();
+    #[cluster_test]
+    fn test_cluster_eval(cluster: TestClusterContext) {
         let mut con = cluster.connection();
 
         let rv = redis::cmd("EVAL")
@@ -213,7 +212,6 @@ mod cluster {
         if !use_protocol().supports_resp3() {
             return;
         }
-        let cluster = TestClusterContext::new();
 
         let mut connection = cluster.connection();
 
@@ -224,9 +222,8 @@ mod cluster {
         assert_eq!(result, redis_value!({"foo": "baz", "bar": "foobar"}));
     }
 
-    #[test]
-    fn test_cluster_multi_shard_commands() {
-        let cluster = TestClusterContext::new();
+    #[cluster_test]
+    fn test_cluster_multi_shard_commands(cluster: TestClusterContext) {
 
         let mut connection = cluster.connection();
 
@@ -241,7 +238,6 @@ mod cluster {
     #[test]
     #[cfg(feature = "script")]
     fn test_cluster_script() {
-        let cluster = TestClusterContext::new();
         let mut con = cluster.connection();
 
         let script = redis::Script::new(
@@ -256,9 +252,8 @@ mod cluster {
         assert_eq!(rv, Ok(("1".to_string(), "2".to_string())));
     }
 
-    #[test]
-    fn test_cluster_pipeline() {
-        let cluster = TestClusterContext::new();
+    #[cluster_test]
+    fn test_cluster_pipeline(cluster: TestClusterContext) {
         cluster.wait_for_cluster_up();
         let mut con = cluster.connection();
 
@@ -275,7 +270,6 @@ mod cluster {
     #[test]
     fn test_cluster_pipeline_multiple_keys() {
         use redis::FromRedisValue;
-        let cluster = TestClusterContext::new();
         cluster.wait_for_cluster_up();
         let mut con = cluster.connection();
 
@@ -309,9 +303,8 @@ mod cluster {
         assert_eq!(resp_2, 1);
     }
 
-    #[test]
-    fn test_cluster_pipeline_invalid_command() {
-        let cluster = TestClusterContext::new();
+    #[cluster_test]
+    fn test_cluster_pipeline_invalid_command(cluster: TestClusterContext) {
         cluster.wait_for_cluster_up();
         let mut con = cluster.connection();
 
@@ -337,9 +330,8 @@ mod cluster {
         );
     }
 
-    #[test]
-    fn test_cluster_pipeline_command_ordering() {
-        let cluster = TestClusterContext::new();
+    #[cluster_test]
+    fn test_cluster_pipeline_command_ordering(cluster: TestClusterContext) {
         cluster.wait_for_cluster_up();
         let mut con = cluster.connection();
         let mut pipe = cluster_pipe();
@@ -365,7 +357,6 @@ mod cluster {
     #[test]
     #[ignore] // Flaky
     fn test_cluster_pipeline_ordering_with_improper_command() {
-        let cluster = TestClusterContext::new();
         cluster.wait_for_cluster_up();
         let mut con = cluster.connection();
         let mut pipe = cluster_pipe();
@@ -1138,7 +1129,6 @@ mod cluster {
 
     #[test]
     fn fail_on_empty_command() {
-        let ctx = TestClusterContext::new();
         let mut connection = ctx.connection();
 
         let error: RedisError = cluster_pipe().query::<String>(&mut connection).unwrap_err();
@@ -1215,9 +1205,8 @@ mod cluster {
         }
     }
 
-    #[test]
-    fn test_cluster_node_address_map_remaps_connections() {
-        let cluster = TestClusterContext::new();
+    #[cluster_test]
+    fn test_cluster_node_address_map_remaps_connections(cluster: TestClusterContext) {
 
         let mut address_map = std::collections::HashMap::new();
         for server in cluster.cluster.iter_servers() {

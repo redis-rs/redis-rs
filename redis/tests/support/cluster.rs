@@ -74,9 +74,27 @@ impl TestClusterContext {
         Self::new_with_config_and_builder(RedisClusterConfiguration::default(), initializer)
     }
 
+    pub fn new_with_config_and_protocol(
+        cluster_config: RedisClusterConfiguration,
+        protocol: ProtocolVersion,
+    ) -> Self {
+        Self::new_with_config_and_builder_and_protocol(cluster_config, identity, protocol)
+    }
+
     pub fn new_with_config_and_builder<F>(
         cluster_config: RedisClusterConfiguration,
         initializer: F,
+    ) -> Self
+    where
+        F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
+    {
+        Self::new_with_config_and_builder_and_protocol(cluster_config, initializer, use_protocol())
+    }
+
+    pub fn new_with_config_and_builder_and_protocol<F>(
+        cluster_config: RedisClusterConfiguration,
+        initializer: F,
+        protocol: ProtocolVersion,
     ) -> Self
     where
         F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
@@ -85,16 +103,17 @@ impl TestClusterContext {
         #[cfg(feature = "tls-rustls")]
         let secure_tls = cluster_config.get_require_secure_tls();
         let mtls_enabled = cluster_config.get_mtls_enabled();
+        let cluster_type = cluster_config.get_cluster_type();
         let cluster = RedisCluster::new(cluster_config);
         let initial_nodes: Vec<ConnectionInfo> = cluster
             .iter_servers()
             .map(RedisServer::connection_info)
             .collect();
-        let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes.clone())
-            .use_protocol(use_protocol());
+        let mut builder =
+            redis::cluster::ClusterClientBuilder::new(initial_nodes.clone()).use_protocol(protocol);
 
         #[cfg(feature = "tls-rustls")]
-        if (mtls_enabled || (ClusterType::get_intended() == ClusterType::TcpTls && !secure_tls))
+        if (mtls_enabled || (cluster_type == ClusterType::TcpTls && !secure_tls))
             && let Some(tls_file_paths) = &cluster.tls_paths
         {
             builder = builder.certs(load_certs_from_file(tls_file_paths));
@@ -109,7 +128,7 @@ impl TestClusterContext {
             client,
             mtls_enabled,
             nodes: initial_nodes,
-            protocol: use_protocol(),
+            protocol,
         }
     }
 
