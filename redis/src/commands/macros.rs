@@ -6,13 +6,13 @@ macro_rules! implement_command_async {
         $lifetime: lifetime
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-            $($argname:ident: $argty:ty),*) $body:block Generic
+            $($argname:ident: $argty:ty),*) { $($body:tt)* } Generic
     ) => {
         implement_command_async!(
             $lifetime
             $(#[$attr])+
             fn $name<$($tyargs : $ty,)* RV: FromRedisValue>(
-                $($argname: $argty),*) $body RV
+                $($argname: $argty),*) { $($body)* } RV
         );
     };
 
@@ -21,7 +21,7 @@ macro_rules! implement_command_async {
         $lifetime: lifetime
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-            $($argname:ident: $argty:ty),*) $body:block $rettype:ty
+            $($argname:ident: $argty:ty),*) { $($body:tt)* } $rettype:ty
     ) => {
         $(#[$attr])*
         #[inline]
@@ -32,7 +32,7 @@ macro_rules! implement_command_async {
         ) -> crate::types::RedisFuture<$lifetime, $rettype>
 
         {
-            Box::pin(async move { $body.query_async(self).await })
+            Box::pin(async move { $($body)*.query_async(self).await })
         }
     };
 }
@@ -43,13 +43,13 @@ macro_rules! implement_command_sync {
         $lifetime: lifetime
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-            $($argname:ident: $argty:ty),*) $body:block Generic
+            $($argname:ident: $argty:ty),*) { $($body:tt)* } Generic
     ) => {
         implement_command_sync!(
             $lifetime
             $(#[$attr])+
             fn $name<$($tyargs : $ty,)* RV: FromRedisValue>(
-                $($argname: $argty),*) $body RV
+                $($argname: $argty),*) { $($body)* } RV
         );
     };
 
@@ -58,7 +58,7 @@ macro_rules! implement_command_sync {
         $lifetime: lifetime
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-            $($argname:ident: $argty:ty),*) $body:block $rettype:ty
+            $($argname:ident: $argty:ty),*) { $($body:tt)* } $rettype:ty
     ) => {
         $(#[$attr])*
         #[inline]
@@ -73,6 +73,46 @@ macro_rules! implement_command_sync {
         }
     };
 }
+
+macro_rules! ready_cmd {
+    ($name:expr $(, $arg:expr)*) => {{
+        let name = $name;
+        let mut cmd = Cmd::with_capacity(
+            1usize $( + $arg.num_of_args())*,
+            name.len() $( + $arg.args_size())*,
+        );
+        cmd.arg(name);
+        $(cmd.arg($arg);)*
+        cmd
+    }};
+}
+
+macro_rules! write_pipeline_command {
+    ($self:expr, { ready_cmd!($name:expr $(, $arg:expr)*).take() }) => {{
+        let name = $name;
+        $self.reserve_for_commands(1)
+          .reserve_for_args(0usize $(+ $arg.num_of_args())*)
+          .reserve_for_data(name.len() $( + $arg.args_size())*);
+        $self.start_command();
+        $self.arg($name);
+        $($self.arg($arg);)*
+        $self
+    }};
+
+    ($self:expr, $cmd:expr) => {{
+        $self.add_command($cmd)
+    }};
+}
+
+// macro_rules! bar {
+//     ($body:tt) => {
+//         fn get<K: ToSingleRedisArg>(key: K) -> (Option<String>) {
+//             write_pipeline_command!(self, $($body)*)
+//         }
+//     };
+// }
+
+// bar!({ready_cmd!("MGET", key).take()})
 
 macro_rules! implement_iterators {
     ($iter:expr, $ret:ty) => {
@@ -169,7 +209,7 @@ macro_rules! implement_commands {
         $(
             $(#[$attr:meta])+
             fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-                $($argname:ident: $argty:ty),*) -> $rettype:tt $body:block
+                $($argname:ident: $argty:ty),*) -> $rettype:tt { $($body:tt)* }
         )*
     ) =>
     (
@@ -223,7 +263,7 @@ macro_rules! implement_commands {
                 $(#[$attr])*
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
                 pub fn $name<$lifetime, $($tyargs: $ty),*>($($argname: $argty),*) -> Self {
-                    $body
+                    $($body)*
                 }
             )*
         }
@@ -270,7 +310,7 @@ macro_rules! implement_commands {
                 where
                     RV: FromRedisValue,
                 {
-                    Box::pin(async move { ($body).query_async(self).await })
+                    Box::pin(async move { {$($body)*}.query_async(self).await })
                 }
             )*
 
@@ -292,7 +332,7 @@ macro_rules! implement_commands {
                     )
 
                     {
-                        $body
+                        $($body)*
                     } $rettype
                 }
             )*
@@ -326,7 +366,7 @@ macro_rules! implement_commands {
                     )
 
                     {
-                        $body
+                        $($body)*
                     } $rettype
                 }
             )*
@@ -358,7 +398,7 @@ macro_rules! implement_commands {
                 pub fn $name<$lifetime, $($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
                 ) -> &mut Self {
-                    self.add_command($body)
+                    write_pipeline_command!(self,{ $($body)* })
                 }
             )*
         }
@@ -375,7 +415,7 @@ macro_rules! implement_commands {
                 pub fn $name<$lifetime, $($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
                 ) -> &mut Self {
-                    self.add_command($body)
+                    write_pipeline_command!(self,{ $($body)* })
                 }
             )*
         }

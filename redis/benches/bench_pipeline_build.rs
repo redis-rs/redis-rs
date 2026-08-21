@@ -22,7 +22,7 @@ fn bench_build_pipeline(c: &mut Criterion) {
         b.iter(|| {
             let mut pipe = redis::pipe();
             for _ in 0..N {
-                pipe.cmd("SET").arg("some_key").arg(42i64).ignore();
+                pipe.set("some_key", 42i64).ignore();
             }
             black_box(&pipe);
         });
@@ -35,14 +35,13 @@ fn bench_build_pipeline_nested(c: &mut Criterion) {
         b.iter(|| {
             let mut pipe = redis::pipe();
             for _ in 0..N / 5 {
-                pipe.cmd("MSET")
-                    .arg(&[
-                        ("foo1", &b"bar"[..]),
-                        ("foo2", &b"123"[..]),
-                        ("foo3", &b"1231279712"[..]),
-                        ("foo4", &b"test"[..]),
-                    ])
-                    .ignore();
+                pipe.mset(&[
+                    ("foo1", &b"bar"[..]),
+                    ("foo2", &b"123"[..]),
+                    ("foo3", &b"1231279712"[..]),
+                    ("foo4", &b"test"[..]),
+                ])
+                .ignore();
             }
             black_box(&pipe);
         });
@@ -53,7 +52,7 @@ fn bench_build_pipeline_nested(c: &mut Criterion) {
 fn bench_packed_pipeline(c: &mut Criterion) {
     let mut pipe = redis::pipe();
     for _ in 0..N {
-        pipe.cmd("SET").arg("some_key").arg(42i64).ignore();
+        pipe.set("some_key", 42i64).ignore();
     }
     c.bench_function("packed_pipeline", |b| {
         b.iter(|| black_box(pipe.get_packed_pipeline()));
@@ -67,7 +66,7 @@ fn bench_build_and_pack(c: &mut Criterion) {
         b.iter(|| {
             let mut pipe = redis::pipe();
             for _ in 0..N {
-                pipe.cmd("SET").arg("some_key").arg(42i64).ignore();
+                pipe.set("some_key", 42i64).ignore();
             }
             black_box(pipe.get_packed_pipeline())
         });
@@ -107,7 +106,7 @@ fn bench_packed_pipeline_atomic(c: &mut Criterion) {
     let mut pipe = redis::pipe();
     pipe.atomic();
     for _ in 0..N {
-        pipe.cmd("SET").arg("some_key").arg(42i64).ignore();
+        pipe.set("some_key", 42i64).ignore();
     }
     c.bench_function("packed_pipeline_atomic", |b| {
         b.iter(|| black_box(pipe.get_packed_pipeline()));
@@ -121,7 +120,7 @@ fn bench_build_and_pack_atomic(c: &mut Criterion) {
             let mut pipe = redis::pipe();
             pipe.atomic();
             for _ in 0..N {
-                pipe.cmd("SET").arg("some_key").arg(42i64).ignore();
+                pipe.set("some_key", 42i64).ignore();
             }
             black_box(pipe.get_packed_pipeline())
         });
@@ -136,7 +135,7 @@ fn bench_packed_pipeline_atomic_small(c: &mut Criterion) {
     let mut pipe = redis::pipe();
     pipe.atomic();
     for _ in 0..N_SMALL {
-        pipe.cmd("SET").arg("some_key").arg(42i64).ignore();
+        pipe.set("some_key", 42i64).ignore();
     }
     c.bench_function("packed_pipeline_atomic_small", |b| {
         b.iter(|| black_box(pipe.get_packed_pipeline()));
@@ -149,7 +148,7 @@ fn bench_build_and_pack_atomic_small(c: &mut Criterion) {
             let mut pipe = redis::pipe();
             pipe.atomic();
             for _ in 0..N_SMALL {
-                pipe.cmd("SET").arg("some_key").arg(42i64).ignore();
+                pipe.set("some_key", 42i64).ignore();
             }
             black_box(pipe.get_packed_pipeline())
         });
