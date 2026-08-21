@@ -49,14 +49,10 @@ fn bench_simple_getsetdel_pipeline(b: &mut Bencher) {
     b.iter(|| {
         let key = "test_key";
         let _: (usize,) = redis::pipe()
-            .cmd("SET")
-            .arg(key)
-            .arg(42)
+            .set(key, 42)
             .ignore()
-            .cmd("GET")
-            .arg(key)
-            .cmd("DEL")
-            .arg(key)
+            .get(key)
+            .del(key)
             .ignore()
             .query(&mut con)
             .unwrap();
@@ -68,15 +64,7 @@ fn bench_simple_getsetdel_pipeline_precreated(b: &mut Bencher) {
     let mut con = ctx.connection();
     let key = "test_key";
     let mut pipe = redis::pipe();
-    pipe.cmd("SET")
-        .arg(key)
-        .arg(42)
-        .ignore()
-        .cmd("GET")
-        .arg(key)
-        .cmd("DEL")
-        .arg(key)
-        .ignore();
+    pipe.set(key, 42).ignore().get(key).del(key).ignore();
 
     b.iter(|| {
         let _: (usize,) = pipe.query(&mut con).unwrap();
@@ -231,11 +219,7 @@ fn bench_encode_set_ex(b: &mut Bencher, value: &[u8]) {
         let mut pipe = redis::pipe();
 
         for _ in 0..1_000 {
-            pipe.cmd("SET")
-                .arg("session:abc123")
-                .arg(value)
-                .arg(redis::SetExpiry::EX(3600))
-                .ignore();
+pipe.set_ex("session:abc123", value, 3600).ignore();
         }
         pipe.get_packed_pipeline()
     });

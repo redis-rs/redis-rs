@@ -33,7 +33,7 @@ fn payload(len: usize) -> Vec<u8> {
 }
 
 fn add_set(pipe: &mut redis::Pipeline, value: &[u8]) {
-    pipe.cmd("SET").arg("some_key").arg(value).ignore();
+    pipe.set("some_key", value).ignore();
 }
 
 // Create and populate a pipeline with N simple commands carrying a payload of the given size.
@@ -60,14 +60,13 @@ fn bench_build_pipeline_nested(c: &mut Criterion) {
             b.iter(|| {
                 let mut pipe = redis::pipe();
                 for _ in 0..N / 5 {
-                    pipe.cmd("MSET")
-                        .arg(&[
-                            ("foo1", &value[..]),
-                            ("foo2", &value[..]),
-                            ("foo3", &value[..]),
-                            ("foo4", &value[..]),
-                        ])
-                        .ignore();
+                    pipe.mset(&[
+                        ("foo1", &value[..]),
+                        ("foo2", &value[..]),
+                        ("foo3", &value[..]),
+                        ("foo4", &value[..]),
+                    ])
+                    .ignore();
                 }
                 black_box(&pipe);
             });
