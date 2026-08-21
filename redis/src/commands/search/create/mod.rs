@@ -26,7 +26,8 @@
 //! // Build a schema using the schema! macro
 //! let schema = schema! {
 //!     "title" => SchemaTextField::new().weight(2.0),
-//!     "subtitle" => SchemaTextField::new()
+//!     "price" => SchemaNumericField::new(),
+//!     "condition" => SchemaTagField::new().separator(',')
 //! };
 //!
 //! // Create an FT.CREATE command
@@ -152,6 +153,84 @@ mod tests {
     // <https://redis.io/docs/latest/commands/ft.create/#examples>
     // ============================================================================
     #[test]
+    fn test_create_blog_post_index() {
+        /*
+        Create an index that stores the title, publication date, and categories of blog post hashes whose keys start with blog:post: (for example, blog:post:1).
+        FT.CREATE idx ON HASH PREFIX 1 blog:post: SCHEMA title TEXT SORTABLE published_at NUMERIC SORTABLE category TAG SORTABLE
+        */
+        let schema = schema! {
+            "title" =>  SchemaTextField::new().sortable(Sortable::Yes),
+            "published_at" => SchemaNumericField::new().sortable(Sortable::Yes),
+            "category" => SchemaTagField::new().sortable(Sortable::Yes),
+        };
+        let options = CreateOptions::new()
+            .on(IndexDataType::Hash)
+            .prefix("blog:post:");
+
+        let ft_create = FtCreateCommand::new("idx", schema).options(options);
+        assert_eq!(
+            ft_create.into_args(),
+            "FT.CREATE idx ON HASH PREFIX 1 blog:post: SCHEMA title TEXT SORTABLE published_at NUMERIC SORTABLE category TAG SORTABLE"
+        );
+    }
+
+    #[test]
+    fn test_attribute_with_alias_and_dual_index() {
+        /*
+        Index the sku attribute from a hash as both a TAG and as TEXT.
+        FT.CREATE idx ON HASH PREFIX 1 blog:post: SCHEMA sku AS sku_text TEXT sku AS sku_tag TAG SORTABLE
+        */
+        let sku_text_field = SchemaTextField::new().alias("sku_text");
+
+        let sku_tag_field = SchemaTagField::new()
+            .alias("sku_tag")
+            .sortable(Sortable::Yes);
+
+        let schema = schema! {
+            "sku" => sku_text_field,
+            "sku" => sku_tag_field,
+        };
+
+        let options = CreateOptions::new()
+            .on(IndexDataType::Hash)
+            .prefix("blog:post:");
+
+        let ft_create = FtCreateCommand::new("idx", schema).options(options);
+        assert_eq!(
+            ft_create.into_args(),
+            "FT.CREATE idx ON HASH PREFIX 1 blog:post: SCHEMA sku AS sku_text TEXT sku AS sku_tag TAG SORTABLE"
+        );
+    }
+
+    #[test]
+    fn test_index_two_hashes_within_the_same_index() {
+        /*
+        Index two different hashes, one containing author data and one containing books, in the same index.
+        FT.CREATE author-books-idx ON HASH PREFIX 2 author:details: book:details: SCHEMA author_id TAG SORTABLE author_ids TAG title TEXT name TEXT
+        */
+        let ft_create = FtCreateCommand::new(
+            "author-books-idx",
+            schema! {
+                "author_id" =>  SchemaTagField::new().sortable(Sortable::Yes),
+                "author_ids" => SchemaTagField::new(),
+                "title" => SchemaTextField::new(),
+                "name" => SchemaTextField::new(),
+            },
+        )
+        .options(
+            CreateOptions::new()
+                .on(IndexDataType::Hash)
+                .prefix("author:details:")
+                .prefix("book:details:"),
+        );
+
+        assert_eq!(
+            ft_create.into_args(),
+            "FT.CREATE author-books-idx ON HASH PREFIX 2 author:details: book:details: SCHEMA author_id TAG SORTABLE author_ids TAG title TEXT name TEXT"
+        );
+    }
+
+    #[test]
     fn test_index_with_filter() {
         // In this example, keys for author data use the key pattern author:details:<id> while keys for book data use the pattern book:details:<id>.
 
@@ -197,6 +276,54 @@ mod tests {
         assert_eq!(
             ft_create.into_args(),
             "FT.CREATE subtitled-books-idx ON HASH PREFIX 1 book:details FILTER '@subtitle != \"\"' SCHEMA title TEXT"
+        );
+    }
+
+    #[test]
+    fn test_index_with_separator() {
+        /*
+        In this example, keys for author data use the key pattern author:details:<id> while keys for book data use the pattern book:details:<id>.
+        Index books that have a "categories" attribute where each category is separated by a ; character.
+        FT.CREATE books-idx ON HASH PREFIX 1 book:details SCHEMA title TEXT categories TAG SEPARATOR ;
+        */
+        let ft_create = FtCreateCommand::new(
+            "books-idx",
+            schema! {
+                "title" =>  SchemaTextField::new(),
+                "categories" => SchemaTagField::new().separator(';'),
+            },
+        )
+        .options(
+            CreateOptions::new()
+                .on(IndexDataType::Hash)
+                .prefix("book:details"),
+        );
+
+        assert_eq!(
+            ft_create.into_args(),
+            "FT.CREATE books-idx ON HASH PREFIX 1 book:details SCHEMA title TEXT categories TAG SEPARATOR ;"
+        );
+    }
+
+    #[test]
+    fn test_index_json() {
+        /*
+        Index a JSON document using a JSON Path expression
+        The following example uses data similar to the hash examples above but uses JSON instead.
+        FT.CREATE idx ON JSON SCHEMA $.title AS title TEXT $.categories AS categories TAG
+        */
+        let ft_create = FtCreateCommand::new(
+            "idx",
+            schema! {
+                "$.title" =>  SchemaTextField::new().alias("title"),
+                "$.categories" => SchemaTagField::new().alias("categories"),
+            },
+        )
+        .options(CreateOptions::new().on(IndexDataType::Json));
+
+        assert_eq!(
+            ft_create.into_args(),
+            "FT.CREATE idx ON JSON SCHEMA $.title AS title TEXT $.categories AS categories TAG"
         );
     }
 }
