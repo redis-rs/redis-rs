@@ -68,17 +68,20 @@ fn test_geohash() {
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
-    let result: RedisResult<Vec<String>> = con.geo_hash("my_gis", PALERMO.2);
-    assert_eq!(result, Ok(vec![String::from("sqc8b49rny0")]));
+    let result: RedisResult<Vec<Option<String>>> = con.geo_hash("my_gis", PALERMO.2);
+    assert_eq!(result, Ok(vec![Some(String::from("sqc8b49rny0"))]));
 
-    let result: RedisResult<Vec<String>> = con.geo_hash("my_gis", &[PALERMO.2, CATANIA.2]);
+    let result: RedisResult<Vec<Option<String>>> = con.geo_hash("my_gis", &[PALERMO.2, CATANIA.2]);
     assert_eq!(
         result,
         Ok(vec![
-            String::from("sqc8b49rny0"),
-            String::from("sqdtr74hyu0"),
+            Some(String::from("sqc8b49rny0")),
+            Some(String::from("sqdtr74hyu0")),
         ])
     );
+
+    let result: RedisResult<Vec<Option<String>>> = con.geo_hash("my_gis", "NonExisting");
+    assert_eq!(result, Ok(vec![None]));
 }
 
 #[test]

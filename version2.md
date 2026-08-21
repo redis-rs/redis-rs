@@ -271,3 +271,14 @@ That has two consequences:
 ### `ValueComparison` no longer forces utf8 (Minor breaking Change)
 
 As [this ticket](https://github.com/redis-rs/redis-rs/issues/2315) demonstrates, `ValueComparison` performed unnecessary UTF8 string coercion. Now this behavior was removed. This is a technically breaking change, while for most users this should be an improvement in correctness.
+
+### `(Async)TypedCommands::hmget`, `hget_ex`, `zscore_multiple`, and `geo_hash` return optional values in lists (Breaking Change)
+
+Following [issue #2311](https://github.com/redis-rs/redis-rs/issues/2311), the same issue was addressed across Redis commands `HMGET`, `HGETEX`, `ZMSCORE`, and `GEOHASH`, which return `nil` elements for missing keys or missing fields/members.
+Previously, `TypedCommands` and `AsyncTypedCommands` defined these with non-optional inner element types (or an incorrect outer option in `zscore_multiple`), causing any missing field or member to fail with a type conversion error.
+
+Their return types are now updated to:
+- `hmget`: `Vec<Option<String>>` (was `Vec<String>`)
+- `hget_ex`: `Vec<Option<String>>` (was `Vec<String>`)
+- `zscore_multiple`: `Vec<Option<f64>>` (was `Option<Vec<f64>>`)
+- `geo_hash`: `Vec<Option<String>>` (was `Vec<String>`)
