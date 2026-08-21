@@ -1012,6 +1012,10 @@ impl MultiplexedConnection {
 mod tests {
     use super::*;
 
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+    use tokio_util::codec::FramedRead;
+
     #[test]
     fn test_pipeline_resolve_buffer_size_default() {
         assert_eq!(Pipeline::resolve_buffer_size(None), 50);
@@ -1060,10 +1064,6 @@ mod tests {
         tokio::sync::mpsc::Receiver<()>,
         tokio::sync::mpsc::Sender<()>,
     ) {
-        use futures_util::StreamExt;
-        use tokio::io::AsyncWriteExt;
-        use tokio_util::codec::FramedRead;
-
         let (client_half, server_half) = tokio::io::duplex(4096);
         let (cmd_received_tx, cmd_received_rx) = tokio::sync::mpsc::channel::<()>(10);
         let (send_response_tx, mut send_response_rx) = tokio::sync::mpsc::channel::<()>(10);
@@ -1333,10 +1333,6 @@ mod tests {
     /// which keeps the duplex moving and lets the SETs complete.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_deadlock_when_writes_blocked_with_pending_response() {
-        use futures_util::StreamExt;
-        use tokio::io::AsyncWriteExt;
-        use tokio_util::codec::FramedRead;
-
         // Small duplex buffer + ~4 KiB request/response sizes. The polling
         // pathology doesn't depend on scale; a real socket would see the
         // same shape with tens of KiB of buffer and MB-scale payloads.
@@ -1424,10 +1420,6 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_permit_released_on_response_timeout() {
-        use futures_util::StreamExt;
-        use tokio::io::AsyncWriteExt;
-        use tokio_util::codec::FramedRead;
-
         let (client_half, server_half) = tokio::io::duplex(4096);
         let (cmd_received_tx, mut cmd_received_rx) = tokio::sync::mpsc::channel::<()>(10);
 

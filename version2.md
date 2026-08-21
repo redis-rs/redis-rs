@@ -128,6 +128,151 @@ let info = "redis://127.0.0.1/".into_connection_info()?
     .set_tcp_settings(TcpSettings::default().set_nodelay(false));
 ```
 
+### Zero-copy response parsing (Breaking Change)
+
+`Value` now stores its textual and binary payloads in cheaply-cloneable,
+reference-counted buffers instead of owned `Vec<u8>`/`String`:
+
+- `Value::BulkString(Vec<u8>)` → `Value::BulkString(bytes::Bytes)`
+- `Value::SimpleString(String)` → `Value::SimpleString(Str)`
+- `Value::VerbatimString { text: String, .. }` → `{ text: Str, .. }`
+- `Value::BigNumber(Vec<u8>)` → `Value::BigNumber(bytes::Bytes)` (unchanged under the `num-bigint` feature)
+- `PushKind::Other(String)` / `VerbatimFormat::Unknown(String)` → `Str`
+
+`Str` is a new UTF-8-guaranteed string backed by `bytes::Bytes`, exported as
+`redis::Str`. It derefs to `&str`, so most code keeps working unchanged, and it
+implements `FromRedisValue`/`ToRedisArgs`, so `con.get::<_, Str>("key")` reads a
+string without copying the payload. `Str::from_static` and `From<String>` are
+free; `From<&str>` copies, as does `Into<String>` when the `Str` is a shared slice
+into a response — the common parser case. `Into<Bytes>` just moves the buffer.
+
+`Str` otherwise carries the borrowed-string traits of the `String` it replaced:
+`Borrow<str>`, `AsRef<str>`/`AsRef<[u8]>`, `Display`/`Debug`, `str`-consistent
+`Hash`/`Eq`/`Ord` (so it is a `HashMap`/`BTreeMap` key you can look up by `&str`),
+`From<&str>`/`String`/`&String`/`Cow<str>`/`char`, `FromStr`, and
+`Into<String>`/`Into<Bytes>`/`Into<Vec<u8>>`. It also compares and orders directly
+against `str`, `&str`, `String` and `Cow<str>` in either operand position.
+
+`Str` and `Bytes` are immutable views, so payloads can no longer be edited in
+place: convert out (`String::from(s)`, `b.to_vec()`), modify, convert back.
+Traits that other crates implement for `Vec<u8>`/`String` — quickcheck's
+`Arbitrary`, proptest strategies — no longer apply to a payload either, so
+convert at that boundary too.
+
+The parser was rewritten to be **zero-copy**: instead of allocating a fresh
+`Vec`/`String` for every element of a response, it parses into byte-range
+offsets and then produces each leaf as a cheap reference-counted slice into the
+response buffer. A response with many elements no longer performs a heap
+allocation per element.
+
+**Migration:** Most code that goes through `FromRedisValue`/`from_redis_value`
+is unaffected. Code that matches on `Value` directly should:
+
+```rust
+// Before:
+if let Value::BulkString(bytes) = v {
+    let s = String::from_utf8(bytes)?;       // bytes: Vec<u8>
+}
+// After:
+if let Value::BulkString(bytes) = v {
+    let s = String::from_utf8(bytes.into())?; // bytes: Bytes  (or use &bytes as &[u8])
+}
+```
+
+`Str` derefs to `&str`, so `match` arms that previously used the inner `String`
+of a `Value::SimpleString` as a `&str` continue to work. Constructing and
+byte-wise reading are where the compiler will stop you:
+
+```rust
+// Constructing a `Value` (tests, mocks, `redis-test` expectations):
+Value::BulkString(b"key".to_vec())      // → Value::BulkString(b"key".to_vec().into())
+Value::SimpleString("OK".to_string())   // → Value::SimpleString("OK".into())
+// For literals, `Bytes::from_static(b"OK")` / `Str::from_static("OK")` skip the copy.
+// `.as_bytes().into()` on a non-'static string will not borrow-check: use
+// `Bytes::copy_from_slice(..)`, or move a `String` in with `.into()`.
+
+// Reading a `BulkString` payload:
+b.as_slice()                            // → b.as_ref()
+b == b"OK"                              // → b.as_ref() == b"OK", or simply b == "OK"
+takes_vec(b)                            // → takes_vec(b.into())
+```
+
+`.as_slice()` is worth calling out: on `Bytes` it resolves to an unstable method
+and reports `error[E0658]: use of unstable library feature 'str_as_str'`, which
+mentions neither `Bytes` nor the fix. You do not need nightly — use `.as_ref()`.
+
+The (rarely used) re-exported `parse_redis_value_async` also changed shape as
+part of the rewrite: its first argument is now a `&mut bytes::BytesMut` read
+buffer instead of a `combine::stream::Decoder`. Call it with a `BytesMut` you
+own and reuse across calls.
+
+`redis`'s `bytes` feature is gone: `bytes` is now an unconditional dependency, so
+the `FromRedisValue for bytes::Bytes` and `RedisWrite::bufmut_for_next_arg` impls
+it used to gate are always available. Remove `"bytes"` from your `redis` features
+— Cargo errors on features that no longer exist. (`redis-test` keeps its own
+`bytes` feature; leave that one alone.) Code that needs to *name* `Bytes`/
+`BytesMut` (rather than rely on `.into()` and `Deref<Target = [u8]>`) should add
+`bytes = "1"` to its own `Cargo.toml`.
+
+#### Why it's faster
+
+The new parser allocates a small, constant number of times per response rather
+than once per element, and avoids copying bulk-string payloads out of the read
+buffer entirely on the async codec path. From `cargo bench -p redis --bench
+bench_decode`; the "before" column comes from running that same benchmark file
+against 1.x, where it compiles unchanged:
+
+| Response                      | Allocations (before → after) |
+| ----------------------------- | ---------------------------- |
+| Single 1 MiB bulk string      | 154 → **2** (77×)            |
+| Array of 5000 small bulks     | 7509 → **5** (1502×)         |
+| Array of 500 × 1 KiB bulks    | 2022 → **4** (506×)          |
+| Array of 5000 simple strings  | 7152 → **5** (1430×)         |
+| Array of 1000 key/value pairs | 2933 → **4** (733×)          |
+
+That is **77×–1500× fewer heap allocations** on large multi-element responses.
+Allocation counts are deterministic, so those numbers reproduce anywhere; the
+timings that go with them are hardware-dependent and are in
+[#2199](https://github.com/redis-rs/redis-rs/pull/2199) rather than here, where
+they would go stale.
+
+Small replies are a different story: the per-reply bookkeeping (one
+reference-counted frame per response) is a fixed cost that the saved allocations
+no longer pay for, so a single `+OK` or `:1` does not get faster and may be
+slightly slower. Cloning a `Value` payload is now a reference-count bump rather
+than a deep copy (cloning an aggregate still copies the `Vec` spine).
+
+#### Trade-offs to be aware of
+
+- **Peak memory is lower, but it moves into one contiguous allocation:** a large
+  reply is parsed out of a single buffer that cannot be drained until the reply
+  is complete, and its payloads are then slices of that buffer rather than fresh
+  copies. Total peak is roughly one copy of the reply, where before it was
+  roughly two (the old parser also had to buffer the whole reply, then allocated
+  owned `Vec`s on top). The buffer itself, however, is now as large as the reply
+  and has to be contiguous, where it used to stay near the read size — so a
+  fragmented heap can fail an allocation that previously succeeded.
+- **Memory retention:** every `Bytes`/`Str` leaf is a reference-counted slice of
+  the buffer it arrived in, so holding on to one small field keeps that whole
+  buffer alive — and because replies that arrive in the same read share one
+  allocation, that can be more than just the reply you kept a field from. If you
+  extract a small piece of a large response and store it long-term, copy it out
+  (e.g. `Vec::from(&bytes[..])` or `s.to_string()`). Server errors are already
+  copied out by the parser for exactly this reason — storing an error never pins
+  a response buffer.
+- **Extracting owned `Vec<u8>`/`String`:** conversions like
+  `from_redis_value::<Vec<u8>>` now perform their copy at conversion time rather
+  than at parse time (the total number of copies is unchanged — one). Code that
+  reads payloads by reference performs no copy at all.
+- **`Debug` output for binary payloads changed:** `Value::BulkString`'s `Debug`
+  now renders through `Bytes`, so `binary-data([255, 0, 1])` reads
+  `binary-data(b"\xff\0\x01")`. This text appears in type-mismatch error
+  messages, so anything asserting on those strings needs updating.
+- **Lossy UTF-8 decoding is now strict:** verbatim strings and blob errors were
+  previously decoded with `from_utf8_lossy`, silently substituting U+FFFD for
+  invalid bytes. They are now validated, so a non-UTF-8 payload in one of those
+  reply types fails the reply with a parse error instead of being corrupted.
+
 ### Removed `zinterstore_*` and `zunionstore_*` commands in favor of `zinterstore`, `zinterstore_with_weights`, `zunionstore`, and `zunionstore_with_weights`
 
 The following commands have been removed:
@@ -163,7 +308,6 @@ con.zinterstore_with_weights("out", &[("zset1", 2), ("zset2", 3)], SortedSetOper
 ```
 
 The same pattern applies to `zunionstore` and `zunionstore_with_weights`.
-
 
 ### `cmd_iter` yields `CmdRef` instead of `&Cmd` (Breaking Change)
 

@@ -8,14 +8,17 @@
 )]
 use std::{
     io::{self, Read},
+    ops::Range,
     str,
 };
 
 use crate::errors::{ParsingError, RedisError, Repr, ServerError, ServerErrorKind};
-use crate::types::{PushKind, RedisResult, Value, VerbatimFormat};
+use crate::types::{PushKind, RedisResult, Str, Value, VerbatimFormat};
+
+use bytes::{Buf, Bytes, BytesMut};
 
 use combine::{
-    ParseError, Parser as _, any,
+    Parser as _, any,
     error::StreamError,
     opaque,
     parser::{
@@ -23,62 +26,294 @@ use combine::{
         combinator::{AnySendSyncPartialState, any_send_sync_partial_state},
         range::{recognize, take},
     },
-    stream::{
-        PointerOffset, RangeStream, StreamErrorFor,
-        decoder::{self, Decoder},
-    },
+    stream::{RangeStream, StreamErrorFor},
     unexpected_any,
 };
 
 const MAX_RECURSE_DEPTH: usize = 100;
 
-fn err_parser(line: &str) -> ServerError {
-    let mut pieces = line.splitn(2, ' ');
-    let kind = match pieces.next().unwrap() {
-        "ERR" => ServerErrorKind::ResponseError,
-        "EXECABORT" => ServerErrorKind::ExecAbort,
-        "LOADING" => ServerErrorKind::BusyLoading,
-        "NOSCRIPT" => ServerErrorKind::NoScript,
-        "MOVED" => ServerErrorKind::Moved,
-        "ASK" => ServerErrorKind::Ask,
-        "TRYAGAIN" => ServerErrorKind::TryAgain,
-        "CLUSTERDOWN" => ServerErrorKind::ClusterDown,
-        "CROSSSLOT" => ServerErrorKind::CrossSlot,
-        "MASTERDOWN" => ServerErrorKind::MasterDown,
-        "READONLY" => ServerErrorKind::ReadOnly,
-        "NOTBUSY" => ServerErrorKind::NotBusy,
-        "NOSUB" => ServerErrorKind::NoSub,
-        "NOPERM" => ServerErrorKind::NoPerm,
-        code => {
-            return ServerError(Repr::Extension {
-                code: code.into(),
-                detail: pieces.next().map(|str| str.into()),
-            });
-        }
-    };
-    let detail = pieces.next().map(|str| str.into());
-    ServerError(Repr::Known { kind, detail })
+/// An intermediate, zero-copy representation of a parsed [`Value`].
+///
+/// The parser produces a `ValueRange` whose textual/binary leaves store
+/// `Range<usize>` offsets into the response buffer rather than copies of the
+/// data. Once a complete value has been parsed, [`materialize`] converts the
+/// ranges into [`Value`] by cheaply slicing the (frozen) buffer `Bytes`.
+enum ValueRange {
+    Nil,
+    Int(i64),
+    BulkString(Range<usize>),
+    Array(Vec<Self>),
+    SimpleString(StrRange),
+    Okay,
+    Map(Vec<(Self, Self)>),
+    Attribute {
+        data: Box<Self>,
+        attributes: Vec<(Self, Self)>,
+    },
+    Set(Vec<Self>),
+    Double(f64),
+    Boolean(bool),
+    VerbatimString {
+        format: VerbatimFormatRange,
+        text: StrRange,
+    },
+    #[cfg(feature = "num-bigint")]
+    BigNumber(num_bigint::BigInt),
+    #[cfg(not(feature = "num-bigint"))]
+    BigNumber(Range<usize>),
+    /// The parsed elements of a push message. The first element, if any, is the
+    /// push kind; the rest is the data.
+    Push(Vec<Self>),
+    ServerError(ServerErrorRange),
 }
 
-pub fn get_push_kind(kind: String) -> PushKind {
-    match kind.as_str() {
-        "invalidate" => PushKind::Invalidate,
-        "message" => PushKind::Message,
-        "pmessage" => PushKind::PMessage,
-        "smessage" => PushKind::SMessage,
-        "unsubscribe" => PushKind::Unsubscribe,
-        "punsubscribe" => PushKind::PUnsubscribe,
-        "sunsubscribe" => PushKind::SUnsubscribe,
-        "subscribe" => PushKind::Subscribe,
-        "psubscribe" => PushKind::PSubscribe,
-        "ssubscribe" => PushKind::SSubscribe,
-        _ => PushKind::Other(kind),
+enum VerbatimFormatRange {
+    Text,
+    Markdown,
+    Unknown(StrRange),
+}
+
+struct ServerErrorRange {
+    /// `Some` for a known error kind, `None` for an extension error (in which
+    /// case `code` holds the error code).
+    kind: Option<ServerErrorKind>,
+    code: StrRange,
+    detail: Option<StrRange>,
+}
+
+/// Computes the offset range of `slice` within the buffer that starts at `base`.
+///
+/// `slice` must be a sub-slice of the buffer whose start address is `base`.
+#[inline]
+fn range_of(slice: &[u8], base: usize) -> Range<usize> {
+    let start = slice.as_ptr() as usize - base;
+    start..start + slice.len()
+}
+
+use str_range::StrRange;
+
+/// Wraps [`StrRange`] so that its field is unreachable from the rest of this
+/// module: the only way to build one is [`StrRange::of`], which requires a
+/// `&str`.
+mod str_range {
+    use super::range_of;
+    use std::ops::Range;
+
+    /// The offset range of a buffer sub-slice that is known to hold valid UTF-8.
+    ///
+    /// This is the only range type `slice_str` accepts, which is what makes its
+    /// `unsafe` sound. Two things have to hold, and the type only carries the
+    /// first:
+    ///
+    /// - **Valid UTF-8** — guaranteed. [`StrRange::of`] takes a `&str`, and safe
+    ///   Rust cannot produce a `&str` that is not valid UTF-8. Every `&str` in
+    ///   this parser comes out of a `str::from_utf8` call (`line`, `verbatim`,
+    ///   `blob_error`), so a new `Str`-valued reply kind cannot skip the check.
+    /// - **Provenance** — *not* checked by the type. `of` erases the borrow into
+    ///   an offset against a bare `base` address, so passing a `&str` that does
+    ///   not point into the buffer yields a meaningless range. `slice_str`
+    ///   re-validates in debug builds to catch that.
+    pub(super) struct StrRange(Range<usize>);
+
+    impl StrRange {
+        /// Records the offset range of `s` within the buffer that starts at `base`.
+        ///
+        /// `s` must be a sub-slice of that buffer.
+        #[inline]
+        pub(super) fn of(s: &str, base: usize) -> Self {
+            Self(range_of(s.as_bytes(), base))
+        }
+
+        #[inline]
+        pub(super) fn into_range(self) -> Range<usize> {
+            self.0
+        }
     }
 }
 
+fn err_parser(line: &str, base: usize) -> ServerErrorRange {
+    let mut pieces = line.splitn(2, ' ');
+    let code = pieces.next().unwrap();
+    let kind = match code {
+        "ERR" => Some(ServerErrorKind::ResponseError),
+        "EXECABORT" => Some(ServerErrorKind::ExecAbort),
+        "LOADING" => Some(ServerErrorKind::BusyLoading),
+        "NOSCRIPT" => Some(ServerErrorKind::NoScript),
+        "MOVED" => Some(ServerErrorKind::Moved),
+        "ASK" => Some(ServerErrorKind::Ask),
+        "TRYAGAIN" => Some(ServerErrorKind::TryAgain),
+        "CLUSTERDOWN" => Some(ServerErrorKind::ClusterDown),
+        "CROSSSLOT" => Some(ServerErrorKind::CrossSlot),
+        "MASTERDOWN" => Some(ServerErrorKind::MasterDown),
+        "READONLY" => Some(ServerErrorKind::ReadOnly),
+        "NOTBUSY" => Some(ServerErrorKind::NotBusy),
+        "NOSUB" => Some(ServerErrorKind::NoSub),
+        "NOPERM" => Some(ServerErrorKind::NoPerm),
+        _ => None,
+    };
+    ServerErrorRange {
+        kind,
+        // `code` and `detail` are sub-slices of `line`, which the caller
+        // obtained from `str::from_utf8`; splitting a `&str` on an ASCII byte
+        // keeps both halves valid UTF-8.
+        code: StrRange::of(code, base),
+        detail: pieces.next().map(|detail| StrRange::of(detail, base)),
+    }
+}
+
+/// Slices `frame` at `range`, wrapping it as a [`Str`] without re-validating.
+///
+/// The crate's only `Str::from_utf8_unchecked` call site; see [`StrRange`].
+#[inline]
+fn slice_str(frame: &Bytes, range: StrRange) -> Str {
+    let bytes = frame.slice(range.into_range());
+    // `StrRange` cannot carry non-UTF-8, but its offsets come from pointer
+    // arithmetic that no type can check, so re-validate outside release builds.
+    debug_assert!(
+        str::from_utf8(&bytes).is_ok(),
+        "StrRange pointed at non-UTF-8 bytes: {bytes:?}"
+    );
+    // SAFETY: `bytes` is the byte range of a `&str` that borrowed this frame;
+    // see `StrRange`.
+    unsafe { Str::from_utf8_unchecked(bytes) }
+}
+
+fn materialize(range: ValueRange, frame: &Bytes) -> Result<Value, ParsingError> {
+    Ok(match range {
+        ValueRange::Nil => Value::Nil,
+        ValueRange::Int(val) => Value::Int(val),
+        ValueRange::BulkString(range) => Value::BulkString(frame.slice(range)),
+        ValueRange::Array(items) => Value::Array(materialize_vec(items, frame)?),
+        ValueRange::SimpleString(range) => Value::SimpleString(slice_str(frame, range)),
+        ValueRange::Okay => Value::Okay,
+        ValueRange::Map(pairs) => Value::Map(materialize_pairs(pairs, frame)?),
+        ValueRange::Attribute { data, attributes } => Value::Attribute {
+            data: Box::new(materialize(*data, frame)?),
+            attributes: materialize_pairs(attributes, frame)?,
+        },
+        ValueRange::Set(items) => Value::Set(materialize_vec(items, frame)?),
+        ValueRange::Double(val) => Value::Double(val),
+        ValueRange::Boolean(val) => Value::Boolean(val),
+        ValueRange::VerbatimString { format, text } => Value::VerbatimString {
+            format: materialize_format(format, frame),
+            text: slice_str(frame, text),
+        },
+        #[cfg(feature = "num-bigint")]
+        ValueRange::BigNumber(num) => Value::BigNumber(num),
+        #[cfg(not(feature = "num-bigint"))]
+        ValueRange::BigNumber(range) => Value::BigNumber(frame.slice(range)),
+        ValueRange::Push(items) => materialize_push(items, frame)?,
+        ValueRange::ServerError(err) => Value::ServerError(materialize_error(err, frame)),
+    })
+}
+
+/// Collecting into a `Result` reports a size-hint lower bound of zero, because
+/// the iterator may short-circuit. So `collect()` here would start the output at
+/// capacity 4 and double its way up, which for a 100-element array is five
+/// reallocations and most of the parse's allocation count. The element count is
+/// known up front, so reserve it.
+fn materialize_vec(items: Vec<ValueRange>, frame: &Bytes) -> Result<Vec<Value>, ParsingError> {
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        out.push(materialize(item, frame)?);
+    }
+    Ok(out)
+}
+
+/// See [`materialize_vec`] for why this reserves rather than collecting.
+fn materialize_pairs(
+    pairs: Vec<(ValueRange, ValueRange)>,
+    frame: &Bytes,
+) -> Result<Vec<(Value, Value)>, ParsingError> {
+    let mut out = Vec::with_capacity(pairs.len());
+    for (k, v) in pairs {
+        out.push((materialize(k, frame)?, materialize(v, frame)?));
+    }
+    Ok(out)
+}
+
+fn materialize_format(format: VerbatimFormatRange, frame: &Bytes) -> VerbatimFormat {
+    match format {
+        VerbatimFormatRange::Text => VerbatimFormat::Text,
+        VerbatimFormatRange::Markdown => VerbatimFormat::Markdown,
+        VerbatimFormatRange::Unknown(range) => VerbatimFormat::Unknown(slice_str(frame, range)),
+    }
+}
+
+/// Copies `frame[range]` out into a detached [`Str`].
+///
+/// Used for error payloads instead of [`slice_str`]: errors are rare, small,
+/// and often outlive the response they arrived in (users store them, retry
+/// loops hold them, cluster redirects carry them around). Slicing would pin
+/// the whole response frame for as long as the error lives — e.g. one error
+/// among thousands of pipelined results would retain the entire reply buffer.
+/// Copying a few bytes here keeps the hot data path zero-copy while giving
+/// errors an independent lifetime.
+#[inline]
+fn detached_str(frame: &Bytes, range: StrRange) -> Str {
+    Str::from(slice_str(frame, range).as_str())
+}
+
+fn materialize_error(err: ServerErrorRange, frame: &Bytes) -> ServerError {
+    let detail = err.detail.map(|range| detached_str(frame, range));
+    match err.kind {
+        Some(kind) => ServerError(Repr::Known { kind, detail }),
+        None => ServerError(Repr::Extension {
+            code: detached_str(frame, err.code),
+            detail,
+        }),
+    }
+}
+
+fn materialize_push(items: Vec<ValueRange>, frame: &Bytes) -> Result<Value, ParsingError> {
+    let mut it = items.into_iter();
+    let Some(first) = it.next() else {
+        return Ok(Value::Push {
+            kind: PushKind::Other(Str::from_static("")),
+            data: vec![],
+        });
+    };
+    let kind = match first {
+        // A bulk string is arbitrary bytes, so the kind has to be validated here.
+        ValueRange::BulkString(range) => get_push_kind(frame.slice(range))?,
+        // A simple string was already validated by the parser's `line`.
+        ValueRange::SimpleString(range) => push_kind_from_str(slice_str(frame, range)),
+        _ => return Err(ParsingError::from("parse error when decoding push")),
+    };
+    let data = it
+        .map(|item| materialize(item, frame))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Value::Push { kind, data })
+}
+
+fn get_push_kind(name: Bytes) -> Result<PushKind, ParsingError> {
+    let name =
+        Str::from_utf8(name).map_err(|_| ParsingError::from("parse error when decoding push"))?;
+    Ok(push_kind_from_str(name))
+}
+
+/// Maps an already-validated push-kind name onto a [`PushKind`].
+fn push_kind_from_str(name: Str) -> PushKind {
+    let known = match name.as_str() {
+        "invalidate" => Some(PushKind::Invalidate),
+        "message" => Some(PushKind::Message),
+        "pmessage" => Some(PushKind::PMessage),
+        "smessage" => Some(PushKind::SMessage),
+        "unsubscribe" => Some(PushKind::Unsubscribe),
+        "punsubscribe" => Some(PushKind::PUnsubscribe),
+        "sunsubscribe" => Some(PushKind::SUnsubscribe),
+        "subscribe" => Some(PushKind::Subscribe),
+        "psubscribe" => Some(PushKind::PSubscribe),
+        "ssubscribe" => Some(PushKind::SSubscribe),
+        _ => None,
+    };
+    known.unwrap_or_else(|| PushKind::Other(name))
+}
+
 fn value<'a, I>(
+    base: usize,
     count: Option<usize>,
-) -> impl combine::Parser<I, Output = Value, PartialState = AnySendSyncPartialState>
+) -> impl combine::Parser<I, Output = ValueRange, PartialState = AnySendSyncPartialState>
 where
     I: RangeStream<Token = u8, Range = &'a [u8]>,
     I::Error: combine::ParseError<u8, &'a [u8], I::Position>,
@@ -105,11 +340,12 @@ where
                 };
 
                 let simple_string = || {
-                    line().map(|line| {
+                    line().map(move |line: &str| {
                         if line == "OK" {
-                            Value::Okay
+                            ValueRange::Okay
                         } else {
-                            Value::SimpleString(line.into())
+                            // `line` came from `str::from_utf8` above.
+                            ValueRange::SimpleString(StrRange::of(line, base))
                         }
                     })
                 };
@@ -124,54 +360,56 @@ where
                     })
                 };
 
+                // Reply kinds with no null form. Casting a negative length to
+                // `usize` would ask for ~2^64 bytes, so the decoder would buffer
+                // forever waiting for them instead of failing.
+                let non_negative_len = |message: &'static str| {
+                    int().and_then(move |size| {
+                        usize::try_from(size)
+                            .map_err(|_| StreamErrorFor::<I>::message_static_message(message))
+                    })
+                };
+
                 let bulk_string = || {
                     int().then_partial(move |size| {
                         if *size < 0 {
-                            combine::produce(|| Value::Nil).left()
+                            combine::produce(|| ValueRange::Nil).left()
                         } else {
                             take(*size as usize)
-                                .map(|bs: &[u8]| Value::BulkString(bs.to_vec()))
+                                .map(move |bs: &[u8]| ValueRange::BulkString(range_of(bs, base)))
                                 .skip(crlf())
                                 .right()
                         }
                     })
                 };
-                let blob = || {
-                    int().then_partial(move |size| {
-                        take(*size as usize)
-                            .map(|bs: &[u8]| String::from_utf8_lossy(bs).to_string())
-                            .skip(crlf())
-                    })
-                };
-
                 let array = || {
                     int().then_partial(move |&mut length| {
                         if length < 0 {
-                            combine::produce(|| Value::Nil).left()
+                            combine::produce(|| ValueRange::Nil).left()
                         } else {
                             let length = length as usize;
-                            combine::count_min_max(length, length, value(Some(count + 1)))
-                                .map(Value::Array)
+                            combine::count_min_max(length, length, value(base, Some(count + 1)))
+                                .map(ValueRange::Array)
                                 .right()
                         }
                     })
                 };
 
-                let error = || line().map(err_parser);
+                let error = || line().map(move |line: &str| err_parser(line, base));
                 let map = || {
                     int().then_partial(move |&mut kv_length| {
                         match (kv_length as usize).checked_mul(2) {
                             Some(length) => {
-                                combine::count_min_max(length, length, value(Some(count + 1)))
-                                    .map(move |result: Vec<Value>| {
+                                combine::count_min_max(length, length, value(base, Some(count + 1)))
+                                    .map(move |result: Vec<ValueRange>| {
                                         let mut it = result.into_iter();
-                                        let mut x = vec![];
+                                        let mut x = Vec::with_capacity(kv_length as usize);
                                         for _ in 0..kv_length {
                                             if let (Some(k), Some(v)) = (it.next(), it.next()) {
                                                 x.push((k, v));
                                             }
                                         }
-                                        Value::Map(x)
+                                        ValueRange::Map(x)
                                     })
                                     .left()
                             }
@@ -187,16 +425,16 @@ where
                             Some(length) => {
                                 // + 1 is for data!
                                 let length = length + 1;
-                                combine::count_min_max(length, length, value(Some(count + 1)))
-                                    .map(move |result: Vec<Value>| {
+                                combine::count_min_max(length, length, value(base, Some(count + 1)))
+                                    .map(move |result: Vec<ValueRange>| {
                                         let mut it = result.into_iter();
-                                        let mut attributes = vec![];
+                                        let mut attributes = Vec::with_capacity(kv_length as usize);
                                         for _ in 0..kv_length {
                                             if let (Some(k), Some(v)) = (it.next(), it.next()) {
                                                 attributes.push((k, v));
                                             }
                                         }
-                                        Value::Attribute {
+                                        ValueRange::Attribute {
                                             data: Box::new(it.next().unwrap()),
                                             attributes,
                                         }
@@ -212,11 +450,11 @@ where
                 let set = || {
                     int().then_partial(move |&mut length| {
                         if length < 0 {
-                            combine::produce(|| Value::Nil).left()
+                            combine::produce(|| ValueRange::Nil).left()
                         } else {
                             let length = length as usize;
-                            combine::count_min_max(length, length, value(Some(count + 1)))
-                                .map(Value::Set)
+                            combine::count_min_max(length, length, value(base, Some(count + 1)))
+                                .map(ValueRange::Set)
                                 .right()
                         }
                     })
@@ -224,40 +462,16 @@ where
                 let push = || {
                     int().then_partial(move |&mut length| {
                         if length <= 0 {
-                            combine::produce(|| Value::Push {
-                                kind: PushKind::Other("".to_string()),
-                                data: vec![],
-                            })
-                            .left()
+                            combine::produce(|| ValueRange::Push(vec![])).left()
                         } else {
                             let length = length as usize;
-                            combine::count_min_max(length, length, value(Some(count + 1)))
-                                .and_then(|result: Vec<Value>| {
-                                    let mut it = result.into_iter();
-                                    let first = it.next().unwrap_or(Value::Nil);
-                                    if let Value::BulkString(kind) = first {
-                                        let push_kind = String::from_utf8(kind)
-                                            .map_err(StreamErrorFor::<I>::other)?;
-                                        Ok(Value::Push {
-                                            kind: get_push_kind(push_kind),
-                                            data: it.collect(),
-                                        })
-                                    } else if let Value::SimpleString(kind) = first {
-                                        Ok(Value::Push {
-                                            kind: get_push_kind(kind),
-                                            data: it.collect(),
-                                        })
-                                    } else {
-                                        Err(StreamErrorFor::<I>::message_static_message(
-                                            "parse error when decoding push",
-                                        ))
-                                    }
-                                })
+                            combine::count_min_max(length, length, value(base, Some(count + 1)))
+                                .map(ValueRange::Push)
                                 .right()
                         }
                     })
                 };
-                let null = || line().map(|_| Value::Nil);
+                let null = || line().map(|_| ValueRange::Nil);
                 let double = || {
                     line().and_then(|line| {
                         line.trim()
@@ -274,32 +488,53 @@ where
                         )),
                     })
                 };
-                let blob_error = || blob().map(|line| err_parser(&line));
-                let verbatim = || {
-                    blob().and_then(|line| {
-                        if let Some((format, text)) = line.split_once(':') {
-                            let format = match format {
-                                "txt" => VerbatimFormat::Text,
-                                "mkd" => VerbatimFormat::Markdown,
-                                x => VerbatimFormat::Unknown(x.to_string()),
-                            };
-                            Ok(Value::VerbatimString {
-                                format,
-                                text: text.to_string(),
+                let blob_error = || {
+                    non_negative_len("negative blob error length").then_partial(move |&mut size| {
+                        take(size)
+                            .and_then(move |bs: &[u8]| {
+                                let line =
+                                    str::from_utf8(bs).map_err(StreamErrorFor::<I>::other)?;
+                                Ok::<_, StreamErrorFor<I>>(err_parser(line, base))
                             })
-                        } else {
-                            Err(StreamErrorFor::<I>::message_static_message(
-                                "parse error when decoding verbatim string",
-                            ))
-                        }
+                            .skip(crlf())
                     })
                 };
+                let verbatim = || {
+                    non_negative_len("negative verbatim string length").then_partial(
+                        move |&mut size| {
+                            take(size)
+                                .and_then(move |bs: &[u8]| {
+                                    let line =
+                                        str::from_utf8(bs).map_err(StreamErrorFor::<I>::other)?;
+                                    if let Some((format, text)) = line.split_once(':') {
+                                        let format = match format {
+                                            "txt" => VerbatimFormatRange::Text,
+                                            "mkd" => VerbatimFormatRange::Markdown,
+                                            x => {
+                                                VerbatimFormatRange::Unknown(StrRange::of(x, base))
+                                            }
+                                        };
+                                        Ok(ValueRange::VerbatimString {
+                                            format,
+                                            text: StrRange::of(text, base),
+                                        })
+                                    } else {
+                                        Err(StreamErrorFor::<I>::message_static_message(
+                                            "parse error when decoding verbatim string",
+                                        ))
+                                    }
+                                })
+                                .skip(crlf())
+                        },
+                    )
+                };
                 let big_number = || {
-                    line().and_then(|line| {
+                    line().and_then(move |line| {
                         #[cfg(not(feature = "num-bigint"))]
-                        return Ok::<_, StreamErrorFor<I>>(Value::BigNumber(
-                            line.as_bytes().to_vec(),
-                        ));
+                        return Ok::<_, StreamErrorFor<I>>(ValueRange::BigNumber(range_of(
+                            line.as_bytes(),
+                            base,
+                        )));
                         #[cfg(feature = "num-bigint")]
                         num_bigint::BigInt::parse_bytes(line.as_bytes(), 10)
                             .ok_or_else(|| {
@@ -307,22 +542,22 @@ where
                                     "Expected bigint, got garbage",
                                 )
                             })
-                            .map(Value::BigNumber)
+                            .map(ValueRange::BigNumber)
                     })
                 };
                 combine::dispatch!(b;
                     b'+' => simple_string(),
-                    b':' => int().map(Value::Int),
+                    b':' => int().map(ValueRange::Int),
                     b'$' => bulk_string(),
                     b'*' => array(),
                     b'%' => map(),
                     b'|' => attribute(),
                     b'~' => set(),
-                    b'-' => error().map(Value::ServerError),
+                    b'-' => error().map(ValueRange::ServerError),
                     b'_' => null(),
-                    b',' => double().map(Value::Double),
-                    b'#' => boolean().map(Value::Boolean),
-                    b'!' => blob_error().map(Value::ServerError),
+                    b',' => double().map(ValueRange::Double),
+                    b'#' => boolean().map(ValueRange::Boolean),
+                    b'!' => blob_error().map(ValueRange::ServerError),
                     b'=' => verbatim(),
                     b'(' => big_number(),
                     b'>' => push(),
@@ -332,63 +567,190 @@ where
     ))
 }
 
-// a macro is needed because of lifetime shenanigans with `decoder`.
-macro_rules! to_redis_err {
-    ($err: expr, $decoder: expr) => {
-        match $err {
-            decoder::Error::Io { error, .. } => error.into(),
-            decoder::Error::Parse(err) => {
-                if err.is_unexpected_end_of_input() {
-                    RedisError::from(io::Error::from(io::ErrorKind::UnexpectedEof))
-                } else {
-                    let err = err
-                        .map_range(|range| format!("{range:?}"))
-                        .map_position(|pos| pos.translate_position($decoder.buffer()))
-                        .to_string();
-                    RedisError::from(ParsingError::from(err))
-                }
+/// Resumable state for the value currently being parsed, so that a reply
+/// spanning many reads is parsed once instead of re-scanned on every read.
+///
+/// Because the retained state holds [`ValueRange`] offsets that are indices from
+/// the start of the buffer, the buffer may only be *appended* to while
+/// `committed != 0`; splitting bytes off the front would shift index 0. That
+/// only happens once a value is complete and the state has been reset.
+#[derive(Default)]
+struct ParseState {
+    partial: AnySendSyncPartialState,
+    /// Leading bytes `combine` has already consumed for the value in progress.
+    /// They stay in the buffer because the finished value slices into them, so
+    /// `combine` is handed only the suffix that follows.
+    committed: usize,
+}
+
+impl ParseState {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+/// Attempts to parse a single value from `buffer`, resuming from `state`.
+///
+/// On success returns the value's offsets — indices from the start of
+/// `buffer` — together with the total number of bytes it occupies, and resets
+/// `state`. Returns `Ok(None)` if `buffer` does not yet contain a complete
+/// value (and `complete` is `false`, i.e. more data may still arrive), in
+/// which case `state` records how far the parse got so the next call resumes
+/// there rather than starting over. See [`ParseState`] for the invariant this
+/// places on `buffer`.
+fn decode_value_range(
+    buffer: &[u8],
+    state: &mut ParseState,
+    complete: bool,
+) -> RedisResult<Option<(ValueRange, usize)>> {
+    let base = buffer.as_ptr() as usize;
+    let committed = state.committed;
+    // A `ParseState` belongs to one buffer: resuming against a different (or
+    // truncated) one would silently mis-slice, so fail with a useful message
+    // instead of an opaque out-of-range panic below.
+    debug_assert!(
+        committed <= buffer.len(),
+        "resumed a parse against a buffer that lost the {committed} bytes already consumed \
+         (len is {})",
+        buffer.len()
+    );
+    // `combine` picks up where it left off, so it is shown only the bytes it
+    // has not consumed yet. This is the same token sequence it would have seen
+    // had the consumed prefix been dropped from the buffer; `base` is still the
+    // start of the whole buffer, so recorded offsets stay absolute.
+    let rest = &buffer[committed..];
+    let mut stream = combine::easy::Stream(combine::stream::MaybePartialStream(rest, !complete));
+    match combine::stream::decode_tokio(value(base, None), &mut stream, &mut state.partial) {
+        Ok((Some(value), removed_len)) => {
+            state.reset();
+            Ok(Some((value, committed + removed_len)))
+        }
+        Ok((None, removed_len)) => {
+            state.committed = committed + removed_len;
+            Ok(None)
+        }
+        Err(err) => {
+            state.reset();
+            let err = err
+                .map_position(|pos| committed + pos.translate_position(rest))
+                .map_range(|range| format!("{range:?}"))
+                .to_string();
+            Err(RedisError::from(ParsingError::from(err)))
+        }
+    }
+}
+
+/// Parses a single value from `buffer`, consuming the bytes that make it up.
+///
+/// On success the consumed prefix is frozen into a [`Bytes`] and the value's
+/// leaves are produced as cheap, reference-counted slices into it; the
+/// remaining bytes are left in `buffer` for the next value.
+/// Whether materializing this range needs to slice the response buffer.
+///
+/// Replies that are a single scalar -- `+OK`, `:1`, `_`, `#t`, `,1.5` -- carry no
+/// payload that borrows the frame, so freezing it would hand out a
+/// reference-counted handle nobody reads. Freezing is not free: it makes the
+/// buffer shared, so every such reply pays an atomic increment and decrement
+/// (~22ns measured) plus, whenever the buffer had been reclaimed since, the
+/// allocation that promotes it back to shared.
+///
+/// This deliberately does not recurse into aggregates. An array of scalars could
+/// also skip the frame, but measuring it showed no gain -- the two `Vec`
+/// allocations an aggregate needs dominate the atomic pair -- while the walk cost
+/// ~2% on a 1000-element integer array and at nesting depth 50+. An O(1) check
+/// keeps the wins and drops the losses.
+fn needs_frame(range: &ValueRange) -> bool {
+    !matches!(
+        range,
+        ValueRange::Nil
+            | ValueRange::Int(_)
+            | ValueRange::Okay
+            | ValueRange::Double(_)
+            | ValueRange::Boolean(_)
+    )
+}
+
+fn parse_buffer(
+    buffer: &mut BytesMut,
+    state: &mut ParseState,
+    complete: bool,
+) -> RedisResult<Option<Value>> {
+    let Some((range, consumed)) = decode_value_range(&buffer[..], state, complete)? else {
+        return Ok(None);
+    };
+    if !needs_frame(&range) {
+        buffer.advance(consumed);
+        return Ok(Some(materialize(range, &Bytes::new())?));
+    }
+    let frame = buffer.split_to(consumed).freeze();
+    Ok(Some(materialize(range, &frame)?))
+}
+
+/// Final parse attempt for callers that own their read loop (the sync and async
+/// `parse_*` entry points), used once the underlying reader has hit EOF.
+///
+/// A reply truncated by a dropped connection is reported as `Ok(None)` so the
+/// caller can surface it as [`io::ErrorKind::UnexpectedEof`] (which
+/// [`RedisError::is_connection_dropped`] recognizes), matching the pre-2.0
+/// behavior; genuinely malformed data is still an `Err`. The codec path
+/// (`decode_eof`) deliberately keeps returning the parse error instead.
+fn parse_final_value(buffer: &mut BytesMut, state: &mut ParseState) -> RedisResult<Option<Value>> {
+    let base = buffer.as_ptr() as usize;
+    let committed = state.committed;
+    let (range, consumed) = {
+        let rest = &buffer[committed..];
+        let mut stream = combine::easy::Stream(combine::stream::MaybePartialStream(rest, false));
+        match combine::stream::decode_tokio(value(base, None), &mut stream, &mut state.partial) {
+            Ok((Some(value), removed_len)) => (value, committed + removed_len),
+            // Every exit from here on is terminal for this value, so the state
+            // is reset rather than left with `committed` and `partial`
+            // disagreeing about how far the parse got.
+            Ok((None, _)) => {
+                state.reset();
+                return Ok(None);
+            }
+            // Input ended in the middle of a value: a truncated reply, not a
+            // protocol error.
+            Err(ref err) if err.errors.iter().any(is_end_of_input) => {
+                state.reset();
+                return Ok(None);
+            }
+            Err(err) => {
+                let err = err
+                    .map_position(|pos| committed + pos.translate_position(rest))
+                    .map_range(|range| format!("{range:?}"))
+                    .to_string();
+                state.reset();
+                return Err(RedisError::from(ParsingError::from(err)));
             }
         }
     };
+    state.reset();
+    let frame = buffer.split_to(consumed).freeze();
+    Ok(Some(materialize(range, &frame)?))
+}
+
+/// Whether a single combine error is the "unexpected end of input" marker.
+fn is_end_of_input(err: &combine::easy::Error<u8, &[u8]>) -> bool {
+    *err == combine::easy::Error::end_of_input()
 }
 
 #[cfg(feature = "aio")]
 mod aio_support {
     use super::*;
 
-    use bytes::{Buf, BytesMut};
-    use tokio::io::AsyncRead;
+    use tokio::io::{AsyncRead, AsyncReadExt};
     use tokio_util::codec::{Decoder, Encoder};
 
+    /// Decodes a stream of RESP replies.
+    ///
+    /// Holds the parse state of the reply currently in flight, so a reply that
+    /// arrives over several reads is parsed once rather than re-parsed from the
+    /// start on every read.
     #[derive(Default)]
     pub struct ValueCodec {
-        state: AnySendSyncPartialState,
-    }
-
-    impl ValueCodec {
-        fn decode_stream(&mut self, bytes: &mut BytesMut, eof: bool) -> RedisResult<Option<Value>> {
-            let (opt, removed_len) = {
-                let buffer = &bytes[..];
-                let mut stream =
-                    combine::easy::Stream(combine::stream::MaybePartialStream(buffer, !eof));
-                match combine::stream::decode_tokio(value(None), &mut stream, &mut self.state) {
-                    Ok(x) => x,
-                    Err(err) => {
-                        let err = err
-                            .map_position(|pos| pos.translate_position(buffer))
-                            .map_range(|range| format!("{range:?}"))
-                            .to_string();
-                        return Err(RedisError::from(ParsingError::from(err)));
-                    }
-                }
-            };
-
-            bytes.advance(removed_len);
-            match opt {
-                Some(result) => Ok(Some(result)),
-                None => Ok(None),
-            }
-        }
+        /// Visible to the parent module so tests can assert on parse progress.
+        pub(super) state: ParseState,
     }
 
     impl Encoder<Vec<u8>> for ValueCodec {
@@ -404,28 +766,56 @@ mod aio_support {
         type Error = RedisError;
 
         fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-            self.decode_stream(src, false)
+            parse_buffer(src, &mut self.state, false)
         }
 
         fn decode_eof(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-            self.decode_stream(buf, true)
+            parse_buffer(buf, &mut self.state, true)
         }
     }
 
     /// Parses a redis value asynchronously.
+    ///
+    /// `buffer` accumulates data read from `read` and retains any bytes that
+    /// follow a parsed value, so the same buffer should be reused across calls
+    /// on the same stream.
     pub async fn parse_redis_value_async<R>(
-        decoder: &mut combine::stream::Decoder<AnySendSyncPartialState, PointerOffset<[u8]>>,
+        buffer: &mut BytesMut,
         read: &mut R,
     ) -> RedisResult<Value>
     where
         R: AsyncRead + std::marker::Unpin,
     {
-        let result = combine::decode_tokio!(*decoder, *read, value(None), |input, _| {
-            combine::stream::easy::Stream::from(input)
-        });
-        match result {
-            Err(err) => Err(to_redis_err!(err, decoder)),
-            Ok(result) => Ok(result),
+        // One `ParseState` for the whole read loop: the reply may need several
+        // reads, and each read must resume the parse instead of restarting it.
+        // It does not need to outlive this call, because it is always reset once
+        // a value completes.
+        let mut state = ParseState::default();
+        loop {
+            if let Some(value) = parse_buffer(buffer, &mut state, false)? {
+                return Ok(value);
+            }
+            // Keep a sane minimum read granularity: `read_buf` only fills the
+            // buffer's spare capacity, which after a `split_to`/`freeze` can be
+            // arbitrarily small (the frozen prefix may still share the backing
+            // allocation). Without this, reads can degrade to tiny chunks.
+            //
+            // Only ask when the spare capacity is actually small, though. While
+            // a previously parsed value is still alive the buffer is shared, so
+            // `reserve` cannot reclaim in place and allocates a fresh chunk --
+            // which that reply's leaves then pin. Reserving unconditionally
+            // therefore gives every reply its own allocation.
+            if buffer.capacity() - buffer.len() < READ_CHUNK_SIZE / 8 {
+                buffer.reserve(READ_CHUNK_SIZE);
+            }
+            if read.read_buf(buffer).await? == 0 {
+                return match parse_final_value(buffer, &mut state)? {
+                    Some(value) => Ok(value),
+                    None => Err(RedisError::from(io::Error::from(
+                        io::ErrorKind::UnexpectedEof,
+                    ))),
+                };
+            }
         }
     }
 }
@@ -434,9 +824,15 @@ mod aio_support {
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 pub use self::aio_support::*;
 
+/// Minimum read granularity for both the sync and the async parse loops.
+const READ_CHUNK_SIZE: usize = 8 * 1024;
+
 /// The internal redis response parser.
 pub struct Parser {
-    decoder: Decoder<AnySendSyncPartialState, PointerOffset<[u8]>>,
+    buffer: BytesMut,
+    /// Scratch space for `parse_value`'s reads. Kept alive between calls so
+    /// that the read granularity doesn't have to be re-zeroed every time.
+    chunk: Box<[u8]>,
 }
 
 impl Default for Parser {
@@ -456,7 +852,8 @@ impl Parser {
     /// to be terminated.
     pub fn new() -> Self {
         Self {
-            decoder: Decoder::new(),
+            buffer: BytesMut::new(),
+            chunk: vec![0u8; READ_CHUNK_SIZE].into_boxed_slice(),
         }
     }
 
@@ -464,13 +861,22 @@ impl Parser {
 
     /// Parses synchronously into a single value from the reader.
     pub fn parse_value<T: Read>(&mut self, mut reader: T) -> RedisResult<Value> {
-        let mut decoder = &mut self.decoder;
-        let result = combine::decode!(decoder, reader, value(None), |input, _| {
-            combine::stream::easy::Stream::from(input)
-        });
-        match result {
-            Err(err) => Err(to_redis_err!(err, decoder)),
-            Ok(result) => Ok(result),
+        // See `parse_redis_value_async`: one resumable state for the read loop.
+        let mut state = ParseState::default();
+        loop {
+            if let Some(value) = parse_buffer(&mut self.buffer, &mut state, false)? {
+                return Ok(value);
+            }
+            let read = reader.read(&mut self.chunk)?;
+            if read == 0 {
+                return match parse_final_value(&mut self.buffer, &mut state)? {
+                    Some(value) => Ok(value),
+                    None => Err(RedisError::from(io::Error::from(
+                        io::ErrorKind::UnexpectedEof,
+                    ))),
+                };
+            }
+            self.buffer.extend_from_slice(&self.chunk[..read]);
         }
     }
 }
@@ -480,8 +886,13 @@ impl Parser {
 /// This is the most straightforward way to parse something into a low
 /// level redis value instead of having to use a whole parser.
 pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
-    let mut parser = Parser::new();
-    parser.parse_value(bytes)
+    let mut buffer = BytesMut::from(bytes);
+    match parse_final_value(&mut buffer, &mut ParseState::default())? {
+        Some(value) => Ok(value),
+        None => Err(RedisError::from(io::Error::from(
+            io::ErrorKind::UnexpectedEof,
+        ))),
+    }
 }
 
 #[cfg(test)]
@@ -521,7 +932,7 @@ mod tests {
                 Value::Okay,
                 Value::ServerError(ServerError(Repr::Known {
                     kind: ServerErrorKind::BusyLoading,
-                    detail: Some(arcstr::literal!("server is loading"))
+                    detail: Some(Str::from_static("server is loading"))
                 })),
                 Value::Okay
             ])
@@ -547,7 +958,7 @@ mod tests {
                 Value::Okay,
                 Value::ServerError(ServerError(Repr::Known {
                     kind: ServerErrorKind::BusyLoading,
-                    detail: Some(arcstr::literal!("server is loading"))
+                    detail: Some(Str::from_static("server is loading"))
                 })),
                 Value::Okay
             ])
@@ -598,11 +1009,11 @@ mod tests {
         let val = parse_redis_value(b"%2\r\n+first\r\n:1\r\n+second\r\n:2\r\n").unwrap();
         let mut v = val.as_map_iter().unwrap();
         assert_eq!(
-            (&Value::SimpleString("first".to_string()), &Value::Int(1)),
+            (&Value::SimpleString("first".into()), &Value::Int(1)),
             v.next().unwrap()
         );
         assert_eq!(
-            (&Value::SimpleString("second".to_string()), &Value::Int(2)),
+            (&Value::SimpleString("second".into()), &Value::Int(2)),
             v.next().unwrap()
         );
     }
@@ -625,10 +1036,486 @@ mod tests {
         assert_eq!(
             val.unwrap(),
             Value::ServerError(ServerError(Repr::Extension {
-                code: arcstr::literal!("SYNTAX"),
-                detail: Some(arcstr::literal!("invalid syntax"))
+                code: Str::from_static("SYNTAX"),
+                detail: Some(Str::from_static("invalid syntax"))
             }))
         );
+    }
+
+    #[test]
+    fn truncated_reply_at_eof_is_unexpected_eof_not_parse_error() {
+        // A reply cut off mid-value (server dropped the connection) must surface
+        // as an UnexpectedEof IO error that `is_connection_dropped()` recognizes,
+        // not a protocol parse error. Genuinely malformed data stays a parse error.
+        let truncated = parse_redis_value(b"$5\r\nab").unwrap_err();
+        assert_eq!(truncated.kind(), ErrorKind::Io);
+        assert!(truncated.is_connection_dropped());
+
+        // A truncated aggregate (array promises 2 elements, only 1 arrives) is
+        // likewise a dropped-connection EOF, not a parse error.
+        let truncated_array = parse_redis_value(b"*2\r\n:1\r\n").unwrap_err();
+        assert_eq!(truncated_array.kind(), ErrorKind::Io);
+        assert!(truncated_array.is_connection_dropped());
+
+        // Sanity: a well-formed reply still parses, and malformed-but-complete
+        // data (an invalid boolean line, terminated by CRLF) is still a parse
+        // error — only genuine end-of-input becomes UnexpectedEof.
+        assert_eq!(
+            parse_redis_value(b"$2\r\nab\r\n").unwrap(),
+            Value::BulkString("ab".into())
+        );
+        assert_eq!(
+            parse_redis_value(b"#x\r\n").unwrap_err().kind(),
+            ErrorKind::Parse
+        );
+    }
+
+    #[cfg(feature = "aio")]
+    #[tokio::test]
+    async fn async_truncated_reply_at_eof_is_unexpected_eof() {
+        // Same guarantee on the async entry point: 5-byte bulk, only 2 delivered.
+        let mut buf = bytes::BytesMut::new();
+        let mut input: &[u8] = b"$5\r\nab";
+        let err = parse_redis_value_async(&mut buf, &mut input)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Io);
+        assert!(err.is_connection_dropped());
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn negative_length_is_rejected_rather_than_awaited() {
+        // `$-1` is the null bulk string, but there is no null verbatim string or
+        // blob error. Casting those lengths to `usize` would ask for ~2^64 bytes,
+        // so the decoder would keep buffering forever instead of failing.
+        use tokio_util::codec::Decoder;
+
+        for (reply, expected) in [
+            (&b"=-1\r\n"[..], "negative verbatim string length"),
+            (&b"!-1\r\n"[..], "negative blob error length"),
+        ] {
+            let mut codec = ValueCodec::default();
+            let mut buf = BytesMut::from(reply);
+            let err = codec.decode(&mut buf).unwrap_err();
+            assert_eq!(err.kind(), ErrorKind::Parse, "{reply:?}");
+            // Specifically rejected, not "need more input": a decoder that
+            // awaited the missing bytes would return `Ok(None)` here.
+            assert!(
+                err.to_string().contains(expected),
+                "{reply:?} gave the wrong error: {err}"
+            );
+        }
+
+        // The null bulk string still parses.
+        assert_eq!(parse_redis_value(b"$-1\r\n").unwrap(), Value::Nil);
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn scalar_only_replies_skip_the_frame_and_still_pipeline() {
+        // Replies with no payload borrowing the buffer take the `advance` path
+        // instead of `split_to(..).freeze()`. That must not change what is
+        // parsed, and must leave the buffer correctly positioned for the next
+        // reply -- `advance` and `split_to` have to consume exactly the same
+        // number of bytes.
+        use tokio_util::codec::Decoder;
+
+        for (reply, expected) in [
+            (&b"+OK\r\n"[..], Value::Okay),
+            (&b":42\r\n"[..], Value::Int(42)),
+            (&b"_\r\n"[..], Value::Nil),
+            (&b"#t\r\n"[..], Value::Boolean(true)),
+            (&b",1.5\r\n"[..], Value::Double(1.5)),
+        ] {
+            assert!(!needs_frame(
+                &decode_value_range(reply, &mut ParseState::default(), true)
+                    .unwrap()
+                    .unwrap()
+                    .0
+            ));
+            assert_eq!(parse_redis_value(reply).unwrap(), expected, "{reply:?}");
+        }
+
+        // Anything carrying a payload still takes the frame path -- including
+        // aggregates, which are deliberately not inspected element by element.
+        for reply in [
+            &b"$3\r\nfoo\r\n"[..],
+            &b"+hi\r\n"[..],
+            &b"*3\r\n:1\r\n:2\r\n:3\r\n"[..],
+        ] {
+            assert!(needs_frame(
+                &decode_value_range(reply, &mut ParseState::default(), true)
+                    .unwrap()
+                    .unwrap()
+                    .0
+            ));
+        }
+
+        // Scalars and payload-carrying replies interleaved through one codec:
+        // if `advance` consumed the wrong count the later replies would desync.
+        let mut codec = ValueCodec::default();
+        let mut buf = BytesMut::from(&b"+OK\r\n:7\r\n$3\r\nfoo\r\n_\r\n+bye\r\n"[..]);
+        let mut got = Vec::new();
+        while let Some(value) = codec.decode(&mut buf).unwrap() {
+            got.push(value);
+        }
+        assert_eq!(
+            got,
+            vec![
+                Value::Okay,
+                Value::Int(7),
+                Value::BulkString(Bytes::from_static(b"foo")),
+                Value::Nil,
+                Value::SimpleString("bye".into()),
+            ]
+        );
+        assert!(buf.is_empty(), "buffer not fully consumed");
+    }
+
+    #[test]
+    fn null_aggregates_and_empty_payloads() {
+        // `-1` lengths are the RESP2 null encodings and must not be confused
+        // with their empty counterparts.
+        assert_eq!(parse_redis_value(b"*-1\r\n").unwrap(), Value::Nil);
+        assert_eq!(parse_redis_value(b"~-1\r\n").unwrap(), Value::Nil);
+        assert_eq!(parse_redis_value(b"$-1\r\n").unwrap(), Value::Nil);
+        assert_eq!(parse_redis_value(b"_\r\n").unwrap(), Value::Nil);
+
+        assert_eq!(parse_redis_value(b"*0\r\n").unwrap(), Value::Array(vec![]));
+        assert_eq!(parse_redis_value(b"~0\r\n").unwrap(), Value::Set(vec![]));
+        assert_eq!(
+            parse_redis_value(b"$0\r\n\r\n").unwrap(),
+            Value::BulkString(Bytes::new())
+        );
+        assert_eq!(
+            parse_redis_value(b"+\r\n").unwrap(),
+            Value::SimpleString(Str::default())
+        );
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn codec_recovers_after_a_parse_error() {
+        // A parse error must leave no resumable state behind, so a codec that is
+        // handed a fresh buffer afterwards starts clean rather than resuming into
+        // the bytes of the reply that failed.
+        use tokio_util::codec::Decoder;
+
+        let mut codec = ValueCodec::default();
+        let mut buf = BytesMut::from(b"*2\r\n:1\r\n#x\r\n".as_slice());
+        assert_eq!(codec.decode(&mut buf).unwrap_err().kind(), ErrorKind::Parse);
+        assert_eq!(codec.state.committed, 0, "state outlived the failed value");
+
+        let mut next = BytesMut::from(b"+OK\r\n".as_slice());
+        assert_eq!(codec.decode(&mut next).unwrap(), Some(Value::Okay));
+    }
+
+    #[test]
+    fn sync_parser_resumes_across_single_byte_reads() {
+        // `Parser::parse_value` is the sync connection's read loop. Feeding it one
+        // byte at a time exercises resumption there, and reusing the same `Parser`
+        // for a second reply checks the state is reset between values.
+        struct OneByteAtATime<'a>(&'a [u8]);
+        impl Read for OneByteAtATime<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                match self.0.split_first() {
+                    Some((byte, rest)) if !buf.is_empty() => {
+                        buf[0] = *byte;
+                        self.0 = rest;
+                        Ok(1)
+                    }
+                    _ => Ok(0),
+                }
+            }
+        }
+
+        let mut reader = OneByteAtATime(b"*2\r\n+h\xc3\xa9llo\r\n$5\r\nworld\r\n+second\r\n");
+        let mut parser = Parser::new();
+
+        assert_eq!(
+            parser.parse_value(&mut reader).unwrap(),
+            Value::Array(vec![
+                Value::SimpleString("héllo".into()),
+                Value::BulkString(Bytes::from_static(b"world")),
+            ])
+        );
+        assert_eq!(
+            parser.parse_value(&mut reader).unwrap(),
+            Value::SimpleString("second".into())
+        );
+    }
+
+    // The `unsafe` in `slice_str` rests on two halves: a `StrRange` can only be
+    // built from a `&str` (enforced by the type system), and the parser really
+    // does run `str::from_utf8` before it has such a `&str`. The tests below pin
+    // that second half — one case per `StrRange::of` call site — plus the
+    // separate check on push kinds, which arrive as raw bytes.
+
+    #[test]
+    fn non_utf8_is_rejected_in_every_str_carrying_position() {
+        // Each of these must fail with a *UTF-8* parse error: not a lossy
+        // U+FFFD replacement, and not some unrelated error that happens to also
+        // reject the input.
+        let cases: [(&str, &[u8]); 8] = [
+            // `simple_string()` -> `ValueRange::SimpleString`; checked by `line()`.
+            ("simple string", b"+\xff\r\n"),
+            ("simple string, bad byte mid-line", b"+ab\xffcd\r\n"),
+            // `error()` -> `err_parser` code and detail; checked by `line()`.
+            ("inline error code", b"-\xff\r\n"),
+            ("inline error detail", b"-ERR \xff\r\n"),
+            // `blob_error()` -> `err_parser` code and detail. Blob errors are
+            // length-prefixed rather than line-based, so they carry their own
+            // `str::from_utf8`.
+            ("blob error code", b"!4\r\nER\xff\xff\r\n"),
+            ("blob error detail", b"!8\r\nERR a\xffbc\r\n"),
+            // `verbatim()` -> the text, and the `Unknown` format prefix.
+            ("verbatim text", b"=5\r\ntxt:\xff\r\n"),
+            ("verbatim format prefix", b"=5\r\n\xff\xfff:a\r\n"),
+        ];
+        for (label, payload) in cases {
+            let Err(err) = parse_redis_value(payload) else {
+                panic!("{label}: non-UTF-8 payload was accepted");
+            };
+            assert_eq!(err.kind(), ErrorKind::Parse, "{label}: wrong error kind");
+            assert!(
+                err.to_string().contains("invalid utf-8 sequence"),
+                "{label}: expected a UTF-8 error, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn non_utf8_push_kind_is_rejected() {
+        // A push kind sent as a bulk string is arbitrary bytes, so it is not
+        // covered by `line()`; `get_push_kind` validates it separately.
+        let err = parse_redis_value(b">2\r\n$2\r\n\xff\xff\r\n:1\r\n").unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Parse);
+        assert!(
+            err.to_string().contains("parse error when decoding push"),
+            "unexpected error: {err}"
+        );
+
+        // Sent as a simple string it is rejected earlier, by `line()`.
+        let err = parse_redis_value(b">2\r\n+\xff\r\n:1\r\n").unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Parse);
+        assert!(
+            err.to_string().contains("invalid utf-8 sequence"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn multibyte_utf8_round_trips_through_every_str_variant() {
+        // A 2-byte char, a combining mark and a non-BMP 4-byte char, so every
+        // UTF-8 sequence length appears and the content is not slice-at-any-
+        // byte-offset safe. Any off-by-one in `range_of` shows up as a mismatch
+        // (and, in debug builds, trips the `debug_assert!` in `slice_str`).
+        const S: &str = "h\u{e9}llo\u{301}\u{1F680}";
+
+        assert_eq!(
+            parse_redis_value(format!("+{S}\r\n").as_bytes()).unwrap(),
+            Value::SimpleString(Str::from(S)),
+            "simple string"
+        );
+
+        assert_eq!(
+            parse_redis_value(format!("={}\r\ntxt:{S}\r\n", 4 + S.len()).as_bytes()).unwrap(),
+            Value::VerbatimString {
+                format: VerbatimFormat::Text,
+                text: Str::from(S),
+            },
+            "verbatim string, known format"
+        );
+
+        // An unknown format prefix is a `StrRange` of its own, so make it
+        // multi-byte too.
+        let format = "x\u{177}z";
+        assert_eq!(
+            parse_redis_value(
+                format!("={}\r\n{format}:{S}\r\n", format.len() + 1 + S.len()).as_bytes()
+            )
+            .unwrap(),
+            Value::VerbatimString {
+                format: VerbatimFormat::Unknown(Str::from(format)),
+                text: Str::from(S),
+            },
+            "verbatim string, unknown format"
+        );
+
+        assert_eq!(
+            parse_redis_value(format!("-ERR {S}\r\n").as_bytes()).unwrap(),
+            Value::ServerError(ServerError(Repr::Known {
+                kind: ServerErrorKind::ResponseError,
+                detail: Some(Str::from(S)),
+            })),
+            "inline error detail"
+        );
+
+        // An extension error keeps both its code and its detail, so this covers
+        // both `StrRange`s built by `err_parser`.
+        let code = "WEIRD\u{e9}";
+        assert_eq!(
+            parse_redis_value(
+                format!("!{}\r\n{code} {S}\r\n", code.len() + 1 + S.len()).as_bytes()
+            )
+            .unwrap(),
+            Value::ServerError(ServerError(Repr::Extension {
+                code: Str::from(code),
+                detail: Some(Str::from(S)),
+            })),
+            "blob error code and detail"
+        );
+
+        assert_eq!(
+            parse_redis_value(format!(">2\r\n+{S}\r\n:1\r\n").as_bytes()).unwrap(),
+            Value::Push {
+                kind: PushKind::Other(Str::from(S)),
+                data: vec![Value::Int(1)],
+            },
+            "push kind"
+        );
+    }
+
+    #[test]
+    fn byte_sweep_over_str_positions_upholds_the_utf8_invariant() {
+        // Sweep every byte value through each position that becomes a `Str`.
+        // Whatever the byte, parsing must either succeed or fail cleanly — and
+        // in debug/test builds the `debug_assert!` in `slice_str` re-validates
+        // every `Str` it produces, so this also catches a range-bookkeeping bug
+        // that the type system cannot see. Any `Str` that does come out must be
+        // valid UTF-8 by construction; we assert it explicitly anyway.
+        fn check(value: &Value) {
+            match value {
+                Value::SimpleString(s) | Value::VerbatimString { text: s, .. } => {
+                    assert!(str::from_utf8(s.as_bytes()).is_ok(), "{s:?}");
+                }
+                Value::Push { kind, data } => {
+                    if let PushKind::Other(s) = kind {
+                        assert!(str::from_utf8(s.as_bytes()).is_ok(), "{s:?}");
+                    }
+                    data.iter().for_each(check);
+                }
+                Value::ServerError(err) => {
+                    str::from_utf8(err.code().as_bytes()).unwrap();
+                }
+                Value::Array(items) | Value::Set(items) => items.iter().for_each(check),
+                _ => {}
+            }
+        }
+
+        for byte in 0u8..=u8::MAX {
+            if byte == b'\r' || byte == b'\n' {
+                continue; // would re-frame the reply rather than exercise a `Str`
+            }
+            let b = &[byte][..];
+            let inputs: [Vec<u8>; 6] = [
+                [b"+x", b, b"y\r\n"].concat(),
+                [b"-ERR x", b, b"y\r\n"].concat(),
+                [b"!7\r\nERR x", b, b"y\r\n"].concat(),
+                [b"=7\r\ntxt:x", b, b"y\r\n"].concat(),
+                [b"=7\r\nx", b, b"y:abc\r\n"].concat(),
+                [b">2\r\n+x", b, b"y\r\n:1\r\n"].concat(),
+            ];
+            for input in inputs {
+                if let Ok(value) = parse_redis_value(&input) {
+                    check(&value);
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn parsed_error_is_detached_from_reply_buffer() {
+        // A parsed error must copy its code/detail out of the reply frame
+        // rather than slice into it, so that holding on to a small error does
+        // not pin the whole response buffer alive. We check this by asserting
+        // the detail bytes live outside the original buffer's allocation.
+        use tokio_util::codec::Decoder;
+        let mut codec = ValueCodec::default();
+        let mut buf = bytes::BytesMut::from(b"!21\r\nSYNTAX invalid syntax\r\n".as_slice());
+        let base = buf.as_ptr() as usize;
+        let cap = buf.capacity();
+        let val = codec.decode(&mut buf).unwrap().unwrap();
+        let Value::ServerError(err) = val else {
+            panic!("expected ServerError, got {val:?}");
+        };
+        let outside = |s: &str| {
+            let ptr = s.as_ptr() as usize;
+            ptr < base || ptr >= base + cap
+        };
+        // Both fields of an extension error are detached, so check both: code
+        // and detail must each live outside the reply buffer's allocation.
+        assert!(
+            outside(err.code()),
+            "error code is a slice into the reply buffer (frame-pinning regression)"
+        );
+        assert!(
+            outside(err.details().unwrap()),
+            "error detail is a slice into the reply buffer (frame-pinning regression)"
+        );
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn chunked_decode_resumes_instead_of_rescanning() {
+        // A reply that arrives over many reads must be parsed once, not
+        // re-parsed from byte 0 on every read -- that is quadratic in the size
+        // of the reply.
+        //
+        // The check is direct: after every `decode`, the bytes the parser
+        // reports as consumed are overwritten with garbage. A parser that
+        // resumes never looks at them again and still returns the right shape;
+        // a parser that restarts trips over the garbage and errors out.
+        use tokio_util::codec::Decoder;
+
+        const ELEMENTS: usize = 200;
+        let element = |i: usize| format!("$8\r\nvalue{i:03}\r\n");
+
+        let mut codec = ValueCodec::default();
+        let mut buf = BytesMut::new();
+        let mut fed = 0;
+
+        let feed = |codec: &mut ValueCodec, buf: &mut BytesMut, chunk: &str| {
+            buf.extend_from_slice(chunk.as_bytes());
+            let parsed = codec.decode(buf).unwrap();
+            // Everything delivered so far is part of the value in progress and
+            // has been consumed, so the parser must never read it again.
+            let poison = codec.state.committed;
+            buf[..poison].fill(b'!');
+            parsed
+        };
+
+        assert_eq!(feed(&mut codec, &mut buf, "*200\r\n"), None);
+        fed += "*200\r\n".len();
+        assert_eq!(codec.state.committed, fed, "array header was not consumed");
+
+        for i in 0..ELEMENTS - 1 {
+            let element = element(i);
+            assert_eq!(feed(&mut codec, &mut buf, &element), None);
+            fed += element.len();
+            assert_eq!(
+                codec.state.committed, fed,
+                "element {i} left bytes behind for a later call to re-scan"
+            );
+        }
+
+        // The last element completes the array.
+        buf.extend_from_slice(element(ELEMENTS - 1).as_bytes());
+        let value = codec.decode(&mut buf).unwrap().unwrap();
+        let Value::Array(items) = value else {
+            panic!("expected an array");
+        };
+        assert_eq!(items.len(), ELEMENTS);
+        // Only the final element's bytes were never poisoned, so it is the one
+        // whose contents can still be asserted.
+        assert_eq!(
+            items[ELEMENTS - 1],
+            Value::BulkString(format!("value{:03}", ELEMENTS - 1).into())
+        );
+        assert_eq!(codec.state.committed, 0, "state was not reset");
+        assert!(buf.is_empty(), "buffer should be fully consumed");
     }
 
     #[test]
@@ -640,7 +1527,9 @@ mod tests {
                 .unwrap(),
         );
         #[cfg(not(feature = "num-bigint"))]
-        let expected = Value::BigNumber(b"3492890328409238509324850943850943825024385".to_vec());
+        let expected = Value::BigNumber(Bytes::from_static(
+            b"3492890328409238509324850943850943825024385",
+        ));
         assert_eq!(val, expected);
     }
 
@@ -649,8 +1538,8 @@ mod tests {
         let val = parse_redis_value(b"~5\r\n+orange\r\n+apple\r\n#t\r\n:100\r\n:999\r\n").unwrap();
         let v = val.as_sequence().unwrap();
         assert!(v.len() >= 5);
-        assert_eq!(Value::SimpleString("orange".to_string()), v[0]);
-        assert_eq!(Value::SimpleString("apple".to_string()), v[1]);
+        assert_eq!(Value::SimpleString("orange".into()), v[0]);
+        assert_eq!(Value::SimpleString("apple".into()), v[1]);
         assert_eq!(Value::Boolean(true), v[2]);
         assert_eq!(Value::Int(100), v[3]);
         assert_eq!(Value::Int(999), v[4]);
@@ -662,11 +1551,8 @@ mod tests {
             .unwrap();
         if let Value::Push { ref kind, ref data } = val {
             assert_eq!(&PushKind::Message, kind);
-            assert_eq!(Value::SimpleString("somechannel".to_string()), data[0]);
-            assert_eq!(
-                Value::SimpleString("this is the message".to_string()),
-                data[1]
-            );
+            assert_eq!(Value::SimpleString("somechannel".into()), data[0]);
+            assert_eq!(Value::SimpleString("this is the message".into()), data[1]);
         } else {
             panic!("Expected Value::Push")
         }
@@ -713,6 +1599,43 @@ mod tests {
         match parse_redis_value(&ba) {
             Ok(_) => panic!("Expected ParseError"),
             Err(e) => assert_matches!(e.kind(), ErrorKind::Parse),
+        }
+    }
+    #[test]
+    fn multibyte_at_every_offset_round_trips_and_upholds_the_invariant() {
+        // Slide a multi-byte char across every offset of a fixed-length payload.
+        // An off-by-one in `range_of`/`StrRange::of` either changes the content
+        // (caught by the `assert_eq!`) or starts/ends the range inside a UTF-8
+        // sequence (caught by the `debug_assert!` in `slice_str`). This is the
+        // check the type system cannot make, since the offsets come from
+        // pointer arithmetic.
+        for ch in ['\u{e9}', '\u{20ac}', '\u{1F680}'] {
+            for offset in 0..8 {
+                let text = format!("{}{ch}{}", "a".repeat(offset), "b".repeat(7 - offset));
+
+                assert_eq!(
+                    parse_redis_value(format!("+{text}\r\n").as_bytes()).unwrap(),
+                    Value::SimpleString(Str::from(text.as_str())),
+                    "simple string, {ch:?} at offset {offset}"
+                );
+                assert_eq!(
+                    parse_redis_value(format!("={}\r\ntxt:{text}\r\n", 4 + text.len()).as_bytes())
+                        .unwrap(),
+                    Value::VerbatimString {
+                        format: VerbatimFormat::Text,
+                        text: Str::from(text.as_str()),
+                    },
+                    "verbatim string, {ch:?} at offset {offset}"
+                );
+                assert_eq!(
+                    parse_redis_value(format!("-ERR {text}\r\n").as_bytes()).unwrap(),
+                    Value::ServerError(ServerError(Repr::Known {
+                        kind: ServerErrorKind::ResponseError,
+                        detail: Some(Str::from(text.as_str())),
+                    })),
+                    "inline error detail, {ch:?} at offset {offset}"
+                );
+            }
         }
     }
 }

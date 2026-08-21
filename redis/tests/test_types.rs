@@ -234,7 +234,8 @@ mod types {
     fn test_parse_boxed() {
         for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
             let simple_string_exp = "Simple string".to_string();
-            let v = parse_mode.parse_redis_value(Value::SimpleString(simple_string_exp.clone()));
+            let v =
+                parse_mode.parse_redis_value(Value::SimpleString(simple_string_exp.clone().into()));
             assert_eq!(v, Ok(Box::new(simple_string_exp.clone())));
         }
     }
@@ -243,11 +244,13 @@ mod types {
     fn test_parse_arc() {
         for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
             let simple_string_exp = "Simple string".to_string();
-            let v = parse_mode.parse_redis_value(Value::SimpleString(simple_string_exp.clone()));
+            let v =
+                parse_mode.parse_redis_value(Value::SimpleString(simple_string_exp.clone().into()));
             assert_eq!(v, Ok(Arc::new(simple_string_exp.clone())));
 
             // works with optional
-            let v = parse_mode.parse_redis_value(Value::SimpleString(simple_string_exp.clone()));
+            let v =
+                parse_mode.parse_redis_value(Value::SimpleString(simple_string_exp.clone().into()));
             assert_eq!(v, Ok(Arc::new(Some(simple_string_exp))));
         }
     }
@@ -256,11 +259,13 @@ mod types {
     fn test_parse_rc() {
         for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
             let simple_string_exp = "Simple string".to_string();
-            let v = parse_mode.parse_redis_value(Value::SimpleString(simple_string_exp.clone()));
+            let v =
+                parse_mode.parse_redis_value(Value::SimpleString(simple_string_exp.clone().into()));
             assert_eq!(v, Ok(Rc::new(simple_string_exp.clone())));
 
             // works with optional
-            let v = parse_mode.parse_redis_value(Value::SimpleString(simple_string_exp.clone()));
+            let v =
+                parse_mode.parse_redis_value(Value::SimpleString(simple_string_exp.clone().into()));
             assert_eq!(v, Ok(Rc::new(Some(simple_string_exp))));
         }
     }
@@ -277,14 +282,14 @@ mod types {
 
             let content: &[u8] = b"\x01\x02\x03\x04";
             let content_vec: Vec<u8> = Vec::from(content);
-            let v = parse_mode.parse_redis_value(Value::BulkString(content_vec.clone()));
+            let v = parse_mode.parse_redis_value(Value::BulkString(content_vec.clone().into()));
             assert_eq!(v, Ok(content_vec));
 
             let content: &[u8] = b"1";
             let content_vec: Vec<u8> = Vec::from(content);
-            let v = parse_mode.parse_redis_value(Value::BulkString(content_vec.clone()));
+            let v = parse_mode.parse_redis_value(Value::BulkString(content_vec.clone().into()));
             assert_eq!(v, Ok(vec![b'1']));
-            let v = parse_mode.parse_redis_value(Value::BulkString(content_vec));
+            let v = parse_mode.parse_redis_value(Value::BulkString(content_vec.into()));
             assert_eq!(v, Ok(vec![1_u16]));
         }
     }
@@ -301,14 +306,14 @@ mod types {
 
             let content: &[u8] = b"\x01\x02\x03\x04";
             let content_vec: Vec<u8> = Vec::from(content);
-            let v = parse_mode.parse_redis_value(Value::BulkString(content_vec.clone()));
+            let v = parse_mode.parse_redis_value(Value::BulkString(content_vec.clone().into()));
             assert_eq!(v, Ok(content_vec.into_boxed_slice()));
 
             let content: &[u8] = b"1";
             let content_vec: Vec<u8> = Vec::from(content);
-            let v = parse_mode.parse_redis_value(Value::BulkString(content_vec.clone()));
+            let v = parse_mode.parse_redis_value(Value::BulkString(content_vec.clone().into()));
             assert_eq!(v, Ok(vec![b'1'].into_boxed_slice()));
-            let v = parse_mode.parse_redis_value(Value::BulkString(content_vec));
+            let v = parse_mode.parse_redis_value(Value::BulkString(content_vec.into()));
             assert_eq!(v, Ok(vec![1_u16].into_boxed_slice()));
 
             assert_eq!(
@@ -332,16 +337,16 @@ mod types {
 
             let content: &[u8] = b"\x01\x02\x03\x04";
             let content_vec: Vec<u8> = Vec::from(content);
-            let v =
-                parse_mode.parse_redis_value::<Arc<[_]>>(Value::BulkString(content_vec.clone()));
+            let v = parse_mode
+                .parse_redis_value::<Arc<[_]>>(Value::BulkString(content_vec.clone().into()));
             assert_eq!(v, Ok(Arc::from(content_vec)));
 
             let content: &[u8] = b"1";
             let content_vec: Vec<u8> = Vec::from(content);
             let v: Result<Arc<[u8]>, _> =
-                parse_mode.parse_redis_value(Value::BulkString(content_vec.clone()));
+                parse_mode.parse_redis_value(Value::BulkString(content_vec.clone().into()));
             assert_eq!(v, Ok(Arc::from(vec![b'1'])));
-            let v = parse_mode.parse_redis_value::<Arc<[_]>>(Value::BulkString(content_vec));
+            let v = parse_mode.parse_redis_value::<Arc<[_]>>(Value::BulkString(content_vec.into()));
             assert_eq!(v, Ok(Arc::from(vec![1_u16])));
 
             assert_eq!(
@@ -578,7 +583,6 @@ mod types {
         }
     }
 
-    #[cfg(feature = "bytes")]
     #[test]
     fn test_bytes() {
         use bytes::Bytes;
@@ -588,7 +592,8 @@ mod types {
             let content_vec: Vec<u8> = Vec::from(content);
             let content_bytes = Bytes::from_static(content);
 
-            let v: Result<Bytes, _> = parse_mode.parse_redis_value(Value::BulkString(content_vec));
+            let v: Result<Bytes, _> =
+                parse_mode.parse_redis_value(Value::BulkString(content_vec.into()));
             assert_eq!(v, Ok(content_bytes));
 
             let v: Result<Bytes, _> = parse_mode.parse_redis_value(redis_value!(simple:"garbage"));
@@ -608,6 +613,106 @@ mod types {
         }
     }
 
+    #[test]
+    fn test_str() {
+        use bytes::Bytes;
+        use redis::{Str, VerbatimFormat};
+
+        // `Str` has a separate `match` for each of `from_redis_value` and
+        // `from_redis_value_ref`, so both must be driven over every arm.
+        for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+            // BulkString: the bytes are validated as UTF-8 and rewrapped.
+            let v: Result<Str, _> =
+                parse_mode.parse_redis_value(Value::BulkString(Bytes::from_static(b"bulk")));
+            assert_eq!(v, Ok(Str::from("bulk")));
+            let v: Result<Str, _> = parse_mode
+                .parse_redis_value(Value::BulkString(Bytes::from_static("héllo".as_bytes())));
+            assert_eq!(v, Ok(Str::from("héllo")));
+            let v: Result<Str, _> =
+                parse_mode.parse_redis_value(Value::BulkString(Bytes::from_static(b"")));
+            assert_eq!(v, Ok(Str::default()));
+            // A BulkString that is not UTF-8 must be rejected, not transmuted.
+            let v: Result<Str, _> =
+                parse_mode.parse_redis_value(Value::BulkString(Bytes::from_static(b"a\xffb")));
+            assert_matches!(v, Err(_));
+
+            // SimpleString and Okay.
+            let v: Result<Str, _> = parse_mode.parse_redis_value(redis_value!(simple:"simple"));
+            assert_eq!(v, Ok(Str::from("simple")));
+            let v: Result<Str, _> = parse_mode.parse_redis_value(redis_value!(simple:""));
+            assert_eq!(v, Ok(Str::default()));
+            let v: Result<Str, _> = parse_mode.parse_redis_value(Value::Okay);
+            assert_eq!(v, Ok(Str::from("OK")));
+
+            // VerbatimString: the format is dropped and the text kept, for every
+            // format including the `Unknown` catch-all.
+            for format in [
+                VerbatimFormat::Text,
+                VerbatimFormat::Markdown,
+                VerbatimFormat::Unknown(Str::from("xml")),
+            ] {
+                let v: Result<Str, _> = parse_mode.parse_redis_value(Value::VerbatimString {
+                    format,
+                    text: Str::from("verbatim text"),
+                });
+                assert_eq!(v, Ok(Str::from("verbatim text")));
+            }
+
+            // Double and Int render as their decimal text.
+            let v: Result<Str, _> = parse_mode.parse_redis_value(Value::Double(1.5));
+            assert_eq!(v, Ok(Str::from("1.5")));
+            let v: Result<Str, _> = parse_mode.parse_redis_value(Value::Double(-0.25));
+            assert_eq!(v, Ok(Str::from("-0.25")));
+            let v: Result<Str, _> = parse_mode.parse_redis_value(Value::Double(0.0));
+            assert_eq!(v, Ok(Str::from("0")));
+            let v: Result<Str, _> = parse_mode.parse_redis_value(Value::Int(42));
+            assert_eq!(v, Ok(Str::from("42")));
+            let v: Result<Str, _> = parse_mode.parse_redis_value(Value::Int(-7));
+            assert_eq!(v, Ok(Str::from("-7")));
+
+            // Types that are not string compatible are rejected.
+            let v: Result<Str, _> = parse_mode.parse_redis_value(Value::Nil);
+            assert_matches!(v, Err(_));
+            let v: Result<Str, _> = parse_mode.parse_redis_value(Value::Array(vec![]));
+            assert_matches!(v, Err(_));
+            let v: Result<Str, _> = parse_mode.parse_redis_value(Value::Boolean(true));
+            assert_matches!(v, Err(_));
+
+            // `Str` replaced a `String` here, so the two impls must agree on
+            // every accepted input.
+            for value in [
+                Value::BulkString(Bytes::from_static("héllo".as_bytes())),
+                redis_value!(simple:"simple"),
+                Value::Okay,
+                Value::VerbatimString {
+                    format: VerbatimFormat::Markdown,
+                    text: Str::from("verbatim text"),
+                },
+                Value::Double(-0.25),
+                Value::Int(-7),
+            ] {
+                let as_str: Str = parse_mode.parse_redis_value(value.clone()).unwrap();
+                let as_string: String = parse_mode.parse_redis_value(value).unwrap();
+                assert_eq!(as_str, as_string);
+            }
+        }
+
+        // `ToRedisArgs` writes the contents verbatim, as exactly one argument.
+        assert_eq!(Str::from("arg").to_redis_args(), vec![b"arg".to_vec()]);
+        assert_eq!(Str::from("").to_redis_args(), vec![Vec::<u8>::new()]);
+        assert_eq!(
+            Str::from("héllo").to_redis_args(),
+            vec!["héllo".as_bytes().to_vec()]
+        );
+        assert_eq!(Str::from("arg").num_of_args(), 1);
+        // …and identically to the `String` impl it replaced.
+        let as_string = String::from("a\r\nb");
+        assert_eq!(
+            Str::from(as_string.as_str()).to_redis_args(),
+            as_string.to_redis_args()
+        );
+    }
+
     #[cfg(feature = "uuid")]
     #[test]
     fn test_uuid() {
@@ -618,7 +723,8 @@ mod types {
         let uuid = Uuid::from_str("abab64b7-e265-4052-a41b-23e1e28674bf").unwrap();
         let bytes = uuid.as_bytes().to_vec();
 
-        let v: Result<Uuid, _> = FromRedisValue::from_redis_value_ref(&Value::BulkString(bytes));
+        let v: Result<Uuid, _> =
+            FromRedisValue::from_redis_value_ref(&Value::BulkString(bytes.into()));
         assert_eq!(v, Ok(uuid));
 
         let v: Result<Uuid, _> =
@@ -647,7 +753,7 @@ mod types {
             let content_vec: Vec<u8> = Vec::from(content);
 
             let v: Result<CString, _> =
-                parse_mode.parse_redis_value(Value::BulkString(content_vec));
+                parse_mode.parse_redis_value(Value::BulkString(content_vec.into()));
             assert_eq!(v, Ok(CString::new(content).unwrap()));
 
             let v: Result<CString, _> =
@@ -784,7 +890,7 @@ mod types {
 
         let value = Value::Array(
             vec.iter()
-                .map(|val| Value::BulkString(val.clone()))
+                .map(|val| Value::BulkString(val.clone().into()))
                 .collect(),
         );
         let mut encoded_input = Vec::new();
@@ -829,7 +935,7 @@ mod types {
 
         let value = Value::Array(
             vec.iter()
-                .map(|val| Value::BulkString(val.clone()))
+                .map(|val| Value::BulkString(val.clone().into()))
                 .collect(),
         );
         let mut encoded_input = Vec::new();
@@ -850,7 +956,7 @@ mod types {
 
         let value = Value::Array(
             vec.iter()
-                .map(|val| Value::BulkString(val.clone()))
+                .map(|val| Value::BulkString(val.clone().into()))
                 .collect(),
         );
         let mut encoded_input = Vec::new();

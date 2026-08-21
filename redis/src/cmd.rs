@@ -555,7 +555,6 @@ impl RedisWrite for Cmd {
         self.args.reserve(args);
     }
 
-    #[cfg(feature = "bytes")]
     fn bufmut_for_next_arg(&mut self, capacity: usize) -> impl bytes::BufMut + '_ {
         self.data.reserve(capacity);
         struct CmdBufferedArgGuard<'a>(&'a mut Cmd);
@@ -1027,7 +1026,6 @@ pub fn pipe() -> Pipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "bytes")]
     use bytes::BufMut;
 
     fn args_iter_to_str(cmd: &Cmd) -> Vec<String> {
@@ -1195,7 +1193,6 @@ mod tests {
         assert_practical_equivalent(c1, c2);
     }
 
-    #[cfg(feature = "bytes")]
     /// Test that a write split across multiple calls to `write` produces the
     /// same result as a single call to `write_arg`
     #[test]
@@ -1213,7 +1210,6 @@ mod tests {
         assert_practical_equivalent(c1, c2);
     }
 
-    #[cfg(feature = "bytes")]
     /// Test that multiple writers to the same command produce the same
     /// result as the same multiple calls to `write_arg`
     #[test]
@@ -1237,7 +1233,6 @@ mod tests {
         assert_practical_equivalent(c1, c2);
     }
 
-    #[cfg(feature = "bytes")]
     /// Test that an "empty" write produces the equivalent to `write_arg(b"")`
     #[test]
     fn test_cmd_bufmut_for_next_arg_empty() {

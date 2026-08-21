@@ -192,7 +192,7 @@ impl AclInfo {
                     })?
                     .iter()
                     .map(|flag| match flag {
-                        Value::BulkString(flag) => match flag.as_slice() {
+                        Value::BulkString(flag) => match flag.as_ref() {
                             b"on" => Ok(Rule::On),
                             b"off" => Ok(Rule::Off),
                             b"allkeys" => Ok(Rule::AllKeys),
