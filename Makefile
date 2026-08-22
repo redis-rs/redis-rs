@@ -8,34 +8,14 @@ test:
 	@RUSTFLAGS="-D warnings" cargo build --locked -p redis -p redis-test --all-features
 
 	@echo "===================================================================="
-	@echo "Testing Connection Type TCP without features"
+	@echo "Testing redis without default features"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo nextest run --locked -p redis --no-default-features --profile tcp
+	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run --locked -p redis --no-default-features --profile no_module
 
 	@echo "===================================================================="
-	@echo "Testing Connection Type TCP with all features and RESP2"
+	@echo "Testing redis with all features"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo nextest run --locked -p redis --all-features --profile tcp
-
-	@echo "===================================================================="
-	@echo "Testing Connection Type TCP with all features and RESP3"
-	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 PROTOCOL=RESP3 cargo nextest run --locked -p redis --all-features --profile tcp
-
-	@echo "===================================================================="
-	@echo "Testing Connection Type TCP with all features and Rustls support"
-	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp+tls RUST_BACKTRACE=1 cargo nextest run --locked -p redis --all-features --profile tcp_tls
-
-	@echo "===================================================================="
-	@echo "Testing Connection Type TCP with native-TLS support"
-	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp+tls RUST_BACKTRACE=1 cargo nextest run --locked -p redis --features=json,tokio-native-tls-comp,smol-native-tls-comp,connection-manager,cluster-async --profile tcp_tls
-
-	@echo "===================================================================="
-	@echo "Testing Connection Type UNIX SOCKETS"
-	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=unix RUST_BACKTRACE=1 cargo nextest run --locked -p redis --all-features --profile unix
+	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run --locked -p redis --all-features --profile no_module
 
 	@echo "===================================================================="
 	@echo "Testing Connection Type UNIX SOCKETS and RESP3"
@@ -45,34 +25,24 @@ test:
 	@echo "===================================================================="
 	@echo "Testing redis-test without features"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run --locked -p redis-test --no-default-features
+	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run --locked -p redis-test --no-default-features --profile no_module
 
 	@echo "===================================================================="
 	@echo "Testing redis-test with all features"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run --locked -p redis-test --all-features
+	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run --locked -p redis-test --all-features --profile no_module
 
 test-module-json:
 	@echo "===================================================================="
-	@echo "Testing RESP2 with RedisJSON module"
+	@echo "Testing RedisJSON module"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo nextest run -p redis --locked --all-features --profile module_json
-
-	@echo "===================================================================="
-	@echo "Testing RESP3 with RedisJSON module"
-	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 PROTOCOL=RESP3 cargo nextest run -p redis --locked --all-features --profile module_json
+	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run -p redis --locked --all-features --profile module_json
 
 test-module-bloom:
 	@echo "===================================================================="
-	@echo "Testing RESP2 with RedisBloom module"
+	@echo "Testing RedisBloom module"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo nextest run -p redis --locked --all-features --profile module_bloom
-
-	@echo "===================================================================="
-	@echo "Testing RESP3 with RedisBloom module"
-	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 PROTOCOL=RESP3 cargo nextest run -p redis --locked --all-features --profile module_bloom
+	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run -p redis --locked --all-features --profile module_bloom
 
 test-modules: test-module-json test-module-bloom
 

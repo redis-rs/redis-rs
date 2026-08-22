@@ -26,6 +26,7 @@ pub struct RedisClusterConfiguration {
     cluster_databases: Option<u16>,
     /// Custom DNS hostname for TLS certificate SAN (used when `certs_with_ip_alts` is false).
     dns_hostname: Option<String>,
+    cluster_type: Option<ClusterType>,
 }
 
 impl RedisClusterConfiguration {
@@ -90,6 +91,15 @@ impl RedisClusterConfiguration {
         self
     }
 
+    pub fn cluster_type(mut self, cluster_type: ClusterType) -> Self {
+        self.cluster_type = Some(cluster_type);
+        self
+    }
+
+    pub fn get_cluster_type(&self) -> ClusterType {
+        self.cluster_type.unwrap_or_else(ClusterType::get_intended)
+    }
+
     pub fn get_require_secure_tls(&self) -> bool {
         self.require_secure_tls
     }
@@ -111,6 +121,7 @@ impl Default for RedisClusterConfiguration {
             certs_with_ip_alts: true,
             cluster_databases: None,
             dns_hostname: None,
+            cluster_type: None,
         }
     }
 }
@@ -138,8 +149,8 @@ impl ClusterType {
         }
     }
 
-    fn build_addr(port: u16) -> redis::ConnectionAddr {
-        match Self::get_intended() {
+    pub fn build_addr(&self, port: u16) -> redis::ConnectionAddr {
+        match self {
             Self::Tcp => redis::ConnectionAddr::Tcp("127.0.0.1".into(), port),
             Self::TcpTls => redis::ConnectionAddr::TcpTls {
                 host: "127.0.0.1".into(),
@@ -197,6 +208,8 @@ impl RedisCluster {
     }
 
     pub fn new(configuration: RedisClusterConfiguration) -> Self {
+        let cluster_type = configuration.get_cluster_type();
+
         let RedisClusterConfiguration {
             num_nodes: nodes,
             num_replicas: replicas,
@@ -207,6 +220,7 @@ impl RedisCluster {
             certs_with_ip_alts,
             cluster_databases,
             dns_hostname,
+            ..
         } = configuration;
 
         let optional_ports = if ports.is_empty() {
@@ -223,7 +237,7 @@ impl RedisCluster {
 
         let mut is_tls = false;
 
-        if let ClusterType::TcpTls = ClusterType::get_intended() {
+        if let ClusterType::TcpTls = cluster_type {
             // Create a shared set of keys in cluster mode
             let tempdir = tempfile::Builder::new()
                 .prefix("redis")
@@ -243,7 +257,7 @@ impl RedisCluster {
 
         let mut make_server = |port| {
             RedisServerBuilder::new()
-                .address(ClusterType::build_addr(port))
+                .address(cluster_type.build_addr(port))
                 .tls_paths_opt(tls_paths.clone())
                 .mtls(mtls_enabled)
                 .modules(&modules)
