@@ -17,6 +17,7 @@ use std::str::from_utf8;
 use crate::errors::{RedisError, ServerError};
 
 /// Helper enum that is used to define expiry time
+#[derive(Clone)]
 #[non_exhaustive]
 pub enum Expiry {
     /// EX seconds -- Set the specified expire time, in seconds.
@@ -2750,5 +2751,59 @@ impl PartialEq<u32> for IntegerReplyOrNoOp {
             Self::IntegerReply(s) => *s as u32 == *other,
             _ => false,
         }
+    }
+}
+
+/// The two-element reply of the [INCREX](https://redis.io/commands/increx) command.
+///
+/// Each field holds the raw [`Value`] returned by the server.
+/// For `BYINT` operations this is an integer, while for `BYFLOAT` it is a bulk string (RESP2) or double (RESP3).
+/// Decode a field into a concrete type with [`value_as`](Self::value_as) / [`actual_increment_as`](Self::actual_increment_as)
+/// - e.g. `i64` for `BYINT` or `f64` (or a wider type such as `bigdecimal::BigDecimal`) for `BYFLOAT`.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct IncrexResult {
+    /// The key's value after the increment.
+    pub value: Value,
+    /// The increment that was actually applied.
+    ///
+    /// This is `0` when the default policy (when `SATURATE` is not set) rejected an out-of-bounds operation.
+    /// In that case `value` holds the unchanged current value and the TTL is left untouched.
+    /// When `SATURATE` is set, it clamps the result to a bound.
+    /// This reflects the clamped delta, which may differ from the requested increment.
+    pub actual_increment: Value,
+}
+
+impl IncrexResult {
+    /// Decode [`value`](Self::value) into the desired type.
+    /// - e.g. `i64` for `BYINT` operations and `f64` or a wider type for `BYFLOAT` operations.
+    pub fn value_as<T: FromRedisValue>(&self) -> Result<T, ParsingError> {
+        T::from_redis_value_ref(&self.value)
+    }
+
+    /// Decode [`actual_increment`](Self::actual_increment) into the desired type.
+    /// - e.g. `i64` for `BYINT` operations and `f64` or a wider type for `BYFLOAT` operations.
+    pub fn actual_increment_as<T: FromRedisValue>(&self) -> Result<T, ParsingError> {
+        T::from_redis_value_ref(&self.actual_increment)
+    }
+
+    /// Decode both fields as `i64`, the natural type for a `BYINT` result, returning `(value, actual_increment)`.
+    pub fn as_i64(&self) -> Result<(i64, i64), ParsingError> {
+        Ok((self.value_as()?, self.actual_increment_as()?))
+    }
+
+    /// Decode both fields as `f64`, the natural type for a `BYFLOAT` result, returning `(value, actual_increment)`.
+    pub fn as_f64(&self) -> Result<(f64, f64), ParsingError> {
+        Ok((self.value_as()?, self.actual_increment_as()?))
+    }
+}
+
+impl FromRedisValue for IncrexResult {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        let [value, actual_increment] = <[Value; 2]>::from_redis_value(v)?;
+        Ok(Self {
+            value,
+            actual_increment,
+        })
     }
 }

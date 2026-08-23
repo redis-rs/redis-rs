@@ -6,9 +6,9 @@ use crate::pipeline::Pipeline;
 #[cfg(feature = "search_unfinished")]
 use crate::search::{CreateOptions, SearchSchema};
 use crate::types::{
-    ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, IntegerReplyOrNoOp,
-    NumericBehavior, RedisResult, RedisWrite, SetExpiry, ToRedisArgs, ToSingleRedisArg,
-    ValueComparison,
+    ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, IncrexResult,
+    IntegerReplyOrNoOp, NumericBehavior, RedisResult, RedisWrite, SetExpiry, ToRedisArgs,
+    ToSingleRedisArg, ValueComparison,
 };
 
 #[cfg(feature = "vector-sets")]
@@ -523,6 +523,39 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/DECRBY)
     fn decr<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, delta: V) -> (isize) {
         cmd("DECRBY").arg(key).arg(delta).take()
+    }
+
+    /// Increment the numeric value of a key by the given amount and set its expiration.
+    ///
+    /// Uses 0 as the initial value if the key does not exist.
+    /// The increment's type determines the operation: integer increments use `BYINT`, while floating-point ones use `BYFLOAT`.
+    /// The reply is an [`IncrexResult`] holding the raw value after the increment and the raw
+    /// increment that was actually applied (see [`IncrexOptions`] for the bounds and `SATURATE`
+    /// behavior). Read it with [`IncrexResult::as_i64`] / [`IncrexResult::as_f64`] for the common
+    /// typed pairs, or [`IncrexResult::value_as`] / [`IncrexResult::actual_increment_as`] to decode
+    /// a single field into any other [`FromRedisValue`] type.
+    ///
+    /// For `BYINT`, the server operates on 64-bit signed integers, so `i64` is an exact match.
+    /// Every storable or clamped value fits in `i64`, the implicit `SATURATE` limits are `i64::MAX`/`i64::MIN`.
+    /// Out-of-range increment or bound is rejected by the server.
+    ///
+    /// For `BYFLOAT`, the server computes with more range and precision than `f64`, so decoding a
+    /// result beyond `f64::MAX` (including the implicit `±LDBL_MAX` limit) as `f64` yields
+    /// `±f64::INFINITY`. On RESP2 the value arrives as a bulk string, so `value_as::<String>()`
+    /// recovers the server's exact text; on RESP3 it arrives as a double the client has already
+    /// narrowed to `f64`, so `f64` is the full precision available there.
+    /// [Redis Docs](https://redis.io/commands/INCREX)
+    fn increx<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, increment: V, options: IncrexOptions<V>) -> (IncrexResult) {
+        cmd("INCREX")
+            .arg(key)
+            .arg(if increment.describe_numeric_behavior() == NumericBehavior::NumberIsFloat {
+                "BYFLOAT"
+            } else {
+                "BYINT"
+            })
+            .arg(increment)
+            .arg(options)
+            .take()
     }
 
     /// Sets or clears the bit at offset in the string value stored at key.
@@ -3922,6 +3955,93 @@ impl ToRedisArgs for Expiry {
             Self::PERSIST => {
                 out.write_arg(b"PERSIST");
             }
+        }
+    }
+}
+
+/// Options for the [INCREX](https://redis.io/commands/increx) command.
+///
+/// `T` is the type of the increment and of the `LBOUND`/`UBOUND` bounds.
+/// It matches the increment passed to [`increx`](crate::TypedCommands::increx).
+/// (e.g. `IncrexOptions<i64>` for an `i64` increment, `IncrexOptions<f64>` for an `f64` one).
+///
+/// # Example
+/// ```rust,no_run
+/// use redis::{Commands, RedisResult, IncrexOptions, IncrexResult, Expiry};
+/// fn bump(con: &mut redis::Connection) -> RedisResult<IncrexResult> {
+///     let opts = IncrexOptions::default()
+///         .saturate()
+///         .upper_bound(100)
+///         .with_expiration(Expiry::EX(60));
+///     con.increx("counter", 5, opts)
+/// }
+/// ```
+#[derive(Clone, Default)]
+pub struct IncrexOptions<T> {
+    saturate: bool,
+    lower_bound: Option<T>,
+    upper_bound: Option<T>,
+    expiration: Option<Expiry>,
+    enx: bool,
+}
+
+impl<T: ToSingleRedisArg> IncrexOptions<T> {
+    /// Instead of rejecting an out-of-bounds operation,
+    /// clamp the result to the specified bound or to the type's limit when no explicit bound is set.
+    pub fn saturate(mut self) -> Self {
+        self.saturate = true;
+        self
+    }
+
+    /// Set the lower bound for the operation (`LBOUND`).
+    pub fn lower_bound(mut self, lower_bound: T) -> Self {
+        self.lower_bound = Some(lower_bound);
+        self
+    }
+
+    /// Set the upper bound for the operation (`UBOUND`).
+    pub fn upper_bound(mut self, upper_bound: T) -> Self {
+        self.upper_bound = Some(upper_bound);
+        self
+    }
+
+    /// Set the expiration to apply to the key (`EX`/`PX`/`EXAT`/`PXAT`/`PERSIST`).
+    pub fn with_expiration(mut self, expiration: Expiry) -> Self {
+        self.expiration = Some(expiration);
+        self
+    }
+
+    /// Only apply the expiration if the key currently has no TTL (`ENX`).
+    ///
+    /// Requires an expiration other than [`Expiry::PERSIST`] to be set.
+    /// The server rejects `ENX` combined with `PERSIST`.
+    pub fn enx(mut self) -> Self {
+        self.enx = true;
+        self
+    }
+}
+
+impl<T: ToRedisArgs> ToRedisArgs for IncrexOptions<T> {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if self.saturate {
+            out.write_arg(b"SATURATE");
+        }
+        if let Some(ref lower_bound) = self.lower_bound {
+            out.write_arg(b"LBOUND");
+            lower_bound.write_redis_args(out);
+        }
+        if let Some(ref upper_bound) = self.upper_bound {
+            out.write_arg(b"UBOUND");
+            upper_bound.write_redis_args(out);
+        }
+        if let Some(ref expiration) = self.expiration {
+            expiration.write_redis_args(out);
+        }
+        if self.enx {
+            out.write_arg(b"ENX");
         }
     }
 }
