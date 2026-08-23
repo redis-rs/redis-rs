@@ -631,6 +631,10 @@ mod basic {
             redis::Commands::hget_ex(&mut con, HASH_KEY, &expired_fields, Expiry::PERSIST),
             Ok([Value::Nil])
         );
+        assert_eq!(
+            con.hget_ex(HASH_KEY, &expired_fields, Expiry::PERSIST),
+            Ok(vec![None])
+        );
 
         // Scenario 5
         // Retrieve multiple fields and set their expiration to 1 second
@@ -672,6 +676,10 @@ mod basic {
         assert_eq!(
             redis::Commands::hget_ex(&mut con, HASH_KEY, &expired_fields, Expiry::PERSIST),
             Ok(vec![Value::Nil; expired_fields.len()])
+        );
+        assert_eq!(
+            con.hget_ex(HASH_KEY, &expired_fields, Expiry::PERSIST),
+            Ok(vec![None; expired_fields.len()])
         );
     }
 
@@ -2958,6 +2966,39 @@ mod basic {
     }
 
     #[test]
+    fn test_hmget() {
+        let ctx = TestContext::default();
+        let mut con = ctx.connection();
+
+        con.hset("my_hash", "f1", "1").unwrap();
+        let data: Vec<String> = con
+            .hmget("my_hash", &["f1"])
+            .unwrap()
+            .into_iter()
+            .map(|s| s.unwrap())
+            .collect();
+        assert_eq!(data, vec!["1"]);
+
+        con.hset("my_hash", "f2", "2").unwrap();
+        let data: Vec<String> = con
+            .hmget("my_hash", &["f1", "f2"])
+            .unwrap()
+            .into_iter()
+            .map(|s| s.unwrap())
+            .collect();
+        assert_eq!(data, vec!["1", "2"]);
+
+        let data: Vec<Option<String>> = con.hmget("my_hash", &["f4"]).unwrap();
+        assert_eq!(data, vec![None]);
+
+        let data: Vec<Option<String>> = con.hmget("my_hash", &["f2", "f4"]).unwrap();
+        assert_eq!(data, vec![Some("2".to_string()), None]);
+
+        let data: Vec<Option<String>> = con.hmget("non_existing_hash", &["f1", "f2"]).unwrap();
+        assert_eq!(data, vec![None, None]);
+    }
+
+    #[test]
     fn test_variable_length_get() {
         let ctx = TestContext::default();
         let mut con = ctx.connection();
@@ -3956,6 +3997,26 @@ mod basic {
 
         assert_eq!(con.zadd_options("6", "6a", 6, &options), Ok(12));
         assert_eq!(con.zscore("6", "6a"), Ok(Some(12.0)));
+    }
+
+    #[test]
+    fn test_zmscore() {
+        let ctx = TestContext::default();
+        let mut con = ctx.connection();
+
+        let _: usize = con.zadd("my_zset", "m1", 1.5).unwrap();
+        let _: usize = con.zadd("my_zset", "m2", 2.5).unwrap();
+
+        let scores: Vec<Option<f64>> = con.zscore_multiple("my_zset", &["m1", "m2"]).unwrap();
+        assert_eq!(scores, vec![Some(1.5), Some(2.5)]);
+
+        let scores: Vec<Option<f64>> = con.zscore_multiple("my_zset", &["m1", "m3"]).unwrap();
+        assert_eq!(scores, vec![Some(1.5), None]);
+
+        let scores: Vec<Option<f64>> = con
+            .zscore_multiple("non_existing_zset", &["m1", "m2"])
+            .unwrap();
+        assert_eq!(scores, vec![None, None]);
     }
 
     #[test]

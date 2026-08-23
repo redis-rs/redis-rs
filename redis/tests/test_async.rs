@@ -245,6 +245,25 @@ mod basic_async {
     }
 
     #[async_test]
+    async fn test_async_typed_hmget(mut con: impl redis::AsyncTypedCommands) {
+        let _: usize = con.hset("my_hash", "f1", "1").await.unwrap();
+        let data: Vec<String> = con
+            .hmget("my_hash", &["f1"])
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| s.unwrap())
+            .collect();
+        assert_eq!(data, vec!["1"]);
+
+        let data: Vec<Option<String>> = con.hmget("my_hash", &["f1", "f2"]).await.unwrap();
+        assert_eq!(data, vec![Some("1".to_string()), None]);
+
+        let data: Vec<Option<String>> = con.hmget("non_existing_hash", &["f1"]).await.unwrap();
+        assert_eq!(data, vec![None]);
+    }
+
+    #[async_test]
     async fn test_dont_panic_on_closed_multiplexed_connection() {
         let ctx = TestContext::default();
         let client = ctx.client.clone();

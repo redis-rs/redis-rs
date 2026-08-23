@@ -626,13 +626,13 @@ implement_commands! {
 
     /// Gets multiple fields from a hash.
     /// [Redis Docs](https://redis.io/commands/HMGET)
-    fn hmget<K: ToSingleRedisArg, F: ToRedisArgs>(key: K, fields: F) -> (Vec<String>) {
+    fn hmget<K: ToSingleRedisArg, F: ToRedisArgs>(key: K, fields: F) -> (Vec<Option<String>>) {
         cmd("HMGET").arg(key).arg(fields).take()
     }
 
     /// Get the value of one or more fields of a given hash key, and optionally set their expiration
     /// [Redis Docs](https://redis.io/commands/HGETEX)
-    fn hget_ex<K: ToSingleRedisArg, F: ToRedisArgs>(key: K, fields: F, expire_at: Expiry) -> (Vec<String>) {
+    fn hget_ex<K: ToSingleRedisArg, F: ToRedisArgs>(key: K, fields: F, expire_at: Expiry) -> (Vec<Option<String>>) {
         cmd("HGETEX").arg(key).arg(expire_at).arg("FIELDS").arg(fields.num_of_args()).arg(fields).take()
     }
 
@@ -1375,7 +1375,7 @@ implement_commands! {
 
     /// Get the scores associated with multiple members in a sorted set.
     /// [Redis Docs](https://redis.io/commands/ZMSCORE)
-    fn zscore_multiple<K: ToSingleRedisArg, M: ToRedisArgs>(key: K, members: &'a [M]) -> (Option<Vec<f64>>) {
+    fn zscore_multiple<K: ToSingleRedisArg, M: ToRedisArgs>(key: K, members: &'a [M]) -> (Vec<Option<f64>>) {
         cmd("ZMSCORE").arg(key).arg(members).take()
     }
 
@@ -1901,17 +1901,17 @@ implement_commands! {
     /// use redis::{Commands, RedisResult};
     ///
     /// fn get_hash(con: &mut redis::Connection) {
-    ///     let x: RedisResult<Vec<String>> = con.geo_hash("my_gis", "Palermo");
-    ///     // x is vec!["sqc8b49rny0"]
+    ///     let x: RedisResult<Vec<Option<String>>> = con.geo_hash("my_gis", "Palermo");
+    ///     // x is vec![Some(String::from("sqc8b49rny0"))]
     ///
-    ///     let x: RedisResult<Vec<String>> = con.geo_hash("my_gis", &["Palermo", "Catania"]);
-    ///     // x is vec!["sqc8b49rny0", "sqdtr74hyu0"]
+    ///     let x: RedisResult<Vec<Option<String>>> = con.geo_hash("my_gis", &["Palermo", "Catania"]);
+    ///     // x is vec![Some(String::from("sqc8b49rny0")), Some(String::from("sqdtr74hyu0"))]
     /// }
     /// ```
     /// [Redis Docs](https://redis.io/commands/GEOHASH)
     #[cfg(feature = "geospatial")]
     #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
-    fn geo_hash<K: ToSingleRedisArg, M: ToRedisArgs>(key: K, members: M) -> (Vec<String>) {
+    fn geo_hash<K: ToSingleRedisArg, M: ToRedisArgs>(key: K, members: M) -> (Vec<Option<String>>) {
         cmd("GEOHASH").arg(key).arg(members).take()
     }
 
