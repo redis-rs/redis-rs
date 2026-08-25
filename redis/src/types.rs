@@ -77,6 +77,7 @@ impl ToRedisArgs for SetExpiry {
         }
     }
 
+    #[inline]
     fn num_of_args(&self) -> usize {
         match self {
             Self::EX(_) | Self::PX(_) | Self::EXAT(_) | Self::PXAT(_) => 2,
@@ -84,6 +85,7 @@ impl ToRedisArgs for SetExpiry {
         }
     }
 
+    #[inline]
     fn args_size(&self) -> usize {
         let mut buf = ::itoa::Buffer::new();
         match self {
@@ -121,10 +123,12 @@ impl ToRedisArgs for ExistenceCheck {
         }
     }
 
+    #[inline]
     fn num_of_args(&self) -> usize {
         1
     }
 
+    #[inline]
     fn args_size(&self) -> usize {
         2
     }
@@ -151,10 +155,12 @@ impl ToRedisArgs for FieldExistenceCheck {
         }
     }
 
+    #[inline]
     fn num_of_args(&self) -> usize {
         1
     }
 
+    #[inline]
     fn args_size(&self) -> usize {
         3
     }
@@ -339,10 +345,12 @@ impl ToRedisArgs for ValueComparison {
         }
     }
 
+    #[inline]
     fn num_of_args(&self) -> usize {
         2
     }
 
+    #[inline]
     fn args_size(&self) -> usize {
         match self {
             Self::IFEQ(value) => b"IFEQ".len() + value.len(),
@@ -1167,6 +1175,7 @@ pub trait ToRedisArgs: Sized {
     /// to it's numeric behavior in a redis context.  This is used in
     /// some high level concepts to switch between different implementations
     /// of redis functions (for instance `INCR` vs `INCRBYFLOAT`).
+    #[inline]
     fn describe_numeric_behavior(&self) -> NumericBehavior {
         NumericBehavior::NonNumeric
     }
@@ -1177,12 +1186,14 @@ pub trait ToRedisArgs: Sized {
     /// between `GET` and `MGET` variants. Also, for some commands like HEXPIREDAT
     /// which require a specific number of arguments, this method can be used to
     /// know the number of arguments.
+    #[inline]
     fn num_of_args(&self) -> usize {
         1
     }
 
     /// Returns an estimate of the number of bytes that will be written to the
     /// command for this value.
+    #[inline]
     fn args_size(&self) -> usize {
         0
     }
@@ -1212,6 +1223,7 @@ pub trait ToRedisArgs: Sized {
     }
 
     #[doc(hidden)]
+    #[inline]
     fn is_single_vec_arg(items: &[Self]) -> bool {
         items.len() == 1 && items[0].num_of_args() <= 1
     }
@@ -1229,11 +1241,13 @@ macro_rules! itoa_based_to_redis_impl {
                 out.write_arg(s.as_bytes())
             }
 
+            #[inline]
             fn args_size(&self) -> usize {
                 let mut buf = ::itoa::Buffer::new();
                 buf.format(*self).len()
             }
 
+            #[inline]
             fn describe_numeric_behavior(&self) -> NumericBehavior {
                 $numeric
             }
@@ -1255,11 +1269,13 @@ macro_rules! non_zero_itoa_based_to_redis_impl {
                 out.write_arg(s.as_bytes())
             }
 
+            #[inline]
             fn args_size(&self) -> usize {
                 let mut buf = ::itoa::Buffer::new();
                 buf.format(self.get()).len()
             }
 
+            #[inline]
             fn describe_numeric_behavior(&self) -> NumericBehavior {
                 $numeric
             }
@@ -1281,11 +1297,13 @@ macro_rules! ryu_based_to_redis_impl {
                 out.write_arg(s.as_bytes())
             }
 
+            #[inline]
             fn args_size(&self) -> usize {
                 let mut buf = ::ryu::Buffer::new();
                 buf.format(*self).len()
             }
 
+            #[inline]
             fn describe_numeric_behavior(&self) -> NumericBehavior {
                 $numeric
             }
@@ -1305,6 +1323,7 @@ impl ToRedisArgs for u8 {
         out.write_arg(s.as_bytes());
     }
 
+    #[inline]
     fn args_size(&self) -> usize {
         let mut buf = ::itoa::Buffer::new();
         buf.format(*self).len()
@@ -1317,6 +1336,7 @@ impl ToRedisArgs for u8 {
         out.write_arg(items);
     }
 
+    #[inline]
     fn is_single_vec_arg(_items: &[Self]) -> bool {
         true
     }
@@ -1389,6 +1409,7 @@ impl ToRedisArgs for bool {
         out.write_arg(if *self { b"1" } else { b"0" });
     }
 
+    #[inline]
     fn args_size(&self) -> usize {
         1
     }
@@ -1404,6 +1425,7 @@ impl ToRedisArgs for String {
         out.write_arg(self.as_bytes());
     }
 
+    #[inline]
     fn args_size(&self) -> usize {
         self.len()
     }
@@ -1418,6 +1440,7 @@ impl ToRedisArgs for &str {
         out.write_arg(self.as_bytes());
     }
 
+    #[inline]
     fn args_size(&self) -> usize {
         self.len()
     }
@@ -1441,6 +1464,7 @@ where
         }
     }
 
+    #[inline]
     fn args_size(&self) -> usize {
         match self {
             Cow::Borrowed(inner) => inner.args_size(),
@@ -1467,6 +1491,7 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
         }
     }
 
+    #[inline]
     fn describe_numeric_behavior(&self) -> NumericBehavior {
         match *self {
             Some(ref x) => x.describe_numeric_behavior(),
@@ -1474,6 +1499,7 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
         }
     }
 
+    #[inline]
     fn num_of_args(&self) -> usize {
         match *self {
             Some(ref x) => x.num_of_args(),
@@ -1481,6 +1507,7 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
         }
     }
 
+    #[inline]
     fn args_size(&self) -> usize {
         match *self {
             Some(ref x) => x.args_size(),
@@ -1503,6 +1530,7 @@ macro_rules! impl_write_redis_args_for_collection {
                 ToRedisArgs::write_args_from_slice(self, out)
             }
 
+            #[inline]
             fn num_of_args(&self) -> usize {
                 if ToRedisArgs::is_single_vec_arg(&self[..]) {
                     return 1;
@@ -1514,10 +1542,12 @@ macro_rules! impl_write_redis_args_for_collection {
                 }
             }
 
+            #[inline]
             fn args_size(&self) -> usize {
                 self.iter().map(|item| item.args_size()).sum()
             }
 
+            #[inline]
             fn describe_numeric_behavior(&self) -> NumericBehavior {
                 NumericBehavior::NonNumeric
             }
@@ -1539,14 +1569,17 @@ macro_rules! deref_to_write_redis_args_impl {
                 (**self).write_redis_args(out)
             }
 
+            #[inline]
             fn num_of_args(&self) -> usize {
                 (**self).num_of_args()
             }
 
+            #[inline]
             fn args_size(&self) -> usize {
                 (**self).args_size()
             }
 
+            #[inline]
             fn describe_numeric_behavior(&self) -> NumericBehavior {
                 (**self).describe_numeric_behavior()
             }
@@ -1590,11 +1623,11 @@ macro_rules! impl_to_redis_args_for_set {
                 ToRedisArgs::make_arg_iter_ref(self.iter(), out)
             }
 
-            fn num_of_args(&self) -> usize {
+            #[inline] fn num_of_args(&self) -> usize {
                 self.len()
             }
 
-            fn args_size(&self) -> usize {
+            #[inline] fn args_size(&self) -> usize {
                 self.iter().map(|item| item.args_size()).sum()
             }
         }
@@ -1649,11 +1682,11 @@ macro_rules! impl_to_redis_args_for_map {
                 }
             }
 
-            fn num_of_args(&self) -> usize {
+            #[inline] fn num_of_args(&self) -> usize {
                 self.len()
             }
 
-            fn args_size(&self) -> usize {
+            #[inline] fn args_size(&self) -> usize {
                 self.iter().map(|(key, value)| key.args_size() + value.args_size()).sum()
             }
         }
@@ -1697,14 +1730,14 @@ macro_rules! to_redis_args_for_tuple {
             }
 
             #[allow(non_snake_case, unused_variables)]
-            fn num_of_args(&self) -> usize {
+            #[inline] fn num_of_args(&self) -> usize {
                 let mut n: usize = 0;
                 $(let $name = (); n += 1;)*
                 n
             }
 
             #[allow(non_snake_case, unused_variables)]
-            fn args_size(&self) -> usize {
+            #[inline] fn args_size(&self) -> usize {
                 let ($(ref $name,)*) = *self;
                 0 $( + $name.args_size())*
             }
@@ -1733,6 +1766,7 @@ impl<T: ToRedisArgs, const N: usize> ToRedisArgs for &[T; N] {
         ToRedisArgs::write_args_from_slice(self.as_slice(), out);
     }
 
+    #[inline]
     fn num_of_args(&self) -> usize {
         if ToRedisArgs::is_single_vec_arg(&self[..]) {
             return 1;
@@ -2673,6 +2707,7 @@ impl ToRedisArgs for uuid::Uuid {
         out.write_arg(self.as_bytes());
     }
 
+    #[inline]
     fn args_size(&self) -> usize {
         self.as_bytes().len()
     }
@@ -2782,10 +2817,12 @@ impl ToRedisArgs for ExpireOption {
         }
     }
 
+    #[inline]
     fn num_of_args(&self) -> usize {
         1
     }
 
+    #[inline]
     fn args_size(&self) -> usize {
         match self {
             Self::NONE => b"NONE".len(),
@@ -2961,10 +2998,12 @@ impl ToRedisArgs for ValueType {
         out.write_arg(as_str.as_bytes());
     }
 
+    #[inline]
     fn num_of_args(&self) -> usize {
         1
     }
 
+    #[inline]
     fn args_size(&self) -> usize {
         let as_str = <&Self as Into<&str>>::into(self);
         as_str.len()
