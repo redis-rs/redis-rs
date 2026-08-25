@@ -1205,6 +1205,56 @@ mod cluster_async {
     }
 
     #[test]
+    fn async_ask_redirect_propagates_asking_failure() {
+        let name = "async_ask_redirect_propagates_asking_failure";
+        let redirected_command_sent = Arc::new(AtomicBool::new(false));
+        let redirected_command_sent_in_handler = Arc::clone(&redirected_command_sent);
+
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
+            name,
+            move |cmd, port| {
+                respond_startup(name, cmd)?;
+
+                match port {
+                    6379 if contains_slice(cmd, b"GET") => Err(Ok(parse_redis_value(
+                        format!("-ASK 123 {name}:6380\r\n").as_bytes(),
+                    )
+                    .unwrap())),
+                    6380 if contains_slice(cmd, b"ASKING") => {
+                        Err(Ok(parse_redis_value(b"-ERR ASKING failed\r\n").unwrap()))
+                    }
+                    6380 if contains_slice(cmd, b"GET") => {
+                        redirected_command_sent_in_handler.store(true, Ordering::SeqCst);
+                        Err(Ok(Value::BulkString(b"unexpected-success".to_vec())))
+                    }
+                    _ => panic!(
+                        "unexpected command on port {port}: {}",
+                        String::from_utf8_lossy(cmd)
+                    ),
+                }
+            },
+        );
+
+        // An ASKING failure must abort the redirect before the original command is sent.
+        let result = runtime.block_on(
+            redis::cmd("GET")
+                .arg("key")
+                .query_async::<String>(&mut connection),
+        );
+
+        assert!(result.is_err(), "ASKING failure must be propagated");
+        assert!(
+            !redirected_command_sent.load(Ordering::SeqCst),
+            "the redirected command must not be sent when ASKING fails"
+        );
+    }
+
+    #[test]
     fn test_async_cluster_ask_save_new_connection() {
         let name = "test_async_cluster_ask_save_new_connection";
         let ping_attempts = Arc::new(AtomicI32::new(0));
@@ -3540,5 +3590,99 @@ mod cluster_async {
             assert_eq!(attempts.load(Ordering::SeqCst), 3);
             check_unwatched(&mut con.clone()).await;
         }
+    }
+
+    fn nested_redirect_cluster_slots(name: &str, primary_port: u16) -> Value {
+        Value::Array(vec![Value::Array(vec![
+            Value::Int(0),
+            Value::Int(16383),
+            Value::Array(vec![
+                Value::BulkString(name.as_bytes().to_vec()),
+                Value::Int(primary_port as i64),
+            ]),
+        ])])
+    }
+
+    #[test]
+    fn nested_redirects_are_fully_reset_before_slot_refresh_retry() {
+        let name = "nested_redirects_are_fully_reset_before_slot_refresh_retry";
+        let refreshed = Arc::new(AtomicBool::new(false));
+        let stale_route_used = Arc::new(AtomicBool::new(false));
+        let refreshed_in_handler = Arc::clone(&refreshed);
+        let stale_route_used_in_handler = Arc::clone(&stale_route_used);
+
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(4),
+            name,
+            move |cmd, port| {
+                if is_connection_check(cmd) {
+                    return Err(Ok(Value::SimpleString("OK".into())));
+                }
+
+                if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
+                    let primary_port = if refreshed_in_handler.load(Ordering::SeqCst) {
+                        6382
+                    } else {
+                        6379
+                    };
+                    return Err(Ok(nested_redirect_cluster_slots(name, primary_port)));
+                }
+
+                if refreshed_in_handler.load(Ordering::SeqCst) && port != 6382 {
+                    stale_route_used_in_handler.store(true, Ordering::SeqCst);
+                    return Err(Ok(parse_redis_value(
+                        b"-ERR stale redirect reused after refresh\r\n",
+                    )
+                    .unwrap()));
+                }
+
+                match port {
+                    6379 if contains_slice(cmd, b"GET") => Err(Ok(parse_redis_value(
+                        format!("-ASK 123 {name}:6380\r\n").as_bytes(),
+                    )
+                    .unwrap())),
+                    6380 | 6381 if contains_slice(cmd, b"ASKING") => {
+                        Err(Ok(Value::SimpleString("OK".into())))
+                    }
+                    6380 if contains_slice(cmd, b"GET") => Err(Ok(parse_redis_value(
+                        format!("-ASK 123 {name}:6381\r\n").as_bytes(),
+                    )
+                    .unwrap())),
+                    6381 if contains_slice(cmd, b"GET") => {
+                        refreshed_in_handler.store(true, Ordering::SeqCst);
+                        Err(Ok(parse_redis_value(
+                            b"-READONLY You can't write against a read only replica.\r\n",
+                        )
+                        .unwrap()))
+                    }
+                    6382 if contains_slice(cmd, b"GET") => {
+                        Err(Ok(Value::BulkString(b"ok".to_vec())))
+                    }
+                    _ => panic!(
+                        "unexpected command on port {port}: {}",
+                        String::from_utf8_lossy(cmd)
+                    ),
+                }
+            },
+        );
+
+        let value = runtime
+            .block_on(
+                redis::cmd("GET")
+                    .arg("key")
+                    .query_async::<String>(&mut connection),
+            )
+            .expect("request should be rerouted through the refreshed slot map");
+
+        assert_eq!(value, "ok");
+        assert!(
+            !stale_route_used.load(Ordering::SeqCst),
+            "a nested redirect survived reset_routing and bypassed the refreshed slot map"
+        );
     }
 }

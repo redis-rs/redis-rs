@@ -1,3 +1,19 @@
+### 1.6.0 (2026-08-15)
+
+#### Changes & Bug fixes
+
+* Add XNACK command for Redis streams ([2119#](https://github.com/redis-rs/redis-rs/pull/2119) by @StefanPalashev)
+* Allow limiting number of reconnect attempts ([2298#](https://github.com/redis-rs/redis-rs/pull/2298) by @nihohit)
+* Restrict sentinel creation to Sentinel nodes ([2308#](https://github.com/redis-rs/redis-rs/pull/2308) by @nihohit)
+* fix: cluster-async: propagate ASKING command failures ([2305#](https://github.com/redis-rs/redis-rs/pull/2305) by @freedom-winds)
+* Add `CreateOptions` for the Search module's `FT.CREATE` command [1/8] ([2302#](https://github.com/redis-rs/redis-rs/pull/2302) by @StefanPalashev)
+* fix: reset all nested redirect routes before retrying ([2306#](https://github.com/redis-rs/redis-rs/pull/2306) by @freedom-winds)
+
+#### CI & operational improvements
+
+* Enable even more lints ([2300#](https://github.com/redis-rs/redis-rs/pull/2300) by @nihohit)
+* Enable more lints ([2299#](https://github.com/redis-rs/redis-rs/pull/2299) by @nihohit)
+
 ### 1.5.0 (2026-07-29)
 
 #### Changes & Bug fixes

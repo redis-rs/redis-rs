@@ -66,7 +66,7 @@ impl ReadRoutingStrategy for RoundRobinReplicaStrategy {
             ReadCandidates::AnyNode(c) => c.replicas(),
             ReadCandidates::ReplicasOnly(c) => c.replicas(),
         };
-        replicas.get(idx % replicas.len().get()).expect("non-empty")
+        replicas.get(idx % replicas.len()).expect("non-empty")
     }
 }
 
