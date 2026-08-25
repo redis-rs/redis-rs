@@ -1,5 +1,6 @@
 //! Defines types to use with Bloom filter commands.
 
+use crate::cmd::count_digits;
 use crate::errors::invalid_type_error;
 use crate::{
     Commands, Connection, FromRedisValue, ParsingError, RedisResult, RedisWrite, ToRedisArgs,
@@ -35,37 +36,31 @@ pub enum BloomFilterInfoType {
     MaximumScaledCapacity,
 }
 
+impl BloomFilterInfoType {
+    fn bytes_rep(&self) -> &'static [u8] {
+        match *self {
+            Self::Capacity => b"CAPACITY",
+            Self::Expansion => b"EXPANSION",
+            Self::Filters => b"FILTERS",
+            Self::Items => b"ITEMS",
+            Self::Size => b"SIZE",
+            Self::Error => b"ERROR",
+            Self::Tightening => b"TIGHTENING",
+            Self::MaximumScaledCapacity => b"MAXSCALEDCAPACITY",
+        }
+    }
+}
+
 impl ToRedisArgs for BloomFilterInfoType {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
     {
-        match *self {
-            Self::Capacity => {
-                out.write_arg(b"CAPACITY");
-            }
-            Self::Expansion => {
-                out.write_arg(b"EXPANSION");
-            }
-            Self::Filters => {
-                out.write_arg(b"FILTERS");
-            }
-            Self::Items => {
-                out.write_arg(b"ITEMS");
-            }
-            Self::Size => {
-                out.write_arg(b"SIZE");
-            }
-            Self::Error => {
-                out.write_arg(b"ERROR");
-            }
-            Self::Tightening => {
-                out.write_arg(b"TIGHTENING");
-            }
-            Self::MaximumScaledCapacity => {
-                out.write_arg(b"MAXSCALEDCAPACITY");
-            }
-        }
+        out.write_arg(self.bytes_rep());
+    }
+
+    fn args_size(&self) -> usize {
+        self.bytes_rep().len()
     }
 }
 
@@ -166,6 +161,20 @@ impl ToRedisArgs for BloomFilterScalingOptions {
             }
         }
     }
+
+    fn num_of_args(&self) -> usize {
+        match *self {
+            Self::ExpansionRate(_) => 2,
+            Self::NonScaling => 1,
+        }
+    }
+
+    fn args_size(&self) -> usize {
+        match *self {
+            Self::ExpansionRate(size) => b"EXPANSION".len() + count_digits(size),
+            Self::NonScaling => b"NONSCALING".len(),
+        }
+    }
 }
 
 /// Options for inserting items to a Bloom filter
@@ -224,6 +233,27 @@ impl ToRedisArgs for BloomFilterInsertOptions {
         if let Some(ref scaling) = self.expansion {
             scaling.write_redis_args(out);
         }
+    }
+
+    fn args_size(&self) -> usize {
+        let mut size = 0;
+        if Some(false) == self.create {
+            size += b"NOCREATE".len();
+        }
+
+        if let Some(ref error) = self.error_rate {
+            size += b"ERROR".len() + error.arg_size();
+        }
+
+        if let Some(ref capacity) = self.capacity {
+            size += b"CAPACITY".len() + capacity.arg_size();
+        }
+
+        if let Some(ref scaling) = self.expansion {
+            size += scaling.args_size();
+        }
+
+        size
     }
 }
 
