@@ -1,5 +1,7 @@
 # Coding Conventions
 
+Be sure to also read the [contribution docs](CONTRIBUTING.md) and [development docs](DEVELOPMENT.md) before working on a pull request.
+
 ## Redis Commands
 
 * Don't add new options to existing Redis commands. Instead build an `_options` variant with a dedicated type that manages the options.
