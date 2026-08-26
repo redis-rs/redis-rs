@@ -83,19 +83,15 @@ impl<C> CmdArg<C> {
 
     fn reset_routing(&mut self) {
         let fix_route = |route: &mut InternalSingleNodeRouting<C>| {
-            match route {
-                InternalSingleNodeRouting::Redirect {
-                    previous_routing, ..
-                } => {
-                    let previous_routing = std::mem::take(previous_routing.as_mut());
-                    *route = previous_routing;
-                }
-                // If a specific connection is specified, then reconnecting without resetting the routing
-                // will mean that the request is still routed to the old connection.
-                InternalSingleNodeRouting::Connection { identifier, .. } => {
-                    *route = InternalSingleNodeRouting::ByAddress(std::mem::take(identifier));
-                }
-                _ => {}
+            while let InternalSingleNodeRouting::Redirect {
+                previous_routing, ..
+            } = route
+            {
+                *route = std::mem::take(previous_routing.as_mut());
+            }
+
+            if let InternalSingleNodeRouting::Connection { identifier, .. } = route {
+                *route = InternalSingleNodeRouting::ByAddress(std::mem::take(identifier));
             }
         };
         match self {

@@ -475,6 +475,32 @@ fn test_sentinel_client() {
 }
 
 #[test]
+fn test_sentinel_non_sentinel_address_error() {
+    let master_name = "master1";
+    let context = TestSentinelContext::new(2, 3, 3);
+    // Build a Sentinel using regular Redis node addresses instead of sentinel addresses
+    let mut sentinel = Sentinel::build(
+        context
+            .cluster
+            .servers
+            .iter()
+            .map(|s| s.connection_info())
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let node_conn_info = context.sentinel_node_connection_info();
+    let err = sentinel
+        .master_for(master_name, Some(&node_conn_info))
+        .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::InvalidClientConfig);
+    assert!(
+        err.to_string()
+            .contains("Address does not point to a sentinel node"),
+        "{err}"
+    );
+}
+
+#[test]
 fn test_sentinel_client_io_error() {
     let master_name = "master1";
 
@@ -867,6 +893,33 @@ pub mod async_tests {
     }
 
     #[async_test]
+    async fn test_sentinel_non_sentinel_address_error_async() {
+        let master_name = "master1";
+        let context = TestSentinelContext::new(2, 3, 3);
+        // Build a Sentinel using regular Redis node addresses instead of sentinel addresses
+        let mut sentinel = Sentinel::build(
+            context
+                .cluster
+                .servers
+                .iter()
+                .map(|s| s.connection_info())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let node_conn_info = context.sentinel_node_connection_info();
+        let err = sentinel
+            .async_master_for(master_name, Some(&node_conn_info))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidClientConfig);
+        assert!(
+            err.to_string()
+                .contains("Address does not point to a sentinel node"),
+            "{err}"
+        );
+    }
+
+    #[async_test]
     async fn test_sentinel_client_async_not_sentinel_error() {
         let master_name = "master1";
 
@@ -1228,7 +1281,7 @@ pub mod pool_tests {
     }
 }
 
-#[cfg(feature = "tokio-comp")]
+#[cfg(all(feature = "tokio-comp", feature = "bb8"))]
 pub mod bb8_pool_tests {
     use super::*;
     use bb8::Pool;

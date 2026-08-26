@@ -147,6 +147,11 @@ use crate::{
     connection::ConnectionInfo, errors::ServerErrorKind, io::tcp::TcpSettings, types::RedisResult,
 };
 
+fn not_a_sentinel_error() -> RedisError {
+    const ERR_MSG: &str = "Address does not point to a sentinel node";
+    RedisError::from((ErrorKind::InvalidClientConfig, ERR_MSG))
+}
+
 /// The Sentinel type, serves as a special purpose client which builds other clients on
 /// demand.
 pub struct Sentinel {
@@ -615,6 +620,13 @@ async fn async_reconnect(
     let sentinel_client = Client::open(connection_info.clone())?;
     let new_connection = sentinel_client.get_multiplexed_async_connection().await?;
     connection.replace(new_connection);
+    let role: Role = crate::cmd("ROLE")
+        .query_async(connection.as_mut().unwrap())
+        .await?;
+    if !matches!(role, Role::Sentinel { .. }) {
+        *connection = None;
+        return Err(not_a_sentinel_error());
+    }
     Ok(())
 }
 
@@ -649,6 +661,11 @@ fn reconnect(
     let sentinel_client = Client::open(connection_info.clone())?;
     let new_connection = sentinel_client.get_connection()?;
     connection.replace(new_connection);
+    let role: Role = crate::cmd("ROLE").query(connection.as_mut().unwrap())?;
+    if !matches!(role, Role::Sentinel { .. }) {
+        *connection = None;
+        return Err(not_a_sentinel_error());
+    }
     Ok(())
 }
 
@@ -678,15 +695,19 @@ fn try_single_sentinel<T: FromRedisValue>(
 // non-async methods
 impl Sentinel {
     #[cfg(not(feature = "tls-rustls"))]
-    /// Creates a Sentinel client performing some basic
-    /// checks on the URLs that might make the operation fail.
+    /// Creates a Sentinel client performing some basic checks on the URLs that might
+    /// make the operation fail.
+    ///
+    /// `params` must contain addresses of Redis Sentinel nodes, not regular Redis nodes.
     pub fn build<T: IntoConnectionInfo>(params: Vec<T>) -> RedisResult<Sentinel> {
         Self::build_inner(params)
     }
 
     #[cfg(feature = "tls-rustls")]
-    /// Creates a Sentinel client performing some basic
-    /// checks on the URLs that might make the operation fail.
+    /// Creates a Sentinel client performing some basic checks on the URLs that might
+    /// make the operation fail.
+    ///
+    /// `params` must contain addresses of Redis Sentinel nodes, not regular Redis nodes.
     pub fn build<T: IntoConnectionInfo>(params: Vec<T>) -> RedisResult<Self> {
         Self::build_inner(params, None)
     }
@@ -1130,6 +1151,8 @@ impl SentinelClient {
     #[cfg(not(feature = "tls-rustls"))]
     /// Creates a SentinelClient performing some basic checks on the URLs that might
     /// result in an error.
+    ///
+    /// `params` must contain addresses of Redis Sentinel nodes, not regular Redis nodes.
     pub fn build<T: IntoConnectionInfo>(
         params: Vec<T>,
         service_name: String,
@@ -1142,6 +1165,8 @@ impl SentinelClient {
     #[cfg(feature = "tls-rustls")]
     /// Creates a SentinelClient performing some basic checks on the URLs that might
     /// result in an error.
+    ///
+    /// `params` must contain addresses of Redis Sentinel nodes, not regular Redis nodes.
     pub fn build<T: IntoConnectionInfo>(
         params: Vec<T>,
         service_name: impl AsRef<str>,
@@ -1364,7 +1389,7 @@ pub struct SentinelClientBuilder {
 
 impl SentinelClientBuilder {
     /// Creates a new `SentinelClientBuilder`
-    /// - `sentinels` - Addresses of sentinel nodes
+    /// - `sentinels` - Addresses of Redis Sentinel nodes (not regular Redis nodes)
     /// - `service_name` - The name of the service to be queried via the sentinels
     /// - `server_type` - The server type to be queried via the sentinels
     pub fn new<T: IntoIterator<Item = ConnectionAddr>>(
