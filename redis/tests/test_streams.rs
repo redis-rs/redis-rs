@@ -960,14 +960,12 @@ fn test_xreadgroup_claim_with_idle_and_incoming_messages() {
     //  - delivered_count > 0
     assert_eq!(idle_pending_ids[0], claim_reply.keys[0].ids[0].id);
     assert_eq!(idle_pending_ids[1], claim_reply.keys[0].ids[1].id);
-    for i in 0..2 {
-        let stream_id = &claim_reply.keys[0].ids[i];
+    for stream_id in claim_reply.keys[0].ids.iter().take(2) {
         assert!(stream_id.milliseconds_elapsed_from_delivery.unwrap() > 0);
         assert!(stream_id.delivered_count.unwrap() > 0);
     }
     // Verify that the remaining 8 messages are new, incoming messages (not previously delivered)
-    for i in 2..10 {
-        let stream_id = &claim_reply.keys[0].ids[i];
+    for stream_id in claim_reply.keys[0].ids.iter().take(10).skip(2) {
         assert_eq!(stream_id.milliseconds_elapsed_from_delivery.unwrap(), 0);
         assert_eq!(stream_id.delivered_count.unwrap(), 0);
         // These messages should NOT be in the idle pending list
@@ -1012,15 +1010,13 @@ fn test_xreadgroup_claim_with_idle_and_incoming_messages() {
     assert_eq!(claim_all_reply.keys[0].ids.len(), 22);
 
     // Verify that the first 10 are the idle pending messages
-    for i in 0..10 {
-        let stream_id = &claim_all_reply.keys[0].ids[i];
+    for stream_id in claim_all_reply.keys[0].ids.iter().take(10) {
         assert!(stream_id.milliseconds_elapsed_from_delivery.unwrap() > 0);
         assert!(stream_id.delivered_count.unwrap() > 0);
     }
 
     // Verify that the rest are new, incoming messages
-    for i in 10..22 {
-        let stream_id = &claim_all_reply.keys[0].ids[i];
+    for stream_id in claim_all_reply.keys[0].ids.iter().take(22).skip(10) {
         assert_eq!(stream_id.milliseconds_elapsed_from_delivery.unwrap(), 0);
         assert_eq!(stream_id.delivered_count.unwrap(), 0);
     }
@@ -1644,9 +1640,9 @@ fn test_xdel_ex() {
         assert_eq!(pending.count(), i);
         if let StreamPendingReply::Data(data) = pending {
             assert_eq!(data.consumers.len(), i);
-            for j in 0..i {
-                assert_eq!(data.consumers[j].name, format!("consumer{}", j + 1));
-                assert_eq!(data.consumers[j].pending, 1);
+            for (j, consumer) in data.consumers.iter().enumerate().take(i) {
+                assert_eq!(consumer.name, format!("consumer{}", j + 1));
+                assert_eq!(consumer.pending, 1);
             }
         } else {
             panic!("Expected StreamPendingReply::Data");
@@ -1848,9 +1844,9 @@ fn test_xack_del() {
         assert_eq!(pending.count(), i);
         if let StreamPendingReply::Data(data) = pending {
             assert_eq!(data.consumers.len(), i);
-            for j in 0..i {
-                assert_eq!(data.consumers[j].name, format!("consumer{}", j + 1));
-                assert_eq!(data.consumers[j].pending, 1);
+            for (j, consumer) in data.consumers.iter().enumerate().take(i) {
+                assert_eq!(consumer.name, format!("consumer{}", j + 1));
+                assert_eq!(consumer.pending, 1);
             }
         } else {
             panic!("Expected StreamPendingReply::Data");
