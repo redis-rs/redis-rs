@@ -28,6 +28,7 @@ The affected structs are:
 * `RadiusSearchResult`
 * `SendError`
 * `SentinelError`
+* `TlsCertificates`
 
 ### `ScanOptions::with_type` takes `ValueType` instead of `Into<String>` (Breaking Change)
 
