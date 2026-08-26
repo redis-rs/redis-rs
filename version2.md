@@ -28,6 +28,21 @@ The affected structs are:
 * `RadiusSearchResult`
 * `SendError`
 * `SentinelError`
+* `StreamAutoClaimReply`
+* `StreamClaimReply`
+* `StreamId`
+* `StreamIdempotencyMode`
+* `StreamInfoConsumer`
+* `StreamInfoConsumersReply`
+* `StreamInfoGroup`
+* `StreamInfoGroupsReply`
+* `StreamInfoStreamReply`
+* `StreamKey`
+* `StreamPendingCountReply`
+* `StreamPendingData`
+* `StreamPendingId`
+* `StreamRangeReply`
+* `StreamReadReply`
 * `TlsCertificates`
 
 ### `ScanOptions::with_type` takes `ValueType` instead of `Into<String>` (Breaking Change)

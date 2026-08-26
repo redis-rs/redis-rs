@@ -396,7 +396,7 @@ fn test_assorted_2() {
         id,
         consumer,
         times_delivered,
-        last_delivered_ms: _,
+        ..
     } in reply.ids
     {
         assert!(!id.is_empty());
@@ -2331,7 +2331,7 @@ fn test_xautoclaim_invalid_pel_entries_claiming_just_ids() {
     let _ = con.xdel("k1", &[claim.id.clone(), claim_1.id.clone()]);
     sleep(Duration::from_millis(5));
 
-    let reply = con
+    let mut reply = con
         .xautoclaim_options(
             "k1",
             "g1",
@@ -2352,25 +2352,12 @@ fn test_xautoclaim_invalid_pel_entries_claiming_just_ids() {
             vec![claim.id.clone(), claim_1.id.clone()]
         );
     } else {
-        // on redis 6, the deleted entries appear when passing JUSTID
-        claimed_entries.insert(
-            0,
-            StreamId {
-                id: claim.id.clone(),
-                map: Default::default(),
-                milliseconds_elapsed_from_delivery: None,
-                delivered_count: None,
-            },
-        );
-        claimed_entries.insert(
-            1,
-            StreamId {
-                id: claim_1.id.clone(),
-                map: Default::default(),
-                milliseconds_elapsed_from_delivery: None,
-                delivered_count: None,
-            },
-        );
+        // On Redis <7, the deleted entries appear claimed when passing JUSTID
+        // So we check that they are present and skip over them
+        assert_eq!(reply.claimed[0].id, claim.id);
+        assert_eq!(reply.claimed[1].id, claim_1.id);
+        reply.claimed = reply.claimed.into_iter().skip(2).collect();
+
         assert_eq!(reply.claimed, claimed_entries);
         assert_eq!(reply.deleted_ids.len(), 0);
     }
