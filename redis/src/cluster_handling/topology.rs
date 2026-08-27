@@ -111,7 +111,7 @@ mod tests {
             .iter()
             .map(|(host, port)| {
                 Value::Array(vec![
-                    Value::BulkString(host.as_bytes().to_vec()),
+                    Value::BulkString(host.as_bytes().to_vec().into()),
                     Value::Int(*port as i64),
                 ])
             })

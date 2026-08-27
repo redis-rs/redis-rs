@@ -717,6 +717,7 @@ pub use crate::types::{
 
     // low level values
     Value,
+    Str,
     PushKind,
     VerbatimFormat,
     ProtocolVersion,
