@@ -1332,3 +1332,17 @@ mod cluster {
         smoke_test_connection(client.get_connection().unwrap());
     }
 }
+
+#[cfg(feature = "r2d2")]
+pub mod pool_tests {
+    use crate::support::*;
+    use r2d2::ManageConnection;
+
+    #[test]
+    fn is_valid_accepts_a_healthy_cluster_connection() {
+        let cluster = TestClusterContext::new();
+        let mut con = cluster.connection();
+
+        ManageConnection::is_valid(&cluster.client, &mut con).unwrap();
+    }
+}
