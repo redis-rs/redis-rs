@@ -219,7 +219,7 @@ fn bench_encode_set_ex(b: &mut Bencher, value: &[u8]) {
         let mut pipe = redis::pipe();
 
         for _ in 0..1_000 {
-pipe.set_ex("session:abc123", value, 3600).ignore();
+            pipe.set_ex("session:abc123", value, 3600).ignore();
         }
         pipe.get_packed_pipeline()
     });

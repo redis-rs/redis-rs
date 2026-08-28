@@ -89,13 +89,6 @@ impl ClusterPipeline {
         }
     }
 
-    pub(crate) fn sizes(&self) -> (usize, usize, usize) {
-        let command_count = self.commands.len();
-        let arg_count = self.args.len();
-        let data_count = self.data.len();
-        (command_count, arg_count, data_count)
-    }
-
     /// Executes the pipeline and fetches the return values:
     ///
     /// ```rust,no_run
