@@ -12,7 +12,7 @@ use {
 };
 
 mod support;
-use crate::support::{current_thread_runtime, encode_value};
+use crate::support::{current_thread_runtime, shared::encode::encode_value};
 
 #[derive(Clone, Debug)]
 struct ArbitraryValue(Value);

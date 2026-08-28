@@ -286,7 +286,7 @@ fn bench_decode(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode");
     {
         let mut input = Vec::new();
-        support::encode_value(&value, &mut input).unwrap();
+        support::shared::encode::encode_value(&value, &mut input).unwrap();
         assert_eq!(redis::parse_redis_value(&input).unwrap(), value);
         group.bench_function("decode", move |b| bench_decode_simple(b, &input));
     }
