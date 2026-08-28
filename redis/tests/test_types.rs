@@ -230,6 +230,86 @@ mod types {
         }
     }
 
+    /// A reply carries the same number whether the server encodes it as a
+    /// number or as a string, so both encodings have to convert to the same
+    /// result for every integer type.
+    mod numeric_and_string_replies_agree {
+        use quickcheck::quickcheck;
+        use redis::{FromRedisValue, Value};
+
+        fn string_value(s: String) -> Value {
+            Value::BulkString(s.into_bytes())
+        }
+
+        macro_rules! agree_on_int {
+            ($name:ident, $t:ty) => {
+                quickcheck! {
+                    fn $name(val: i64) -> bool {
+                        let from_int = <$t>::from_redis_value(Value::Int(val));
+                        let from_string =
+                            <$t>::from_redis_value(string_value(val.to_string()));
+                        match (from_int, from_string) {
+                            (Ok(a), Ok(b)) => a == b,
+                            (Err(_), Err(_)) => true,
+                            _ => false,
+                        }
+                    }
+                }
+            };
+        }
+
+        agree_on_int!(u8_agrees, u8);
+        agree_on_int!(i8_agrees, i8);
+        agree_on_int!(u16_agrees, u16);
+        agree_on_int!(i16_agrees, i16);
+        agree_on_int!(u32_agrees, u32);
+        agree_on_int!(i32_agrees, i32);
+        agree_on_int!(u64_agrees, u64);
+        agree_on_int!(i64_agrees, i64);
+        agree_on_int!(u128_agrees, u128);
+        agree_on_int!(i128_agrees, i128);
+        agree_on_int!(usize_agrees, usize);
+        agree_on_int!(isize_agrees, isize);
+
+        macro_rules! agree_on_double {
+            ($name:ident, $t:ty) => {
+                quickcheck! {
+                    fn $name(val: f64) -> bool {
+                        let from_double = <$t>::from_redis_value(Value::Double(val));
+                        // Neither a non-finite nor a fractional double is an
+                        // integer, and no integer string spells one, so the only
+                        // thing to check is that both are refused.
+                        if !val.is_finite() || val.fract() != 0.0 {
+                            return from_double.is_err();
+                        }
+                        // For a whole number `{:.0}` writes the exact value, which
+                        // is what a server sending it as a string would write.
+                        // Negative zero is the one exception: it is zero, but it
+                        // writes as "-0", and `str::parse` refuses a sign on an
+                        // unsigned type.
+                        let val = if val == 0.0 { 0.0 } else { val };
+                        let from_string =
+                            <$t>::from_redis_value(string_value(format!("{val:.0}")));
+                        match (from_double, from_string) {
+                            (Ok(a), Ok(b)) => a == b,
+                            (Err(_), Err(_)) => true,
+                            _ => false,
+                        }
+                    }
+                }
+            };
+        }
+
+        agree_on_double!(u8_agrees_on_double, u8);
+        agree_on_double!(i8_agrees_on_double, i8);
+        agree_on_double!(u32_agrees_on_double, u32);
+        agree_on_double!(i32_agrees_on_double, i32);
+        agree_on_double!(u64_agrees_on_double, u64);
+        agree_on_double!(i64_agrees_on_double, i64);
+        agree_on_double!(u128_agrees_on_double, u128);
+        agree_on_double!(i128_agrees_on_double, i128);
+    }
+
     #[test]
     fn test_out_of_range_integer_reply_is_an_error() {
         for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
@@ -298,9 +378,16 @@ mod types {
                 parse_mode.parse_redis_value(Value::Double(9223372036854775808.0));
             assert_matches!(bad, Err(_));
 
-            // In-range doubles still truncate towards zero, as before.
-            assert_eq!(parse_mode.parse_redis_value(Value::Double(1.9)), Ok(1i64));
-            assert_eq!(parse_mode.parse_redis_value(Value::Double(-1.9)), Ok(-1i64));
+            // A fractional double is not an integer, the same way "1.9" is not
+            // one for `str::parse`.
+            let bad: Result<i64, _> = parse_mode.parse_redis_value(Value::Double(1.9));
+            assert_matches!(bad, Err(_));
+            let bad: Result<i64, _> = parse_mode.parse_redis_value(Value::Double(-1.9));
+            assert_matches!(bad, Err(_));
+
+            // Doubles that are whole numbers in range convert as before.
+            assert_eq!(parse_mode.parse_redis_value(Value::Double(1.0)), Ok(1i64));
+            assert_eq!(parse_mode.parse_redis_value(Value::Double(-1.0)), Ok(-1i64));
             assert_eq!(
                 parse_mode.parse_redis_value(Value::Double(255.0)),
                 Ok(255u8)

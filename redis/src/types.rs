@@ -1704,7 +1704,7 @@ fn get_owned_inner_value(v: Value) -> Value {
     }
 }
 
-macro_rules! from_redis_value_for_num_internal {
+macro_rules! from_redis_value_for_float_internal {
     ($t:ty, $v:expr) => {{
         let v = if let Value::Attribute {
             data,
@@ -1731,15 +1731,11 @@ macro_rules! from_redis_value_for_num_internal {
     }};
 }
 
-/// Same as `from_redis_value_for_num_internal`, but for integer types.
+/// Same as `from_redis_value_for_float_internal`, but for integer types.
 ///
-/// `Value::Int` holds an `i64` and `Value::Double` holds an `f64`. Neither can
-/// be converted to a narrower or differently signed integer with `as`, which
-/// wraps around for integers, and saturates (turning NaN into zero) for floats.
-/// Both do so silently, so `TTL` replying `:-1` used to be handed back as
-/// `u64::MAX` instead of as an error. These two arms are therefore
-/// range-checked, which is what the `SimpleString` and `BulkString` arms
-/// already get from `str::parse`.
+/// Every arm rejects a value that the requested type cannot represent, so that
+/// a reply converts to the same result whether the server sent it as a number
+/// or as a string.
 macro_rules! from_redis_value_for_int_internal {
     ($t:ty, $v:expr) => {{
         let v = if let Value::Attribute {
@@ -1768,18 +1764,17 @@ macro_rules! from_redis_value_for_int_internal {
                 Err(_) => crate::errors::invalid_type_error!(v, "Could not convert from string."),
             },
             Value::Double(val) => {
-                // Truncate towards zero, as `as` does, but reject anything that
-                // does not fit. `<$t>::MAX as f64` rounds *up* to the next power
-                // of two for the wider integer types, so the upper bound has to
-                // be a strict `<` against `MAX as f64 + 1.0`. NaN and the
-                // infinities fail both comparisons and are rejected too.
-                let truncated = val.trunc();
-                if truncated >= <$t>::MIN as f64 && truncated < <$t>::MAX as f64 + 1.0 {
-                    Ok(truncated as $t)
+                // `<$t>::MAX as f64` rounds *up* to the next power of two for the
+                // wider integer types, so the upper bound is a strict `<` against
+                // `MAX as f64 + 1.0`. NaN and the infinities fail both
+                // comparisons, and a fractional value is not an integer, so all
+                // three are rejected the same way `str::parse` rejects them.
+                if val.fract() == 0.0 && val >= <$t>::MIN as f64 && val < <$t>::MAX as f64 + 1.0 {
+                    Ok(val as $t)
                 } else {
                     crate::errors::invalid_type_error!(
                         v,
-                        "Double is out of range for the requested type."
+                        "Double is not an integer in range for the requested type."
                     )
                 }
             }
@@ -1788,11 +1783,11 @@ macro_rules! from_redis_value_for_int_internal {
     }};
 }
 
-macro_rules! from_redis_value_for_num {
+macro_rules! from_redis_value_for_float {
     ($t:ty) => {
         impl FromRedisValue for $t {
             fn from_redis_value_ref(v: &Value) -> Result<$t, ParsingError> {
-                from_redis_value_for_num_internal!($t, v)
+                from_redis_value_for_float_internal!($t, v)
             }
 
             fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
@@ -1843,8 +1838,8 @@ from_redis_value_for_int!(i64);
 from_redis_value_for_int!(u64);
 from_redis_value_for_int!(i128);
 from_redis_value_for_int!(u128);
-from_redis_value_for_num!(f32);
-from_redis_value_for_num!(f64);
+from_redis_value_for_float!(f32);
+from_redis_value_for_float!(f64);
 from_redis_value_for_int!(isize);
 from_redis_value_for_int!(usize);
 

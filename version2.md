@@ -311,7 +311,7 @@ let ttl: u64 = con.ttl("key")?; // 18446744073709551615, no error
 
 The same value arriving as a string already errored, so the outcome depended on how the reply happened to be encoded. RESP3 makes the same split reachable for scores, since `ZSCORE` replies with a double under RESP3 and a bulk string under RESP2.
 
-The numeric arms are now range-checked, matching what the `SimpleString` and `BulkString` arms already got from `str::parse`. `Value::Int` goes through `try_from`, and `Value::Double` is bounds-checked before it truncates towards zero, which also rejects `NaN` and the infinities. In-range values, including the exact type boundaries and fractional doubles, convert exactly as before, and `f32`/`f64` are untouched.
+Every arm now rejects a value the requested type cannot represent, so a reply converts to the same result whether the server sent it as a number or as a string. `Value::Int` goes through `try_from`, and for the integer types `Value::Double` accepts only whole numbers in range, which also rejects `NaN`, the infinities, and fractional values such as `1.9` that previously truncated to `1`. Whole numbers in range, including the exact type boundaries, convert exactly as before, and `f32`/`f64` are untouched.
 
 **Migration:** Handle the error, or parse into a type that covers the full range of the reply.
 
