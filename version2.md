@@ -298,3 +298,32 @@ Their return types are now updated to:
 - `hget_ex`: `Vec<Option<String>>` (was `Vec<String>`)
 - `zscore_multiple`: `Vec<Option<f64>>` (was `Option<Vec<f64>>`)
 - `geo_hash`: `Vec<Option<String>>` (was `Vec<String>`)
+
+### Out-of-range integer and double replies are rejected instead of wrapping (Breaking Change)
+
+`FromRedisValue` for the integer types converted `Value::Int` and `Value::Double` with `as`, which wraps around for integers and saturates for floats, turning `NaN` into zero. Both did so silently, so a reply outside the target type's range produced a wrong number rather than an error.
+
+The most visible case is `TTL`, which replies `-2` for a missing key and `-1` for a key without an expiry:
+
+```rust
+let ttl: u64 = con.ttl("key")?; // 18446744073709551615, no error
+```
+
+The same value arriving as a string already errored, so the outcome depended on how the reply happened to be encoded. RESP3 makes the same split reachable for scores, since `ZSCORE` replies with a double under RESP3 and a bulk string under RESP2.
+
+Every arm now rejects a value the requested type cannot represent, so a reply converts to the same result whether the server sent it as a number or as a string. `Value::Int` goes through `try_from`, and for the integer types `Value::Double` accepts only whole numbers in range, which also rejects `NaN`, the infinities, and fractional values such as `1.9` that previously truncated to `1`. Whole numbers in range, including the exact type boundaries, convert exactly as before, and `f32`/`f64` are untouched.
+
+**Migration:** Handle the error, or parse into a type that covers the full range of the reply.
+
+```rust
+// Before: silently wrapped to 18446744073709551615
+let ttl: u64 = con.ttl("key")?;
+
+// After: use a signed type that can represent the -1 and -2 sentinels
+let ttl: i64 = con.ttl("key")?;
+match ttl {
+    -2 => { /* key does not exist */ }
+    -1 => { /* key exists but has no expiry */ }
+    secs => { /* seconds remaining */ }
+}
+```
