@@ -1760,7 +1760,7 @@ mod basic_async {
         let pipe = build_simple_pipeline_for_invalidation();
         let _: RedisResult<()> = pipe.query_async(&mut manager).await;
         let _: i32 = manager.get("key_1").await.unwrap();
-        let redis::PushInfo { kind, data } = rx.try_recv().unwrap();
+        let redis::PushInfo { kind, data, .. } = rx.try_recv().unwrap();
         assert_eq!(
             (PushKind::Invalidate, vec![redis_value!(["key_1"])]),
             (kind, data)

@@ -1959,29 +1959,19 @@ mod basic {
         if ctx.protocol.supports_resp3() {
             // We expect all push messages to be here, since sync connection won't read in background
             // we can't receive push messages without requesting some command
-            let PushInfo { kind, data } = rx.try_recv().unwrap();
             assert_eq!(
-                (
-                    PushKind::Subscribe,
-                    vec![redis_value!("foo"), redis_value!(1)]
-                ),
-                (kind, data)
+                rx.try_recv().unwrap(),
+                PushInfo::new(PushKind::Subscribe).data(vec![redis_value!("foo"), redis_value!(1)])
             );
-            let PushInfo { kind, data } = rx.try_recv().unwrap();
             assert_eq!(
-                (
-                    PushKind::Message,
-                    vec![redis_value!("foo"), redis_value!("42")]
-                ),
-                (kind, data)
+                rx.try_recv().unwrap(),
+                PushInfo::new(PushKind::Message)
+                    .data(vec![redis_value!("foo"), redis_value!("42")])
             );
-            let PushInfo { kind, data } = rx.try_recv().unwrap();
             assert_eq!(
-                (
-                    PushKind::Message,
-                    vec![redis_value!("foo"), redis_value!("23")]
-                ),
-                (kind, data)
+                rx.try_recv().unwrap(),
+                PushInfo::new(PushKind::Message)
+                    .data(vec![redis_value!("foo"), redis_value!("23")])
             );
         }
     }
@@ -2133,10 +2123,10 @@ mod basic {
             ];
             let mut received_values = vec![];
             for _ in &expected_values {
-                let PushInfo { kind, data } = rx.try_recv().unwrap();
+                let info = rx.try_recv().unwrap();
                 let channel_name: String =
-                    redis::from_redis_value_ref(data.first().unwrap()).unwrap();
-                received_values.push((kind, channel_name));
+                    redis::from_redis_value_ref(info.data.first().unwrap()).unwrap();
+                received_values.push((info.kind, channel_name));
             }
             for val in expected_values {
                 assert!(received_values.contains(&val));
@@ -4981,10 +4971,9 @@ mod basic {
         for _ in 0..10 {
             let _: RedisResult<()> = pipe.query(&mut con);
             con.get_int("key_1").unwrap();
-            let PushInfo { kind, data } = rx.try_recv().unwrap();
             assert_eq!(
-                (PushKind::Invalidate, vec![redis_value!(["key_1"])]),
-                (kind, data)
+                rx.try_recv().unwrap(),
+                PushInfo::new(PushKind::Invalidate).data(vec![redis_value!(["key_1"])])
             );
         }
         let (new_tx, new_rx) = std::sync::mpsc::channel();
@@ -4992,10 +4981,9 @@ mod basic {
         drop(rx);
         let _: RedisResult<()> = pipe.query(&mut con);
         con.get_int("key_1").unwrap();
-        let PushInfo { kind, data } = new_rx.try_recv().unwrap();
         assert_eq!(
-            (PushKind::Invalidate, vec![redis_value!(["key_1"])]),
-            (kind, data)
+            new_rx.try_recv().unwrap(),
+            PushInfo::new(PushKind::Invalidate).data(vec![redis_value!(["key_1"])])
         );
 
         {
@@ -5061,8 +5049,8 @@ mod basic {
         // we don't assume any order on the received messages, so we first receive them and them check that they exist regardless of order
         let mut messages = vec![];
         for _ in 0..4 {
-            let PushInfo { kind, data } = rx.try_recv().unwrap();
-            messages.push((kind, data));
+            let info = rx.try_recv().unwrap();
+            messages.push((info.kind, info.data));
         }
         assert!(
             messages.contains(&(
@@ -5105,21 +5093,13 @@ mod basic {
         assert_eq!(con.publish("barvaz", 42), Ok(0));
 
         // We have received verification from Redis that it's unsubscribed to channel.
-        let PushInfo { kind, data } = rx.try_recv().unwrap();
         assert_eq!(
-            (
-                PushKind::Unsubscribe,
-                vec![redis_value!("foo"), redis_value!(1)]
-            ),
-            (kind, data)
+            rx.try_recv().unwrap(),
+            PushInfo::new(PushKind::Unsubscribe).data(vec![redis_value!("foo"), redis_value!(1)])
         );
-        let PushInfo { kind, data } = rx.try_recv().unwrap();
         assert_eq!(
-            (
-                PushKind::PUnsubscribe,
-                vec![redis_value!("bar*"), redis_value!(0)]
-            ),
-            (kind, data)
+            rx.try_recv().unwrap(),
+            PushInfo::new(PushKind::PUnsubscribe).data(vec![redis_value!("bar*"), redis_value!(0)])
         );
 
         // check that no additional message was sent.

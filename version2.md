@@ -25,6 +25,7 @@ The affected structs are:
 * `ClientTlsConfig`
 * `Coord`
 * `FlushAllOptions`
+* `PushInfo`
 * `RadiusSearchResult`
 * `SendError`
 * `SentinelError`
