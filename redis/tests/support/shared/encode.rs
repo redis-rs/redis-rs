@@ -32,6 +32,7 @@ where
     W: io::Write,
 {
     #![allow(clippy::write_with_newline)]
+    #![allow(unreachable_patterns)]
     match *value {
         Value::Nil => write!(writer, "$-1\r\n"),
         Value::Int(val) => write!(writer, ":{val}\r\n"),
