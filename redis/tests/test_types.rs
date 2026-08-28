@@ -276,20 +276,20 @@ mod types {
                 quickcheck! {
                     fn $name(val: f64) -> bool {
                         let from_double = <$t>::from_redis_value(Value::Double(val));
-                        // Neither a non-finite nor a fractional double is an
-                        // integer, and no integer string spells one, so the only
-                        // thing to check is that both are refused.
-                        if !val.is_finite() || val.fract() != 0.0 {
-                            return from_double.is_err();
-                        }
-                        // For a whole number `{:.0}` writes the exact value, which
-                        // is what a server sending it as a string would write.
-                        // Negative zero is the one exception: it is zero, but it
-                        // writes as "-0", and `str::parse` refuses a sign on an
-                        // unsigned type.
+                        // Negative zero is zero, but it writes as "-0" and
+                        // `str::parse` refuses a sign on an unsigned type, so
+                        // compare against the spelling of the value itself.
                         let val = if val == 0.0 { 0.0 } else { val };
-                        let from_string =
-                            <$t>::from_redis_value(string_value(format!("{val:.0}")));
+                        // A whole number is written exactly by `{:.0}`, which is
+                        // what a server sending it as a string would write. Every
+                        // other double is spelled the way it prints, and none of
+                        // those spellings parse as an integer.
+                        let spelled = if val.is_finite() && val.fract() == 0.0 {
+                            format!("{val:.0}")
+                        } else {
+                            format!("{val}")
+                        };
+                        let from_string = <$t>::from_redis_value(string_value(spelled));
                         match (from_double, from_string) {
                             (Ok(a), Ok(b)) => a == b,
                             (Err(_), Err(_)) => true,
