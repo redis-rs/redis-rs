@@ -1731,6 +1731,63 @@ macro_rules! from_redis_value_for_num_internal {
     }};
 }
 
+/// Same as `from_redis_value_for_num_internal`, but for integer types.
+///
+/// `Value::Int` holds an `i64` and `Value::Double` holds an `f64`. Neither can
+/// be converted to a narrower or differently signed integer with `as`, which
+/// wraps around for integers, and saturates (turning NaN into zero) for floats.
+/// Both do so silently, so `TTL` replying `:-1` used to be handed back as
+/// `u64::MAX` instead of as an error. These two arms are therefore
+/// range-checked, which is what the `SimpleString` and `BulkString` arms
+/// already get from `str::parse`.
+macro_rules! from_redis_value_for_int_internal {
+    ($t:ty, $v:expr) => {{
+        let v = if let Value::Attribute {
+            data,
+            attributes: _,
+        } = $v
+        {
+            data
+        } else {
+            $v
+        };
+        match *v {
+            Value::Int(val) => match <$t>::try_from(val) {
+                Ok(rv) => Ok(rv),
+                Err(_) => crate::errors::invalid_type_error!(
+                    v,
+                    "Integer is out of range for the requested type."
+                ),
+            },
+            Value::SimpleString(ref s) => match s.parse::<$t>() {
+                Ok(rv) => Ok(rv),
+                Err(_) => crate::errors::invalid_type_error!(v, "Could not convert from string."),
+            },
+            Value::BulkString(ref bytes) => match from_utf8(bytes)?.parse::<$t>() {
+                Ok(rv) => Ok(rv),
+                Err(_) => crate::errors::invalid_type_error!(v, "Could not convert from string."),
+            },
+            Value::Double(val) => {
+                // Truncate towards zero, as `as` does, but reject anything that
+                // does not fit. `<$t>::MAX as f64` rounds *up* to the next power
+                // of two for the wider integer types, so the upper bound has to
+                // be a strict `<` against `MAX as f64 + 1.0`. NaN and the
+                // infinities fail both comparisons and are rejected too.
+                let truncated = val.trunc();
+                if truncated >= <$t>::MIN as f64 && truncated < <$t>::MAX as f64 + 1.0 {
+                    Ok(truncated as $t)
+                } else {
+                    crate::errors::invalid_type_error!(
+                        v,
+                        "Double is out of range for the requested type."
+                    )
+                }
+            }
+            _ => crate::errors::invalid_type_error!(v, "Response type not convertible to numeric."),
+        }
+    }};
+}
+
 macro_rules! from_redis_value_for_num {
     ($t:ty) => {
         impl FromRedisValue for $t {
@@ -1745,9 +1802,23 @@ macro_rules! from_redis_value_for_num {
     };
 }
 
+macro_rules! from_redis_value_for_int {
+    ($t:ty) => {
+        impl FromRedisValue for $t {
+            fn from_redis_value_ref(v: &Value) -> Result<$t, ParsingError> {
+                from_redis_value_for_int_internal!($t, v)
+            }
+
+            fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+                Self::from_redis_value_ref(&v)
+            }
+        }
+    };
+}
+
 impl FromRedisValue for u8 {
     fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
-        from_redis_value_for_num_internal!(Self, v)
+        from_redis_value_for_int_internal!(Self, v)
     }
 
     fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
@@ -1763,19 +1834,19 @@ impl FromRedisValue for u8 {
     }
 }
 
-from_redis_value_for_num!(i8);
-from_redis_value_for_num!(i16);
-from_redis_value_for_num!(u16);
-from_redis_value_for_num!(i32);
-from_redis_value_for_num!(u32);
-from_redis_value_for_num!(i64);
-from_redis_value_for_num!(u64);
-from_redis_value_for_num!(i128);
-from_redis_value_for_num!(u128);
+from_redis_value_for_int!(i8);
+from_redis_value_for_int!(i16);
+from_redis_value_for_int!(u16);
+from_redis_value_for_int!(i32);
+from_redis_value_for_int!(u32);
+from_redis_value_for_int!(i64);
+from_redis_value_for_int!(u64);
+from_redis_value_for_int!(i128);
+from_redis_value_for_int!(u128);
 from_redis_value_for_num!(f32);
 from_redis_value_for_num!(f64);
-from_redis_value_for_num!(isize);
-from_redis_value_for_num!(usize);
+from_redis_value_for_int!(isize);
+from_redis_value_for_int!(usize);
 
 #[cfg(any(
     feature = "rust_decimal",

@@ -231,6 +231,91 @@ mod types {
     }
 
     #[test]
+    fn test_out_of_range_integer_reply_is_an_error() {
+        for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+            // `TTL` replies with `:-1` when the key has no expiry and with `:-2`
+            // when it does not exist. Neither fits in an unsigned type, and used
+            // to wrap around to `u64::MAX` / `u64::MAX - 1` instead of erroring.
+            let bad: Result<u64, _> = parse_mode.parse_redis_value(Value::Int(-1));
+            assert_matches!(bad, Err(_));
+            let bad: Result<usize, _> = parse_mode.parse_redis_value(Value::Int(-2));
+            assert_matches!(bad, Err(_));
+            let bad: Result<u32, _> = parse_mode.parse_redis_value(Value::Int(-1));
+            assert_matches!(bad, Err(_));
+
+            // Too large for the narrower types.
+            let bad: Result<u8, _> = parse_mode.parse_redis_value(Value::Int(300));
+            assert_matches!(bad, Err(_));
+            let bad: Result<i8, _> = parse_mode.parse_redis_value(Value::Int(128));
+            assert_matches!(bad, Err(_));
+            let bad: Result<i32, _> = parse_mode.parse_redis_value(Value::Int(i64::MAX));
+            assert_matches!(bad, Err(_));
+
+            // An integer reply and the equivalent string reply must agree: the
+            // same command can reply with either depending on the protocol
+            // version in use.
+            let bad: Result<u8, _> =
+                parse_mode.parse_redis_value(Value::BulkString(b"300".to_vec()));
+            assert_matches!(bad, Err(_));
+
+            // Values that do fit still convert, including the exact boundaries.
+            assert_eq!(parse_mode.parse_redis_value(Value::Int(-1)), Ok(-1i64));
+            assert_eq!(parse_mode.parse_redis_value(Value::Int(255)), Ok(255u8));
+            assert_eq!(parse_mode.parse_redis_value(Value::Int(-128)), Ok(-128i8));
+            assert_eq!(parse_mode.parse_redis_value(Value::Int(127)), Ok(127i8));
+            assert_eq!(
+                parse_mode.parse_redis_value(Value::Int(i64::MAX)),
+                Ok(i64::MAX)
+            );
+            assert_eq!(
+                parse_mode.parse_redis_value(Value::Int(i64::MIN)),
+                Ok(i64::MIN as i128)
+            );
+        }
+    }
+
+    #[test]
+    fn test_out_of_range_double_reply_is_an_error() {
+        for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+            // RESP3 replies with a double where RESP2 replies with a bulk
+            // string, e.g. for `ZSCORE`. A score that does not fit used to
+            // saturate to `i64::MAX` (and NaN used to become `0`) rather than
+            // producing the error the string reply produces.
+            let bad: Result<i64, _> = parse_mode.parse_redis_value(Value::Double(3e40));
+            assert_matches!(bad, Err(_));
+            let bad: Result<u64, _> = parse_mode.parse_redis_value(Value::Double(-5.0));
+            assert_matches!(bad, Err(_));
+            let bad: Result<i64, _> = parse_mode.parse_redis_value(Value::Double(f64::NAN));
+            assert_matches!(bad, Err(_));
+            let bad: Result<i64, _> = parse_mode.parse_redis_value(Value::Double(f64::INFINITY));
+            assert_matches!(bad, Err(_));
+            let bad: Result<i64, _> =
+                parse_mode.parse_redis_value(Value::Double(f64::NEG_INFINITY));
+            assert_matches!(bad, Err(_));
+
+            // `i64::MAX as f64` rounds up to 2^63, which is out of range.
+            let bad: Result<i64, _> =
+                parse_mode.parse_redis_value(Value::Double(9223372036854775808.0));
+            assert_matches!(bad, Err(_));
+
+            // In-range doubles still truncate towards zero, as before.
+            assert_eq!(parse_mode.parse_redis_value(Value::Double(1.9)), Ok(1i64));
+            assert_eq!(parse_mode.parse_redis_value(Value::Double(-1.9)), Ok(-1i64));
+            assert_eq!(
+                parse_mode.parse_redis_value(Value::Double(255.0)),
+                Ok(255u8)
+            );
+            assert_eq!(parse_mode.parse_redis_value(Value::Double(0.0)), Ok(0u64));
+
+            // Floating point targets are unaffected.
+            assert_eq!(
+                parse_mode.parse_redis_value(Value::Double(f64::INFINITY)),
+                Ok(f64::INFINITY)
+            );
+        }
+    }
+
+    #[test]
     fn test_parse_boxed() {
         for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
             let simple_string_exp = "Simple string".to_string();
