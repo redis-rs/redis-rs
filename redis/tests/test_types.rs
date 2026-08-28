@@ -1,6 +1,7 @@
 mod support;
 
 mod types {
+    use crate::support::shared::encode::encode_value;
     use std::{
         collections::{HashMap, HashSet},
         error::Error,
@@ -944,8 +945,6 @@ mod types {
 
     #[test]
     fn test_large_usize_array_to_redis_args_and_back() {
-        use crate::support::encode_value;
-
         let mut array = [0; 1000];
         for (i, item) in array.iter_mut().enumerate() {
             *item = i;
@@ -968,8 +967,6 @@ mod types {
 
     #[test]
     fn test_large_u8_array_to_redis_args_and_back() {
-        use crate::support::encode_value;
-
         let mut array: [u8; 1000] = [0; 1000];
         for (i, item) in array.iter_mut().enumerate() {
             *item = (i % 256) as u8;
@@ -989,8 +986,6 @@ mod types {
 
     #[test]
     fn test_large_string_array_to_redis_args_and_back() {
-        use crate::support::encode_value;
-
         let mut array: [String; 1000] = [(); 1000].map(|_| String::new());
         for (i, item) in array.iter_mut().enumerate() {
             *item = format!("{i}");
@@ -1013,8 +1008,6 @@ mod types {
 
     #[test]
     fn test_0_length_usize_array_to_redis_args_and_back() {
-        use crate::support::encode_value;
-
         let array: [usize; 0] = [0; 0];
 
         let vec = (&array).to_redis_args();
