@@ -640,11 +640,9 @@ mod types {
     /// into a map type identically. `Vec<(K, V)>` already handled both.
     #[test]
     fn test_map_from_resp3_array_of_pairs() {
-        use std::collections::HashMap;
+        type MapType = HashMap<String, f64>;
 
-        type Hm = HashMap<String, f64>;
-
-        let expected: Hm = [("a".to_string(), 1.0), ("b".to_string(), 2.5)]
+        let expected: MapType = [("a".to_string(), 1.0), ("b".to_string(), 2.5)]
             .into_iter()
             .collect();
 
@@ -663,11 +661,11 @@ mod types {
 
         for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
             assert_eq!(
-                parse_mode.parse_redis_value::<Hm>(resp2.clone()),
+                parse_mode.parse_redis_value::<MapType>(resp2.clone()),
                 Ok(expected.clone())
             );
             assert_eq!(
-                parse_mode.parse_redis_value::<Hm>(resp3.clone()),
+                parse_mode.parse_redis_value::<MapType>(resp3.clone()),
                 Ok(expected.clone())
             );
 
@@ -682,12 +680,12 @@ mod types {
                 Value::Array(vec![Value::BulkString("c".into()), Value::Double(3.0)]),
                 Value::Array(vec![Value::BulkString("d".into()), Value::Double(4.0)]),
             ]);
-            let m: Hm = parse_mode.parse_redis_value(four).unwrap();
+            let m: MapType = parse_mode.parse_redis_value(four).unwrap();
             assert_eq!(m.len(), 4);
             assert_eq!(m["d"], 4.0);
 
             // An empty array is still an empty map, not a "nested pairs" array.
-            let empty: Hm = parse_mode.parse_redis_value(Value::Array(vec![])).unwrap();
+            let empty: MapType = parse_mode.parse_redis_value(Value::Array(vec![])).unwrap();
             assert!(empty.is_empty());
 
             // A flat array of non-collections keeps the old pairwise behaviour.
