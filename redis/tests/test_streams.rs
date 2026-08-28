@@ -2,14 +2,11 @@
 
 use redis::streams::*;
 use redis::{Connection, ToRedisArgs, TypedCommands};
-use redis_test::{
-    REDIS_CE_7_0, REDIS_CE_8_2, REDIS_CE_8_4, REDIS_CE_8_6, REDIS_CE_8_8, TestContext,
-    TestContextVersioning, run_test_if_version_supported, skip_if_context_does_not_support,
-};
 use test_macros::single_server_test;
 
 #[macro_use]
 mod support;
+use crate::support::*;
 
 use assert_matches::assert_matches;
 use std::collections::BTreeMap;
@@ -396,7 +393,7 @@ fn test_assorted_2(ctx: TestContext) {
         id,
         consumer,
         times_delivered,
-        ..
+        last_delivered_ms: _,
     } in reply.ids
     {
         assert!(!id.is_empty());
@@ -953,12 +950,14 @@ fn test_xreadgroup_claim_with_idle_and_incoming_messages(ctx: TestContext) {
     //  - delivered_count > 0
     assert_eq!(idle_pending_ids[0], claim_reply.keys[0].ids[0].id);
     assert_eq!(idle_pending_ids[1], claim_reply.keys[0].ids[1].id);
-    for stream_id in claim_reply.keys[0].ids.iter().take(2) {
+    for i in 0..2 {
+        let stream_id = &claim_reply.keys[0].ids[i];
         assert!(stream_id.milliseconds_elapsed_from_delivery.unwrap() > 0);
         assert!(stream_id.delivered_count.unwrap() > 0);
     }
     // Verify that the remaining 8 messages are new, incoming messages (not previously delivered)
-    for stream_id in claim_reply.keys[0].ids.iter().take(10).skip(2) {
+    for i in 2..10 {
+        let stream_id = &claim_reply.keys[0].ids[i];
         assert_eq!(stream_id.milliseconds_elapsed_from_delivery.unwrap(), 0);
         assert_eq!(stream_id.delivered_count.unwrap(), 0);
         // These messages should NOT be in the idle pending list
@@ -1003,13 +1002,15 @@ fn test_xreadgroup_claim_with_idle_and_incoming_messages(ctx: TestContext) {
     assert_eq!(claim_all_reply.keys[0].ids.len(), 22);
 
     // Verify that the first 10 are the idle pending messages
-    for stream_id in claim_all_reply.keys[0].ids.iter().take(10) {
+    for i in 0..10 {
+        let stream_id = &claim_all_reply.keys[0].ids[i];
         assert!(stream_id.milliseconds_elapsed_from_delivery.unwrap() > 0);
         assert!(stream_id.delivered_count.unwrap() > 0);
     }
 
     // Verify that the rest are new, incoming messages
-    for stream_id in claim_all_reply.keys[0].ids.iter().take(22).skip(10) {
+    for i in 10..22 {
+        let stream_id = &claim_all_reply.keys[0].ids[i];
         assert_eq!(stream_id.milliseconds_elapsed_from_delivery.unwrap(), 0);
         assert_eq!(stream_id.delivered_count.unwrap(), 0);
     }
@@ -1628,9 +1629,9 @@ fn test_xdel_ex(ctx: TestContext) {
         assert_eq!(pending.count(), i);
         if let StreamPendingReply::Data(data) = pending {
             assert_eq!(data.consumers.len(), i);
-            for (j, consumer) in data.consumers.iter().enumerate().take(i) {
-                assert_eq!(consumer.name, format!("consumer{}", j + 1));
-                assert_eq!(consumer.pending, 1);
+            for j in 0..i {
+                assert_eq!(data.consumers[j].name, format!("consumer{}", j + 1));
+                assert_eq!(data.consumers[j].pending, 1);
             }
         } else {
             panic!("Expected StreamPendingReply::Data");
@@ -1832,9 +1833,9 @@ fn test_xack_del(ctx: TestContext) {
         assert_eq!(pending.count(), i);
         if let StreamPendingReply::Data(data) = pending {
             assert_eq!(data.consumers.len(), i);
-            for (j, consumer) in data.consumers.iter().enumerate().take(i) {
-                assert_eq!(consumer.name, format!("consumer{}", j + 1));
-                assert_eq!(consumer.pending, 1);
+            for j in 0..i {
+                assert_eq!(data.consumers[j].name, format!("consumer{}", j + 1));
+                assert_eq!(data.consumers[j].pending, 1);
             }
         } else {
             panic!("Expected StreamPendingReply::Data");
@@ -2320,7 +2321,7 @@ fn test_xautoclaim_invalid_pel_entries_claiming_just_ids(ctx: TestContext) {
     let _ = con.xdel("k1", &[claim.id.clone(), claim_1.id.clone()]);
     sleep(Duration::from_millis(5));
 
-    let mut reply = con
+    let reply = con
         .xautoclaim_options(
             "k1",
             "g1",
@@ -2341,12 +2342,25 @@ fn test_xautoclaim_invalid_pel_entries_claiming_just_ids(ctx: TestContext) {
             vec![claim.id.clone(), claim_1.id.clone()]
         );
     } else {
-        // On Redis <7, the deleted entries appear claimed when passing JUSTID
-        // So we check that they are present and skip over them
-        assert_eq!(reply.claimed[0].id, claim.id);
-        assert_eq!(reply.claimed[1].id, claim_1.id);
-        reply.claimed = reply.claimed.into_iter().skip(2).collect();
-
+        // on redis 6, the deleted entries appear when passing JUSTID
+        claimed_entries.insert(
+            0,
+            StreamId {
+                id: claim.id.clone(),
+                map: Default::default(),
+                milliseconds_elapsed_from_delivery: None,
+                delivered_count: None,
+            },
+        );
+        claimed_entries.insert(
+            1,
+            StreamId {
+                id: claim_1.id.clone(),
+                map: Default::default(),
+                milliseconds_elapsed_from_delivery: None,
+                delivered_count: None,
+            },
+        );
         assert_eq!(reply.claimed, claimed_entries);
         assert_eq!(reply.deleted_ids.len(), 0);
     }
@@ -3012,7 +3026,6 @@ mod idempotency_tests {
 
 mod xnack_tests {
     use super::*;
-    use rstest::rstest;
 
     const GROUP: &str = "xnack_group";
     const CONSUMER: &str = "xnack_consumer1";
@@ -3072,25 +3085,31 @@ mod xnack_tests {
         assert_eq!(nacked, 3);
     }
 
-    #[rstest]
-    #[case(StreamNackMode::Silent)]
-    #[case(StreamNackMode::Fail)]
-    #[case(StreamNackMode::Fatal)]
-    fn test_xnack_marks_message_as_unowned(#[case] mode: StreamNackMode) {
-        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
-        let mut con = ctx.connection();
+    #[single_server_test]
+    fn test_xnack_marks_message_as_unowned(ctx: TestContext) {
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_8);
+        for (i, mode) in [
+            StreamNackMode::Silent,
+            StreamNackMode::Fail,
+            StreamNackMode::Fatal,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut con = ctx.connection();
 
-        let stream = "test_xnack_unowned";
-        let ids = xnack_setup_pending(&mut con, stream, GROUP, CONSUMER, 3);
+            let stream = format!("test_xnack_unowned_{i}");
+            let ids = xnack_setup_pending(&mut con, &stream, GROUP, CONSUMER, 3);
 
-        con.xnack(stream, GROUP, &ids, &StreamNackOptions::new(mode))
-            .unwrap();
+            con.xnack(&stream, GROUP, &ids, &StreamNackOptions::new(mode))
+                .unwrap();
 
-        // After NACK the messages remain in the PEL but are unowned, so their last consumer should be an empty string.
-        let reply = con.xpending_count(stream, GROUP, "-", "+", 3).unwrap();
-        assert_eq!(reply.ids.len(), 3);
-        for entry in &reply.ids {
-            assert_eq!(entry.consumer, "");
+            // After NACK the messages remain in the PEL but are unowned, so their last consumer should be an empty string.
+            let reply = con.xpending_count(&stream, GROUP, "-", "+", 3).unwrap();
+            assert_eq!(reply.ids.len(), 3);
+            for entry in &reply.ids {
+                assert_eq!(entry.consumer, "");
+            }
         }
     }
 
