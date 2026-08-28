@@ -1,4 +1,4 @@
-use criterion::{Bencher, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{Bencher, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use futures::{prelude::*, stream};
 use redis::{RedisError, Value};
 use redis_test::TestContext;
@@ -192,13 +192,23 @@ fn bench_query(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_encode_small(b: &mut Bencher) {
+// Payload sizes for the small / medium / large data variants: low tens of bytes, hundreds of
+// bytes, and several kilobytes respectively.
+const PAYLOAD_SIZES: &[(&str, usize)] = &[("small", 16), ("medium", 256), ("large", 4096)];
+
+// Deterministic filler bytes so every run encodes identical input.
+fn payload(len: usize) -> Vec<u8> {
+    (0..len).map(|i| b'a' + (i % 26) as u8).collect()
+}
+
+// Encode a single command whose value carries the given payload.
+fn bench_encode_small(b: &mut Bencher, value: &[u8]) {
     b.iter(|| {
         let mut cmd = redis::cmd("HSETX");
 
         cmd.arg("ABC:1237897325302:878241asdyuxpioaswehqwu")
             .arg("some hash key")
-            .arg(124757920);
+            .arg(value);
 
         cmd.get_packed_command()
     });
@@ -215,7 +225,7 @@ fn bench_encode_integer(b: &mut Bencher) {
     });
 }
 
-fn bench_encode_set_ex(b: &mut Bencher) {
+fn bench_encode_set_ex(b: &mut Bencher, value: &[u8]) {
     // `SET key val EX <secs>` — exercises the `SetExpiry` option encoder.
     b.iter(|| {
         let mut pipe = redis::pipe();
@@ -223,7 +233,7 @@ fn bench_encode_set_ex(b: &mut Bencher) {
         for _ in 0..1_000 {
             pipe.cmd("SET")
                 .arg("session:abc123")
-                .arg("some-value")
+                .arg(value)
                 .arg(redis::SetExpiry::EX(3600))
                 .ignore();
         }
@@ -231,27 +241,27 @@ fn bench_encode_set_ex(b: &mut Bencher) {
     });
 }
 
-fn bench_encode_pipeline(b: &mut Bencher) {
+fn bench_encode_pipeline(b: &mut Bencher, value: &[u8]) {
     b.iter(|| {
         let mut pipe = redis::pipe();
 
         for _ in 0..1_000 {
-            pipe.set("foo", "bar").ignore();
+            pipe.set("foo", value).ignore();
         }
         pipe.get_packed_pipeline()
     });
 }
 
-fn bench_encode_pipeline_nested(b: &mut Bencher) {
+fn bench_encode_pipeline_nested(b: &mut Bencher, value: &[u8]) {
     b.iter(|| {
         let mut pipe = redis::pipe();
 
         for _ in 0..200 {
             pipe.mset(&[
-                ("foo1", &b"bar"[..]),
-                ("foo2", &b"123"[..]),
-                ("foo3", &b"1231279712"[..]),
-                ("foo4", &b"test"[..]),
+                ("foo1", value),
+                ("foo2", value),
+                ("foo3", value),
+                ("foo4", value),
             ])
             .ignore();
         }
@@ -261,12 +271,26 @@ fn bench_encode_pipeline_nested(b: &mut Bencher) {
 
 fn bench_encode(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode");
-    group
-        .bench_function("pipeline", bench_encode_pipeline)
-        .bench_function("pipeline_nested", bench_encode_pipeline_nested)
-        .bench_function("integer", bench_encode_integer)
-        .bench_function("small", bench_encode_small)
-        .bench_function("set_ex", bench_encode_set_ex);
+
+    // Integer args are fixed-width and size-independent, so they stay a single control case.
+    group.bench_function("integer", bench_encode_integer);
+
+    for &(name, len) in PAYLOAD_SIZES {
+        let value = payload(len);
+
+        group.bench_function(BenchmarkId::new("pipeline", name), |b| {
+            bench_encode_pipeline(b, &value);
+        });
+        group.bench_function(BenchmarkId::new("pipeline_nested", name), |b| {
+            bench_encode_pipeline_nested(b, &value);
+        });
+        group.bench_function(BenchmarkId::new("hsetx", name), |b| {
+            bench_encode_small(b, &value);
+        });
+        group.bench_function(BenchmarkId::new("set_ex", name), |b| {
+            bench_encode_set_ex(b, &value);
+        });
+    }
     group.finish();
 }
 
@@ -274,21 +298,22 @@ fn bench_decode_simple(b: &mut Bencher, input: &[u8]) {
     b.iter(|| redis::parse_redis_value(input).unwrap());
 }
 fn bench_decode(c: &mut Criterion) {
-    let value = Value::Array(vec![
-        Value::Okay,
-        Value::SimpleString("testing".to_string()),
-        Value::Array(vec![]),
-        Value::Nil,
-        Value::BulkString(vec![b'a'; 10]),
-        Value::Int(7512182390),
-    ]);
-
     let mut group = c.benchmark_group("decode");
-    {
+
+    for &(name, len) in PAYLOAD_SIZES {
+        let value = Value::Array(vec![
+            Value::Okay,
+            Value::SimpleString("testing".to_string()),
+            Value::Array(vec![]),
+            Value::Nil,
+            Value::BulkString(vec![b'a'; len]),
+            Value::Int(7512182390),
+        ]);
+
         let mut input = Vec::new();
         support::encode_value(&value, &mut input).unwrap();
         assert_eq!(redis::parse_redis_value(&input).unwrap(), value);
-        group.bench_function("decode", move |b| bench_decode_simple(b, &input));
+        group.bench_function(name, move |b| bench_decode_simple(b, &input));
     }
     group.finish();
 }
