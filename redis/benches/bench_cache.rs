@@ -1,5 +1,6 @@
 use criterion::{Bencher, Criterion, Throughput, criterion_group, criterion_main};
 use redis::Cmd;
+use redis_test::TestContext;
 
 use support::*;
 

@@ -5,7 +5,6 @@ use std::convert::identity;
 use std::thread::sleep;
 use std::time::Duration;
 
-use crate::support::{AvailableComponents, build_single_client, start_tls_crypto_provider};
 use redis::Connection;
 use redis::ConnectionInfo;
 use redis::ProtocolVersion;
@@ -18,9 +17,11 @@ use redis::cluster_async::Connect;
 use redis_test::cluster::ClusterType;
 use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
 use redis_test::server::{RedisServer, use_protocol};
+use redis_test::utils::{build_single_client, start_tls_crypto_provider};
+use redis_test::{AvailableComponents, TestContextVersioning};
 
 #[cfg(feature = "tls-rustls")]
-use super::load_certs_from_file;
+use redis_test::utils::load_certs_from_file;
 
 pub struct TestClusterContext {
     pub cluster: RedisCluster,
@@ -225,7 +226,7 @@ impl TestClusterContext {
     }
 }
 
-impl super::TestContextVersioning for TestClusterContext {
+impl TestContextVersioning for TestClusterContext {
     fn get_available_components(&self) -> AvailableComponents {
         let server = self.cluster.servers.first().unwrap();
         let mut conn = self.build_single_client_connection(server).unwrap();
