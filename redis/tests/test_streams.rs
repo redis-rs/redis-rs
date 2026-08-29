@@ -393,7 +393,7 @@ fn test_assorted_2(ctx: TestContext) {
         id,
         consumer,
         times_delivered,
-        last_delivered_ms: _,
+        ..
     } in reply.ids
     {
         assert!(!id.is_empty());
@@ -2343,24 +2343,14 @@ fn test_xautoclaim_invalid_pel_entries_claiming_just_ids(ctx: TestContext) {
         );
     } else {
         // on redis 6, the deleted entries appear when passing JUSTID
-        claimed_entries.insert(
-            0,
-            StreamId {
-                id: claim.id.clone(),
-                map: Default::default(),
-                milliseconds_elapsed_from_delivery: None,
-                delivered_count: None,
-            },
-        );
-        claimed_entries.insert(
-            1,
-            StreamId {
-                id: claim_1.id.clone(),
-                map: Default::default(),
-                milliseconds_elapsed_from_delivery: None,
-                delivered_count: None,
-            },
-        );
+        let mut stream_id = StreamId::default();
+        stream_id.id = claim.id.clone();
+        stream_id.map = Default::default();
+        claimed_entries.insert(0, stream_id);
+        let mut stream_id = StreamId::default();
+        stream_id.id = claim_1.id.clone();
+        stream_id.map = Default::default();
+        claimed_entries.insert(1, stream_id);
         assert_eq!(reply.claimed, claimed_entries);
         assert_eq!(reply.deleted_ids.len(), 0);
     }

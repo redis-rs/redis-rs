@@ -15,11 +15,25 @@ use redis::{Pipeline, Value};
 #[cfg(feature = "aio")]
 use redis::{aio, cmd};
 #[allow(unused_imports)]
+pub use redis_test::run_test_if_version_supported;
+#[allow(unused_imports)]
 pub use redis_test::skip_if_context_does_not_support;
 #[cfg(feature = "tls-rustls")]
 use redis_test::utils::TlsFilePaths;
+#[allow(unused_imports)]
+pub use redis_test::utils::build_single_client;
 #[cfg(feature = "tls-rustls")]
-use redis_test::utils::load_certs_from_file;
+pub use redis_test::utils::load_certs_from_file;
+#[cfg(feature = "tls-rustls")]
+pub use redis_test::utils::start_tls_crypto_provider;
+#[allow(unused_imports)]
+pub use redis_test::version::TestContextVersioning;
+#[allow(unused_imports)]
+pub use redis_test::version::{
+    REDIS_BLOOM_ANY, REDIS_CE_6_0, REDIS_CE_7_0, REDIS_CE_7_2, REDIS_CE_7_4, REDIS_CE_8_0,
+    REDIS_CE_8_2, REDIS_CE_8_4, REDIS_CE_8_6, REDIS_CE_8_8, REDIS_JSON_8_8, VALKEY_8_1, VALKEY_9_0,
+    VALKEY_9_1,
+};
 #[allow(unused_imports)]
 pub use redis_test::{TestContext, TestContextBuilder};
 
@@ -106,7 +120,7 @@ where
     F: Future,
 {
     #[cfg(feature = "smol-comp")]
-    redis::aio::prefer_tokio().unwrap();
+    let _ = redis::aio::prefer_tokio();
     current_thread_runtime().block_on(f)
 }
 
@@ -116,7 +130,7 @@ where
     F: Future,
 {
     #[cfg(feature = "tokio-comp")]
-    redis::aio::prefer_smol().unwrap();
+    let _ = redis::aio::prefer_smol();
     smol::block_on(f)
 }
 
