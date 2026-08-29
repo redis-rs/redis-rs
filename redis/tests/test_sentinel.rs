@@ -11,7 +11,6 @@ use redis::{
     Client, Connection, ConnectionAddr, ConnectionInfo, ErrorKind, RedisError, Role,
     sentinel::{Sentinel, SentinelClient, SentinelNodeConnectionInfo},
 };
-use redis_test::server::use_protocol;
 use test_macros::sentinel_test;
 
 fn log_connection_error(
@@ -578,7 +577,7 @@ fn test_sentinel_client_builder(mut ctx: TestSentinelContext) {
     )
     .unwrap();
 
-    master_client_builder = master_client_builder.set_client_to_sentinel_protocol(use_protocol());
+    master_client_builder = master_client_builder.set_client_to_sentinel_protocol(ctx.protocol);
 
     if let Some(tls_mode) = ctx.tls_mode() {
         master_client_builder = master_client_builder.set_client_to_redis_tls_mode(tls_mode);
