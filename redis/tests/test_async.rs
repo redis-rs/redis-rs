@@ -243,7 +243,6 @@ mod basic_async {
     }
 
     #[async_test]
-#[async_test]
     async fn test_dont_panic_on_closed_multiplexed_connection(ctx: TestContext) {
         let client = ctx.client.clone();
         let connect = client.get_multiplexed_async_connection();

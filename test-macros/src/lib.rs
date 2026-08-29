@@ -2,6 +2,18 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::parse_macro_input;
 
+fn has_ignore_attr(item: &syn::ItemFn) -> bool {
+    item.attrs.iter().any(|a| a.path().is_ident("ignore"))
+}
+
+fn ignore_flag(item: &syn::ItemFn) -> proc_macro2::TokenStream {
+    if has_ignore_attr(item) {
+        quote! { #[ignore] }
+    } else {
+        quote! {}
+    }
+}
+
 fn is_connection_type(ty: &syn::Type) -> bool {
     let type_str = quote!(#ty).to_string();
     type_str.contains("Connection")
@@ -166,6 +178,7 @@ pub fn single_server_test(attr: TokenStream, input: TokenStream) -> TokenStream 
         test_function_name.span(),
     );
     let function_name = item.sig.ident.clone();
+    let ignore_flag = ignore_flag(&item);
     let call_expr = generate_sync_call(&function_name, &item.sig.inputs);
 
     let expanded = quote! {
@@ -174,6 +187,7 @@ pub fn single_server_test(attr: TokenStream, input: TokenStream) -> TokenStream 
             #item
 
             #[test]
+            #ignore_flag
             fn resp2_tcp() {
                 let mut ctx = crate::support::TestContextBuilder::new()
                     #module_expr
@@ -184,6 +198,7 @@ pub fn single_server_test(attr: TokenStream, input: TokenStream) -> TokenStream 
             }
 
             #[test]
+            #ignore_flag
             #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
             fn resp2_tls() {
                 let mut ctx = crate::support::TestContextBuilder::new()
@@ -195,6 +210,7 @@ pub fn single_server_test(attr: TokenStream, input: TokenStream) -> TokenStream 
             }
 
             #[test]
+            #ignore_flag
             #[cfg(unix)]
             fn resp2_unix() {
                 let mut ctx = crate::support::TestContextBuilder::new()
@@ -206,6 +222,7 @@ pub fn single_server_test(attr: TokenStream, input: TokenStream) -> TokenStream 
             }
 
             #[test]
+            #ignore_flag
             fn resp3_tcp() {
                 let mut ctx = crate::support::TestContextBuilder::new()
                     #module_expr
@@ -216,6 +233,7 @@ pub fn single_server_test(attr: TokenStream, input: TokenStream) -> TokenStream 
             }
 
             #[test]
+            #ignore_flag
             #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
             fn resp3_tls() {
                 let mut ctx = crate::support::TestContextBuilder::new()
@@ -227,6 +245,7 @@ pub fn single_server_test(attr: TokenStream, input: TokenStream) -> TokenStream 
             }
 
             #[test]
+            #ignore_flag
             #[cfg(unix)]
             fn resp3_unix() {
                 let mut ctx = crate::support::TestContextBuilder::new()
@@ -253,6 +272,7 @@ pub fn async_single_server_test(attr: TokenStream, input: TokenStream) -> TokenS
         test_function_name.span(),
     );
     let function_name = item.sig.ident.clone();
+    let ignore_flag = ignore_flag(&item);
     let call_expr = generate_async_call(&function_name, &item.sig.inputs);
 
     let expanded = quote! {
@@ -261,6 +281,7 @@ pub fn async_single_server_test(attr: TokenStream, input: TokenStream) -> TokenS
             #item
 
             #[test]
+            #ignore_flag
             #[cfg(feature = "tokio-comp")]
             fn resp2_tcp_tokio() {
                 crate::support::block_on_all(async move {
@@ -274,6 +295,7 @@ pub fn async_single_server_test(attr: TokenStream, input: TokenStream) -> TokenS
             }
 
             #[test]
+            #ignore_flag
             #[cfg(feature = "smol-comp")]
             fn resp2_tcp_smol() {
                 crate::support::block_on_all(async move {
@@ -287,6 +309,7 @@ pub fn async_single_server_test(attr: TokenStream, input: TokenStream) -> TokenS
             }
 
             #[test]
+            #ignore_flag
             #[cfg(feature = "tokio-rustls-comp")]
             fn resp2_tls_tokio() {
                 crate::support::block_on_all(async move {
@@ -300,6 +323,7 @@ pub fn async_single_server_test(attr: TokenStream, input: TokenStream) -> TokenS
             }
 
             #[test]
+            #ignore_flag
             #[cfg(feature = "smol-rustls-comp")]
             fn resp2_tls_smol() {
                 crate::support::block_on_all(async move {
@@ -313,6 +337,7 @@ pub fn async_single_server_test(attr: TokenStream, input: TokenStream) -> TokenS
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "tokio-comp", unix))]
             fn resp2_unix_tokio() {
                 crate::support::block_on_all(async move {
@@ -326,6 +351,7 @@ pub fn async_single_server_test(attr: TokenStream, input: TokenStream) -> TokenS
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "smol-comp", unix))]
             fn resp2_unix_smol() {
                 crate::support::block_on_all(async move {
@@ -339,6 +365,7 @@ pub fn async_single_server_test(attr: TokenStream, input: TokenStream) -> TokenS
             }
 
             #[test]
+            #ignore_flag
             #[cfg(feature = "tokio-comp")]
             fn resp3_tcp_tokio() {
                 crate::support::block_on_all(async move {
@@ -352,6 +379,7 @@ pub fn async_single_server_test(attr: TokenStream, input: TokenStream) -> TokenS
             }
 
             #[test]
+            #ignore_flag
             #[cfg(feature = "smol-comp")]
             fn resp3_tcp_smol() {
                 crate::support::block_on_all(async move {
@@ -365,6 +393,7 @@ pub fn async_single_server_test(attr: TokenStream, input: TokenStream) -> TokenS
             }
 
             #[test]
+            #ignore_flag
             #[cfg(feature = "tokio-rustls-comp")]
             fn resp3_tls_tokio() {
                 crate::support::block_on_all(async move {
@@ -378,6 +407,7 @@ pub fn async_single_server_test(attr: TokenStream, input: TokenStream) -> TokenS
             }
 
             #[test]
+            #ignore_flag
             #[cfg(feature = "smol-rustls-comp")]
             fn resp3_tls_smol() {
                 crate::support::block_on_all(async move {
@@ -391,6 +421,7 @@ pub fn async_single_server_test(attr: TokenStream, input: TokenStream) -> TokenS
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "tokio-comp", unix))]
             fn resp3_unix_tokio() {
                 crate::support::block_on_all(async move {
@@ -404,6 +435,7 @@ pub fn async_single_server_test(attr: TokenStream, input: TokenStream) -> TokenS
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "smol-comp", unix))]
             fn resp3_unix_smol() {
                 crate::support::block_on_all(async move {
@@ -431,6 +463,7 @@ pub fn cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
         test_function_name.span(),
     );
     let function_name = item.sig.ident.clone();
+    let ignore_flag = ignore_flag(&item);
     let call_expr = generate_sync_call(&function_name, &item.sig.inputs);
 
     let expanded = quote! {
@@ -440,6 +473,7 @@ pub fn cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             #item
 
             #[test]
+            #ignore_flag
             #[cfg(feature = "cluster")]
             fn resp2_tcp() {
                 let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
@@ -450,6 +484,7 @@ pub fn cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "cluster", feature = "tls-rustls"))]
             fn resp2_tls() {
                 let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
@@ -462,6 +497,7 @@ pub fn cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             }
 
             #[test]
+            #ignore_flag
             #[cfg(feature = "cluster")]
             fn resp3_tcp() {
                 let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
@@ -472,6 +508,7 @@ pub fn cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "cluster", feature = "tls-rustls"))]
             fn resp3_tls() {
                 let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
@@ -498,6 +535,7 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
         test_function_name.span(),
     );
     let function_name = item.sig.ident.clone();
+    let ignore_flag = ignore_flag(&item);
     let call_expr = generate_async_cluster_call(&function_name, &item.sig.inputs);
 
     let expanded = quote! {
@@ -507,6 +545,7 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
             #item
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "cluster-async", feature = "tokio-comp"))]
             fn resp2_tcp_tokio() {
                 crate::support::block_on_all(async move {
@@ -519,6 +558,7 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "cluster-async", feature = "smol-comp"))]
             fn resp2_tcp_smol() {
                 crate::support::block_on_all(async move {
@@ -531,6 +571,7 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "cluster-async", feature = "tokio-rustls-comp"))]
             fn resp2_tls_tokio() {
                 crate::support::block_on_all(async move {
@@ -545,6 +586,7 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "cluster-async", feature = "smol-rustls-comp"))]
             fn resp2_tls_smol() {
                 crate::support::block_on_all(async move {
@@ -559,6 +601,7 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "cluster-async", feature = "tokio-comp"))]
             fn resp3_tcp_tokio() {
                 crate::support::block_on_all(async move {
@@ -571,6 +614,7 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "cluster-async", feature = "smol-comp"))]
             fn resp3_tcp_smol() {
                 crate::support::block_on_all(async move {
@@ -583,6 +627,7 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "cluster-async", feature = "tokio-rustls-comp"))]
             fn resp3_tls_tokio() {
                 crate::support::block_on_all(async move {
@@ -597,6 +642,7 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "cluster-async", feature = "smol-rustls-comp"))]
             fn resp3_tls_smol() {
                 crate::support::block_on_all(async move {
@@ -625,6 +671,7 @@ pub fn sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
         test_function_name.span(),
     );
     let function_name = item.sig.ident.clone();
+    let ignore_flag = ignore_flag(&item);
     let call_expr = generate_sync_call(&function_name, &item.sig.inputs);
 
     let expanded = quote! {
@@ -634,6 +681,7 @@ pub fn sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             #item
 
             #[test]
+            #ignore_flag
             #[cfg(feature = "sentinel")]
             fn resp2_tcp() {
                 let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
@@ -647,6 +695,7 @@ pub fn sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "sentinel", feature = "tls-rustls"))]
             fn resp2_tls() {
                 let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
@@ -660,6 +709,7 @@ pub fn sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             }
 
             #[test]
+            #ignore_flag
             #[cfg(feature = "sentinel")]
             fn resp3_tcp() {
                 let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
@@ -673,6 +723,7 @@ pub fn sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "sentinel", feature = "tls-rustls"))]
             fn resp3_tls() {
                 let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
@@ -700,6 +751,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
         test_function_name.span(),
     );
     let function_name = item.sig.ident.clone();
+    let ignore_flag = ignore_flag(&item);
     let call_expr = generate_async_call(&function_name, &item.sig.inputs);
 
     let expanded = quote! {
@@ -709,6 +761,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
             #item
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "sentinel", feature = "tokio-comp"))]
             fn resp2_tcp_tokio() {
                 crate::support::block_on_all(async move {
@@ -724,6 +777,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "sentinel", feature = "smol-comp"))]
             fn resp2_tcp_smol() {
                 crate::support::block_on_all(async move {
@@ -739,6 +793,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "sentinel", feature = "tokio-rustls-comp"))]
             fn resp2_tls_tokio() {
                 crate::support::block_on_all(async move {
@@ -754,6 +809,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "sentinel", feature = "smol-rustls-comp"))]
             fn resp2_tls_smol() {
                 crate::support::block_on_all(async move {
@@ -769,6 +825,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "sentinel", feature = "tokio-comp"))]
             fn resp3_tcp_tokio() {
                 crate::support::block_on_all(async move {
@@ -784,6 +841,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "sentinel", feature = "smol-comp"))]
             fn resp3_tcp_smol() {
                 crate::support::block_on_all(async move {
@@ -799,6 +857,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "sentinel", feature = "tokio-rustls-comp"))]
             fn resp3_tls_tokio() {
                 crate::support::block_on_all(async move {
@@ -814,6 +873,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
             }
 
             #[test]
+            #ignore_flag
             #[cfg(all(feature = "sentinel", feature = "smol-rustls-comp"))]
             fn resp3_tls_smol() {
                 crate::support::block_on_all(async move {

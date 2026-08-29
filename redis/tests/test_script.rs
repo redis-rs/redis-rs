@@ -5,7 +5,7 @@ mod support;
 mod script {
     use redis::ServerErrorKind;
 
-use crate::support::*;
+    use crate::support::*;
     use test_macros::single_server_test;
 
     #[single_server_test]
