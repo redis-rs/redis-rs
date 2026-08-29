@@ -115,9 +115,7 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn test_no_response_skips_response_even_on_error(_ctx: TestClusterContext) {
-        let cluster = TestClusterContext::new();
-
+    async fn test_no_response_skips_response_even_on_error(cluster: TestClusterContext) {
         let mut connection = cluster.async_connection().await;
         redis::cmd("SET")
             .arg("key")
@@ -196,9 +194,7 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn test_async_cluster_basic_eval(_ctx: TestClusterContext) {
-        let cluster = TestClusterContext::new();
-
+    async fn test_async_cluster_basic_eval(cluster: TestClusterContext) {
         let mut connection = cluster.async_connection().await;
         let res: String = cmd("EVAL")
             .arg(r#"redis.call("SET", KEYS[1], ARGV[1]); return redis.call("GET", KEYS[1])"#)
@@ -212,9 +208,7 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn test_async_cluster_basic_script(_ctx: TestClusterContext) {
-        let cluster = TestClusterContext::new();
-
+    async fn test_async_cluster_basic_script(cluster: TestClusterContext) {
         let mut connection = cluster.async_connection().await;
         let res: String = Script::new(
             r#"redis.call("SET", KEYS[1], ARGV[1]); return redis.call("GET", KEYS[1])"#,
@@ -228,9 +222,7 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn test_async_cluster_route_flush_to_specific_node() {
-        let cluster = TestClusterContext::new();
-
+    async fn test_async_cluster_route_flush_to_specific_node(cluster: TestClusterContext) {
         let mut connection = cluster.async_connection().await;
         let _: () = connection.set("foo", "bar").await.unwrap();
         let _: () = connection.set("bar", "foo").await.unwrap();
@@ -257,9 +249,7 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn test_async_cluster_route_flush_to_node_by_address() {
-        let cluster = TestClusterContext::new();
-
+    async fn test_async_cluster_route_flush_to_node_by_address(cluster: TestClusterContext) {
         let mut connection = cluster.async_connection().await;
         let mut cmd = redis::cmd("INFO");
         // The other sections change with time.
@@ -371,12 +361,10 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn test_cluster_resp3() {
-        if !use_protocol().supports_resp3() {
+    async fn test_cluster_resp3(cluster: TestClusterContext) {
+        if !cluster.protocol.supports_resp3() {
             return;
         }
-
-        let cluster = TestClusterContext::new();
 
         let mut connection = cluster.async_connection().await;
 
@@ -388,9 +376,7 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn test_async_cluster_basic_pipe() {
-        let cluster = TestClusterContext::new();
-
+    async fn test_async_cluster_basic_pipe(cluster: TestClusterContext) {
         let mut connection = cluster.async_connection().await;
         let mut pipe = redis::pipe();
         pipe.add_command(cmd("SET").arg("test").arg("test_data").clone());
@@ -440,9 +426,7 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn test_async_cluster_multi_shard_commands() {
-        let cluster = TestClusterContext::new();
-
+    async fn test_async_cluster_multi_shard_commands(cluster: TestClusterContext) {
         let mut connection = cluster.async_connection().await;
 
         let res: String = connection
@@ -751,9 +735,7 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn test_async_cluster_error_in_inner_connection() {
-        let cluster = TestClusterContext::new();
-
+    async fn test_async_cluster_error_in_inner_connection(cluster: TestClusterContext) {
         let mut con = cluster.async_generic_connection::<ErrorConnection>().await;
 
         ERROR.store(false, Ordering::SeqCst);
@@ -2784,9 +2766,7 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn test_async_cluster_connect_lazily() {
-        let cluster = TestClusterContext::new();
-
+    async fn test_async_cluster_connect_lazily(cluster: TestClusterContext) {
         let connection = cluster
             .client
             .get_pending_async_connection_with_config(Default::default());
@@ -2794,8 +2774,7 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn test_fail_on_empty_command() {
-        let cluster = TestClusterContext::new();
+    async fn test_fail_on_empty_command(cluster: TestClusterContext) {
         let mut connection = cluster.async_connection().await;
 
         let error: RedisError = redis::Pipeline::new()
@@ -2927,13 +2906,12 @@ mod cluster_async {
         }
 
         #[async_test]
-        async fn test_pub_sub_subscription_with_config() {
-            if !use_protocol().supports_resp3() {
+        async fn test_pub_sub_subscription_with_config(ctx: TestClusterContext) {
+            if !ctx.protocol.supports_resp3() {
                 return;
             }
 
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            let ctx = TestClusterContext::new();
             let config = redis::cluster::ClusterConfig::new().set_push_sender(tx.clone());
 
             let (mut publish_conn, mut pubsub_conn) = join!(
@@ -2948,12 +2926,11 @@ mod cluster_async {
         }
 
         #[async_test]
-        async fn test_pub_sub_shardnumsub() {
-            if !use_protocol().supports_resp3() {
+        async fn test_pub_sub_shardnumsub(ctx: TestClusterContext) {
+            if !ctx.protocol.supports_resp3() {
                 return;
             }
 
-            let ctx = TestClusterContext::new();
             skip_if_context_does_not_support!(ctx, REDIS_CE_7_0);
 
             let mut pubsub_conn = ctx.async_connection().await;
@@ -3419,8 +3396,7 @@ mod cluster_async {
         }
 
         #[async_test]
-        async fn test_simple_case_success() {
-            let cluster = TestClusterContext::new();
+        async fn test_simple_case_success(cluster: TestClusterContext) {
             let mut con = cluster.async_connection().await;
 
             let res: Vec<usize> = redis::aio::transaction_async(
@@ -3445,8 +3421,7 @@ mod cluster_async {
         }
 
         #[async_test]
-        async fn test_transaction_should_retry_on_watch() {
-            let cluster = TestClusterContext::new();
+        async fn test_transaction_should_retry_on_watch(cluster: TestClusterContext) {
             let con1 = cluster.async_connection().await;
             let mut con2 = cluster.async_connection().await;
 
@@ -3494,8 +3469,7 @@ mod cluster_async {
         }
 
         #[async_test]
-        async fn test_transaction_should_retry_on_none_from_closure() {
-            let cluster = TestClusterContext::new();
+        async fn test_transaction_should_retry_on_none_from_closure(cluster: TestClusterContext) {
             let con = cluster.async_connection().await;
 
             let attempts = Arc::new(AtomicUsize::new(0));
@@ -3524,8 +3498,9 @@ mod cluster_async {
         }
 
         #[async_test]
-        async fn test_transaction_abort_if_internal_function_returns_error() {
-            let cluster = TestClusterContext::new();
+        async fn test_transaction_abort_if_internal_function_returns_error(
+            cluster: TestClusterContext,
+        ) {
             let con = cluster.async_connection().await;
             let attempts = Arc::new(AtomicUsize::new(0));
 
