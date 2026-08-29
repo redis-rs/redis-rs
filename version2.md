@@ -328,3 +328,22 @@ match ttl {
     secs => { /* seconds remaining */ }
 }
 ```
+
+### Map types accept the RESP3 array-of-pairs shape (Minor breaking Change)
+
+RESP3 returns `ZRANGE ... WITHSCORES` and its relatives as an array of `[member, score]` pairs where RESP2 returned one flat array. `Vec<(K, V)>` accepted both, because `from_redis_values` checks `Value::is_collection_of_len`, but the map types only accepted the flat one, so the same command on the same data parsed under RESP2 and errored under RESP3. `as_map_iter` and `into_map_iter` now recognise the nested shape using that same check.
+
+For the affected commands this turns an error into a map, which needs no migration. The breaking part is narrower: a key or value type that can itself absorb a two element array now sees the pairs split rather than combined.
+
+**Migration:** Expect one entry per pair for such a type.
+
+```rust
+// value: [[a, 1], [b, 2]]
+
+// Before:
+// {["a", "1"]: ["b", "2"]}
+
+// After:
+// {["a"]: ["1"], ["b"]: ["2"]}
+let map: HashMap<Vec<String>, Vec<String>> = con.zrange_withscores("z", 0, -1)?;
+```

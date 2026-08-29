@@ -392,10 +392,23 @@ impl fmt::Display for PushKind {
     }
 }
 
+/// RESP3 returns key/value replies that RESP2 flattened into a single array as an
+/// array of two-element pairs instead (`ZRANGE ... WITHSCORES` and friends). Detect
+/// that shape so it converts into a map type just like the RESP2 shape does. This
+/// mirrors the check `<(K, V)>::from_redis_values` already makes via
+/// `Value::is_collection_of_len`.
+fn is_nested_pairs(items: &[Value]) -> bool {
+    !items.is_empty() && items.iter().all(|item| item.is_collection_of_len(2))
+}
+
 #[non_exhaustive]
 pub enum MapIter<'a> {
     Array(std::slice::Iter<'a, Value>),
     Map(std::slice::Iter<'a, (Value, Value)>),
+    /// An array whose every element is itself a two-element collection. This is
+    /// the shape RESP3 uses where RESP2 used a flat key/value array, e.g. for
+    /// `ZRANGE ... WITHSCORES`.
+    NestedPairs(std::slice::Iter<'a, Value>),
 }
 
 impl<'a> Iterator for MapIter<'a> {
@@ -408,13 +421,14 @@ impl<'a> Iterator for MapIter<'a> {
                 let (k, v) = iter.next()?;
                 Some((k, v))
             }
+            MapIter::NestedPairs(iter) => iter.next()?.as_pair(),
         }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         match self {
-            MapIter::Array(iter) => iter.size_hint(),
             MapIter::Map(iter) => iter.size_hint(),
+            MapIter::Array(iter) | MapIter::NestedPairs(iter) => iter.size_hint(),
         }
     }
 }
@@ -423,6 +437,10 @@ impl<'a> Iterator for MapIter<'a> {
 pub enum OwnedMapIter {
     Array(std::vec::IntoIter<Value>),
     Map(std::vec::IntoIter<(Value, Value)>),
+    /// An array whose every element is itself a two-element collection. This is
+    /// the shape RESP3 uses where RESP2 used a flat key/value array, e.g. for
+    /// `ZRANGE ... WITHSCORES`.
+    NestedPairs(std::vec::IntoIter<Value>),
 }
 
 impl Iterator for OwnedMapIter {
@@ -432,6 +450,7 @@ impl Iterator for OwnedMapIter {
         match self {
             Self::Array(iter) => Some((iter.next()?, iter.next()?)),
             Self::Map(iter) => iter.next(),
+            Self::NestedPairs(iter) => iter.next()?.into_pair().ok(),
         }
     }
 
@@ -442,6 +461,7 @@ impl Iterator for OwnedMapIter {
                 (low / 2, high.map(|h| h / 2))
             }
             Self::Map(iter) => iter.size_hint(),
+            Self::NestedPairs(iter) => iter.size_hint(),
         }
     }
 }
@@ -492,9 +512,39 @@ impl Value {
     /// Returns an iterator of `(&Value, &Value)` if `self` is compatible with a map type
     pub fn as_map_iter(&self) -> Option<MapIter<'_>> {
         match self {
-            Self::Array(items) => (items.len() % 2 == 0).then(|| MapIter::Array(items.iter())),
+            Self::Array(items) => {
+                if is_nested_pairs(items) {
+                    Some(MapIter::NestedPairs(items.iter()))
+                } else {
+                    (items.len() % 2 == 0).then(|| MapIter::Array(items.iter()))
+                }
+            }
             Self::Map(items) => Some(MapIter::Map(items.iter())),
             _ => None,
+        }
+    }
+
+    /// If `self` is a two-element collection, return its two elements.
+    fn as_pair(&self) -> Option<(&Self, &Self)> {
+        match self {
+            Self::Array(items) | Self::Set(items) if items.len() == 2 => {
+                Some((&items[0], &items[1]))
+            }
+            Self::Map(items) if items.len() == 1 => Some((&items[0].0, &items[0].1)),
+            _ => None,
+        }
+    }
+
+    /// Owned counterpart of [`Self::as_pair`].
+    fn into_pair(self) -> Result<(Self, Self), Self> {
+        match self {
+            Self::Array(items) | Self::Set(items) if items.len() == 2 => {
+                let mut it = items.into_iter();
+                let (a, b) = (it.next().unwrap(), it.next().unwrap());
+                Ok((a, b))
+            }
+            Self::Map(items) if items.len() == 1 => Ok(items.into_iter().next().unwrap()),
+            other => Err(other),
         }
     }
 
@@ -503,7 +553,9 @@ impl Value {
     pub fn into_map_iter(self) -> Result<OwnedMapIter, Self> {
         match self {
             Self::Array(items) => {
-                if items.len() % 2 == 0 {
+                if is_nested_pairs(&items) {
+                    Ok(OwnedMapIter::NestedPairs(items.into_iter()))
+                } else if items.len() % 2 == 0 {
                     Ok(OwnedMapIter::Array(items.into_iter()))
                 } else {
                     Err(Self::Array(items))

@@ -634,6 +634,71 @@ mod types {
         }
     }
 
+    /// RESP3 replaces the flat `[member, score, member, score]` array RESP2 used
+    /// for `ZRANGE ... WITHSCORES` (and ZPOPMIN/ZPOPMAX/ZRANDMEMBER/ZDIFF/ZUNION/
+    /// ZINTER) with an array of `[member, score]` pairs. Both shapes must convert
+    /// into a map type identically. `Vec<(K, V)>` already handled both.
+    #[test]
+    fn test_map_from_resp3_array_of_pairs() {
+        type MapType = HashMap<String, f64>;
+
+        let expected: MapType = [("a".to_string(), 1.0), ("b".to_string(), 2.5)]
+            .into_iter()
+            .collect();
+
+        // RESP2: flat array.
+        let resp2 = Value::Array(vec![
+            Value::BulkString("a".into()),
+            Value::BulkString("1".into()),
+            Value::BulkString("b".into()),
+            Value::BulkString("2.5".into()),
+        ]);
+        // RESP3: array of two-element pairs.
+        let resp3 = Value::Array(vec![
+            Value::Array(vec![Value::BulkString("a".into()), Value::Double(1.0)]),
+            Value::Array(vec![Value::BulkString("b".into()), Value::Double(2.5)]),
+        ]);
+
+        for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+            assert_eq!(
+                parse_mode.parse_redis_value::<MapType>(resp2.clone()),
+                Ok(expected.clone())
+            );
+            assert_eq!(
+                parse_mode.parse_redis_value::<MapType>(resp3.clone()),
+                Ok(expected.clone())
+            );
+
+            // `Vec<(K, V)>` accepted both shapes before and must keep doing so.
+            let pairs: Vec<(String, f64)> = parse_mode.parse_redis_value(resp3.clone()).unwrap();
+            assert_eq!(pairs, vec![("a".to_string(), 1.0), ("b".to_string(), 2.5)]);
+
+            // An even-length array of pairs must not be paired up *as pairs*.
+            let four = Value::Array(vec![
+                Value::Array(vec![Value::BulkString("a".into()), Value::Double(1.0)]),
+                Value::Array(vec![Value::BulkString("b".into()), Value::Double(2.0)]),
+                Value::Array(vec![Value::BulkString("c".into()), Value::Double(3.0)]),
+                Value::Array(vec![Value::BulkString("d".into()), Value::Double(4.0)]),
+            ]);
+            let m: MapType = parse_mode.parse_redis_value(four).unwrap();
+            assert_eq!(m.len(), 4);
+            assert_eq!(m["d"], 4.0);
+
+            // An empty array is still an empty map, not a "nested pairs" array.
+            let empty: MapType = parse_mode.parse_redis_value(Value::Array(vec![])).unwrap();
+            assert!(empty.is_empty());
+
+            // A flat array of non-collections keeps the old pairwise behaviour.
+            let flat: HashMap<String, String> = parse_mode
+                .parse_redis_value(Value::Array(vec![
+                    Value::BulkString("k".into()),
+                    Value::BulkString("v".into()),
+                ]))
+                .unwrap();
+            assert_eq!(flat["k"], "v");
+        }
+    }
+
     #[cfg(feature = "hashbrown")]
     #[test]
     fn test_hashbrown_hashmap() {
