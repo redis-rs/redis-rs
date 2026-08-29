@@ -1205,10 +1205,9 @@ mod token_based_authentication_acl_tests {
 
         #[async_cluster_test]
         async fn test_cluster_multiple_clients_sharing_a_single_credentials_provider(
-            _ctx: TestClusterContext,
+            cluster: TestClusterContext,
         ) {
             init_logger();
-            let cluster = TestClusterContext::new();
 
             add_users_with_jwt_tokens_on_all_nodes(&cluster).await;
 

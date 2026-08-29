@@ -7,9 +7,6 @@ use redis::CommandCacheConfig;
 use redis::cluster_routing::*;
 use redis::{AsyncCommands, RedisError, caching::CacheConfig};
 #[cfg(feature = "json")]
-use redis_test::server::Module;
-use redis_test::{REDIS_CE_7_2, TestContext, TestContextBuilder};
-#[cfg(feature = "json")]
 use serde_json::json;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -38,66 +35,66 @@ macro_rules! assert_invalidate {
 
 // Basic testing should work with both CacheMode::All and CacheMode::OptIn if commands has called cache()
 #[async_test]
-async fn test_cache_basic(test_with_optin: bool) {
-    let ctx = TestContext::default();
+async fn test_cache_basic(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
 
-    let cache_config = if test_with_optin {
-        CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn)
-    } else {
-        CacheConfig::default()
-    };
-    let mut con = ctx
-        .async_connection_with_cache_config(cache_config)
-        .await
-        .unwrap();
-    let val: Option<String> = get_cmd("GET", test_with_optin)
-        .arg("key_1")
-        .query_async(&mut con)
-        .await
-        .unwrap();
-    assert_eq!(val, None);
-    assert_hit!(&con, 0);
-    assert_miss!(&con, 1);
+    for test_with_optin in [true, false] {
+        let cache_config = if test_with_optin {
+            CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn)
+        } else {
+            CacheConfig::default()
+        };
+        let mut con = ctx
+            .async_connection_with_cache_config(cache_config)
+            .await
+            .unwrap();
+        let val: Option<String> = get_cmd("GET", test_with_optin)
+            .arg("key_1")
+            .query_async(&mut con)
+            .await
+            .unwrap();
+        assert_eq!(val, None);
+        assert_hit!(&con, 0);
+        assert_miss!(&con, 1);
 
-    let val: Option<String> = get_cmd("GET", test_with_optin)
-        .arg("key_1")
-        .query_async(&mut con)
-        .await
-        .unwrap();
-    assert_eq!(val, None);
-    // key_1's value should be returned from cache even if it doesn't exist in server yet.
-    assert_hit!(&con, 1);
-    assert_miss!(&con, 1);
+        let val: Option<String> = get_cmd("GET", test_with_optin)
+            .arg("key_1")
+            .query_async(&mut con)
+            .await
+            .unwrap();
+        assert_eq!(val, None);
+        // key_1's value should be returned from cache even if it doesn't exist in server yet.
+        assert_hit!(&con, 1);
+        assert_miss!(&con, 1);
 
-    let _: () = get_cmd("SET", test_with_optin)
-        .arg("key_1")
-        .arg("1")
-        .query_async(&mut con)
-        .await
-        .unwrap();
-    sleep(Duration::from_millis(50).into()).await; // Give time for push message to be received after invalidating key_1.
-    assert_hit!(&con, 1);
-    assert_miss!(&con, 1);
-    assert_invalidate!(&con, 1);
+        let _: () = get_cmd("SET", test_with_optin)
+            .arg("key_1")
+            .arg("1")
+            .query_async(&mut con)
+            .await
+            .unwrap();
+        sleep(Duration::from_millis(50).into()).await; // Give time for push message to be received after invalidating key_1.
+        assert_hit!(&con, 1);
+        assert_miss!(&con, 1);
+        assert_invalidate!(&con, 1);
 
-    let val: String = get_cmd("GET", test_with_optin)
-        .arg("key_1")
-        .query_async(&mut con)
-        .await
-        .unwrap();
-    assert_eq!(val, "1");
-    // After invalidating key_1, now it misses the key from cache
-    assert_hit!(&con, 1);
-    assert_miss!(&con, 2);
-    assert_invalidate!(&con, 1);
+        let val: String = get_cmd("GET", test_with_optin)
+            .arg("key_1")
+            .query_async(&mut con)
+            .await
+            .unwrap();
+        assert_eq!(val, "1");
+        // After invalidating key_1, now it misses the key from cache
+        assert_hit!(&con, 1);
+        assert_miss!(&con, 2);
+        assert_invalidate!(&con, 1);
+    }
 }
 
 #[async_test]
-async fn test_cache_mget() {
-    let ctx = TestContext::default();
+async fn test_cache_mget(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -151,9 +148,8 @@ async fn test_cache_mget() {
 }
 
 #[cfg(feature = "json")]
-#[async_test]
-async fn test_module_json_cache_get_mget() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[async_test(json)]
+async fn test_module_json_cache_get_mget(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -221,9 +217,8 @@ async fn test_module_json_cache_get_mget() {
 }
 
 #[cfg(feature = "json")]
-#[async_test]
-async fn test_module_json_cache_get_mget_different_paths() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[async_test(json)]
+async fn test_module_json_cache_get_mget_different_paths(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -335,8 +330,7 @@ async fn test_module_json_cache_get_mget_different_paths() {
 }
 
 #[async_test]
-async fn test_cache_is_not_target_type_dependent() {
-    let ctx = TestContext::default();
+async fn test_cache_is_not_target_type_dependent(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -354,56 +348,56 @@ async fn test_cache_is_not_target_type_dependent() {
 }
 
 #[async_test]
-async fn test_cache_with_pipeline(atomic: bool) {
-    let ctx = TestContext::default();
+async fn test_cache_with_pipeline(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
 
-    let mut con = ctx.async_connection_with_cache().await.unwrap();
-    // Test cache for both atomic and non-atomic Pipeline and mix MGET,GET,ignore in the pipeline.
-    let (mget_k1_k2,): ((i32, i32),) = get_pipe(atomic)
-        .cmd("SET")
-        .arg("key_1")
-        .arg(41)
-        .ignore()
-        .cmd("SET")
-        .arg("key_2")
-        .arg(42)
-        .ignore()
-        .cmd("MGET")
-        .arg(&["key_1", "key_2"])
-        .query_async(&mut con)
-        .await
-        .unwrap();
+    for atomic in [true, false] {
+        let mut con = ctx.async_connection_with_cache().await.unwrap();
+        // Test cache for both atomic and non-atomic Pipeline and mix MGET,GET,ignore in the pipeline.
+        let (mget_k1_k2,): ((i32, i32),) = get_pipe(atomic)
+            .cmd("SET")
+            .arg("key_1")
+            .arg(41)
+            .ignore()
+            .cmd("SET")
+            .arg("key_2")
+            .arg(42)
+            .ignore()
+            .cmd("MGET")
+            .arg(&["key_1", "key_2"])
+            .query_async(&mut con)
+            .await
+            .unwrap();
 
-    assert_eq!(mget_k1_k2, (41, 42));
-    // There are 2 miss for key_1, key_2 used with MGET
-    assert_hit!(&con, 0);
-    assert_miss!(&con, 2);
+        assert_eq!(mget_k1_k2, (41, 42));
+        // There are 2 miss for key_1, key_2 used with MGET
+        assert_hit!(&con, 0);
+        assert_miss!(&con, 2);
 
-    let (k1, mget_k1_k2, k_unknown): (i32, (i32, i32), Option<i32>) = get_pipe(atomic)
-        .cmd("GET")
-        .arg("key_1")
-        .cmd("MGET")
-        .arg(&["key_1", "key_2"])
-        .cmd("GET")
-        .arg("key_doesnt_exists")
-        .query_async(&mut con)
-        .await
-        .unwrap();
+        let (k1, mget_k1_k2, k_unknown): (i32, (i32, i32), Option<i32>) = get_pipe(atomic)
+            .cmd("GET")
+            .arg("key_1")
+            .cmd("MGET")
+            .arg(&["key_1", "key_2"])
+            .cmd("GET")
+            .arg("key_doesnt_exists")
+            .query_async(&mut con)
+            .await
+            .unwrap();
 
-    assert_eq!(k1, 41);
-    assert_eq!(mget_k1_k2, (41, 42));
-    assert_eq!(k_unknown, Option::None);
-    assert_hit!(&con, 3);
-    assert_miss!(&con, 3);
+        assert_eq!(k1, 41);
+        assert_eq!(mget_k1_k2, (41, 42));
+        assert_eq!(k_unknown, Option::None);
+        assert_hit!(&con, 3);
+        assert_miss!(&con, 3);
+    }
 }
 
 #[async_test]
-async fn test_cache_basic_partial_opt_in() {
+async fn test_cache_basic_partial_opt_in(ctx: TestContext) {
     // In OptIn mode cache must not be utilized without explicit per command configuration.
-    let ctx = TestContext::default();
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -467,128 +461,143 @@ async fn test_cache_basic_partial_opt_in() {
 }
 
 #[async_test]
-async fn test_cache_pipeline_partial_opt_in(atomic: bool) {
+async fn test_cache_pipeline_partial_opt_in(ctx: TestContext) {
     // In OptIn mode cache must not be utilized without explicit per command configuration.
-    let ctx = TestContext::default();
     if !ctx.protocol.supports_resp3() {
         return;
     }
 
-    let cache_config = CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn);
-    let mut con = ctx
-        .async_connection_with_cache_config(cache_config)
-        .await
-        .unwrap();
-    // Test cache for both atomic and non-atomic Pipeline and mix MGET,GET,ignore in the pipeline.
-    let (mget_k1_k2,): ((i32, i32),) = get_pipe(atomic)
-        .cmd("SET")
-        .arg("key_1")
-        .arg(42)
-        .ignore()
-        .cmd("SET")
-        .arg("key_2")
-        .arg(43)
-        .ignore()
-        .cmd("MGET")
-        .arg(&["key_1", "key_2"])
-        .query_async(&mut con)
-        .await
-        .unwrap();
-
-    assert_eq!(mget_k1_k2, (42, 43));
-    // Since CacheMode::OptIn is enabled, so there should be no miss or hit
-    assert_hit!(&con, 0);
-    assert_miss!(&con, 0);
-
-    for _ in 0..2 {
-        let (mget_k1_k2, k1, k_unknown): ((i32, i32), i32, Option<i32>) = get_pipe(atomic)
-            .cmd("MGET")
-            .set_cache_config(CommandCacheConfig::new().set_enable_cache(true))
-            .arg(&["key_1", "key_2"])
-            .cmd("GET")
+    for atomic in [true, false] {
+        let cache_config = CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn);
+        let mut con = ctx
+            .async_connection_with_cache_config(cache_config)
+            .await
+            .unwrap();
+        // Test cache for both atomic and non-atomic Pipeline and mix MGET,GET,ignore in the pipeline.
+        let (mget_k1_k2,): ((i32, i32),) = get_pipe(atomic)
+            .cmd("SET")
             .arg("key_1")
-            .cmd("GET")
-            .arg("key_doesnt_exists")
+            .arg(42)
+            .ignore()
+            .cmd("SET")
+            .arg("key_2")
+            .arg(43)
+            .ignore()
+            .cmd("MGET")
+            .arg(&["key_1", "key_2"])
             .query_async(&mut con)
             .await
             .unwrap();
 
         assert_eq!(mget_k1_k2, (42, 43));
-        assert_eq!(k1, 42);
-        assert_eq!(k_unknown, Option::None);
+        // Since CacheMode::OptIn is enabled, so there should be no miss or hit
+        assert_hit!(&con, 0);
+        assert_miss!(&con, 0);
+
+        for _ in 0..2 {
+            let (mget_k1_k2, k1, k_unknown): ((i32, i32), i32, Option<i32>) = get_pipe(atomic)
+                .cmd("MGET")
+                .set_cache_config(CommandCacheConfig::new().set_enable_cache(true))
+                .arg(&["key_1", "key_2"])
+                .cmd("GET")
+                .arg("key_1")
+                .cmd("GET")
+                .arg("key_doesnt_exists")
+                .query_async(&mut con)
+                .await
+                .unwrap();
+
+            assert_eq!(mget_k1_k2, (42, 43));
+            assert_eq!(k1, 42);
+            assert_eq!(k_unknown, Option::None);
+        }
+        // Only MGET should be use cache path, since pipeline used twice there should be one miss and one hit.
+        assert_hit!(&con, 2);
+        assert_miss!(&con, 2);
     }
-    // Only MGET should be use cache path, since pipeline used twice there should be one miss and one hit.
-    assert_hit!(&con, 2);
-    assert_miss!(&con, 2);
 }
 
 #[async_test]
-async fn test_cache_different_commands(test_with_opt_in: bool) {
-    let ctx = TestContext::default();
+async fn test_cache_different_commands(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
 
-    let cache_config = if test_with_opt_in {
-        CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn)
-    } else {
-        CacheConfig::default()
-    };
-    let mut con = ctx
-        .async_connection_with_cache_config(cache_config)
-        .await
-        .unwrap();
-    let _: () = get_cmd("HSET", test_with_opt_in)
-        .arg("user")
-        .arg("health")
-        .arg("100")
-        .query_async(&mut con)
-        .await
-        .unwrap();
+    for test_with_opt_in in [true, false] {
+        let cache_config = if test_with_opt_in {
+            CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn)
+        } else {
+            CacheConfig::default()
+        };
+        let mut con = ctx
+            .async_connection_with_cache_config(cache_config)
+            .await
+            .unwrap();
+        let _: () = get_cmd("HSET", test_with_opt_in)
+            .arg("user")
+            .arg("health")
+            .arg("100")
+            .query_async(&mut con)
+            .await
+            .unwrap();
 
-    let val: usize = get_cmd("HGET", test_with_opt_in)
-        .arg("user")
-        .arg("health")
-        .query_async(&mut con)
-        .await
-        .unwrap();
-    assert_eq!(val, 100);
-    assert_hit!(&con, 0);
-    assert_miss!(&con, 1);
+        let val: usize = get_cmd("HGET", test_with_opt_in)
+            .arg("user")
+            .arg("health")
+            .query_async(&mut con)
+            .await
+            .unwrap();
+        assert_eq!(val, 100);
+        assert_hit!(&con, 0);
+        assert_miss!(&con, 1);
 
-    let val: Option<usize> = get_cmd("HGET", test_with_opt_in)
-        .arg("user")
-        .arg("non_existent_key")
-        .query_async(&mut con)
-        .await
-        .unwrap();
-    assert_eq!(val, None);
-    assert_hit!(&con, 0);
-    assert_miss!(&con, 2);
+        let val: Option<usize> = get_cmd("HGET", test_with_opt_in)
+            .arg("user")
+            .arg("non_existent_key")
+            .query_async(&mut con)
+            .await
+            .unwrap();
+        assert_eq!(val, None);
+        assert_hit!(&con, 0);
+        assert_miss!(&con, 2);
 
-    let val: HashMap<String, usize> = get_cmd("HGETALL", test_with_opt_in)
-        .arg("user")
-        .query_async(&mut con)
-        .await
-        .unwrap();
-    assert_eq!(val.get("health"), Some(100).as_ref());
-    assert_hit!(&con, 0);
-    assert_miss!(&con, 3);
+        let val: HashMap<String, usize> = get_cmd("HGETALL", test_with_opt_in)
+            .arg("user")
+            .query_async(&mut con)
+            .await
+            .unwrap();
+        assert_eq!(val.get("health"), Some(100).as_ref());
+        assert_hit!(&con, 0);
+        assert_miss!(&con, 3);
 
-    let val: HashMap<String, usize> = get_cmd("HGETALL", test_with_opt_in)
-        .arg("user")
-        .query_async(&mut con)
-        .await
-        .unwrap();
-    assert_eq!(val.get("health"), Some(100).as_ref());
-    assert_hit!(&con, 1);
-    assert_miss!(&con, 3);
+        let val: HashMap<String, usize> = get_cmd("HGETALL", test_with_opt_in)
+            .arg("user")
+            .query_async(&mut con)
+            .await
+            .unwrap();
+        assert_eq!(val.get("health"), Some(100).as_ref());
+        assert_hit!(&con, 1);
+        assert_miss!(&con, 3);
+    }
 }
 
 #[cfg(feature = "connection-manager")]
 #[async_test]
-async fn test_connection_manager_maintains_statistics_after_crashes(test_with_optin: bool) {
-    let ctx = TestContext::default();
+async fn test_connection_manager_maintains_statistics_after_crashes_optin(ctx: TestContext) {
+    test_connection_manager_maintains_statistics_after_crashes(ctx, true).await;
+}
+
+#[cfg(feature = "connection-manager")]
+#[async_test]
+async fn test_connection_manager_maintains_statistics_after_crashes_optout(ctx: TestContext) {
+    test_connection_manager_maintains_statistics_after_crashes(ctx, false).await;
+}
+
+#[cfg(feature = "connection-manager")]
+async fn test_connection_manager_maintains_statistics_after_crashes(
+    ctx: TestContext,
+    test_with_optin: bool,
+) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -963,8 +972,7 @@ fn get_cmd(name: &str, enable_opt_in: bool) -> redis::Cmd {
 }
 
 #[async_test]
-async fn test_readonly_commands_with_patterns_are_not_cached() {
-    let ctx = TestContext::default();
+async fn test_readonly_commands_with_patterns_are_not_cached(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -982,8 +990,7 @@ async fn test_readonly_commands_with_patterns_are_not_cached() {
 }
 
 #[async_test]
-async fn test_bitcount_is_handled_correctly() {
-    let ctx = TestContext::default();
+async fn test_bitcount_is_handled_correctly(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -1036,8 +1043,7 @@ async fn test_bitcount_is_handled_correctly() {
 }
 
 #[async_test]
-async fn test_that_a_pipeline_with_all_commands_cached_does_not_hang() {
-    let ctx = TestContext::default();
+async fn test_that_a_pipeline_with_all_commands_cached_does_not_hang(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
