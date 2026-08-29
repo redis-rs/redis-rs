@@ -83,6 +83,24 @@ mod types {
         assert_eq!(Rc::new(twobytesslice).num_of_args(), 2);
     }
 
+    #[test]
+    fn test_collection_args_size() {
+        let bytes: &[u8] = &[0, 42, 255];
+        assert_eq!(bytes.args_size(), bytes.len());
+
+        let byte_vec: Vec<u8> = vec![0, 42, 255];
+        assert_eq!(byte_vec.args_size(), byte_vec.len());
+        assert_eq!(vec![bytes, bytes].args_size(), byte_vec.len() * 2);
+
+        let numbers = [1_u16, 255_u16];
+        assert_eq!(numbers.as_slice().num_of_args(), numbers.len());
+        assert_eq!(numbers.as_slice().args_size(), 4);
+
+        let items = [("foo1", bytes), ("foo2", bytes)];
+        assert_eq!(items.as_slice().num_of_args(), 4);
+        assert_eq!(items.as_slice().args_size(), 8 + bytes.len() * 2);
+    }
+
     /// The `FromRedisValue` trait provides two methods for parsing:
     /// - `fn from_redis_value_ref(&Value) -> Result<T, RedisError>`
     /// - `fn from_redis_value(Value) -> Result<T, RedisError>`

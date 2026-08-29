@@ -1222,6 +1222,21 @@ pub trait ToRedisArgs: Sized {
         }
     }
 
+    // this is used in absence of specialization to provide a default implementation for slices that can be overridden specifically for byte slices (&[u8])
+    #[doc(hidden)]
+    #[inline]
+    fn args_size_for_slice(items: &[Self]) -> usize {
+        items.iter().map(|item| item.args_size()).sum()
+    }
+
+    // this is used in absence of specialization to provide a default implementation for slices that can be overridden specifically for byte slices (&[u8])
+    #[doc(hidden)]
+    #[inline]
+    fn num_of_args_for_slice(items: &[Self]) -> usize {
+        items.iter().map(|item| item.num_of_args()).sum()
+    }
+
+    // this is used in absence of specialization to provide a default implementation for slices that can be overridden specifically for byte slices (&[u8])
     #[doc(hidden)]
     #[inline]
     fn is_single_vec_arg(items: &[Self]) -> bool {
@@ -1334,6 +1349,16 @@ impl ToRedisArgs for u8 {
         W: ?Sized + RedisWrite,
     {
         out.write_arg(items);
+    }
+
+    #[inline]
+    fn args_size_for_slice(items: &[Self]) -> usize {
+        items.len()
+    }
+
+    #[inline]
+    fn num_of_args_for_slice(_items: &[Self]) -> usize {
+        1
     }
 
     #[inline]
@@ -1532,19 +1557,12 @@ macro_rules! impl_write_redis_args_for_collection {
 
             #[inline]
             fn num_of_args(&self) -> usize {
-                if ToRedisArgs::is_single_vec_arg(&self[..]) {
-                    return 1;
-                }
-                if self.len() == 1 {
-                    self[0].num_of_args()
-                } else {
-                    self.len()
-                }
+                <T as ToRedisArgs>::num_of_args_for_slice(self)
             }
 
             #[inline]
             fn args_size(&self) -> usize {
-                self.iter().map(|item| item.args_size()).sum()
+                <T as ToRedisArgs>::args_size_for_slice(self)
             }
 
             #[inline]
