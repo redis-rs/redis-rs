@@ -219,7 +219,7 @@ mod cluster {
 
     #[cluster_test]
     fn test_cluster_resp3(cluster: TestClusterContext) {
-        if !use_protocol().supports_resp3() {
+        if !cluster.protocol.supports_resp3() {
             return;
         }
 
@@ -1232,7 +1232,7 @@ mod cluster {
             .collect();
 
         let client = redis::cluster::ClusterClient::builder(initial_nodes)
-            .use_protocol(use_protocol())
+            .use_protocol(cluster.protocol)
             .node_address_map(address_map)
             .build()
             .unwrap();
