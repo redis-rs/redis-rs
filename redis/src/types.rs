@@ -1198,6 +1198,13 @@ pub trait ToRedisArgs: Sized {
         0
     }
 
+    /// Returns both the number of Redis arguments and the estimated number of bytes this value
+    /// will serialize to.
+    #[inline]
+    fn num_of_args_and_size(&self) -> (usize, usize) {
+        (self.num_of_args(), self.args_size())
+    }
+
     /// This only exists internally as a workaround for the lack of
     /// specialization.
     #[doc(hidden)]
@@ -1225,15 +1232,13 @@ pub trait ToRedisArgs: Sized {
     // this is used in absence of specialization to provide a default implementation for slices that can be overridden specifically for byte slices (&[u8])
     #[doc(hidden)]
     #[inline]
-    fn args_size_for_slice(items: &[Self]) -> usize {
-        items.iter().map(|item| item.args_size()).sum()
-    }
-
-    // this is used in absence of specialization to provide a default implementation for slices that can be overridden specifically for byte slices (&[u8])
-    #[doc(hidden)]
-    #[inline]
-    fn num_of_args_for_slice(items: &[Self]) -> usize {
-        items.iter().map(|item| item.num_of_args()).sum()
+    fn num_of_args_and_size_for_slice(items: &[Self]) -> (usize, usize) {
+        items
+            .iter()
+            .map(|item| item.num_of_args_and_size())
+            .fold((0, 0), |(args, size), (item_args, item_size)| {
+                (args + item_args, size + item_size)
+            })
     }
 
     // this is used in absence of specialization to provide a default implementation for slices that can be overridden specifically for byte slices (&[u8])
@@ -1352,13 +1357,8 @@ impl ToRedisArgs for u8 {
     }
 
     #[inline]
-    fn args_size_for_slice(items: &[Self]) -> usize {
-        items.len()
-    }
-
-    #[inline]
-    fn num_of_args_for_slice(_items: &[Self]) -> usize {
-        1
+    fn num_of_args_and_size_for_slice(items: &[Self]) -> (usize, usize) {
+        (1, items.len())
     }
 
     #[inline]
@@ -1557,12 +1557,17 @@ macro_rules! impl_write_redis_args_for_collection {
 
             #[inline]
             fn num_of_args(&self) -> usize {
-                <T as ToRedisArgs>::num_of_args_for_slice(self)
+                self.num_of_args_and_size().0
             }
 
             #[inline]
             fn args_size(&self) -> usize {
-                <T as ToRedisArgs>::args_size_for_slice(self)
+                self.num_of_args_and_size().1
+            }
+
+            #[inline]
+            fn num_of_args_and_size(&self) -> (usize, usize) {
+                <T as ToRedisArgs>::num_of_args_and_size_for_slice(self)
             }
 
             #[inline]

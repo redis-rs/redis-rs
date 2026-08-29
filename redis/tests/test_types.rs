@@ -96,9 +96,16 @@ mod types {
         assert_eq!(numbers.as_slice().num_of_args(), numbers.len());
         assert_eq!(numbers.as_slice().args_size(), 4);
 
-        let items = [("foo1", bytes), ("foo2", bytes)];
-        assert_eq!(items.as_slice().num_of_args(), 4);
-        assert_eq!(items.as_slice().args_size(), 8 + bytes.len() * 2);
+        let items: [(&str, &[u8]); 2] = [("foo1", bytes), ("foo2", bytes)];
+        let items_slice = items.as_slice();
+        assert_eq!(
+            <&[(&str, &[u8])] as ToRedisArgs>::num_of_args(&items_slice),
+            4
+        );
+        assert_eq!(
+            <&[(&str, &[u8])] as ToRedisArgs>::args_size(&items_slice),
+            8 + bytes.len() * 2
+        );
     }
 
     /// The `FromRedisValue` trait provides two methods for parsing:

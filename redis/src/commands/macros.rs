@@ -77,10 +77,14 @@ macro_rules! implement_command_sync {
 macro_rules! ready_cmd {
     ($name:expr $(, $arg:expr)*) => {{
         let name = $name;
-        let mut cmd = Cmd::with_capacity(
-            1usize $( + $arg.num_of_args())*,
-            name.len() $( + $arg.args_size())*,
-        );
+        let args_count = 1usize;
+        let args_size = name.len();
+        $(
+            let (next_args_count, next_args_size) = $arg.num_of_args_and_size();
+            let args_count = args_count + next_args_count;
+            let args_size = args_size + next_args_size;
+        )*
+        let mut cmd = Cmd::with_capacity(args_count, args_size);
         cmd.arg(name);
         $(cmd.arg($arg);)*
         cmd
@@ -90,10 +94,17 @@ macro_rules! ready_cmd {
 macro_rules! write_pipeline_command {
     ($self:expr, { ready_cmd!($name:expr $(, $arg:expr)*).take() }) => {{
         let name = $name;
-        $self.reserve_for_args(1usize $(+ $arg.num_of_args())*)
-          .reserve_for_data(name.len() $( + $arg.args_size())*);
+        let args_count = 1usize;
+        let args_size = name.len();
+        $(
+            let (next_args_count, next_args_size) = $arg.num_of_args_and_size();
+            let args_count = args_count + next_args_count;
+            let args_size = args_size + next_args_size;
+        )*
+        $self.reserve_for_args(args_count)
+          .reserve_for_data(args_size);
         $self.start_command();
-        $self.arg($name);
+        $crate::types::RedisWrite::write_arg($self, name.as_bytes());
         $($self.arg($arg);)*
         $self
     }};
