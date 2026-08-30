@@ -114,13 +114,14 @@ where
     res.unwrap()
 }
 
+// With both `tokio-comp` and `smol-comp` enabled, the tests of both runtimes run
+// in the same process. Setting a preferred runtime here would poison the process
+// for the other runtime, so we rely on `Runtime::locate`'s auto-detection instead.
 #[cfg(feature = "tokio-comp")]
 fn block_on_all_using_tokio<F>(f: F) -> F::Output
 where
     F: Future,
 {
-    #[cfg(feature = "smol-comp")]
-    let _ = redis::aio::prefer_tokio();
     current_thread_runtime().block_on(f)
 }
 
@@ -129,8 +130,6 @@ fn block_on_all_using_smol<F>(f: F) -> F::Output
 where
     F: Future,
 {
-    #[cfg(feature = "tokio-comp")]
-    let _ = redis::aio::prefer_smol();
     smol::block_on(f)
 }
 
