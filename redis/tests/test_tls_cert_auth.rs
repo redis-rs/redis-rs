@@ -73,6 +73,7 @@ fn create_cert_auth_context_with_username(username: &str) -> CertAuthTestContext
 
     // Create a single server context with cert-based auth enabled
     let server_ctx = TestContextBuilder::new()
+        .server_type(redis_test::server::ServerType::Tcp { tls: true })
         .tls_paths(tls_paths.clone())
         .mtls(true)
         .cert_auth_field("CN")

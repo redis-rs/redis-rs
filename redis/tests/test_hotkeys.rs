@@ -136,6 +136,9 @@ mod hotkeys {
             con.hotkeys_start(metric.options()).unwrap();
             setup_test_keys_and_make_hot_keys(&mut con);
 
+            // Ensure the server measures a non-zero collection duration even on fast local sockets.
+            sleep(Duration::from_millis(2));
+
             let result = con.hotkeys_get().unwrap().unwrap();
 
             assert!(result.tracking_active);
@@ -148,6 +151,8 @@ mod hotkeys {
 
             assert_eq!(result.by_cpu_time_us.is_some(), expect_cpu || expect_all);
             assert_eq!(result.by_net_bytes.is_some(), expect_net || expect_all);
+
+            con.hotkeys_stop().unwrap();
         }
     }
 
@@ -664,6 +669,9 @@ mod async_hotkeys {
             con.hotkeys_start(metric.options()).await.unwrap();
             setup_test_keys_and_make_hot_keys(&mut con).await;
 
+            // Ensure the server measures a non-zero collection duration even on fast local sockets.
+            futures_time::task::sleep(Duration::from_millis(2).into()).await;
+
             let result = con.hotkeys_get().await.unwrap().unwrap();
             assert!(result.tracking_active);
             assert_eq!(result.sample_ratio, 1);
@@ -675,6 +683,8 @@ mod async_hotkeys {
 
             assert_eq!(result.by_cpu_time_us.is_some(), expect_cpu || expect_all);
             assert_eq!(result.by_net_bytes.is_some(), expect_net || expect_all);
+
+            con.hotkeys_stop().await.unwrap();
         }
     }
 

@@ -686,7 +686,7 @@ pub fn sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             fn resp2_tcp() {
                 let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
                     2,
-                    1,
+                    3,
                     3,
                     redis_test::server::ServerType::Tcp { tls: false },
                     redis::ProtocolVersion::RESP2,
@@ -700,7 +700,7 @@ pub fn sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             fn resp2_tls() {
                 let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
                     2,
-                    1,
+                    3,
                     3,
                     redis_test::server::ServerType::Tcp { tls: true },
                     redis::ProtocolVersion::RESP2,
@@ -714,7 +714,7 @@ pub fn sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             fn resp3_tcp() {
                 let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
                     2,
-                    1,
+                    3,
                     3,
                     redis_test::server::ServerType::Tcp { tls: false },
                     redis::ProtocolVersion::RESP3,
@@ -728,7 +728,7 @@ pub fn sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             fn resp3_tls() {
                 let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
                     2,
-                    1,
+                    3,
                     3,
                     redis_test::server::ServerType::Tcp { tls: true },
                     redis::ProtocolVersion::RESP3,
@@ -767,7 +767,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
                         2,
-                        1,
+                        3,
                         3,
                         redis_test::server::ServerType::Tcp { tls: false },
                         redis::ProtocolVersion::RESP2,
@@ -783,7 +783,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
                         2,
-                        1,
+                        3,
                         3,
                         redis_test::server::ServerType::Tcp { tls: false },
                         redis::ProtocolVersion::RESP2,
@@ -799,7 +799,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
                         2,
-                        1,
+                        3,
                         3,
                         redis_test::server::ServerType::Tcp { tls: true },
                         redis::ProtocolVersion::RESP2,
@@ -815,7 +815,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
                         2,
-                        1,
+                        3,
                         3,
                         redis_test::server::ServerType::Tcp { tls: true },
                         redis::ProtocolVersion::RESP2,
@@ -831,7 +831,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
                         2,
-                        1,
+                        3,
                         3,
                         redis_test::server::ServerType::Tcp { tls: false },
                         redis::ProtocolVersion::RESP3,
@@ -847,7 +847,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
                         2,
-                        1,
+                        3,
                         3,
                         redis_test::server::ServerType::Tcp { tls: false },
                         redis::ProtocolVersion::RESP3,
@@ -863,7 +863,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
                         2,
-                        1,
+                        3,
                         3,
                         redis_test::server::ServerType::Tcp { tls: true },
                         redis::ProtocolVersion::RESP3,
@@ -879,7 +879,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
                         2,
-                        1,
+                        3,
                         3,
                         redis_test::server::ServerType::Tcp { tls: true },
                         redis::ProtocolVersion::RESP3,
