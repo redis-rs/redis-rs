@@ -346,7 +346,7 @@ macro_rules! implement_pipeline_commands {
             /// Pushes a new, empty command record. Subsequent arguments written through
             /// [`RedisWrite`](crate::RedisWrite) belong to it until the next command starts.
             #[inline]
-            fn start_command(&mut self) {
+            pub(crate) fn start_command(&mut self) {
                 self.commands.push($crate::pipeline::CommandRecord {
                     args_start: self.args.len(),
                     data_start: self.data.len(),
