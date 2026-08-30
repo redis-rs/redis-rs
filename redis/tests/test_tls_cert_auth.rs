@@ -97,15 +97,17 @@ fn generate_random_username() -> String {
 fn test_tls_certificate_authentication_with_matching_acl_user() {
     // This test verifies that Redis can automatically authenticate a client
     // based on the Common Name (CN) field in the client's TLS certificate.
+    // Certificate-based authentication requires a Redis server >= 8.6 (or Valkey
+    // >= 9.0), so check the version before creating the cert-auth server (which
+    // needs command-line flags that older servers reject at startup).
+
+    run_test_if_version_supported!([REDIS_CE_8_6, VALKEY_9_0]);
 
     // Generate a random username for the test.
     let test_username = generate_random_username();
 
     // Create a test context with cert-based authentication enabled.
     let ctx = create_cert_auth_context_with_username(&test_username);
-
-    // Skip the test if the running server does not support cert-based auth (<8.6).
-    skip_if_context_does_not_support!(ctx.server_ctx, [REDIS_CE_8_6, VALKEY_9_0]);
 
     // First, create the ACL user on the server using the setup connection.
     let mut setup_conn = ctx.setup_connection();
@@ -176,15 +178,16 @@ fn test_tls_certificate_authentication_with_matching_acl_user() {
 fn test_tls_certificate_authentication_no_matching_user() {
     // This test verifies that when a client certificate's CN doesn't match
     // any existing ACL user, Redis falls back to the "default" user.
+    // Certificate-based authentication requires a Redis server >= 8.6 (or Valkey
+    // >= 9.0), so check the version before creating the cert-auth server (which
+    // needs command-line flags that older servers reject at startup).
+    run_test_if_version_supported!([REDIS_CE_8_6, VALKEY_9_0]);
 
     // Generate a random username (that won't have a corresponding ACL user).
     let test_username = generate_random_username();
 
     // Create a test context with cert-based authentication enabled.
     let ctx = create_cert_auth_context_with_username(&test_username);
-
-    // Skip the test if the running server does not support cert-based auth (<8.6).
-    skip_if_context_does_not_support!(ctx.server_ctx, [REDIS_CE_8_6, VALKEY_9_0]);
 
     // Verify that the user doesn't exist.
     let mut setup_conn = ctx.setup_connection();
