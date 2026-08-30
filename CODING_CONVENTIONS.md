@@ -1,5 +1,7 @@
 # Coding Conventions
 
+Be sure to also read the [contribution docs](CONTRIBUTING.md) and [development docs](DEVELOPMENT.md) before working on a pull request.
+
 ## General
 
 * All `struct`s with public members, `enum`s and their variants have to be marked as `#[non_exhaustive]`.
