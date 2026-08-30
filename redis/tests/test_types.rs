@@ -96,6 +96,9 @@ mod types {
         assert_eq!(numbers.as_slice().num_of_args(), numbers.len());
         assert_eq!(numbers.as_slice().args_size(), 4);
 
+        let bytes_array_ref = &[0_u8, 42, 255];
+        assert_eq!(bytes_array_ref.num_of_args_and_size(), (1, 3));
+
         let items: [(&str, &[u8]); 2] = [("foo1", bytes), ("foo2", bytes)];
         let items_slice = items.as_slice();
         assert_eq!(
@@ -106,6 +109,115 @@ mod types {
             <&[(&str, &[u8])] as ToRedisArgs>::args_size(&items_slice),
             8 + bytes.len() * 2
         );
+    }
+
+    fn assert_arg_metadata<T: ToRedisArgs>(value: &T) {
+        assert_eq!(
+            value.num_of_args_and_size(),
+            (value.num_of_args(), value.args_size())
+        );
+    }
+
+    #[test]
+    fn test_collection_num_of_args_and_size_matches_separate_getters() {
+        let numbers = [1_u16, 255_u16];
+        let number_slice: &[u16] = &numbers;
+        assert_arg_metadata(&number_slice);
+
+        let mut mutable_numbers = [1_u16, 255_u16];
+        let mutable_number_slice: &mut [u16] = &mut mutable_numbers;
+        assert_arg_metadata(&mutable_number_slice);
+
+        let boxed_numbers: Box<[u16]> = vec![1_u16, 255_u16].into_boxed_slice();
+        assert_arg_metadata(&boxed_numbers);
+
+        let arc_numbers: Arc<[u16]> = Arc::from(vec![1_u16, 255_u16].into_boxed_slice());
+        assert_arg_metadata(&arc_numbers);
+
+        let rc_numbers: Rc<[u16]> = Rc::from(vec![1_u16, 255_u16].into_boxed_slice());
+        assert_arg_metadata(&rc_numbers);
+
+        let number_vec = vec![1_u16, 255_u16];
+        assert_arg_metadata(&number_vec);
+
+        let bytes = [0_u8, 42, 255];
+        let byte_slice: &[u8] = &bytes;
+        assert_arg_metadata(&byte_slice);
+
+        let mut mutable_bytes = [0_u8, 42, 255];
+        let mutable_byte_slice: &mut [u8] = &mut mutable_bytes;
+        assert_arg_metadata(&mutable_byte_slice);
+
+        let boxed_bytes: Box<[u8]> = vec![0_u8, 42, 255].into_boxed_slice();
+        assert_arg_metadata(&boxed_bytes);
+
+        let arc_bytes: Arc<[u8]> = Arc::from(vec![0_u8, 42, 255].into_boxed_slice());
+        assert_arg_metadata(&arc_bytes);
+
+        let rc_bytes: Rc<[u8]> = Rc::from(vec![0_u8, 42, 255].into_boxed_slice());
+        assert_arg_metadata(&rc_bytes);
+
+        let byte_vec = vec![0_u8, 42, 255];
+        assert_arg_metadata(&byte_vec);
+
+        let tuple_items: [(&str, &[u8]); 2] = [("foo1", byte_slice), ("foo2", byte_slice)];
+        let tuple_slice = tuple_items.as_slice();
+        assert_arg_metadata(&tuple_slice);
+
+        let number_array_ref = &numbers;
+        assert_arg_metadata(&number_array_ref);
+
+        let byte_array_ref = &bytes;
+        assert_arg_metadata(&byte_array_ref);
+
+        let tuple_array_ref = &tuple_items;
+        assert_arg_metadata(&tuple_array_ref);
+        assert_eq!(
+            tuple_array_ref.num_of_args_and_size(),
+            (4, 8 + byte_slice.len() * 2)
+        );
+
+        let number_hash_set = [1_u16, 255_u16].into_iter().collect::<HashSet<_>>();
+        assert_arg_metadata(&number_hash_set);
+
+        let number_btree_set = [1_u16, 255_u16]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_arg_metadata(&number_btree_set);
+
+        let number_hash_map = [("foo1", 1_u16), ("foo2", 255_u16)]
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_arg_metadata(&number_hash_map);
+
+        let number_btree_map = [("foo1", 1_u16), ("foo2", 255_u16)]
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_arg_metadata(&number_btree_map);
+    }
+
+    #[test]
+    fn test_deref_num_of_args_and_size_matches_separate_getters() {
+        let number = 255_u16;
+        let number_ref = &number;
+        assert_arg_metadata(&number_ref);
+
+        let mut mutable_number = 255_u16;
+        let number_mut_ref = &mut mutable_number;
+        assert_arg_metadata(&number_mut_ref);
+
+        let boxed_number = Box::new(255_u16);
+        assert_arg_metadata(&boxed_number);
+
+        let arc_number = Arc::new(255_u16);
+        assert_arg_metadata(&arc_number);
+
+        let rc_number = Rc::new(255_u16);
+        assert_arg_metadata(&rc_number);
+
+        let values = vec![1_u16, 255_u16];
+        let values_ref = &values;
+        assert_arg_metadata(&values_ref);
     }
 
     /// The `FromRedisValue` trait provides two methods for parsing:

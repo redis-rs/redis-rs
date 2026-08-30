@@ -1241,6 +1241,13 @@ pub trait ToRedisArgs: Sized {
             })
     }
 
+    // this is used in absence of specialization to provide a default implementation for arrays that can be overridden specifically for byte arrays (&[u8; N])
+    #[doc(hidden)]
+    #[inline]
+    fn num_of_args_and_size_for_array<const N: usize>(items: &[Self; N]) -> (usize, usize) {
+        Self::num_of_args_and_size_for_slice(items.as_slice())
+    }
+
     // this is used in absence of specialization to provide a default implementation for slices that can be overridden specifically for byte slices (&[u8])
     #[doc(hidden)]
     #[inline]
@@ -1359,6 +1366,11 @@ impl ToRedisArgs for u8 {
     #[inline]
     fn num_of_args_and_size_for_slice(items: &[Self]) -> (usize, usize) {
         (1, items.len())
+    }
+
+    #[inline]
+    fn num_of_args_and_size_for_array<const N: usize>(_items: &[Self; N]) -> (usize, usize) {
+        (1, N)
     }
 
     #[inline]
@@ -1603,6 +1615,11 @@ macro_rules! deref_to_write_redis_args_impl {
             }
 
             #[inline]
+            fn num_of_args_and_size(&self) -> (usize, usize) {
+                (**self).num_of_args_and_size()
+            }
+
+            #[inline]
             fn describe_numeric_behavior(&self) -> NumericBehavior {
                 (**self).describe_numeric_behavior()
             }
@@ -1646,12 +1663,23 @@ macro_rules! impl_to_redis_args_for_set {
                 ToRedisArgs::make_arg_iter_ref(self.iter(), out)
             }
 
-            #[inline] fn num_of_args(&self) -> usize {
-                self.len()
+            #[inline]
+            fn num_of_args(&self) -> usize {
+                self.num_of_args_and_size().0
             }
 
-            #[inline] fn args_size(&self) -> usize {
-                self.iter().map(|item| item.args_size()).sum()
+            #[inline]
+            fn args_size(&self) -> usize {
+                self.num_of_args_and_size().1
+            }
+
+            #[inline]
+            fn num_of_args_and_size(&self) -> (usize, usize) {
+                self.iter()
+                    .map(|item| item.num_of_args_and_size())
+                    .fold((0, 0), |(args, size), (item_args, item_size)| {
+                        (args + item_args, size + item_size)
+                    })
             }
         }
     };
@@ -1705,12 +1733,27 @@ macro_rules! impl_to_redis_args_for_map {
                 }
             }
 
-            #[inline] fn num_of_args(&self) -> usize {
-                self.len()
+            #[inline]
+            fn num_of_args(&self) -> usize {
+                self.num_of_args_and_size().0
             }
 
-            #[inline] fn args_size(&self) -> usize {
-                self.iter().map(|(key, value)| key.args_size() + value.args_size()).sum()
+            #[inline]
+            fn args_size(&self) -> usize {
+                self.num_of_args_and_size().1
+            }
+
+            #[inline]
+            fn num_of_args_and_size(&self) -> (usize, usize) {
+                self.iter()
+                    .map(|(key, value)| {
+                        let (key_args, key_size) = key.num_of_args_and_size();
+                        let (value_args, value_size) = value.num_of_args_and_size();
+                        (key_args + value_args, key_size + value_size)
+                    })
+                    .fold((0, 0), |(args, size), (item_args, item_size)| {
+                        (args + item_args, size + item_size)
+                    })
             }
         }
     };
@@ -1764,6 +1807,14 @@ macro_rules! to_redis_args_for_tuple {
                 let ($(ref $name,)*) = *self;
                 0 $( + $name.args_size())*
             }
+
+            #[allow(non_snake_case, unused_variables)]
+            #[inline] fn num_of_args_and_size(&self) -> (usize, usize) {
+                let ($(ref $name,)*) = *self;
+                let args_count = 0usize $( + { let $name = (); 1usize })*;
+                let args_size = 0usize $( + $name.args_size())*;
+                (args_count, args_size)
+            }
         }
     )
 }
@@ -1791,14 +1842,17 @@ impl<T: ToRedisArgs, const N: usize> ToRedisArgs for &[T; N] {
 
     #[inline]
     fn num_of_args(&self) -> usize {
-        if ToRedisArgs::is_single_vec_arg(&self[..]) {
-            return 1;
-        }
-        if self.len() == 1 {
-            self[0].num_of_args()
-        } else {
-            self.len()
-        }
+        self.num_of_args_and_size().0
+    }
+
+    #[inline]
+    fn args_size(&self) -> usize {
+        self.num_of_args_and_size().1
+    }
+
+    #[inline]
+    fn num_of_args_and_size(&self) -> (usize, usize) {
+        <T as ToRedisArgs>::num_of_args_and_size_for_array(self)
     }
 }
 impl<const N: usize> ToSingleRedisArg for &[u8; N] {}
