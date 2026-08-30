@@ -35,62 +35,61 @@ macro_rules! assert_invalidate {
 
 // Basic testing should work with both CacheMode::All and CacheMode::OptIn if commands has called cache()
 #[async_test]
-async fn test_cache_basic(ctx: TestContext) {
+async fn test_cache_basic(test_with_optin: bool) {
+    let ctx = TestContext::default();
     if !ctx.protocol.supports_resp3() {
         return;
     }
 
-    for test_with_optin in [true, false] {
-        let cache_config = if test_with_optin {
-            CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn)
-        } else {
-            CacheConfig::default()
-        };
-        let mut con = ctx
-            .async_connection_with_cache_config(cache_config)
-            .await
-            .unwrap();
-        let val: Option<String> = get_cmd("GET", test_with_optin)
-            .arg("key_1")
-            .query_async(&mut con)
-            .await
-            .unwrap();
-        assert_eq!(val, None);
-        assert_hit!(&con, 0);
-        assert_miss!(&con, 1);
+    let cache_config = if test_with_optin {
+        CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn)
+    } else {
+        CacheConfig::default()
+    };
+    let mut con = ctx
+        .async_connection_with_cache_config(cache_config)
+        .await
+        .unwrap();
+    let val: Option<String> = get_cmd("GET", test_with_optin)
+        .arg("key_1")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, None);
+    assert_hit!(&con, 0);
+    assert_miss!(&con, 1);
 
-        let val: Option<String> = get_cmd("GET", test_with_optin)
-            .arg("key_1")
-            .query_async(&mut con)
-            .await
-            .unwrap();
-        assert_eq!(val, None);
-        // key_1's value should be returned from cache even if it doesn't exist in server yet.
-        assert_hit!(&con, 1);
-        assert_miss!(&con, 1);
+    let val: Option<String> = get_cmd("GET", test_with_optin)
+        .arg("key_1")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, None);
+    // key_1's value should be returned from cache even if it doesn't exist in server yet.
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 1);
 
-        let _: () = get_cmd("SET", test_with_optin)
-            .arg("key_1")
-            .arg("1")
-            .query_async(&mut con)
-            .await
-            .unwrap();
-        sleep(Duration::from_millis(50).into()).await; // Give time for push message to be received after invalidating key_1.
-        assert_hit!(&con, 1);
-        assert_miss!(&con, 1);
-        assert_invalidate!(&con, 1);
+    let _: () = get_cmd("SET", test_with_optin)
+        .arg("key_1")
+        .arg("1")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    sleep(Duration::from_millis(50).into()).await; // Give time for push message to be received after invalidating key_1.
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 1);
+    assert_invalidate!(&con, 1);
 
-        let val: String = get_cmd("GET", test_with_optin)
-            .arg("key_1")
-            .query_async(&mut con)
-            .await
-            .unwrap();
-        assert_eq!(val, "1");
-        // After invalidating key_1, now it misses the key from cache
-        assert_hit!(&con, 1);
-        assert_miss!(&con, 2);
-        assert_invalidate!(&con, 1);
-    }
+    let val: String = get_cmd("GET", test_with_optin)
+        .arg("key_1")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, "1");
+    // After invalidating key_1, now it misses the key from cache
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 2);
+    assert_invalidate!(&con, 1);
 }
 
 #[async_test]
