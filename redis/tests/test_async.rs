@@ -1288,7 +1288,8 @@ mod basic_async {
             let config = redis::aio::ConnectionManagerConfig::new()
                 .set_push_sender(tx)
                 .set_automatic_resubscription()
-                .set_max_delay(max_delay_between_attempts);
+                .set_max_delay(max_delay_between_attempts)
+                .set_number_of_retries(10_000);
 
             let mut pubsub_conn = ctx
                 .client
@@ -1457,7 +1458,8 @@ mod basic_async {
         let max_delay_between_attempts = Duration::from_millis(2);
         let config = redis::aio::ConnectionManagerConfig::new()
             .set_exponent_base(10000.0)
-            .set_max_delay(max_delay_between_attempts);
+            .set_max_delay(max_delay_between_attempts)
+            .set_number_of_retries(10_000);
 
         let mut conn = ctx
             .client
@@ -1529,7 +1531,8 @@ mod basic_async {
         let config = redis::aio::ConnectionManagerConfig::new()
             .set_exponent_base(10000.0)
             .set_push_sender(tx)
-            .set_max_delay(max_delay_between_attempts);
+            .set_max_delay(max_delay_between_attempts)
+            .set_number_of_retries(10_000);
 
         let mut conn = ctx
             .client
@@ -1620,7 +1623,10 @@ mod basic_async {
         #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
         #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
         fn test_should_connect_mtls(#[case] runtime: RuntimeType) {
-            let ctx = TestContextBuilder::new().mtls(true).build();
+            let ctx = TestContextBuilder::new()
+                .server_type(redis_test::server::ServerType::Tcp { tls: true })
+                .mtls(true)
+                .build();
 
             let connect = ctx.client.get_multiplexed_async_connection();
             block_on_all(
@@ -1644,7 +1650,10 @@ mod basic_async {
         #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
         #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
         fn test_should_not_connect_if_tls_active(#[case] runtime: RuntimeType) {
-            let ctx = TestContextBuilder::new().mtls(true).build();
+            let ctx = TestContextBuilder::new()
+                .server_type(redis_test::server::ServerType::Tcp { tls: true })
+                .mtls(true)
+                .build();
 
             let client =
                 build_single_client(ctx.server.connection_info(), &ctx.server.tls_paths, false)
