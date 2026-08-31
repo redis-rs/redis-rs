@@ -20,7 +20,7 @@ macro_rules! invalid_type_error {
 pub(crate) use {invalid_type_error, invalid_type_error_inner};
 
 // A consistent error value for connections closed without a reason.
-#[cfg(any(feature = "aio", feature = "r2d2", test))]
+#[cfg(any(feature = "aio", test))]
 pub(crate) fn closed_connection_error() -> RedisError {
     use std::io;
 

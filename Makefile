@@ -38,6 +38,11 @@ test:
 	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=unix RUST_BACKTRACE=1 cargo nextest run --locked -p redis --all-features --profile unix
 
 	@echo "===================================================================="
+	@echo "Testing Connection Type UNIX SOCKETS and RESP3"
+	@echo "===================================================================="
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=unix PROTOCOL=RESP3 RUST_BACKTRACE=1 cargo nextest run --locked -p redis --all-features --profile unix	
+
+	@echo "===================================================================="
 	@echo "Testing redis-test without features"
 	@echo "===================================================================="
 	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run --locked -p redis-test --no-default-features
