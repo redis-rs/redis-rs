@@ -128,6 +128,7 @@ macro_rules! panic_w_server_log_dump {
 /// let connection = ctx.connection();
 /// // Use `connection` to run commands
 /// ```
+#[non_exhaustive]
 pub struct TestContext {
     pub server: RedisServer,
     pub client: redis::Client,
