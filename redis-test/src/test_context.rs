@@ -99,8 +99,8 @@ impl TestContextBuilder {
 macro_rules! panic_w_server_log_dump {
     ($server:ident, $msg:literal $(, $arg:tt)*) => {
         let msg = format!($msg, $(, $arg)*);
-        let logs = $server.log_file_contents().unwrap_or_else(|| "<failed to read server log>".into());
-        panic!("{msg}\nServer logs:\n{logs}")
+        let process_info = $server.stop_with_info();
+        panic!("{msg}\n{process_info}")
     }
 }
 
@@ -163,10 +163,10 @@ impl TestContext {
                 Err(err) => {
                     if err.is_connection_refusal() {
                         // Check if the server is still alive
-                        if let Some(exit_status) = server.process.try_wait().unwrap() {
+                        if !server.is_alive() {
                             panic_w_server_log_dump!(
                                 server,
-                                "Server exited (status: {exit_status}) before we could connect"
+                                "Server exited before we could connect"
                             );
                         }
 

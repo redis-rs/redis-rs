@@ -1,5 +1,6 @@
 use redis::{ConnectionAddr, IntoConnectionInfo, ProtocolVersion, RedisConnectionInfo};
 use std::ffi::OsStr;
+use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::{env, fs, path::PathBuf, process};
 use tempfile::TempDir;
@@ -173,7 +174,16 @@ impl RedisServerBuilder {
 /// ```
 #[non_exhaustive]
 pub struct RedisServer {
-    pub process: process::Child,
+    /// The server's process
+    ///
+    /// To spare working with the process API direcly, [`is_alive`](Self::is_alive) allows to check
+    /// liveness, and [`stop_with_info`](Self::stop_with_info) yields relevant process info for
+    /// error messages.
+    pub process: Option<process::Child>,
+    /// The command that was used to start the server
+    ///
+    /// This is only used for debugging purposes
+    pub command: RedisServerCommand,
     pub tempdir: tempfile::TempDir,
     pub log_file: PathBuf,
     pub addr: redis::ConnectionAddr,
@@ -211,8 +221,8 @@ impl Default for RedisServer {
 }
 
 impl RedisServer {
-    pub fn log_file_contents(&self) -> Option<String> {
-        std::fs::read_to_string(self.log_file.clone()).ok()
+    pub fn log_file_contents(&self) -> std::io::Result<String> {
+        std::fs::read_to_string(self.log_file.clone())
     }
 
     pub fn get_addr(port: u16) -> ConnectionAddr {
@@ -337,8 +347,10 @@ impl RedisServer {
 
         cmd_refiner(&mut redis_cmd);
 
+        let process = Some(redis_cmd.spawn());
         Self {
-            process: redis_cmd.spawn(),
+            process,
+            command: redis_cmd,
             log_file,
             tempdir,
             addr,
@@ -368,16 +380,110 @@ impl RedisServer {
             .set_redis_settings(redis_settings())
     }
 
-    pub fn stop(&mut self) {
-        let _ = self.process.kill();
-        let _ = self.process.wait();
-        if let redis::ConnectionAddr::Unix(ref path) = *self.client_addr() {
-            fs::remove_file(path).ok();
+    /// Stops the server (if running) and optionally yields formatted process information
+    ///
+    /// It's safe to call this function on an already stopped server.
+    ///
+    /// If `format_process_info` is `true` for an instance's first call to this method, the
+    /// returned string holds the formatted process information (exit code, ...), which is useful
+    /// to build error messages.
+    fn stop_internal(&mut self, format_process_info: bool) -> String {
+        let Some(mut process) = self.process.take() else {
+            return "Server information no longer available (it has been reaped before)"
+                .to_string();
+        };
+        // In this branch, `process` will get consumed. To allow reporting its id even after
+        // consuming, we store it beforehand.
+        let process_id = process.id();
+
+        // The process is still running. So we signal it to stop.
+        if let Err(err) = process.kill() {
+            // Stopping the process failed. Maybe it between the above check and now, or we lack
+            // permission. We flag the issue and continue to clean up.
+            eprintln!("Failed to kill server process {process_id}: {err}");
         }
+
+        // Wait for the process to stop and collect its info (if needed)
+        let info = if format_process_info {
+            let exit_output_info = match process.wait_with_output() {
+                Ok(output) => {
+                    format!(
+                        "Server {}\nServer stdout:\n{}\nServer stderr:\n{}",
+                        output.status,
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr),
+                    )
+                }
+                Err(err) => {
+                    format!("Server exit/output information unavailable: {err}")
+                }
+            };
+
+            let log_info = match self.log_file_contents() {
+                Ok(contents) => {
+                    format!("Server logs:\n{contents}")
+                }
+                Err(err) => {
+                    format!("Server logs not available: {err}")
+                }
+            };
+
+            format!(
+                "Server command: {:?}\nServer process id: {process_id}\n{exit_output_info}\n{log_info}",
+                self.command
+            )
+        } else {
+            if let Err(err) = process.wait() {
+                eprintln!("Failed to wait for server process {process_id}: {err}");
+            }
+            String::new()
+        };
+
+        // Clean up unix sockets
+        if let redis::ConnectionAddr::Unix(ref path) = *self.client_addr()
+            && let Err(err) = fs::remove_file(path)
+        {
+            eprintln!("Failed to remove unix socket {}: {err}", path.display());
+        }
+
+        info
+    }
+
+    /// Stops the server (if it was running)
+    ///
+    /// It's safe to call this function on an already stopped server.
+    pub fn stop(&mut self) {
+        self.stop_internal(false);
+    }
+
+    /// Stops the server (if running) and yields returns process information on first `stop*` call
+    ///
+    /// It's safe to call this function on an already stopped server.
+    ///
+    /// If it's the first `stop*` call for this instance, the returned string holds the formatted
+    /// process information (exit code, ...), which is useful to build error messages.
+    pub fn stop_with_info(&mut self) -> String {
+        self.stop_internal(true)
     }
 
     pub fn log_file(tempdir: &TempDir) -> PathBuf {
         tempdir.path().join("redis.log")
+    }
+
+    /// Check if the server is still running
+    pub fn is_alive(&mut self) -> bool {
+        if let Some(process) = &mut self.process {
+            match process.try_wait() {
+                Ok(opt_exit_status) => return opt_exit_status.is_none(),
+                Err(err) => {
+                    eprintln!(
+                        "failed to check exit status of process {}, assuming stopped: {err}",
+                        process.id()
+                    );
+                }
+            }
+        }
+        false
     }
 }
 
@@ -479,6 +585,12 @@ impl CommandMultiArgs for RedisServerCommand {
     fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
         self.cmd.arg(arg);
         self
+    }
+}
+
+impl Debug for RedisServerCommand {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.cmd.fmt(f)
     }
 }
 
