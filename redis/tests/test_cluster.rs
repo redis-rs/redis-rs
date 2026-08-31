@@ -1307,7 +1307,7 @@ mod cluster {
                 .collect();
 
             let mut builder = redis::cluster::ClusterClient::builder(initial_nodes)
-                .use_protocol(use_protocol())
+                .use_protocol(use_protocol().unwrap_or(redis::ProtocolVersion::RESP2))
                 .node_address_map(address_map);
 
             if let Some(tls_file_paths) = &cluster.cluster.tls_paths {
@@ -1324,12 +1324,12 @@ mod cluster {
 pub mod pool_tests {
     use crate::support::*;
     use r2d2::ManageConnection;
+    use test_macros::cluster_test;
 
-    #[test]
-    fn is_valid_accepts_a_healthy_cluster_connection() {
-        let cluster = TestClusterContext::new();
-        let mut con = cluster.connection();
+    #[cluster_test]
+    fn is_valid_accepts_a_healthy_cluster_connection(ctx: TestClusterContext) {
+        let mut con = ctx.connection();
 
-        ManageConnection::is_valid(&cluster.client, &mut con).unwrap();
+        ManageConnection::is_valid(&ctx.client, &mut con).unwrap();
     }
 }

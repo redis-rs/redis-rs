@@ -312,13 +312,6 @@ where
             }
         }
     }
-
-    fn send_disconnect_if_needed(self: Pin<&mut Self>, err: &RedisError) {
-        if err.is_unrecoverable_error() {
-            let self_ = self.project();
-            send_disconnect(self_.push_sender);
-        }
-    }
 }
 
 impl<T> Sink<PipelineMessage> for PipelineSink<T>

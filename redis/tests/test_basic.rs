@@ -5181,10 +5181,10 @@ mod r2d2_pool {
     use r2d2::ManageConnection;
     use redis::{ErrorKind, ServerErrorKind};
     use redis_test::TestContext;
+    use test_macros::single_server_test;
 
-    #[test]
-    fn is_valid_reports_the_error_returned_by_the_server() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn is_valid_reports_the_error_returned_by_the_server(ctx: TestContext) {
         let mut con = ctx.connection();
 
         // Revoke `PING` from the default user, so that the health check fails

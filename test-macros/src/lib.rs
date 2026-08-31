@@ -477,7 +477,9 @@ pub fn cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             #[cfg(feature = "cluster")]
             fn resp2_tcp() {
                 let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
-                    redis_test::cluster::RedisClusterConfiguration::default().insecure_tls(),
+                    redis_test::cluster::RedisClusterConfiguration::default()
+                        .insecure_tls()
+                        .cluster_type(redis_test::cluster::ClusterType::Tcp),
                     redis::ProtocolVersion::RESP2,
                 );
                 #call_expr
@@ -501,7 +503,9 @@ pub fn cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             #[cfg(feature = "cluster")]
             fn resp3_tcp() {
                 let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
-                    redis_test::cluster::RedisClusterConfiguration::default().insecure_tls(),
+                    redis_test::cluster::RedisClusterConfiguration::default()
+                        .insecure_tls()
+                        .cluster_type(redis_test::cluster::ClusterType::Tcp),
                     redis::ProtocolVersion::RESP3,
                 );
                 #call_expr
@@ -550,7 +554,9 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
             fn resp2_tcp_tokio() {
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
-                        redis_test::cluster::RedisClusterConfiguration::default().insecure_tls(),
+                        redis_test::cluster::RedisClusterConfiguration::default()
+                            .insecure_tls()
+                            .cluster_type(redis_test::cluster::ClusterType::Tcp),
                         redis::ProtocolVersion::RESP2,
                     );
                     #call_expr
@@ -563,7 +569,9 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
             fn resp2_tcp_smol() {
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
-                        redis_test::cluster::RedisClusterConfiguration::default().insecure_tls(),
+                        redis_test::cluster::RedisClusterConfiguration::default()
+                            .insecure_tls()
+                            .cluster_type(redis_test::cluster::ClusterType::Tcp),
                         redis::ProtocolVersion::RESP2,
                     );
                     #call_expr
@@ -606,7 +614,9 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
             fn resp3_tcp_tokio() {
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
-                        redis_test::cluster::RedisClusterConfiguration::default().insecure_tls(),
+                        redis_test::cluster::RedisClusterConfiguration::default()
+                            .insecure_tls()
+                            .cluster_type(redis_test::cluster::ClusterType::Tcp),
                         redis::ProtocolVersion::RESP3,
                     );
                     #call_expr
@@ -619,7 +629,9 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
             fn resp3_tcp_smol() {
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
-                        redis_test::cluster::RedisClusterConfiguration::default().insecure_tls(),
+                        redis_test::cluster::RedisClusterConfiguration::default()
+                            .insecure_tls()
+                            .cluster_type(redis_test::cluster::ClusterType::Tcp),
                         redis::ProtocolVersion::RESP3,
                     );
                     #call_expr
