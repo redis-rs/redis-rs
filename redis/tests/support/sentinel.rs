@@ -64,7 +64,7 @@ impl TestSentinelContext {
             cluster,
             sentinel,
             sentinels_connection_info: initial_nodes,
-            protocol: use_protocol(),
+            protocol: use_protocol().unwrap_or(ProtocolVersion::RESP2),
             mtls_enabled: MTLS_NOT_ENABLED,
         };
         context.wait_for_cluster_up();

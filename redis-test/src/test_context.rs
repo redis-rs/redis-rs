@@ -158,7 +158,9 @@ impl TestContext {
     // Instead, users should to go through `TestContextBuilder` to limit the points of entry and
     // hence help us with maintenance.
     fn from_server(mut server: RedisServer, protocol: Option<ProtocolVersion>) -> Self {
-        let protocol = protocol.unwrap_or_else(use_protocol);
+        let protocol = protocol
+            .or_else(use_protocol)
+            .unwrap_or(ProtocolVersion::RESP2);
         let client = build_single_client(
             server.connection_info_with_protocol(protocol),
             &server.tls_paths,

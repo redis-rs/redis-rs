@@ -97,7 +97,9 @@ impl RedisClusterConfiguration {
     }
 
     pub fn get_cluster_type(&self) -> ClusterType {
-        self.cluster_type.unwrap_or_else(ClusterType::get_intended)
+        self.cluster_type
+            .or_else(ClusterType::get_intended)
+            .unwrap_or(ClusterType::Tcp)
     }
 
     pub fn get_require_secure_tls(&self) -> bool {
@@ -135,14 +137,14 @@ pub enum ClusterType {
 }
 
 impl ClusterType {
-    pub fn get_intended() -> Self {
+    pub fn get_intended() -> Option<Self> {
         match env::var("REDISRS_SERVER_TYPE")
             .ok()
             .as_ref()
             .map(|x| &x[..])
         {
-            Some("tcp+tls") => Self::TcpTls,
-            Some("tcp") | None => Self::Tcp,
+            Some("tcp+tls") => Some(Self::TcpTls),
+            Some("tcp") | None => Some(Self::Tcp),
             Some(val) => {
                 panic!("Unknown server type {val:?}");
             }

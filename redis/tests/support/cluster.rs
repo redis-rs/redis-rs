@@ -93,7 +93,11 @@ impl TestClusterContext {
     where
         F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
     {
-        Self::new_with_config_and_builder_and_protocol(cluster_config, initializer, use_protocol())
+        Self::new_with_config_and_builder_and_protocol(
+            cluster_config,
+            initializer,
+            use_protocol().unwrap_or(ProtocolVersion::RESP2),
+        )
     }
 
     pub fn new_with_config_and_builder_and_protocol<F>(
