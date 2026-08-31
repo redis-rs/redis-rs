@@ -215,6 +215,10 @@ name = "test_module_json"
 required-features = ["json", "serde/derive"]
 
 [[test]]
+name = "test_module_search"
+required-features = ["search_unfinished"]
+
+[[test]]
 name = "test_cluster_async"
 required-features = ["cluster-async"]
 
