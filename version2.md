@@ -10,6 +10,17 @@ redis = "2"
 
 ## Breaking Changes
 
+### `StreamInfoStreamReplyWithIdempotency` got folded into `StreamInfoStreamReply`
+
+`StreamInfoStreamReply` had the idempotency fields added.
+
+This removed the need for `StreamInfoStreamReplyWithIdempotency` and the `xinfo_stream_with_idempotency` command, which therefore got dropped.
+
+**Migration:**
+
+* Switch from `StreamInfoStreamReplyWithIdempotency` to `StreamInfoStreamReply`, and
+* Switch from `xinfo_stream_with_idempotency` to `xinfo_stream`.
+
 ### Several `struct`s and `enum`s are now marked `#[non_exhaustive]` (Breaking Change)
 
 The `#[non_exhaustive]` will allow us to add fields without having to trigger version bumps, hence help with maintenance.
