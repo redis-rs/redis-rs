@@ -5236,3 +5236,29 @@ mod basic {
         );
     }
 }
+
+#[cfg(feature = "r2d2")]
+mod r2d2_pool {
+    use r2d2::ManageConnection;
+    use redis::{ErrorKind, ServerErrorKind};
+    use redis_test::TestContext;
+
+    #[test]
+    fn is_valid_reports_the_error_returned_by_the_server() {
+        let ctx = TestContext::default();
+        let mut con = ctx.connection();
+
+        // Revoke `PING` from the default user, so that the health check fails
+        // with a server error instead of an I/O error.
+        redis::cmd("ACL")
+            .arg("SETUSER")
+            .arg("default")
+            .arg("-ping")
+            .exec(&mut con)
+            .unwrap();
+
+        let err = ManageConnection::is_valid(&ctx.client, &mut con).unwrap_err();
+
+        assert_eq!(err.kind(), ErrorKind::Server(ServerErrorKind::NoPerm));
+    }
+}
