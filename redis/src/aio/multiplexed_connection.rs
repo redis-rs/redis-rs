@@ -139,8 +139,10 @@ fn send_push(push_sender: &Option<Arc<dyn AsyncPushSender>>, info: PushInfo) {
     }
 }
 
-pub(crate) fn send_disconnect(push_sender: &Option<Arc<dyn AsyncPushSender>>) {
+fn send_disconnect(push_sender: &mut Option<Arc<dyn AsyncPushSender>>) {
     send_push(push_sender, PushInfo::disconnect());
+    // we don't want to send the same request twice, so if the connection is disconnected we can just stop sending push messages
+    push_sender.take();
 }
 
 impl<T> PipelineSink<T>
@@ -291,6 +293,13 @@ where
             }
         }
     }
+
+    fn send_disconnect_if_needed(self: Pin<&mut Self>, err: &RedisError) {
+        if err.is_unrecoverable_error() {
+            let self_ = self.project();
+            send_disconnect(self_.push_sender);
+        }
+    }
 }
 
 impl<T> Sink<PipelineMessage> for PipelineSink<T>
@@ -316,6 +325,7 @@ where
         match ready!(self.as_mut().project().sink_stream.poll_ready(cx)) {
             Ok(()) => Ok(()).into(),
             Err(err) => {
+                self.as_mut().send_disconnect_if_needed(&err);
                 *self.project().error = Some(err);
                 Ok(()).into()
             }
@@ -384,7 +394,8 @@ where
             .sink_stream
             .poll_flush(cx)
             .map_err(|err| {
-                self.as_mut().send_result(Err(err));
+                self.as_mut().send_disconnect_if_needed(&err);
+                self.send_result(Err(err));
             })
     }
 
