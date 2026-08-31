@@ -1,3 +1,4 @@
+use crate::errors::closed_connection_error;
 #[cfg(feature = "sentinel")]
 use crate::sentinel::LockedSentinelClient;
 use crate::{ConnectionLike, RedisError};
@@ -13,10 +14,10 @@ macro_rules! impl_manage_connection {
             }
 
             fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
-                let pong: String = crate::Cmd::ping().query(conn)?;
-                match pong.as_str() {
-                    "PONG" => Ok(()),
-                    _ => Err((crate::ErrorKind::UnexpectedReturnType, "ping request", pong).into()),
+                if conn.check_connection() {
+                    Ok(())
+                } else {
+                    Err(closed_connection_error())
                 }
             }
 
