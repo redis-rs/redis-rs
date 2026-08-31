@@ -53,11 +53,10 @@ mod cluster {
     }
 
     #[cluster_test(
-        config = "RedisClusterConfiguration::default().cluster_databases(16).insecure_tls()"
+        config = "RedisClusterConfiguration::default().cluster_databases(16).insecure_tls()",
+        supported_versions = "VALKEY_9_0"
     )]
     fn test_cluster_numbered_database(ctx: TestClusterContext) {
-        skip_if_context_does_not_support!(ctx, VALKEY_9_0);
-
         let ctx = ctx.with_cluster_client_builder(|builder| builder.database_id(4));
         let mut con = ctx.connection();
 
