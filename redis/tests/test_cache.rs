@@ -656,10 +656,9 @@ async fn test_connection_manager_maintains_statistics_after_crashes(
 
 #[cfg(feature = "cluster-async")]
 #[async_cluster_test]
-async fn test_cache_async_cluster_reconnect_all_nodes(_ctx: TestClusterContext) {
-    let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
-        builder.cache_config(CacheConfig::default())
-    });
+async fn test_cache_async_cluster_reconnect_all_nodes(ctx: TestClusterContext) {
+    let ctx =
+        ctx.with_cluster_client_builder(|builder| builder.cache_config(CacheConfig::default()));
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -719,10 +718,9 @@ async fn test_cache_async_cluster_reconnect_all_nodes(_ctx: TestClusterContext) 
 
 #[cfg(feature = "cluster-async")]
 #[async_cluster_test]
-async fn test_cache_async_cluster_mget(_ctx: TestClusterContext) {
-    let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
-        builder.cache_config(CacheConfig::default())
-    });
+async fn test_cache_async_cluster_mget(ctx: TestClusterContext) {
+    let ctx =
+        ctx.with_cluster_client_builder(|builder| builder.cache_config(CacheConfig::default()));
     if !ctx.protocol.supports_resp3() {
         return;
     }

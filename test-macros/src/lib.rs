@@ -38,6 +38,24 @@ fn parse_module_from_attr(attr: &TokenStream) -> proc_macro2::TokenStream {
     }
 }
 
+fn parse_config_from_attr(attr: &TokenStream) -> proc_macro2::TokenStream {
+    let mut config = None;
+    let parser = syn::meta::parser(|meta| {
+        if meta.path.is_ident("config") {
+            let value: syn::LitStr = meta.value()?.parse()?;
+            config = Some(syn::parse_str::<proc_macro2::TokenStream>(&value.value())?);
+            Ok(())
+        } else {
+            Err(meta.error("unsupported attribute; expected `config = \"...\"`"))
+        }
+    });
+    syn::parse::Parser::parse2(parser, attr.clone().into())
+        .expect("invalid `#[cluster_test]` attribute");
+    config.unwrap_or_else(|| {
+        quote! { redis_test::cluster::RedisClusterConfiguration::default().insecure_tls() }
+    })
+}
+
 fn generate_sync_call(
     function_name: &syn::Ident,
     inputs: &syn::punctuated::Punctuated<syn::FnArg, syn::token::Comma>,
@@ -310,7 +328,7 @@ pub fn async_single_server_test(attr: TokenStream, input: TokenStream) -> TokenS
 
             #[test]
             #ignore_flag
-            #[cfg(feature = "tokio-rustls-comp")]
+            #[cfg(any(feature = "tokio-rustls-comp", feature = "tokio-native-tls-comp"))]
             fn resp2_tls_tokio() {
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestContextBuilder::new()
@@ -324,7 +342,7 @@ pub fn async_single_server_test(attr: TokenStream, input: TokenStream) -> TokenS
 
             #[test]
             #ignore_flag
-            #[cfg(feature = "smol-rustls-comp")]
+            #[cfg(any(feature = "smol-rustls-comp", feature = "smol-native-tls-comp"))]
             fn resp2_tls_smol() {
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestContextBuilder::new()
@@ -394,7 +412,7 @@ pub fn async_single_server_test(attr: TokenStream, input: TokenStream) -> TokenS
 
             #[test]
             #ignore_flag
-            #[cfg(feature = "tokio-rustls-comp")]
+            #[cfg(any(feature = "tokio-rustls-comp", feature = "tokio-native-tls-comp"))]
             fn resp3_tls_tokio() {
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestContextBuilder::new()
@@ -408,7 +426,7 @@ pub fn async_single_server_test(attr: TokenStream, input: TokenStream) -> TokenS
 
             #[test]
             #ignore_flag
-            #[cfg(feature = "smol-rustls-comp")]
+            #[cfg(any(feature = "smol-rustls-comp", feature = "smol-native-tls-comp"))]
             fn resp3_tls_smol() {
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestContextBuilder::new()
@@ -454,9 +472,10 @@ pub fn async_single_server_test(attr: TokenStream, input: TokenStream) -> TokenS
 }
 
 #[proc_macro_attribute]
-pub fn cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
+pub fn cluster_test(attr: TokenStream, input: TokenStream) -> TokenStream {
     let mut item = parse_macro_input!(input as syn::ItemFn);
     let test_function_name = item.sig.ident.clone();
+    let config_expr = parse_config_from_attr(&attr);
 
     item.sig.ident = syn::Ident::new(
         &format!("{test_function_name}_internal"),
@@ -477,8 +496,7 @@ pub fn cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             #[cfg(feature = "cluster")]
             fn resp2_tcp() {
                 let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
-                    redis_test::cluster::RedisClusterConfiguration::default()
-                        .insecure_tls()
+                    (#config_expr)
                         .cluster_type(redis_test::cluster::ClusterType::Tcp),
                     redis::ProtocolVersion::RESP2,
                 );
@@ -487,11 +505,10 @@ pub fn cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
 
             #[test]
             #ignore_flag
-            #[cfg(all(feature = "cluster", feature = "tls-rustls"))]
+            #[cfg(all(feature = "cluster", any(feature = "tls-rustls", feature = "tls-native-tls")))]
             fn resp2_tls() {
                 let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
-                    redis_test::cluster::RedisClusterConfiguration::default()
-                        .insecure_tls()
+                    (#config_expr)
                         .cluster_type(redis_test::cluster::ClusterType::TcpTls),
                     redis::ProtocolVersion::RESP2,
                 );
@@ -503,8 +520,7 @@ pub fn cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             #[cfg(feature = "cluster")]
             fn resp3_tcp() {
                 let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
-                    redis_test::cluster::RedisClusterConfiguration::default()
-                        .insecure_tls()
+                    (#config_expr)
                         .cluster_type(redis_test::cluster::ClusterType::Tcp),
                     redis::ProtocolVersion::RESP3,
                 );
@@ -513,11 +529,10 @@ pub fn cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
 
             #[test]
             #ignore_flag
-            #[cfg(all(feature = "cluster", feature = "tls-rustls"))]
+            #[cfg(all(feature = "cluster", any(feature = "tls-rustls", feature = "tls-native-tls")))]
             fn resp3_tls() {
                 let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
-                    redis_test::cluster::RedisClusterConfiguration::default()
-                        .insecure_tls()
+                    (#config_expr)
                         .cluster_type(redis_test::cluster::ClusterType::TcpTls),
                     redis::ProtocolVersion::RESP3,
                 );
@@ -530,9 +545,10 @@ pub fn cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_attribute]
-pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
+pub fn async_cluster_test(attr: TokenStream, input: TokenStream) -> TokenStream {
     let mut item = parse_macro_input!(input as syn::ItemFn);
     let test_function_name = item.sig.ident.clone();
+    let config_expr = parse_config_from_attr(&attr);
 
     item.sig.ident = syn::Ident::new(
         &format!("{test_function_name}_internal"),
@@ -554,8 +570,7 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
             fn resp2_tcp_tokio() {
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
-                        redis_test::cluster::RedisClusterConfiguration::default()
-                            .insecure_tls()
+                        (#config_expr)
                             .cluster_type(redis_test::cluster::ClusterType::Tcp),
                         redis::ProtocolVersion::RESP2,
                     );
@@ -569,8 +584,7 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
             fn resp2_tcp_smol() {
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
-                        redis_test::cluster::RedisClusterConfiguration::default()
-                            .insecure_tls()
+                        (#config_expr)
                             .cluster_type(redis_test::cluster::ClusterType::Tcp),
                         redis::ProtocolVersion::RESP2,
                     );
@@ -580,12 +594,11 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
 
             #[test]
             #ignore_flag
-            #[cfg(all(feature = "cluster-async", feature = "tokio-rustls-comp"))]
+            #[cfg(all(feature = "cluster-async", any(feature = "tokio-rustls-comp", feature = "tokio-native-tls-comp")))]
             fn resp2_tls_tokio() {
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
-                        redis_test::cluster::RedisClusterConfiguration::default()
-                            .insecure_tls()
+                        (#config_expr)
                             .cluster_type(redis_test::cluster::ClusterType::TcpTls),
                         redis::ProtocolVersion::RESP2,
                     );
@@ -595,12 +608,11 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
 
             #[test]
             #ignore_flag
-            #[cfg(all(feature = "cluster-async", feature = "smol-rustls-comp"))]
+            #[cfg(all(feature = "cluster-async", any(feature = "smol-rustls-comp", feature = "smol-native-tls-comp")))]
             fn resp2_tls_smol() {
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
-                        redis_test::cluster::RedisClusterConfiguration::default()
-                            .insecure_tls()
+                        (#config_expr)
                             .cluster_type(redis_test::cluster::ClusterType::TcpTls),
                         redis::ProtocolVersion::RESP2,
                     );
@@ -614,8 +626,7 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
             fn resp3_tcp_tokio() {
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
-                        redis_test::cluster::RedisClusterConfiguration::default()
-                            .insecure_tls()
+                        (#config_expr)
                             .cluster_type(redis_test::cluster::ClusterType::Tcp),
                         redis::ProtocolVersion::RESP3,
                     );
@@ -629,8 +640,7 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
             fn resp3_tcp_smol() {
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
-                        redis_test::cluster::RedisClusterConfiguration::default()
-                            .insecure_tls()
+                        (#config_expr)
                             .cluster_type(redis_test::cluster::ClusterType::Tcp),
                         redis::ProtocolVersion::RESP3,
                     );
@@ -640,12 +650,11 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
 
             #[test]
             #ignore_flag
-            #[cfg(all(feature = "cluster-async", feature = "tokio-rustls-comp"))]
+            #[cfg(all(feature = "cluster-async", any(feature = "tokio-rustls-comp", feature = "tokio-native-tls-comp")))]
             fn resp3_tls_tokio() {
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
-                        redis_test::cluster::RedisClusterConfiguration::default()
-                            .insecure_tls()
+                        (#config_expr)
                             .cluster_type(redis_test::cluster::ClusterType::TcpTls),
                         redis::ProtocolVersion::RESP3,
                     );
@@ -655,12 +664,11 @@ pub fn async_cluster_test(_attr: TokenStream, input: TokenStream) -> TokenStream
 
             #[test]
             #ignore_flag
-            #[cfg(all(feature = "cluster-async", feature = "smol-rustls-comp"))]
+            #[cfg(all(feature = "cluster-async", any(feature = "smol-rustls-comp", feature = "smol-native-tls-comp")))]
             fn resp3_tls_smol() {
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
-                        redis_test::cluster::RedisClusterConfiguration::default()
-                            .insecure_tls()
+                        (#config_expr)
                             .cluster_type(redis_test::cluster::ClusterType::TcpTls),
                         redis::ProtocolVersion::RESP3,
                     );
@@ -708,7 +716,7 @@ pub fn sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
 
             #[test]
             #ignore_flag
-            #[cfg(all(feature = "sentinel", feature = "tls-rustls"))]
+            #[cfg(all(feature = "sentinel", any(feature = "tls-rustls", feature = "tls-native-tls")))]
             fn resp2_tls() {
                 let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
                     2,
@@ -736,7 +744,7 @@ pub fn sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStream {
 
             #[test]
             #ignore_flag
-            #[cfg(all(feature = "sentinel", feature = "tls-rustls"))]
+            #[cfg(all(feature = "sentinel", any(feature = "tls-rustls", feature = "tls-native-tls")))]
             fn resp3_tls() {
                 let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
                     2,
@@ -806,7 +814,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
 
             #[test]
             #ignore_flag
-            #[cfg(all(feature = "sentinel", feature = "tokio-rustls-comp"))]
+            #[cfg(all(feature = "sentinel", any(feature = "tokio-rustls-comp", feature = "tokio-native-tls-comp")))]
             fn resp2_tls_tokio() {
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
@@ -822,7 +830,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
 
             #[test]
             #ignore_flag
-            #[cfg(all(feature = "sentinel", feature = "smol-rustls-comp"))]
+            #[cfg(all(feature = "sentinel", any(feature = "smol-rustls-comp", feature = "smol-native-tls-comp")))]
             fn resp2_tls_smol() {
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
@@ -870,7 +878,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
 
             #[test]
             #ignore_flag
-            #[cfg(all(feature = "sentinel", feature = "tokio-rustls-comp"))]
+            #[cfg(all(feature = "sentinel", any(feature = "tokio-rustls-comp", feature = "tokio-native-tls-comp")))]
             fn resp3_tls_tokio() {
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(
@@ -886,7 +894,7 @@ pub fn async_sentinel_test(_attr: TokenStream, input: TokenStream) -> TokenStrea
 
             #[test]
             #ignore_flag
-            #[cfg(all(feature = "sentinel", feature = "smol-rustls-comp"))]
+            #[cfg(all(feature = "sentinel", any(feature = "smol-rustls-comp", feature = "smol-native-tls-comp")))]
             fn resp3_tls_smol() {
                 crate::support::block_on_all(async move {
                     let mut ctx = crate::support::TestSentinelContext::new_with_server_type_and_protocol(

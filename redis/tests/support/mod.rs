@@ -24,7 +24,7 @@ use redis_test::utils::TlsFilePaths;
 pub use redis_test::utils::build_single_client;
 #[cfg(feature = "tls-rustls")]
 pub use redis_test::utils::load_certs_from_file;
-#[cfg(feature = "tls-rustls")]
+#[allow(unused_imports)]
 pub use redis_test::utils::start_tls_crypto_provider;
 #[allow(unused_imports)]
 pub use redis_test::version::TestContextVersioning;

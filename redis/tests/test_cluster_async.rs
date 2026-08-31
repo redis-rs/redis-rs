@@ -143,10 +143,10 @@ mod cluster_async {
 
     #[async_test]
     async fn test_reconnect_only_the_disconnected_node_leave_other_connections_intact(
-        _ctx: TestClusterContext,
+        ctx: TestClusterContext,
     ) {
         // we remove retries in order to know that a request will fail immediately when discovering that a connection disconnected, instead of reconnecting and succeeding
-        let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(0));
+        let ctx = ctx.with_cluster_client_builder(|builder| builder.retries(0));
 
         let first_node = ctx.cluster.servers[0]
             .host_and_port()
@@ -453,14 +453,11 @@ mod cluster_async {
     }
 
     #[cfg(feature = "tls-rustls")]
-    #[async_test]
-    async fn test_async_cluster_default_reject_invalid_hostnames(_ctx: TestClusterContext) {
-        let cluster = TestClusterContext::new_with_config(
-            RedisClusterConfiguration::default()
-                .insecure_tls()
-                .certs_without_ip_alts(),
-        );
-        if let redis::ConnectionAddr::TcpTls { .. } = cluster
+    #[async_test(
+        config = "RedisClusterConfiguration::default().insecure_tls().certs_without_ip_alts()"
+    )]
+    async fn test_async_cluster_default_reject_invalid_hostnames(ctx: TestClusterContext) {
+        if let redis::ConnectionAddr::TcpTls { .. } = ctx
             .cluster
             .iter_servers()
             .next()
@@ -468,20 +465,18 @@ mod cluster_async {
             .connection_info()
             .addr()
         {
-            assert!(cluster.client.get_async_connection().await.is_err());
+            assert!(ctx.client.get_async_connection().await.is_err());
         }
     }
 
     #[cfg(feature = "tls-rustls-insecure")]
-    #[async_test]
-    async fn test_async_cluster_danger_accept_invalid_hostnames(_ctx: TestClusterContext) {
-        let cluster = TestClusterContext::new_with_config_and_builder(
-            RedisClusterConfiguration::default()
-                .insecure_tls()
-                .certs_without_ip_alts(),
-            |builder| builder.danger_accept_invalid_hostnames(true),
-        );
-        if let redis::ConnectionAddr::TcpTls { .. } = cluster
+    #[async_test(
+        config = "RedisClusterConfiguration::default().insecure_tls().certs_without_ip_alts()"
+    )]
+    async fn test_async_cluster_danger_accept_invalid_hostnames(ctx: TestClusterContext) {
+        let ctx = ctx
+            .with_cluster_client_builder(|builder| builder.danger_accept_invalid_hostnames(true));
+        if let redis::ConnectionAddr::TcpTls { .. } = ctx
             .cluster
             .iter_servers()
             .next()
@@ -489,23 +484,19 @@ mod cluster_async {
             .connection_info()
             .addr()
         {
-            let connection = cluster.async_connection().await;
+            let connection = ctx.async_connection().await;
             smoke_test_connection(connection).await;
         }
     }
 
     #[cfg(feature = "tls-rustls")]
-    #[async_test]
-    async fn async_cluster_node_address_map_fixes_tls_hostname_mismatch(_ctx: TestClusterContext) {
+    #[async_test(
+        config = "RedisClusterConfiguration::default().insecure_tls().certs_without_ip_alts().dns_hostname(\"localhost\")"
+    )]
+    async fn async_cluster_node_address_map_fixes_tls_hostname_mismatch(ctx: TestClusterContext) {
         // Certs issued for "localhost" only (no IP SAN), so connecting via
         // 127.0.0.1 will fail TLS verification without node_address_map.
-        let cluster = TestClusterContext::new_with_config(
-            RedisClusterConfiguration::default()
-                .insecure_tls()
-                .certs_without_ip_alts()
-                .dns_hostname("localhost"),
-        );
-        if let redis::ConnectionAddr::TcpTls { .. } = cluster
+        if let redis::ConnectionAddr::TcpTls { .. } = ctx
             .cluster
             .iter_servers()
             .next()
@@ -513,7 +504,7 @@ mod cluster_async {
             .connection_info()
             .addr()
         {
-            let err = match cluster.client.get_async_connection().await {
+            let err = match ctx.client.get_async_connection().await {
                 Ok(_) => panic!("connecting via IP address should fail TLS hostname verification"),
                 Err(err) => err,
             };
@@ -528,7 +519,7 @@ mod cluster_async {
             );
 
             let mut address_map = HashMap::new();
-            for server in cluster.cluster.iter_servers() {
+            for server in ctx.cluster.iter_servers() {
                 if let Some((host, port)) = server.host_and_port() {
                     address_map.insert(
                         redis::cluster::NodeAddress::new(host, port),
@@ -537,17 +528,17 @@ mod cluster_async {
                 }
             }
 
-            let initial_nodes: Vec<redis::ConnectionInfo> = cluster
+            let initial_nodes: Vec<redis::ConnectionInfo> = ctx
                 .cluster
                 .iter_servers()
                 .map(|s| s.connection_info())
                 .collect();
 
             let mut builder = ClusterClient::builder(initial_nodes)
-                .use_protocol(cluster.protocol)
+                .use_protocol(ctx.protocol)
                 .node_address_map(address_map);
 
-            if let Some(tls_file_paths) = &cluster.cluster.tls_paths {
+            if let Some(tls_file_paths) = &ctx.cluster.tls_paths {
                 builder = builder.certs(load_certs_from_file(tls_file_paths));
             }
 

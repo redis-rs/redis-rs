@@ -119,7 +119,6 @@ pin_project! {
         error: Option<RedisError>,
         push_sender: Option<Arc<dyn AsyncPushSender>>,
         cache_manager: Option<CacheManager>,
-        disconnect_sent: bool,
     }
 }
 
@@ -131,7 +130,6 @@ pin_project! {
         in_flight: VecDeque<InFlight>,
         error: Option<RedisError>,
         push_sender: Option<Arc<dyn AsyncPushSender>>,
-        disconnect_sent: bool,
     }
 }
 
@@ -164,22 +162,8 @@ where
             in_flight: VecDeque::new(),
             error: None,
             push_sender,
-            disconnect_sent: false,
             #[cfg(feature = "cache-aio")]
             cache_manager,
-        }
-    }
-
-    // Sends a single disconnect push if the given error indicates that the
-    // connection cannot be used anymore and a disconnect push wasn't sent yet.
-    fn send_disconnect_if_needed(self: Pin<&mut Self>, err: &RedisError) {
-        if !err.is_unrecoverable_error() {
-            return;
-        }
-        let self_ = self.project();
-        if !*self_.disconnect_sent {
-            *self_.disconnect_sent = true;
-            send_disconnect(self_.push_sender);
         }
     }
 
@@ -197,10 +181,7 @@ where
             self.as_mut().send_result(item);
             if is_unrecoverable {
                 let self_ = self.project();
-                if !*self_.disconnect_sent {
-                    *self_.disconnect_sent = true;
-                    send_disconnect(self_.push_sender);
-                }
+                send_disconnect(self_.push_sender);
                 return Poll::Ready(Err(()));
             }
         }
@@ -310,6 +291,13 @@ where
                     _ = output.send(response);
                 }
             }
+        }
+    }
+
+    fn send_disconnect_if_needed(self: Pin<&mut Self>, err: &RedisError) {
+        if err.is_unrecoverable_error() {
+            let self_ = self.project();
+            send_disconnect(self_.push_sender);
         }
     }
 }
