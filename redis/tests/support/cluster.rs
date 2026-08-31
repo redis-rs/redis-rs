@@ -13,9 +13,6 @@ use redis::RedisResult;
 use redis::aio::ConnectionLike;
 #[cfg(feature = "cluster-async")]
 use redis::cluster_async::Connect;
-#[cfg(feature = "tls-rustls")]
-// ClusterType is available for configuration but not referenced directly in this file.
-// Remove direct import to avoid unused-import warnings.
 use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
 use redis_test::server::{RedisServer, use_protocol};
 use redis_test::utils::{build_single_client, start_tls_crypto_provider};
@@ -38,13 +35,11 @@ impl TestClusterContext {
     }
 
     pub fn new_with_mtls() -> Self {
-        let mut cfg = RedisClusterConfiguration::default()
+        let cfg = RedisClusterConfiguration::default()
             .mtls_enabled()
             .insecure_tls();
         #[cfg(feature = "tls-rustls")]
-        {
-            cfg = cfg.cluster_type(redis_test::cluster::ClusterType::TcpTls);
-        }
+        let cfg = cfg.cluster_type(redis_test::cluster::ClusterType::TcpTls);
 
         Self::new_with_config_and_builder(cfg, identity)
     }
@@ -158,6 +153,22 @@ impl TestClusterContext {
         }
 
         initializer(builder).build().unwrap()
+    }
+
+    /// Returns a new context against the same (already-running) servers, but with
+    /// the cluster client rebuilt through the given builder initializer.
+    pub fn with_cluster_client_builder<F>(self, initializer: F) -> Self
+    where
+        F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
+    {
+        let client = self.new_client_with_builder(initializer);
+        Self {
+            cluster: self.cluster,
+            client,
+            mtls_enabled: self.mtls_enabled,
+            nodes: self.nodes,
+            protocol: self.protocol,
+        }
     }
 
     pub fn connection(&self) -> redis::cluster::ClusterConnection {

@@ -941,8 +941,9 @@ pub mod async_tests {
         );
     }
 
-    #[async_sentinel_test]
-    async fn test_sentinel_client_async_io_error(_ctx: TestSentinelContext) {
+    #[cfg(all(feature = "sentinel", feature = "tokio-comp"))]
+    #[tokio::test]
+    async fn test_sentinel_client_async_io_error() {
         let master_name = "master1";
 
         let mut master_client = SentinelClient::build(
