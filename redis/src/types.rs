@@ -852,6 +852,7 @@ pub enum Role {
 /// Replication information for a replica, as returned by the [`ROLE`][1] command.
 ///
 /// [1]: https://redis.io/docs/latest/commands/role/
+#[non_exhaustive]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ReplicaInfo {
     /// The IP of the replica.
@@ -860,6 +861,17 @@ pub struct ReplicaInfo {
     pub port: u16,
     /// The last acknowledged replication offset.
     pub replication_offset: i64,
+}
+
+impl ReplicaInfo {
+    /// Builds a new instance
+    pub fn new<S: Into<String>>(ip: S, port: u16, replication_offset: i64) -> Self {
+        Self {
+            ip: ip.into(),
+            port,
+            replication_offset,
+        }
+    }
 }
 
 impl FromRedisValue for ReplicaInfo {
