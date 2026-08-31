@@ -2484,12 +2484,12 @@ implement_commands! {
 
 
     /// Returns info about high-level stream details
-    /// (first & last message `id`, length, number of groups, etc.)
-    /// Take note of the StreamInfoStreamReply return type.
     ///
-    /// *It's possible this return value might not contain new fields added by Redis in future versions,
-    /// such as the idempotency fields introduced in Redis 8.6. For IDMP tracking statistics, use
-    /// [`xinfo_stream_with_idempotency`](Self::xinfo_stream_with_idempotency).*
+    /// This includes first and last message `id`, length, number of groups, etc.
+    ///
+    /// Take note of the [`StreamInfoStreamReply`](streams::StreamInfoStreamReply)
+    /// return type.
+    /// It's IDMP fields, however, only get set, if [IDMP is configured for the stream](#xcfgset).
     ///
     /// ```text
     /// XINFO STREAM <key>
@@ -2498,23 +2498,6 @@ implement_commands! {
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xinfo_stream<K: ToRedisArgs>(key: K) -> (streams::StreamInfoStreamReply) {
-        ready_cmd!("XINFO", "STREAM", key).take()
-    }
-
-    // TODO: Remove this function when creating the next major release.
-    /// Returns stream info with idempotency tracking statistics (Redis 8.6+).
-    ///
-    /// This command returns [`StreamInfoStreamReplyWithIdempotency`](streams::StreamInfoStreamReplyWithIdempotency)
-    /// which composes [`StreamInfoStreamReply`](streams::StreamInfoStreamReply) (accessible via the `base` field)
-    /// and adds IDMP (Idempotent Message Processing) tracking fields.
-    ///
-    /// ```text
-    /// XINFO STREAM <key>
-    /// ```
-    /// [Redis Docs](https://redis.io/commands/XINFO-STREAM)
-    #[cfg(feature = "streams")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
-    fn xinfo_stream_with_idempotency<K: ToRedisArgs>(key: K) -> (streams::StreamInfoStreamReplyWithIdempotency) {
         ready_cmd!("XINFO", "STREAM", key).take()
     }
 
