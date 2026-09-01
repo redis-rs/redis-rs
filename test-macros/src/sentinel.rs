@@ -230,40 +230,117 @@ pub(crate) fn expand_async_sentinel_test(_attr: TokenStream2, input: TokenStream
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn to_str(tokens: &TokenStream2) -> String {
-        tokens.to_string().replace(' ', "")
-    }
-
-    fn item() -> TokenStream2 {
-        "fn test(ctx: &mut TestContext) {}"
-            .to_string()
+    /// Asserts the produced expansion equals the expected full output. The expected is given as
+    /// readable source and parsed to a token stream first, then compared token-by-token via its
+    /// canonical string form (a full-output check, not a substring match).
+    fn assert_full(actual: TokenStream2, expected_src: &str) {
+        let expected: TokenStream2 = expected_src
             .parse()
-            .unwrap()
+            .expect("failed to parse expected expansion");
+        assert_eq!(actual.to_string(), expected.to_string());
     }
 
+    /// Each case: the input function and the full, explicit expected expansion for that
+    /// `#[sentinel_test]` scenario.
+    #[rstest::rstest]
+    #[case::ctx(
+        r#"fn test(ctx: &mut TestContext) {}"#,
+        r#"mod test { use super :: * ; fn test_internal (ctx : & mut TestContext) { } #[test]
+    #[cfg (feature = "sentinel")]
+    fn resp2_tcp () { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : false } , redis :: ProtocolVersion :: RESP2 ,) ; test_internal (& mut ctx) ; }
     #[test]
-    fn sentinel_emits_resp2_and_resp3() {
-        let out = expand_sentinel_test("".parse().unwrap(), item());
-        let s = to_str(&out);
-        assert!(s.contains("fnresp2_tcp()"));
-        assert!(s.contains("fnresp2_tls()"));
-        assert!(s.contains("fnresp3_tcp()"));
-        assert!(s.contains("fnresp3_tls()"));
-        assert!(s.contains("new_with_server_type_and_protocol"));
+    #[cfg (all (feature = "sentinel" , any (feature = "tls-rustls" , feature = "tls-native-tls")))]
+    fn resp2_tls () { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : true } , redis :: ProtocolVersion :: RESP2 ,) ; test_internal (& mut ctx) ; }
+    #[test]
+    #[cfg (feature = "sentinel")]
+    fn resp3_tcp () { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : false } , redis :: ProtocolVersion :: RESP3 ,) ; test_internal (& mut ctx) ; }
+    #[test]
+    #[cfg (all (feature = "sentinel" , any (feature = "tls-rustls" , feature = "tls-native-tls")))]
+    fn resp3_tls () { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : true } , redis :: ProtocolVersion :: RESP3 ,) ; test_internal (& mut ctx) ; } }"#
+    )]
+    #[case::bool(
+        r#"fn test(flag: bool) {}"#,
+        r#"mod test { use super :: * ; fn test_internal (flag : bool) { } #[test]
+    #[cfg (feature = "sentinel")]
+    fn resp2_tcp () { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : false } , redis :: ProtocolVersion :: RESP2 ,) ; test_internal (true) ; test_internal (false) ; }
+    #[test]
+    #[cfg (all (feature = "sentinel" , any (feature = "tls-rustls" , feature = "tls-native-tls")))]
+    fn resp2_tls () { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : true } , redis :: ProtocolVersion :: RESP2 ,) ; test_internal (true) ; test_internal (false) ; }
+    #[test]
+    #[cfg (feature = "sentinel")]
+    fn resp3_tcp () { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : false } , redis :: ProtocolVersion :: RESP3 ,) ; test_internal (true) ; test_internal (false) ; }
+    #[test]
+    #[cfg (all (feature = "sentinel" , any (feature = "tls-rustls" , feature = "tls-native-tls")))]
+    fn resp3_tls () { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : true } , redis :: ProtocolVersion :: RESP3 ,) ; test_internal (true) ; test_internal (false) ; } }"#
+    )]
+    fn sentinel_test(#[case] item_src: &str, #[case] expected: &str) {
+        let actual = expand_sentinel_test("".parse().unwrap(), item_src.parse().unwrap());
+        assert_full(actual, expected);
     }
 
+    /// Each case: the input function and the full, explicit expected expansion for that
+    /// `#[async_sentinel_test]` scenario.
+    #[rstest::rstest]
+    #[case::ctx(
+        r#"fn test(ctx: &mut TestContext) {}"#,
+        r#"mod test { use super :: * ; fn test_internal (ctx : & mut TestContext) { } #[test]
+    #[cfg (all (feature = "sentinel" , feature = "tokio-comp"))]
+    fn resp2_tcp_tokio () { crate :: support :: block_on_all (async move { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : false } , redis :: ProtocolVersion :: RESP2 ,) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
     #[test]
-    fn async_sentinel_emits_tokio_and_smol() {
-        let out = expand_async_sentinel_test("".parse().unwrap(), item());
-        let s = to_str(&out);
-        assert!(s.contains("fnresp2_tcp_tokio()"));
-        assert!(s.contains("fnresp2_tls_smol()"));
-        assert!(s.contains("fnresp3_tcp_smol()"));
-        assert!(s.contains("fnresp3_tls_tokio()"));
+    #[cfg (all (feature = "sentinel" , feature = "smol-comp"))]
+    fn resp2_tcp_smol () { crate :: support :: block_on_all (async move { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : false } , redis :: ProtocolVersion :: RESP2 ,) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Smol) ; }
+    #[test]
+    #[cfg (all (feature = "sentinel" , any (feature = "tokio-rustls-comp" , feature = "tokio-native-tls-comp")))]
+    fn resp2_tls_tokio () { crate :: support :: block_on_all (async move { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : true } , redis :: ProtocolVersion :: RESP2 ,) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
+    #[test]
+    #[cfg (all (feature = "sentinel" , any (feature = "smol-rustls-comp" , feature = "smol-native-tls-comp")))]
+    fn resp2_tls_smol () { crate :: support :: block_on_all (async move { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : true } , redis :: ProtocolVersion :: RESP2 ,) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Smol) ; }
+    #[test]
+    #[cfg (all (feature = "sentinel" , feature = "tokio-comp"))]
+    fn resp3_tcp_tokio () { crate :: support :: block_on_all (async move { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : false } , redis :: ProtocolVersion :: RESP3 ,) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
+    #[test]
+    #[cfg (all (feature = "sentinel" , feature = "smol-comp"))]
+    fn resp3_tcp_smol () { crate :: support :: block_on_all (async move { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : false } , redis :: ProtocolVersion :: RESP3 ,) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Smol) ; }
+    #[test]
+    #[cfg (all (feature = "sentinel" , any (feature = "tokio-rustls-comp" , feature = "tokio-native-tls-comp")))]
+    fn resp3_tls_tokio () { crate :: support :: block_on_all (async move { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : true } , redis :: ProtocolVersion :: RESP3 ,) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
+    #[test]
+    #[cfg (all (feature = "sentinel" , any (feature = "smol-rustls-comp" , feature = "smol-native-tls-comp")))]
+    fn resp3_tls_smol () { crate :: support :: block_on_all (async move { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : true } , redis :: ProtocolVersion :: RESP3 ,) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Smol) ; } }"#
+    )]
+    #[case::connection(
+        r#"fn test(conn: &mut Connection) {}"#,
+        r#"mod test { use super :: * ; fn test_internal (conn : & mut Connection) { } #[test]
+    #[cfg (all (feature = "sentinel" , feature = "tokio-comp"))]
+    fn resp2_tcp_tokio () { crate :: support :: block_on_all (async move { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : false } , redis :: ProtocolVersion :: RESP2 ,) ; let mut conn = ctx . async_connection () . await . unwrap () ; test_internal (& mut conn) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
+    #[test]
+    #[cfg (all (feature = "sentinel" , feature = "smol-comp"))]
+    fn resp2_tcp_smol () { crate :: support :: block_on_all (async move { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : false } , redis :: ProtocolVersion :: RESP2 ,) ; let mut conn = ctx . async_connection () . await . unwrap () ; test_internal (& mut conn) . await ; } , crate :: support :: RuntimeType :: Smol) ; }
+    #[test]
+    #[cfg (all (feature = "sentinel" , any (feature = "tokio-rustls-comp" , feature = "tokio-native-tls-comp")))]
+    fn resp2_tls_tokio () { crate :: support :: block_on_all (async move { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : true } , redis :: ProtocolVersion :: RESP2 ,) ; let mut conn = ctx . async_connection () . await . unwrap () ; test_internal (& mut conn) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
+    #[test]
+    #[cfg (all (feature = "sentinel" , any (feature = "smol-rustls-comp" , feature = "smol-native-tls-comp")))]
+    fn resp2_tls_smol () { crate :: support :: block_on_all (async move { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : true } , redis :: ProtocolVersion :: RESP2 ,) ; let mut conn = ctx . async_connection () . await . unwrap () ; test_internal (& mut conn) . await ; } , crate :: support :: RuntimeType :: Smol) ; }
+    #[test]
+    #[cfg (all (feature = "sentinel" , feature = "tokio-comp"))]
+    fn resp3_tcp_tokio () { crate :: support :: block_on_all (async move { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : false } , redis :: ProtocolVersion :: RESP3 ,) ; let mut conn = ctx . async_connection () . await . unwrap () ; test_internal (& mut conn) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
+    #[test]
+    #[cfg (all (feature = "sentinel" , feature = "smol-comp"))]
+    fn resp3_tcp_smol () { crate :: support :: block_on_all (async move { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : false } , redis :: ProtocolVersion :: RESP3 ,) ; let mut conn = ctx . async_connection () . await . unwrap () ; test_internal (& mut conn) . await ; } , crate :: support :: RuntimeType :: Smol) ; }
+    #[test]
+    #[cfg (all (feature = "sentinel" , any (feature = "tokio-rustls-comp" , feature = "tokio-native-tls-comp")))]
+    fn resp3_tls_tokio () { crate :: support :: block_on_all (async move { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : true } , redis :: ProtocolVersion :: RESP3 ,) ; let mut conn = ctx . async_connection () . await . unwrap () ; test_internal (& mut conn) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
+    #[test]
+    #[cfg (all (feature = "sentinel" , any (feature = "smol-rustls-comp" , feature = "smol-native-tls-comp")))]
+    fn resp3_tls_smol () { crate :: support :: block_on_all (async move { let mut ctx = crate :: support :: TestSentinelContext :: new_with_server_type_and_protocol (2 , 3 , 3 , redis_test :: server :: ServerType :: Tcp { tls : true } , redis :: ProtocolVersion :: RESP3 ,) ; let mut conn = ctx . async_connection () . await . unwrap () ; test_internal (& mut conn) . await ; } , crate :: support :: RuntimeType :: Smol) ; } }"#
+    )]
+    fn async_sentinel_test(#[case] item_src: &str, #[case] expected: &str) {
+        let actual = expand_async_sentinel_test("".parse().unwrap(), item_src.parse().unwrap());
+        assert_full(actual, expected);
     }
 }

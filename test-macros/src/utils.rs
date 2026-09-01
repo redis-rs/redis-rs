@@ -223,14 +223,23 @@ pub(crate) fn generate_async_cluster_call(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quote::ToTokens;
 
     fn parse_fn(input: &str) -> syn::ItemFn {
         syn::parse_str(input).expect("failed to parse function")
     }
 
     fn to_string(tokens: &proc_macro2::TokenStream) -> String {
-        tokens.to_token_stream().to_string().replace(' ', "")
+        tokens.to_string()
+    }
+
+    /// Asserts `actual` equals `expected_src` token-by-token (a full-output check, not a
+    /// substring match). The expected is given as readable source and parsed first, so whitespace
+    /// between tokens is irrelevant while string literal contents are preserved.
+    fn assert_full(actual: &proc_macro2::TokenStream, expected_src: &str) {
+        let expected: proc_macro2::TokenStream = expected_src
+            .parse()
+            .expect("failed to parse expected expansion");
+        assert_eq!(to_string(actual), to_string(&expected));
     }
 
     fn inputs_of(item: &syn::ItemFn) -> syn::punctuated::Punctuated<syn::FnArg, syn::token::Comma> {
@@ -241,177 +250,104 @@ mod tests {
         input.parse().expect("failed to parse attr")
     }
 
-    fn call_contains(tokens: &proc_macro2::TokenStream, needle: &str) -> bool {
-        to_string(tokens).contains(&needle.replace(' ', ""))
+    /// Calls a generator with the given input function and asserts the full output.
+    fn assert_call(
+        generator: fn(
+            &syn::Ident,
+            &syn::punctuated::Punctuated<syn::FnArg, syn::token::Comma>,
+        ) -> proc_macro2::TokenStream,
+        fn_src: &str,
+        expected: &str,
+    ) {
+        let item = parse_fn(fn_src);
+        let call = generator(&item.sig.ident, &inputs_of(&item));
+        assert_full(&call, expected);
     }
 
     #[test]
     fn module_from_attr_json() {
-        assert_eq!(
-            to_string(&parse_module_from_attr(&attr_stream("json"))),
-            ".module(redis_test::server::Module::Json)"
+        assert_full(
+            &parse_module_from_attr(&attr_stream("json")),
+            ".module(redis_test::server::Module::Json)",
         );
     }
 
     #[test]
     fn module_from_attr_bloom() {
-        assert_eq!(
-            to_string(&parse_module_from_attr(&attr_stream("bloom"))),
-            ".module(redis_test::server::Module::Bloom)"
+        assert_full(
+            &parse_module_from_attr(&attr_stream("bloom")),
+            ".module(redis_test::server::Module::Bloom)",
         );
     }
 
     #[test]
     fn module_from_attr_none() {
-        assert_eq!(to_string(&parse_module_from_attr(&attr_stream(""))), "");
+        assert_full(&parse_module_from_attr(&attr_stream("")), "");
     }
 
-    #[test]
-    fn sync_call_empty_inputs() {
-        let item = parse_fn("fn test() {}");
-        let call = generate_sync_call(&item.sig.ident, &inputs_of(&item));
-        assert_eq!(to_string(&call), "test();");
+    #[rstest::rstest]
+    #[case::empty("fn test() {}", "test();")]
+    #[case::bool("fn test(flag: bool) {}", "test(true); test(false);")]
+    #[case::ctx_ref("fn test(ctx: &mut TestContext) {}", "test(&mut ctx);")]
+    #[case::ctx_value("fn test(ctx: TestContext) {}", "test(ctx);")]
+    #[case::conn_ref(
+        "fn test(conn: &mut Connection) {}",
+        "let mut conn = ctx.connection(); test(&mut conn);"
+    )]
+    #[case::conn_value(
+        "fn test(conn: Connection) {}",
+        "let conn = ctx.connection(); test(conn);"
+    )]
+    fn sync_call(#[case] fn_src: &str, #[case] expected: &str) {
+        assert_call(generate_sync_call, fn_src, expected);
     }
 
-    #[test]
-    fn sync_call_bool_inputs() {
-        let item = parse_fn("fn test(flag: bool) {}");
-        let call = generate_sync_call(&item.sig.ident, &inputs_of(&item));
-        assert!(call_contains(&call, "test(true);"));
-        assert!(call_contains(&call, "test(false);"));
+    #[rstest::rstest]
+    #[case::empty("fn test() {}", "test().await;")]
+    #[case::bool("fn test(flag: bool) {}", "test(true).await; test(false).await;")]
+    #[case::ctx_ref("fn test(ctx: &mut TestContext) {}", "test(&mut ctx).await;")]
+    #[case::ctx_value("fn test(ctx: TestContext) {}", "test(ctx).await;")]
+    #[case::conn_ref(
+        "fn test(conn: &mut Connection) {}",
+        "let mut conn = ctx.async_connection().await.unwrap(); test(&mut conn).await;"
+    )]
+    #[case::conn_value(
+        "fn test(conn: Connection) {}",
+        "let conn = ctx.async_connection().await.unwrap(); test(conn).await;"
+    )]
+    fn async_call(#[case] fn_src: &str, #[case] expected: &str) {
+        assert_call(generate_async_call, fn_src, expected);
     }
 
-    #[test]
-    fn sync_call_ctx_ref() {
-        let item = parse_fn("fn test(ctx: &mut TestContext) {}");
-        let call = generate_sync_call(&item.sig.ident, &inputs_of(&item));
-        assert!(call_contains(&call, "test(&mutctx);"));
-    }
-
-    #[test]
-    fn sync_call_ctx_by_value() {
-        let item = parse_fn("fn test(ctx: TestContext) {}");
-        let call = generate_sync_call(&item.sig.ident, &inputs_of(&item));
-        assert!(call_contains(&call, "test(ctx);"));
-    }
-
-    #[test]
-    fn sync_call_connection_ref() {
-        let item = parse_fn("fn test(conn: &mut Connection) {}");
-        let call = generate_sync_call(&item.sig.ident, &inputs_of(&item));
-        assert!(call_contains(&call, "letmutconn=ctx.connection();"));
-        assert!(call_contains(&call, "test(&mutconn);"));
-    }
-
-    #[test]
-    fn sync_call_connection_by_value() {
-        let item = parse_fn("fn test(conn: Connection) {}");
-        let call = generate_sync_call(&item.sig.ident, &inputs_of(&item));
-        assert!(call_contains(&call, "letconn=ctx.connection();"));
-        assert!(call_contains(&call, "test(conn);"));
-    }
-
-    #[test]
-    fn async_call_empty_inputs() {
-        let item = parse_fn("fn test() {}");
-        let call = generate_async_call(&item.sig.ident, &inputs_of(&item));
-        assert_eq!(to_string(&call), "test().await;");
-    }
-
-    #[test]
-    fn async_call_bool_inputs() {
-        let item = parse_fn("fn test(flag: bool) {}");
-        let call = generate_async_call(&item.sig.ident, &inputs_of(&item));
-        assert!(call_contains(&call, "test(true).await;"));
-        assert!(call_contains(&call, "test(false).await;"));
-    }
-
-    #[test]
-    fn async_call_ctx_ref() {
-        let item = parse_fn("fn test(ctx: &mut TestContext) {}");
-        let call = generate_async_call(&item.sig.ident, &inputs_of(&item));
-        assert!(call_contains(&call, "test(&mutctx).await;"));
-    }
-
-    #[test]
-    fn async_call_ctx_by_value() {
-        let item = parse_fn("fn test(ctx: TestContext) {}");
-        let call = generate_async_call(&item.sig.ident, &inputs_of(&item));
-        assert!(call_contains(&call, "test(ctx).await;"));
-    }
-
-    #[test]
-    fn async_call_connection_ref() {
-        let item = parse_fn("fn test(conn: &mut Connection) {}");
-        let call = generate_async_call(&item.sig.ident, &inputs_of(&item));
-        assert!(call_contains(
-            &call,
-            "letmutconn=ctx.async_connection().await.unwrap();"
-        ));
-        assert!(call_contains(&call, "test(&mutconn).await;"));
-    }
-
-    #[test]
-    fn async_call_connection_by_value() {
-        let item = parse_fn("fn test(conn: Connection) {}");
-        let call = generate_async_call(&item.sig.ident, &inputs_of(&item));
-        assert!(call_contains(
-            &call,
-            "letconn=ctx.async_connection().await.unwrap();"
-        ));
-        assert!(call_contains(&call, "test(conn).await;"));
-    }
-
-    #[test]
-    fn async_cluster_call_empty_inputs() {
-        let item = parse_fn("fn test() {}");
-        let call = generate_async_cluster_call(&item.sig.ident, &inputs_of(&item));
-        assert_eq!(to_string(&call), "test().await;");
-    }
-
-    #[test]
-    fn async_cluster_call_connection_ref() {
-        let item = parse_fn("fn test(conn: &mut Connection) {}");
-        let call = generate_async_cluster_call(&item.sig.ident, &inputs_of(&item));
-        assert!(call_contains(
-            &call,
-            "letmutconn=ctx.async_connection().await;"
-        ));
-        assert!(call_contains(&call, "test(&mutconn).await;"));
-    }
-
-    #[test]
-    fn async_cluster_call_connection_by_value() {
-        let item = parse_fn("fn test(conn: Connection) {}");
-        let call = generate_async_cluster_call(&item.sig.ident, &inputs_of(&item));
-        assert!(call_contains(
-            &call,
-            "letconn=ctx.async_connection().await;"
-        ));
-        assert!(call_contains(&call, "test(conn).await;"));
-    }
-
-    #[test]
-    fn async_cluster_call_ctx_ref() {
-        let item = parse_fn("fn test(ctx: &mut TestContext) {}");
-        let call = generate_async_cluster_call(&item.sig.ident, &inputs_of(&item));
-        assert!(call_contains(&call, "test(&mutctx).await;"));
+    #[rstest::rstest]
+    #[case::empty("fn test() {}", "test().await;")]
+    #[case::ctx_ref("fn test(ctx: &mut TestContext) {}", "test(&mut ctx).await;")]
+    #[case::conn_ref(
+        "fn test(conn: &mut Connection) {}",
+        "let mut conn = ctx.async_connection().await; test(&mut conn).await;"
+    )]
+    #[case::conn_value(
+        "fn test(conn: Connection) {}",
+        "let conn = ctx.async_connection().await; test(conn).await;"
+    )]
+    fn async_cluster_call(#[case] fn_src: &str, #[case] expected: &str) {
+        assert_call(generate_async_cluster_call, fn_src, expected);
     }
 
     #[test]
     fn cluster_args_default_config() {
         let args = parse_cluster_test_args(&attr_stream(""));
-        assert!(call_contains(
+        assert_full(
             &args.config,
-            "redis_test::cluster::RedisClusterConfiguration::default().insecure_tls()"
-        ));
+            "redis_test::cluster::RedisClusterConfiguration::default().insecure_tls()",
+        );
         assert!(args.supported_versions.is_none());
     }
 
     #[test]
     fn cluster_args_config_only() {
         let args = parse_cluster_test_args(&attr_stream("config = \"foo().bar()\""));
-        assert!(call_contains(&args.config, "foo().bar()"));
+        assert_full(&args.config, "foo().bar()");
         assert!(args.supported_versions.is_none());
     }
 
@@ -419,10 +355,7 @@ mod tests {
     fn cluster_args_supported_versions_only() {
         let args = parse_cluster_test_args(&attr_stream("supported_versions = \"Json\""));
         assert!(args.supported_versions.is_some());
-        assert!(call_contains(
-            args.supported_versions.as_ref().unwrap(),
-            "Json"
-        ));
+        assert_full(args.supported_versions.as_ref().unwrap(), "Json");
     }
 
     #[test]
@@ -430,39 +363,41 @@ mod tests {
         let args = parse_cluster_test_args(&attr_stream(
             "config = \"foo()\", supported_versions = \"[Bloom]\"",
         ));
-        assert!(call_contains(&args.config, "foo()"));
-        assert!(call_contains(
-            args.supported_versions.as_ref().unwrap(),
-            "[Bloom]"
-        ));
+        assert_full(&args.config, "foo()");
+        assert_full(args.supported_versions.as_ref().unwrap(), "[Bloom]");
     }
 
     #[test]
     fn version_check_none() {
         let vc = generate_version_check(&None);
-        assert_eq!(to_string(&vc), "");
+        assert_full(&vc, "");
     }
 
     #[test]
     fn version_check_some() {
         let vc = generate_version_check(&Some(quote! { Json }));
-        let s = to_string(&vc);
-        assert!(s.contains("TestContextBuilder::new().build()"));
-        assert!(s.contains("TestContextVersioning::supports"));
-        assert!(s.contains("return;"));
+        assert_full(
+            &vc,
+            r#"{ let version_check_ctx = crate::support::TestContextBuilder::new().build();
+                if !crate::support::TestContextVersioning::supports(&version_check_ctx, Json) {
+                    eprintln!("Skipping the test because the running server does not support {:?}.", Json);
+                    return;
+                }
+            }"#,
+        );
     }
 
     #[test]
     fn ignore_flag_present() {
         let item = parse_fn("#[ignore]\nfn test(ctx: &mut TestContext) {}");
-        assert_eq!(to_string(&ignore_flag(&item)), "#[ignore]");
+        assert_full(&ignore_flag(&item), "#[ignore]");
         assert!(has_ignore_attr(&item));
     }
 
     #[test]
     fn ignore_flag_absent() {
         let item = parse_fn("fn test(ctx: &mut TestContext) {}");
-        assert_eq!(to_string(&ignore_flag(&item)), "");
+        assert_full(&ignore_flag(&item), "");
         assert!(!has_ignore_attr(&item));
     }
 
