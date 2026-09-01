@@ -3,6 +3,7 @@ use proc_macro::TokenStream;
 mod cluster;
 mod sentinel;
 mod single;
+mod test_env;
 mod utils;
 
 #[proc_macro_attribute]
