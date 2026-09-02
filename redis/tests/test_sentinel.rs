@@ -81,7 +81,7 @@ fn connect_to_all_replicas(
     node_conn_info: &SentinelNodeConnectionInfo,
     number_of_replicas: u16,
 ) -> Vec<ConnectionAddr> {
-    let mut replica_conn_infos = vec![];
+    let mut replica_conn_info = vec![];
 
     for _ in 0..number_of_replicas {
         let replica_client = sentinel
@@ -89,18 +89,18 @@ fn connect_to_all_replicas(
             .unwrap();
         let mut replica_con = replica_client.get_connection().unwrap();
 
-        assert!(!replica_conn_infos.contains(replica_client.get_connection_info().addr()));
-        replica_conn_infos.push(replica_client.get_connection_info().addr().clone());
+        assert!(!replica_conn_info.contains(replica_client.get_connection_info().addr()));
+        replica_conn_info.push(replica_client.get_connection_info().addr().clone());
 
         assert_connection_is_replica_of_correct_master(&mut replica_con, master_client);
     }
 
-    replica_conn_infos
+    replica_conn_info
 }
 
 fn assert_connect_to_known_replicas(
     sentinel: &mut Sentinel,
-    replica_conn_infos: &[ConnectionAddr],
+    replica_conn_info: &[ConnectionAddr],
     master_name: &str,
     master_client: &Client,
     node_conn_info: &SentinelNodeConnectionInfo,
@@ -112,7 +112,7 @@ fn assert_connect_to_known_replicas(
             .unwrap();
         let mut replica_con = replica_client.get_connection().unwrap();
 
-        assert!(replica_conn_infos.contains(replica_client.get_connection_info().addr()));
+        assert!(replica_conn_info.contains(replica_client.get_connection_info().addr()));
 
         assert_connection_is_replica_of_correct_master(&mut replica_con, master_client);
     }
@@ -331,7 +331,7 @@ fn test_sentinel_connect_to_multiple_replicas() {
 
     assert_is_connection_to_master(&mut master_con);
 
-    let replica_conn_infos = connect_to_all_replicas(
+    let replica_conn_info = connect_to_all_replicas(
         sentinel,
         master_name,
         &master_client,
@@ -341,7 +341,7 @@ fn test_sentinel_connect_to_multiple_replicas() {
 
     assert_connect_to_known_replicas(
         sentinel,
-        &replica_conn_infos,
+        &replica_conn_info,
         master_name,
         &master_client,
         &node_conn_info,
@@ -369,7 +369,7 @@ fn test_sentinel_server_down() {
 
     let sentinel = context.sentinel_mut();
 
-    let replica_conn_infos = connect_to_all_replicas(
+    let replica_conn_info = connect_to_all_replicas(
         sentinel,
         master_name,
         &master_client,
@@ -379,7 +379,7 @@ fn test_sentinel_server_down() {
 
     assert_connect_to_known_replicas(
         sentinel,
-        &replica_conn_infos,
+        &replica_conn_info,
         master_name,
         &master_client,
         &node_conn_info,
@@ -652,7 +652,7 @@ pub mod async_tests {
         node_conn_info: &SentinelNodeConnectionInfo,
         number_of_replicas: u16,
     ) -> Vec<ConnectionAddr> {
-        let mut replica_conn_infos = vec![];
+        let mut replica_conn_info = vec![];
 
         for _ in 0..number_of_replicas {
             let replica_client = sentinel
@@ -665,23 +665,23 @@ pub mod async_tests {
                 .unwrap();
 
             assert!(
-                !replica_conn_infos.contains(replica_client.get_connection_info().addr()),
+                !replica_conn_info.contains(replica_client.get_connection_info().addr()),
                 "pushing {:?} into {:?}",
                 replica_client.get_connection_info().addr(),
-                replica_conn_infos
+                replica_conn_info
             );
-            replica_conn_infos.push(replica_client.get_connection_info().addr().clone());
+            replica_conn_info.push(replica_client.get_connection_info().addr().clone());
 
             async_assert_connection_is_replica_of_correct_master(&mut replica_con, master_client)
                 .await;
         }
 
-        replica_conn_infos
+        replica_conn_info
     }
 
     async fn async_assert_connect_to_known_replicas(
         sentinel: &mut Sentinel,
-        replica_conn_infos: &[ConnectionAddr],
+        replica_conn_info: &[ConnectionAddr],
         master_name: &str,
         master_client: &Client,
         node_conn_info: &SentinelNodeConnectionInfo,
@@ -697,7 +697,7 @@ pub mod async_tests {
                 .await
                 .unwrap();
 
-            assert!(replica_conn_infos.contains(replica_client.get_connection_info().addr()));
+            assert!(replica_conn_info.contains(replica_client.get_connection_info().addr()));
 
             async_assert_connection_is_replica_of_correct_master(&mut replica_con, master_client)
                 .await;
@@ -752,7 +752,7 @@ pub mod async_tests {
 
         async_assert_is_connection_to_master(&mut master_con).await;
 
-        let replica_conn_infos = async_connect_to_all_replicas(
+        let replica_conn_info = async_connect_to_all_replicas(
             sentinel,
             master_name,
             &master_client,
@@ -763,7 +763,7 @@ pub mod async_tests {
 
         async_assert_connect_to_known_replicas(
             sentinel,
-            &replica_conn_infos,
+            &replica_conn_info,
             master_name,
             &master_client,
             &node_conn_info,
@@ -797,7 +797,7 @@ pub mod async_tests {
 
         let sentinel = context.sentinel_mut();
 
-        let replica_conn_infos = async_connect_to_all_replicas(
+        let replica_conn_info = async_connect_to_all_replicas(
             sentinel,
             master_name,
             &master_client,
@@ -808,7 +808,7 @@ pub mod async_tests {
 
         async_assert_connect_to_known_replicas(
             sentinel,
-            &replica_conn_infos,
+            &replica_conn_info,
             master_name,
             &master_client,
             &node_conn_info,
