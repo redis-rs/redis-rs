@@ -26,21 +26,21 @@ fn single_server_matrix() -> Vec<SyncVariant> {
         matrix.push(SyncVariant {
             protocol,
             kind: ServerKind::Tcp,
-            name: format!("{}_tcp", proto_lc),
+            name: format!("{proto_lc}_tcp"),
             cfg: quote! {},
             server_type: tcp.clone(),
         });
         matrix.push(SyncVariant {
             protocol,
             kind: ServerKind::Tls,
-            name: format!("{}_tls", proto_lc),
+            name: format!("{proto_lc}_tls"),
             cfg: tls_cfg.clone(),
             server_type: tls.clone(),
         });
         matrix.push(SyncVariant {
             protocol,
             kind: ServerKind::Unix,
-            name: format!("{}_unix", proto_lc),
+            name: format!("{proto_lc}_unix"),
             cfg: unix_cfg.clone(),
             server_type: unix.clone(),
         });
@@ -67,9 +67,9 @@ fn async_single_server_matrix() -> Vec<AsyncVariant> {
     for protocol in ["RESP2", "RESP3"] {
         let proto_lc = protocol.to_ascii_lowercase();
         for (kind, name, server_type) in [
-            (ServerKind::Tcp, format!("{}_tcp", proto_lc), tcp.clone()),
-            (ServerKind::Tls, format!("{}_tls", proto_lc), tls.clone()),
-            (ServerKind::Unix, format!("{}_unix", proto_lc), unix.clone()),
+            (ServerKind::Tcp, format!("{proto_lc}_tcp"), tcp.clone()),
+            (ServerKind::Tls, format!("{proto_lc}_tls"), tls.clone()),
+            (ServerKind::Unix, format!("{proto_lc}_unix"), unix.clone()),
         ] {
             for (runtime, runtime_lc) in [
                 (
@@ -83,14 +83,14 @@ fn async_single_server_matrix() -> Vec<AsyncVariant> {
             ] {
                 let feature = |name: &str| {
                     syn::LitStr::new(
-                        &format!("{}-{}", runtime_lc, name),
+                        &format!("{runtime_lc}-{name}"),
                         proc_macro2::Span::call_site(),
                     )
                 };
                 let cfg = match kind {
                     ServerKind::Tcp => {
                         let f = syn::LitStr::new(
-                            &format!("{}-comp", runtime_lc),
+                            &format!("{runtime_lc}-comp"),
                             proc_macro2::Span::call_site(),
                         );
                         quote! { #[cfg(feature = #f)] }
@@ -102,7 +102,7 @@ fn async_single_server_matrix() -> Vec<AsyncVariant> {
                     }
                     ServerKind::Unix => {
                         let f = syn::LitStr::new(
-                            &format!("{}-comp", runtime_lc),
+                            &format!("{runtime_lc}-comp"),
                             proc_macro2::Span::call_site(),
                         );
                         quote! { #[cfg(all(feature = #f, unix))] }
@@ -111,7 +111,7 @@ fn async_single_server_matrix() -> Vec<AsyncVariant> {
                 matrix.push(AsyncVariant {
                     protocol,
                     kind,
-                    name: format!("{}_{}", name, runtime_lc),
+                    name: format!("{name}_{runtime_lc}"),
                     cfg,
                     server_type: server_type.clone(),
                     runtime: runtime.clone(),
