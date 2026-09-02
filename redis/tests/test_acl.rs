@@ -4,7 +4,6 @@ use redis::TypedCommands;
 use redis::acl::Rule;
 use redis_test::REDIS_CE_7_2;
 use redis_test::TestContext;
-use redis_test::run_test_if_version_supported;
 use std::collections::HashSet;
 
 mod support;

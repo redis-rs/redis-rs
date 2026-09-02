@@ -248,31 +248,31 @@ mod tests {
         r#""#,
         r#"mod test { use super :: * ; fn test_internal (ctx : & mut TestContext) { } #[test]
     #[cfg (feature = "cluster")]
-    fn resp2_tcp () {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP2 ) ; test_internal (& mut ctx) ; }
+    fn resp2_tcp () {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP2 , ) ; test_internal (& mut ctx) ; }
     #[test]
     #[cfg (all (feature = "cluster" , any (feature = "tls-rustls" , feature = "tls-native-tls")))]
-    fn resp2_tls () {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP2 ) ; test_internal (& mut ctx) ; }
+    fn resp2_tls () {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP2 , ) ; test_internal (& mut ctx) ; }
     #[test]
     #[cfg (feature = "cluster")]
-    fn resp3_tcp () {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP3 ) ; test_internal (& mut ctx) ; }
+    fn resp3_tcp () {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP3 , ) ; test_internal (& mut ctx) ; }
     #[test]
     #[cfg (all (feature = "cluster" , any (feature = "tls-rustls" , feature = "tls-native-tls")))]
-    fn resp3_tls () {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP3 ) ; test_internal (& mut ctx) ; } }"#
+    fn resp3_tls () {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP3 , ) ; test_internal (& mut ctx) ; } }"#
     )]
     #[case::config_and_versions(
         r#"config = "foo()", supported_versions = "Json""#,
         r#"mod test { use super :: * ; fn test_internal (ctx : & mut TestContext) { } #[test]
     #[cfg (feature = "cluster")]
-    fn resp2_tcp () { { let version_check_ctx = crate :: support :: TestContextBuilder :: new () . build () ; if ! crate :: support :: TestContextVersioning :: supports (& version_check_ctx , Json) { eprintln ! ("Skipping the test because the running server does not support {:?}." , Json) ; return ; } } let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP2 ) ; test_internal (& mut ctx) ; }
+    fn resp2_tcp () { { let version_check_ctx = crate :: support :: TestContextBuilder :: new () . build () ; if ! crate :: support :: TestContextVersioning :: supports (& version_check_ctx , Json) { eprintln ! ("Skipping the test because the running server does not support {:?}." , Json) ; return ; } } let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP2 , ) ; test_internal (& mut ctx) ; }
     #[test]
     #[cfg (all (feature = "cluster" , any (feature = "tls-rustls" , feature = "tls-native-tls")))]
-    fn resp2_tls () { { let version_check_ctx = crate :: support :: TestContextBuilder :: new () . build () ; if ! crate :: support :: TestContextVersioning :: supports (& version_check_ctx , Json) { eprintln ! ("Skipping the test because the running server does not support {:?}." , Json) ; return ; } } let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP2 ) ; test_internal (& mut ctx) ; }
+    fn resp2_tls () { { let version_check_ctx = crate :: support :: TestContextBuilder :: new () . build () ; if ! crate :: support :: TestContextVersioning :: supports (& version_check_ctx , Json) { eprintln ! ("Skipping the test because the running server does not support {:?}." , Json) ; return ; } } let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP2 , ) ; test_internal (& mut ctx) ; }
     #[test]
     #[cfg (feature = "cluster")]
-    fn resp3_tcp () { { let version_check_ctx = crate :: support :: TestContextBuilder :: new () . build () ; if ! crate :: support :: TestContextVersioning :: supports (& version_check_ctx , Json) { eprintln ! ("Skipping the test because the running server does not support {:?}." , Json) ; return ; } } let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP3 ) ; test_internal (& mut ctx) ; }
+    fn resp3_tcp () { { let version_check_ctx = crate :: support :: TestContextBuilder :: new () . build () ; if ! crate :: support :: TestContextVersioning :: supports (& version_check_ctx , Json) { eprintln ! ("Skipping the test because the running server does not support {:?}." , Json) ; return ; } } let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP3 , ) ; test_internal (& mut ctx) ; }
     #[test]
     #[cfg (all (feature = "cluster" , any (feature = "tls-rustls" , feature = "tls-native-tls")))]
-    fn resp3_tls () { { let version_check_ctx = crate :: support :: TestContextBuilder :: new () . build () ; if ! crate :: support :: TestContextVersioning :: supports (& version_check_ctx , Json) { eprintln ! ("Skipping the test because the running server does not support {:?}." , Json) ; return ; } } let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP3 ) ; test_internal (& mut ctx) ; } }"#
+    fn resp3_tls () { { let version_check_ctx = crate :: support :: TestContextBuilder :: new () . build () ; if ! crate :: support :: TestContextVersioning :: supports (& version_check_ctx , Json) { eprintln ! ("Skipping the test because the running server does not support {:?}." , Json) ; return ; } } let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP3 , ) ; test_internal (& mut ctx) ; } }"#
     )]
     fn cluster_test(#[case] attr: &str, #[case] expected: &str) {
         with_env(clear_env, || {
@@ -291,55 +291,55 @@ mod tests {
         r#""#,
         r#"mod test { use super :: * ; fn test_internal (ctx : & mut TestContext) { } #[test]
     #[cfg (all (feature = "cluster-async" , feature = "tokio-comp"))]
-    fn resp2_tcp_tokio () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP2 ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
+    fn resp2_tcp_tokio () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP2 , ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
     #[test]
     #[cfg (all (feature = "cluster-async" , feature = "smol-comp"))]
-    fn resp2_tcp_smol () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP2 ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Smol) ; }
+    fn resp2_tcp_smol () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP2 , ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Smol) ; }
     #[test]
     #[cfg (all (feature = "cluster-async" , any (feature = "tokio-rustls-comp" , feature = "tokio-native-tls-comp")))]
-    fn resp2_tls_tokio () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP2 ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
+    fn resp2_tls_tokio () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP2 , ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
     #[test]
     #[cfg (all (feature = "cluster-async" , any (feature = "smol-rustls-comp" , feature = "smol-native-tls-comp")))]
-    fn resp2_tls_smol () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP2 ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Smol) ; }
+    fn resp2_tls_smol () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP2 , ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Smol) ; }
     #[test]
     #[cfg (all (feature = "cluster-async" , feature = "tokio-comp"))]
-    fn resp3_tcp_tokio () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP3 ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
+    fn resp3_tcp_tokio () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP3 , ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
     #[test]
     #[cfg (all (feature = "cluster-async" , feature = "smol-comp"))]
-    fn resp3_tcp_smol () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP3 ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Smol) ; }
+    fn resp3_tcp_smol () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP3 , ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Smol) ; }
     #[test]
     #[cfg (all (feature = "cluster-async" , any (feature = "tokio-rustls-comp" , feature = "tokio-native-tls-comp")))]
-    fn resp3_tls_tokio () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP3 ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
+    fn resp3_tls_tokio () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP3 , ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
     #[test]
     #[cfg (all (feature = "cluster-async" , any (feature = "smol-rustls-comp" , feature = "smol-native-tls-comp")))]
-    fn resp3_tls_smol () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP3 ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Smol) ; } }"#
+    fn resp3_tls_smol () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP3 , ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Smol) ; } }"#
     )]
     #[case::config(
         r#"config = "foo()""#,
         r#"mod test { use super :: * ; fn test_internal (ctx : & mut TestContext) { } #[test]
     #[cfg (all (feature = "cluster-async" , feature = "tokio-comp"))]
-    fn resp2_tcp_tokio () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP2 ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
+    fn resp2_tcp_tokio () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP2 , ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
     #[test]
     #[cfg (all (feature = "cluster-async" , feature = "smol-comp"))]
-    fn resp2_tcp_smol () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP2 ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Smol) ; }
+    fn resp2_tcp_smol () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP2 , ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Smol) ; }
     #[test]
     #[cfg (all (feature = "cluster-async" , any (feature = "tokio-rustls-comp" , feature = "tokio-native-tls-comp")))]
-    fn resp2_tls_tokio () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP2 ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
+    fn resp2_tls_tokio () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP2 , ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
     #[test]
     #[cfg (all (feature = "cluster-async" , any (feature = "smol-rustls-comp" , feature = "smol-native-tls-comp")))]
-    fn resp2_tls_smol () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP2 ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Smol) ; }
+    fn resp2_tls_smol () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP2 , ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Smol) ; }
     #[test]
     #[cfg (all (feature = "cluster-async" , feature = "tokio-comp"))]
-    fn resp3_tcp_tokio () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP3 ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
+    fn resp3_tcp_tokio () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP3 , ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
     #[test]
     #[cfg (all (feature = "cluster-async" , feature = "smol-comp"))]
-    fn resp3_tcp_smol () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP3 ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Smol) ; }
+    fn resp3_tcp_smol () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP3 , ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Smol) ; }
     #[test]
     #[cfg (all (feature = "cluster-async" , any (feature = "tokio-rustls-comp" , feature = "tokio-native-tls-comp")))]
-    fn resp3_tls_tokio () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP3 ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
+    fn resp3_tls_tokio () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP3 , ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Tokio) ; }
     #[test]
     #[cfg (all (feature = "cluster-async" , any (feature = "smol-rustls-comp" , feature = "smol-native-tls-comp")))]
-    fn resp3_tls_smol () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP3 ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Smol) ; } }"#
+    fn resp3_tls_smol () { crate :: support :: block_on_all (async move {  let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((foo ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP3 , ) ; test_internal (& mut ctx) . await ; } , crate :: support :: RuntimeType :: Smol) ; } }"#
     )]
     fn async_cluster_test(#[case] attr: &str, #[case] expected: &str) {
         with_env(clear_env, || {
@@ -375,7 +375,7 @@ mod tests {
 
         assert_eq!(
             expand("tcp", None),
-            r#"mod test { use super :: * ; fn test_internal (ctx : & mut TestContext) { } #[test] #[cfg (feature = "cluster")] fn resp2_tcp () { let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP2 ) ; test_internal (& mut ctx) ; } #[test] #[cfg (feature = "cluster")] fn resp3_tcp () { let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP3 ) ; test_internal (& mut ctx) ; } }"#
+            r#"mod test { use super :: * ; fn test_internal (ctx : & mut TestContext) { } #[test] #[cfg (feature = "cluster")] fn resp2_tcp () { let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP2 , ) ; test_internal (& mut ctx) ; } #[test] #[cfg (feature = "cluster")] fn resp3_tcp () { let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: Tcp) , redis :: ProtocolVersion :: RESP3 , ) ; test_internal (& mut ctx) ; } }"#
                 .parse::<TokenStream2>()
                 .unwrap()
                 .to_string()
@@ -383,7 +383,7 @@ mod tests {
 
         assert_eq!(
             expand("tcp+tls", Some("RESP2")),
-            r#"mod test { use super :: * ; fn test_internal (ctx : & mut TestContext) { } #[test] #[cfg (all (feature = "cluster" , any (feature = "tls-rustls" , feature = "tls-native-tls")))] fn resp2_tls () { let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP2 ) ; test_internal (& mut ctx) ; } }"#
+            r#"mod test { use super :: * ; fn test_internal (ctx : & mut TestContext) { } #[test] #[cfg (all (feature = "cluster" , any (feature = "tls-rustls" , feature = "tls-native-tls")))] fn resp2_tls () { let mut ctx = crate :: support :: TestClusterContext :: new_with_config_and_protocol ((redis_test :: cluster :: RedisClusterConfiguration :: default () . insecure_tls ()) . cluster_type (redis_test :: cluster :: ClusterType :: TcpTls) , redis :: ProtocolVersion :: RESP2 , ) ; test_internal (& mut ctx) ; } }"#
                 .parse::<TokenStream2>()
                 .unwrap()
                 .to_string()
