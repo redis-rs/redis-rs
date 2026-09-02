@@ -337,7 +337,7 @@ mod cluster_async {
             .route_command(redis::cmd("INFO"), routing)
             .await
             .unwrap();
-        let (addresses, infos) = split_to_addresses_and_info(res);
+        let (addresses, info) = split_to_addresses_and_info(res);
 
         let mut cluster_addresses: Vec<_> = cluster_addresses
             .into_iter()
@@ -347,10 +347,10 @@ mod cluster_async {
 
         assert_eq!(addresses.len(), 6);
         assert_eq!(addresses, cluster_addresses);
-        assert_eq!(infos.len(), 6);
+        assert_eq!(info.len(), 6);
         for i in 0..6 {
             let split: Vec<_> = addresses[i].split(':').collect();
-            assert!(infos[i].contains(&format!("tcp_port:{}", split[1])));
+            assert!(info[i].contains(&format!("tcp_port:{}", split[1])));
         }
 
         let route_to_all_primaries = MultipleNodeRoutingInfo::AllMasters;
@@ -359,15 +359,15 @@ mod cluster_async {
             .route_command(redis::cmd("INFO"), routing)
             .await
             .unwrap();
-        let (addresses, infos) = split_to_addresses_and_info(res);
+        let (addresses, info) = split_to_addresses_and_info(res);
         assert_eq!(addresses.len(), 3);
-        assert_eq!(infos.len(), 3);
+        assert_eq!(info.len(), 3);
         // verify that all primaries have the correct port & host, and are marked as primaries.
         for i in 0..3 {
             assert!(cluster_addresses.contains(&addresses[i]));
             let split: Vec<_> = addresses[i].split(':').collect();
-            assert!(infos[i].contains(&format!("tcp_port:{}", split[1])));
-            assert!(infos[i].contains("role:primary") || infos[i].contains("role:master"));
+            assert!(info[i].contains(&format!("tcp_port:{}", split[1])));
+            assert!(info[i].contains("role:primary") || info[i].contains("role:master"));
         }
     }
 
