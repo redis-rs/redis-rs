@@ -275,6 +275,13 @@ impl RedisServer {
         // This stops littering `dump.rdb` files during testing/development.
         redis_cmd.arg2("--save", "");
 
+        // We'd like to prohibit loading dumps by setting `dbfilename` to the empty string. But that
+        // only works on Redis and is prohibited in Valkey.
+
+        // We'd prefer `flushdb` here to prohibit more disk actions, but this is only available on
+        // Redis 8.6+. So we fall back to `on-empty-db`, which also covers the typical setup.
+        redis_cmd.arg2("--repl-diskless-load", "on-empty-db");
+
         redis_cmd.load_modules(modules);
 
         let tempdir = tempfile::Builder::new()
