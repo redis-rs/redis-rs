@@ -5,8 +5,6 @@ mod support;
 #[cfg(test)]
 mod cluster {
     // TLS cluster type checks are now done at runtime against the created cluster.
-    #[cfg(feature = "tls-rustls")]
-    use redis_test::utils::load_certs_from_file;
     use std::collections::HashMap;
     use std::sync::{
         Arc,
@@ -23,7 +21,6 @@ mod cluster {
         cmd, from_redis_value, parse_redis_value,
     };
     use redis_test::{
-        VALKEY_9_0,
         cluster::{RedisCluster, RedisClusterConfiguration},
         redis_value,
         server::use_protocol,
@@ -55,8 +52,8 @@ mod cluster {
     }
 
     #[cluster_test]
-    fn test_cluster_numbered_database(_ctx: TestClusterContext) {
-        skip_if_context_does_not_support!(_ctx, VALKEY_9_0);
+    fn test_cluster_numbered_database(ctx: TestClusterContext) {
+        skip_if_context_does_not_support!(ctx, VALKEY_9_0);
 
         let cluster = TestClusterContext::new_with_config_and_builder(
             RedisClusterConfiguration::default()

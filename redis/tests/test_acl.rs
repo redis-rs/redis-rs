@@ -156,9 +156,9 @@ fn test_acl_log(ctx: TestContext) {
 }
 
 #[single_server_test]
-fn test_acl_dryrun() {
+fn test_acl_dryrun(ctx: TestContext) {
     // Skip the test <7.2, as the error message at the end was different before 7.2
-    let ctx = run_test_if_version_supported!(REDIS_CE_7_2);
+    skip_if_context_does_not_support!(ctx, REDIS_CE_7_2);
 
     let mut con = ctx.connection();
 
@@ -262,8 +262,8 @@ fn test_acl_info(ctx: TestContext) {
     assert_eq!(info.selectors, vec![]);
 }
 #[single_server_test]
-fn test_acl_sample_info() {
-    let ctx = run_test_if_version_supported!(REDIS_CE_7_2);
+fn test_acl_sample_info(ctx: TestContext) {
+    skip_if_context_does_not_support!(ctx, REDIS_CE_7_2);
     let mut conn = ctx.connection();
     let sample_rule = vec![
         Rule::On,
@@ -323,7 +323,6 @@ mod token_based_authentication_acl_tests {
         aio::ConnectionLike,
         auth::{BasicAuth, StreamingCredentialsProvider},
     };
-    use redis_test::TestContext;
     use std::{
         pin::Pin,
         sync::{Arc, Mutex, Once, RwLock},

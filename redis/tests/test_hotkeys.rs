@@ -5,31 +5,17 @@ mod support;
 
 #[cfg(test)]
 mod hotkeys {
-
-    use redis::{Commands, HotkeysCommands, HotkeysOptions, ProtocolVersion, RedisConnectionInfo};
-    use redis_test::{REDIS_CE_8_6, TestContext, skip_if_context_does_not_support};
-
-    use rstest::rstest;
+    use crate::support::*;
+    use redis::{Commands, HotkeysCommands, HotkeysOptions};
     use std::thread::sleep;
     use std::time::Duration;
+    use test_macros::single_server_test;
 
     const TEST_KEYS_AND_VALUES: [(&str, &str); 3] = [
         ("test_key_1", "value1"),
         ("test_key_2", "value2"),
         ("test_key_3", "value3"),
     ];
-
-    fn setup_connection_with_protocol(
-        ctx: &TestContext,
-        protocol: ProtocolVersion,
-    ) -> redis::Connection {
-        let connection_info = ctx
-            .server
-            .connection_info()
-            .set_redis_settings(RedisConnectionInfo::default().set_protocol(protocol));
-        let client = redis::Client::open(connection_info).unwrap();
-        client.get_connection().unwrap()
-    }
 
     fn setup_test_keys_and_make_hot_keys(con: &mut redis::Connection) {
         for (i, (key, value)) in TEST_KEYS_AND_VALUES.iter().enumerate() {
@@ -67,16 +53,13 @@ mod hotkeys {
         }
     }
 
-    #[rstest]
-    #[case(ProtocolVersion::RESP2)]
-    #[case(ProtocolVersion::RESP3)]
-    fn test_hotkeys_state_machine_behavior(#[case] protocol: ProtocolVersion) {
+    #[single_server_test]
+    fn test_hotkeys_state_machine_behavior(ctx: TestContext) {
         // `HOTKEYS` is only supported in Redis 8.6+ (but not Valkey<=9.1)
-        let ctx = TestContext::default();
         skip_if_context_does_not_support!(ctx, REDIS_CE_8_6);
-        let mut con = setup_connection_with_protocol(&ctx, protocol);
+        let mut con = ctx.connection();
 
-        println!("Starting test_hotkeys_state_machine_behavior - Protocol: {protocol:?}");
+        println!("Starting test_hotkeys_state_machine_behavior");
 
         // When there isn't an active tracking session:
         //  STOP returns false
@@ -141,48 +124,40 @@ mod hotkeys {
         assert!(con.hotkeys_get().unwrap().is_none());
     }
 
-    #[rstest]
-    #[case(ProtocolVersion::RESP2, Metric::Cpu)]
-    #[case(ProtocolVersion::RESP3, Metric::Cpu)]
-    #[case(ProtocolVersion::RESP2, Metric::Net)]
-    #[case(ProtocolVersion::RESP3, Metric::Net)]
-    #[case(ProtocolVersion::RESP2, Metric::All)]
-    #[case(ProtocolVersion::RESP3, Metric::All)]
-    fn test_hotkeys_with_metric(#[case] protocol: ProtocolVersion, #[case] metric: Metric) {
+    #[single_server_test]
+    fn test_hotkeys_with_metric(ctx: TestContext) {
         // `HOTKEYS` is only supported in Redis 8.6+ (but not Valkey<=9.1)
-        let ctx = TestContext::default();
         skip_if_context_does_not_support!(ctx, REDIS_CE_8_6);
-        let mut con = setup_connection_with_protocol(&ctx, protocol);
+        for metric in [Metric::Cpu, Metric::Net, Metric::All] {
+            let mut con = ctx.connection();
 
-        println!("Starting test_hotkeys_with_metric - Metric: {metric}, Protocol: {protocol:?}");
+            println!("Starting test_hotkeys_with_metric - Metric: {metric}");
 
-        con.hotkeys_start(metric.options()).unwrap();
-        setup_test_keys_and_make_hot_keys(&mut con);
+            con.hotkeys_start(metric.options()).unwrap();
+            setup_test_keys_and_make_hot_keys(&mut con);
 
-        let result = con.hotkeys_get().unwrap().unwrap();
+            let result = con.hotkeys_get().unwrap().unwrap();
 
-        assert!(result.tracking_active);
-        assert_eq!(result.sample_ratio, 1);
-        assert!(result.collection_duration_ms > 0);
+            assert!(result.tracking_active);
+            assert_eq!(result.sample_ratio, 1);
+            assert!(result.collection_duration_ms > 0);
 
-        let expect_cpu = matches!(metric, Metric::Cpu);
-        let expect_net = matches!(metric, Metric::Net);
-        let expect_all = matches!(metric, Metric::All);
+            let expect_cpu = matches!(metric, Metric::Cpu);
+            let expect_net = matches!(metric, Metric::Net);
+            let expect_all = matches!(metric, Metric::All);
 
-        assert_eq!(result.by_cpu_time_us.is_some(), expect_cpu || expect_all);
-        assert_eq!(result.by_net_bytes.is_some(), expect_net || expect_all);
+            assert_eq!(result.by_cpu_time_us.is_some(), expect_cpu || expect_all);
+            assert_eq!(result.by_net_bytes.is_some(), expect_net || expect_all);
+        }
     }
 
-    #[rstest]
-    #[case(ProtocolVersion::RESP2)]
-    #[case(ProtocolVersion::RESP3)]
-    fn test_hotkeys_options_with_duration_and_count(#[case] protocol: ProtocolVersion) {
+    #[single_server_test]
+    fn test_hotkeys_options_with_duration_and_count(ctx: TestContext) {
         // `HOTKEYS` is only supported in Redis 8.6+ (but not Valkey<=9.1)
-        let ctx = TestContext::default();
         skip_if_context_does_not_support!(ctx, REDIS_CE_8_6);
-        let mut con = setup_connection_with_protocol(&ctx, protocol);
+        let mut con = ctx.connection();
 
-        println!("Starting test_hotkeys_options_with_duration_and_count - Protocol: {protocol:?}");
+        println!("Starting test_hotkeys_options_with_duration_and_count");
 
         con.hotkeys_start(
             HotkeysOptions::new_with_cpu()
@@ -205,16 +180,13 @@ mod hotkeys {
         assert_eq!(result.by_cpu_time_us.unwrap().len(), 2);
     }
 
-    #[rstest]
-    #[case(ProtocolVersion::RESP2)]
-    #[case(ProtocolVersion::RESP3)]
-    fn test_hotkeys_options_with_sample_ratio(#[case] protocol: ProtocolVersion) {
+    #[single_server_test]
+    fn test_hotkeys_options_with_sample_ratio(ctx: TestContext) {
         // `HOTKEYS` is only supported in Redis 8.6+ (but not Valkey<=9.1)
-        let ctx = TestContext::default();
         skip_if_context_does_not_support!(ctx, REDIS_CE_8_6);
-        let mut con = setup_connection_with_protocol(&ctx, protocol);
+        let mut con = ctx.connection();
 
-        println!("Starting test_hotkeys_options_with_sample_ratio - Protocol: {protocol:?}");
+        println!("Starting test_hotkeys_options_with_sample_ratio");
 
         const SAMPLE_RATIO: u64 = 100;
         con.hotkeys_start(HotkeysOptions::new_with_cpu().with_sample_ratio(SAMPLE_RATIO))
@@ -225,18 +197,13 @@ mod hotkeys {
         assert_eq!(result.sample_ratio, SAMPLE_RATIO);
     }
 
-    #[rstest]
-    #[case(ProtocolVersion::RESP2)]
-    #[case(ProtocolVersion::RESP3)]
-    fn test_hotkeys_start_with_slots_on_standalone_errors(#[case] protocol: ProtocolVersion) {
+    #[single_server_test]
+    fn test_hotkeys_start_with_slots_on_standalone_errors(ctx: TestContext) {
         // `HOTKEYS` is only supported in Redis 8.6+ (but not Valkey<=9.1)
-        let ctx = TestContext::default();
         skip_if_context_does_not_support!(ctx, REDIS_CE_8_6);
-        let mut con = setup_connection_with_protocol(&ctx, protocol);
+        let mut con = ctx.connection();
 
-        println!(
-            "Starting test_hotkeys_start_with_slots_on_standalone_errors - Protocol: {protocol:?}"
-        );
+        println!("Starting test_hotkeys_start_with_slots_on_standalone_errors");
 
         let err = con
             .hotkeys_start(HotkeysOptions::new_with_cpu().with_slots(vec![100]))
@@ -263,8 +230,6 @@ mod hotkeys_cluster {
         Commands, ConnectionAddr, ConnectionInfo, HotkeysCommands, HotkeysOptions, HotkeysResponse,
         ProtocolVersion, RedisConnectionInfo, Value, cmd, from_redis_value,
     };
-    use redis_test::{REDIS_CE_8_6, skip_if_context_does_not_support};
-
     use rstest::rstest;
 
     /// Open a direct (non-cluster) connection to a specific node using `protocol`.
@@ -601,31 +566,15 @@ mod hotkeys_cluster {
 #[cfg(all(test, feature = "aio"))]
 mod async_hotkeys {
     use crate::support::*;
-    use redis::{
-        AsyncCommands, AsyncHotkeysCommands, HotkeysOptions, ProtocolVersion, RedisConnectionInfo,
-    };
-    use redis_test::{REDIS_CE_8_6, TestContext, skip_if_context_does_not_support};
-
-    use rstest::rstest;
+    use redis::{AsyncCommands, AsyncHotkeysCommands, HotkeysOptions};
     use std::time::Duration;
+    use test_macros::async_single_server_test;
 
     const TEST_KEYS_AND_VALUES: [(&str, &str); 3] = [
         ("async_test_key_1", "value1"),
         ("async_test_key_2", "value2"),
         ("async_test_key_3", "value3"),
     ];
-
-    async fn setup_async_connection_with_protocol(
-        ctx: &TestContext,
-        protocol: ProtocolVersion,
-    ) -> redis::aio::MultiplexedConnection {
-        let connection_info = ctx
-            .server
-            .connection_info()
-            .set_redis_settings(RedisConnectionInfo::default().set_protocol(protocol));
-        let client = redis::Client::open(connection_info).unwrap();
-        client.get_multiplexed_async_connection().await.unwrap()
-    }
 
     async fn setup_test_keys_and_make_hot_keys(con: &mut redis::aio::MultiplexedConnection) {
         for (i, (key, value)) in TEST_KEYS_AND_VALUES.iter().enumerate() {
@@ -638,227 +587,166 @@ mod async_hotkeys {
 
     use super::hotkeys::Metric;
 
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_hotkeys_state_machine_behavior_async(
-        #[case] runtime: RuntimeType,
-        #[values(ProtocolVersion::RESP2, ProtocolVersion::RESP3)] protocol: ProtocolVersion,
-    ) {
+    #[async_single_server_test]
+    async fn test_hotkeys_state_machine_behavior_async(ctx: TestContext) {
         // `HOTKEYS` is only supported in Redis 8.6+ (but not Valkey<=9.1)
-        let ctx = TestContext::default();
         skip_if_context_does_not_support!(ctx, REDIS_CE_8_6);
 
-        println!("Starting test_hotkeys_state_machine_behavior_async - Protocol: {protocol:?}");
+        println!("Starting test_hotkeys_state_machine_behavior_async");
 
-        block_on_all(
-            async move {
-                let mut con = setup_async_connection_with_protocol(&ctx, protocol).await;
+        let mut con = ctx.async_connection().await.unwrap();
 
-                // When there isn't an active tracking session:
-                //  STOP returns false
-                assert!(!con.hotkeys_stop().await.unwrap());
-                //  RESET succeeds as a no-op
-                con.hotkeys_reset().await.unwrap();
-                //  GET returns None
-                assert!(con.hotkeys_get().await.unwrap().is_none());
+        // When there isn't an active tracking session:
+        //  STOP returns false
+        assert!(!con.hotkeys_stop().await.unwrap());
+        //  RESET succeeds as a no-op
+        con.hotkeys_reset().await.unwrap();
+        //  GET returns None
+        assert!(con.hotkeys_get().await.unwrap().is_none());
 
-                // Start a tracking session by CPU.
-                con.hotkeys_start(HotkeysOptions::new_with_cpu())
-                    .await
-                    .unwrap();
-                // When there is a running tracking session START returns an error.
-                assert!(
-                    con.hotkeys_start(HotkeysOptions::new_with_net())
-                        .await
-                        .is_err()
-                );
-
-                setup_test_keys_and_make_hot_keys(&mut con).await;
-
-                let snapshot = con.hotkeys_get().await.unwrap().unwrap();
-                assert!(snapshot.tracking_active);
-                assert!(snapshot.by_cpu_time_us.is_some());
-                assert!(!snapshot.by_cpu_time_us.unwrap().is_empty());
-                assert!(snapshot.by_net_bytes.is_none());
-
-                // RESET while a live session exists must error.
-                assert!(con.hotkeys_reset().await.is_err());
-
-                // STOP returns true when a session is running, false afterwards.
-                assert!(con.hotkeys_stop().await.unwrap());
-                assert!(!con.hotkeys_stop().await.unwrap());
-
-                let final_snapshot = con.hotkeys_get().await.unwrap().unwrap();
-                assert!(!final_snapshot.tracking_active);
-                assert!(final_snapshot.by_cpu_time_us.is_some());
-                assert!(!final_snapshot.by_cpu_time_us.unwrap().is_empty());
-                assert!(final_snapshot.by_net_bytes.is_none());
-
-                // Starting a new session overrides any existing tracking state.
-                con.hotkeys_start(HotkeysOptions::new_with_cpu())
-                    .await
-                    .unwrap();
-                let new_snapshot = con.hotkeys_get().await.unwrap().unwrap();
-                assert!(new_snapshot.tracking_active);
-                assert!(new_snapshot.by_cpu_time_us.is_some());
-                assert!(new_snapshot.by_cpu_time_us.unwrap().is_empty());
-                assert!(new_snapshot.by_net_bytes.is_none());
-
-                assert!(con.hotkeys_stop().await.unwrap());
-                con.hotkeys_reset().await.unwrap();
-                assert!(con.hotkeys_get().await.unwrap().is_none());
-            },
-            runtime,
-        );
-    }
-
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_hotkeys_with_metric_async(
-        #[case] runtime: RuntimeType,
-        #[values(ProtocolVersion::RESP2, ProtocolVersion::RESP3)] protocol: ProtocolVersion,
-        #[values(Metric::Cpu, Metric::Net, Metric::All)] metric: Metric,
-    ) {
-        // `HOTKEYS` is only supported in Redis 8.6+ (but not Valkey<=9.1)
-        let ctx = TestContext::default();
-        skip_if_context_does_not_support!(ctx, REDIS_CE_8_6);
-
-        println!(
-            "Starting test_hotkeys_with_metric_async - Metric: {metric}, Protocol: {protocol:?}"
-        );
-
-        block_on_all(
-            async move {
-                let mut con = setup_async_connection_with_protocol(&ctx, protocol).await;
-
-                con.hotkeys_start(metric.options()).await.unwrap();
-                setup_test_keys_and_make_hot_keys(&mut con).await;
-
-                let result = con.hotkeys_get().await.unwrap().unwrap();
-                assert!(result.tracking_active);
-                assert_eq!(result.sample_ratio, 1);
-                assert!(result.collection_duration_ms > 0);
-
-                let expect_cpu = matches!(metric, Metric::Cpu);
-                let expect_net = matches!(metric, Metric::Net);
-                let expect_all = matches!(metric, Metric::All);
-
-                assert_eq!(result.by_cpu_time_us.is_some(), expect_cpu || expect_all);
-                assert_eq!(result.by_net_bytes.is_some(), expect_net || expect_all);
-            },
-            runtime,
-        );
-    }
-
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_hotkeys_options_with_duration_and_count_async(
-        #[case] runtime: RuntimeType,
-        #[values(ProtocolVersion::RESP2, ProtocolVersion::RESP3)] protocol: ProtocolVersion,
-    ) {
-        // `HOTKEYS` is only supported in Redis 8.6+ (but not Valkey<=9.1)
-        let ctx = TestContext::default();
-        skip_if_context_does_not_support!(ctx, REDIS_CE_8_6);
-
-        println!(
-            "Starting test_hotkeys_options_with_duration_and_count_async - Protocol: {protocol:?}"
-        );
-
-        block_on_all(
-            async move {
-                let mut con = setup_async_connection_with_protocol(&ctx, protocol).await;
-
-                con.hotkeys_start(
-                    HotkeysOptions::new_with_cpu()
-                        .with_count(2)
-                        .unwrap()
-                        .with_duration_secs(2),
-                )
+        // Start a tracking session by CPU.
+        con.hotkeys_start(HotkeysOptions::new_with_cpu())
+            .await
+            .unwrap();
+        // When there is a running tracking session START returns an error.
+        assert!(
+            con.hotkeys_start(HotkeysOptions::new_with_net())
                 .await
-                .unwrap();
-                setup_test_keys_and_make_hot_keys(&mut con).await;
-                let result = con.hotkeys_get().await.unwrap().unwrap();
-                assert!(result.tracking_active);
-                assert!(result.by_cpu_time_us.is_some());
-                assert_eq!(result.by_cpu_time_us.unwrap().len(), 2);
-
-                futures_time::task::sleep(Duration::from_secs(3).into()).await;
-
-                let result = con.hotkeys_get().await.unwrap().unwrap();
-                assert!(!result.tracking_active);
-                assert!(result.by_cpu_time_us.is_some());
-                assert_eq!(result.by_cpu_time_us.unwrap().len(), 2);
-            },
-            runtime,
+                .is_err()
         );
+
+        setup_test_keys_and_make_hot_keys(&mut con).await;
+
+        let snapshot = con.hotkeys_get().await.unwrap().unwrap();
+        assert!(snapshot.tracking_active);
+        assert!(snapshot.by_cpu_time_us.is_some());
+        assert!(!snapshot.by_cpu_time_us.unwrap().is_empty());
+        assert!(snapshot.by_net_bytes.is_none());
+
+        // RESET while a live session exists must error.
+        assert!(con.hotkeys_reset().await.is_err());
+
+        // STOP returns true when a session is running, false afterwards.
+        assert!(con.hotkeys_stop().await.unwrap());
+        assert!(!con.hotkeys_stop().await.unwrap());
+
+        let final_snapshot = con.hotkeys_get().await.unwrap().unwrap();
+        assert!(!final_snapshot.tracking_active);
+        assert!(final_snapshot.by_cpu_time_us.is_some());
+        assert!(!final_snapshot.by_cpu_time_us.unwrap().is_empty());
+        assert!(final_snapshot.by_net_bytes.is_none());
+
+        // Starting a new session overrides any existing tracking state.
+        con.hotkeys_start(HotkeysOptions::new_with_cpu())
+            .await
+            .unwrap();
+        let new_snapshot = con.hotkeys_get().await.unwrap().unwrap();
+        assert!(new_snapshot.tracking_active);
+        assert!(new_snapshot.by_cpu_time_us.is_some());
+        assert!(new_snapshot.by_cpu_time_us.unwrap().is_empty());
+        assert!(new_snapshot.by_net_bytes.is_none());
+
+        assert!(con.hotkeys_stop().await.unwrap());
+        con.hotkeys_reset().await.unwrap();
+        assert!(con.hotkeys_get().await.unwrap().is_none());
     }
 
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_hotkeys_options_with_sample_ratio_async(
-        #[case] runtime: RuntimeType,
-        #[values(ProtocolVersion::RESP2, ProtocolVersion::RESP3)] protocol: ProtocolVersion,
-    ) {
+    #[async_single_server_test]
+    async fn test_hotkeys_with_metric_async(ctx: TestContext) {
         // `HOTKEYS` is only supported in Redis 8.6+ (but not Valkey<=9.1)
-        let ctx = TestContext::default();
         skip_if_context_does_not_support!(ctx, REDIS_CE_8_6);
 
-        println!("Starting test_hotkeys_options_with_sample_ratio_async - Protocol: {protocol:?}");
+        for metric in [Metric::Cpu, Metric::Net, Metric::All] {
+            println!("Starting test_hotkeys_with_metric_async - Metric: {metric}");
 
-        block_on_all(
-            async move {
-                let mut con = setup_async_connection_with_protocol(&ctx, protocol).await;
+            let mut con = ctx.async_connection().await.unwrap();
 
-                const SAMPLE_RATIO: u64 = 100;
-                con.hotkeys_start(HotkeysOptions::new_with_cpu().with_sample_ratio(SAMPLE_RATIO))
-                    .await
-                    .unwrap();
+            con.hotkeys_start(metric.options()).await.unwrap();
+            setup_test_keys_and_make_hot_keys(&mut con).await;
 
-                let result = con.hotkeys_get().await.unwrap().unwrap();
-                assert!(result.tracking_active);
-                assert_eq!(result.sample_ratio, SAMPLE_RATIO);
-            },
-            runtime,
-        );
+            let result = con.hotkeys_get().await.unwrap().unwrap();
+            assert!(result.tracking_active);
+            assert_eq!(result.sample_ratio, 1);
+            assert!(result.collection_duration_ms > 0);
+
+            let expect_cpu = matches!(metric, Metric::Cpu);
+            let expect_net = matches!(metric, Metric::Net);
+            let expect_all = matches!(metric, Metric::All);
+
+            assert_eq!(result.by_cpu_time_us.is_some(), expect_cpu || expect_all);
+            assert_eq!(result.by_net_bytes.is_some(), expect_net || expect_all);
+        }
     }
 
-    #[rstest]
-    #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
-    fn test_hotkeys_start_with_slots_on_standalone_errors_async(
-        #[case] runtime: RuntimeType,
-        #[values(ProtocolVersion::RESP2, ProtocolVersion::RESP3)] protocol: ProtocolVersion,
-    ) {
+    #[async_single_server_test]
+    async fn test_hotkeys_options_with_duration_and_count_async(ctx: TestContext) {
         // `HOTKEYS` is only supported in Redis 8.6+ (but not Valkey<=9.1)
-        let ctx = TestContext::default();
         skip_if_context_does_not_support!(ctx, REDIS_CE_8_6);
 
-        println!(
-            "Starting test_hotkeys_start_with_slots_on_standalone_errors_async - \
-             Protocol: {protocol:?}"
+        println!("Starting test_hotkeys_options_with_duration_and_count_async");
+
+        let mut con = ctx.async_connection().await.unwrap();
+
+        con.hotkeys_start(
+            HotkeysOptions::new_with_cpu()
+                .with_count(2)
+                .unwrap()
+                .with_duration_secs(2),
+        )
+        .await
+        .unwrap();
+        setup_test_keys_and_make_hot_keys(&mut con).await;
+        let result = con.hotkeys_get().await.unwrap().unwrap();
+        assert!(result.tracking_active);
+        assert!(result.by_cpu_time_us.is_some());
+        assert_eq!(result.by_cpu_time_us.unwrap().len(), 2);
+
+        futures_time::task::sleep(Duration::from_secs(3).into()).await;
+
+        let result = con.hotkeys_get().await.unwrap().unwrap();
+        assert!(!result.tracking_active);
+        assert!(result.by_cpu_time_us.is_some());
+        assert_eq!(result.by_cpu_time_us.unwrap().len(), 2);
+    }
+
+    #[async_single_server_test]
+    async fn test_hotkeys_options_with_sample_ratio_async(ctx: TestContext) {
+        // `HOTKEYS` is only supported in Redis 8.6+ (but not Valkey<=9.1)
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_6);
+
+        println!("Starting test_hotkeys_options_with_sample_ratio_async");
+
+        let mut con = ctx.async_connection().await.unwrap();
+
+        const SAMPLE_RATIO: u64 = 100;
+        con.hotkeys_start(HotkeysOptions::new_with_cpu().with_sample_ratio(SAMPLE_RATIO))
+            .await
+            .unwrap();
+
+        let result = con.hotkeys_get().await.unwrap().unwrap();
+        assert!(result.tracking_active);
+        assert_eq!(result.sample_ratio, SAMPLE_RATIO);
+    }
+
+    #[async_single_server_test]
+    async fn test_hotkeys_start_with_slots_on_standalone_errors_async(ctx: TestContext) {
+        // `HOTKEYS` is only supported in Redis 8.6+ (but not Valkey<=9.1)
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_6);
+
+        println!("Starting test_hotkeys_start_with_slots_on_standalone_errors_async");
+
+        let mut con = ctx.async_connection().await.unwrap();
+
+        let err = con
+            .hotkeys_start(HotkeysOptions::new_with_cpu().with_slots(vec![100]))
+            .await
+            .expect_err("SLOTS on a standalone server must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("SLOTS parameter cannot be used in non-cluster mode"),
+            "unexpected error for SLOTS on standalone: {msg}",
         );
 
-        block_on_all(
-            async move {
-                let mut con = setup_async_connection_with_protocol(&ctx, protocol).await;
-
-                let err = con
-                    .hotkeys_start(HotkeysOptions::new_with_cpu().with_slots(vec![100]))
-                    .await
-                    .expect_err("SLOTS on a standalone server must be rejected");
-                let msg = err.to_string();
-                assert!(
-                    msg.contains("SLOTS parameter cannot be used in non-cluster mode"),
-                    "unexpected error for SLOTS on standalone: {msg}",
-                );
-
-                assert!(con.hotkeys_get().await.unwrap().is_none());
-            },
-            runtime,
-        );
+        assert!(con.hotkeys_get().await.unwrap().is_none());
     }
 }
