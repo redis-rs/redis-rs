@@ -532,6 +532,7 @@ impl ClusterClientBuilder {
     ///         match candidates {
     ///             ReadCandidates::AnyNode(c) => c.replicas().first(),
     ///             ReadCandidates::ReplicasOnly(c) => c.replicas().first(),
+    ///             &_ => panic!("Unsupported candidate requirement: {candidates:?}"),
     ///         }
     ///     }
     /// }

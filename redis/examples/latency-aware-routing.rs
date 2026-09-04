@@ -118,6 +118,7 @@ impl ReadRoutingStrategy for LatencyAwareStrategy {
                 .iter()
                 .min_by_key(|node| latency_of(node))
                 .expect("replicas is non-empty"),
+            &_ => panic!("Unsupported candidate requirement: {candidates:?}"),
         }
     }
 }

@@ -177,6 +177,7 @@ impl<'a> ReplicasOnlyCandidates<'a> {
 /// The strategy is only called when there are replicas available for the
 /// target slot. If a slot has no replicas, the caller falls back to the
 /// primary without consulting the strategy.
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum ReadCandidates<'a> {
     /// Any node (primary or replica) is acceptable for this read.
@@ -234,6 +235,7 @@ impl<'a> ReadCandidates<'a> {
 ///         match candidates {
 ///             ReadCandidates::AnyNode(c) => c.replicas().first(),
 ///             ReadCandidates::ReplicasOnly(c) => c.replicas().first(),
+///             &_ => panic!("Unsupported candidate requirement: {candidates:?}"),
 ///         }
 ///     }
 /// }
@@ -306,6 +308,7 @@ pub trait ReadRoutingStrategy: Send + Sync {
 ///         match candidates {
 ///             ReadCandidates::AnyNode(c) => c.replicas().first(),
 ///             ReadCandidates::ReplicasOnly(c) => c.replicas().first(),
+///             &_ => panic!("Unsupported candidate requirement: {candidates:?}"),
 ///         }
 ///     }
 /// }
