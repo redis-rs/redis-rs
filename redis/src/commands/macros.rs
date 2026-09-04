@@ -32,7 +32,7 @@ macro_rules! implement_command_async {
         ) -> crate::types::RedisFuture<$lifetime, $rettype>
 
         {
-            Box::pin(async move { $($body)*.query_async(self).await })
+            Box::pin(async move { Cmd::$name($($argname),*).query_async(self).await })
         }
     };
 }
@@ -88,29 +88,6 @@ macro_rules! ready_cmd {
         cmd.arg(name);
         $(cmd.arg($arg);)*
         cmd
-    }};
-}
-
-macro_rules! write_pipeline_command {
-    ($self:expr, { ready_cmd!($name:expr $(, $arg:expr)*).take() }) => {{
-        let name = $name;
-        let args_count = 1usize;
-        let args_size = name.len();
-        $(
-            let (next_args_count, next_args_size) = $arg.num_of_args_and_size();
-            let args_count = args_count + next_args_count;
-            let args_size = args_size + next_args_size;
-        )*
-        $self.reserve_for_args(args_count)
-          .reserve_for_data(args_size);
-        $self.start_command();
-        $crate::types::RedisWrite::write_arg($self, name.as_bytes());
-        $($self.arg($arg);)*
-        $self
-    }};
-
-    ($self:expr, $cmd:expr) => {{
-        $self.add_command($cmd)
     }};
 }
 
@@ -261,6 +238,7 @@ macro_rules! implement_commands {
         impl Cmd {
             $(
                 $(#[$attr])*
+                #[inline]
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
                 pub fn $name<$lifetime, $($tyargs: $ty),*>($($argname: $argty),*) -> Self {
                     $($body)*
@@ -310,7 +288,7 @@ macro_rules! implement_commands {
                 where
                     RV: FromRedisValue,
                 {
-                    Box::pin(async move { {$($body)*}.query_async(self).await })
+                    Box::pin(async move { Cmd::$name($($argname),*).query_async(self).await })
                 }
             )*
 
@@ -398,7 +376,7 @@ macro_rules! implement_commands {
                 pub fn $name<$lifetime, $($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
                 ) -> &mut Self {
-                    write_pipeline_command!(self,{ $($body)* })
+                    self.add_command(Cmd::$name($($argname),*))
                 }
             )*
         }
@@ -415,7 +393,7 @@ macro_rules! implement_commands {
                 pub fn $name<$lifetime, $($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
                 ) -> &mut Self {
-                    write_pipeline_command!(self,{ $($body)* })
+                    self.add_command(Cmd::$name($($argname),*))
                 }
             )*
         }
