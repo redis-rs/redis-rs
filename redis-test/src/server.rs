@@ -434,10 +434,19 @@ impl RedisServerCommand {
             .unwrap_or_else(|err| panic!("Failed to run {:?}: {err}", self.cmd))
     }
 
-    /// Loads a module from the given path
-    fn load_module(&mut self, path: String) {
+    /// Loads a single module
+    // Although the passed `path_env_var_name`s will have some common parts, these are on purpose
+    // _not_ abstracted away. This forces callers to pass the full environment variable name, which
+    // makes sure that grepping for environment variable names leads to the relevant code.
+    fn load_module(&mut self, path_env_var_name: &str, description: &str) {
+        let path = env::var_os(path_env_var_name).unwrap_or_else(|| {
+            panic!(
+                "Environment variable {path_env_var_name} is empty, but should hold the path to a {description} module"
+            )
+        });
+
         if !Path::new(&path).is_file() {
-            panic!("Module doesn't exist or is not a file: {path}");
+            panic!("Path for the {description} module doesn't exist or is not a file: {path:?}");
         }
         self.arg2("--loadmodule", path);
     }
@@ -449,18 +458,10 @@ impl RedisServerCommand {
         for module in modules {
             match module {
                 Module::Json => {
-                    let path = env::var("REDISRS_REDIS_JSON_PATH").expect(
-                        "Unable to find path to the JSON module at REDISRS_REDIS_JSON_PATH, is it set?",
-                    );
-
-                    self.load_module(path);
+                    self.load_module("REDISRS_REDIS_JSON_PATH", "JSON");
                 }
                 Module::Bloom => {
-                    let path = env::var("REDISRS_REDIS_BLOOM_PATH").expect(
-                        "Unable to find path to RedisBloom at REDISRS_REDIS_BLOOM_PATH, is it set?",
-                    );
-
-                    self.load_module(path);
+                    self.load_module("REDISRS_REDIS_BLOOM_PATH", "Bloom");
                 }
             }
         }
