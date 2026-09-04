@@ -235,7 +235,7 @@ mod types {
         for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
             let simple_string_exp = "Simple string".to_string();
             let v = parse_mode.parse_redis_value(Value::SimpleString(simple_string_exp.clone()));
-            assert_eq!(v, Ok(Box::new(simple_string_exp.clone())));
+            assert_eq!(v, Ok(Box::new(simple_string_exp)));
         }
     }
 

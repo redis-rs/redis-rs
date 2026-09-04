@@ -3,7 +3,6 @@ name = "redis"
 version = "1.6.0"
 keywords = ["redis", "valkey", "cluster", "sentinel", "pubsub"]
 description = "Redis driver for Rust."
-homepage = "https://github.com/redis-rs/redis-rs"
 repository = "https://github.com/redis-rs/redis-rs"
 documentation = "https://docs.rs/redis"
 license = "BSD-3-Clause"
