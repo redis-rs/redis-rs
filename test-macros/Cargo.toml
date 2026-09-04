@@ -8,4 +8,7 @@ proc-macro = true
 
 [dependencies]
 quote = "1.0.45"
-syn = { version="3.0.3", features=["full", "extra-traits"] }
+syn = { version = "3.0.3", features = ["full", "extra-traits"] }
+
+[lints]
+workspace = true
