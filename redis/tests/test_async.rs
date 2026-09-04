@@ -9,8 +9,6 @@ mod basic_async {
     use assert_matches::assert_matches;
     use futures::{StreamExt, prelude::*};
     use futures_time::{future::FutureExt, task::sleep};
-    #[cfg(feature = "json")]
-    use redis::JsonAsyncCommands;
     use redis::{
         AsyncCommands, ErrorKind, IntoConnectionInfo, ParsingError, ProtocolVersion, PushKind,
         RedisConnectionInfo, RedisError, RedisResult, ScanOptions, ServerErrorKind, Value,

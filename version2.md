@@ -10,6 +10,22 @@ redis = "2"
 
 ## Breaking Changes
 
+### JSON commands got promoted to standard commands (Breaking Change)
+
+`JsonCommands`, and `JsonAsyncCommands` got merged into `Commands`, and `JsonAsyncCommands`.
+
+**Migration:** Switch from `JsonCommands` and `JsonAsyncCommands` to `Commands` and `AsyncCommands`
+
+```rust
+// Before:
+use redis::JsonCommands;
+use redis::JsonAsyncCommands;
+
+// After:
+use redis::Commands;
+use redis::AsyncCommands;
+```
+
 ### Script loading on typed connections returns `String` (Breaking change)
 
 The `script_load` command on typed connections returned a generic `Value`. But as Redis returns a string, the typed version of the function now also directly returns a `String`.
