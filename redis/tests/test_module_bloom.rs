@@ -8,11 +8,11 @@ use redis::bloom::{
     BloomFilterScalingOptions,
 };
 use redis::{TypedCommands, ValueType};
-use redis_test::server::Module;
 use redis_test::{
-    REDIS_BLOOM_ANY, TestContextBuilder, TestContextVersioning, skip_if_context_does_not_support,
+    REDIS_BLOOM_ANY, TestContext, TestContextVersioning, skip_if_context_does_not_support,
 };
 use std::vec;
+use test_macros::single_server_test;
 
 // Test keys
 const KEY_1: &str = "test_bloom_1";
@@ -20,9 +20,8 @@ const KEY_2: &str = "test_bloom_2";
 const KEY_3: &str = "test_bloom_3";
 
 /// Tries to assure single value updates work
-#[test]
-fn test_module_bloom_single_value_updates() {
-    let ctx = TestContextBuilder::new().module(Module::Bloom).build();
+#[single_server_test(bloom)]
+fn test_module_bloom_single_value_updates(ctx: TestContext) {
     let mut con = ctx.connection();
 
     // Add a single value, and check containment
@@ -56,9 +55,8 @@ fn test_module_bloom_single_value_updates() {
 }
 
 /// Tries to assure that multi-value updates work
-#[test]
-fn test_module_bloom_multiple_value_updates() {
-    let ctx = TestContextBuilder::new().module(Module::Bloom).build();
+#[single_server_test(bloom)]
+fn test_module_bloom_multiple_value_updates(ctx: TestContext) {
     let mut con = ctx.connection();
 
     // Init the key by adding multiple values at once
@@ -98,9 +96,8 @@ fn test_module_bloom_multiple_value_updates() {
 }
 
 /// Tries to assure that information functions work
-#[test]
-fn test_module_bloom_infos() {
-    let ctx = TestContextBuilder::new().module(Module::Bloom).build();
+#[single_server_test(bloom)]
+fn test_module_bloom_infos(ctx: TestContext) {
     let mut con = ctx.connection();
 
     // Check that getting infos on a not yet existing key does not panic
@@ -213,9 +210,8 @@ fn test_module_bloom_infos() {
 }
 
 /// Tries to assure that reserving is effective
-#[test]
-fn test_module_bloom_reserving() {
-    let ctx = TestContextBuilder::new().module(Module::Bloom).build();
+#[single_server_test(bloom)]
+fn test_module_bloom_reserving(ctx: TestContext) {
     let mut con = ctx.connection();
 
     // Reserving without options
@@ -253,9 +249,8 @@ fn test_module_bloom_reserving() {
 }
 
 /// Tries to assure that dumping/loading works
-#[test]
-fn test_module_bloom_dump_and_load() {
-    let ctx = TestContextBuilder::new().module(Module::Bloom).build();
+#[single_server_test(bloom)]
+fn test_module_bloom_dump_and_load(ctx: TestContext) {
     skip_if_context_does_not_support!(ctx, REDIS_BLOOM_ANY);
     let mut con = ctx.connection();
 
@@ -307,9 +302,8 @@ fn test_module_bloom_dump_and_load() {
 }
 
 /// Tries to assure that dumping through an iterator works
-#[test]
-fn test_module_bloom_dump_iterator() {
-    let ctx = TestContextBuilder::new().module(Module::Bloom).build();
+#[single_server_test(bloom)]
+fn test_module_bloom_dump_iterator(ctx: TestContext) {
     skip_if_context_does_not_support!(ctx, REDIS_BLOOM_ANY);
     let mut con = ctx.connection();
 

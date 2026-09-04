@@ -8,16 +8,17 @@ use crate::utils::{
     CommandMultiArgs, TlsFilePaths, build_keys_and_certs_for_tls, get_random_available_port,
 };
 
-pub fn use_protocol() -> ProtocolVersion {
-    if env::var("PROTOCOL").unwrap_or_default() == "RESP3" {
-        ProtocolVersion::RESP3
-    } else {
-        ProtocolVersion::RESP2
+pub fn use_protocol() -> Option<ProtocolVersion> {
+    match env::var("PROTOCOL").ok().as_deref() {
+        Some("RESP2") => Some(ProtocolVersion::RESP2),
+        Some("RESP3") => Some(ProtocolVersion::RESP3),
+        Some(val) => panic!("Unknown protocol {val:?}"),
+        None => None,
     }
 }
 
 pub fn redis_settings() -> RedisConnectionInfo {
-    RedisConnectionInfo::default().set_protocol(use_protocol())
+    RedisConnectionInfo::default().set_protocol(use_protocol().unwrap_or(ProtocolVersion::RESP2))
 }
 
 /// Get the default host to use for TCP connections.
@@ -25,8 +26,9 @@ pub fn get_default_host() -> String {
     "127.0.0.1".to_string()
 }
 
-#[derive(PartialEq)]
-enum ServerType {
+#[derive(PartialEq, Clone, Copy, Debug)]
+#[non_exhaustive]
+pub enum ServerType {
     Tcp { tls: bool },
     Unix,
 }
@@ -55,6 +57,7 @@ pub enum Module {
 // considerations.
 #[derive(Default)]
 pub struct RedisServerBuilder {
+    server_type: Option<ServerType>,
     address: Option<ConnectionAddr>,
     config_file: Option<PathBuf>,
     cert_auth_field: Option<String>,
@@ -67,6 +70,11 @@ impl RedisServerBuilder {
     /// Starts a fresh builder
     pub fn new() -> Self {
         Default::default()
+    }
+
+    pub fn server_type(mut self, server_type: ServerType) -> Self {
+        self.server_type = Some(server_type);
+        self
     }
 
     pub fn address(mut self, address: ConnectionAddr) -> Self {
@@ -130,7 +138,11 @@ impl RedisServerBuilder {
             // This is technically a race, but we can't do better with
             // the tools that redis gives us :(
             let redis_port = get_random_available_port();
-            RedisServer::get_addr(redis_port)
+            let st = self
+                .server_type
+                .or_else(ServerType::get_intended)
+                .unwrap_or(ServerType::Tcp { tls: false });
+            RedisServer::get_addr_for_type(redis_port, st)
         });
 
         RedisServer::new(
@@ -182,18 +194,19 @@ pub struct RedisServer {
 }
 
 impl ServerType {
-    fn get_intended() -> Self {
+    pub fn get_intended() -> Option<Self> {
         match env::var("REDISRS_SERVER_TYPE")
             .ok()
             .as_ref()
             .map(|x| &x[..])
         {
-            Some("tcp+tls") => Self::Tcp { tls: true },
-            Some("unix") => Self::Unix,
-            Some("tcp") | None => Self::Tcp { tls: false },
+            Some("tcp+tls") => Some(Self::Tcp { tls: true }),
+            Some("unix") => Some(Self::Unix),
+            Some("tcp") => Some(Self::Tcp { tls: false }),
             Some(val) => {
                 panic!("Unknown server type {val:?}");
             }
+            None => None,
         }
     }
 }
@@ -216,7 +229,13 @@ impl RedisServer {
     }
 
     pub fn get_addr(port: u16) -> ConnectionAddr {
-        let server_type = ServerType::get_intended();
+        Self::get_addr_for_type(
+            port,
+            ServerType::get_intended().unwrap_or(ServerType::Tcp { tls: false }),
+        )
+    }
+
+    pub fn get_addr_for_type(port: u16, server_type: ServerType) -> ConnectionAddr {
         match server_type {
             ServerType::Tcp { tls } => {
                 if tls {
@@ -368,11 +387,18 @@ impl RedisServer {
     }
 
     pub fn connection_info(&self) -> redis::ConnectionInfo {
+        self.connection_info_with_protocol(use_protocol().unwrap_or(ProtocolVersion::RESP2))
+    }
+
+    pub fn connection_info_with_protocol(
+        &self,
+        protocol: ProtocolVersion,
+    ) -> redis::ConnectionInfo {
         self.client_addr()
             .clone()
             .into_connection_info()
             .unwrap()
-            .set_redis_settings(redis_settings())
+            .set_redis_settings(redis::RedisConnectionInfo::default().set_protocol(protocol))
     }
 
     pub fn stop(&mut self) {

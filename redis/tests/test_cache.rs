@@ -7,12 +7,10 @@ use redis::CommandCacheConfig;
 use redis::cluster_routing::*;
 use redis::{AsyncCommands, RedisError, caching::CacheConfig};
 #[cfg(feature = "json")]
-use redis_test::server::Module;
-use redis_test::{REDIS_CE_7_2, TestContext, TestContextBuilder, run_test_if_version_supported};
-#[cfg(feature = "json")]
 use serde_json::json;
 use std::collections::HashMap;
 use std::time::Duration;
+use test_macros::async_cluster_test;
 use test_macros::async_test;
 
 mod support;
@@ -95,8 +93,7 @@ async fn test_cache_basic(test_with_optin: bool) {
 }
 
 #[async_test]
-async fn test_cache_mget() {
-    let ctx = TestContext::default();
+async fn test_cache_mget(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -150,9 +147,8 @@ async fn test_cache_mget() {
 }
 
 #[cfg(feature = "json")]
-#[async_test]
-async fn test_module_json_cache_get_mget() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[async_test(json)]
+async fn test_module_json_cache_get_mget(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -220,9 +216,8 @@ async fn test_module_json_cache_get_mget() {
 }
 
 #[cfg(feature = "json")]
-#[async_test]
-async fn test_module_json_cache_get_mget_different_paths() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[async_test(json)]
+async fn test_module_json_cache_get_mget_different_paths(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -334,8 +329,7 @@ async fn test_module_json_cache_get_mget_different_paths() {
 }
 
 #[async_test]
-async fn test_cache_is_not_target_type_dependent() {
-    let ctx = TestContext::default();
+async fn test_cache_is_not_target_type_dependent(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -353,56 +347,56 @@ async fn test_cache_is_not_target_type_dependent() {
 }
 
 #[async_test]
-async fn test_cache_with_pipeline(atomic: bool) {
-    let ctx = TestContext::default();
+async fn test_cache_with_pipeline(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
 
-    let mut con = ctx.async_connection_with_cache().await.unwrap();
-    // Test cache for both atomic and non-atomic Pipeline and mix MGET,GET,ignore in the pipeline.
-    let (mget_k1_k2,): ((i32, i32),) = get_pipe(atomic)
-        .cmd("SET")
-        .arg("key_1")
-        .arg(41)
-        .ignore()
-        .cmd("SET")
-        .arg("key_2")
-        .arg(42)
-        .ignore()
-        .cmd("MGET")
-        .arg(&["key_1", "key_2"])
-        .query_async(&mut con)
-        .await
-        .unwrap();
+    for atomic in [true, false] {
+        let mut con = ctx.async_connection_with_cache().await.unwrap();
+        // Test cache for both atomic and non-atomic Pipeline and mix MGET,GET,ignore in the pipeline.
+        let (mget_k1_k2,): ((i32, i32),) = get_pipe(atomic)
+            .cmd("SET")
+            .arg("key_1")
+            .arg(41)
+            .ignore()
+            .cmd("SET")
+            .arg("key_2")
+            .arg(42)
+            .ignore()
+            .cmd("MGET")
+            .arg(&["key_1", "key_2"])
+            .query_async(&mut con)
+            .await
+            .unwrap();
 
-    assert_eq!(mget_k1_k2, (41, 42));
-    // There are 2 miss for key_1, key_2 used with MGET
-    assert_hit!(&con, 0);
-    assert_miss!(&con, 2);
+        assert_eq!(mget_k1_k2, (41, 42));
+        // There are 2 miss for key_1, key_2 used with MGET
+        assert_hit!(&con, 0);
+        assert_miss!(&con, 2);
 
-    let (k1, mget_k1_k2, k_unknown): (i32, (i32, i32), Option<i32>) = get_pipe(atomic)
-        .cmd("GET")
-        .arg("key_1")
-        .cmd("MGET")
-        .arg(&["key_1", "key_2"])
-        .cmd("GET")
-        .arg("key_doesnt_exists")
-        .query_async(&mut con)
-        .await
-        .unwrap();
+        let (k1, mget_k1_k2, k_unknown): (i32, (i32, i32), Option<i32>) = get_pipe(atomic)
+            .cmd("GET")
+            .arg("key_1")
+            .cmd("MGET")
+            .arg(&["key_1", "key_2"])
+            .cmd("GET")
+            .arg("key_doesnt_exists")
+            .query_async(&mut con)
+            .await
+            .unwrap();
 
-    assert_eq!(k1, 41);
-    assert_eq!(mget_k1_k2, (41, 42));
-    assert_eq!(k_unknown, Option::None);
-    assert_hit!(&con, 3);
-    assert_miss!(&con, 3);
+        assert_eq!(k1, 41);
+        assert_eq!(mget_k1_k2, (41, 42));
+        assert_eq!(k_unknown, Option::None);
+        assert_hit!(&con, 3);
+        assert_miss!(&con, 3);
+    }
 }
 
 #[async_test]
-async fn test_cache_basic_partial_opt_in() {
+async fn test_cache_basic_partial_opt_in(ctx: TestContext) {
     // In OptIn mode cache must not be utilized without explicit per command configuration.
-    let ctx = TestContext::default();
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -466,128 +460,143 @@ async fn test_cache_basic_partial_opt_in() {
 }
 
 #[async_test]
-async fn test_cache_pipeline_partial_opt_in(atomic: bool) {
+async fn test_cache_pipeline_partial_opt_in(ctx: TestContext) {
     // In OptIn mode cache must not be utilized without explicit per command configuration.
-    let ctx = TestContext::default();
     if !ctx.protocol.supports_resp3() {
         return;
     }
 
-    let cache_config = CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn);
-    let mut con = ctx
-        .async_connection_with_cache_config(cache_config)
-        .await
-        .unwrap();
-    // Test cache for both atomic and non-atomic Pipeline and mix MGET,GET,ignore in the pipeline.
-    let (mget_k1_k2,): ((i32, i32),) = get_pipe(atomic)
-        .cmd("SET")
-        .arg("key_1")
-        .arg(42)
-        .ignore()
-        .cmd("SET")
-        .arg("key_2")
-        .arg(43)
-        .ignore()
-        .cmd("MGET")
-        .arg(&["key_1", "key_2"])
-        .query_async(&mut con)
-        .await
-        .unwrap();
-
-    assert_eq!(mget_k1_k2, (42, 43));
-    // Since CacheMode::OptIn is enabled, so there should be no miss or hit
-    assert_hit!(&con, 0);
-    assert_miss!(&con, 0);
-
-    for _ in 0..2 {
-        let (mget_k1_k2, k1, k_unknown): ((i32, i32), i32, Option<i32>) = get_pipe(atomic)
-            .cmd("MGET")
-            .set_cache_config(CommandCacheConfig::new().set_enable_cache(true))
-            .arg(&["key_1", "key_2"])
-            .cmd("GET")
+    for atomic in [true, false] {
+        let cache_config = CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn);
+        let mut con = ctx
+            .async_connection_with_cache_config(cache_config)
+            .await
+            .unwrap();
+        // Test cache for both atomic and non-atomic Pipeline and mix MGET,GET,ignore in the pipeline.
+        let (mget_k1_k2,): ((i32, i32),) = get_pipe(atomic)
+            .cmd("SET")
             .arg("key_1")
-            .cmd("GET")
-            .arg("key_doesnt_exists")
+            .arg(42)
+            .ignore()
+            .cmd("SET")
+            .arg("key_2")
+            .arg(43)
+            .ignore()
+            .cmd("MGET")
+            .arg(&["key_1", "key_2"])
             .query_async(&mut con)
             .await
             .unwrap();
 
         assert_eq!(mget_k1_k2, (42, 43));
-        assert_eq!(k1, 42);
-        assert_eq!(k_unknown, Option::None);
+        // Since CacheMode::OptIn is enabled, so there should be no miss or hit
+        assert_hit!(&con, 0);
+        assert_miss!(&con, 0);
+
+        for _ in 0..2 {
+            let (mget_k1_k2, k1, k_unknown): ((i32, i32), i32, Option<i32>) = get_pipe(atomic)
+                .cmd("MGET")
+                .set_cache_config(CommandCacheConfig::new().set_enable_cache(true))
+                .arg(&["key_1", "key_2"])
+                .cmd("GET")
+                .arg("key_1")
+                .cmd("GET")
+                .arg("key_doesnt_exists")
+                .query_async(&mut con)
+                .await
+                .unwrap();
+
+            assert_eq!(mget_k1_k2, (42, 43));
+            assert_eq!(k1, 42);
+            assert_eq!(k_unknown, Option::None);
+        }
+        // Only MGET should be use cache path, since pipeline used twice there should be one miss and one hit.
+        assert_hit!(&con, 2);
+        assert_miss!(&con, 2);
     }
-    // Only MGET should be use cache path, since pipeline used twice there should be one miss and one hit.
-    assert_hit!(&con, 2);
-    assert_miss!(&con, 2);
 }
 
 #[async_test]
-async fn test_cache_different_commands(test_with_opt_in: bool) {
-    let ctx = TestContext::default();
+async fn test_cache_different_commands(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
 
-    let cache_config = if test_with_opt_in {
-        CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn)
-    } else {
-        CacheConfig::default()
-    };
-    let mut con = ctx
-        .async_connection_with_cache_config(cache_config)
-        .await
-        .unwrap();
-    let _: () = get_cmd("HSET", test_with_opt_in)
-        .arg("user")
-        .arg("health")
-        .arg("100")
-        .query_async(&mut con)
-        .await
-        .unwrap();
+    for test_with_opt_in in [true, false] {
+        let cache_config = if test_with_opt_in {
+            CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn)
+        } else {
+            CacheConfig::default()
+        };
+        let mut con = ctx
+            .async_connection_with_cache_config(cache_config)
+            .await
+            .unwrap();
+        let _: () = get_cmd("HSET", test_with_opt_in)
+            .arg("user")
+            .arg("health")
+            .arg("100")
+            .query_async(&mut con)
+            .await
+            .unwrap();
 
-    let val: usize = get_cmd("HGET", test_with_opt_in)
-        .arg("user")
-        .arg("health")
-        .query_async(&mut con)
-        .await
-        .unwrap();
-    assert_eq!(val, 100);
-    assert_hit!(&con, 0);
-    assert_miss!(&con, 1);
+        let val: usize = get_cmd("HGET", test_with_opt_in)
+            .arg("user")
+            .arg("health")
+            .query_async(&mut con)
+            .await
+            .unwrap();
+        assert_eq!(val, 100);
+        assert_hit!(&con, 0);
+        assert_miss!(&con, 1);
 
-    let val: Option<usize> = get_cmd("HGET", test_with_opt_in)
-        .arg("user")
-        .arg("non_existent_key")
-        .query_async(&mut con)
-        .await
-        .unwrap();
-    assert_eq!(val, None);
-    assert_hit!(&con, 0);
-    assert_miss!(&con, 2);
+        let val: Option<usize> = get_cmd("HGET", test_with_opt_in)
+            .arg("user")
+            .arg("non_existent_key")
+            .query_async(&mut con)
+            .await
+            .unwrap();
+        assert_eq!(val, None);
+        assert_hit!(&con, 0);
+        assert_miss!(&con, 2);
 
-    let val: HashMap<String, usize> = get_cmd("HGETALL", test_with_opt_in)
-        .arg("user")
-        .query_async(&mut con)
-        .await
-        .unwrap();
-    assert_eq!(val.get("health"), Some(100).as_ref());
-    assert_hit!(&con, 0);
-    assert_miss!(&con, 3);
+        let val: HashMap<String, usize> = get_cmd("HGETALL", test_with_opt_in)
+            .arg("user")
+            .query_async(&mut con)
+            .await
+            .unwrap();
+        assert_eq!(val.get("health"), Some(100).as_ref());
+        assert_hit!(&con, 0);
+        assert_miss!(&con, 3);
 
-    let val: HashMap<String, usize> = get_cmd("HGETALL", test_with_opt_in)
-        .arg("user")
-        .query_async(&mut con)
-        .await
-        .unwrap();
-    assert_eq!(val.get("health"), Some(100).as_ref());
-    assert_hit!(&con, 1);
-    assert_miss!(&con, 3);
+        let val: HashMap<String, usize> = get_cmd("HGETALL", test_with_opt_in)
+            .arg("user")
+            .query_async(&mut con)
+            .await
+            .unwrap();
+        assert_eq!(val.get("health"), Some(100).as_ref());
+        assert_hit!(&con, 1);
+        assert_miss!(&con, 3);
+    }
 }
 
 #[cfg(feature = "connection-manager")]
 #[async_test]
-async fn test_connection_manager_maintains_statistics_after_crashes(test_with_optin: bool) {
-    let ctx = TestContext::default();
+async fn test_connection_manager_maintains_statistics_after_crashes_optin(ctx: TestContext) {
+    test_connection_manager_maintains_statistics_after_crashes(ctx, true).await;
+}
+
+#[cfg(feature = "connection-manager")]
+#[async_test]
+async fn test_connection_manager_maintains_statistics_after_crashes_optout(ctx: TestContext) {
+    test_connection_manager_maintains_statistics_after_crashes(ctx, false).await;
+}
+
+#[cfg(feature = "connection-manager")]
+async fn test_connection_manager_maintains_statistics_after_crashes(
+    ctx: TestContext,
+    test_with_optin: bool,
+) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -646,11 +655,10 @@ async fn test_connection_manager_maintains_statistics_after_crashes(test_with_op
 }
 
 #[cfg(feature = "cluster-async")]
-#[async_test]
-async fn test_cache_async_cluster_reconnect_all_nodes() {
-    let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
-        builder.cache_config(CacheConfig::default())
-    });
+#[async_cluster_test]
+async fn test_cache_async_cluster_reconnect_all_nodes(ctx: TestClusterContext) {
+    let ctx =
+        ctx.with_cluster_client_builder(|builder| builder.cache_config(CacheConfig::default()));
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -709,11 +717,10 @@ async fn test_cache_async_cluster_reconnect_all_nodes() {
 }
 
 #[cfg(feature = "cluster-async")]
-#[async_test]
-async fn test_cache_async_cluster_mget() {
-    let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
-        builder.cache_config(CacheConfig::default())
-    });
+#[async_cluster_test]
+async fn test_cache_async_cluster_mget(ctx: TestClusterContext) {
+    let ctx =
+        ctx.with_cluster_client_builder(|builder| builder.cache_config(CacheConfig::default()));
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -768,186 +775,188 @@ fn get_pipe(atomic: bool) -> redis::Pipeline {
 }
 
 #[cfg(feature = "cluster-async")]
-#[async_test]
-async fn test_cache_async_cluster_slot_change(migrate: bool) {
-    let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
-        builder.cache_config(CacheConfig::default())
-    });
-    if !ctx.protocol.supports_resp3() {
-        return;
-    }
-    // When not `migrate`, this test relies on Redis commit 8945067 which was included beginning
-    // with Redis 7.2
-    if !migrate {
-        run_test_if_version_supported!(REDIS_CE_7_2);
-    }
-
-    struct NodeData {
-        id: String,
-        host: String,
-        port: u16,
-        range: std::ops::Range<u16>,
-    }
-    impl NodeData {
-        fn get_singe_route(&self) -> RoutingInfo {
-            RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
-                host: self.host.clone(),
-                port: self.port,
-            })
+#[async_cluster_test]
+async fn test_cache_async_cluster_slot_change(_ctx: TestClusterContext) {
+    for migrate in [true, false] {
+        let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
+            builder.cache_config(CacheConfig::default())
+        });
+        if !ctx.protocol.supports_resp3() {
+            continue;
         }
-    }
-    let key_slot = 11998; // equivalent get_slot("key_1".as_bytes());
+        // When not `migrate`, this test relies on Redis commit 8945067 which was included beginning
+        // with Redis 7.2
+        if !migrate {
+            skip_if_context_does_not_support!(ctx, REDIS_CE_7_2);
+        }
 
-    let mut con = ctx.async_connection().await;
-    let _: redis::Value = redis::cmd("SET")
-        .arg("key_1")
-        .arg(77)
-        .query_async(&mut con)
-        .await
-        .unwrap();
-
-    let val: usize = redis::cmd("GET")
-        .arg("key_1")
-        .query_async(&mut con)
-        .await
-        .unwrap();
-    assert_eq!(val, 77);
-    assert_hit!(&con, 0);
-    assert_miss!(&con, 1);
-    assert_invalidate!(&con, 0);
-
-    let val: usize = redis::cmd("GET")
-        .arg("key_1")
-        .query_async(&mut con)
-        .await
-        .unwrap();
-    assert_eq!(val, 77);
-    assert_hit!(&con, 1);
-    assert_miss!(&con, 1);
-
-    let nodes_str: String = redis::cmd("CLUSTER")
-        .arg("NODES")
-        .query_async(&mut con)
-        .await
-        .unwrap();
-
-    let node_slot_data: Vec<_> = nodes_str
-        .split("\n")
-        .filter(|node_str| !node_str.is_empty())
-        .map(|node_str| {
-            let node_sep: Vec<&str> = node_str.split(" ").collect();
-            let node_id = node_sep[0];
-            let (node_addr, _cport) = node_sep[1].split_once("@").unwrap();
-            let (node_host, node_port) = node_addr.split_once(":").unwrap();
-            let (slot_start, slot_end) = node_sep[8].split_once("-").unwrap();
-            let range = std::ops::Range {
-                start: slot_start.parse().unwrap(),
-                end: slot_end.parse::<u16>().unwrap() + 1,
-            };
-            NodeData {
-                id: node_id.to_string(),
-                host: node_host.to_string(),
-                port: node_port.parse::<u16>().unwrap(),
-                range,
+        struct NodeData {
+            id: String,
+            host: String,
+            port: u16,
+            range: std::ops::Range<u16>,
+        }
+        impl NodeData {
+            fn get_singe_route(&self) -> RoutingInfo {
+                RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+                    host: self.host.clone(),
+                    port: self.port,
+                })
             }
-        })
-        .collect();
-    let old_slot_owner = node_slot_data
-        .iter()
-        .find(|node_data| node_data.range.contains(&key_slot))
-        .unwrap();
-    let new_slot_owner = node_slot_data
-        .iter()
-        .find(|node_data| !node_data.range.contains(&key_slot))
-        .unwrap();
+        }
+        let key_slot = 11998; // equivalent get_slot("key_1".as_bytes());
 
-    con.route_command(
-        redis::cmd("CLUSTER")
-            .arg("SETSLOT")
-            .arg(key_slot)
-            .arg("IMPORTING")
-            .arg(&old_slot_owner.id)
-            .to_owned(),
-        new_slot_owner.get_singe_route(),
-    )
-    .await
-    .unwrap();
+        let mut con = ctx.async_connection().await;
+        let _: redis::Value = redis::cmd("SET")
+            .arg("key_1")
+            .arg(77)
+            .query_async(&mut con)
+            .await
+            .unwrap();
 
-    con.route_command(
-        redis::cmd("CLUSTER")
-            .arg("SETSLOT")
-            .arg(key_slot)
-            .arg("MIGRATING")
-            .arg(&new_slot_owner.id)
-            .to_owned(),
-        old_slot_owner.get_singe_route(),
-    )
-    .await
-    .unwrap();
+        let val: usize = redis::cmd("GET")
+            .arg("key_1")
+            .query_async(&mut con)
+            .await
+            .unwrap();
+        assert_eq!(val, 77);
+        assert_hit!(&con, 0);
+        assert_miss!(&con, 1);
+        assert_invalidate!(&con, 0);
 
-    if migrate {
+        let val: usize = redis::cmd("GET")
+            .arg("key_1")
+            .query_async(&mut con)
+            .await
+            .unwrap();
+        assert_eq!(val, 77);
+        assert_hit!(&con, 1);
+        assert_miss!(&con, 1);
+
+        let nodes_str: String = redis::cmd("CLUSTER")
+            .arg("NODES")
+            .query_async(&mut con)
+            .await
+            .unwrap();
+
+        let node_slot_data: Vec<_> = nodes_str
+            .split("\n")
+            .filter(|node_str| !node_str.is_empty())
+            .map(|node_str| {
+                let node_sep: Vec<&str> = node_str.split(" ").collect();
+                let node_id = node_sep[0];
+                let (node_addr, _cport) = node_sep[1].split_once("@").unwrap();
+                let (node_host, node_port) = node_addr.split_once(":").unwrap();
+                let (slot_start, slot_end) = node_sep[8].split_once("-").unwrap();
+                let range = std::ops::Range {
+                    start: slot_start.parse().unwrap(),
+                    end: slot_end.parse::<u16>().unwrap() + 1,
+                };
+                NodeData {
+                    id: node_id.to_string(),
+                    host: node_host.to_string(),
+                    port: node_port.parse::<u16>().unwrap(),
+                    range,
+                }
+            })
+            .collect();
+        let old_slot_owner = node_slot_data
+            .iter()
+            .find(|node_data| node_data.range.contains(&key_slot))
+            .unwrap();
+        let new_slot_owner = node_slot_data
+            .iter()
+            .find(|node_data| !node_data.range.contains(&key_slot))
+            .unwrap();
+
         con.route_command(
-            redis::cmd("MIGRATE")
-                .arg(&new_slot_owner.host)
-                .arg(new_slot_owner.port)
-                .arg("key_1")
-                .arg(0)
-                .arg(5000)
+            redis::cmd("CLUSTER")
+                .arg("SETSLOT")
+                .arg(key_slot)
+                .arg("IMPORTING")
+                .arg(&old_slot_owner.id)
+                .to_owned(),
+            new_slot_owner.get_singe_route(),
+        )
+        .await
+        .unwrap();
+
+        con.route_command(
+            redis::cmd("CLUSTER")
+                .arg("SETSLOT")
+                .arg(key_slot)
+                .arg("MIGRATING")
+                .arg(&new_slot_owner.id)
                 .to_owned(),
             old_slot_owner.get_singe_route(),
         )
         .await
         .unwrap();
-        sleep(Duration::from_millis(50).into()).await;
-        // Migrating should invalidate
-        assert_invalidate!(&con, 1);
-    } else {
-        assert_invalidate!(&con, 0);
-        // Without migration invalidation will happen when receiving `MOVED` from server,
-        // which triggers a topology change.
-    }
 
-    con.route_command(
-        redis::cmd("CLUSTER")
-            .arg("SETSLOT")
-            .arg(key_slot)
-            .arg("NODE")
-            .arg(&new_slot_owner.id)
-            .take(),
-        new_slot_owner.get_singe_route(),
-    )
-    .await
-    .unwrap();
+        if migrate {
+            con.route_command(
+                redis::cmd("MIGRATE")
+                    .arg(&new_slot_owner.host)
+                    .arg(new_slot_owner.port)
+                    .arg("key_1")
+                    .arg(0)
+                    .arg(5000)
+                    .to_owned(),
+                old_slot_owner.get_singe_route(),
+            )
+            .await
+            .unwrap();
+            sleep(Duration::from_millis(50).into()).await;
+            // Migrating should invalidate
+            assert_invalidate!(&con, 1);
+        } else {
+            assert_invalidate!(&con, 0);
+            // Without migration invalidation will happen when receiving `MOVED` from server,
+            // which triggers a topology change.
+        }
 
-    con.route_command(
-        redis::cmd("CLUSTER")
-            .arg("SETSLOT")
-            .arg(key_slot)
-            .arg("NODE")
-            .arg(&new_slot_owner.id)
-            .take(),
-        old_slot_owner.get_singe_route(),
-    )
-    .await
-    .unwrap();
-
-    assert_miss!(&con, 1);
-    let val: Option<usize> = redis::cmd("GET")
-        .arg("key_1")
-        .query_async(&mut con)
+        con.route_command(
+            redis::cmd("CLUSTER")
+                .arg("SETSLOT")
+                .arg(key_slot)
+                .arg("NODE")
+                .arg(&new_slot_owner.id)
+                .take(),
+            new_slot_owner.get_singe_route(),
+        )
         .await
         .unwrap();
-    // Without migration, key itself won't be copied over
-    if migrate {
-        assert_eq!(val, Some(77));
-    } else {
-        assert_eq!(val, None);
+
+        con.route_command(
+            redis::cmd("CLUSTER")
+                .arg("SETSLOT")
+                .arg(key_slot)
+                .arg("NODE")
+                .arg(&new_slot_owner.id)
+                .take(),
+            old_slot_owner.get_singe_route(),
+        )
+        .await
+        .unwrap();
+
+        assert_miss!(&con, 1);
+        let val: Option<usize> = redis::cmd("GET")
+            .arg("key_1")
+            .query_async(&mut con)
+            .await
+            .unwrap();
+        // Without migration, key itself won't be copied over
+        if migrate {
+            assert_eq!(val, Some(77));
+        } else {
+            assert_eq!(val, None);
+        }
+        assert_hit!(&con, 1);
+        // It will miss twice because there will be retry after receiving
+        // `MOVED` error from server
+        assert_miss!(&con, 3);
+        assert_invalidate!(&con, 1);
     }
-    assert_hit!(&con, 1);
-    // It will miss twice because there will be retry after receiving
-    // `MOVED` error from server
-    assert_miss!(&con, 3);
-    assert_invalidate!(&con, 1);
 }
 
 // Support function for testing cases where CacheMode::All == CacheMode::OptIn
@@ -960,8 +969,7 @@ fn get_cmd(name: &str, enable_opt_in: bool) -> redis::Cmd {
 }
 
 #[async_test]
-async fn test_readonly_commands_with_patterns_are_not_cached() {
-    let ctx = TestContext::default();
+async fn test_readonly_commands_with_patterns_are_not_cached(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -979,8 +987,7 @@ async fn test_readonly_commands_with_patterns_are_not_cached() {
 }
 
 #[async_test]
-async fn test_bitcount_is_handled_correctly() {
-    let ctx = TestContext::default();
+async fn test_bitcount_is_handled_correctly(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -1033,8 +1040,7 @@ async fn test_bitcount_is_handled_correctly() {
 }
 
 #[async_test]
-async fn test_that_a_pipeline_with_all_commands_cached_does_not_hang() {
-    let ctx = TestContext::default();
+async fn test_that_a_pipeline_with_all_commands_cached_does_not_hang(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;
     }

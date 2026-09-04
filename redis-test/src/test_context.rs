@@ -26,6 +26,7 @@ use std::time::Duration;
 #[derive(Default)]
 pub struct TestContextBuilder {
     server_builder: RedisServerBuilder,
+    protocol: Option<redis::ProtocolVersion>,
 }
 
 impl TestContextBuilder {
@@ -36,6 +37,16 @@ impl TestContextBuilder {
 
     pub fn address(mut self, address: ConnectionAddr) -> Self {
         self.server_builder = self.server_builder.address(address);
+        self
+    }
+
+    pub fn server_type(mut self, server_type: crate::server::ServerType) -> Self {
+        self.server_builder = self.server_builder.server_type(server_type);
+        self
+    }
+
+    pub fn protocol(mut self, protocol: redis::ProtocolVersion) -> Self {
+        self.protocol = Some(protocol);
         self
     }
 
@@ -91,7 +102,7 @@ impl TestContextBuilder {
     /// * `refiner` - See [`RedisServerBuilder::refine_and_build`]
     pub fn refine_and_build(self, refiner: impl FnOnce(&mut RedisServerCommand)) -> TestContext {
         let server = self.server_builder.refine_and_build(refiner);
-        TestContext::from_server(server)
+        TestContext::from_server(server, self.protocol)
     }
 }
 
@@ -146,9 +157,16 @@ impl TestContext {
     //
     // Instead, users should to go through `TestContextBuilder` to limit the points of entry and
     // hence help us with maintenance.
-    fn from_server(mut server: RedisServer) -> Self {
-        let client =
-            build_single_client(server.connection_info(), &server.tls_paths, server.mtls).unwrap();
+    fn from_server(mut server: RedisServer, protocol: Option<ProtocolVersion>) -> Self {
+        let protocol = protocol
+            .or_else(use_protocol)
+            .unwrap_or(ProtocolVersion::RESP2);
+        let client = build_single_client(
+            server.connection_info_with_protocol(protocol),
+            &server.tls_paths,
+            server.mtls,
+        )
+        .unwrap();
 
         if server.tls_paths.is_some() {
             crate::utils::start_tls_crypto_provider();
@@ -218,7 +236,7 @@ impl TestContext {
         Self {
             server,
             client,
-            protocol: use_protocol(),
+            protocol,
         }
     }
 
