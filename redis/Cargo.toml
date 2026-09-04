@@ -3,7 +3,6 @@ name = "redis"
 version = "2.0.0-rc.1"
 keywords = ["redis", "valkey", "cluster", "sentinel", "pubsub"]
 description = "Redis driver for Rust."
-homepage = "https://github.com/redis-rs/redis-rs"
 repository = "https://github.com/redis-rs/redis-rs"
 documentation = "https://docs.rs/redis"
 license = "BSD-3-Clause"
@@ -71,7 +70,7 @@ smol-timeout = { version = "0.6", optional = true }
 # Only needed for native tls
 native-tls = { version = "0.2", optional = true }
 tokio-native-tls = { version = "0.3", optional = true }
-async-native-tls = { version = "0.5", optional = true }
+async-native-tls = { version = "0.6", optional = true }
 
 # Only needed for rustls
 rustls = { version = "0.23", optional = true, default-features = false }

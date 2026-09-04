@@ -103,7 +103,7 @@ fn test_module_bloom_infos() {
     let ctx = TestContextBuilder::new().module(Module::Bloom).build();
     let mut con = ctx.connection();
 
-    // Check that getting infos on a not yet existing key does not panic
+    // Check that getting info on a not yet existing key does not panic
     assert_eq!(con.bf_card(KEY_1), Ok(0));
     assert_eq!(con.key_type(KEY_1), Ok(ValueType::None));
     assert_matches!(con.bf_info(KEY_1).unwrap_err().detail(), Some(d) if d.contains("not found"));
@@ -114,7 +114,7 @@ fn test_module_bloom_infos() {
         Ok(vec![false, false, false])
     );
 
-    // Add a single value and check its infos
+    // Add a single value and check its info
     assert_eq!(con.bf_add(KEY_1, "foo"), Ok(true));
     assert_eq!(con.bf_card(KEY_1), Ok(1));
     let bf_type = con.key_type(KEY_1).unwrap();
@@ -141,7 +141,7 @@ fn test_module_bloom_infos() {
         Ok(vec![true, false, false])
     );
 
-    // Add a second value and check its infos
+    // Add a second value and check its info
     assert_eq!(con.bf_add(KEY_1, "bar"), Ok(true));
     assert_eq!(con.bf_card(KEY_1), Ok(2));
     assert_eq!(con.key_type(KEY_1), Ok(bf_type.clone()));
@@ -164,7 +164,7 @@ fn test_module_bloom_infos() {
         Ok(vec![true, true, false])
     );
 
-    // Adding the first value again should not change infos, as that value was already added before.
+    // Adding the first value again should not change info, as that value was already added before.
     assert_eq!(con.bf_add(KEY_1, "foo"), Ok(false));
     assert_eq!(con.bf_card(KEY_1), Ok(2));
     assert_eq!(con.key_type(KEY_1), Ok(bf_type));
@@ -187,7 +187,7 @@ fn test_module_bloom_infos() {
         Ok(vec![true, true, false])
     );
 
-    // Check that getting infos on a not-Bloom-filter key does not panic or change its value
+    // Check that getting info on a not-Bloom-filter key does not panic or change its value
     assert_eq!(con.set(KEY_2, "quux"), Ok(()));
     assert_eq!(con.bf_card(KEY_2).unwrap_err().code(), Some("WRONGTYPE"));
     assert_eq!(con.bf_info(KEY_2).unwrap_err().code(), Some("WRONGTYPE"));

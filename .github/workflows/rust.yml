@@ -34,16 +34,16 @@ jobs:
             # If minor versions are sufficiently different, CI also tests against the latest minor.
             #
             # When making changes here, also update `README.md` accordingly (grep for `CI runs against`).
-            {  db-org: redis, db-name: redis, db-version: 6.2.22 },
+            {  db-org: redis, db-name: redis, db-version: 6.2.24 },
             {  db-org: redis, db-name: redis, db-version: 7.0.15, json-module-version: v2.6.22 },
-            {  db-org: redis, db-name: redis, db-version: 7.4.9, json-module-version: v2.6.22 },
+            {  db-org: redis, db-name: redis, db-version: 7.4.11, json-module-version: v2.6.22 },
             {  db-org: redis, db-name: redis, db-version: 8.0.6, json-module-version: bundled, bloom-module-version: bundled },
-            {  db-org: redis, db-name: redis, db-version: 8.8.0, json-module-version: bundled, bloom-module-version: bundled },
+            {  db-org: redis, db-name: redis, db-version: 8.8.2, json-module-version: bundled, bloom-module-version: bundled },
             # valkey-bloom has some quirks with Valkey <8.1, so we only test it on >=8.1
-            {  db-org: valkey-io, db-name: valkey, db-version: 7.2.13, json-module-version: v2.6.22 },
-            {  db-org: valkey-io, db-name: valkey, db-version: 8.0.9, json-module-version: v2.6.22 },
+            {  db-org: valkey-io, db-name: valkey, db-version: 7.2.14, json-module-version: v2.6.22 },
+            {  db-org: valkey-io, db-name: valkey, db-version: 8.0.10, json-module-version: v2.6.22 },
             # Skipping ValKey 8.1 as it's too similar to 8.0
-            {  db-org: valkey-io, db-name: valkey, db-version: 9.0.4, json-module-version: v2.6.22, bloom-module-version: "valkey-bloom:1.0.1" },
+            {  db-org: valkey-io, db-name: valkey, db-version: 9.0.5, json-module-version: v2.6.22, bloom-module-version: "valkey-bloom:1.0.1" },
             # Skipping ValKey 9.1 as it's too similar to 9.0
             #
             # KeyDB (#2203), Dragonfly (#2204), Kvrocks, ... are implicitly supported, but this support is not tested.
@@ -79,15 +79,15 @@ jobs:
           cp "$HOME/db/redisbloom.so" "$REDISRS_REDIS_BLOOM_PATH"
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: stable
           components: rustfmt
 
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@065d6a08a14e61e89fb0a4c10eecdbdef39c7d8e # v2.85.4
+        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
         with:
           tool: nextest
 
@@ -244,11 +244,11 @@ jobs:
           cp "$HOME/db/redisbloom.so" "$REDISRS_REDIS_BLOOM_PATH"
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Start Redis
         run: |
@@ -355,11 +355,11 @@ jobs:
           db-version: 8.0.2
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: ${{ env.rust_ver }}
 
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Benchmark
         run: |
@@ -378,10 +378,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - run: |
           cargo install --git https://github.com/nihohit/flag-frenzy.git

@@ -15,3 +15,6 @@ path = "src/reproduce.rs"
 [dependencies]
 afl = "0.18"
 redis = { path = "../../redis" }
+
+[lints]
+workspace = true
