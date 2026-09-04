@@ -20,6 +20,32 @@ impl TestSentinelContext {
         Self::new_with_cluster_client_builder(nodes, replicas, sentinels)
     }
 
+    pub fn new_with_server_type_and_protocol(
+        nodes: u16,
+        replicas: u16,
+        sentinels: u16,
+        server_type: redis_test::server::ServerType,
+        protocol: redis::ProtocolVersion,
+    ) -> Self {
+        start_tls_crypto_provider();
+        let cluster =
+            RedisSentinelCluster::new_with_server_type(nodes, replicas, sentinels, server_type);
+        let initial_nodes: Vec<ConnectionInfo> = cluster
+            .iter_sentinel_servers()
+            .map(|s| s.connection_info_with_protocol(protocol))
+            .collect();
+        let sentinel = redis::sentinel::Sentinel::build(initial_nodes.clone()).unwrap();
+
+        let mut context = Self {
+            cluster,
+            sentinel,
+            sentinels_connection_info: initial_nodes,
+            mtls_enabled: MTLS_NOT_ENABLED,
+        };
+        context.wait_for_cluster_up();
+        context
+    }
+
     pub fn new_with_cluster_client_builder(nodes: u16, replicas: u16, sentinels: u16) -> Self {
         start_tls_crypto_provider();
         let cluster = RedisSentinelCluster::new(nodes, replicas, sentinels);

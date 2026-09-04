@@ -4,7 +4,6 @@ mod support;
 mod basic_async {
     use std::{collections::HashMap, time::Duration};
 
-    use super::*;
     use crate::support::*;
     use assert_matches::assert_matches;
     use futures::{StreamExt, prelude::*};
@@ -158,8 +157,7 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn test_set_write_backpressure_boundary_does_not_break_connection() {
-        let ctx = TestContext::default();
+    async fn test_set_write_backpressure_boundary_does_not_break_connection(ctx: TestContext) {
         let config =
             redis::AsyncConnectionConfig::new().set_write_backpressure_boundary(16 * 1024 * 1024);
         let mut conn = ctx
@@ -1611,9 +1609,9 @@ mod basic_async {
     }
 
     #[async_test]
-    async fn test_multiplexed_connection_kills_connection_on_drop_even_when_blocking() {
-        let ctx = TestContext::default();
-
+    async fn test_multiplexed_connection_kills_connection_on_drop_even_when_blocking(
+        ctx: TestContext,
+    ) {
         let mut conn = ctx.async_connection().await.unwrap();
         let mut connection_to_dispose_of = ctx.async_connection().await.unwrap();
         connection_to_dispose_of.set_response_timeout(Duration::from_millis(1));

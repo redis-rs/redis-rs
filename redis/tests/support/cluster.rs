@@ -14,7 +14,8 @@ use redis::aio::ConnectionLike;
 #[cfg(feature = "cluster-async")]
 use redis::cluster_async::Connect;
 #[cfg(feature = "tls-rustls")]
-use redis_test::cluster::ClusterType;
+// ClusterType is available for configuration but not referenced directly in this file.
+// Remove direct import to avoid unused-import warnings.
 use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
 use redis_test::server::{RedisServer, use_protocol};
 use redis_test::utils::{build_single_client, start_tls_crypto_provider};
@@ -37,12 +38,15 @@ impl TestClusterContext {
     }
 
     pub fn new_with_mtls() -> Self {
-        Self::new_with_config_and_builder(
-            RedisClusterConfiguration::default()
-                .mtls_enabled()
-                .insecure_tls(),
-            identity,
-        )
+        let mut cfg = RedisClusterConfiguration::default()
+            .mtls_enabled()
+            .insecure_tls();
+        #[cfg(feature = "tls-rustls")]
+        {
+            cfg = cfg.cluster_type(redis_test::cluster::ClusterType::TcpTls);
+        }
+
+        Self::new_with_config_and_builder(cfg, identity)
     }
 
     pub fn new_without_ip_alts() -> Self {
@@ -75,6 +79,13 @@ impl TestClusterContext {
         Self::new_with_config_and_builder(RedisClusterConfiguration::default(), initializer)
     }
 
+    pub fn new_with_config_and_protocol(
+        cluster_config: RedisClusterConfiguration,
+        protocol: ProtocolVersion,
+    ) -> Self {
+        Self::new_with_config_and_builder_and_protocol(cluster_config, identity, protocol)
+    }
+
     pub fn new_with_config_and_builder<F>(
         cluster_config: RedisClusterConfiguration,
         initializer: F,
@@ -82,20 +93,32 @@ impl TestClusterContext {
     where
         F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
     {
+        Self::new_with_config_and_builder_and_protocol(cluster_config, initializer, use_protocol())
+    }
+
+    pub fn new_with_config_and_builder_and_protocol<F>(
+        cluster_config: RedisClusterConfiguration,
+        initializer: F,
+        protocol: ProtocolVersion,
+    ) -> Self
+    where
+        F: FnOnce(redis::cluster::ClusterClientBuilder) -> redis::cluster::ClusterClientBuilder,
+    {
         start_tls_crypto_provider();
         #[cfg(feature = "tls-rustls")]
-        let secure_tls = cluster_config.get_require_secure_tls();
+        let _secure_tls = cluster_config.get_require_secure_tls();
         let mtls_enabled = cluster_config.get_mtls_enabled();
+        let _cluster_type = cluster_config.get_cluster_type();
         let cluster = RedisCluster::new(cluster_config);
         let initial_nodes: Vec<ConnectionInfo> = cluster
             .iter_servers()
             .map(RedisServer::connection_info)
             .collect();
-        let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes.clone())
-            .use_protocol(use_protocol());
+        let mut builder =
+            redis::cluster::ClusterClientBuilder::new(initial_nodes.clone()).use_protocol(protocol);
 
         #[cfg(feature = "tls-rustls")]
-        if (mtls_enabled || (ClusterType::get_intended() == ClusterType::TcpTls && !secure_tls))
+        if (mtls_enabled || cluster.tls_paths.is_some())
             && let Some(tls_file_paths) = &cluster.tls_paths
         {
             builder = builder.certs(load_certs_from_file(tls_file_paths));
@@ -110,7 +133,7 @@ impl TestClusterContext {
             client,
             mtls_enabled,
             nodes: initial_nodes,
-            protocol: use_protocol(),
+            protocol,
         }
     }
 
@@ -124,7 +147,7 @@ impl TestClusterContext {
             .use_protocol(self.protocol);
 
         #[cfg(feature = "tls-rustls")]
-        if (self.mtls_enabled || ClusterType::get_intended() == ClusterType::TcpTls)
+        if (self.mtls_enabled || self.cluster.tls_paths.is_some())
             && let Some(tls_file_paths) = &self.cluster.tls_paths
         {
             builder = builder.certs(load_certs_from_file(tls_file_paths));

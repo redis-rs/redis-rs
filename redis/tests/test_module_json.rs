@@ -4,7 +4,7 @@ use redis::json::{FphaType, JsonSetOptions};
 use redis::{Commands, ExistenceCheck, JsonCommands, ValueType};
 use redis_test::server::Module;
 use redis_test::{
-    REDIS_CE_7_0, REDIS_CE_8_8, REDIS_JSON_8_8, TestContextBuilder, TestContextVersioning,
+    REDIS_CE_7_0, REDIS_CE_8_8, REDIS_JSON_8_8, TestContext, TestContextVersioning,
     run_test_if_version_supported,
 };
 use std::assert_eq;
@@ -17,6 +17,7 @@ use redis::{
 };
 
 mod support;
+use test_macros::single_server_test;
 
 use serde::Serialize;
 // adds json! macro for quick json generation on the fly.
@@ -24,9 +25,8 @@ use serde_json::json;
 
 const TEST_KEY: &str = "my_json";
 
-#[test]
-fn test_module_json_serialize_error() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test]
+fn test_module_json_serialize_error(ctx: TestContext) {
     let mut con = ctx.connection();
 
     #[derive(Debug, Serialize)]
@@ -55,9 +55,8 @@ fn test_module_json_serialize_error() {
     );
 }
 
-#[test]
-fn test_module_json_arr_append() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test]
+fn test_module_json_arr_append(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -73,9 +72,8 @@ fn test_module_json_arr_append() {
     assert_eq!(json_append, Ok(Array(vec![Int(2i64), Int(3i64), Nil])));
 }
 
-#[test]
-fn test_module_json_arr_index() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test]
+fn test_module_json_arr_index(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -104,9 +102,8 @@ fn test_module_json_arr_index() {
     assert_eq!(json_arrindex_2, Ok(Array(vec![Int(1i64), Nil])));
 }
 
-#[test]
-fn test_module_json_arr_insert() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test]
+fn test_module_json_arr_insert(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -134,9 +131,8 @@ fn test_module_json_arr_insert() {
     assert_eq!(json_arrinsert_2, Ok(Array(vec![Int(5), Nil])));
 }
 
-#[test]
-fn test_module_json_arr_len() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test]
+fn test_module_json_arr_len(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -164,9 +160,8 @@ fn test_module_json_arr_len() {
     assert_eq!(json_arrlen_2, Ok(Array(vec![Int(4), Nil])));
 }
 
-#[test]
-fn test_module_json_arr_pop() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test]
+fn test_module_json_arr_pop(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -208,9 +203,8 @@ fn test_module_json_arr_pop() {
     );
 }
 
-#[test]
-fn test_module_json_arr_trim() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test]
+fn test_module_json_arr_trim(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -238,9 +232,8 @@ fn test_module_json_arr_trim() {
     assert_eq!(json_arrtrim_2, Ok(Array(vec![Int(1), Nil])));
 }
 
-#[test]
-fn test_module_json_clear() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test]
+fn test_module_json_clear(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(TEST_KEY, "$", &json!({"obj": {"a": 1i64, "b": 2i64}, "arr": [1i64, 2i64, 3i64], "str": "foo", "bool": true, "int": 42i64, "float": std::f64::consts::PI}));
@@ -263,9 +256,8 @@ fn test_module_json_clear() {
     );
 }
 
-#[test]
-fn test_module_json_del() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test]
+fn test_module_json_del(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -281,9 +273,8 @@ fn test_module_json_del() {
     assert_eq!(json_del, Ok(2));
 }
 
-#[test]
-fn test_module_json_get() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test]
+fn test_module_json_get(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -307,9 +298,8 @@ fn test_module_json_get() {
     }
 }
 
-#[test]
-fn test_module_json_mget() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test]
+fn test_module_json_mget(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_mset(&[
@@ -341,9 +331,8 @@ fn test_module_json_mget() {
     );
 }
 
-#[test]
-fn test_module_json_num_incr_by() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test]
+fn test_module_json_num_incr_by(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -375,9 +364,8 @@ fn test_module_json_num_incr_by() {
     }
 }
 
-#[test]
-fn test_module_json_obj_keys() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test]
+fn test_module_json_obj_keys(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -402,9 +390,8 @@ fn test_module_json_obj_keys() {
     );
 }
 
-#[test]
-fn test_module_json_obj_len() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test]
+fn test_module_json_obj_len(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -420,9 +407,8 @@ fn test_module_json_obj_len() {
     assert_eq!(json_objlen, Ok(Array(vec![Nil, Int(2)])));
 }
 
-#[test]
-fn test_module_json_set() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test]
+fn test_module_json_set(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let set: RedisResult<bool> = con.json_set(TEST_KEY, "$", &json!({"key": "value"}));
@@ -430,9 +416,8 @@ fn test_module_json_set() {
     assert_eq!(set, Ok(true));
 }
 
-#[test]
-fn test_module_json_str_append() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test]
+fn test_module_json_str_append(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -455,9 +440,8 @@ fn test_module_json_str_append() {
     );
 }
 
-#[test]
-fn test_module_json_str_len() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test]
+fn test_module_json_str_len(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -473,9 +457,8 @@ fn test_module_json_str_len() {
     assert_eq!(json_strlen, Ok(Array(vec![Int(3), Int(5), Nil])));
 }
 
-#[test]
-fn test_module_json_toggle() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test]
+fn test_module_json_toggle(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(TEST_KEY, "$", &json!({"bool": true}));
@@ -489,9 +472,8 @@ fn test_module_json_toggle() {
     assert_eq!(json_toggle_b, Ok(Array(vec![Int(1)])));
 }
 
-#[test]
-fn test_module_json_type() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test]
+fn test_module_json_type(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let set_initial: RedisResult<bool> = con.json_set(
@@ -544,11 +526,8 @@ fn test_module_json_type() {
     assert_eq!(key_type, Ok(ValueType::JSON));
 }
 
-#[test]
-fn test_module_json_set_options_json_value() {
-    let ctx = TestContextBuilder::default()
-        .modules(&[Module::Json])
-        .build();
+#[single_server_test]
+fn test_module_json_set_options_json_value(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let set_result: RedisResult<bool> = con.json_set_options(
@@ -563,11 +542,8 @@ fn test_module_json_set_options_json_value() {
     assert_eq!(get_result, Ok(r#"[{"a":1,"b":[2,3]}]"#.to_string()));
 }
 
-#[test]
-fn test_module_json_set_options_nx_xx() {
-    let ctx = TestContextBuilder::default()
-        .modules(&[Module::Json])
-        .build();
+#[single_server_test]
+fn test_module_json_set_options_nx_xx(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let opts_xx = JsonSetOptions::default().conditional_set(ExistenceCheck::XX);
@@ -631,7 +607,7 @@ fn test_module_json_set_fpha_roundtrip(#[case] fpha_type: FphaType) {
     assert_eq!(get_result, Ok("[[1.0,2.0,-3.5]]".to_string()));
 }
 
-#[test]
+#[single_server_test]
 fn test_module_json_set_fpha_empty_payload() {
     let ctx =
         run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
@@ -651,7 +627,7 @@ fn test_module_json_set_fpha_empty_payload() {
     assert_eq!(get_result, Ok("[[]]".to_string()));
 }
 
-#[test]
+#[single_server_test]
 fn test_module_json_set_fpha_with_existence_check() {
     let ctx =
         run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
@@ -679,7 +655,7 @@ fn test_module_json_set_fpha_with_existence_check() {
 
 // FP16 storage range is ±65504.
 // A value outside that range must be rejected by the server with an out-of-range error.
-#[test]
+#[single_server_test]
 fn test_module_json_set_fpha_fp16_overflow() {
     let ctx =
         run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
@@ -705,7 +681,7 @@ fn test_module_json_set_fpha_fp16_overflow() {
 // "If at least one value in the FP array does not fit the FPHA type, the command errors."
 
 // Verify that a single out-of-range element in an otherwise valid payload rejects the whole command and leaves the key untouched.
-#[test]
+#[single_server_test]
 fn test_module_json_set_fpha_fp16_partial_overflow() {
     let ctx =
         run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
@@ -727,7 +703,7 @@ fn test_module_json_set_fpha_fp16_partial_overflow() {
 }
 
 // 65504 is the largest finite value representable in IEEE-754 binary16.
-#[test]
+#[single_server_test]
 fn test_module_json_set_fpha_fp16_max_boundary() {
     let ctx =
         run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
@@ -748,7 +724,7 @@ fn test_module_json_set_fpha_fp16_max_boundary() {
 }
 
 // 3.4e38 is near the largest finite value representable in IEEE-754 binary32.
-#[test]
+#[single_server_test]
 fn test_module_json_set_fpha_fp32_max_boundary() {
     let ctx =
         run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
@@ -770,7 +746,7 @@ fn test_module_json_set_fpha_fp32_max_boundary() {
 
 // 2^20 (= 1048576) is exactly representable in bf16 and well above FP16's ±65504 limit.
 // The same value would be rejected under FPHA FP16 but under FPHA BF16 it round-trips losslessly.
-#[test]
+#[single_server_test]
 fn test_module_json_set_fpha_bf16_above_fp16_range() {
     let ctx =
         run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
@@ -792,7 +768,7 @@ fn test_module_json_set_fpha_bf16_above_fp16_range() {
 
 // Values that serde_json emits in scientific notation must be accepted by the server and round-tripped back as scientific notation.
 // Note: serde emits `6.022e+23` while the server omits the `+`.
-#[test]
+#[single_server_test]
 fn test_module_json_set_fpha_fp32_scientific_notation() {
     let ctx =
         run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
@@ -817,7 +793,7 @@ fn test_module_json_set_fpha_fp32_scientific_notation() {
 // bf16 has a 7-bit mantissa.
 // Around 100 its step size is 0.5, so 100.7 snaps to 100.5
 // pi (3.1415927) snaps to 3.14.
-#[test]
+#[single_server_test]
 fn test_module_json_set_fpha_bf16_truncation() {
     let ctx =
         run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
@@ -839,7 +815,7 @@ fn test_module_json_set_fpha_bf16_truncation() {
 
 // fp16 has a 10-bit mantissa, so it preserves more precision than bf16.
 // Around 1.0 its step size is ~0.001, which snaps 1.0009766 to 1.001, pi still snaps to 3.14.
-#[test]
+#[single_server_test]
 fn test_module_json_set_fpha_fp16_truncation() {
     let ctx =
         run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
@@ -862,7 +838,7 @@ fn test_module_json_set_fpha_fp16_truncation() {
 // The FPHA hint applies to any serializable value, not just flat slices.
 // A 2-D matrix exercises the docs' "all FP arrays in value" wording - the hint is applied to every inner array.
 // With BF16, 100.7 snaps to 100.5 and pi snaps to 3.14 within their respective inner arrays.
-#[test]
+#[single_server_test]
 fn test_module_json_set_fpha_matrix() {
     let ctx =
         run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
@@ -884,7 +860,7 @@ fn test_module_json_set_fpha_matrix() {
 }
 
 // An object holding multiple FP-array fields gets the storage hint applied to each field independently.
-#[test]
+#[single_server_test]
 fn test_module_json_set_fpha_object_with_array_fields() {
     let ctx =
         run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
@@ -913,7 +889,7 @@ fn test_module_json_set_fpha_object_with_array_fields() {
 // "If at least one value in the FP array does not fit the FPHA type, the command errors."
 
 // Verify that a single out-of-range value causes the entire command to fail without modifying the key, even when the offending value appears in a nested array.
-#[test]
+#[single_server_test]
 fn test_module_json_set_fpha_nested_partial_overflow() {
     let ctx =
         run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
@@ -936,7 +912,7 @@ fn test_module_json_set_fpha_nested_partial_overflow() {
 }
 
 // A scalar (not an array) is also a valid FPHA payload server-side.
-#[test]
+#[single_server_test]
 fn test_module_json_set_fpha_scalar() {
     let ctx =
         run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);

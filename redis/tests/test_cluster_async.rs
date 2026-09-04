@@ -4,10 +4,10 @@ mod support;
 
 #[cfg(test)]
 mod cluster_async {
-    #[cfg(feature = "tls-rustls")]
-    use redis_test::cluster::ClusterType;
+    // TLS cluster type checks are now done at runtime against the created cluster.
     #[cfg(feature = "tls-rustls")]
     use redis_test::utils::load_certs_from_file;
+
     use std::{
         collections::HashMap,
         num::NonZeroUsize,
@@ -41,10 +41,10 @@ mod cluster_async {
     use redis_test::utils::build_single_client;
     use redis_test::{
         REDIS_CE_7_0, TestContextVersioning, VALKEY_9_0, redis_value,
-        run_test_if_version_supported, skip_if_context_does_not_support,
+        skip_if_context_does_not_support,
     };
 
-    use test_macros::async_test;
+    use test_macros::async_cluster_test as async_test;
     use tokio::{join, sync::mpsc::UnboundedReceiver};
 
     use crate::support::*;
@@ -66,24 +66,14 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn test_async_cluster_basic_cmd() {
-        let cluster = TestClusterContext::new();
-
+    async fn test_async_cluster_basic_cmd(cluster: TestClusterContext) {
         let connection = cluster.async_connection().await;
         smoke_test_connection(connection).await;
     }
 
     #[async_test]
-    async fn test_async_cluster_numbered_database() {
-        run_test_if_version_supported!(VALKEY_9_0);
-
-        let cluster = TestClusterContext::new_with_config_and_builder(
-            RedisClusterConfiguration::default()
-                .cluster_databases(16)
-                .insecure_tls(),
-            |builder| builder.database_id(4),
-        );
-
+    async fn test_async_cluster_numbered_database(cluster: TestClusterContext) {
+        skip_if_context_does_not_support!(cluster, VALKEY_9_0);
         let mut con = cluster.async_connection().await;
 
         assert_all_nodes_on_db(&mut con, 4).await;
@@ -125,7 +115,7 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn test_no_response_skips_response_even_on_error() {
+    async fn test_no_response_skips_response_even_on_error(_ctx: TestClusterContext) {
         let cluster = TestClusterContext::new();
 
         let mut connection = cluster.async_connection().await;
@@ -155,7 +145,9 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn test_reconnect_only_the_disconnected_node_leave_other_connections_intact() {
+    async fn test_reconnect_only_the_disconnected_node_leave_other_connections_intact(
+        _ctx: TestClusterContext,
+    ) {
         // we remove retries in order to know that a request will fail immediately when discovering that a connection disconnected, instead of reconnecting and succeeding
         let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| builder.retries(0));
 
@@ -204,7 +196,7 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn test_async_cluster_basic_eval() {
+    async fn test_async_cluster_basic_eval(_ctx: TestClusterContext) {
         let cluster = TestClusterContext::new();
 
         let mut connection = cluster.async_connection().await;
@@ -220,7 +212,7 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn test_async_cluster_basic_script() {
+    async fn test_async_cluster_basic_script(_ctx: TestClusterContext) {
         let cluster = TestClusterContext::new();
 
         let mut connection = cluster.async_connection().await;
@@ -463,9 +455,7 @@ mod cluster_async {
     }
 
     #[async_test]
-    async fn test_async_cluster_can_run_a_transaction() {
-        let cluster = TestClusterContext::new();
-
+    async fn test_async_cluster_can_run_a_transaction(cluster: TestClusterContext) {
         let mut connection = cluster.async_connection().await;
 
         let result: Vec<Value> = redis::pipe()
@@ -481,47 +471,49 @@ mod cluster_async {
 
     #[cfg(feature = "tls-rustls")]
     #[async_test]
-    async fn test_async_cluster_default_reject_invalid_hostnames() {
-        if ClusterType::get_intended() != ClusterType::TcpTls {
-            // Only TLS causes invalid certificates to be rejected as desired.
-            return;
-        }
-
+    async fn test_async_cluster_default_reject_invalid_hostnames(_ctx: TestClusterContext) {
         let cluster = TestClusterContext::new_with_config(
             RedisClusterConfiguration::default()
                 .insecure_tls()
                 .certs_without_ip_alts(),
         );
-
-        assert!(cluster.client.get_async_connection().await.is_err());
+        if let redis::ConnectionAddr::TcpTls { .. } = cluster
+            .cluster
+            .iter_servers()
+            .next()
+            .unwrap()
+            .connection_info()
+            .addr()
+        {
+            assert!(cluster.client.get_async_connection().await.is_err());
+        }
     }
 
     #[cfg(feature = "tls-rustls-insecure")]
     #[async_test]
-    async fn test_async_cluster_danger_accept_invalid_hostnames() {
-        if ClusterType::get_intended() != ClusterType::TcpTls {
-            // No point testing this TLS-specific mode in non-TLS configurations.
-            return;
-        }
-
+    async fn test_async_cluster_danger_accept_invalid_hostnames(_ctx: TestClusterContext) {
         let cluster = TestClusterContext::new_with_config_and_builder(
             RedisClusterConfiguration::default()
                 .insecure_tls()
                 .certs_without_ip_alts(),
             |builder| builder.danger_accept_invalid_hostnames(true),
         );
-
-        let connection = cluster.async_connection().await;
-        smoke_test_connection(connection).await;
+        if let redis::ConnectionAddr::TcpTls { .. } = cluster
+            .cluster
+            .iter_servers()
+            .next()
+            .unwrap()
+            .connection_info()
+            .addr()
+        {
+            let connection = cluster.async_connection().await;
+            smoke_test_connection(connection).await;
+        }
     }
 
     #[cfg(feature = "tls-rustls")]
     #[async_test]
-    async fn async_cluster_node_address_map_fixes_tls_hostname_mismatch() {
-        if ClusterType::get_intended() != ClusterType::TcpTls {
-            return;
-        }
-
+    async fn async_cluster_node_address_map_fixes_tls_hostname_mismatch(_ctx: TestClusterContext) {
         // Certs issued for "localhost" only (no IP SAN), so connecting via
         // 127.0.0.1 will fail TLS verification without node_address_map.
         let cluster = TestClusterContext::new_with_config(
@@ -530,48 +522,56 @@ mod cluster_async {
                 .certs_without_ip_alts()
                 .dns_hostname("localhost"),
         );
-
-        let err = match cluster.client.get_async_connection().await {
-            Ok(_) => panic!("connecting via IP address should fail TLS hostname verification"),
-            Err(err) => err,
-        };
-        assert!(
-            err.is_io_error(),
-            "expected a TLS/IO error from hostname verification failure, got: {err:?}"
-        );
-        let err_string = err.to_string();
-        assert!(
-            err_string.contains("certificate") || err_string.contains("NotValidForName"),
-            "expected a certificate hostname verification error, got: {err_string}"
-        );
-
-        let mut address_map = HashMap::new();
-        for server in cluster.cluster.iter_servers() {
-            if let Some((host, port)) = server.host_and_port() {
-                address_map.insert(
-                    redis::cluster::NodeAddress::new(host, port),
-                    redis::cluster::NodeAddress::new("localhost", port),
-                );
-            }
-        }
-
-        let initial_nodes: Vec<redis::ConnectionInfo> = cluster
+        if let redis::ConnectionAddr::TcpTls { .. } = cluster
             .cluster
             .iter_servers()
-            .map(|s| s.connection_info())
-            .collect();
+            .next()
+            .unwrap()
+            .connection_info()
+            .addr()
+        {
+            let err = match cluster.client.get_async_connection().await {
+                Ok(_) => panic!("connecting via IP address should fail TLS hostname verification"),
+                Err(err) => err,
+            };
+            assert!(
+                err.is_io_error(),
+                "expected a TLS/IO error from hostname verification failure, got: {err:?}"
+            );
+            let err_string = err.to_string();
+            assert!(
+                err_string.contains("certificate") || err_string.contains("NotValidForName"),
+                "expected a certificate hostname verification error, got: {err_string}"
+            );
 
-        let mut builder = ClusterClient::builder(initial_nodes)
-            .use_protocol(use_protocol())
-            .node_address_map(address_map);
+            let mut address_map = HashMap::new();
+            for server in cluster.cluster.iter_servers() {
+                if let Some((host, port)) = server.host_and_port() {
+                    address_map.insert(
+                        redis::cluster::NodeAddress::new(host, port),
+                        redis::cluster::NodeAddress::new("localhost", port),
+                    );
+                }
+            }
 
-        if let Some(tls_file_paths) = &cluster.cluster.tls_paths {
-            builder = builder.certs(load_certs_from_file(tls_file_paths));
+            let initial_nodes: Vec<redis::ConnectionInfo> = cluster
+                .cluster
+                .iter_servers()
+                .map(|s| s.connection_info())
+                .collect();
+
+            let mut builder = ClusterClient::builder(initial_nodes)
+                .use_protocol(use_protocol())
+                .node_address_map(address_map);
+
+            if let Some(tls_file_paths) = &cluster.cluster.tls_paths {
+                builder = builder.certs(load_certs_from_file(tls_file_paths));
+            }
+
+            let client = builder.build().unwrap();
+            let connection = client.get_async_connection().await.unwrap();
+            smoke_test_connection(connection).await;
         }
-
-        let client = builder.build().unwrap();
-        let connection = client.get_async_connection().await.unwrap();
-        smoke_test_connection(connection).await;
     }
 
     #[async_test]

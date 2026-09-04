@@ -116,9 +116,12 @@ mod credentials_provider_failures_tests {
     mod cluster {
         use super::*;
         use redis::cluster::ClusterClientBuilder;
+        use test_macros::async_cluster_test;
 
-        #[async_test]
-        async fn test_cluster_connection_fails_when_credentials_provider_returns_error() {
+        #[async_cluster_test]
+        async fn test_cluster_connection_fails_when_credentials_provider_returns_error(
+            _ctx: TestClusterContext,
+        ) {
             init_logger();
             let cluster = TestClusterContext::new_with_cluster_client_builder(
                 |builder: ClusterClientBuilder| {
@@ -137,8 +140,10 @@ mod credentials_provider_failures_tests {
             assert_eq!(err.kind(), ErrorKind::Io);
         }
 
-        #[async_test]
-        async fn test_cluster_connection_fails_when_credentials_stream_is_empty() {
+        #[async_cluster_test]
+        async fn test_cluster_connection_fails_when_credentials_stream_is_empty(
+            _ctx: TestClusterContext,
+        ) {
             init_logger();
             let cluster = TestClusterContext::new_with_cluster_client_builder(
                 |builder: ClusterClientBuilder| {
