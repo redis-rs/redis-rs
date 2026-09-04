@@ -39,6 +39,7 @@ When decomposing them, you need to adapt to ignore fields potentially added in t
 
 The affected structs are:
 
+* `AclInfo`
 * `BloomFilterDumpChunk`
 * `CacheStatistics`
 * `ClientTlsConfig`

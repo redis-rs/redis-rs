@@ -1,11 +1,10 @@
 #![cfg(feature = "acl")]
 
 use redis::TypedCommands;
-use redis::acl::{AclInfo, Rule};
+use redis::acl::Rule;
 use redis_test::REDIS_CE_7_2;
 use redis_test::TestContext;
 use redis_test::run_test_if_version_supported;
-
 use std::collections::HashSet;
 
 mod support;
@@ -59,22 +58,24 @@ fn test_acl_getsetdel_users() {
         Ok(())
     );
     let acl_info = con.acl_getuser("bob").expect("Got user").unwrap();
+    assert_eq!(acl_info.flags, vec![Rule::On]);
     assert_eq!(
-        acl_info,
-        AclInfo {
-            flags: vec![Rule::On],
-            passwords: vec![Rule::AddHashedPass(
-                "c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2".to_owned()
-            )],
-            commands: vec![
-                Rule::RemoveCategory("all".to_owned()),
-                Rule::AddCommand("set".to_owned())
-            ],
-            keys: vec![Rule::Pattern("redis:*".to_owned())],
-            channels: vec![],
-            selectors: vec![],
-        }
+        acl_info.passwords,
+        vec![Rule::AddHashedPass(
+            "c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2".to_owned()
+        )]
     );
+    assert_eq!(
+        acl_info.commands,
+        vec![
+            Rule::RemoveCategory("all".to_owned()),
+            Rule::AddCommand("set".to_owned())
+        ]
+    );
+    assert_eq!(acl_info.keys, vec![Rule::Pattern("redis:*".to_owned())]);
+    assert_eq!(acl_info.channels, vec![]);
+    assert_eq!(acl_info.selectors, vec![]);
+
     assert_eq!(
         con.acl_list(),
         Ok(vec![
