@@ -458,10 +458,10 @@ impl RedisServerCommand {
         for module in modules {
             match module {
                 Module::Json => {
-                    self.load_module("REDISRS_REDIS_JSON_PATH", "JSON");
+                    self.load_module("REDISRS_MODULE_JSON_PATH", "JSON");
                 }
                 Module::Bloom => {
-                    self.load_module("REDISRS_REDIS_BLOOM_PATH", "Bloom");
+                    self.load_module("REDISRS_MODULE_BLOOM_PATH", "Bloom");
                 }
             }
         }
