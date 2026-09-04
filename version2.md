@@ -10,13 +10,20 @@ redis = "2"
 
 ## Breaking Changes
 
-### Tests: The path to the JSON module is no longer picked up from `REDIS_RS...`
+### Tests: The path to Redis modules is only picked up from `REDISRS_MODULE_...` environment variables (Breaking Change)
 
-The path to the JSON module is now only picked up from the environment variable `REDISRS_REDIS_JSON_PATH` (no `_` before `RS`).
+The modules get picked only from the following environment variables:
 
-The legacy logic to pick it up also from `REDIS_RS_REDIS_JSON_PATH` (`_` before `RS`) got removed. 
+| EnvVar Name | Description |
+| --- | --- |
+| `REDISRS_MODULE_BLOOM_PATH` | Path to the `bloom` module |
+| `REDISRS_MODULE_JSON_PATH` | Path to the `json` module |
 
-**Migration:** Switch from `REDIS_RS_REDIS_JSON_PATH` to `REDISRS_REDIS_JSON_PATH`
+**Migration:**
+
+* Switch from `REDIS_RS_REDIS_JSON_PATH` to `REDISRS_MODULE_JSON_PATH`
+* Switch from `REDISRS_REDIS_JSON_PATH` to `REDISRS_MODULE_JSON_PATH`
+* Switch from `REDISRS_REDIS_BLOOM_PATH` to `REDISRS_MODULE_BLOOM_PATH`
 
 ### `StreamInfoStreamReplyWithIdempotency` got folded into `StreamInfoStreamReply`
 

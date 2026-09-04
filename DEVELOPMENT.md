@@ -59,8 +59,8 @@ The tests need to be able to find Redis' tools and the modules. If automatic det
 | EnvVar Name | Description |
 | --- | --- |
 | `REDISRS_SERVER_BIN` | Binary to start Redis |
-| `REDISRS_REDIS_BLOOM_PATH` | Path to the `bloom` module |
-| `REDISRS_REDIS_JSON_PATH` | Path to the `json` module |
+| `REDISRS_MODULE_BLOOM_PATH` | Path to the `bloom` module |
+| `REDISRS_MODULE_JSON_PATH` | Path to the `json` module |
 
 ### Speeding up TLS tests
 
