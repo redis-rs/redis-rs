@@ -1,10 +1,12 @@
 use redis::ConnectionAddr;
 use redis::ConnectionInfo;
+use redis::ProtocolVersion;
 use redis::TlsMode;
 use redis::sentinel::SentinelNodeConnectionInfo;
 use redis_test::sentinel::{RedisSentinelCluster, wait_for_master_server, wait_for_replica};
-use redis_test::server::RedisServer;
-use redis_test::utils::start_tls_crypto_provider;
+use redis_test::server::{RedisServer, use_protocol};
+
+use crate::support::start_tls_crypto_provider;
 
 const MTLS_NOT_ENABLED: bool = false;
 
@@ -12,12 +14,40 @@ pub struct TestSentinelContext {
     pub cluster: RedisSentinelCluster,
     pub sentinel: redis::sentinel::Sentinel,
     pub sentinels_connection_info: Vec<ConnectionInfo>,
+    pub protocol: ProtocolVersion,
     mtls_enabled: bool, // for future tests
 }
 
 impl TestSentinelContext {
     pub fn new(nodes: u16, replicas: u16, sentinels: u16) -> Self {
         Self::new_with_cluster_client_builder(nodes, replicas, sentinels)
+    }
+
+    pub fn new_with_server_type_and_protocol(
+        nodes: u16,
+        replicas: u16,
+        sentinels: u16,
+        server_type: redis_test::server::ServerType,
+        protocol: redis::ProtocolVersion,
+    ) -> Self {
+        start_tls_crypto_provider();
+        let cluster =
+            RedisSentinelCluster::new_with_server_type(nodes, replicas, sentinels, server_type);
+        let initial_nodes: Vec<ConnectionInfo> = cluster
+            .iter_sentinel_servers()
+            .map(|s| s.connection_info_with_protocol(protocol))
+            .collect();
+        let sentinel = redis::sentinel::Sentinel::build(initial_nodes.clone()).unwrap();
+
+        let mut context = Self {
+            cluster,
+            sentinel,
+            sentinels_connection_info: initial_nodes,
+            protocol,
+            mtls_enabled: MTLS_NOT_ENABLED,
+        };
+        context.wait_for_cluster_up();
+        context
     }
 
     pub fn new_with_cluster_client_builder(nodes: u16, replicas: u16, sentinels: u16) -> Self {
@@ -34,6 +64,7 @@ impl TestSentinelContext {
             cluster,
             sentinel,
             sentinels_connection_info: initial_nodes,
+            protocol: use_protocol().unwrap_or(ProtocolVersion::RESP2),
             mtls_enabled: MTLS_NOT_ENABLED,
         };
         context.wait_for_cluster_up();

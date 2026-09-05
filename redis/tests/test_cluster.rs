@@ -106,7 +106,7 @@ mod cluster {
     #[cfg(feature = "tls-rustls")]
     #[test]
     fn test_default_reject_invalid_hostnames() {
-        if ClusterType::get_intended() != ClusterType::TcpTls {
+        if ClusterType::get_intended().unwrap_or(ClusterType::Tcp) != ClusterType::TcpTls {
             // Only TLS causes invalid certificates to be rejected as desired.
             return;
         }
@@ -122,7 +122,7 @@ mod cluster {
     #[cfg(feature = "tls-rustls-insecure")]
     #[test]
     fn test_danger_accept_invalid_hostnames() {
-        if ClusterType::get_intended() != ClusterType::TcpTls {
+        if ClusterType::get_intended().unwrap_or(ClusterType::Tcp) != ClusterType::TcpTls {
             // No point testing this TLS-specific mode in non-TLS configurations.
             return;
         }
@@ -210,7 +210,10 @@ mod cluster {
 
     #[test]
     fn test_cluster_resp3() {
-        if !use_protocol().supports_resp3() {
+        if !use_protocol()
+            .unwrap_or(redis::ProtocolVersion::RESP2)
+            .supports_resp3()
+        {
             return;
         }
         let cluster = TestClusterContext::new();
@@ -1235,7 +1238,7 @@ mod cluster {
             .collect();
 
         let client = redis::cluster::ClusterClient::builder(initial_nodes)
-            .use_protocol(use_protocol())
+            .use_protocol(use_protocol().unwrap_or(redis::ProtocolVersion::RESP2))
             .node_address_map(address_map)
             .build()
             .unwrap();
@@ -1265,7 +1268,7 @@ mod cluster {
     fn test_cluster_node_address_map_fixes_tls_hostname_mismatch() {
         use redis_test::cluster::ClusterType;
 
-        if ClusterType::get_intended() != ClusterType::TcpTls {
+        if ClusterType::get_intended().unwrap_or(ClusterType::Tcp) != ClusterType::TcpTls {
             return;
         }
 
@@ -1309,7 +1312,7 @@ mod cluster {
             .collect();
 
         let mut builder = redis::cluster::ClusterClient::builder(initial_nodes)
-            .use_protocol(use_protocol())
+            .use_protocol(use_protocol().unwrap_or(redis::ProtocolVersion::RESP2))
             .node_address_map(address_map);
 
         if let Some(tls_file_paths) = &cluster.cluster.tls_paths {
