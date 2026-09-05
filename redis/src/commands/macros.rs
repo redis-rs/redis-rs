@@ -6,13 +6,13 @@ macro_rules! implement_command_async {
         $lifetime: lifetime
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-            $($argname:ident: $argty:ty),*) { $($body:tt)* } Generic
+            $($argname:ident: $argty:ty),*) -> Generic
     ) => {
         implement_command_async!(
             $lifetime
             $(#[$attr])+
             fn $name<$($tyargs : $ty,)* RV: FromRedisValue>(
-                $($argname: $argty),*) { $($body)* } RV
+                $($argname: $argty),*) -> RV
         );
     };
 
@@ -21,7 +21,7 @@ macro_rules! implement_command_async {
         $lifetime: lifetime
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-            $($argname:ident: $argty:ty),*) { $($body:tt)* } $rettype:ty
+            $($argname:ident: $argty:ty),*) -> $rettype:ty
     ) => {
         $(#[$attr])*
         #[inline]
@@ -43,13 +43,13 @@ macro_rules! implement_command_sync {
         $lifetime: lifetime
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-            $($argname:ident: $argty:ty),*) { $($body:tt)* } Generic
+            $($argname:ident: $argty:ty),*) -> Generic
     ) => {
         implement_command_sync!(
             $lifetime
             $(#[$attr])+
             fn $name<$($tyargs : $ty,)* RV: FromRedisValue>(
-                $($argname: $argty),*) { $($body)* } RV
+                $($argname: $argty),*) -> RV
         );
     };
 
@@ -58,7 +58,7 @@ macro_rules! implement_command_sync {
         $lifetime: lifetime
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-            $($argname:ident: $argty:ty),*) { $($body:tt)* } $rettype:ty
+            $($argname:ident: $argty:ty),*) -> $rettype:ty
     ) => {
         $(#[$attr])*
         #[inline]
@@ -330,11 +330,7 @@ macro_rules! implement_commands {
                     $(#[$attr])*
                     fn $name<$($tyargs: $ty),*>(
                         $($argname: $argty),*
-                    )
-
-                    {
-                        $($body)*
-                    } $rettype
+                    ) -> $rettype
                 }
             )*
 
@@ -364,11 +360,7 @@ macro_rules! implement_commands {
                     $(#[$attr])*
                     fn $name<$($tyargs: $ty),*>(
                         $($argname: $argty),*
-                    )
-
-                    {
-                        $($body)*
-                    } $rettype
+                    ) -> $rettype
                 }
             )*
 
