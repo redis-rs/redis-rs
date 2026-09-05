@@ -1,6 +1,9 @@
 //! Commands and types for working with the RedisJSON module.
 
+use crate::errors::invalid_type_error;
 use crate::types::{ExistenceCheck, RedisWrite, ToRedisArgs};
+use crate::{FromRedisValue, ParsingError, Value};
+use std::ops::Deref;
 
 /// Storage-precision tag for the `FPHA` form of `JSON.SET`.
 ///
@@ -86,10 +89,208 @@ impl ToRedisArgs for JsonSetOptions {
     }
 }
 
+/// A [`Vec`] that tries to parse to `Vec<T>`, if unsuccessful to `T`, treated as singleton `Vec<T>`
+///
+/// This struct is useful for typing in Redis' JSON module, where return types are often either `T`
+/// or `Vec<T>` depending on the path argument. This struct allows to abstract that difference away.
+///
+/// It dereferences to a plain [`Vec`].
+///
+/// This struct is similar to [`SingletonOrVec`], except that it first tries to parse as
+/// `Vec<T>` and falls back to parsing as `T`.
+#[derive(Debug)]
+pub struct VecOrSingleton<T>(Vec<T>);
+
+impl<T> Deref for VecOrSingleton<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl<T: FromRedisValue> FromRedisValue for VecOrSingleton<T> {
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
+        let items = if let Value::Array(arr) = v {
+            arr.iter()
+                .map(|item| T::from_redis_value_ref(item))
+                .collect::<Result<Vec<_>, ParsingError>>()?
+        } else {
+            vec![T::from_redis_value_ref(v)?]
+        };
+        Ok(Self(items))
+    }
+
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        let items = if let Value::Array(arr) = v {
+            arr.into_iter()
+                .map(|item| T::from_redis_value(item))
+                .collect::<Result<Vec<_>, ParsingError>>()?
+        } else {
+            vec![T::from_redis_value(v)?]
+        };
+        Ok(Self(items))
+    }
+}
+
+/// A [`Vec`] that tries to parse to `T`, treated as singleton `Vec<T>`, if unsuccessful to `Vec<T>`
+///
+/// This struct is useful for typing in Redis' JSON module, where return types are often either `T`
+/// or `Vec<T>` depending on the path argument. This struct allows to abstract that difference away.
+///
+/// It dereferences to a plain [`Vec`].
+///
+/// This struct is similar to [`VecOrSingleton`], except that it first tries to parse as `T` and falls
+/// back to parsing as `Vec<T>`.
+///
+/// If `T` allows it, use [`VecOrSingleton`], as it has a cheaper to decide whether to parse as `T`,
+/// or `Vec<T>`.
+///
+/// [`SingletonOrVec`] allows to avoid mis-parsings, if `T` contains a `Vec` of a type
+/// that itself parses to a `Vec`, like `Vec<String>`.
+///
+/// E.g.: On the wire, `JSON.OBJKEYS` for .-paths yields `Array`s of `BulkString`s and `Nil`s. But
+/// as `BulkString` and `Nil` both themselves parse to `Vec<String>`,
+/// `SingletonFallbackVec<Opt<Vec<String>>` would parse `Array(BulkString(foo), BulkString(bar))` to
+/// `[Some([foo]), Some([bar])]` instead of `[Some[foo, bar]]`. [`SingletonOrVec`] parses
+/// to the latter.
+#[derive(Debug)]
+pub struct SingletonOrVec<T>(Vec<T>);
+
+impl<T> Deref for SingletonOrVec<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl<T: FromRedisValue> FromRedisValue for SingletonOrVec<T> {
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
+        if let Ok(parsed) = T::from_redis_value_ref(v) {
+            return Ok(Self(vec![parsed]));
+        }
+
+        let Value::Array(arr) = v else {
+            invalid_type_error!(v, "Could not convert to T or Vec<T>");
+        };
+
+        Ok(Self(
+            arr.iter()
+                .map(|item| T::from_redis_value_ref(item))
+                .collect::<Result<Vec<_>, ParsingError>>()?,
+        ))
+    }
+
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        if let Ok(parsed) = T::from_redis_value_ref(&v) {
+            return Ok(Self(vec![parsed]));
+        }
+
+        let Value::Array(arr) = v else {
+            invalid_type_error!(v, "Could not convert to T or Vec<T>");
+        };
+
+        Ok(Self(
+            arr.into_iter()
+                .map(|item| T::from_redis_value(item))
+                .collect::<Result<Vec<_>, ParsingError>>()?,
+        ))
+    }
+}
+
+/// A [`Vec`] that parses by descending into [`Value::Array`]s, flattening the parsed items
+// The implementation is not very efficient, but as it is typically only used small lists, the
+// simple implementation is good enough.
+#[derive(Debug, PartialEq, Eq)]
+pub struct FlattenedVec<T>(Vec<T>);
+
+impl<T> Deref for FlattenedVec<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T: FromRedisValue> FlattenedVec<T> {
+    fn flatten_into(v: Value, collector: &mut Vec<T>) -> Result<(), ParsingError> {
+        match v {
+            Value::Array(elements) => {
+                for element in elements {
+                    Self::flatten_into(element, collector)?;
+                }
+            }
+            _ => {
+                collector.push(T::from_redis_value(v)?);
+            }
+        }
+        Ok(())
+    }
+}
+impl<T: FromRedisValue> FromRedisValue for FlattenedVec<T> {
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        let mut ret = Vec::new();
+        Self::flatten_into(v, &mut ret)?;
+        Ok(Self(ret))
+    }
+}
+
+/// Json-like types returned by [`Cmd::json_type`](crate::Cmd::json_type)
+#[derive(Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RedisJsonType {
+    /// Type `null` values
+    Null,
+    /// Type for boolean values
+    Boolean,
+    /// Type for integers
+    Integer,
+    /// Type for non-integer numbers
+    Number,
+    /// Type for strings
+    String,
+    /// Type for arrays
+    Array,
+    /// Type for objects
+    Object,
+}
+
+impl TryFrom<&[u8]> for RedisJsonType {
+    type Error = ParsingError;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        match value {
+            b"null" => Ok(Self::Null),
+            b"boolean" => Ok(Self::Boolean),
+            b"integer" => Ok(Self::Integer),
+            b"number" => Ok(Self::Number),
+            b"string" => Ok(Self::String),
+            b"array" => Ok(Self::Array),
+            b"object" => Ok(Self::Object),
+            _ => invalid_type_error!(value, "Response type not RedisJsonType compatible."),
+        }
+    }
+}
+
+impl FromRedisValue for RedisJsonType {
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
+        match v {
+            Value::SimpleString(str) => Self::try_from(str.as_ref()),
+            Value::BulkString(str) => Self::try_from(str.as_ref()),
+            _ => invalid_type_error!(v, "Response type not RedisJsonType compatible."),
+        }
+    }
+
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        Self::from_redis_value_ref(&v)
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Value::*;
     use crate::cmd::{Arg, Cmd, cmd};
+    use crate::types::FromRedisValue;
+    use rstest::rstest;
     use serde::ser::Serialize;
 
     fn simple_args(c: &Cmd) -> Vec<Vec<u8>> {
@@ -201,5 +402,275 @@ mod tests {
         assert_eq!(args[3], br#"{"bias":[0.5],"weights":[1.0,2.0]}"#);
         assert_eq!(args[4], b"FPHA");
         assert_eq!(args[5], b"FP16");
+    }
+
+    /// Tries to assure that converting an Array value to an `SingletonFallbackVec` works
+    #[test]
+    fn singleton_fallback_vec_from_redis_value_array() {
+        // The value to test with
+        let value = Array(vec![Int(4711), Nil, Int(42)]);
+
+        // The actual conversion
+        let converted = VecOrSingleton::<Option<i64>>::from_redis_value(value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(*converted, vec![Some(4711), None, Some(42)]);
+    }
+
+    /// Tries to assure that converting a basic value to an `SingletonFallbackVec` works
+    #[test]
+    fn singleton_fallback_vec_from_redis_value_basic() {
+        // The value to test with
+        let value = Int(4711);
+
+        // The actual conversion
+        let converted = VecOrSingleton::<Option<i64>>::from_redis_value(value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(*converted, vec![Some(4711)]);
+    }
+
+    /// Tries to assure that result of parsing a value that parses as both `T` and `Vec<T>`
+    #[test]
+    fn singleton_fallback_vec_from_redis_value_ambiguous() {
+        // The value to test with
+        let value = Array(vec![BulkString("foo".into()), BulkString("bar".into())]);
+
+        // The actual conversion
+        let converted = VecOrSingleton::<Option<Vec<String>>>::from_redis_value(value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(
+            *converted,
+            vec![Some(vec!["foo".to_string()]), Some(vec!["bar".to_string()])]
+        );
+    }
+
+    /// Tries to assure that converting fails for unconvertible values in `SingletonFallbackVec`
+    #[test]
+    fn singleton_fallback_vec_from_redis_value_other_fails() {
+        // The value to test with
+        let value = BulkString("foo".into());
+
+        // The actual conversion should fail as a `str` should not convert to `i64` or `Vec<i64>`.
+        let err = VecOrSingleton::<Option<i64>>::from_redis_value(value).unwrap_err();
+
+        // Check the resulting value
+        assert!(err.description.contains("not convert"));
+    }
+
+    /// Tries to assure that converting an Array value ref to an `SingletonFallbackVec` works
+    #[test]
+    fn singleton_fallback_vec_from_redis_value_ref_array() {
+        // The value to test with
+        let value = Array(vec![Int(4711), Nil, Int(42)]);
+
+        // The actual conversion
+        let converted = VecOrSingleton::<Option<i64>>::from_redis_value_ref(&value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(*converted, vec![Some(4711), None, Some(42)]);
+    }
+
+    /// Tries to assure that converting a basic value ref to an `SingletonFallbackVec` works
+    #[test]
+    fn singleton_fallback_vec_from_redis_value_ref_basic() {
+        // The value to test with
+        let value = Int(4711);
+
+        // The actual conversion
+        let converted = VecOrSingleton::<Option<i64>>::from_redis_value_ref(&value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(*converted, vec![Some(4711)]);
+    }
+
+    /// Tries to assure that result of parsing a ref to a value that parses as both `T` and `Vec<T>`
+    #[test]
+    fn singleton_fallback_vec_from_redis_value_ref_ambiguous() {
+        // The value to test with
+        let value = Array(vec![BulkString("foo".into()), BulkString("bar".into())]);
+
+        // The actual conversion
+        let converted =
+            VecOrSingleton::<Option<Vec<String>>>::from_redis_value_ref(&value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(
+            *converted,
+            vec![Some(vec!["foo".to_string()]), Some(vec!["bar".to_string()])]
+        );
+    }
+
+    /// Tries to assure that converting fails for refs to unconvertible values in `SingletonFallbackVec`
+    #[test]
+    fn singleton_fallback_vec_from_redis_value_ref_other_fails() {
+        // The value to test with
+        let value = BulkString("foo".into());
+
+        // The actual conversion should fail as a `str` should not convert to `i64` or `Vec<i64>`.
+        let err = VecOrSingleton::<Option<i64>>::from_redis_value_ref(&value).unwrap_err();
+
+        // Check the resulting value
+        assert!(err.description.contains("not convert"));
+    }
+
+    /// Tries to assure that converting an Array value to an `SingletonFirstVec` works
+    #[test]
+    fn singleton_first_vec_from_redis_value_array() {
+        // The value to test with
+        let value = Array(vec![Int(4711), Nil, Int(42)]);
+
+        // The actual conversion
+        let converted = SingletonOrVec::<Option<i64>>::from_redis_value(value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(*converted, vec![Some(4711), None, Some(42)]);
+    }
+
+    /// Tries to assure that converting a basic value to an `SingletonFirstVec` works
+    #[test]
+    fn singleton_first_vec_from_redis_value_basic() {
+        // The value to test with
+        let value = Int(4711);
+
+        // The actual conversion
+        let converted = SingletonOrVec::<Option<i64>>::from_redis_value(value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(*converted, vec![Some(4711)]);
+    }
+
+    /// Tries to assure that result of parsing a value that parses as both `T` and `Vec<T>`
+    #[test]
+    fn singleton_first_vec_from_redis_value_ambiguous() {
+        // The value to test with
+        let value = Array(vec![BulkString("foo".into()), BulkString("bar".into())]);
+
+        // The actual conversion
+        let converted = SingletonOrVec::<Option<Vec<String>>>::from_redis_value(value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(
+            *converted,
+            vec![Some(vec!["foo".to_string(), "bar".to_string()])]
+        );
+    }
+
+    /// Tries to assure that converting fails for unconvertible values in `SingletonFirstVec`
+    #[test]
+    fn singleton_first_vec_from_redis_value_other_fails() {
+        // The value to test with
+        let value = BulkString("foo".into());
+
+        // The actual conversion should fail as a `str` should not convert to `i64` or `Vec<i64>`.
+        let err = SingletonOrVec::<Option<i64>>::from_redis_value(value).unwrap_err();
+
+        // Check the resulting value
+        assert!(err.description.contains("not convert"));
+    }
+
+    /// Tries to assure that converting an Array value ref to an `SingletonFirstVec` works
+    #[test]
+    fn singleton_first_vec_from_redis_value_ref_array() {
+        // The value to test with
+        let value = Array(vec![Int(4711), Nil, Int(42)]);
+
+        // The actual conversion
+        let converted = SingletonOrVec::<Option<i64>>::from_redis_value_ref(&value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(*converted, vec![Some(4711), None, Some(42)]);
+    }
+
+    /// Tries to assure that converting a basic value ref to an `SingletonFirstVec` works
+    #[test]
+    fn singleton_first_vec_from_redis_value_ref_basic() {
+        // The value to test with
+        let value = Int(4711);
+
+        // The actual conversion
+        let converted = SingletonOrVec::<Option<i64>>::from_redis_value_ref(&value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(*converted, vec![Some(4711)]);
+    }
+
+    /// Tries to assure that result of parsing a ref to a value that parses as both `T` and `Vec<T>`
+    #[test]
+    fn singleton_first_vec_from_redis_value_ref_ambiguous() {
+        // The value to test with
+        let value = Array(vec![BulkString("foo".into()), BulkString("bar".into())]);
+
+        // The actual conversion
+        let converted =
+            SingletonOrVec::<Option<Vec<String>>>::from_redis_value_ref(&value).unwrap();
+
+        // Check the resulting value
+        assert_eq!(
+            *converted,
+            vec![Some(vec!["foo".to_string(), "bar".to_string()])]
+        );
+    }
+
+    /// Tries to assure that converting fails for refs to unconvertible values in `SingletonFirstVec`
+    #[test]
+    fn singleton_first_vec_from_redis_value_ref_other_fails() {
+        // The value to test with
+        let value = BulkString("foo".into());
+
+        // The actual conversion should fail as a `str` should not convert to `i64` or `Vec<i64>`.
+        let err = SingletonOrVec::<Option<i64>>::from_redis_value_ref(&value).unwrap_err();
+
+        // Check the resulting value
+        assert!(err.description.contains("not convert"));
+    }
+
+    #[rstest]
+    #[case::direct_item(Int(42), vec![42])]
+    #[case::empty_array(Array(vec![]), vec![])]
+    #[case::flat_array(Array(vec![Int(42), Double(4711.)]), vec![42, 4711])]
+    #[case::nested_array(Array(vec![Int(23), Array(vec![Array(vec![Int(42)]), Int(151)])]), vec![23, 42, 151])]
+    fn flattened_conversion_success(#[case] input: Value, #[case] expected: Vec<u64>) {
+        let result = FlattenedVec::<u64>::from_redis_value(input).unwrap();
+        assert_eq!(*result, expected);
+    }
+
+    #[rstest]
+    #[case::direct_item(BulkString("foo".into()))]
+    #[case::flat_array(Array(vec![Int(42), BulkString("foo".into()), Int(4711)]))]
+    #[case::nested_array(Array(vec![Int(23), Array(vec![Int(42), BulkString("foo".into()), Int(151)]), Int(4711)]))]
+    fn flattened_conversion_failure(#[case] input: Value) {
+        let err = FlattenedVec::<u64>::from_redis_value(input).unwrap_err();
+        assert!(err.description.contains("convert"));
+    }
+
+    #[rstest]
+    #[case::null("null", RedisJsonType::Null)]
+    #[case::bool("boolean", RedisJsonType::Boolean)]
+    #[case::int("integer", RedisJsonType::Integer)]
+    #[case::number("number", RedisJsonType::Number)]
+    #[case::array("array", RedisJsonType::Array)]
+    #[case::object("object", RedisJsonType::Object)]
+    fn redis_json_type_parsing_success(#[case] input: &str, #[case] expected: RedisJsonType) {
+        let value = BulkString(Vec::from(input));
+
+        assert_eq!(
+            RedisJsonType::from_redis_value_ref(&value).unwrap(),
+            expected
+        );
+        assert_eq!(RedisJsonType::from_redis_value(value).unwrap(), expected);
+    }
+
+    #[rstest]
+    #[case::bulkstring_unparsable(BulkString("foo".into()))]
+    #[case::simplestring_unparsable(SimpleString("foo".into()))]
+    #[case::nil(Nil)]
+    fn redis_json_type_parsing_errors(#[case] value: Value) {
+        let err = RedisJsonType::from_redis_value_ref(&value).unwrap_err();
+        assert!(err.description.contains("compatible"));
+
+        let err = RedisJsonType::from_redis_value(value).unwrap_err();
+        assert!(err.description.contains("compatible"));
     }
 }
