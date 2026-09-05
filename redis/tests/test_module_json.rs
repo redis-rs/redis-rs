@@ -3,23 +3,23 @@
 use redis::ErrorKind;
 use redis::json::{FphaType, JsonSetOptions, RedisJsonType};
 use redis::{ExistenceCheck, TypedCommands};
-use redis_test::server::Module;
-use redis_test::{REDIS_CE_8_8, REDIS_JSON_8_8, TestContextBuilder, run_test_if_version_supported};
+use redis_test::{REDIS_CE_8_8, REDIS_JSON_8_8};
 use serde::Serialize;
 use std::assert_eq;
 use std::collections::HashMap;
 use std::f32::consts::PI;
 
+use crate::support::*;
 mod support;
+use test_macros::single_server_test;
 
 // adds json! macro for quick json generation on the fly.
 use serde_json::json;
 
 const TEST_KEY: &str = "my_json";
 
-#[test]
-fn test_module_json_serialize_error() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test(module = "json")]
+fn test_module_json_serialize_error(ctx: TestContext) {
     let mut con = ctx.connection();
 
     #[derive(Debug, Serialize)]
@@ -48,9 +48,8 @@ fn test_module_json_serialize_error() {
     );
 }
 
-#[test]
-fn test_module_json_arr_append() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test(module = "json")]
+fn test_module_json_arr_append(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let setup = con
@@ -71,9 +70,8 @@ fn test_module_json_arr_append() {
     assert_eq!(*result, vec![Some(3), Some(3), None]); // 3 for the first item, as the .-path command run also added an item
 }
 
-#[test]
-fn test_module_json_arr_index() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test(module = "json")]
+fn test_module_json_arr_index(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let setup = con
@@ -94,9 +92,8 @@ fn test_module_json_arr_index() {
     assert_eq!(*result, vec![Some(1), Some(-1), None]);
 }
 
-#[test]
-fn test_module_json_arr_index_ss() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test(module = "json")]
+fn test_module_json_arr_index_ss(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let setup = con
@@ -117,9 +114,8 @@ fn test_module_json_arr_index_ss() {
     assert_eq!(*result, vec![Some(3), None, None]);
 }
 
-#[test]
-fn test_module_json_arr_insert() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test(module = "json")]
+fn test_module_json_arr_insert(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let setup = con
@@ -140,9 +136,8 @@ fn test_module_json_arr_insert() {
     assert_eq!(*result, vec![Some(6), None, None]); // 6 for the first item, as the .-path command run also added an item
 }
 
-#[test]
-fn test_module_json_arr_len() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test(module = "json")]
+fn test_module_json_arr_len(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let setup = con
@@ -163,9 +158,8 @@ fn test_module_json_arr_len() {
     assert_eq!(*result, vec![Some(4), None, None]);
 }
 
-#[test]
-fn test_module_json_arr_pop() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test(module = "json")]
+fn test_module_json_arr_pop(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let setup = con
@@ -186,9 +180,8 @@ fn test_module_json_arr_pop() {
     assert_eq!(*result, vec![Some("3".to_string()), None, None]); // "3 for the first item", as the .-path command run also took an item
 }
 
-#[test]
-fn test_module_json_arr_trim() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test(module = "json")]
+fn test_module_json_arr_trim(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let setup = con
@@ -209,9 +202,8 @@ fn test_module_json_arr_trim() {
     assert_eq!(*result, vec![Some(1), None, None]); // 1 for the first item, as the .-path command run trimmed to 2 elements, and we're trying to take the 2nd (which exists) and 3rd (which does no longer exist)
 }
 
-#[test]
-fn test_module_json_clear() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test(module = "json")]
+fn test_module_json_clear(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let setup = con
@@ -232,9 +224,8 @@ fn test_module_json_clear() {
     assert_eq!(result, 1); // 1, as the .-path command run took the main `a`, and `nested.a` is not numeric
 }
 
-#[test]
-fn test_module_json_del() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test(module = "json")]
+fn test_module_json_del(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let setup = con
@@ -255,9 +246,8 @@ fn test_module_json_del() {
     assert_eq!(result, 2); // 2, as the .-path command run took the main `a`
 }
 
-#[test]
-fn test_module_json_get() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test(module = "json")]
+fn test_module_json_get(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let setup = con
@@ -293,9 +283,8 @@ fn test_module_json_get() {
     );
 }
 
-#[test]
-fn test_module_json_mget() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test(module = "json")]
+fn test_module_json_mget(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let keys = [
@@ -334,9 +323,8 @@ fn test_module_json_mget() {
     );
 }
 
-#[test]
-fn test_module_json_num_incr_by() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test(module = "json")]
+fn test_module_json_num_incr_by(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let setup = con
@@ -370,9 +358,8 @@ fn test_module_json_num_incr_by() {
     }
 }
 
-#[test]
-fn test_module_json_obj_keys() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test(module = "json")]
+fn test_module_json_obj_keys(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let setup = con
@@ -396,9 +383,8 @@ fn test_module_json_obj_keys() {
     );
 }
 
-#[test]
-fn test_module_json_obj_len() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test(module = "json")]
+fn test_module_json_obj_len(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let setup = con
@@ -419,9 +405,8 @@ fn test_module_json_obj_len() {
     assert_eq!(*result, vec![Some(3), None]);
 }
 
-#[test]
-fn test_module_json_set() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test(module = "json")]
+fn test_module_json_set(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let result = con
@@ -434,9 +419,8 @@ fn test_module_json_set() {
     assert!(result);
 }
 
-#[test]
-fn test_module_json_str_append() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test(module = "json")]
+fn test_module_json_str_append(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let setup = con
@@ -459,9 +443,8 @@ fn test_module_json_str_append() {
     assert_eq!(*result, vec![None, Some(9), None]); // 9 for the 2nd item, as the .-path command run already added "bar"
 }
 
-#[test]
-fn test_module_json_str_len() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test(module = "json")]
+fn test_module_json_str_len(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let setup = con
@@ -482,9 +465,8 @@ fn test_module_json_str_len() {
     assert_eq!(*result, vec![None, Some(3), None]); // 9 for the 2nd item, as the .-path command run already added "bar"
 }
 
-#[test]
-fn test_module_json_toggle() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test(module = "json")]
+fn test_module_json_toggle(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let setup = con
@@ -505,9 +487,8 @@ fn test_module_json_toggle() {
     assert_eq!(*result, vec![Some(true), None, Some(false)]); // true for the first item, as the .-path command run already toggled it
 }
 
-#[test]
-fn test_module_json_type() {
-    let ctx = TestContextBuilder::new().module(Module::Json).build();
+#[single_server_test(module = "json")]
+fn test_module_json_type(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let setup = con
@@ -535,9 +516,8 @@ fn test_module_json_type() {
     );
 }
 
-#[test]
-fn test_module_json_set_options_json_value() {
-    let ctx = TestContextBuilder::new().modules(&[Module::Json]).build();
+#[single_server_test(module = "json")]
+fn test_module_json_set_options_json_value(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let set_result = con
@@ -554,9 +534,8 @@ fn test_module_json_set_options_json_value() {
     assert_eq!(&get_result, r#"[{"a":1,"b":[2,3]}]"#);
 }
 
-#[test]
-fn test_module_json_set_options_nx_xx() {
-    let ctx = TestContextBuilder::new().modules(&[Module::Json]).build();
+#[single_server_test(module = "json")]
+fn test_module_json_set_options_nx_xx(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let opts_xx = JsonSetOptions::default().conditional_set(ExistenceCheck::XX);
@@ -600,34 +579,35 @@ fn test_module_json_set_options_nx_xx() {
 // The value travels as a JSON array of numbers.
 // The `FPHA <TYPE>` token is a storage hint that asks the server to pack the array internally as bf16/fp16/fp32/fp64 lanes.
 // Round-trip via `JSON.GET` returns the array as a JSON array of numbers.
-#[rstest::rstest]
-#[case::fp32(FphaType::Fp32)]
-#[case::fp64(FphaType::Fp64)]
-#[case::bf16(FphaType::Bf16)]
-#[case::fp16(FphaType::Fp16)]
-fn test_module_json_set_fpha_roundtrip(#[case] fpha_type: FphaType) {
-    let ctx =
-        run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
-    let mut con = ctx.connection();
+#[single_server_test(module = "json")]
+fn test_module_json_set_fpha_roundtrip(ctx: TestContext) {
+    for fpha_type in [
+        FphaType::Fp32,
+        FphaType::Fp64,
+        FphaType::Bf16,
+        FphaType::Fp16,
+    ] {
+        skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
+        let mut con = ctx.connection();
 
-    let set_result = con
-        .json_set_options(
-            TEST_KEY,
-            "$",
-            &[1.0_f32, 2.0, -3.5],
-            &JsonSetOptions::default().fpha(fpha_type),
-        )
-        .unwrap();
-    assert!(set_result);
+        let set_result = con
+            .json_set_options(
+                TEST_KEY,
+                "$",
+                &[1.0_f32, 2.0, -3.5],
+                &JsonSetOptions::default().fpha(fpha_type),
+            )
+            .unwrap();
+        assert!(set_result);
 
-    let get_result = con.json_get(TEST_KEY, "$").unwrap();
-    assert_eq!(&get_result, "[[1.0,2.0,-3.5]]");
+        let get_result = con.json_get(TEST_KEY, "$").unwrap();
+        assert_eq!(&get_result, "[[1.0,2.0,-3.5]]");
+    }
 }
 
-#[test]
-fn test_module_json_set_fpha_empty_payload() {
-    let ctx =
-        run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
+#[single_server_test(module = "json")]
+fn test_module_json_set_fpha_empty_payload(ctx: TestContext) {
+    skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
 
     let set_result = con
@@ -644,10 +624,9 @@ fn test_module_json_set_fpha_empty_payload() {
     assert_eq!(&get_result, "[[]]");
 }
 
-#[test]
-fn test_module_json_set_fpha_with_existence_check() {
-    let ctx =
-        run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
+#[single_server_test(module = "json")]
+fn test_module_json_set_fpha_with_existence_check(ctx: TestContext) {
+    skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
 
     // XX against a missing key must not create it.
@@ -675,10 +654,9 @@ fn test_module_json_set_fpha_with_existence_check() {
 
 // FP16 storage range is ±65504.
 // A value outside that range must be rejected by the server with an out-of-range error.
-#[test]
-fn test_module_json_set_fpha_fp16_overflow() {
-    let ctx =
-        run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
+#[single_server_test(module = "json")]
+fn test_module_json_set_fpha_fp16_overflow(ctx: TestContext) {
+    skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
 
     let error = con
@@ -702,10 +680,9 @@ fn test_module_json_set_fpha_fp16_overflow() {
 // "If at least one value in the FP array does not fit the FPHA type, the command errors."
 
 // Verify that a single out-of-range element in an otherwise valid payload rejects the whole command and leaves the key untouched.
-#[test]
-fn test_module_json_set_fpha_fp16_partial_overflow() {
-    let ctx =
-        run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
+#[single_server_test(module = "json")]
+fn test_module_json_set_fpha_fp16_partial_overflow(ctx: TestContext) {
+    skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
 
     con.json_set_options(
@@ -721,10 +698,9 @@ fn test_module_json_set_fpha_fp16_partial_overflow() {
 }
 
 // 65504 is the largest finite value representable in IEEE-754 binary16.
-#[test]
-fn test_module_json_set_fpha_fp16_max_boundary() {
-    let ctx =
-        run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
+#[single_server_test(module = "json")]
+fn test_module_json_set_fpha_fp16_max_boundary(ctx: TestContext) {
+    skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
 
     let set_result = con
@@ -742,10 +718,9 @@ fn test_module_json_set_fpha_fp16_max_boundary() {
 }
 
 // 3.4e38 is near the largest finite value representable in IEEE-754 binary32.
-#[test]
-fn test_module_json_set_fpha_fp32_max_boundary() {
-    let ctx =
-        run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
+#[single_server_test(module = "json")]
+fn test_module_json_set_fpha_fp32_max_boundary(ctx: TestContext) {
+    skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
 
     let set_result = con
@@ -764,10 +739,9 @@ fn test_module_json_set_fpha_fp32_max_boundary() {
 
 // 2^20 (= 1048576) is exactly representable in bf16 and well above FP16's ±65504 limit.
 // The same value would be rejected under FPHA FP16 but under FPHA BF16 it round-trips losslessly.
-#[test]
-fn test_module_json_set_fpha_bf16_above_fp16_range() {
-    let ctx =
-        run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
+#[single_server_test(module = "json")]
+fn test_module_json_set_fpha_bf16_above_fp16_range(ctx: TestContext) {
+    skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
 
     let set_result = con
@@ -786,10 +760,9 @@ fn test_module_json_set_fpha_bf16_above_fp16_range() {
 
 // Values that serde_json emits in scientific notation must be accepted by the server and round-tripped back as scientific notation.
 // Note: serde emits `6.022e+23` while the server omits the `+`.
-#[test]
-fn test_module_json_set_fpha_fp32_scientific_notation() {
-    let ctx =
-        run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
+#[single_server_test(module = "json")]
+fn test_module_json_set_fpha_fp32_scientific_notation(ctx: TestContext) {
+    skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
 
     let set_result = con
@@ -811,10 +784,9 @@ fn test_module_json_set_fpha_fp32_scientific_notation() {
 // bf16 has a 7-bit mantissa.
 // Around 100 its step size is 0.5, so 100.7 snaps to 100.5
 // pi (3.1415927) snaps to 3.14.
-#[test]
-fn test_module_json_set_fpha_bf16_truncation() {
-    let ctx =
-        run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
+#[single_server_test(module = "json")]
+fn test_module_json_set_fpha_bf16_truncation(ctx: TestContext) {
+    skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
 
     let set_result = con
@@ -833,10 +805,9 @@ fn test_module_json_set_fpha_bf16_truncation() {
 
 // fp16 has a 10-bit mantissa, so it preserves more precision than bf16.
 // Around 1.0 its step size is ~0.001, which snaps 1.0009766 to 1.001, pi still snaps to 3.14.
-#[test]
-fn test_module_json_set_fpha_fp16_truncation() {
-    let ctx =
-        run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
+#[single_server_test(module = "json")]
+fn test_module_json_set_fpha_fp16_truncation(ctx: TestContext) {
+    skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
 
     let set_result = con
@@ -856,10 +827,9 @@ fn test_module_json_set_fpha_fp16_truncation() {
 // The FPHA hint applies to any serializable value, not just flat slices.
 // A 2-D matrix exercises the docs' "all FP arrays in value" wording - the hint is applied to every inner array.
 // With BF16, 100.7 snaps to 100.5 and pi snaps to 3.14 within their respective inner arrays.
-#[test]
-fn test_module_json_set_fpha_matrix() {
-    let ctx =
-        run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
+#[single_server_test(module = "json")]
+fn test_module_json_set_fpha_matrix(ctx: TestContext) {
+    skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
 
     let matrix: &[&[f32]] = &[&[1.0, 100.7], &[PI, 4.0]];
@@ -877,10 +847,9 @@ fn test_module_json_set_fpha_matrix() {
 }
 
 // An object holding multiple FP-array fields gets the storage hint applied to each field independently.
-#[test]
-fn test_module_json_set_fpha_object_with_array_fields() {
-    let ctx =
-        run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
+#[single_server_test(module = "json")]
+fn test_module_json_set_fpha_object_with_array_fields(ctx: TestContext) {
+    skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
 
     let set_result = con
@@ -906,10 +875,9 @@ fn test_module_json_set_fpha_object_with_array_fields() {
 // "If at least one value in the FP array does not fit the FPHA type, the command errors."
 
 // Verify that a single out-of-range value causes the entire command to fail without modifying the key, even when the offending value appears in a nested array.
-#[test]
-fn test_module_json_set_fpha_nested_partial_overflow() {
-    let ctx =
-        run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
+#[single_server_test(module = "json")]
+fn test_module_json_set_fpha_nested_partial_overflow(ctx: TestContext) {
+    skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
 
     let matrix: &[&[f32]] = &[&[1.0, 2.0], &[70000.0, 3.0]];
@@ -926,10 +894,9 @@ fn test_module_json_set_fpha_nested_partial_overflow() {
 }
 
 // A scalar (not an array) is also a valid FPHA payload server-side.
-#[test]
-fn test_module_json_set_fpha_scalar() {
-    let ctx =
-        run_test_if_version_supported!([&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]], &[Module::Json]);
+#[single_server_test(module = "json")]
+fn test_module_json_set_fpha_scalar(ctx: TestContext) {
+    skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
 
     let set_result = con
