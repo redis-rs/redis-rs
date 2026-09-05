@@ -1,6 +1,4 @@
-use crate::server::{
-    Module, Output, RedisServer, RedisServerBuilder, RedisServerCommand, use_protocol,
-};
+use crate::server::{Module, RedisServer, RedisServerBuilder, RedisServerCommand};
 use crate::utils::{TlsFilePaths, build_single_client};
 use crate::version::{AvailableComponents, TestContextVersioning};
 #[cfg(feature = "aio")]
@@ -92,11 +90,6 @@ impl TestContextBuilder {
         self
     }
 
-    pub fn panicking_drop_info_output(mut self, output: Output) -> Self {
-        self.server_builder = self.server_builder.panicking_drop_info_output(output);
-        self
-    }
-
     /// Builds the [`TestContext`] for this instance
     pub fn build(self) -> TestContext {
         self.refine_and_build(|_| {})
@@ -108,7 +101,12 @@ impl TestContextBuilder {
     ///
     /// * `refiner` - See [`RedisServerBuilder::refine_and_build`]
     pub fn refine_and_build(self, refiner: impl FnOnce(&mut RedisServerCommand)) -> TestContext {
-        let server = self.server_builder.refine_and_build(refiner);
+        let server_builder = if let Some(protocol) = self.protocol {
+            self.server_builder.protocol(protocol)
+        } else {
+            self.server_builder
+        };
+        let server = server_builder.refine_and_build(refiner);
         TestContext::from_server(server, self.protocol)
     }
 }
@@ -166,7 +164,7 @@ impl TestContext {
     // Instead, users should to go through `TestContextBuilder` to limit the points of entry and
     // hence help us with maintenance.
     fn from_server(mut server: RedisServer, protocol: Option<ProtocolVersion>) -> Self {
-        let protocol = protocol.unwrap_or_else(use_protocol);
+        let protocol = protocol.unwrap_or(ProtocolVersion::RESP2);
         let client = build_single_client(
             server.connection_info_with_protocol(protocol),
             &server.tls_paths,
