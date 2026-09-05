@@ -7,30 +7,28 @@ use redis::{RedisResult, TypedCommands};
 use redis_test::TestContext;
 
 mod support;
+use test_macros::single_server_test;
 
 const PALERMO: (&str, &str, &str) = ("13.361389", "38.115556", "Palermo");
 const CATANIA: (&str, &str, &str) = ("15.087269", "37.502669", "Catania");
 const AGRIGENTO: (&str, &str, &str) = ("13.5833332", "37.316667", "Agrigento");
 
-#[test]
-fn test_geoadd_single_tuple() {
-    let ctx = TestContext::default();
+#[single_server_test]
+fn test_geoadd_single_tuple(ctx: TestContext) {
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", PALERMO), Ok(1));
 }
 
-#[test]
-fn test_geoadd_multiple_tuples() {
-    let ctx = TestContext::default();
+#[single_server_test]
+fn test_geoadd_multiple_tuples(ctx: TestContext) {
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
 }
 
-#[test]
-fn test_geodist_existing_members() {
-    let ctx = TestContext::default();
+#[single_server_test]
+fn test_geodist_existing_members(ctx: TestContext) {
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
@@ -42,9 +40,8 @@ fn test_geodist_existing_members() {
     assert_approx_eq!(dist, 166.2742, 0.001);
 }
 
-#[test]
-fn test_geodist_support_option() {
-    let ctx = TestContext::default();
+#[single_server_test]
+fn test_geodist_support_option(ctx: TestContext) {
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
@@ -62,9 +59,8 @@ fn test_geodist_support_option() {
     assert_approx_eq!(dist, 166_274.151_6, 0.01);
 }
 
-#[test]
-fn test_geohash() {
-    let ctx = TestContext::default();
+#[single_server_test]
+fn test_geohash(ctx: TestContext) {
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
@@ -84,9 +80,8 @@ fn test_geohash() {
     assert_eq!(result, Ok(vec![None]));
 }
 
-#[test]
-fn test_geopos() {
-    let ctx = TestContext::default();
+#[single_server_test]
+fn test_geopos(ctx: TestContext) {
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
@@ -108,9 +103,8 @@ fn test_geopos() {
     assert_approx_eq!(result[1].as_ref().unwrap().latitude, 37.50266, 0.0001);
 }
 
-#[test]
-fn test_use_coord_struct() {
-    let ctx = TestContext::default();
+#[single_server_test]
+fn test_use_coord_struct(ctx: TestContext) {
     let mut con = ctx.connection();
 
     assert_eq!(
@@ -128,9 +122,8 @@ fn test_use_coord_struct() {
     assert_approx_eq!(result[0].as_ref().unwrap().latitude, 38.11555, 0.0001);
 }
 
-#[test]
-fn test_georadius() {
-    let ctx = TestContext::default();
+#[single_server_test]
+fn test_georadius(ctx: TestContext) {
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
@@ -205,9 +198,8 @@ fn test_georadius() {
     assert_eq!(result[1].hash, Some(3479099956230698));
 }
 
-#[test]
-fn test_georadius_by_member() {
-    let ctx = TestContext::default();
+#[single_server_test]
+fn test_georadius_by_member(ctx: TestContext) {
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA, AGRIGENTO]), Ok(3));
