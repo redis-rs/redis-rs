@@ -167,8 +167,11 @@ impl TestContext {
         builder: TestContextBuilder,
         refiner: impl FnOnce(&mut RedisServerCommand),
     ) -> Self {
-        let mut server = builder.server_builder.refine_and_build(refiner);
         let protocol = builder.protocol.unwrap_or_else(use_protocol);
+        let mut server = builder
+            .server_builder
+            .protocol(protocol)
+            .refine_and_build(refiner);
         let client = build_single_client(
             server.connection_info_with_protocol(protocol),
             &server.tls_paths,

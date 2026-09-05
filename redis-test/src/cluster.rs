@@ -1,5 +1,6 @@
 use std::{env, process, thread::sleep, time::Duration};
 
+use redis::ProtocolVersion;
 use tempfile::TempDir;
 
 use crate::server::RedisServerBuilder;
@@ -34,6 +35,7 @@ pub struct RedisClusterConfiguration {
     /// Custom DNS hostname for TLS certificate SAN (used when `certs_with_ip_alts` is false).
     dns_hostname: Option<String>,
     cluster_type: Option<ClusterType>,
+    protocol: ProtocolVersion,
 }
 
 impl RedisClusterConfiguration {
@@ -102,6 +104,11 @@ impl RedisClusterConfiguration {
         self.require_secure_tls
     }
 
+    pub fn protocol(mut self, protocol: ProtocolVersion) -> Self {
+        self.protocol = protocol;
+        self
+    }
+
     pub fn get_mtls_enabled(&self) -> bool {
         self.mtls_enabled
     }
@@ -125,6 +132,7 @@ impl Default for RedisClusterConfiguration {
             cluster_databases: None,
             dns_hostname: None,
             cluster_type: None,
+            protocol: ProtocolVersion::RESP2,
         }
     }
 }
@@ -222,6 +230,7 @@ impl RedisCluster {
             cluster_databases,
             dns_hostname,
             cluster_type,
+            protocol,
         } = configuration;
 
         let optional_ports = if ports.is_empty() {
@@ -274,6 +283,7 @@ impl RedisCluster {
         let mut make_server = |port| {
             RedisServerBuilder::new()
                 .address(cluster_type.build_addr(port))
+                .protocol(protocol)
                 .tls_paths_opt(tls_paths.clone())
                 .mtls(mtls_enabled)
                 .modules(&modules)
