@@ -278,37 +278,27 @@ impl RedisCluster {
         };
 
         let verify_server = |server: &mut RedisServer| {
-            let process = &mut server.process;
-            match process.try_wait() {
-                Ok(Some(status)) => {
-                    let log_file_contents = server.log_file_contents();
-                    let err = format!(
-                        "redis server creation failed with status {status:?}.\nlog file: {log_file_contents:?}"
-                    );
-                    Err(err)
-                }
-                Ok(None) => {
-                    // wait for 10 seconds for the server to be available.
-                    let max_attempts = 200;
-                    let mut cur_attempts = 0;
-                    loop {
-                        if cur_attempts == max_attempts {
-                            let log_file_contents = server.log_file_contents();
-                            break Err(format!(
-                                "redis server creation failed: Address {} closed. {log_file_contents:?}",
-                                server.addr
-                            ));
-                        } else if port_in_use(&server.addr.to_string()) {
-                            break Ok(());
-                        }
-                        eprintln!("Waiting for redis process to initialize");
-                        sleep(Duration::from_millis(50));
-                        cur_attempts += 1;
+            if server.is_alive() {
+                // wait for 10 seconds for the server to be available.
+                let max_attempts = 200;
+                let mut cur_attempts = 0;
+                loop {
+                    if cur_attempts == max_attempts {
+                        let process_info = server.stop_with_info();
+                        break Err(format!(
+                            "redis server creation failed: Address {} closed.\n{process_info}",
+                            server.addr
+                        ));
+                    } else if port_in_use(&server.addr.to_string()) {
+                        break Ok(());
                     }
+                    eprintln!("Waiting for redis process to initialize");
+                    sleep(Duration::from_millis(50));
+                    cur_attempts += 1;
                 }
-                Err(e) => {
-                    panic!("Unexpected error in redis server creation {e}");
-                }
+            } else {
+                let process_info = server.stop_with_info();
+                Err(format!("redis server creation failed\n{process_info}"))
             }
         };
 
