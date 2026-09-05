@@ -917,6 +917,12 @@ mod types {
             let v = parse_mode.parse_redis_value(Value::BulkString("0".into()));
             assert_eq!(v, Ok(false));
 
+            let v = parse_mode.parse_redis_value(Value::BulkString("true".into()));
+            assert_eq!(v, Ok(true));
+
+            let v = parse_mode.parse_redis_value(Value::BulkString("false".into()));
+            assert_eq!(v, Ok(false));
+
             let v: Result<bool, _> =
                 parse_mode.parse_redis_value(Value::BulkString("garbage".into()));
             assert_matches!(v, Err(_));
@@ -925,6 +931,12 @@ mod types {
             assert_eq!(v, Ok(true));
 
             let v = parse_mode.parse_redis_value(redis_value!(simple:"0"));
+            assert_eq!(v, Ok(false));
+
+            let v = parse_mode.parse_redis_value(redis_value!(simple:"true"));
+            assert_eq!(v, Ok(true));
+
+            let v = parse_mode.parse_redis_value(redis_value!(simple:"false"));
             assert_eq!(v, Ok(false));
 
             let v: Result<bool, _> = parse_mode.parse_redis_value(redis_value!(simple:"garbage"));

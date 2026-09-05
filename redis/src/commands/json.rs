@@ -1,6 +1,8 @@
 //! Commands and types for working with the RedisJSON module.
 
+use crate::errors::invalid_type_error;
 use crate::types::{ExistenceCheck, RedisWrite, ToRedisArgs};
+use crate::{FromRedisValue, ParsingError, Value};
 
 /// Storage-precision tag for the `FPHA` form of `JSON.SET`.
 ///
@@ -86,10 +88,62 @@ impl ToRedisArgs for JsonSetOptions {
     }
 }
 
+/// Json-like types returned by [`Cmd::json_type`](crate::Cmd::json_type)
+#[derive(Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RedisJsonType {
+    /// Type `null` values
+    Null,
+    /// Type for boolean values
+    Boolean,
+    /// Type for integers
+    Integer,
+    /// Type for non-integer numbers
+    Number,
+    /// Type for strings
+    String,
+    /// Type for arrays
+    Array,
+    /// Type for objects
+    Object,
+}
+
+impl TryFrom<&[u8]> for RedisJsonType {
+    type Error = ParsingError;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        match value {
+            b"null" => Ok(Self::Null),
+            b"boolean" => Ok(Self::Boolean),
+            b"integer" => Ok(Self::Integer),
+            b"number" => Ok(Self::Number),
+            b"string" => Ok(Self::String),
+            b"array" => Ok(Self::Array),
+            b"object" => Ok(Self::Object),
+            _ => invalid_type_error!(value, "Response type not RedisJsonType compatible."),
+        }
+    }
+}
+
+impl FromRedisValue for RedisJsonType {
+    fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
+        match v {
+            Value::SimpleString(str) => Self::try_from(str.as_ref()),
+            Value::BulkString(str) => Self::try_from(str.as_ref()),
+            _ => invalid_type_error!(v, "Response type not RedisJsonType compatible."),
+        }
+    }
+
+    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+        Self::from_redis_value_ref(&v)
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cmd::{Arg, Cmd, cmd};
+    use crate::types::FromRedisValue;
+    use rstest::rstest;
     use serde::ser::Serialize;
 
     fn simple_args(c: &Cmd) -> Vec<Vec<u8>> {
@@ -201,5 +255,34 @@ mod tests {
         assert_eq!(args[3], br#"{"bias":[0.5],"weights":[1.0,2.0]}"#);
         assert_eq!(args[4], b"FPHA");
         assert_eq!(args[5], b"FP16");
+    }
+
+    #[rstest]
+    #[case::null("null", RedisJsonType::Null)]
+    #[case::bool("boolean", RedisJsonType::Boolean)]
+    #[case::int("integer", RedisJsonType::Integer)]
+    #[case::number("number", RedisJsonType::Number)]
+    #[case::array("array", RedisJsonType::Array)]
+    #[case::object("object", RedisJsonType::Object)]
+    fn redis_json_type_parsing_success(#[case] input: &str, #[case] expected: RedisJsonType) {
+        let value = Value::BulkString(Vec::from(input));
+
+        assert_eq!(
+            RedisJsonType::from_redis_value_ref(&value).unwrap(),
+            expected
+        );
+        assert_eq!(RedisJsonType::from_redis_value(value).unwrap(), expected);
+    }
+
+    #[rstest]
+    #[case::bulkstring_unparsable(Value::BulkString("foo".into()))]
+    #[case::simplestring_unparsable(Value::SimpleString("foo".into()))]
+    #[case::nil(Value::Nil)]
+    fn redis_json_type_parsing_errors(#[case] value: Value) {
+        let err = RedisJsonType::from_redis_value_ref(&value).unwrap_err();
+        assert!(err.description.contains("compatible"));
+
+        let err = RedisJsonType::from_redis_value(value).unwrap_err();
+        assert!(err.description.contains("compatible"));
     }
 }
