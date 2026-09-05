@@ -5,11 +5,11 @@ mod support;
 mod script {
     use redis::ServerErrorKind;
 
-    use redis_test::TestContext;
+    use crate::support::*;
+    use test_macros::single_server_test;
 
-    #[test]
-    fn test_script() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_script(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let script = redis::Script::new(r"return {redis.call('GET', KEYS[1]), ARGV[1]}");
@@ -24,9 +24,8 @@ mod script {
         assert_eq!(response, Ok(("foo".to_string(), 42)));
     }
 
-    #[test]
-    fn test_script_load() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_script_load(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let script = redis::Script::new("return 'Hello World'");
@@ -36,9 +35,8 @@ mod script {
         assert_eq!(hash, Ok(script.get_hash().to_string()));
     }
 
-    #[test]
-    fn test_script_load_through_invocation() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_script_load_through_invocation(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let script = redis::Script::new("return 'Hello World'");
@@ -48,9 +46,8 @@ mod script {
         assert_eq!(hash, Ok(script.get_hash().to_string()));
     }
 
-    #[test]
-    fn test_script_that_is_not_loaded_fails_on_pipeline_invocation() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_script_that_is_not_loaded_fails_on_pipeline_invocation(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let script = redis::Script::new(r"return tonumber(ARGV[1]) + tonumber(ARGV[2]);");
@@ -60,9 +57,8 @@ mod script {
         assert_eq!(r.unwrap_err().kind(), ServerErrorKind::NoScript.into());
     }
 
-    #[test]
-    fn test_script_pipeline() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_script_pipeline(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let script = redis::Script::new(r"return tonumber(ARGV[1]) + tonumber(ARGV[2]);");
