@@ -351,7 +351,7 @@ mod basic_async {
     }
 
     #[cfg(feature = "json")]
-    #[async_test(json)]
+    #[async_test(module = "json")]
     async fn test_module_json_and_pipeline_transaction_with_ignore_errors(ctx: TestContext) {
         let mut con = ctx.async_connection().await.unwrap();
         con.set::<_, _, ()>("x", 42).await.unwrap();

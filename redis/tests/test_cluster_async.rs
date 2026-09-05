@@ -62,17 +62,12 @@ mod cluster_async {
         smoke_test_connection(connection).await;
     }
 
-    #[async_test]
-    async fn test_async_cluster_numbered_database() {
-        run_test_if_version_supported!(VALKEY_9_0);
-
-        let cluster = TestClusterContext::new_with_config_and_builder(
-            RedisClusterConfiguration::default()
-                .cluster_databases(16)
-                .insecure_tls(),
-            |builder| builder.database_id(4),
-        );
-
+    #[async_test(
+        config = "redis_test::cluster::RedisClusterConfiguration::default().cluster_databases(16).insecure_tls()",
+        database_id = 4,
+        supported_versions = "VALKEY_9_0"
+    )]
+    async fn test_async_cluster_numbered_database(cluster: TestClusterContext) {
         let mut con = cluster.async_connection().await;
 
         assert_all_nodes_on_db(&mut con, 4).await;

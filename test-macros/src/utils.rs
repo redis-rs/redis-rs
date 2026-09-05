@@ -26,12 +26,70 @@ pub(crate) fn is_bool_type(ty: &syn::Type) -> bool {
     type_str == "bool"
 }
 
+fn module_expr_for_name(name: &str) -> proc_macro2::TokenStream {
+    match name {
+        "json" => quote! { .module(redis_test::server::Module::Json) },
+        "bloom" => quote! { .module(redis_test::server::Module::Bloom) },
+        other => {
+            let msg = syn::LitStr::new(
+                &format!("unsupported module name: \"{other}\""),
+                proc_macro2::Span::call_site(),
+            );
+            quote! { compile_error!(#msg) }
+        }
+    }
+}
+
 pub(crate) fn parse_module_from_attr(attr: &TokenStream2) -> proc_macro2::TokenStream {
-    let attr_str = attr.to_string();
-    if attr_str.contains("json") {
-        quote! { .module(redis_test::server::Module::Json) }
-    } else if attr_str.contains("bloom") {
-        quote! { .module(redis_test::server::Module::Bloom) }
+    use syn::Meta;
+    use syn::parse::Parser;
+
+    let module_exprs: Vec<proc_macro2::TokenStream> =
+        syn::punctuated::Punctuated::<Meta, syn::token::Comma>::parse_terminated
+            .parse2(attr.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|meta| match meta {
+                Meta::NameValue(nv) if nv.path.is_ident("module") => match nv.value {
+                    syn::Expr::Lit(lit) => match lit.lit {
+                        syn::Lit::Str(s) => Some(module_expr_for_name(&s.value())),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                Meta::Path(path) => {
+                    if path.is_ident("json") {
+                        Some(quote! { .module(redis_test::server::Module::Json) })
+                    } else if path.is_ident("bloom") {
+                        Some(quote! { .module(redis_test::server::Module::Bloom) })
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .collect();
+
+    if module_exprs.is_empty() {
+        quote! {}
+    } else {
+        quote! { #(#module_exprs)* }
+    }
+}
+
+/// Parses `mtls = true` from the attribute, returning `quote! { .mtls(true) }` if present.
+pub(crate) fn parse_mtls_from_attr(attr: &TokenStream2) -> proc_macro2::TokenStream {
+    use syn::Meta;
+    use syn::parse::Parser;
+
+    let has_mtls = syn::punctuated::Punctuated::<Meta, syn::token::Comma>::parse_terminated
+        .parse2(attr.clone())
+        .unwrap_or_default()
+        .into_iter()
+        .any(|meta| matches!(meta, Meta::NameValue(nv) if nv.path.is_ident("mtls")));
+
+    if has_mtls {
+        quote! { .mtls(true) }
     } else {
         quote! {}
     }
@@ -40,11 +98,13 @@ pub(crate) fn parse_module_from_attr(attr: &TokenStream2) -> proc_macro2::TokenS
 pub(crate) struct ClusterTestArgs {
     pub config: proc_macro2::TokenStream,
     pub supported_versions: Option<proc_macro2::TokenStream>,
+    pub database_id: Option<proc_macro2::TokenStream>,
 }
 
 pub(crate) fn parse_cluster_test_args(attr: &TokenStream2) -> ClusterTestArgs {
     let mut config = None;
     let mut supported_versions = None;
+    let mut database_id = None;
     let parser = syn::meta::parser(|meta| {
         if meta.path.is_ident("config") {
             let value: syn::LitStr = meta.value()?.parse()?;
@@ -54,18 +114,23 @@ pub(crate) fn parse_cluster_test_args(attr: &TokenStream2) -> ClusterTestArgs {
             let value: syn::LitStr = meta.value()?.parse()?;
             supported_versions = Some(syn::parse_str::<TokenStream2>(&value.value())?);
             Ok(())
+        } else if meta.path.is_ident("database_id") {
+            let value: syn::LitInt = meta.value()?.parse()?;
+            database_id = Some(syn::parse_str::<TokenStream2>(value.base10_digits())?);
+            Ok(())
         } else {
             Err(meta.error(
-                "unsupported attribute; expected `config = \"...\"` or `supported_versions = \"...\"`",
+                "unsupported attribute; expected `config = \"...\"`, `supported_versions = \"...\"`, or `database_id = N`",
             ))
         }
     });
-    syn::parse::Parser::parse2(parser, attr.clone()).expect("invalid `#[cluster_test]` attribute");
+    syn::parse::Parser::parse2(parser, attr.clone()).expect("invalid cluster test attribute");
     ClusterTestArgs {
         config: config.unwrap_or_else(|| {
             quote! { redis_test::cluster::RedisClusterConfiguration::default().insecure_tls() }
         }),
         supported_versions,
+        database_id,
     }
 }
 
@@ -285,6 +350,43 @@ mod tests {
         assert_full(&parse_module_from_attr(&attr_stream("")), "");
     }
 
+    #[test]
+    fn module_from_attr_named_json() {
+        assert_full(
+            &parse_module_from_attr(&attr_stream(r#"module = "json""#)),
+            ".module(redis_test::server::Module::Json)",
+        );
+    }
+
+    #[test]
+    fn module_from_attr_named_bloom() {
+        assert_full(
+            &parse_module_from_attr(&attr_stream(r#"module = "bloom""#)),
+            ".module(redis_test::server::Module::Bloom)",
+        );
+    }
+
+    #[test]
+    fn mtls_from_attr_true() {
+        assert_full(
+            &parse_mtls_from_attr(&attr_stream("mtls = true")),
+            ".mtls(true)",
+        );
+    }
+
+    #[test]
+    fn mtls_from_attr_absent() {
+        assert_full(&parse_mtls_from_attr(&attr_stream("")), "");
+    }
+
+    #[test]
+    fn mtls_from_attr_with_json() {
+        assert_full(
+            &parse_mtls_from_attr(&attr_stream(r#"mtls = true, module = "json""#)),
+            ".mtls(true)",
+        );
+    }
+
     #[rstest::rstest]
     #[case::empty("fn test() {}", "test();")]
     #[case::bool("fn test(flag: bool) {}", "test(true); test(false);")]
@@ -365,6 +467,33 @@ mod tests {
         ));
         assert_full(&args.config, "foo()");
         assert_full(args.supported_versions.as_ref().unwrap(), "[Bloom]");
+    }
+
+    #[test]
+    fn cluster_args_database_id_only() {
+        let args = parse_cluster_test_args(&attr_stream("database_id = 4"));
+        assert!(args.database_id.is_some());
+        assert_full(args.database_id.as_ref().unwrap(), "4");
+    }
+
+    #[test]
+    fn cluster_args_database_id_with_config() {
+        let args = parse_cluster_test_args(&attr_stream(r#"config = "foo()", database_id = 7"#));
+        assert_full(&args.config, "foo()");
+        assert!(args.database_id.is_some());
+        assert_full(args.database_id.as_ref().unwrap(), "7");
+    }
+
+    #[test]
+    fn cluster_args_all_three() {
+        let args = parse_cluster_test_args(&attr_stream(
+            r#"config = "foo()", supported_versions = "Json", database_id = 2"#,
+        ));
+        assert_full(&args.config, "foo()");
+        assert!(args.supported_versions.is_some());
+        assert_full(args.supported_versions.as_ref().unwrap(), "Json");
+        assert!(args.database_id.is_some());
+        assert_full(args.database_id.as_ref().unwrap(), "2");
     }
 
     #[test]

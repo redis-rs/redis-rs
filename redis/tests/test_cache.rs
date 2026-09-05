@@ -34,9 +34,7 @@ macro_rules! assert_invalidate {
 }
 
 // Basic testing should work with both CacheMode::All and CacheMode::OptIn if commands has called cache()
-#[async_test]
-async fn test_cache_basic(test_with_optin: bool) {
-    let ctx = TestContext::default();
+async fn test_cache_basic_impl(ctx: TestContext, test_with_optin: bool) {
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -90,6 +88,16 @@ async fn test_cache_basic(test_with_optin: bool) {
     assert_hit!(&con, 1);
     assert_miss!(&con, 2);
     assert_invalidate!(&con, 1);
+}
+
+#[async_test]
+async fn test_cache_basic_default(ctx: TestContext) {
+    test_cache_basic_impl(ctx, false).await;
+}
+
+#[async_test]
+async fn test_cache_basic_optin(ctx: TestContext) {
+    test_cache_basic_impl(ctx, true).await;
 }
 
 #[async_test]
@@ -147,7 +155,7 @@ async fn test_cache_mget(ctx: TestContext) {
 }
 
 #[cfg(feature = "json")]
-#[async_test(json)]
+#[async_test(module = "json")]
 async fn test_module_json_cache_get_mget(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;
@@ -216,7 +224,7 @@ async fn test_module_json_cache_get_mget(ctx: TestContext) {
 }
 
 #[cfg(feature = "json")]
-#[async_test(json)]
+#[async_test(module = "json")]
 async fn test_module_json_cache_get_mget_different_paths(ctx: TestContext) {
     if !ctx.protocol.supports_resp3() {
         return;

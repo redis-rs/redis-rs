@@ -4832,9 +4832,9 @@ mod basic {
         assert_args!(&opts, "SATURATE", "UBOUND", "2.5", "PERSIST");
     }
 
-    #[test]
-    fn test_increx_with_integers() {
-        let ctx = run_test_if_version_supported!([REDIS_CE_8_8]);
+    #[single_server_test]
+    fn test_increx_with_integers(ctx: TestContext) {
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_8);
         let mut con = ctx.connection();
 
         // A fresh key starts at 0.
@@ -4965,9 +4965,9 @@ mod basic {
         assert!((0..=100).contains(&con.ttl("at_bound_enx").unwrap().raw()));
     }
 
-    #[test]
-    fn test_increx_with_floats() {
-        let ctx = run_test_if_version_supported!([REDIS_CE_8_8]);
+    #[single_server_test]
+    fn test_increx_with_floats(ctx: TestContext) {
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_8);
         let mut con = ctx.connection();
 
         // A normal in-bounds float increment applies fully.
@@ -5078,9 +5078,9 @@ mod basic {
         assert!((0..=100).contains(&con.ttl("at_bound_enx").unwrap().raw()));
     }
 
-    #[test]
-    fn test_increx_server_errors_forwarded_verbatim() {
-        let ctx = run_test_if_version_supported!([REDIS_CE_8_8]);
+    #[single_server_test]
+    fn test_increx_server_errors_forwarded_verbatim(ctx: TestContext) {
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_8);
         let mut con = ctx.connection();
 
         // Type mismatch: INCREX against a list key yields WRONGTYPE, surfaced with the server's exact code and detail.
@@ -5122,9 +5122,8 @@ mod basic {
         assert_eq!(err.detail(), Some("ENX flag requires an expiration"));
     }
 
-    #[test]
-    fn test_hmget() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_hmget(ctx: TestContext) {
         let mut con = ctx.connection();
 
         con.hset("my_hash", "f1", "1").unwrap();
@@ -5155,9 +5154,8 @@ mod basic {
         assert_eq!(data, vec![None, None]);
     }
 
-    #[test]
-    fn test_zmscore() {
-        let ctx = TestContext::default();
+    #[single_server_test]
+    fn test_zmscore(ctx: TestContext) {
         let mut con = ctx.connection();
 
         let _: usize = con.zadd("my_zset", "m1", 1.5).unwrap();

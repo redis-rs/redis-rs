@@ -48,6 +48,7 @@ pub(crate) fn expand_cluster_test(attr: TokenStream2, input: TokenStream2) -> To
     let args = parse_cluster_test_args(&attr);
     let config_expr = args.config;
     let version_check = generate_version_check(&args.supported_versions);
+    let database_id = args.database_id;
 
     item.sig.ident = syn::Ident::new(
         &format!("{test_function_name}_internal"),
@@ -70,17 +71,30 @@ pub(crate) fn expand_cluster_test(attr: TokenStream2, input: TokenStream2) -> To
             } = v;
             let protocol: syn::Ident = syn::Ident::new(protocol, proc_macro2::Span::call_site());
             let name = syn::Ident::new(&name, proc_macro2::Span::call_site());
+            let ctx_creation = match &database_id {
+                Some(db_id) => quote! {
+                    let mut ctx = crate::support::TestClusterContext::new_with_config_and_builder_and_protocol(
+                        (#config_expr)
+                            .cluster_type(redis_test::cluster::ClusterType::#cluster_type),
+                        |builder| builder.database_id(#db_id),
+                        redis::ProtocolVersion::#protocol,
+                    );
+                },
+                None => quote! {
+                    let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
+                        (#config_expr)
+                            .cluster_type(redis_test::cluster::ClusterType::#cluster_type),
+                        redis::ProtocolVersion::#protocol,
+                    );
+                },
+            };
             quote! {
                 #[test]
                 #ignore_flag
                 #cfg
                 fn #name() {
                     #version_check
-                    let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
-                        (#config_expr)
-                            .cluster_type(redis_test::cluster::ClusterType::#cluster_type),
-                        redis::ProtocolVersion::#protocol,
-                    );
+                    #ctx_creation
                     #call_expr
                 }
             }
@@ -176,6 +190,7 @@ pub(crate) fn expand_async_cluster_test(attr: TokenStream2, input: TokenStream2)
     let args = parse_cluster_test_args(&attr);
     let config_expr = args.config;
     let version_check = generate_version_check(&args.supported_versions);
+    let database_id = args.database_id;
 
     item.sig.ident = syn::Ident::new(
         &format!("{test_function_name}_internal"),
@@ -200,6 +215,23 @@ pub(crate) fn expand_async_cluster_test(attr: TokenStream2, input: TokenStream2)
             let protocol: syn::Ident =
                 syn::Ident::new(protocol, proc_macro2::Span::call_site());
             let name = syn::Ident::new(&name, proc_macro2::Span::call_site());
+            let ctx_creation = match &database_id {
+                Some(db_id) => quote! {
+                    let mut ctx = crate::support::TestClusterContext::new_with_config_and_builder_and_protocol(
+                        (#config_expr)
+                            .cluster_type(redis_test::cluster::ClusterType::#cluster_type),
+                        |builder| builder.database_id(#db_id),
+                        redis::ProtocolVersion::#protocol,
+                    );
+                },
+                None => quote! {
+                    let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
+                        (#config_expr)
+                            .cluster_type(redis_test::cluster::ClusterType::#cluster_type),
+                        redis::ProtocolVersion::#protocol,
+                    );
+                },
+            };
             quote! {
                 #[test]
                 #ignore_flag
@@ -207,11 +239,7 @@ pub(crate) fn expand_async_cluster_test(attr: TokenStream2, input: TokenStream2)
                 fn #name() {
                     crate::support::block_on_all(async move {
                         #version_check
-                        let mut ctx = crate::support::TestClusterContext::new_with_config_and_protocol(
-                            (#config_expr)
-                                .cluster_type(redis_test::cluster::ClusterType::#cluster_type),
-                            redis::ProtocolVersion::#protocol,
-                        );
+                        #ctx_creation
                         #call_expr
                     }, crate::support::RuntimeType::#runtime);
                 }

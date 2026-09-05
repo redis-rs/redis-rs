@@ -20,7 +20,7 @@ const KEY_2: &str = "test_bloom_2";
 const KEY_3: &str = "test_bloom_3";
 
 /// Tries to assure single value updates work
-#[single_server_test(bloom)]
+#[single_server_test(module = "bloom")]
 fn test_module_bloom_single_value_updates(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -55,7 +55,7 @@ fn test_module_bloom_single_value_updates(ctx: TestContext) {
 }
 
 /// Tries to assure that multi-value updates work
-#[single_server_test(bloom)]
+#[single_server_test(module = "bloom")]
 fn test_module_bloom_multiple_value_updates(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -96,7 +96,7 @@ fn test_module_bloom_multiple_value_updates(ctx: TestContext) {
 }
 
 /// Tries to assure that information functions work
-#[single_server_test(bloom)]
+#[single_server_test(module = "bloom")]
 fn test_module_bloom_infos(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -210,7 +210,7 @@ fn test_module_bloom_infos(ctx: TestContext) {
 }
 
 /// Tries to assure that reserving is effective
-#[single_server_test(bloom)]
+#[single_server_test(module = "bloom")]
 fn test_module_bloom_reserving(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -249,7 +249,7 @@ fn test_module_bloom_reserving(ctx: TestContext) {
 }
 
 /// Tries to assure that dumping/loading works
-#[single_server_test(bloom)]
+#[single_server_test(module = "bloom")]
 fn test_module_bloom_dump_and_load(ctx: TestContext) {
     skip_if_context_does_not_support!(ctx, REDIS_BLOOM_ANY);
     let mut con = ctx.connection();
@@ -302,7 +302,7 @@ fn test_module_bloom_dump_and_load(ctx: TestContext) {
 }
 
 /// Tries to assure that dumping through an iterator works
-#[single_server_test(bloom)]
+#[single_server_test(module = "bloom")]
 fn test_module_bloom_dump_iterator(ctx: TestContext) {
     skip_if_context_does_not_support!(ctx, REDIS_BLOOM_ANY);
     let mut con = ctx.connection();

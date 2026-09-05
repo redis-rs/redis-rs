@@ -2,7 +2,10 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
 use crate::test_env::{ServerKind, protocol_enabled, server_enabled};
-use crate::utils::{generate_async_call, generate_sync_call, ignore_flag, parse_module_from_attr};
+use crate::utils::{
+    generate_async_call, generate_sync_call, ignore_flag, parse_module_from_attr,
+    parse_mtls_from_attr,
+};
 
 /// A single (protocol × server kind) sync test variant.
 struct SyncVariant {
@@ -127,6 +130,8 @@ pub(crate) fn expand_single_server_test(attr: TokenStream2, input: TokenStream2)
     let mut item: syn::ItemFn = syn::parse2(input).expect("failed to parse function");
     let test_function_name = item.sig.ident.clone();
     let module_expr = parse_module_from_attr(&attr);
+    let mtls_expr = parse_mtls_from_attr(&attr);
+    let is_mtls = !mtls_expr.is_empty();
 
     item.sig.ident = syn::Ident::new(
         &format!("{test_function_name}_internal"),
@@ -138,7 +143,11 @@ pub(crate) fn expand_single_server_test(attr: TokenStream2, input: TokenStream2)
 
     let tests = single_server_matrix()
         .into_iter()
-        .filter(|v| protocol_enabled(v.protocol) && server_enabled(v.kind))
+        .filter(|v| {
+            protocol_enabled(v.protocol)
+                && server_enabled(v.kind)
+                && (!is_mtls || v.kind == ServerKind::Tls)
+        })
         .map(|v| {
             let SyncVariant {
                 protocol,
@@ -156,6 +165,7 @@ pub(crate) fn expand_single_server_test(attr: TokenStream2, input: TokenStream2)
                 fn #name() {
                     let mut ctx = crate::support::TestContextBuilder::new()
                         #module_expr
+                        #mtls_expr
                         .protocol(redis::ProtocolVersion::#protocol)
                         .server_type(#server_type)
                         .build();
@@ -181,6 +191,8 @@ pub(crate) fn expand_async_single_server_test(
     let mut item: syn::ItemFn = syn::parse2(input).expect("failed to parse function");
     let test_function_name = item.sig.ident.clone();
     let module_expr = parse_module_from_attr(&attr);
+    let mtls_expr = parse_mtls_from_attr(&attr);
+    let is_mtls = !mtls_expr.is_empty();
 
     item.sig.ident = syn::Ident::new(
         &format!("{test_function_name}_internal"),
@@ -192,7 +204,11 @@ pub(crate) fn expand_async_single_server_test(
 
     let tests = async_single_server_matrix()
         .into_iter()
-        .filter(|v| protocol_enabled(v.protocol) && server_enabled(v.kind))
+        .filter(|v| {
+            protocol_enabled(v.protocol)
+                && server_enabled(v.kind)
+                && (!is_mtls || v.kind == ServerKind::Tls)
+        })
         .map(|v| {
             let AsyncVariant {
                 protocol,
@@ -212,6 +228,7 @@ pub(crate) fn expand_async_single_server_test(
                     crate::support::block_on_all(async move {
                         let mut ctx = crate::support::TestContextBuilder::new()
                             #module_expr
+                            #mtls_expr
                             .protocol(redis::ProtocolVersion::#protocol)
                             .server_type(#server_type)
                             .build();
@@ -648,5 +665,93 @@ mod tests {
                 .unwrap()
                 .to_string()
         );
+    }
+
+    /// `mtls = true` must only generate TLS variants and include `.mtls(true)` in the builder.
+    #[test]
+    fn mtls_only_tls_variants() {
+        with_env(clear_env, || {
+            let out = expand_single_server_test(
+                r#"mtls = true"#.parse().unwrap(),
+                "fn test(ctx: &mut TestContext) {}".parse().unwrap(),
+            );
+            let s = out.to_string();
+            // Must contain .mtls(true)
+            assert!(s.contains(". mtls (true)"), "missing .mtls(true)");
+            // Must contain only tls variants
+            assert!(s.contains("resp2_tls"), "missing resp2_tls");
+            assert!(s.contains("resp3_tls"), "missing resp3_tls");
+            assert!(!s.contains("resp2_tcp"), "should not contain resp2_tcp");
+            assert!(!s.contains("resp3_tcp"), "should not contain resp3_tcp");
+            assert!(!s.contains("resp2_unix"), "should not contain resp2_unix");
+            assert!(!s.contains("resp3_unix"), "should not contain resp3_unix");
+        });
+    }
+
+    /// `mtls = true` must only generate TLS variants for async too.
+    #[test]
+    fn mtls_async_only_tls_variants() {
+        with_env(clear_env, || {
+            let out = expand_async_single_server_test(
+                r#"mtls = true"#.parse().unwrap(),
+                "fn test(ctx: &mut TestContext) {}".parse().unwrap(),
+            );
+            let s = out.to_string();
+            assert!(s.contains(". mtls (true)"), "missing .mtls(true)");
+            assert!(s.contains("resp2_tls_tokio"), "missing resp2_tls_tokio");
+            assert!(s.contains("resp3_tls_tokio"), "missing resp3_tls_tokio");
+            assert!(
+                !s.contains("resp2_tcp_tokio"),
+                "should not contain tcp variants"
+            );
+            assert!(
+                !s.contains("resp2_unix_tokio"),
+                "should not contain unix variants"
+            );
+        });
+    }
+
+    /// `module = "json"` named-arg form must work the same as bare `json`.
+    #[test]
+    fn module_named_arg_json() {
+        with_env(clear_env, || {
+            let out = expand_single_server_test(
+                r#"module = "json""#.parse().unwrap(),
+                "fn test(ctx: &mut TestContext) {}".parse().unwrap(),
+            );
+            let s = out.to_string();
+            assert!(
+                s.contains(". module (redis_test :: server :: Module :: Json)"),
+                "missing Module::Json"
+            );
+            // Should still have all 6 variants (no filtering)
+            assert!(s.contains("resp2_tcp"));
+            assert!(s.contains("resp3_tcp"));
+            assert!(s.contains("resp2_tls"));
+            assert!(s.contains("resp3_tls"));
+            assert!(s.contains("resp2_unix"));
+            assert!(s.contains("resp3_unix"));
+        });
+    }
+
+    /// `module = "json", mtls = true` must combine both: module loaded + TLS-only variants.
+    #[test]
+    fn module_and_mtls_combined() {
+        with_env(clear_env, || {
+            let out = expand_single_server_test(
+                r#"module = "json", mtls = true"#.parse().unwrap(),
+                "fn test(ctx: &mut TestContext) {}".parse().unwrap(),
+            );
+            let s = out.to_string();
+            assert!(
+                s.contains(". module (redis_test :: server :: Module :: Json)"),
+                "missing Module::Json"
+            );
+            assert!(s.contains(". mtls (true)"), "missing .mtls(true)");
+            assert!(s.contains("resp2_tls"));
+            assert!(s.contains("resp3_tls"));
+            assert!(!s.contains("resp2_tcp"));
+            assert!(!s.contains("resp2_unix"));
+        });
     }
 }

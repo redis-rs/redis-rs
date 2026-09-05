@@ -20,7 +20,7 @@ use serde_json::json;
 
 const TEST_KEY: &str = "my_json";
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_serialize_error(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -50,7 +50,7 @@ fn test_module_json_serialize_error(ctx: TestContext) {
     );
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_arr_append(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -67,7 +67,7 @@ fn test_module_json_arr_append(ctx: TestContext) {
     assert_eq!(json_append, Ok(Array(vec![Int(2i64), Int(3i64), Nil])));
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_arr_index(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -97,7 +97,7 @@ fn test_module_json_arr_index(ctx: TestContext) {
     assert_eq!(json_arrindex_2, Ok(Array(vec![Int(1i64), Nil])));
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_arr_insert(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -126,7 +126,7 @@ fn test_module_json_arr_insert(ctx: TestContext) {
     assert_eq!(json_arrinsert_2, Ok(Array(vec![Int(5), Nil])));
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_arr_len(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -155,7 +155,7 @@ fn test_module_json_arr_len(ctx: TestContext) {
     assert_eq!(json_arrlen_2, Ok(Array(vec![Int(4), Nil])));
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_arr_pop(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -198,7 +198,7 @@ fn test_module_json_arr_pop(ctx: TestContext) {
     );
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_arr_trim(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -227,7 +227,7 @@ fn test_module_json_arr_trim(ctx: TestContext) {
     assert_eq!(json_arrtrim_2, Ok(Array(vec![Int(1), Nil])));
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_clear(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -251,7 +251,7 @@ fn test_module_json_clear(ctx: TestContext) {
     );
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_del(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -268,7 +268,7 @@ fn test_module_json_del(ctx: TestContext) {
     assert_eq!(json_del, Ok(2));
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_get(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -293,7 +293,7 @@ fn test_module_json_get(ctx: TestContext) {
     }
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_mget(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -326,7 +326,7 @@ fn test_module_json_mget(ctx: TestContext) {
     );
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_num_incr_by(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -359,7 +359,7 @@ fn test_module_json_num_incr_by(ctx: TestContext) {
     }
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_obj_keys(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -385,7 +385,7 @@ fn test_module_json_obj_keys(ctx: TestContext) {
     );
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_obj_len(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -402,7 +402,7 @@ fn test_module_json_obj_len(ctx: TestContext) {
     assert_eq!(json_objlen, Ok(Array(vec![Nil, Int(2)])));
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_set(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -411,7 +411,7 @@ fn test_module_json_set(ctx: TestContext) {
     assert_eq!(set, Ok(true));
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_str_append(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -435,7 +435,7 @@ fn test_module_json_str_append(ctx: TestContext) {
     );
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_str_len(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -452,7 +452,7 @@ fn test_module_json_str_len(ctx: TestContext) {
     assert_eq!(json_strlen, Ok(Array(vec![Int(3), Int(5), Nil])));
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_toggle(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -467,7 +467,7 @@ fn test_module_json_toggle(ctx: TestContext) {
     assert_eq!(json_toggle_b, Ok(Array(vec![Int(1)])));
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_type(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -521,7 +521,7 @@ fn test_module_json_type(ctx: TestContext) {
     assert_eq!(key_type, Ok(ValueType::JSON));
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_set_options_json_value(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -537,7 +537,7 @@ fn test_module_json_set_options_json_value(ctx: TestContext) {
     assert_eq!(get_result, Ok(r#"[{"a":1,"b":[2,3]}]"#.to_string()));
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_set_options_nx_xx(ctx: TestContext) {
     let mut con = ctx.connection();
 
@@ -578,7 +578,7 @@ fn test_module_json_set_options_nx_xx(ctx: TestContext) {
 // The value travels as a JSON array of numbers.
 // The `FPHA <TYPE>` token is a storage hint that asks the server to pack the array internally as bf16/fp16/fp32/fp64 lanes.
 // Round-trip via `JSON.GET` returns the array as a JSON array of numbers.
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_set_fpha_roundtrip(ctx: TestContext) {
     for fpha_type in [
         FphaType::Fp32,
@@ -604,7 +604,7 @@ fn test_module_json_set_fpha_roundtrip(ctx: TestContext) {
     }
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_set_fpha_empty_payload(ctx: TestContext) {
     skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
@@ -623,7 +623,7 @@ fn test_module_json_set_fpha_empty_payload(ctx: TestContext) {
     assert_eq!(get_result, Ok("[[]]".to_string()));
 }
 
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_set_fpha_with_existence_check(ctx: TestContext) {
     skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
@@ -650,7 +650,7 @@ fn test_module_json_set_fpha_with_existence_check(ctx: TestContext) {
 
 // FP16 storage range is ±65504.
 // A value outside that range must be rejected by the server with an out-of-range error.
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_set_fpha_fp16_overflow(ctx: TestContext) {
     skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
@@ -675,7 +675,7 @@ fn test_module_json_set_fpha_fp16_overflow(ctx: TestContext) {
 // "If at least one value in the FP array does not fit the FPHA type, the command errors."
 
 // Verify that a single out-of-range element in an otherwise valid payload rejects the whole command and leaves the key untouched.
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_set_fpha_fp16_partial_overflow(ctx: TestContext) {
     skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
@@ -696,7 +696,7 @@ fn test_module_json_set_fpha_fp16_partial_overflow(ctx: TestContext) {
 }
 
 // 65504 is the largest finite value representable in IEEE-754 binary16.
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_set_fpha_fp16_max_boundary(ctx: TestContext) {
     skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
@@ -716,7 +716,7 @@ fn test_module_json_set_fpha_fp16_max_boundary(ctx: TestContext) {
 }
 
 // 3.4e38 is near the largest finite value representable in IEEE-754 binary32.
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_set_fpha_fp32_max_boundary(ctx: TestContext) {
     skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
@@ -737,7 +737,7 @@ fn test_module_json_set_fpha_fp32_max_boundary(ctx: TestContext) {
 
 // 2^20 (= 1048576) is exactly representable in bf16 and well above FP16's ±65504 limit.
 // The same value would be rejected under FPHA FP16 but under FPHA BF16 it round-trips losslessly.
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_set_fpha_bf16_above_fp16_range(ctx: TestContext) {
     skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
@@ -758,7 +758,7 @@ fn test_module_json_set_fpha_bf16_above_fp16_range(ctx: TestContext) {
 
 // Values that serde_json emits in scientific notation must be accepted by the server and round-tripped back as scientific notation.
 // Note: serde emits `6.022e+23` while the server omits the `+`.
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_set_fpha_fp32_scientific_notation(ctx: TestContext) {
     skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
@@ -782,7 +782,7 @@ fn test_module_json_set_fpha_fp32_scientific_notation(ctx: TestContext) {
 // bf16 has a 7-bit mantissa.
 // Around 100 its step size is 0.5, so 100.7 snaps to 100.5
 // pi (3.1415927) snaps to 3.14.
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_set_fpha_bf16_truncation(ctx: TestContext) {
     skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
@@ -803,7 +803,7 @@ fn test_module_json_set_fpha_bf16_truncation(ctx: TestContext) {
 
 // fp16 has a 10-bit mantissa, so it preserves more precision than bf16.
 // Around 1.0 its step size is ~0.001, which snaps 1.0009766 to 1.001, pi still snaps to 3.14.
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_set_fpha_fp16_truncation(ctx: TestContext) {
     skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
@@ -825,7 +825,7 @@ fn test_module_json_set_fpha_fp16_truncation(ctx: TestContext) {
 // The FPHA hint applies to any serializable value, not just flat slices.
 // A 2-D matrix exercises the docs' "all FP arrays in value" wording - the hint is applied to every inner array.
 // With BF16, 100.7 snaps to 100.5 and pi snaps to 3.14 within their respective inner arrays.
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_set_fpha_matrix(ctx: TestContext) {
     skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
@@ -846,7 +846,7 @@ fn test_module_json_set_fpha_matrix(ctx: TestContext) {
 }
 
 // An object holding multiple FP-array fields gets the storage hint applied to each field independently.
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_set_fpha_object_with_array_fields(ctx: TestContext) {
     skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
@@ -874,7 +874,7 @@ fn test_module_json_set_fpha_object_with_array_fields(ctx: TestContext) {
 // "If at least one value in the FP array does not fit the FPHA type, the command errors."
 
 // Verify that a single out-of-range value causes the entire command to fail without modifying the key, even when the offending value appears in a nested array.
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_set_fpha_nested_partial_overflow(ctx: TestContext) {
     skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
@@ -896,7 +896,7 @@ fn test_module_json_set_fpha_nested_partial_overflow(ctx: TestContext) {
 }
 
 // A scalar (not an array) is also a valid FPHA payload server-side.
-#[single_server_test(json)]
+#[single_server_test(module = "json")]
 fn test_module_json_set_fpha_scalar(ctx: TestContext) {
     skip_if_context_does_not_support!(ctx, [&[REDIS_CE_8_8][..], &[REDIS_JSON_8_8]]);
     let mut con = ctx.connection();
