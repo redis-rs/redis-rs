@@ -3011,14 +3011,14 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_arr_append<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &V) -> (RedisResult<Vec<Option<usize>>>) via try_vec_then_singleton {
-        cmd("JSON.ARRAPPEND").arg(key).arg(path).arg(serde_json::to_string(value)?).take()
+        ready_cmd!("JSON.ARRAPPEND", key, path, serde_json::to_string(value)?).take()
     }
 
     /// Index array at `path`, returns first occurrence of `value`
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_arr_index<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &V) -> (RedisResult<Vec<Option<i64>>>) via try_vec_then_singleton {
-        cmd("JSON.ARRINDEX").arg(key).arg(path).arg(serde_json::to_string(value)?).take()
+        ready_cmd!("JSON.ARRINDEX", key, path, serde_json::to_string(value)?).take()
     }
 
     /// Same as `json_arr_index` except takes a `start` and a `stop` value, setting these to `0` will mean
@@ -3028,7 +3028,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_arr_index_ss<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &V, start: &isize, stop: &isize) -> (RedisResult<Vec<Option<i64>>>) via try_vec_then_singleton {
-        cmd("JSON.ARRINDEX").arg(key).arg(path).arg(serde_json::to_string(value)?).arg(start).arg(stop).take()
+        ready_cmd!("JSON.ARRINDEX", key, path, serde_json::to_string(value)?, start, stop).take()
     }
 
     /// Inserts the JSON `value` in the array at `path` before the `index` (shifts to the right).
@@ -3037,14 +3037,14 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_arr_insert<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, index: i64, value: &V) -> (RedisResult<Vec<Option<usize>>>) via try_vec_then_singleton {
-        cmd("JSON.ARRINSERT").arg(key).arg(path).arg(index).arg(serde_json::to_string(value)?).take()
+        ready_cmd!("JSON.ARRINSERT", key, path, index, serde_json::to_string(value)?).take()
     }
 
     /// Reports the length of the JSON Array at `path` in `key`.
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_arr_len<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (Vec<Option<usize>>) via try_vec_then_singleton {
-        cmd("JSON.ARRLEN").arg(key).arg(path).take()
+        ready_cmd!("JSON.ARRLEN", key, path).take()
     }
 
     /// Removes and returns an element from the `index` in the array.
@@ -3053,7 +3053,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_arr_pop<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P, index: i64) -> (Vec<Option<String>>) {
-        cmd("JSON.ARRPOP").arg(key).arg(path).arg(index).take()
+        ready_cmd!("JSON.ARRPOP", key, path, index).take()
     }
 
     /// Trims an array so that it contains only the specified inclusive range of elements.
@@ -3063,21 +3063,21 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_arr_trim<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P, start: i64, stop: i64) -> (Vec<Option<usize>>) via try_vec_then_singleton {
-        cmd("JSON.ARRTRIM").arg(key).arg(path).arg(start).arg(stop).take()
+        ready_cmd!("JSON.ARRTRIM", key, path, start, stop).take()
     }
 
     /// Clears container values (Arrays/Objects), and sets numeric values to 0.
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_clear<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (usize) {
-        cmd("JSON.CLEAR").arg(key).arg(path).take()
+        ready_cmd!("JSON.CLEAR", key, path).take()
     }
 
     /// Deletes a value at `path`.
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_del<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (usize) {
-        cmd("JSON.DEL").arg(key).arg(path).take()
+        ready_cmd!("JSON.DEL", key, path).take()
     }
 
     /// Gets JSON Value at `path`.
@@ -3088,7 +3088,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_get<K: ToSingleRedisArg, P: ToRedisArgs>(key: K, path: P) -> (String) {
-        cmd("JSON.GET").arg(key).arg(path).take()
+        ready_cmd!("JSON.GET", key, path).take()
     }
 
     /// Gets JSON Values at `path`.
@@ -3099,35 +3099,35 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_mget<K: ToRedisArgs, P: ToSingleRedisArg>(key: K, path: P) -> (Vec<Option<String>>) {
-        cmd("JSON.MGET").arg(key).arg(path).take()
+        ready_cmd!("JSON.MGET", key, path).take()
     }
 
     /// Increments the number value stored at `path` by `number`.
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_num_incr_by<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P, value: i64) -> (Vec<Option<String>>) via try_vec_then_singleton {
-        cmd("JSON.NUMINCRBY").arg(key).arg(path).arg(value).take()
+        ready_cmd!("JSON.NUMINCRBY", key, path, value).take()
     }
 
     /// Returns the keys in the object that's referenced by `path`.
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_obj_keys<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (Vec<Option<Vec<String>>>) via try_singleton_then_vec{
-        cmd("JSON.OBJKEYS").arg(key).arg(path).take()
+        ready_cmd!("JSON.OBJKEYS", key, path).take()
     }
 
     /// Reports the number of keys in the JSON Object at `path` in `key`.
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_obj_len<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (Vec<Option<usize>>) via try_vec_then_singleton {
-        cmd("JSON.OBJLEN").arg(key).arg(path).take()
+        ready_cmd!("JSON.OBJLEN", key, path).take()
     }
 
     /// Sets the JSON Value at `path` in `key`.
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_set<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &V) -> (RedisResult<bool>) {
-        cmd("JSON.SET").arg(key).arg(path).arg(serde_json::to_string(value)?).take()
+        ready_cmd!("JSON.SET", key, path, serde_json::to_string(value)?).take()
     }
 
     /// Sets the JSON Value at `path` in `key` with options.
@@ -3136,7 +3136,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_set_options<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &V, options: &crate::json::JsonSetOptions) -> (RedisResult<bool>) {
-        cmd("JSON.SET").arg(key).arg(path).arg(serde_json::to_string(value)?).arg(options).take()
+        ready_cmd!("JSON.SET", key, path, serde_json::to_string(value)?, options).take()
     }
 
     /// Sets the value at the path per key, for every given tuple.
@@ -3158,29 +3158,29 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_str_append<K: ToSingleRedisArg, P: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, path: P, value: V) -> (Vec<Option<usize>>) via try_vec_then_singleton {
-        cmd("JSON.STRAPPEND").arg(key).arg(path).arg(value).take()
+        ready_cmd!("JSON.STRAPPEND", key, path, value).take()
     }
 
     /// Reports the length of the JSON String at `path` in `key`.
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_str_len<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (Vec<Option<usize>>) via try_vec_then_singleton {
-        cmd("JSON.STRLEN").arg(key).arg(path).take()
+        ready_cmd!("JSON.STRLEN", key, path).take()
     }
 
     /// Toggle a `boolean` value stored at `path`.
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_toggle<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (Vec<Option<bool>>) via try_vec_then_singleton {
-        cmd("JSON.TOGGLE").arg(key).arg(path).take()
+        ready_cmd!("JSON.TOGGLE", key, path).take()
     }
 
     /// Reports the type of JSON value at `path`.
-    // As for RESP3, and `$` the result is an array of arrays, we flatten the array
+    // As for RESP3 with `$`-based path, the result is an array of arrays, we flatten the array
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_type<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (Vec<RedisJsonType>) via flattened_array {
-        cmd("JSON.TYPE").arg(key).arg(path).take()
+        ready_cmd!("JSON.TYPE", key, path).take()
     }
 
     // Bloom filter commands
