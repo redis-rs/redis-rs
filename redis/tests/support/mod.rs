@@ -18,7 +18,7 @@ use redis_test::TestContext;
 #[cfg(feature = "tls-rustls")]
 use redis_test::utils::TlsFilePaths;
 #[cfg(feature = "tls-rustls")]
-use redis_test::utils::load_certs_from_file;
+pub use redis_test::utils::load_certs_from_file;
 
 use std::io;
 #[cfg(feature = "tls-rustls")]
@@ -123,8 +123,6 @@ mod cluster;
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
 mod mock_cluster;
 
-mod util;
-
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
 #[allow(unused_imports)]
 pub use self::cluster::*;
@@ -132,6 +130,8 @@ pub use self::cluster::*;
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
 #[allow(unused_imports)]
 pub use self::mock_cluster::*;
+
+mod util;
 
 #[cfg(feature = "sentinel")]
 mod sentinel;
@@ -340,7 +340,7 @@ pub(crate) mod mtls_test {
     }
 
     pub(crate) fn create_cluster_client_from_cluster(
-        cluster: &TestClusterContext,
+        cluster: &cluster::TestClusterContext,
         mtls_enabled: bool,
     ) -> Result<ClusterClient, RedisError> {
         let server = cluster
