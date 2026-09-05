@@ -582,7 +582,8 @@ fn test_sentinel_client_builder() {
     )
     .unwrap();
 
-    master_client_builder = master_client_builder.set_client_to_sentinel_protocol(use_protocol());
+    master_client_builder = master_client_builder
+        .set_client_to_sentinel_protocol(use_protocol().unwrap_or(redis::ProtocolVersion::RESP2));
 
     if let Some(tls_mode) = context.tls_mode() {
         master_client_builder = master_client_builder.set_client_to_redis_tls_mode(tls_mode);

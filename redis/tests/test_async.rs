@@ -1289,7 +1289,10 @@ mod basic_async {
 
         #[async_test]
         async fn test_pub_sub_requires_resp3() {
-            if use_protocol().supports_resp3() {
+            if use_protocol()
+                .unwrap_or(ProtocolVersion::RESP2)
+                .supports_resp3()
+            {
                 return;
             }
             let ctx = TestContext::default();

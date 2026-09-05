@@ -380,7 +380,10 @@ mod cluster_async {
 
     #[async_test]
     async fn test_cluster_resp3() {
-        if !use_protocol().supports_resp3() {
+        if !use_protocol()
+            .unwrap_or(redis::ProtocolVersion::RESP2)
+            .supports_resp3()
+        {
             return;
         }
 
@@ -482,7 +485,7 @@ mod cluster_async {
     #[cfg(feature = "tls-rustls")]
     #[async_test]
     async fn test_async_cluster_default_reject_invalid_hostnames() {
-        if ClusterType::get_intended() != ClusterType::TcpTls {
+        if ClusterType::get_intended().unwrap_or(ClusterType::Tcp) != ClusterType::TcpTls {
             // Only TLS causes invalid certificates to be rejected as desired.
             return;
         }
@@ -499,7 +502,7 @@ mod cluster_async {
     #[cfg(feature = "tls-rustls-insecure")]
     #[async_test]
     async fn test_async_cluster_danger_accept_invalid_hostnames() {
-        if ClusterType::get_intended() != ClusterType::TcpTls {
+        if ClusterType::get_intended().unwrap_or(ClusterType::Tcp) != ClusterType::TcpTls {
             // No point testing this TLS-specific mode in non-TLS configurations.
             return;
         }
@@ -518,7 +521,7 @@ mod cluster_async {
     #[cfg(feature = "tls-rustls")]
     #[async_test]
     async fn async_cluster_node_address_map_fixes_tls_hostname_mismatch() {
-        if ClusterType::get_intended() != ClusterType::TcpTls {
+        if ClusterType::get_intended().unwrap_or(ClusterType::Tcp) != ClusterType::TcpTls {
             return;
         }
 
@@ -562,7 +565,7 @@ mod cluster_async {
             .collect();
 
         let mut builder = ClusterClient::builder(initial_nodes)
-            .use_protocol(use_protocol())
+            .use_protocol(use_protocol().unwrap_or(redis::ProtocolVersion::RESP2))
             .node_address_map(address_map);
 
         if let Some(tls_file_paths) = &cluster.cluster.tls_paths {
@@ -2908,7 +2911,10 @@ mod cluster_async {
 
         #[async_test]
         async fn test_pub_sub_subscription() {
-            if !use_protocol().supports_resp3() {
+            if !use_protocol()
+                .unwrap_or(redis::ProtocolVersion::RESP2)
+                .supports_resp3()
+            {
                 return;
             }
 
@@ -2928,7 +2934,10 @@ mod cluster_async {
 
         #[async_test]
         async fn test_pub_sub_subscription_with_config() {
-            if !use_protocol().supports_resp3() {
+            if !use_protocol()
+                .unwrap_or(redis::ProtocolVersion::RESP2)
+                .supports_resp3()
+            {
                 return;
             }
 
@@ -2949,7 +2958,10 @@ mod cluster_async {
 
         #[async_test]
         async fn test_pub_sub_shardnumsub() {
-            if !use_protocol().supports_resp3() {
+            if !use_protocol()
+                .unwrap_or(redis::ProtocolVersion::RESP2)
+                .supports_resp3()
+            {
                 return;
             }
 
@@ -2970,7 +2982,10 @@ mod cluster_async {
 
         #[async_test]
         async fn test_pub_sub_unsubscription() {
-            if !use_protocol().supports_resp3() {
+            if !use_protocol()
+                .unwrap_or(redis::ProtocolVersion::RESP2)
+                .supports_resp3()
+            {
                 return;
             }
 
@@ -3050,7 +3065,10 @@ mod cluster_async {
 
         #[async_test]
         async fn test_connection_is_still_usable_if_pubsub_receiver_is_dropped() {
-            if !use_protocol().supports_resp3() {
+            if !use_protocol()
+                .unwrap_or(redis::ProtocolVersion::RESP2)
+                .supports_resp3()
+            {
                 return;
             }
 
@@ -3077,7 +3095,10 @@ mod cluster_async {
 
         #[async_test]
         async fn test_multiple_subscribes_and_unsubscribes_work() {
-            if !use_protocol().supports_resp3() {
+            if !use_protocol()
+                .unwrap_or(redis::ProtocolVersion::RESP2)
+                .supports_resp3()
+            {
                 return;
             }
 
@@ -3193,7 +3214,10 @@ mod cluster_async {
 
         #[async_test]
         async fn test_pub_sub_reconnect_after_disconnect() {
-            if !use_protocol().supports_resp3() {
+            if !use_protocol()
+                .unwrap_or(redis::ProtocolVersion::RESP2)
+                .supports_resp3()
+            {
                 return;
             }
 
@@ -3271,7 +3295,10 @@ mod cluster_async {
 
         #[async_test]
         async fn test_pub_sub_should_not_reconnect_if_subscription_failed() {
-            if !use_protocol().supports_resp3() {
+            if !use_protocol()
+                .unwrap_or(redis::ProtocolVersion::RESP2)
+                .supports_resp3()
+            {
                 return;
             }
 
