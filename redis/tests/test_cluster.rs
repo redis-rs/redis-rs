@@ -4,10 +4,7 @@ mod support;
 
 #[cfg(test)]
 mod cluster {
-    #[cfg(feature = "tls-rustls")]
-    use redis_test::cluster::ClusterType;
-    #[cfg(feature = "tls-rustls")]
-    use redis_test::utils::load_certs_from_file;
+    // TLS cluster type checks are now done at runtime against the created cluster.
     use std::collections::HashMap;
     use std::sync::{
         Arc,
@@ -23,9 +20,13 @@ mod cluster {
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
         cmd, from_redis_value, parse_redis_value,
     };
-    use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
-    use redis_test::server::use_protocol;
-    use redis_test::{VALKEY_9_0, redis_value, run_test_if_version_supported};
+    #[allow(unused_imports)]
+    use redis_test::{
+        cluster::{RedisCluster, RedisClusterConfiguration},
+        redis_value,
+        server::use_protocol,
+    };
+    use test_macros::cluster_test;
 
     fn smoke_test_connection(mut con: ClusterConnection) {
         redis::cmd("SET")
@@ -46,24 +47,18 @@ mod cluster {
         );
     }
 
-    #[test]
-    fn test_cluster_basics() {
-        let cluster = TestClusterContext::new();
+    #[cluster_test]
+    fn test_cluster_basics(cluster: TestClusterContext) {
         smoke_test_connection(cluster.connection());
     }
 
-    #[test]
-    fn test_cluster_numbered_database() {
-        run_test_if_version_supported!(VALKEY_9_0);
-
-        let cluster = TestClusterContext::new_with_config_and_builder(
-            RedisClusterConfiguration::default()
-                .cluster_databases(16)
-                .insecure_tls(),
-            |builder| builder.database_id(4),
-        );
-
-        let mut con = cluster.connection();
+    #[cluster_test(
+        config = "RedisClusterConfiguration::default().cluster_databases(16).insecure_tls()",
+        supported_versions = "VALKEY_9_0"
+    )]
+    fn test_cluster_numbered_database(ctx: TestClusterContext) {
+        let ctx = ctx.with_cluster_client_builder(|builder| builder.database_id(4));
+        let mut con = ctx.connection();
 
         assert_all_nodes_on_db(&mut con, 4);
 
@@ -104,68 +99,72 @@ mod cluster {
     }
 
     #[cfg(feature = "tls-rustls")]
-    #[test]
-    fn test_default_reject_invalid_hostnames() {
-        if ClusterType::get_intended() != ClusterType::TcpTls {
+    #[cluster_test(
+        config = "RedisClusterConfiguration::default().insecure_tls().certs_without_ip_alts()"
+    )]
+    fn test_default_reject_invalid_hostnames(ctx: TestClusterContext) {
+        if let redis::ConnectionAddr::TcpTls { .. } = ctx
+            .cluster
+            .iter_servers()
+            .next()
+            .unwrap()
+            .connection_info()
+            .addr()
+        {
             // Only TLS causes invalid certificates to be rejected as desired.
-            return;
+            assert!(ctx.client.get_connection().is_err());
         }
-
-        let cluster = TestClusterContext::new_with_config(
-            RedisClusterConfiguration::default()
-                .insecure_tls()
-                .certs_without_ip_alts(),
-        );
-        assert!(cluster.client.get_connection().is_err());
     }
 
     #[cfg(feature = "tls-rustls-insecure")]
-    #[test]
-    fn test_danger_accept_invalid_hostnames() {
-        if ClusterType::get_intended() != ClusterType::TcpTls {
-            // No point testing this TLS-specific mode in non-TLS configurations.
-            return;
+    #[cluster_test(
+        config = "RedisClusterConfiguration::default().insecure_tls().certs_without_ip_alts()"
+    )]
+    fn test_danger_accept_invalid_hostnames(ctx: TestClusterContext) {
+        let ctx = ctx
+            .with_cluster_client_builder(|builder| builder.danger_accept_invalid_hostnames(true));
+
+        if let redis::ConnectionAddr::TcpTls { .. } = ctx
+            .cluster
+            .iter_servers()
+            .next()
+            .unwrap()
+            .connection_info()
+            .addr()
+        {
+            // Only TLS-specific mode is relevant if servers accept TLS.
+            smoke_test_connection(ctx.connection());
         }
-
-        let cluster = TestClusterContext::new_with_config_and_builder(
-            RedisClusterConfiguration::default()
-                .insecure_tls()
-                .certs_without_ip_alts(),
-            |builder| builder.danger_accept_invalid_hostnames(true),
-        );
-
-        smoke_test_connection(cluster.connection());
     }
 
-    #[test]
-    fn test_cluster_with_username_and_password() {
-        let cluster = TestClusterContext::new_with_cluster_client_builder(|builder| {
+    #[cluster_test]
+    fn test_cluster_with_username_and_password(ctx: TestClusterContext) {
+        let ctx = ctx.with_cluster_client_builder(|builder| {
             builder
                 .username(RedisCluster::username())
                 .password(RedisCluster::password())
         });
-        cluster.disable_default_user();
+        ctx.disable_default_user();
 
-        smoke_test_connection(cluster.connection());
+        smoke_test_connection(ctx.connection());
     }
 
-    #[test]
-    fn test_cluster_with_bad_password() {
-        let cluster = TestClusterContext::new_with_cluster_client_builder(|builder| {
+    #[cluster_test]
+    fn test_cluster_with_bad_password(ctx: TestClusterContext) {
+        let ctx = ctx.with_cluster_client_builder(|builder| {
             builder
                 .username(RedisCluster::username())
                 .password("not the right password")
         });
-        assert!(cluster.client.get_connection().is_err());
+        assert!(ctx.client.get_connection().is_err());
     }
 
-    #[test]
-    fn test_cluster_read_from_replicas() {
-        let cluster = TestClusterContext::new_with_config_and_builder(
-            RedisClusterConfiguration::single_replica_config(),
-            |builder| builder.read_routing_strategy(RandomReplicaStrategy),
-        );
-        let mut con = cluster.connection();
+    #[cluster_test(config = "RedisClusterConfiguration::single_replica_config().insecure_tls()")]
+    fn test_cluster_read_from_replicas(ctx: TestClusterContext) {
+        let ctx = ctx.with_cluster_client_builder(|builder| {
+            builder.read_routing_strategy(RandomReplicaStrategy)
+        });
+        let mut con = ctx.connection();
 
         // Write commands would go to the primary nodes
         redis::cmd("SET")
@@ -187,9 +186,8 @@ mod cluster {
         );
     }
 
-    #[test]
-    fn test_cluster_eval() {
-        let cluster = TestClusterContext::new();
+    #[cluster_test]
+    fn test_cluster_eval(cluster: TestClusterContext) {
         let mut con = cluster.connection();
 
         let rv = redis::cmd("EVAL")
@@ -208,12 +206,11 @@ mod cluster {
         assert_eq!(rv, Ok(("1".to_string(), "2".to_string())));
     }
 
-    #[test]
-    fn test_cluster_resp3() {
-        if !use_protocol().supports_resp3() {
+    #[cluster_test]
+    fn test_cluster_resp3(cluster: TestClusterContext) {
+        if !cluster.protocol.supports_resp3() {
             return;
         }
-        let cluster = TestClusterContext::new();
 
         let mut connection = cluster.connection();
 
@@ -224,10 +221,8 @@ mod cluster {
         assert_eq!(result, redis_value!({"foo": "baz", "bar": "foobar"}));
     }
 
-    #[test]
-    fn test_cluster_multi_shard_commands() {
-        let cluster = TestClusterContext::new();
-
+    #[cluster_test]
+    fn test_cluster_multi_shard_commands(cluster: TestClusterContext) {
         let mut connection = cluster.connection();
 
         let res: String = connection
@@ -238,10 +233,9 @@ mod cluster {
         assert_eq!(res, vec!["bazz", "bar", "foo"]);
     }
 
-    #[test]
     #[cfg(feature = "script")]
-    fn test_cluster_script() {
-        let cluster = TestClusterContext::new();
+    #[cluster_test]
+    fn test_cluster_script(cluster: TestClusterContext) {
         let mut con = cluster.connection();
 
         let script = redis::Script::new(
@@ -256,9 +250,8 @@ mod cluster {
         assert_eq!(rv, Ok(("1".to_string(), "2".to_string())));
     }
 
-    #[test]
-    fn test_cluster_pipeline() {
-        let cluster = TestClusterContext::new();
+    #[cluster_test]
+    fn test_cluster_pipeline(cluster: TestClusterContext) {
         cluster.wait_for_cluster_up();
         let mut con = cluster.connection();
 
@@ -272,10 +265,9 @@ mod cluster {
         assert_eq!(resp, vec!["OK".to_string()]);
     }
 
-    #[test]
-    fn test_cluster_pipeline_multiple_keys() {
+    #[cluster_test]
+    fn test_cluster_pipeline_multiple_keys(cluster: TestClusterContext) {
         use redis::FromRedisValue;
-        let cluster = TestClusterContext::new();
         cluster.wait_for_cluster_up();
         let mut con = cluster.connection();
 
@@ -309,9 +301,8 @@ mod cluster {
         assert_eq!(resp_2, 1);
     }
 
-    #[test]
-    fn test_cluster_pipeline_invalid_command() {
-        let cluster = TestClusterContext::new();
+    #[cluster_test]
+    fn test_cluster_pipeline_invalid_command(cluster: TestClusterContext) {
         cluster.wait_for_cluster_up();
         let mut con = cluster.connection();
 
@@ -337,9 +328,8 @@ mod cluster {
         );
     }
 
-    #[test]
-    fn test_cluster_pipeline_command_ordering() {
-        let cluster = TestClusterContext::new();
+    #[cluster_test]
+    fn test_cluster_pipeline_command_ordering(cluster: TestClusterContext) {
         cluster.wait_for_cluster_up();
         let mut con = cluster.connection();
         let mut pipe = cluster_pipe();
@@ -362,10 +352,9 @@ mod cluster {
         assert_eq!(got, expected);
     }
 
-    #[test]
     #[ignore] // Flaky
-    fn test_cluster_pipeline_ordering_with_improper_command() {
-        let cluster = TestClusterContext::new();
+    #[cluster_test]
+    fn test_cluster_pipeline_ordering_with_improper_command(cluster: TestClusterContext) {
         cluster.wait_for_cluster_up();
         let mut con = cluster.connection();
         let mut pipe = cluster_pipe();
@@ -1136,10 +1125,9 @@ mod cluster {
         assert_eq!(result, redis_value!(simple:"PONG"));
     }
 
-    #[test]
-    fn fail_on_empty_command() {
-        let ctx = TestClusterContext::new();
-        let mut connection = ctx.connection();
+    #[cluster_test]
+    fn fail_on_empty_command(cluster: TestClusterContext) {
+        let mut connection = cluster.connection();
 
         let error: RedisError = cluster_pipe().query::<String>(&mut connection).unwrap_err();
         assert_eq!(error.kind(), ErrorKind::Client);
@@ -1215,10 +1203,8 @@ mod cluster {
         }
     }
 
-    #[test]
-    fn test_cluster_node_address_map_remaps_connections() {
-        let cluster = TestClusterContext::new();
-
+    #[cluster_test]
+    fn test_cluster_node_address_map_remaps_connections(cluster: TestClusterContext) {
         let mut address_map = std::collections::HashMap::new();
         for server in cluster.cluster.iter_servers() {
             if let Some((host, port)) = server.host_and_port() {
@@ -1235,7 +1221,7 @@ mod cluster {
             .collect();
 
         let client = redis::cluster::ClusterClient::builder(initial_nodes)
-            .use_protocol(use_protocol())
+            .use_protocol(cluster.protocol)
             .node_address_map(address_map)
             .build()
             .unwrap();
@@ -1263,12 +1249,6 @@ mod cluster {
     #[cfg(feature = "tls-rustls")]
     #[test]
     fn test_cluster_node_address_map_fixes_tls_hostname_mismatch() {
-        use redis_test::cluster::ClusterType;
-
-        if ClusterType::get_intended() != ClusterType::TcpTls {
-            return;
-        }
-
         // Certs issued for "localhost" only (no IP SAN), so connecting via
         // 127.0.0.1 will fail TLS verification without node_address_map.
         let cluster = TestClusterContext::new_with_config(
@@ -1277,47 +1257,55 @@ mod cluster {
                 .certs_without_ip_alts()
                 .dns_hostname("localhost"),
         );
-
-        let err = match cluster.client.get_connection() {
-            Ok(_) => panic!("connecting via IP address should fail TLS hostname verification"),
-            Err(err) => err,
-        };
-        assert!(
-            err.is_io_error(),
-            "expected a TLS/IO error from hostname verification failure, got: {err:?}"
-        );
-        let err_string = err.to_string();
-        assert!(
-            err_string.contains("certificate") || err_string.contains("NotValidForName"),
-            "expected a certificate hostname verification error, got: {err_string}"
-        );
-
-        let mut address_map = std::collections::HashMap::new();
-        for server in cluster.cluster.iter_servers() {
-            if let Some((host, port)) = server.host_and_port() {
-                address_map.insert(
-                    redis::cluster::NodeAddress::new(host, port),
-                    redis::cluster::NodeAddress::new("localhost", port),
-                );
-            }
-        }
-
-        let initial_nodes: Vec<redis::ConnectionInfo> = cluster
+        if let redis::ConnectionAddr::TcpTls { .. } = cluster
             .cluster
             .iter_servers()
-            .map(|s| s.connection_info())
-            .collect();
+            .next()
+            .unwrap()
+            .connection_info()
+            .addr()
+        {
+            let err = match cluster.client.get_connection() {
+                Ok(_) => panic!("connecting via IP address should fail TLS hostname verification"),
+                Err(err) => err,
+            };
+            assert!(
+                err.is_io_error(),
+                "expected a TLS/IO error from hostname verification failure, got: {err:?}"
+            );
+            let err_string = err.to_string();
+            assert!(
+                err_string.contains("certificate") || err_string.contains("NotValidForName"),
+                "expected a certificate hostname verification error, got: {err_string}"
+            );
 
-        let mut builder = redis::cluster::ClusterClient::builder(initial_nodes)
-            .use_protocol(use_protocol())
-            .node_address_map(address_map);
+            let mut address_map = std::collections::HashMap::new();
+            for server in cluster.cluster.iter_servers() {
+                if let Some((host, port)) = server.host_and_port() {
+                    address_map.insert(
+                        redis::cluster::NodeAddress::new(host, port),
+                        redis::cluster::NodeAddress::new("localhost", port),
+                    );
+                }
+            }
 
-        if let Some(tls_file_paths) = &cluster.cluster.tls_paths {
-            builder = builder.certs(load_certs_from_file(tls_file_paths));
+            let initial_nodes: Vec<redis::ConnectionInfo> = cluster
+                .cluster
+                .iter_servers()
+                .map(|s| s.connection_info())
+                .collect();
+
+            let mut builder = redis::cluster::ClusterClient::builder(initial_nodes)
+                .use_protocol(use_protocol().unwrap_or(redis::ProtocolVersion::RESP2))
+                .node_address_map(address_map);
+
+            if let Some(tls_file_paths) = &cluster.cluster.tls_paths {
+                builder = builder.certs(load_certs_from_file(tls_file_paths));
+            }
+
+            let client = builder.build().unwrap();
+            smoke_test_connection(client.get_connection().unwrap());
         }
-
-        let client = builder.build().unwrap();
-        smoke_test_connection(client.get_connection().unwrap());
     }
 }
 
@@ -1325,12 +1313,12 @@ mod cluster {
 pub mod pool_tests {
     use crate::support::*;
     use r2d2::ManageConnection;
+    use test_macros::cluster_test;
 
-    #[test]
-    fn is_valid_accepts_a_healthy_cluster_connection() {
-        let cluster = TestClusterContext::new();
-        let mut con = cluster.connection();
+    #[cluster_test]
+    fn is_valid_accepts_a_healthy_cluster_connection(ctx: TestClusterContext) {
+        let mut con = ctx.connection();
 
-        ManageConnection::is_valid(&cluster.client, &mut con).unwrap();
+        ManageConnection::is_valid(&ctx.client, &mut con).unwrap();
     }
 }

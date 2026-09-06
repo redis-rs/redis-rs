@@ -95,7 +95,7 @@ fn prepare_benchmark(
 }
 
 fn bench_cache(c: &mut Criterion) {
-    if !use_protocol().supports_resp3() {
+    if use_protocol() != Some(redis::ProtocolVersion::RESP3) {
         return;
     }
     let is_cache_enabled = env::var("ENABLE_CLIENT_SIDE_CACHE").unwrap_or_default() == "true";
