@@ -746,7 +746,7 @@ implement_commands! {
     /// Errors if provided key exists but is not a hash.
     /// [Redis Docs](https://redis.io/commands/HEXPIRE)
     fn hexpire<K: ToSingleRedisArg, F: ToRedisArgs>(key: K, seconds: i64, opt: ExpireOption, fields: F) -> (Vec<IntegerReplyOrNoOp>) {
-       ready_cmd!("HEXPIRE", key, seconds, opt, "FIELDS", fields.num_of_args(), fields).take()
+        ready_cmd!("HEXPIRE", key, seconds, opt, "FIELDS", fields.num_of_args(), fields).take()
     }
 
 
@@ -3180,7 +3180,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_reserve_options<K: ToSingleRedisArg, E: ToSingleRedisArg, C: ToSingleRedisArg>(key: K, err_rate: E, capacity: C, options: crate::bloom::BloomFilterScalingOptions) -> (()) {
-      ready_cmd!("BF.RESERVE", key, err_rate, capacity, options).take()
+        ready_cmd!("BF.RESERVE", key, err_rate, capacity, options).take()
     }
 
     /// Begins an incremental save of the Bloom filter
