@@ -163,7 +163,7 @@ mod cluster {
     fn test_cluster_read_from_replicas() {
         let cluster = TestClusterContext::new_with_config_and_builder(
             RedisClusterConfiguration::single_replica_config(),
-            |builder| builder.read_routing_strategy(RandomReplicaStrategy),
+            |builder| builder.read_routing_strategy(RandomReplicaStrategy::new()),
         );
         let mut con = cluster.connection();
 
@@ -647,7 +647,7 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |cmd: &[u8], port| {
                 respond_startup_with_replica(name, cmd)?;
@@ -670,7 +670,7 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |cmd: &[u8], port| {
                 respond_startup_with_replica(name, cmd)?;
@@ -826,7 +826,7 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(
@@ -932,7 +932,7 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -964,7 +964,7 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -1000,7 +1000,7 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -1041,7 +1041,7 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], _| {
                 respond_startup_with_replica_using_config(

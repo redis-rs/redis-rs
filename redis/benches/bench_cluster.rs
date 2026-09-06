@@ -93,7 +93,7 @@ fn bench_cluster_setup(c: &mut Criterion) {
 fn bench_cluster_read_from_replicas_setup(c: &mut Criterion) {
     let cluster = TestClusterContext::new_with_config_and_builder(
         RedisClusterConfiguration::single_replica_config(),
-        |builder| builder.read_routing_strategy(RandomReplicaStrategy),
+        |builder| builder.read_routing_strategy(RandomReplicaStrategy::new()),
     );
     cluster.wait_for_cluster_up();
 

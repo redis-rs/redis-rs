@@ -54,6 +54,7 @@ The affected structs are:
 * `FlushAllOptions`
 * `PushInfo`
 * `RadiusSearchResult`
+* `RandomReplicaStrategy`
 * `SendError`
 * `SentinelError`
 * `StreamAutoClaimReply`

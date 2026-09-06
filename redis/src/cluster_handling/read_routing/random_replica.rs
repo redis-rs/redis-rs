@@ -2,8 +2,16 @@ use super::interface::{ReadCandidates, ReadRoutingStrategy};
 use crate::cluster_handling::NodeAddress;
 
 /// Routes reads to a random replica node.
+#[non_exhaustive]
 #[derive(Debug, Default)]
 pub struct RandomReplicaStrategy;
+
+impl RandomReplicaStrategy {
+    /// Builds a new instance
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
 
 impl ReadRoutingStrategy for RandomReplicaStrategy {
     fn route_read<'a>(&self, candidates: &ReadCandidates<'a>) -> &'a NodeAddress {
