@@ -546,16 +546,11 @@ implement_commands! {
     /// narrowed to `f64`, so `f64` is the full precision available there.
     /// [Redis Docs](https://redis.io/commands/INCREX)
     fn increx<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, increment: V, options: IncrexOptions<V>) -> (IncrexResult) {
-        cmd("INCREX")
-            .arg(key)
-            .arg(if increment.describe_numeric_behavior() == NumericBehavior::NumberIsFloat {
+        ready_cmd!("INCREX", key, if increment.describe_numeric_behavior() == NumericBehavior::NumberIsFloat {
                 "BYFLOAT"
             } else {
                 "BYINT"
-            })
-            .arg(increment)
-            .arg(options)
-            .take()
+            }, increment, options).take()
     }
 
     /// Sets or clears the bit at offset in the string value stored at key.
@@ -2885,7 +2880,7 @@ implement_commands! {
         options: &'a CreateOptions,
         schema: &'a SearchSchema
     ) -> (String) {
-        cmd("FT.CREATE").arg(index_name).arg(options).arg("SCHEMA").arg(schema).take()
+        ready_cmd!("FT.CREATE", index_name, options, "SCHEMA", schema).take()
     }
 
     // script commands
