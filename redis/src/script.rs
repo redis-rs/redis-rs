@@ -2,8 +2,7 @@
 use sha1_smol::Sha1;
 
 use crate::{
-    Cmd, ErrorKind,
-    cmd::cmd,
+    Cmd, ErrorKind, RedisWrite, ToSingleRedisArg,
     connection::ConnectionLike,
     types::{FromRedisValue, RedisResult, ToRedisArgs},
 };
@@ -46,17 +45,10 @@ impl Script {
         &self.hash
     }
 
-    /// Returns a command to load the script.
-    pub(crate) fn load_cmd(&self) -> Cmd {
-        let mut cmd = cmd("SCRIPT");
-        cmd.arg("LOAD").arg(self.code.as_bytes());
-        cmd
-    }
-
     /// Loads the script and returns the SHA1 of it.
     #[inline]
     pub fn load(&self, con: &mut dyn ConnectionLike) -> RedisResult<String> {
-        let hash: String = self.load_cmd().query(con)?;
+        let hash: String = Cmd::load_script(self).query(con)?;
 
         debug_assert_eq!(hash, self.hash);
 
@@ -70,7 +62,7 @@ impl Script {
     where
         C: crate::aio::ConnectionLike,
     {
-        let hash: String = self.load_cmd().query_async(con).await?;
+        let hash: String = Cmd::load_script(self).query_async(con).await?;
 
         debug_assert_eq!(hash, self.hash);
 
@@ -138,6 +130,22 @@ impl Script {
     }
 }
 
+impl ToRedisArgs for Script {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        out.write_arg(self.code.as_bytes());
+    }
+
+    #[inline]
+    fn args_size(&self) -> usize {
+        self.code.len()
+    }
+}
+
+impl ToSingleRedisArg for Script {}
+
 /// Represents a prepared script call.
 pub struct ScriptInvocation<'a> {
     script: &'a Script,
@@ -175,7 +183,7 @@ impl<'a> ScriptInvocation<'a> {
     /// Invokes the script and returns the result.
     #[inline]
     pub fn invoke<T: FromRedisValue>(&self, con: &mut dyn ConnectionLike) -> RedisResult<T> {
-        let eval_cmd = self.eval_cmd();
+        let eval_cmd = Cmd::invoke_script(self);
         match eval_cmd.query(con) {
             Ok(val) => Ok(val),
             Err(err) => {
@@ -196,7 +204,7 @@ impl<'a> ScriptInvocation<'a> {
         &self,
         con: &mut impl crate::aio::ConnectionLike,
     ) -> RedisResult<T> {
-        let eval_cmd = self.eval_cmd();
+        let eval_cmd = Cmd::invoke_script(self);
         match eval_cmd.query_async(con).await {
             Ok(val) => {
                 // Return the value from the script evaluation
@@ -229,42 +237,47 @@ impl<'a> ScriptInvocation<'a> {
     {
         self.script.load_async(con).await
     }
+}
 
-    fn estimate_buflen(&self) -> usize {
-        self
-            .keys
+impl ToRedisArgs for ScriptInvocation<'_> {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        out.write_arg(self.script.hash.as_bytes());
+        self.keys.len().write_redis_args(out);
+        self.keys.write_redis_args(out);
+        self.args.write_redis_args(out);
+    }
+
+    #[inline]
+    fn num_of_args(&self) -> usize {
+        2 + self.keys.len() + self.args.len()
+    }
+
+    #[inline]
+    fn args_size(&self) -> usize {
+        self.keys
             .iter()
             .chain(self.args.iter())
             .fold(0, |acc, e| acc + e.len())
-            + 7 /* "EVALSHA".len() */
             + self.script.hash.len()
             + 4 /* Slots reserved for the length of keys. */
-    }
-
-    /// Returns a command to evaluate the script.
-    pub(crate) fn eval_cmd(&self) -> Cmd {
-        let args_len = 3 + self.keys.len() + self.args.len();
-        let mut cmd = Cmd::with_capacity(args_len, self.estimate_buflen());
-        cmd.arg("EVALSHA")
-            .arg(self.script.hash.as_bytes())
-            .arg(self.keys.len())
-            .arg(&*self.keys)
-            .arg(&*self.args);
-        cmd
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::Script;
+    use crate::Cmd;
+    use crate::types::ToRedisArgs;
 
     #[test]
     fn script_eval_should_work() {
         let script = Script::new("return KEYS[1]");
         let invocation = script.key("dummy");
-        let estimated_buflen = invocation.estimate_buflen();
-        let cmd = invocation.eval_cmd();
-        assert!(estimated_buflen >= cmd.capacity().1);
+        assert_eq!(invocation.args_size(), 49);
+        let cmd = Cmd::invoke_script(&invocation);
         let expected = "*4\r\n$7\r\nEVALSHA\r\n$40\r\n4a2267357833227dd98abdedb8cf24b15a986445\r\n$1\r\n1\r\n$5\r\ndummy\r\n";
         assert_eq!(
             expected,

@@ -10,6 +10,10 @@ redis = "2"
 
 ## Breaking Changes
 
+### Script loading on typed connections returns `String` (Breaking change)
+
+The `script_load` command on typed connections returned a generic `Value`. But as Redis returns a string, the typed version of the function now also directly returns a `String`.
+
 ### Tests: The path to Redis modules is only picked up from `REDISRS_MODULE_...` environment variables (Breaking Change)
 
 The modules get picked only from the following environment variables:

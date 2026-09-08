@@ -2911,8 +2911,8 @@ assert_eq!(invok_res, 3);
 "##)]
     #[cfg(feature = "script")]
     #[cfg_attr(docsrs, doc(cfg(feature = "script")))]
-    fn load_script<>(script: &'a crate::Script) -> Generic {
-        script.load_cmd().take()
+    fn load_script<>(script: &'a crate::Script) -> String {
+        ready_cmd!("SCRIPT", "LOAD", script).take()
     }
 
     /// Invoke a prepared script.
@@ -2947,7 +2947,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "script")]
     #[cfg_attr(docsrs, doc(cfg(feature = "script")))]
     fn invoke_script<>(invocation: &'a crate::ScriptInvocation<'a>) -> Generic {
-        invocation.eval_cmd().take()
+        ready_cmd!("EVALSHA", invocation).take()
     }
 
     // cleanup commands
