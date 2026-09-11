@@ -119,7 +119,7 @@ base64 = { version = "0.22.1", optional = true }
 tokio = { version = "1.51", features = ["sync"], optional = true }
 
 [features]
-default = ["acl", "streams", "geospatial", "script", "num-bigint"]
+default = ["acl", "streams", "geospatial", "script", "num-bigint", "bloom"]
 acl = []
 bloom = []
 geospatial = []
@@ -129,7 +129,12 @@ search_unfinished = []
 cluster = ["dep:crc16", "dep:rand"]
 script = ["dep:sha1_smol"]
 tls-native-tls = ["dep:native-tls"]
-tls-rustls = ["dep:rustls", "rustls/std", "dep:rustls-native-certs", "redis-test/tls-rustls"]
+tls-rustls = [
+  "dep:rustls",
+  "rustls/std",
+  "dep:rustls-native-certs",
+  "redis-test/tls-rustls",
+]
 tls-rustls-insecure = ["tls-rustls"]
 tls-rustls-webpki-roots = ["tls-rustls", "dep:webpki-roots"]
 smol-comp = ["aio", "dep:smol", "dep:smol-timeout", "dep:async-io"]
