@@ -24,6 +24,6 @@ impl AsyncPushSender for AddressedPushSender {
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         self.sender
             .unbounded_send((self.address.clone(), info))
-            .map_err(|_| SendError)
+            .map_err(|_| SendError::message("the internal cluster push channel was closed"))
     }
 }

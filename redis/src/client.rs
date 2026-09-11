@@ -259,7 +259,7 @@ impl AsyncConnectionConfig {
     /// let messages = Arc::new(Mutex::new(Vec::new()));
     /// let config = AsyncConnectionConfig::new().set_push_sender(move |msg|{
     ///     let Ok(mut messages) = messages.lock() else {
-    ///         return Err(());
+    ///         return Err("the push handler failed");
     ///     };
     ///     messages.push(msg);
     ///     Ok(())

@@ -219,7 +219,7 @@ where
                             .await;
                     }
                     if let Some(push_sender) = &external_push_sender {
-                        _ = push_sender.send(msg);
+                        crate::aio::send_push(push_sender.as_ref(), msg);
                     }
                 }
             }

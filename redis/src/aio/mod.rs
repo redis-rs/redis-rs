@@ -14,6 +14,8 @@ use futures_util::{
     stream::{Stream, StreamExt},
 };
 pub use monitor::Monitor;
+use std::borrow::Cow;
+use std::fmt;
 use std::net::SocketAddr;
 #[cfg(unix)]
 use std::path::Path;
@@ -175,15 +177,52 @@ pub use runtime::prefer_smol;
 pub use runtime::prefer_tokio;
 pub(super) use runtime::*;
 
-/// An error showing that the receiver
-#[derive(Default)]
+/// An error that is returned when a push message couldn't be sent to the push sender,
+/// e.g. because its receiver was dropped or the push callback returned an error.
+#[derive(Debug)]
 #[non_exhaustive]
-pub struct SendError;
+pub struct SendError {
+    message: Cow<'static, str>,
+}
+
+impl Default for SendError {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl SendError {
-    /// Builds a new instance
+    /// Builds a new instance.
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            message: Cow::Borrowed("push message wasn't sent to the receiver"),
+        }
+    }
+
+    pub(crate) fn message(message: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for SendError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "failed to send push message: {}", self.message)
+    }
+}
+
+impl std::error::Error for SendError {}
+
+/// Sends a push message via the given sender.
+///
+/// If the send fails, the error is logged via the `log` crate when the `log` feature is enabled.
+pub(crate) fn send_push(sender: &dyn AsyncPushSender, info: PushInfo) {
+    if let Err(err) = sender.send(info) {
+        #[cfg(feature = "log")]
+        log::warn!("{err}");
+        #[cfg(not(feature = "log"))]
+        let _ = err;
     }
 }
 
@@ -198,7 +237,9 @@ impl AsyncPushSender for ::tokio::sync::mpsc::UnboundedSender<PushInfo> {
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         match self.send(info) {
             Ok(_) => Ok(()),
-            Err(_) => Err(SendError),
+            Err(_) => Err(SendError::message(
+                "the receiving end of the channel was dropped",
+            )),
         }
     }
 }
@@ -207,16 +248,21 @@ impl AsyncPushSender for ::tokio::sync::broadcast::Sender<PushInfo> {
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         match self.send(info) {
             Ok(_) => Ok(()),
-            Err(_) => Err(SendError),
+            Err(_) => Err(SendError::message(
+                "the broadcast channel has no active receivers",
+            )),
         }
     }
 }
 
-impl<T, Func: Fn(PushInfo) -> Result<(), T> + Send + Sync + 'static> AsyncPushSender for Func {
+impl<T, Func: Fn(PushInfo) -> Result<(), T> + Send + Sync + 'static> AsyncPushSender for Func
+where
+    T: fmt::Display,
+{
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         match self(info) {
             Ok(_) => Ok(()),
-            Err(_) => Err(SendError),
+            Err(error) => Err(SendError::message(error.to_string())),
         }
     }
 }
@@ -225,7 +271,9 @@ impl AsyncPushSender for std::sync::mpsc::Sender<PushInfo> {
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         match self.send(info) {
             Ok(_) => Ok(()),
-            Err(_) => Err(SendError),
+            Err(_) => Err(SendError::message(
+                "the receiving end of the channel was dropped",
+            )),
         }
     }
 }
@@ -235,7 +283,9 @@ impl AsyncPushSender for futures_channel::mpsc::UnboundedSender<PushInfo> {
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         match self.unbounded_send(info) {
             Ok(_) => Ok(()),
-            Err(_) => Err(SendError),
+            Err(_) => Err(SendError::message(
+                "the receiving end of the channel was dropped",
+            )),
         }
     }
 }
