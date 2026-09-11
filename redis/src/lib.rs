@@ -90,7 +90,7 @@
 //! if so desired.  Some of them are turned on by default.
 //!
 //! * `acl`: enables acl support (enabled by default)
-//! * `bloom`: enables support for the Bloom filter module (optional)
+//! * `bloom`: enables support for the Bloom filter module (enabled by default)
 //! * `tokio-comp`: enables support for async usage with the Tokio runtime (optional)
 //! * `smol-comp`: enables support for async usage with the Smol runtime (optional)
 //! * `geospatial`: enables geospatial support (enabled by default)
