@@ -129,7 +129,12 @@ search_unfinished = []
 cluster = ["dep:crc16", "dep:rand"]
 script = ["dep:sha1_smol"]
 tls-native-tls = ["dep:native-tls"]
-tls-rustls = ["dep:rustls", "rustls/std", "dep:rustls-native-certs", "redis-test/tls-rustls"]
+tls-rustls = [
+  "dep:rustls",
+  "rustls/std",
+  "dep:rustls-native-certs",
+  "redis-test/tls-rustls",
+]
 tls-rustls-insecure = ["tls-rustls"]
 tls-rustls-webpki-roots = ["tls-rustls", "dep:webpki-roots"]
 smol-comp = ["aio", "dep:smol", "dep:smol-timeout", "dep:async-io"]
@@ -145,13 +150,13 @@ connection-manager = [
   "dep:backon",
 ]
 streams = []
-cluster-async = ["aio", "cluster", "dep:log", "dep:futures-channel"]
-sentinel = ["dep:log", "dep:rand"]
+cluster-async = ["aio", "cluster", "log", "dep:futures-channel"]
+sentinel = ["log", "dep:rand"]
 num-bigint = ["dep:num-bigint"]
 cache-aio = ["aio", "dep:lru"]
 r2d2 = ["dep:r2d2"]
 bb8 = ["dep:bb8"]
-token-based-authentication = ["dep:futures-util", "dep:log", "dep:backon"]
+token-based-authentication = ["dep:futures-util", "log", "dep:backon"]
 entra-id = [
   "dep:azure_identity",
   "dep:azure_core",
@@ -173,6 +178,8 @@ aio = [
   "dep:cfg-if",
   "redis-test/aio",
 ]
+
+log = ["dep:log"]
 
 [dev-dependencies]
 async-trait = "0.1"

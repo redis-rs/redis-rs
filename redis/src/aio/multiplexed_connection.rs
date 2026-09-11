@@ -1,4 +1,6 @@
-use super::{AsyncPushSender, ConnectionLike, Runtime, SharedHandleContainer, TaskHandle};
+use super::{
+    AsyncPushSender, ConnectionLike, Runtime, SharedHandleContainer, TaskHandle, send_push,
+};
 #[cfg(feature = "cache-aio")]
 use crate::caching::{CacheManager, CacheStatistics, PrepCacheItem};
 use crate::{
@@ -133,14 +135,14 @@ pin_project! {
     }
 }
 
-fn send_push(push_sender: &Option<Arc<dyn AsyncPushSender>>, info: PushInfo) {
+fn send_push_if_present(push_sender: &Option<Arc<dyn AsyncPushSender>>, info: PushInfo) {
     if let Some(sender) = push_sender {
-        let _ = sender.send(info);
+        send_push(sender, info);
     }
 }
 
 fn send_disconnect(push_sender: &mut Option<Arc<dyn AsyncPushSender>>) {
-    send_push(push_sender, PushInfo::disconnect());
+    send_push_if_present(push_sender, PushInfo::disconnect());
     // we don't want to send the same request twice, so if the connection is disconnected we can just stop sending push messages
     push_sender.take();
 }
@@ -196,13 +198,13 @@ where
                 if let Some(cache_manager) = &self_.cache_manager {
                     cache_manager.handle_push_value(&kind, &data);
                 }
-                send_push(self_.push_sender, PushInfo { kind, data });
+                send_push_if_present(self_.push_sender, PushInfo { kind, data });
 
                 return;
             }
             // If this push message is a reply to a query, we'll clone it to the push manager and continue with sending the reply
             Ok(Value::Push { kind, data }) if kind.has_reply() => {
-                send_push(
+                send_push_if_present(
                     self_.push_sender,
                     PushInfo {
                         kind: kind.clone(),
