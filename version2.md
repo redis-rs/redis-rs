@@ -379,3 +379,16 @@ For the affected commands this turns an error into a map, which needs no migrati
 // {["a"]: ["1"], ["b"]: ["2"]}
 let map: HashMap<Vec<String>, Vec<String>> = con.zrange_withscores("z", 0, -1)?;
 ```
+
+### `SendError` carries a message, and push handler errors must implement `Display` (Breaking Change)
+
+[`AsyncPushSender::send`] returns [`SendError`](https://docs.rs/redis/latest/redis/aio/struct.SendError.html) when a push message can't be delivered. Previously it was an empty unit-like struct, and every delivery failure was silently dropped, including the error returned by the `Fn(PushInfo) -> Result<(), T>` push sender.
+
+`SendError` now carries a message describing why the delivery failed (e.g. "the receiving end of the channel was dropped"), and it implements `Display`, `Debug`, and `std::error::Error`. `SendError::new()` is unchanged.
+
+For the `Fn(PushInfo) -> Result<(), T>` push sender, the closure's error type `T` must now implement `std::fmt::Display`, so that its message can be surfaced through `SendError`. Undeliverable push messages are now logged at `warn` level via the `log` crate, when the new `log` feature is enabled.
+
+**Migration:**
+
+* If a closure passed to `set_push_sender` / `push_sender` uses an error type `T` that doesn't implement `Display`, make `T` implement `Display` or map it to one (e.g. return `Err(error.to_string())`).
+* Push delivery failures are no longer silent: they are reported through the `SendError` value and (with the `log` feature enabled) logged as warnings. Expect these warnings when a push receiver is dropped while the connection is still active.
