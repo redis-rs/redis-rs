@@ -32,7 +32,7 @@ macro_rules! implement_command_async {
         ) -> crate::types::RedisFuture<$lifetime, $rettype>
 
         {
-            Box::pin(async move { $($body)*.query_async(self).await })
+            Box::pin(async move { Cmd::$name($($argname),*).query_async(self).await })
         }
     };
 }
@@ -261,6 +261,7 @@ macro_rules! implement_commands {
         impl Cmd {
             $(
                 $(#[$attr])*
+                #[inline]
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
                 pub fn $name<$lifetime, $($tyargs: $ty),*>($($argname: $argty),*) -> Self {
                     $($body)*
@@ -310,7 +311,7 @@ macro_rules! implement_commands {
                 where
                     RV: FromRedisValue,
                 {
-                    Box::pin(async move { {$($body)*}.query_async(self).await })
+                    Box::pin(async move { Cmd::$name($($argname),*).query_async(self).await })
                 }
             )*
 
