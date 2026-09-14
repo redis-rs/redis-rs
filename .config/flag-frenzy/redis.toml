@@ -20,7 +20,9 @@ forbid = [
   "tokio-comp",
   "OR",
   "smol-comp",
-] # tokio-rustls-comp or smol-rustls-comp should be used instead of this combination
+  "OR",
+  "entra-id",
+] # tokio-rustls-comp or smol-rustls-comp should be used instead of this combination, and entra-id pulls tokio-comp
 
 [[rule]]
 when = ["tls-native-tls"]
@@ -28,7 +30,9 @@ forbid = [
   "tokio-comp",
   "OR",
   "smol-comp",
-] # tokio-native-tls-comp or smol-native-tls-comp should be used instead of this combination
+  "OR",
+  "entra-id",
+] # tokio-native-tls-comp or smol-native-tls-comp should be used instead of this combination, and entra-id pulls tokio-comp
 
 [[rule]]
 when = "tls-rustls-insecure"
@@ -89,6 +93,8 @@ forbid = [
   "smol-comp",
   "OR",
   "smol-rustls-comp",
+  "OR",
+  "entra-id",
 ]
 
 [[rule]]
@@ -99,6 +105,10 @@ require = ["smol-rustls-comp"]
 when = ["tls-rustls-webpki-roots", "tokio-comp"]
 require = ["tokio-rustls-comp"]
 
+[[rule]]
+when = ["tls-rustls-webpki-roots", "entra-id"]
+require = ["tokio-rustls-comp"]
+
 # ------------------------------------------------------------------------
 # Entra ID integration (requires Tokio-based async + TLS compatibility)
 # ------------------------------------------------------------------------
@@ -106,8 +116,7 @@ require = ["tokio-rustls-comp"]
 # Entra ID is Tokio-only; forbid Smol-based TLS runtimes
 [[rule]]
 when = "entra-id"
-require = ["tokio-comp"]
-forbid = ["smol-rustls-comp", "OR", "smol-native-tls-comp"]
+forbid = ["smol-rustls-comp", "OR", "smol-native-tls-comp", "OR", "smol-comp"]
 
 # The users are expected to use only one connection pool.
 [[rule]]
@@ -147,4 +156,6 @@ forbid = [
   "script",
   "OR",
   "num-bigint",
+  "OR",
+  "bloom",
 ]
