@@ -1,4 +1,6 @@
-use crate::server::{Module, RedisServer, RedisServerBuilder, RedisServerCommand, use_protocol};
+use crate::server::{
+    Module, Output, RedisServer, RedisServerBuilder, RedisServerCommand, use_protocol,
+};
 use crate::utils::{TlsFilePaths, build_single_client};
 use crate::version::{AvailableComponents, TestContextVersioning};
 #[cfg(feature = "aio")]
@@ -76,6 +78,11 @@ impl TestContextBuilder {
 
     pub fn tls_paths_opt(mut self, opt_tls_paths: Option<TlsFilePaths>) -> Self {
         self.server_builder = self.server_builder.tls_paths_opt(opt_tls_paths);
+        self
+    }
+
+    pub fn panicking_drop_info_output(mut self, output: Output) -> Self {
+        self.server_builder = self.server_builder.panicking_drop_info_output(output);
         self
     }
 
