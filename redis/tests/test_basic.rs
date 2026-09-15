@@ -4952,14 +4952,17 @@ mod basic {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
 
-        // Revoke just the CLIENT LIST subcommand, so the server itself
-        // rejects it with a clean, single-line error -- unlike an
-        // unexpected pending reply (a genuine desync), this doesn't
-        // corrupt the byte stream, so the connection must stay usable.
+        // Revoke the CLIENT command entirely (command-level ACL denial,
+        // supported since ACL was introduced in Redis 6.0 -- subcommand-
+        // level syntax like `-client|list` needs Redis 7.0+), so the
+        // server itself rejects CLIENT LIST with a clean, single-line
+        // error -- unlike an unexpected pending reply (a genuine desync),
+        // this doesn't corrupt the byte stream, so the connection must
+        // stay usable.
         redis::cmd("ACL")
             .arg("SETUSER")
             .arg("default")
-            .arg("-client|list")
+            .arg("-client")
             .exec(&mut con)
             .unwrap();
 
@@ -4975,7 +4978,7 @@ mod basic {
         redis::cmd("ACL")
             .arg("SETUSER")
             .arg("default")
-            .arg("+client|list")
+            .arg("+client")
             .exec(&mut con)
             .unwrap();
         let pong: String = redis::cmd("PING").query(&mut con).unwrap();
@@ -5045,8 +5048,17 @@ mod basic {
         // `client_list_iter_reflects_every_connected_client` about a
         // just-closed setup connection occasionally still being visible
         // under heavy parallel-test load.
+        //
+        // Not asserted on a "resp=3" field either: CLIENT LIST's line
+        // format has grown fields across versions and this crate's CI
+        // matrix reaches back to Redis 6.2, where it isn't present -- the
+        // RESP3-vs-RESP2 distinction this test cares about is entirely in
+        // how the *reply itself* is framed (Verbatim String vs bulk
+        // string), already exercised by `client_list_iter()` succeeding
+        // here at all and by the "txt:" check below, not by any one field
+        // in its payload.
         assert!(!lines.is_empty());
-        assert!(lines.iter().any(|l| l.contains("resp=3")));
+        assert!(lines.iter().any(|l| l.contains("addr=")));
         // The RESP3 verbatim-string format tag must not leak into any line.
         assert!(!lines.iter().any(|l| l.contains("txt:")));
     }
