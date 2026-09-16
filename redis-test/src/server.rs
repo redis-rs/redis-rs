@@ -127,22 +127,7 @@ impl RedisServerBuilder {
     ///   which is the command to start the server with. This allows to add additional config to
     ///   the server command.
     pub fn refine_and_build(self, refiner: impl FnOnce(&mut RedisServerCommand)) -> RedisServer {
-        let addr = self.address.unwrap_or_else(|| {
-            // This is technically a race, but we can't do better with
-            // the tools that redis gives us :(
-            let redis_port = get_random_available_port();
-            RedisServer::get_addr(redis_port)
-        });
-
-        RedisServer::new(
-            addr,
-            self.config_file,
-            self.tls_paths,
-            self.mtls,
-            self.cert_auth_field,
-            self.modules.as_slice(),
-            refiner,
-        )
+        RedisServer::from_builder(self, refiner)
     }
 }
 
@@ -248,36 +233,39 @@ impl RedisServer {
         }
     }
 
-    fn new(
-        mut addr: redis::ConnectionAddr,
-        config_file: Option<PathBuf>,
-        mut tls_paths: Option<TlsFilePaths>,
-        mtls: bool,
-        cert_auth_field: Option<String>,
-        modules: &[Module],
+    /// Builds a new instance from a [`RedisServerBuilder`]
+    fn from_builder(
+        mut builder: RedisServerBuilder,
         cmd_refiner: impl FnOnce(&mut RedisServerCommand),
     ) -> Self {
+        let mut addr = builder.address.unwrap_or_else(|| {
+            // This is technically a race, but we can't do better with
+            // the tools that redis gives us :(
+            let redis_port = get_random_available_port();
+            Self::get_addr(redis_port)
+        });
+
         // Guard against unsupported settings
-        if tls_paths.is_some() && !matches!(addr, ConnectionAddr::TcpTls { .. }) {
+        if builder.tls_paths.is_some() && !matches!(addr, ConnectionAddr::TcpTls { .. }) {
             panic!("'tls_paths' is only supported for TCP with TLS");
         }
 
-        if mtls && !matches!(addr, ConnectionAddr::TcpTls { .. }) {
+        if builder.mtls && !matches!(addr, ConnectionAddr::TcpTls { .. }) {
             panic!("'mtls' is only supported for TCP with TLS");
         }
 
-        if cert_auth_field.is_some() && !matches!(addr, ConnectionAddr::TcpTls { .. }) {
+        if builder.cert_auth_field.is_some() && !matches!(addr, ConnectionAddr::TcpTls { .. }) {
             panic!("'cert_auth_field' is only supported for TCP with TLS");
         }
 
-        if cert_auth_field.is_some() && !mtls {
+        if builder.cert_auth_field.is_some() && !builder.mtls {
             panic!("'cert_auth_field' is only supported for mTLS");
         }
 
         // From here on, settings are good and supported
         let mut redis_cmd = RedisServerCommand::new();
 
-        if let Some(config_path) = config_file {
+        if let Some(config_path) = builder.config_file {
             redis_cmd.arg(config_path);
         }
 
@@ -292,7 +280,7 @@ impl RedisServer {
         // Redis 8.6+. So we fall back to `on-empty-db`, which also covers the typical setup.
         redis_cmd.arg2("--repl-diskless-load", "on-empty-db");
 
-        redis_cmd.load_modules(modules);
+        redis_cmd.load_modules(&builder.modules);
 
         let tempdir = tempfile::Builder::new()
             .prefix("redis")
@@ -315,10 +303,11 @@ impl RedisServer {
                     .arg2("--bind", host);
             }
             redis::ConnectionAddr::TcpTls { ref host, port, .. } => {
-                let tls_paths =
-                    tls_paths.get_or_insert_with(|| build_keys_and_certs_for_tls(&tempdir));
+                let tls_paths = builder
+                    .tls_paths
+                    .get_or_insert_with(|| build_keys_and_certs_for_tls(&tempdir));
 
-                let auth_client = if mtls { "yes" } else { "no" };
+                let auth_client = if builder.mtls { "yes" } else { "no" };
 
                 // prepare redis with TLS
                 redis_cmd
@@ -332,12 +321,12 @@ impl RedisServer {
                 // Enable certificate-based authentication (Redis 8.6+)
                 // The cert_auth_field specifies which certificate field to use for username mapping
                 // (e.g., "CN" for Common Name)
-                if let Some(field) = cert_auth_field {
+                if let Some(field) = builder.cert_auth_field {
                     redis_cmd.arg2("--tls-auth-clients-user", field);
                 }
 
                 // Insecure only disabled if `mtls` is enabled
-                let insecure = !mtls;
+                let insecure = !builder.mtls;
 
                 addr = redis::ConnectionAddr::TcpTls {
                     host: host.clone(),
@@ -361,8 +350,8 @@ impl RedisServer {
             log_file,
             tempdir,
             addr,
-            tls_paths,
-            mtls,
+            tls_paths: builder.tls_paths,
+            mtls: builder.mtls,
         }
     }
 
