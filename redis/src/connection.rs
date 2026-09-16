@@ -1691,64 +1691,20 @@ impl Connection {
     }
 
     /// Issues `CLIENT LIST` and returns an iterator over the individual
-    /// client-info lines of the reply.
+    /// client-info lines of the reply, reading it directly off the wire
+    /// instead of buffering the whole reply first. Peak memory is roughly
+    /// one read-chunk plus the longest line, independent of client count.
     ///
-    /// The generic command path materializes a `CLIENT LIST` reply into a
-    /// single owned buffer before any of it is usable, so calling it
-    /// against a server with a large number of connected clients causes
-    /// memory to spike roughly in proportion to the client count (see
-    /// [#2396](https://github.com/redis-rs/redis-rs/issues/2396); the same
-    /// underlying limitation -- bulk-string replies aren't streamable -- was
-    /// independently reported against `redis-py`, see
-    /// [redis/redis-py#4326](https://github.com/redis/redis-py/issues/4326)).
-    ///
-    /// This instead reads the reply directly off the wire in fixed-size
-    /// chunks and yields one client-info line at a time, so peak memory for
-    /// the call is roughly the chunk size plus the length of the longest
-    /// single line, independent of how many clients are connected.
-    ///
-    /// This bypasses the normal reply parser to stream raw bytes, so it
-    /// needs to be the next thing read off the connection: a RESP3 push
-    /// message already sitting in the parser's buffer when this is called
-    /// (e.g. a client-side-caching invalidation that arrived bundled with
-    /// an earlier reply) is drained automatically, but this can't dispatch
-    /// push traffic that arrives *while the call is in flight* -- between
-    /// sending `CLIENT LIST` and reading its reply -- the way the normal
-    /// command path does. A push arriving in that window is dropped and
-    /// closes the connection (it looks like any other unexpected reply
-    /// shape at that point), not merely "not dispatched". On a connection
-    /// with push messages that can arrive at arbitrary times, prefer
-    /// plain `CLIENT LIST` through `query`. Returns an error if anything
-    /// other than a push is pending before the call starts: that reply is
-    /// still read via the normal parser first (so the wire stays synced
-    /// -- the connection is left open and usable), it's just not the
-    /// reply this call wanted.
-    ///
-    /// If an earlier command's reply is still outstanding because its read
-    /// timed out (see [`Self::set_read_timeout`]), this blocks draining it
-    /// before proceeding -- it does not return early the way a timed-out
-    /// command normally would. A further timeout while doing so is
-    /// propagated (connection left open, retriable, same as any other
-    /// read timeout); anything else unexpected there closes the
-    /// connection.
-    ///
-    /// If the server rejects `CLIENT LIST` itself (e.g. an ACL/`NOPERM`
-    /// error), that is returned as a normal [`ErrorKind::Server`] error
-    /// with the connection left open and usable -- a single-line server
-    /// error fully consumes the reply and leaves the wire in sync, unlike
-    /// a genuine framing error.
-    ///
-    /// The returned iterator can be dropped before it yields `None` (an
-    /// early `break`, `.take(n)`, an early `return`/`?`, ...) without
-    /// leaving the connection desynced: dropping it drains whatever of the
-    /// reply wasn't consumed. Works under both RESP2 (a plain bulk string)
-    /// and RESP3 (`CLIENT LIST`/`CLIENT INFO` reply with a Verbatim String
-    /// there instead; its format-tag prefix is stripped before splitting
-    /// into lines).
+    /// The returned iterator can be dropped early without desyncing the
+    /// connection. A push arriving *while the call is in flight* (between
+    /// sending the command and reading its reply) is not handled and
+    /// closes the connection -- avoid this on connections with concurrent
+    /// push traffic (e.g. client-side caching); use plain `CLIENT LIST`
+    /// via `query` there instead.
     ///
     /// Sync [`Connection`] only, for now -- there is no equivalent on
-    /// [`crate::aio::MultiplexedConnection`]/async connections, or on the
-    /// (sync) cluster client. Left for a possible follow-up.
+    /// [`crate::aio::MultiplexedConnection`]/async connections or on the
+    /// cluster client.
     pub fn client_list_iter(&mut self) -> RedisResult<ClientListIter<'_>> {
         // Anything already buffered in the parser, or still owed from an
         // earlier command, necessarily predates the command we are about to
