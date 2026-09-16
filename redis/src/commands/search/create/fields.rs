@@ -603,8 +603,6 @@ impl SchemaGeoShapeField {
         self
     }
 
-    // Sortable is not applicable to geo shape fields.
-
     /// Mark the field as no index. This means that the field will not be indexed.
     pub fn no_index(mut self, no_index: bool) -> Self {
         self.common = self.common.no_index(no_index);
