@@ -1,6 +1,7 @@
 use redis::{ConnectionAddr, IntoConnectionInfo, ProtocolVersion, RedisConnectionInfo};
 use std::ffi::OsStr;
 use std::fmt::{Debug, Formatter};
+use std::io::Write;
 use std::path::Path;
 use std::{env, fs, path::PathBuf, process};
 use tempfile::TempDir;
@@ -62,6 +63,13 @@ pub struct RedisServerBuilder {
     modules: Vec<Module>,
     mtls: bool,
     tls_paths: Option<TlsFilePaths>,
+    /// If the built instance is dropped while panicking, dump the server info to this output
+    ///
+    /// This is `None` by default to avoid noisy output. But it's useful when developing server
+    /// modules.
+    ///
+    /// See [`Self::panicking_drop_info_output`]
+    panicking_drop_info_output: Output,
 }
 
 impl RedisServerBuilder {
@@ -111,6 +119,18 @@ impl RedisServerBuilder {
 
     pub fn tls_paths_opt(mut self, opt_tls_paths: Option<TlsFilePaths>) -> Self {
         self.tls_paths = opt_tls_paths;
+        self
+    }
+
+    /// Whether to dump server info when dropping the instance while panicking
+    ///
+    /// By default, dumping server info on random panicking drops is disabled to avoid noisy output
+    /// for a simple failed assertion in integration tests of applications.
+    ///
+    /// But when developing server modules, this allows to see server stdout/stderr/logs upon
+    /// issues, which is helpful during debugging.
+    pub fn panicking_drop_info_output(mut self, output: Output) -> Self {
+        self.panicking_drop_info_output = output;
         self
     }
 
@@ -174,6 +194,10 @@ pub struct RedisServer {
     pub addr: redis::ConnectionAddr,
     pub tls_paths: Option<TlsFilePaths>,
     pub mtls: bool,
+    /// The target to output the server info when dropping the built instance while panicking.
+    ///
+    /// See [`RedisServerBuilder::panicking_drop_info_output`].
+    pub panicking_drop_info_output: Output,
 }
 
 impl ServerType {
@@ -195,7 +219,13 @@ impl ServerType {
 
 impl Drop for RedisServer {
     fn drop(&mut self) {
-        self.stop();
+        if std::thread::panicking() {
+            if let Some(mut writer) = self.panicking_drop_info_output.writer() {
+                writeln!(writer, "{}", self.stop_with_info()).unwrap();
+            }
+        } else {
+            self.stop();
+        }
     }
 }
 
@@ -352,6 +382,7 @@ impl RedisServer {
             addr,
             tls_paths: builder.tls_paths,
             mtls: builder.mtls,
+            panicking_drop_info_output: builder.panicking_drop_info_output,
         }
     }
 
@@ -573,6 +604,32 @@ impl CommandMultiArgs for RedisServerCommand {
 impl Debug for RedisServerCommand {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         self.cmd.fmt(f)
+    }
+}
+
+/// Output specifier that converts to a [`Write`].
+#[non_exhaustive]
+#[derive(Default)]
+pub enum Output {
+    /// Does not output anything
+    ///
+    /// This is the default.
+    #[default]
+    None,
+    /// Outputs to `stdout`
+    Stdout,
+    /// Outputs to `stderr`
+    Stderr,
+}
+
+impl Output {
+    /// Gets a writer for this [`Output`]
+    pub fn writer(&self) -> Option<Box<dyn Write>> {
+        match self {
+            Self::None => None,
+            Self::Stdout => Some(Box::new(std::io::stdout())),
+            Self::Stderr => Some(Box::new(std::io::stderr())),
+        }
     }
 }
 
