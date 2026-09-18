@@ -219,9 +219,15 @@ impl std::error::Error for SendError {}
 /// If the send fails, the error is logged via the `log` crate when the `log` feature is enabled.
 pub(crate) fn send_push(sender: &dyn AsyncPushSender, info: PushInfo) {
     if let Err(err) = sender.send(info) {
-        #[cfg(feature = "log")]
+        // these features use the `log` dependency for logging errors. If we ever change - add log to other
+        // features, this will need to be updated accordingly. Not solved by adding a log feature, because that
+        // makes the combinatorical exploration of features slower than it already is.
+        #[cfg(any(
+            feature = "cluster-async",
+            feature = "token-based-authentication",
+            feature = "sentinel"
+        ))]
         log::warn!("{err}");
-        #[cfg(not(feature = "log"))]
         let _ = err;
     }
 }

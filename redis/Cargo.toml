@@ -116,7 +116,7 @@ azure_core = { version = "1.1.0", optional = true }
 base64 = { version = "0.22.1", optional = true }
 
 [target.'cfg(all(target_os = "wasi", target_env = "p2"))'.dependencies]
-tokio = { version = "1.51", features = ["sync"], optional = true }
+tokio = { workspace = true, features = ["sync"], optional = true }
 
 [features]
 default = ["acl", "streams", "geospatial", "script", "num-bigint", "bloom"]
@@ -150,13 +150,13 @@ connection-manager = [
   "dep:backon",
 ]
 streams = []
-cluster-async = ["aio", "cluster", "log", "dep:futures-channel"]
-sentinel = ["log", "dep:rand"]
+cluster-async = ["aio", "cluster", "dep:log", "dep:futures-channel"]
+sentinel = ["dep:log", "dep:rand"]
 num-bigint = ["dep:num-bigint"]
 cache-aio = ["aio", "dep:lru"]
 r2d2 = ["dep:r2d2"]
 bb8 = ["dep:bb8"]
-token-based-authentication = ["dep:futures-util", "log", "dep:backon"]
+token-based-authentication = ["dep:futures-util", "dep:log", "dep:backon"]
 entra-id = [
   "dep:azure_identity",
   "dep:azure_core",
@@ -178,8 +178,6 @@ aio = [
   "dep:cfg-if",
   "redis-test/aio",
 ]
-
-log = ["dep:log"]
 
 [dev-dependencies]
 async-trait = "0.1"
