@@ -456,8 +456,8 @@ impl RedisServer {
             };
 
             format!(
-                "Server command: {:?}\nServer process id: {process_id}\n{exit_output_info}\n{log_info}",
-                self.command
+                "Server at {:?}\nServer command: {:?}\nServer process id: {process_id}\n{exit_output_info}\n{log_info}",
+                self.addr, self.command
             )
         } else {
             if let Err(err) = process.wait() {
