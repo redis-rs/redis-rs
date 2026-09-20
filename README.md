@@ -122,16 +122,16 @@ redis = { version = "1", features = ["tokio-native-tls-comp"] }
 redis = { version = "1", features = ["smol-native-tls-comp"] }
 ```
 
-To use `rustls`:
+To use `rustls`, choose the root certificate store explicitly (see below):
 
 ```
-redis = { version = "1", features = ["tls-rustls"] }
+redis = { version = "1", features = ["tls-rustls", "tls-rustls-native-roots"] }
 
 # if you use tokio
-redis = { version = "1", features = ["tokio-rustls-comp"] }
+redis = { version = "1", features = ["tokio-rustls-comp", "tls-rustls-native-roots"] }
 
 # if you use smol
-redis = { version = "1", features = ["smol-rustls-comp"] }
+redis = { version = "1", features = ["smol-rustls-comp", "tls-rustls-native-roots"] }
 ```
 
 Add `rustls` to dependencies
@@ -149,12 +149,16 @@ And then, before creating a connection, ensure that you install a crypto provide
 ```
 
 
-With `rustls`, you can add the following feature flags on top of other feature flags to enable additional features:
+With `rustls`, the source of the root certificates is selected explicitly through one (and only one) of the following mutually exclusive feature flags:
+
+-   `tls-rustls-native-roots`: Use the platform's native root certificates
+-   `tls-rustls-webpki-roots`: Use `webpki-roots` (Mozilla's root certificates)
+
+Enabling both store features at once is a compile error (except when building the docs). Bare `tls-rustls` (without a store) is also a compile error, unless the insecure feature is enabled:
 
 -   `tls-rustls-insecure`: Allow insecure TLS connections
--   `tls-rustls-webpki-roots`: Use `webpki-roots` (Mozilla's root certificates) instead of native root certificates
 
-then you should be able to connect to a redis instance using the `rediss://` URL scheme:
+Then you should be able to connect to a redis instance using the `rediss://` URL scheme:
 
 ```rust
 let client = redis::Client::open("rediss://127.0.0.1/")?;

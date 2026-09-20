@@ -649,7 +649,13 @@ let primary = sentinel.get_async_connection().await.unwrap();
 // The `tls-rustls` feature only enables the rustls crate. The source of the root certificates
 // must be selected explicitly through one (and only one) of `tls-rustls-native-roots` or
 // `tls-rustls-webpki-roots`; see https://github.com/redis-rs/redis-rs/issues/2297.
-#[cfg(all(feature = "tls-rustls", not(feature = "tls-rustls-native-roots"), not(feature = "tls-rustls-webpki-roots")))]
+// `tls-rustls-insecure` does not need a root store, since it disables certificate verification.
+#[cfg(all(
+    feature = "tls-rustls",
+    not(feature = "tls-rustls-insecure"),
+    not(feature = "tls-rustls-native-roots"),
+    not(feature = "tls-rustls-webpki-roots")
+))]
 compile_error!(
     "the `tls-rustls` feature requires a root certificate store: enable \
      either `tls-rustls-native-roots` or `tls-rustls-webpki-roots`"

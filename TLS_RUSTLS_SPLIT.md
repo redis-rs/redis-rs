@@ -107,3 +107,63 @@ cargo hack check -p redis-test --locked -F tls-rustls-native-roots,aio,tls-rustl
   discussion); its concrete conclusions above are taken from its coherent state and
   re-verified where possible. The insecure/no-store repro in "Remaining work 1" was
   reproduced on this checkout.
+
+## Addendum: remaining work completed (uncommitted)
+
+The four items under "Remaining work" are done; the diff is NOT committed (3 files:
+`redis/src/lib.rs`, `redis-test/src/lib.rs`, `README.md`).
+
+### 1. `tls-rustls-insecure` without a store now compiles
+
+Added `not(feature = "tls-rustls-insecure")` to the store-required guard in
+`redis/src/lib.rs` and `redis-test/src/lib.rs`. The docs.rs exclusivity guard
+(`not(docsrs)`) phrasing was re-checked and left as committed.
+
+Verified:
+- `cargo check -p redis --no-default-features --features tls-rustls-insecure,tokio-rustls-comp` — OK
+  (the failing repro from "Remaining work 1" is fixed).
+- `cargo check -p redis-test -F tls-rustls-insecure,aio,tokio-rustls-comp --no-default-features` — OK.
+- Store + insecure still compiles.
+- Bare `tls-rustls` (no store, no insecure) still fails to compile — the intended break persists,
+  in both `redis` and `redis-test`.
+- Both stores together still fail the exclusivity `compile_error!` (outside docs.rs).
+
+### 2. README.md updated
+
+- The rustls root-certificate store selection is now documented as a choice between the mutually
+  exclusive `tls-rustls-native-roots` (platform native certs) and `tls-rustls-webpki-roots`
+  (Mozilla roots).
+- Added the mutual-exclusion / no-bare-`tls-rustls` / insecure-exception wording.
+- The "To use rustls" examples now pick a store explicitly (`tls-rustls-native-roots` used in the
+  samples).
+
+### 3. Breaking behavior confirmed
+
+- `tls-rustls` / `tokio-rustls-comp` / `smol-rustls-comp` without a store are now compile errors
+  (issue #2297's intent). Call this out in the PR body.
+- CI exercises both stores: `make test` runs `test-rustls-store` (which runs the full suites once
+  per store) plus `test-native-tls`; lint/docs/bench also run once per store.
+
+### 4. docs.rs path verified
+
+- `RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc -p redis --all-features --no-deps` — OK
+  (needs nightly because of the existing `#![feature(doc_cfg, rustdoc_internals)]`).
+- Without `--cfg docsrs`, `cargo doc --all-features` correctly fails on the exclusivity guard.
+- `cargo doc` on stable with `docsrs` cfg fails on the pre-existing `E0554` (unstable `#![feature]`
+  on stable), unrelated to this change.
+
+### Verification run on this checkout
+
+- `make build-all` — OK (both stores).
+- `make lint` — OK (both stores, `-D warnings`).
+- `make doc-check`, `make doc-tests` — OK (both stores).
+- `make test-rustls-store` — OK (redis + redis-test suites, both stores, against local
+  `redis-server` 8.0.2, nextest incl. `--profile tcp_tls`).
+- Bench binaries built and listed for both store feature derivations (full `make bench` run left to a
+  machine with more time; CI's benchmark job covers it).
+- `cargo fmt --all -- --check` — clean (fmt reformatted the two multi-line `#[cfg]` guards).
+
+### Notes
+
+- No `cargo-hack` check was needed for the fix; the doc's hack commands were run pre-fix.
+- No commit was created; the branch still ends at `e77d3834` (+ the instruction file's edits).
