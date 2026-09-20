@@ -54,13 +54,15 @@ To build the core crate, run `make build`
 | `make test-module-json` | Runs tests for the `json` module |
 | `cargo test --doc --locked --all-features` | Runs doc tests |
 
-The tests need to be able to find Redis' tools and the modules. If automatic detection fails, use the following environment variables to guide the test suite:
+The tests need to be able to find Redis' tools and the modules.
+If automatic detection fails or you need finer control, use the following environment variables to guide the test suite:
 
 | EnvVar Name | Description |
 | --- | --- |
-| `REDISRS_SERVER_BIN` | Binary to start Redis |
+| `REDISRS_SERVER_BIN` | Binary to start Redis (default: `redis-server`) |
 | `REDISRS_REDIS_BLOOM_PATH` | Path to the `bloom` module |
 | `REDISRS_REDIS_JSON_PATH` | Path to the `json` module |
+| `PROTOCOL` | (Only to be used when running `cargo` manually`) If `RESP3`, tests connect using `RESP3`, otherwise using `RESP2` |
 
 
 ## Building documentation
