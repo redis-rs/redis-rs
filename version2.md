@@ -144,6 +144,20 @@ let server = RedisServerBuilder::new()
     });
 ```
 
+### `redis_test::server::ServerType::Tcp { tls }` became `ServerType::Tcp` / `ServerType::TcpTls` (Breaking Change)
+
+`redis_test::server::ServerType` described the connection type with a single `Tcp { tls: bool }` variant, while `redis_test::cluster::ClusterType` used the more self-documenting `Tcp` and `TcpTls` variants. Both enums represent the same logical states (TCP and TCP with TLS), so `ServerType` now mirrors `ClusterType`.
+
+**Migration:** Replace `ServerType::Tcp { tls: false }` with `ServerType::Tcp` and `ServerType::Tcp { tls: true }` with `ServerType::TcpTls`.
+
+```rust
+// Before:
+let st = ServerType::Tcp { tls: true };
+
+// After:
+let st = ServerType::TcpTls;
+```
+
 ### `Generic` typed commands have their `RV` moved from first to last parameter (Breaking Change)
 
 Untyped commands (`Commands`, `AsyncCommands`) have the return value's type (`RV`) as last type parameter, while for typed commands (`TypedCommands`, `AsyncTypedCommands`) it was the first.
