@@ -35,23 +35,23 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
                     #item
 
                     #[rstest::rstest]
-                    #[cfg_attr(feature = "tokio-comp", case::tokio(support::RuntimeType::Tokio))]
-                    #[cfg_attr(feature = "smol-comp", case::smol(support::RuntimeType::Smol))]
-                    fn multiplexed_connection (#[case]runtime: support::RuntimeType) {
+                    #[cfg_attr(feature = "tokio-comp", case::tokio(crate::support::RuntimeType::Tokio))]
+                    #[cfg_attr(feature = "smol-comp", case::smol(crate::support::RuntimeType::Smol))]
+                    fn multiplexed_connection (#[case]runtime: crate::support::RuntimeType) {
                         let ctx = TestContext::default();
-                        support::block_on_all(async move {
+                        crate::support::block_on_all(async move {
                             let conn = ctx.async_connection().await.unwrap();
                             #function_name (conn).await
                         }, runtime);
                     }
 
                     #[rstest::rstest]
-                    #[cfg_attr(feature = "tokio-comp", case::tokio(support::RuntimeType::Tokio))]
-                    #[cfg_attr(feature = "smol-comp", case::smol(support::RuntimeType::Smol))]
+                    #[cfg_attr(feature = "tokio-comp", case::tokio(crate::support::RuntimeType::Tokio))]
+                    #[cfg_attr(feature = "smol-comp", case::smol(crate::support::RuntimeType::Smol))]
                     #[cfg(feature = "connection-manager")]
-                    fn connection_manager (#[case]runtime: support::RuntimeType) {
+                    fn connection_manager (#[case]runtime: crate::support::RuntimeType) {
                         let ctx = TestContext::default();
-                        support::block_on_all(async move {
+                        crate::support::block_on_all(async move {
                             let conn = ctx.client.get_connection_manager().await.unwrap();
                             #function_name (conn).await
                         }, runtime);
