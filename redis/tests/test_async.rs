@@ -4,7 +4,6 @@ mod support;
 mod basic_async {
     use std::{collections::HashMap, time::Duration};
 
-    use super::*;
     use crate::support::*;
     use assert_matches::assert_matches;
     use futures::{StreamExt, prelude::*};
