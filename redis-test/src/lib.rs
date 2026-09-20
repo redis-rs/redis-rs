@@ -59,6 +59,19 @@
 //!
 //! Now the TLS helpers will pick the pre-generated keys up, and perform better.
 
+// `tls-rustls` only enables the rustls crate. The source of the root certificates must be selected
+// explicitly through one (and only one) of `tls-rustls-native-roots` or `tls-rustls-webpki-roots`.
+#[cfg(all(feature = "tls-rustls", not(feature = "tls-rustls-native-roots"), not(feature = "tls-rustls-webpki-roots")))]
+compile_error!(
+    "the `tls-rustls` feature requires a root certificate store: enable \
+     either `tls-rustls-native-roots` or `tls-rustls-webpki-roots`"
+);
+#[cfg(all(feature = "tls-rustls-native-roots", feature = "tls-rustls-webpki-roots"))]
+compile_error!(
+    "the `tls-rustls-native-roots` and `tls-rustls-webpki-roots` features are mutually exclusive; \
+     enable only one of them"
+);
+
 pub mod cluster;
 pub mod sentinel;
 pub mod server;

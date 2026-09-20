@@ -129,14 +129,18 @@ search_unfinished = []
 cluster = ["dep:crc16", "dep:rand"]
 script = ["dep:sha1_smol"]
 tls-native-tls = ["dep:native-tls"]
-tls-rustls = [
-  "dep:rustls",
-  "rustls/std",
-  "dep:rustls-native-certs",
-  "redis-test/tls-rustls",
-]
+tls-rustls = ["dep:rustls", "rustls/std"]
 tls-rustls-insecure = ["tls-rustls"]
-tls-rustls-webpki-roots = ["tls-rustls", "dep:webpki-roots"]
+tls-rustls-native-roots = [
+  "tls-rustls",
+  "dep:rustls-native-certs",
+  "redis-test/tls-rustls-native-roots",
+]
+tls-rustls-webpki-roots = [
+  "tls-rustls",
+  "dep:webpki-roots",
+  "redis-test/tls-rustls-webpki-roots",
+]
 smol-comp = ["aio", "dep:smol", "dep:smol-timeout", "dep:async-io"]
 smol-native-tls-comp = ["smol-comp", "dep:async-native-tls", "tls-native-tls"]
 smol-rustls-comp = ["smol-comp", "dep:futures-rustls", "tls-rustls"]

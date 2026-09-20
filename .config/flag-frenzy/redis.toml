@@ -14,15 +14,42 @@ require = [
   "smol-rustls-comp",
 ]
 
+# The rustls base feature is not a root store; users must pick exactly one of the
+# root-store features. `require` skips any combination with bare `tls-rustls`, and the
+# `forbid` rules ensure the two root-store features are never tested together.
 [[rule]]
-when = ["tls-rustls"]
+when = "tls-rustls"
+require = ["tls-rustls-native-roots", "OR", "tls-rustls-webpki-roots"]
+
+[[rule]]
+when = ["tls-rustls-native-roots"]
+forbid = ["tls-rustls-webpki-roots"]
+
+[[rule]]
+when = ["tls-rustls-webpki-roots"]
+forbid = ["tls-rustls-native-roots"]
+
+# tokio-rustls-comp or smol-rustls-comp should be used instead of this combination, and entra-id pulls tokio-comp
+[[rule]]
+when = ["tls-rustls-native-roots"]
 forbid = [
   "tokio-comp",
   "OR",
   "smol-comp",
   "OR",
   "entra-id",
-] # tokio-rustls-comp or smol-rustls-comp should be used instead of this combination, and entra-id pulls tokio-comp
+]
+
+# tokio-rustls-comp or smol-rustls-comp should be used instead of this combination, and entra-id pulls tokio-comp
+[[rule]]
+when = ["tls-rustls-webpki-roots"]
+forbid = [
+  "tokio-comp",
+  "OR",
+  "smol-comp",
+  "OR",
+  "entra-id",
+]
 
 [[rule]]
 when = ["tls-native-tls"]
@@ -52,7 +79,7 @@ forbid = [
   "OR",
   "tls-rustls-webpki-roots",
   "OR",
-  "tls-rustls",
+  "tls-rustls-native-roots",
   "OR",
   "tls-rustls-insecure",
   "OR",
@@ -107,6 +134,18 @@ require = ["tokio-rustls-comp"]
 
 [[rule]]
 when = ["tls-rustls-webpki-roots", "entra-id"]
+require = ["tokio-rustls-comp"]
+
+[[rule]]
+when = ["tls-rustls-native-roots", "smol-comp"]
+require = ["smol-rustls-comp"]
+
+[[rule]]
+when = ["tls-rustls-native-roots", "tokio-comp"]
+require = ["tokio-rustls-comp"]
+
+[[rule]]
+when = ["tls-rustls-native-roots", "entra-id"]
 require = ["tokio-rustls-comp"]
 
 # ------------------------------------------------------------------------

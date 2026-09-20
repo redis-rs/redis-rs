@@ -309,12 +309,12 @@ jobs:
         run: make style-check
 
       - name: doc
-        run: cargo doc --all-features --no-deps --document-private-items
+        run: make doc-check
         env:
           RUSTDOCFLAGS: -Dwarnings
 
       - name: doc tests
-        run: cargo test --doc --locked --all-features
+        run: make doc-tests
         env:
           RUSTDOCFLAGS: -Dwarnings
 
@@ -364,10 +364,37 @@ jobs:
       - name: Benchmark
         run: |
           cargo install critcmp
-          cargo bench -p redis --all-features -- --measurement-time 15 --save-baseline changes
+
+          # Run the benchmarks once per rustls root-store. On revisions without the split store
+          # features (before this change) there is nothing to exclude, so fall back to
+          # `--all-features`.
+          bench() {
+            baseline="$1"
+            if cargo metadata --no-deps --format-version 1 | python3 -c '
+          import json, sys
+          d = json.load(sys.stdin)
+          features = [p for p in d["packages"] if p["name"] == "redis"][0]["features"]
+          sys.exit(0 if {"tls-rustls-native-roots", "tls-rustls-webpki-roots"} <= features.keys() else 1)
+          '; then
+              for excluded in tls-rustls-native-roots tls-rustls-webpki-roots; do
+                features=$(cargo metadata --no-deps --format-version 1 | python3 -c '
+          import json, sys
+          excluded = sys.argv[1]
+          d = json.load(sys.stdin)
+          features = [p for p in d["packages"] if p["name"] == "redis"][0]["features"]
+          print(" ".join(sorted(k for k in features if k != excluded)))
+          ' "$excluded")
+                cargo bench -p redis --features "$features" -- --measurement-time 15 --save-baseline "$baseline"
+              done
+            else
+              cargo bench -p redis --all-features -- --measurement-time 15 --save-baseline "$baseline"
+            fi
+          }
+
+          bench changes
           git fetch
           git checkout ${{ github.base_ref }}
-          cargo bench -p redis --all-features -- --measurement-time 15 --save-baseline base
+          bench base
           critcmp base changes
 
       # We check out again, because we switched branches in the last step.

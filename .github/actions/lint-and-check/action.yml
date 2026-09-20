@@ -20,7 +20,7 @@ runs:
 
     - name: Build all features
       shell: bash
-      run: RUSTFLAGS="-D warnings" cargo build --locked -p redis --all-features
+      run: make build-all
 
     - name: Lint
       shell: bash
