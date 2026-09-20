@@ -1,7 +1,6 @@
 use redis::{ConnectionAddr, IntoConnectionInfo, ProtocolVersion, RedisConnectionInfo};
 use std::ffi::OsStr;
 use std::fmt::{Debug, Formatter};
-use std::io::Write;
 use std::path::Path;
 use std::{env, fs, path::PathBuf, process};
 use tempfile::TempDir;
@@ -19,7 +18,7 @@ pub fn use_protocol() -> ProtocolVersion {
 }
 
 pub fn redis_settings() -> RedisConnectionInfo {
-    RedisConnectionInfo::default().set_protocol(use_protocol())
+    RedisConnectionInfo::default()
 }
 
 /// Get the default host to use for TCP connections.
@@ -60,19 +59,13 @@ pub enum Module {
 #[derive(Default)]
 pub struct RedisServerBuilder {
     server_type: Option<ServerType>,
+    protocol: Option<ProtocolVersion>,
     address: Option<ConnectionAddr>,
     config_file: Option<PathBuf>,
     cert_auth_field: Option<String>,
     modules: Vec<Module>,
     mtls: bool,
     tls_paths: Option<TlsFilePaths>,
-    /// If the built instance is dropped while panicking, dump the server info to this output
-    ///
-    /// This is `None` by default to avoid noisy output. But it's useful when developing server
-    /// modules.
-    ///
-    /// See [`Self::panicking_drop_info_output`]
-    panicking_drop_info_output: Output,
 }
 
 impl RedisServerBuilder {
@@ -83,6 +76,11 @@ impl RedisServerBuilder {
 
     pub fn server_type(mut self, server_type: ServerType) -> Self {
         self.server_type = Some(server_type);
+        self
+    }
+
+    pub fn protocol(mut self, protocol: ProtocolVersion) -> Self {
+        self.protocol = Some(protocol);
         self
     }
 
@@ -127,18 +125,6 @@ impl RedisServerBuilder {
 
     pub fn tls_paths_opt(mut self, opt_tls_paths: Option<TlsFilePaths>) -> Self {
         self.tls_paths = opt_tls_paths;
-        self
-    }
-
-    /// Whether to dump server info when dropping the instance while panicking
-    ///
-    /// By default, dumping server info on random panicking drops is disabled to avoid noisy output
-    /// for a simple failed assertion in integration tests of applications.
-    ///
-    /// But when developing server modules, this allows to see server stdout/stderr/logs upon
-    /// issues, which is helpful during debugging.
-    pub fn panicking_drop_info_output(mut self, output: Output) -> Self {
-        self.panicking_drop_info_output = output;
         self
     }
 
@@ -200,12 +186,9 @@ pub struct RedisServer {
     pub tempdir: tempfile::TempDir,
     pub log_file: PathBuf,
     pub addr: redis::ConnectionAddr,
+    pub protocol: ProtocolVersion,
     pub tls_paths: Option<TlsFilePaths>,
     pub mtls: bool,
-    /// The target to output the server info when dropping the built instance while panicking.
-    ///
-    /// See [`RedisServerBuilder::panicking_drop_info_output`].
-    pub panicking_drop_info_output: Output,
 }
 
 impl ServerType {
@@ -227,13 +210,7 @@ impl ServerType {
 
 impl Drop for RedisServer {
     fn drop(&mut self) {
-        if std::thread::panicking() {
-            if let Some(mut writer) = self.panicking_drop_info_output.writer() {
-                writeln!(writer, "{}", self.stop_with_info()).unwrap();
-            }
-        } else {
-            self.stop();
-        }
+        self.stop();
     }
 }
 
@@ -278,7 +255,7 @@ impl RedisServer {
             // This is technically a race, but we can't do better with
             // the tools that redis gives us :(
             let redis_port = get_random_available_port();
-            let st = builder.server_type.unwrap_or_else(ServerType::get_intended);
+            let st = builder.server_type.unwrap_or(ServerType::Tcp);
             Self::get_addr_for_type(redis_port, st)
         });
 
@@ -387,9 +364,9 @@ impl RedisServer {
             log_file,
             tempdir,
             addr,
+            protocol: builder.protocol.unwrap_or(ProtocolVersion::RESP2),
             tls_paths: builder.tls_paths,
             mtls: builder.mtls,
-            panicking_drop_info_output: builder.panicking_drop_info_output,
         }
     }
 
@@ -407,7 +384,7 @@ impl RedisServer {
     }
 
     pub fn connection_info(&self) -> redis::ConnectionInfo {
-        self.connection_info_with_protocol(use_protocol())
+        self.connection_info_with_protocol(self.protocol)
     }
 
     pub fn connection_info_with_protocol(
@@ -618,32 +595,6 @@ impl CommandMultiArgs for RedisServerCommand {
 impl Debug for RedisServerCommand {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         self.cmd.fmt(f)
-    }
-}
-
-/// Output specifier that converts to a [`Write`].
-#[non_exhaustive]
-#[derive(Default)]
-pub enum Output {
-    /// Does not output anything
-    ///
-    /// This is the default.
-    #[default]
-    None,
-    /// Outputs to `stdout`
-    Stdout,
-    /// Outputs to `stderr`
-    Stderr,
-}
-
-impl Output {
-    /// Gets a writer for this [`Output`]
-    pub fn writer(&self) -> Option<Box<dyn Write>> {
-        match self {
-            Self::None => None,
-            Self::Stdout => Some(Box::new(std::io::stdout())),
-            Self::Stderr => Some(Box::new(std::io::stderr())),
-        }
     }
 }
 
