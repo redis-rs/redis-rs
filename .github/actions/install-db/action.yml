@@ -63,7 +63,7 @@ runs:
         #   On 2026-06-01, `ubuntu-latest` is ubuntu 24.04, which uses
         #   `clang` 18, but `rustc`'s `clang` is 21. So LTO builds would fail
         #   and we keep LTO disabled (as before).
-        BUILD_TLS=yes BUILD_WITH_MODULES=yes LTO=0 make
+        BUILD_TLS=yes BUILD_WITH_MODULES=yes LTO=0 make --jobs="$(nproc)"
 
         # Copy the built executables out
         mv -v "src/${{ inputs.db-name }}-server" "$HOME/db/redis-server"
