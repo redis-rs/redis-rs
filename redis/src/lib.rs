@@ -754,11 +754,7 @@ pub mod bloom;
 
 #[cfg(feature = "json")]
 #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-pub use crate::commands::{JsonCommands, json};
-
-#[cfg(all(feature = "json", feature = "aio"))]
-#[cfg_attr(docsrs, doc(cfg(all(feature = "json", feature = "aio"))))]
-pub use crate::commands::JsonAsyncCommands;
+pub use commands::json;
 
 #[cfg(feature = "aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
