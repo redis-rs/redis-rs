@@ -337,6 +337,11 @@ jobs:
         uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
         with:
           package: redis
+        env:
+          # The `tls-rustls-native-roots` and `tls-rustls-webpki-roots` features are mutually
+          # exclusive, but the semver check enables all features. Opt out of the exclusivity
+          # `compile_error!` (see `redis/src/lib.rs`) during the check.
+          RUSTDOCFLAGS: --cfg semverchecking
 
   benchmark:
     needs: lint

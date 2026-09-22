@@ -662,10 +662,13 @@ compile_error!(
 );
 // `docs.rs` builds with `--all-features`, which would enable both stores. It sets the `docsrs` cfg
 // (see `rustdoc-args` in `Cargo.toml`), so the exclusivity check is skipped there.
+// `cargo-semver-checks` similarly enables all features; the workflow sets the `semverchecking` cfg
+// via `RUSTDOCFLAGS` so the check is skipped there too.
 #[cfg(all(
     feature = "tls-rustls-native-roots",
     feature = "tls-rustls-webpki-roots",
-    not(docsrs)
+    not(docsrs),
+    not(semverchecking)
 ))]
 compile_error!(
     "the `tls-rustls-native-roots` and `tls-rustls-webpki-roots` features are mutually exclusive; \
