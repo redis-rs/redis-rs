@@ -1889,10 +1889,16 @@ where
             return Err(err);
         }
     };
-    // If READONLY is sent to primary nodes, it will have no effect.
-    // We set this unconditionally, because we don't know whether we'll be making read calls
-    // to replicas. (We allow overriding routing per-call)
-    let mut readonly_cmd = cmd("READONLY");
+    let mut readonly_cmd = if params.read_routing_factory.is_some() {
+        // If READONLY is sent to primary nodes, it will have no effect.
+        // We set this conditionally, because we don't know whether we'll be making read calls
+        // to replicas. (We allow overriding routing per-call)
+        cmd("READONLY")
+    } else {
+        // if readonly reading isn't set, we don't want to send READONLY, since some Redis providers don't support this command
+        // (for example, azure managed redis - https://redis.io/docs/latest/operate/rs/references/compatibility/commands/cluster/)
+        cmd("PING")
+    };
     readonly_cmd.skip_concurrency_limit = true;
     conn.req_packed_command(&readonly_cmd).await?;
     Ok(conn)
