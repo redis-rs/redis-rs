@@ -541,6 +541,8 @@ impl ClusterClientBuilder {
     ///     .build()
     ///     .unwrap();
     /// ```
+    ///
+    /// Don't set this if you're using a managed cluster, such as Azure Managed Redis, as they don't support read routing.
     pub fn read_routing_strategy(
         mut self,
         strategy: impl ReadRoutingStrategyFactory + 'static,
