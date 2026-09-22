@@ -26,10 +26,19 @@ fn assert_no_index_and_index_missing_exclusivity_for_field(
     }));
 }
 
+fn assert_index_already_exists_error(result: redis::RedisResult<String>) {
+    let server_error = redis::ServerError::try_from(result.unwrap_err()).unwrap();
+    assert!(
+        server_error
+            .details()
+            .is_some_and(|details| details.contains("already exists"))
+    );
+}
+
 #[test]
 fn test_module_search_ft_create_with_an_empty_index_name() {
     let ctx = run_test_if_version_supported!(
-        [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]],
+        &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
         &[Module::Search]
     );
     let mut con = ctx.connection();
@@ -43,8 +52,11 @@ fn test_module_search_ft_create_with_an_empty_index_name() {
         con.ft_create(empty_index_name, &options, &schema),
         Ok("OK".to_string())
     );
-    con.ft_create::<_, String>(empty_index_name, &options, &schema)
-        .unwrap_err();
+    assert_index_already_exists_error(con.ft_create::<_, String>(
+        empty_index_name,
+        &options,
+        &schema,
+    ));
 }
 
 fn run_simple_ft_create<C, F>(con: &mut C, index_name: &str, mut on_created: F)
@@ -62,14 +74,13 @@ where
         Ok("OK".to_string())
     );
     on_created(index_name);
-    con.ft_create::<_, String>(index_name, &options, &schema)
-        .unwrap_err();
+    assert_index_already_exists_error(con.ft_create::<_, String>(index_name, &options, &schema));
 }
 
 #[test]
 fn test_module_search_simple_ft_create() {
     let ctx = run_test_if_version_supported!(
-        [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]],
+        &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
         &[Module::Search]
     );
     run_simple_ft_create(&mut ctx.connection(), "index", |_| {});
@@ -78,7 +89,7 @@ fn test_module_search_simple_ft_create() {
 #[test]
 fn test_module_search_ft_create_create_options() {
     let ctx = run_test_if_version_supported!(
-        [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]],
+        &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
         &[Module::Search]
     );
     let mut con = ctx.connection();
@@ -247,7 +258,7 @@ where
 #[test]
 fn test_module_search_ft_create_schema_text_field() {
     let ctx = run_test_if_version_supported!(
-        [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]],
+        &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
         &[Module::Search]
     );
     run_ft_create_schema_text_field(&mut ctx.connection(), |_| {});
@@ -346,7 +357,7 @@ where
 #[test]
 fn test_module_search_ft_create_schema_tag_field() {
     let ctx = run_test_if_version_supported!(
-        [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]],
+        &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
         &[Module::Search]
     );
     run_ft_create_schema_tag_field(&mut ctx.connection(), |_| {});
@@ -440,7 +451,7 @@ where
 #[test]
 fn test_module_search_ft_create_schema_numeric_field() {
     let ctx = run_test_if_version_supported!(
-        [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]],
+        &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
         &[Module::Search]
     );
     run_ft_create_schema_numeric_field(&mut ctx.connection(), |_| {});
@@ -534,7 +545,7 @@ where
 #[test]
 fn test_module_search_ft_create_schema_geo_field() {
     let ctx = run_test_if_version_supported!(
-        [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]],
+        &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
         &[Module::Search]
     );
     run_ft_create_schema_geo_field(&mut ctx.connection(), |_| {});
@@ -631,7 +642,7 @@ where
 #[test]
 fn test_module_search_ft_create_schema_geoshape_field() {
     let ctx = run_test_if_version_supported!(
-        [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]],
+        &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
         &[Module::Search]
     );
     run_ft_create_schema_geoshape_field(&mut ctx.connection(), |_| {});

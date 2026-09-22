@@ -17,7 +17,8 @@ pub const REDIS_CE_8_8: Component = ("redis", (8, 8, 0));
 pub const REDIS_JSON_8_8: Component = ("ReJSON", (8, 8, 0));
 pub const REDIS_BLOOM_ANY: Component = ("redis:bf", (0, 0, 0));
 
-pub const REDIS_SEARCH_8_0: Component = ("search", (8, 0, 0));
+pub const REDIS_SEARCH_8_0: Component = ("redis:search", (8, 0, 0));
+pub const VALKEY_SEARCH_ANY: Component = ("valkey:search", (0, 0, 0));
 
 // Valkey forked off at Redis 7.2.4 and still reports its Redis version 7.2.4. So tests that run
 // on Redis<=7.2.4 automatically also run on any Valkey server, and we only need version guards for
@@ -152,6 +153,16 @@ impl AvailableComponents {
                     name = "redis:bf".to_string();
                 } else {
                     name = "valkey:bf".to_string();
+                }
+            }
+
+            // Like `bf`, both servers' search modules report as `search`: Redis' tracks the
+            // server version (8.x+), Valkey's is still ~1.x.
+            if name == "search" {
+                if version > (8, 0, 0) {
+                    name = "redis:search".to_string();
+                } else {
+                    name = "valkey:search".to_string();
                 }
             }
 
