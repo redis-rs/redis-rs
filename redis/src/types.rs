@@ -2585,7 +2585,7 @@ pub enum ValueType {
     TimeSeries,
     /// A Trie. [Redis Docs](https://redis.io/docs/latest/develop/ai/search-and-query/advanced-concepts/autocomplete/)
     Trie,
-    /// A Bloom filter from Valkey's module. [ValKey Docs](https://valkey.io/topics/bloomfilters/)
+    /// A Bloom filter from Valkey's module. [Valkey Docs](https://valkey.io/topics/bloomfilters/)
     BloomFilterValKey,
     /// Any other value type not explicitly defined in [Redis Docs](https://redis.io/docs/latest/commands/type/)
     Unknown(String),
@@ -2614,7 +2614,7 @@ impl<T: AsRef<str>> From<T> for ValueType {
             "trietype0" => Self::Trie,
             // Timeseries module
             "TSDB-TYPE" => Self::TimeSeries,
-            // Bloom module (ValKey)
+            // Bloom module (Valkey)
             "bloomfltr" => Self::BloomFilterValKey,
             // Fallback
             s => Self::Unknown(s.to_string()),
@@ -2645,7 +2645,7 @@ impl From<ValueType> for String {
             ValueType::Trie => "trietype0".to_string(),
             // Timeseries module
             ValueType::TimeSeries => "TSDB-TYPE".to_string(),
-            // Bloom module (ValKey)
+            // Bloom module (Valkey)
             ValueType::BloomFilterValKey => "bloomfltr".to_string(),
             // Fallback
             ValueType::Unknown(s) => s,
