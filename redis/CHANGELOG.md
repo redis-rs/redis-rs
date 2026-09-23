@@ -1,3 +1,20 @@
+### 1.7.0 (2026-09-05)
+
+#### Changes & Bug fixes
+
+* Add the `FT.CREATE` command builder and index schema (WIP) by @StefanPalashev in https://github.com/redis-rs/redis-rs/pull/2303
+* Add support for the `INCREX` command by @StefanPalashev in https://github.com/redis-rs/redis-rs/pull/2216
+* Switch to `combine` version with `opaque` fix by @somechris in https://github.com/redis-rs/redis-rs/pull/2322
+* Report the underlying error from the r2d2 `is_valid` health check by @AbhinavMir in https://github.com/redis-rs/redis-rs/pull/2321
+* MultiplexedConnection: Fix reporting errors on RESP3 & Unix by @nihohit in https://github.com/redis-rs/redis-rs/pull/2350
+
+#### CI & operational improvements
+
+* ci: Bump minor server versions to latest by @somechris in https://github.com/redis-rs/redis-rs/pull/2357
+* spelling: Change `infos` to `info` by @somechris in https://github.com/redis-rs/redis-rs/pull/2374
+* Fix latest nightly lints by @nihohit in https://github.com/redis-rs/redis-rs/pull/2378
+* docs: Split development parts in README.md into dedicated documents by @somechris in https://github.com/redis-rs/redis-rs/pull/2331
+
 ### 1.6.0 (2026-08-15)
 
 #### Changes & Bug fixes

@@ -26,7 +26,8 @@
 //! // Build a schema using the schema! macro
 //! let schema = schema! {
 //!     "title" => SchemaTextField::new().weight(2.0),
-//!     "subtitle" => SchemaTextField::new()
+//!     "price" => SchemaNumericField::new(),
+//!     "condition" => SchemaTagField::new().separator(',')
 //! };
 //!
 //! // Create an FT.CREATE command
@@ -36,6 +37,43 @@
 //!             .on(IndexDataType::Hash)
 //!             .prefix("doc:")
 //!     );
+//! ```
+//!
+//! Index blog post hashes whose keys start with `blog:post:`, with sortable
+//! fields:
+//!
+//! ```rust
+//! use redis::{schema, search::*};
+//!
+//! let ft_create = FtCreateCommand::new(
+//!     "idx",
+//!     schema! {
+//!         "title" => SchemaTextField::new().sortable(Sortable::Yes),
+//!         "published_at" => SchemaNumericField::new().sortable(Sortable::Yes),
+//!         "category" => SchemaTagField::new().sortable(Sortable::Yes),
+//!     },
+//! )
+//! .options(
+//!     CreateOptions::new()
+//!         .on(IndexDataType::Hash)
+//!         .prefix("blog:post:")
+//! );
+//! ```
+//!
+//! Index a JSON document: select the attributes with JSONPath expressions and
+//! give them plain names with aliases:
+//!
+//! ```rust
+//! use redis::{schema, search::*};
+//!
+//! let ft_create = FtCreateCommand::new(
+//!     "idx",
+//!     schema! {
+//!         "$.title" => SchemaTextField::new().alias("title"),
+//!         "$.categories" => SchemaTagField::new().alias("categories"),
+//!     },
+//! )
+//! .options(CreateOptions::new().on(IndexDataType::Json));
 //! ```
 mod fields;
 mod options;
@@ -144,59 +182,6 @@ mod tests {
         assert_eq!(
             ft_create.into_args(),
             "FT.CREATE index ON HASH SCHEMA title TEXT"
-        );
-    }
-
-    // ============================================================================
-    // Website examples
-    // <https://redis.io/docs/latest/commands/ft.create/#examples>
-    // ============================================================================
-    #[test]
-    fn test_index_with_filter() {
-        // In this example, keys for author data use the key pattern author:details:<id> while keys for book data use the pattern book:details:<id>.
-
-        /*
-        Index authors whose names start with G.
-        FT.CREATE g-authors-idx ON HASH PREFIX 1 author:details FILTER 'startswith(@name, "G")' SCHEMA name TEXT
-        */
-        let ft_create = FtCreateCommand::new(
-            "g-authors-idx",
-            schema! {
-                "name" =>  SchemaTextField::new(),
-            },
-        )
-        .options(
-            CreateOptions::new()
-                .on(IndexDataType::Hash)
-                .prefix("author:details")
-                .filter("startswith(@name, \"G\")"),
-        );
-
-        assert_eq!(
-            ft_create.into_args(),
-            "FT.CREATE g-authors-idx ON HASH PREFIX 1 author:details FILTER 'startswith(@name, \"G\")' SCHEMA name TEXT"
-        );
-
-        /*
-        Index only books that have a subtitle.
-        FT.CREATE subtitled-books-idx ON HASH PREFIX 1 book:details FILTER '@subtitle != ""' SCHEMA title TEXT
-        */
-        let ft_create = FtCreateCommand::new(
-            "subtitled-books-idx",
-            schema! {
-                "title" =>  SchemaTextField::new(),
-            },
-        )
-        .options(
-            CreateOptions::new()
-                .on(IndexDataType::Hash)
-                .prefix("book:details")
-                .filter("@subtitle != \"\""),
-        );
-
-        assert_eq!(
-            ft_create.into_args(),
-            "FT.CREATE subtitled-books-idx ON HASH PREFIX 1 book:details FILTER '@subtitle != \"\"' SCHEMA title TEXT"
         );
     }
 }

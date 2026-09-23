@@ -823,6 +823,74 @@ mod cluster_async {
         assert_eq!(value, Ok(Value::Nil));
     }
 
+    // Without a read-routing policy we must never send READONLY, since
+    // some Redis providers (e.g. Azure Managed Redis) reject it.
+    #[test]
+    fn test_async_cluster_without_read_routing_does_not_send_readonly() {
+        let name = "test_async_cluster_without_read_routing_does_not_send_readonly";
+
+        let ping_sent = Arc::new(AtomicBool::new(false));
+        {
+            let ping_sent_clone = ping_sent.clone();
+            let MockEnv {
+                runtime,
+                async_connection: mut connection,
+                ..
+            } = MockEnv::new(name, move |cmd: &[u8], _| {
+                assert!(!contains_slice(cmd, b"READONLY"));
+
+                if contains_slice(cmd, b"PING") {
+                    ping_sent_clone.store(true, Ordering::SeqCst);
+                }
+                respond_startup(name, cmd)?;
+                Err(Ok(Value::Nil))
+            });
+
+            let value =
+                runtime.block_on(cmd("GET").arg("test").query_async::<Value>(&mut connection));
+            assert_eq!(value, Ok(Value::Nil));
+        }
+
+        assert!(ping_sent.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_async_cluster_with_read_routing_sends_readonly() {
+        let name = "test_async_cluster_with_read_routing_sends_readonly";
+
+        let readonly_sent = Arc::new(AtomicBool::new(false));
+        {
+            let readonly_sent_clone = readonly_sent.clone();
+            let MockEnv {
+                runtime,
+                async_connection: mut connection,
+                handler: _handler,
+                ..
+            } = MockEnv::with_client_builder(
+                ClusterClient::builder(vec![&*format!("redis://{name}")])
+                    .retries(0)
+                    .read_routing_strategy(RandomReplicaStrategy::new()),
+                name,
+                move |cmd: &[u8], _| {
+                    if contains_slice(cmd, b"READONLY") {
+                        readonly_sent_clone.store(true, Ordering::SeqCst);
+                    }
+                    respond_startup(name, cmd)?;
+                    Err(Ok(Value::Nil))
+                },
+            );
+
+            let value =
+                runtime.block_on(cmd("GET").arg("test").query_async::<Value>(&mut connection));
+            assert_eq!(value, Ok(Value::Nil));
+        }
+
+        assert!(
+            readonly_sent.load(Ordering::SeqCst),
+            "READONLY should be sent when read routing is enabled"
+        );
+    }
+
     #[test]
     fn test_async_cluster_retries() {
         let name = "tryagain";
