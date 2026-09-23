@@ -14,13 +14,6 @@ require = [
   "smol-rustls-comp",
 ]
 
-# The rustls base feature is not a root store; users must pick exactly one of the
-# root-store features. `require` skips any combination with bare `tls-rustls`, and the
-# `forbid` rules ensure the two root-store features are never tested together.
-[[rule]]
-when = "tls-rustls"
-require = ["tls-rustls-native-roots", "OR", "tls-rustls-webpki-roots"]
-
 [[rule]]
 when = ["tls-rustls-native-roots"]
 forbid = ["tls-rustls-webpki-roots"]
@@ -61,9 +54,16 @@ forbid = [
   "entra-id",
 ] # tokio-native-tls-comp or smol-native-tls-comp should be used instead of this combination, and entra-id pulls tokio-comp
 
+# must choose rustls roots when working with rustls
 [[rule]]
-when = "tls-rustls-insecure"
-require = ["tls-rustls"]
+when = [
+  "tls-rustls-insecure",
+  "OR",
+  "tokio-rustls-comp",
+  "OR",
+  "smol-rustls-comp",
+]
+require = ["tls-rustls-native-roots", "OR", "tls-rustls-webpki-roots"]
 
 # the native-tls features shouldn't be tested with the rustls features
 [[rule]]
@@ -80,8 +80,6 @@ forbid = [
   "tls-rustls-webpki-roots",
   "OR",
   "tls-rustls-native-roots",
-  "OR",
-  "tls-rustls-insecure",
   "OR",
   "smol-rustls-comp",
 ]
@@ -175,7 +173,7 @@ forbid = "bigdecimal"
 # These features can't run by themselves
 [[rule]]
 when = true
-forbid = ["aio", "OR", "token-based-authentication"]
+forbid = ["aio", "OR", "token-based-authentication", "OR", "tls-rustls"]
 
 # If you're using the library with sentinel or targeting connection manager, you probably don't want cluster connections
 [[rule]]
