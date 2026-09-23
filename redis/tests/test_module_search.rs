@@ -35,6 +35,8 @@ fn assert_index_already_exists_error(result: redis::RedisResult<String>) {
     );
 }
 
+// Basic create — Redis and Valkey.
+
 #[test]
 fn test_module_search_ft_create_with_an_empty_index_name() {
     let ctx = run_test_if_version_supported!(
@@ -85,6 +87,8 @@ fn test_module_search_simple_ft_create() {
     );
     run_simple_ft_create(&mut ctx.connection(), "index", |_| {});
 }
+
+// Full FT.CREATE matrix — Redis only.
 
 #[test]
 fn test_module_search_ft_create_create_options() {
@@ -634,4 +638,184 @@ fn test_module_search_ft_create_schema_geoshape_field() {
     // Redis-only: valkey-search has no GEOSHAPE field type.
     let ctx = run_test_if_version_supported!(REDIS_SEARCH_8_0, &[Module::Search]);
     run_ft_create_schema_geoshape_field(&mut ctx.connection(), |_| {});
+}
+
+// Portable subset — Redis and Valkey (valkey-search rejects the rest).
+
+#[test]
+fn test_module_search_ft_create_schema_text_field_portable() {
+    let ctx = run_test_if_version_supported!(
+        &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
+        &[Module::Search]
+    );
+    let mut con = ctx.connection();
+
+    type SchemaTextFieldModifier = fn(SchemaTextField) -> SchemaTextField;
+    let field_modifiers: Vec<(&'static str, SchemaTextFieldModifier)> = vec![
+        ("alias", |field| field.alias("text_alias")),
+        ("sortable", |field| field.sortable(Sortable::Yes)),
+        ("no_stem", |field| field.no_stem(true)),
+        ("weight", |field| field.weight(1.0)),
+        ("with_suffix_trie", |field| field.with_suffix_trie(true)),
+    ];
+
+    // Each modifier on its own
+    for (suffix, modifier) in &field_modifiers {
+        let index_name = format!("portable_text_field_with_{suffix}");
+        let schema = schema! {
+            TEXT_FIELD_NAME => modifier(SchemaTextField::new())
+        };
+        assert_eq!(
+            con.ft_create(&index_name, &CreateOptions::new(), &schema),
+            Ok("OK".to_string())
+        );
+    }
+
+    // All of them combined
+    let mut combined = SchemaTextField::new();
+    for (suffix, modifier) in &field_modifiers {
+        let index_name = format!("portable_text_field_combined_until_{suffix}");
+        combined = modifier(combined);
+        let schema = schema! {
+            TEXT_FIELD_NAME => combined.clone()
+        };
+        assert_eq!(
+            con.ft_create(&index_name, &CreateOptions::new(), &schema),
+            Ok("OK".to_string())
+        );
+    }
+}
+
+#[test]
+fn test_module_search_ft_create_schema_tag_field_portable() {
+    let ctx = run_test_if_version_supported!(
+        &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
+        &[Module::Search]
+    );
+    let mut con = ctx.connection();
+
+    type SchemaTagFieldModifier = fn(SchemaTagField) -> SchemaTagField;
+    let field_modifiers: Vec<(&'static str, SchemaTagFieldModifier)> = vec![
+        ("alias", |field| field.alias("tag_alias")),
+        ("sortable", |field| field.sortable(Sortable::Yes)),
+        ("separator", |field| field.separator(',')),
+        ("case_sensitive", |field| field.case_sensitive(true)),
+    ];
+
+    // Each modifier on its own
+    for (suffix, modifier) in &field_modifiers {
+        let index_name = format!("portable_tag_field_with_{suffix}");
+        let schema = schema! {
+            TAG_FIELD_NAME => modifier(SchemaTagField::new())
+        };
+        assert_eq!(
+            con.ft_create(&index_name, &CreateOptions::new(), &schema),
+            Ok("OK".to_string())
+        );
+    }
+
+    // All of them combined
+    let mut combined = SchemaTagField::new();
+    for (suffix, modifier) in &field_modifiers {
+        let index_name = format!("portable_tag_field_combined_until_{suffix}");
+        combined = modifier(combined);
+        let schema = schema! {
+            TAG_FIELD_NAME => combined.clone()
+        };
+        assert_eq!(
+            con.ft_create(&index_name, &CreateOptions::new(), &schema),
+            Ok("OK".to_string())
+        );
+    }
+}
+
+#[test]
+fn test_module_search_ft_create_schema_numeric_field_portable() {
+    let ctx = run_test_if_version_supported!(
+        &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
+        &[Module::Search]
+    );
+    let mut con = ctx.connection();
+
+    type SchemaNumericFieldModifier = fn(SchemaNumericField) -> SchemaNumericField;
+    let field_modifiers: Vec<(&'static str, SchemaNumericFieldModifier)> = vec![
+        ("alias", |field| field.alias("numeric_alias")),
+        ("sortable", |field| field.sortable(Sortable::Yes)),
+    ];
+
+    // Each modifier on its own
+    for (suffix, modifier) in &field_modifiers {
+        let index_name = format!("portable_numeric_field_with_{suffix}");
+        let schema = schema! {
+            NUMERIC_FIELD_NAME => modifier(SchemaNumericField::new())
+        };
+        assert_eq!(
+            con.ft_create(&index_name, &CreateOptions::new(), &schema),
+            Ok("OK".to_string())
+        );
+    }
+
+    // All of them combined
+    let mut combined = SchemaNumericField::new();
+    for (suffix, modifier) in &field_modifiers {
+        let index_name = format!("portable_numeric_field_combined_until_{suffix}");
+        combined = modifier(combined);
+        let schema = schema! {
+            NUMERIC_FIELD_NAME => combined.clone()
+        };
+        assert_eq!(
+            con.ft_create(&index_name, &CreateOptions::new(), &schema),
+            Ok("OK".to_string())
+        );
+    }
+}
+
+#[test]
+fn test_module_search_ft_create_create_options_portable() {
+    let ctx = run_test_if_version_supported!(
+        &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
+        &[Module::Search]
+    );
+    let mut con = ctx.connection();
+    let schema = schema! {
+        TEXT_FIELD_NAME => SchemaTextField::new()
+    };
+
+    type CreateOptionsModifier = fn(CreateOptions) -> CreateOptions;
+    let option_modifiers: Vec<(&'static str, CreateOptionsModifier)> = vec![
+        ("on_hash", |opts| opts.on(IndexDataType::Hash)),
+        ("single_prefix", |opts| opts.prefix("pref1")),
+        ("multiple_prefixes", |opts| {
+            opts.prefix("pref2").prefix("pref3")
+        }),
+        ("language", |opts| opts.language(SearchLanguage::English)),
+        ("score", |opts| opts.score(1.0)),
+        ("no_offsets", |opts| opts.no_offsets()),
+        ("single_stopword", |opts| opts.stopword("stopword1")),
+        ("multiple_stopwords", |opts| {
+            opts.stopword("stopword2").stopword("stopword3")
+        }),
+        ("skip_initial_scan", |opts| opts.skip_initial_scan()),
+    ];
+
+    // Each option on its own
+    for (suffix, modifier) in &option_modifiers {
+        let index_name = format!("portable_index_with_{suffix}");
+        let options = modifier(CreateOptions::new());
+        assert_eq!(
+            con.ft_create(&index_name, &options, &schema),
+            Ok("OK".to_string())
+        );
+    }
+
+    // All of them combined cumulatively
+    let mut combined_options = CreateOptions::new();
+    for (suffix, modifier) in &option_modifiers {
+        let index_name = format!("portable_combined_index_until_{suffix}");
+        combined_options = modifier(combined_options);
+        assert_eq!(
+            con.ft_create(&index_name, &combined_options, &schema),
+            Ok("OK".to_string())
+        );
+    }
 }
