@@ -1743,8 +1743,8 @@ where
         trace!("poll_flush: {:?}", self.state);
         loop {
             self.send_refresh_error();
-            self.poll_reconnects(cx);
 
+            // If we have a recovery future, poll it until completion first.
             if let Err(err) = ready!(self.as_mut().poll_recover(cx)) {
                 self.refresh_error = Some(err);
 
@@ -1754,6 +1754,10 @@ where
                 cx.waker().wake_by_ref();
                 return Poll::Pending;
             }
+            // Reconnect futures can be polled only if when the recovery future is not running.
+            // Otherwise you may end up in a deadlock.
+            // See https://github.com/redis-rs/redis-rs/issues/2418.
+            self.poll_reconnects(cx);
 
             match ready!(self.poll_complete(cx)) {
                 PollFlushAction::None => return Poll::Ready(Ok(())),
