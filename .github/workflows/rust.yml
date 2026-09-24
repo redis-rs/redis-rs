@@ -164,7 +164,7 @@ jobs:
           key: ${{ runner.os }}-valkey-bloom-${{ matrix.config.bloom-module-version }}
 
       - name: Build Valkey Bloom repo
-        if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:') && steps.cache-valkey-bloom.cache-hit != 'true'
+        if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:') && steps.cache-valkey-bloom.outputs.cache-hit != 'true'
         env:
           VALKEY_BLOOM: ${{matrix.config.bloom-module-version}}
         shell: bash
