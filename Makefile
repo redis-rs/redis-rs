@@ -8,6 +8,11 @@ test:
 	@RUSTFLAGS="-D warnings" cargo build --locked -p redis -p redis-test --all-features
 
 	@echo "===================================================================="
+	@echo "Testing test-macros unit tests"
+	@echo "===================================================================="
+	@RUSTFLAGS="-D warnings" cargo test --locked -p test-macros
+
+	@echo "===================================================================="
 	@echo "Testing Connection Type TCP without features"
 	@echo "===================================================================="
 	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo nextest run --locked -p redis --no-default-features --profile tcp
