@@ -260,7 +260,6 @@ pub(crate) fn is_cachable_cmd(cmd: &[u8]) -> bool {
 
 // Note - Brackets are needed around return types for purposes of macro branching.
 implement_commands! {
-    'a
     // most common operations
 
     /// Get the value of a key.  If key is a vec this becomes an `MGET` (if using `TypedCommands`, you should specifically use `mget` to get the correct return type.

@@ -44,13 +44,11 @@ macro_rules! if_redisresult {
 macro_rules! implement_command_async {
     // Expand the `Generic` return type to `RV`
     (
-        $lifetime: lifetime
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
             $($argname:ident: $argty:ty),*) -> Generic
     ) => {
         implement_command_async!(
-            $lifetime
             $(#[$attr])+
             fn $name<$($tyargs : $ty,)* RV: FromRedisValue>(
                 $($argname: $argty),*) -> RV
@@ -59,13 +57,11 @@ macro_rules! implement_command_async {
 
     // Expand the `RedisResult<Generic>` return type to `RedisResult<RV>`
     (
-        $lifetime: lifetime
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
             $($argname:ident: $argty:ty),*) -> (RedisResult<Generic>)
     ) => {
         implement_command_async!(
-            $lifetime
             $(#[$attr])+
             fn $name<$($tyargs : $ty,)* RV: FromRedisValue>(
                 $($argname: $argty),*) -> (RedisResult<RV>)
@@ -74,7 +70,6 @@ macro_rules! implement_command_async {
 
     // Actual implementation of the command
     (
-        $lifetime: lifetime
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
             $($argname:ident: $argty:ty),*) -> $rettype:tt
@@ -100,13 +95,11 @@ macro_rules! implement_command_async {
 macro_rules! implement_command_sync {
     // Expand the `Generic` return type to `RV`
     (
-        $lifetime: lifetime
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
             $($argname:ident: $argty:ty),*) -> Generic
     ) => {
         implement_command_sync!(
-            $lifetime
             $(#[$attr])+
             fn $name<$($tyargs : $ty,)* RV: FromRedisValue>(
                 $($argname: $argty),*) -> RV
@@ -115,13 +108,11 @@ macro_rules! implement_command_sync {
 
     // Expand the `Generic` return type to `RedisResult<RV>`
     (
-        $lifetime: lifetime
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
             $($argname:ident: $argty:ty),*) -> (RedisResult<Generic>)
     ) => {
         implement_command_sync!(
-            $lifetime
             $(#[$attr])+
             fn $name<$($tyargs : $ty,)* RV: FromRedisValue>(
                 $($argname: $argty),*) -> (RedisResult<RV>)
@@ -130,7 +121,6 @@ macro_rules! implement_command_sync {
 
     // Actual implementation of the command
     (
-        $lifetime: lifetime
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
             $($argname:ident: $argty:ty),*) -> $rettype:tt
@@ -138,8 +128,8 @@ macro_rules! implement_command_sync {
         $(#[$attr])*
         #[inline]
         #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-        fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
-            & $lifetime mut self
+        fn $name<$($tyargs: $ty + Send + Sync,)*>(
+            &mut self
             $(, $argname: $argty)*
         ) -> RedisResult<if_redisresult!($rettype, strip_redisresult)>
 
@@ -281,7 +271,6 @@ macro_rules! implement_iterators {
 
 macro_rules! implement_commands {
     (
-        $lifetime: lifetime
         $(
             $(#[$attr:meta])+
             fn $name:ident<$($tyargs:ident : $ty:ident),*>(
@@ -323,7 +312,7 @@ macro_rules! implement_commands {
                 $(#[$attr])*
                 #[inline]
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-                fn $name<$lifetime, $($tyargs: $ty, )* RV: FromRedisValue>(
+                fn $name<$($tyargs: $ty, )* RV: FromRedisValue>(
                     &mut self $(, $argname: $argty)*) -> RedisResult<RV>
                     {
                         if_redisresult!($rettype, try, (Cmd::$name($($argname),*)))
@@ -342,7 +331,7 @@ macro_rules! implement_commands {
                 $(#[$attr])*
                 #[inline]
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-                pub fn $name<$lifetime, $($tyargs: $ty),*>($($argname: $argty),*) -> if_redisresult!($rettype, wrap_redisresult, Self) {
+                pub fn $name<$($tyargs: $ty),*>($($argname: $argty),*) -> if_redisresult!($rettype, wrap_redisresult, Self) {
                     if_redisresult!($rettype, wrap_ok, { $($body)* })
                 }
             )*
@@ -409,7 +398,6 @@ macro_rules! implement_commands {
         pub trait TypedCommands : ConnectionLike+Sized {
             $(
                 implement_command_sync! {
-                    $lifetime
                     $(#[$attr])*
                     fn $name<$($tyargs: $ty),*>(
                         $($argname: $argty),*
@@ -439,7 +427,6 @@ macro_rules! implement_commands {
         pub trait AsyncTypedCommands : crate::aio::ConnectionLike + Send + Sized {
             $(
                 implement_command_async! {
-                    $lifetime
                     $(#[$attr])*
                     fn $name<$($tyargs: $ty),*>(
                         $($argname: $argty),*
@@ -471,7 +458,7 @@ macro_rules! implement_commands {
                 $(#[$attr])*
                 #[inline]
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-                pub fn $name<$lifetime, $($tyargs: $ty),*>(
+                pub fn $name<$($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
                 ) -> if_redisresult!($rettype, wrap_redisresult, (&mut Self)) {
                     if_redisresult!($rettype, wrap_ok, (write_pipeline_command!(self, { $($body)* })))
@@ -488,7 +475,7 @@ macro_rules! implement_commands {
                 $(#[$attr])*
                 #[inline]
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-                pub fn $name<$lifetime, $($tyargs: $ty),*>(
+                pub fn $name<$($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
                 ) -> if_redisresult!($rettype, wrap_redisresult, (&mut Self)) {
                     if_redisresult!($rettype, wrap_ok, (write_pipeline_command!(self, { $($body)* })))
