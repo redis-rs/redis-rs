@@ -3491,7 +3491,7 @@ impl PubSubCommands for Connection {
 ///
 /// ```rust
 /// use redis::{Commands, RedisResult, ScanOptions, Iter};
-/// fn force_fetching_every_matching_key<'a, T: redis::FromRedisValue>(
+/// fn force_fetching_every_matching_key<'a, T: redis::FromRedisValue + 'a>(
 ///     con: &'a mut redis::Connection,
 ///     pattern: &'a str,
 ///     count: usize,
