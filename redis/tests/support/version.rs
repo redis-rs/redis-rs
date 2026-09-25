@@ -18,6 +18,10 @@ pub const REDIS_JSON_8_8: Component = ("ReJSON", (8, 8, 0));
 pub const REDIS_BLOOM_ANY: Component = ("redis:bf", (0, 0, 0));
 
 pub const REDIS_SEARCH_8_0: Component = ("redis:search", (8, 0, 0));
+// TODO: pin to the real minimum once the version decoder
+// handles valkey-search's bit-shifted `ver` (e.g. 66049 == 1.2.1, but we
+// currently decode as 6.60.49). Until then, accept any version.
+// See https://github.com/redis-rs/redis-rs/pull/2318#discussion_r4096606850
 pub const VALKEY_SEARCH_ANY: Component = ("valkey:search", (0, 0, 0));
 
 // Valkey forked off at Redis 7.2.4 and still reports its Redis version 7.2.4. So tests that run
