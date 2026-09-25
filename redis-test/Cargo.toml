@@ -23,6 +23,8 @@ rustls = { version = "0.23", optional = true, default-features = false, features
 [features]
 aio = ["futures", "redis/aio", "redis/tokio-comp"]
 tls-rustls = ["dep:rustls", "rustls/std", "redis/tls-rustls"]
+tls-rustls-native-roots = ["tls-rustls", "redis/tls-rustls-native-roots"]
+tls-rustls-webpki-roots = ["tls-rustls", "redis/tls-rustls-webpki-roots"]
 tls-rustls-insecure = ["redis/tls-rustls-insecure", "tls-rustls"]
 tokio-rustls-comp = ["redis/tokio-rustls-comp"]
 

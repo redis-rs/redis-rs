@@ -646,6 +646,35 @@ let primary = sentinel.get_async_connection().await.unwrap();
 #![cfg_attr(not(test), forbid(clippy::infinite_loop))]
 // #![cfg_attr(not(test), forbid(clippy::cast_possible_truncation))]
 
+// The `tls-rustls` feature only enables the rustls crate. The source of the root certificates
+// must be selected explicitly through one (and only one) of `tls-rustls-native-roots` or
+// `tls-rustls-webpki-roots`; see https://github.com/redis-rs/redis-rs/issues/2297.
+// `tls-rustls-insecure` does not need a root store, since it disables certificate verification.
+#[cfg(all(
+    feature = "tls-rustls",
+    not(feature = "tls-rustls-insecure"),
+    not(feature = "tls-rustls-native-roots"),
+    not(feature = "tls-rustls-webpki-roots")
+))]
+compile_error!(
+    "the `tls-rustls` feature requires a root certificate store: enable \
+     either `tls-rustls-native-roots` or `tls-rustls-webpki-roots`"
+);
+// `docs.rs` builds with `--all-features`, which would enable both stores. It sets the `docsrs` cfg
+// (see `rustdoc-args` in `Cargo.toml`), so the exclusivity check is skipped there.
+// `cargo-semver-checks` similarly enables all features; the workflow sets the `semverchecking` cfg
+// via `RUSTDOCFLAGS` so the check is skipped there too.
+#[cfg(all(
+    feature = "tls-rustls-native-roots",
+    feature = "tls-rustls-webpki-roots",
+    not(docsrs),
+    not(semverchecking)
+))]
+compile_error!(
+    "the `tls-rustls-native-roots` and `tls-rustls-webpki-roots` features are mutually exclusive; \
+     enable only one of them"
+);
+
 // public api
 #[cfg(feature = "aio")]
 pub use crate::client::AsyncConnectionConfig;

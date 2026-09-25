@@ -50,3 +50,9 @@ use_self = "warn"
 exhaustive_enums = "warn"
 exhaustive_structs = "warn"
 manual_non_exhaustive = "warn"
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  "cfg(docsrs)",
+  "cfg(semverchecking)",
+] }

@@ -10,6 +10,31 @@ redis = "2"
 
 ## Breaking Changes
 
+### `tls-rustls` now requires an explicit root-certificate store (Breaking Change)
+
+`tls-rustls` no longer bundles the root-certificate store selection. It previously defaulted to the platform's native certificates (via `rustls-native-certs`), which breaks cross-compilation to targets such as Apple's (see [#2297](https://github.com/redis-rs/redis-rs/issues/2297)). The store selection is now split into two mutually exclusive features:
+
+* `tls-rustls-native-roots` — `tls-rustls` plus the platform's native certificates.
+* `tls-rustls-webpki-roots` — `tls-rustls` plus the Mozilla `webpki-roots` bundle.
+
+This means the `tls-rustls` feature alone no longer compiles, and neither do the features built on top of it — `tls-rustls-insecure` (except when used without a store, since it disables certificate verification), `tokio-rustls-comp`, and `smol-rustls-comp`. Users of tokio or smol with rustls must name a root store alongside the async TLS feature. Enabling both stores at once is also a compile error.
+
+**Migration:** pick one root store and enable it alongside the feature you use:
+
+```toml
+# Before:
+redis = { version = "2", features = ["tls-rustls"] }
+redis = { version = "2", features = ["tokio-rustls-comp"] }  # tokio + rustls
+redis = { version = "2", features = ["smol-rustls-comp"] }   # smol + rustls
+
+# After: name a roots feature alongside the feature you use
+redis = { version = "2", features = ["tls-rustls-native-roots"] }
+redis = { version = "2", features = ["tokio-rustls-comp", "tls-rustls-native-roots"] }
+redis = { version = "2", features = ["smol-rustls-comp", "tls-rustls-webpki-roots"] }
+```
+
+Choose `tls-rustls-native-roots` to keep the previous behavior, or `tls-rustls-webpki-roots` for a root bundle that behaves identically across all targets. `tls-rustls-insecure` keeps working without a store.
+
 ### JSON commands got promoted to standard commands (Breaking Change)
 
 `JsonCommands`, and `JsonAsyncCommands` got merged into `Commands`, and `JsonAsyncCommands`.

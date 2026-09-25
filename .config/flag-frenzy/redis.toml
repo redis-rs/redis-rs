@@ -15,14 +15,34 @@ require = [
 ]
 
 [[rule]]
-when = ["tls-rustls"]
+when = ["tls-rustls-native-roots"]
+forbid = ["tls-rustls-webpki-roots"]
+
+[[rule]]
+when = ["tls-rustls-webpki-roots"]
+forbid = ["tls-rustls-native-roots"]
+
+# tokio-rustls-comp or smol-rustls-comp should be used instead of this combination, and entra-id pulls tokio-comp
+[[rule]]
+when = ["tls-rustls-native-roots"]
 forbid = [
   "tokio-comp",
   "OR",
   "smol-comp",
   "OR",
   "entra-id",
-] # tokio-rustls-comp or smol-rustls-comp should be used instead of this combination, and entra-id pulls tokio-comp
+]
+
+# tokio-rustls-comp or smol-rustls-comp should be used instead of this combination, and entra-id pulls tokio-comp
+[[rule]]
+when = ["tls-rustls-webpki-roots"]
+forbid = [
+  "tokio-comp",
+  "OR",
+  "smol-comp",
+  "OR",
+  "entra-id",
+]
 
 [[rule]]
 when = ["tls-native-tls"]
@@ -34,9 +54,16 @@ forbid = [
   "entra-id",
 ] # tokio-native-tls-comp or smol-native-tls-comp should be used instead of this combination, and entra-id pulls tokio-comp
 
+# must choose rustls roots when working with rustls
 [[rule]]
-when = "tls-rustls-insecure"
-require = ["tls-rustls"]
+when = [
+  "tls-rustls-insecure",
+  "OR",
+  "tokio-rustls-comp",
+  "OR",
+  "smol-rustls-comp",
+]
+require = ["tls-rustls-native-roots", "OR", "tls-rustls-webpki-roots"]
 
 # the native-tls features shouldn't be tested with the rustls features
 [[rule]]
@@ -52,9 +79,7 @@ forbid = [
   "OR",
   "tls-rustls-webpki-roots",
   "OR",
-  "tls-rustls",
-  "OR",
-  "tls-rustls-insecure",
+  "tls-rustls-native-roots",
   "OR",
   "smol-rustls-comp",
 ]
@@ -109,6 +134,18 @@ require = ["tokio-rustls-comp"]
 when = ["tls-rustls-webpki-roots", "entra-id"]
 require = ["tokio-rustls-comp"]
 
+[[rule]]
+when = ["tls-rustls-native-roots", "smol-comp"]
+require = ["smol-rustls-comp"]
+
+[[rule]]
+when = ["tls-rustls-native-roots", "tokio-comp"]
+require = ["tokio-rustls-comp"]
+
+[[rule]]
+when = ["tls-rustls-native-roots", "entra-id"]
+require = ["tokio-rustls-comp"]
+
 # ------------------------------------------------------------------------
 # Entra ID integration (requires Tokio-based async + TLS compatibility)
 # ------------------------------------------------------------------------
@@ -136,7 +173,7 @@ forbid = "bigdecimal"
 # These features can't run by themselves
 [[rule]]
 when = true
-forbid = ["aio", "OR", "token-based-authentication"]
+forbid = ["aio", "OR", "token-based-authentication", "OR", "tls-rustls"]
 
 # If you're using the library with sentinel or targeting connection manager, you probably don't want cluster connections
 [[rule]]
