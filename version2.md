@@ -10,6 +10,52 @@ redis = "2"
 
 ## Breaking Changes
 
+### Async Commands now return impl Future (Breaking Change)
+
+Methods on `AsyncCommands`, `AsyncTypedCommands`, and `AsyncHotkeysCommands` now returns `impl Future<Output = RedisResult<...>>`.
+
+Along with this change, explicit lifetime parameters are removed and now implicit.
+
+**Migration:**
+
+For general cases that `await`s immediately, you don't need to change your code.
+
+If your code explicitly specifies lifetime parameters, you will need to remove them.
+
+If your code depends on returning boxed future, you need to wrap with `async` block or manually call `FuturesExt::boxed()` to make the future boxed.
+
+```rust
+// Before:
+if condition {
+    conn.set(key, value)
+} else {
+    conn.set_ex(key, value, 100)
+}.await
+
+// After 1: Simply awaiting inside if it is not necessary to await once
+if condition {
+    conn.set(key, value).await
+} else {
+    conn.set_ex(key, value, 100).await
+}
+
+// After 2: if single Future instance is necessary, you can wrap with async block
+async {
+    if condition {
+        conn.set(key, value).await
+    } else {
+        conn.set_ex(key, value, 100).await
+    }
+}.await
+
+// After 3: when you actually need BoxedFuture, you can call `boxed`
+if condition {
+    conn.set(key, value).boxed()
+} else {
+    conn.set_ex(key, value, 100).boxed()
+}
+```
+
 ### JSON commands got promoted to standard commands (Breaking Change)
 
 `JsonCommands`, and `JsonAsyncCommands` got merged into `Commands`, and `JsonAsyncCommands`.
