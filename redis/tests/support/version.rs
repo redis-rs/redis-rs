@@ -17,6 +17,13 @@ pub const REDIS_CE_8_8: Component = ("redis", (8, 8, 0));
 pub const REDIS_JSON_8_8: Component = ("ReJSON", (8, 8, 0));
 pub const REDIS_BLOOM_ANY: Component = ("redis:bf", (0, 0, 0));
 
+pub const REDIS_SEARCH_8_0: Component = ("redis:search", (8, 0, 0));
+// TODO: pin to the real minimum once the version decoder
+// handles valkey-search's bit-shifted `ver` (e.g. 66049 == 1.2.1, but we
+// currently decode as 6.60.49). Until then, accept any version.
+// See https://github.com/redis-rs/redis-rs/pull/2318#discussion_r4096606850
+pub const VALKEY_SEARCH_ANY: Component = ("valkey:search", (0, 0, 0));
+
 // Valkey forked off at Redis 7.2.4 and still reports its Redis version 7.2.4. So tests that run
 // on Redis<=7.2.4 automatically also run on any Valkey server, and we only need version guards for
 // later versions.
@@ -150,6 +157,16 @@ impl AvailableComponents {
                     name = "redis:bf".to_string();
                 } else {
                     name = "valkey:bf".to_string();
+                }
+            }
+
+            // Like `bf`, both servers' search modules report as `search`: Redis' tracks the
+            // server version (8.x+), Valkey's is still ~1.x.
+            if name == "search" {
+                if version > (8, 0, 0) {
+                    name = "redis:search".to_string();
+                } else {
+                    name = "valkey:search".to_string();
                 }
             }
 
@@ -347,7 +364,7 @@ macro_rules! skip_if_context_does_not_support {
 /// ```
 #[macro_export]
 macro_rules! run_test_if_version_supported {
-    ($component:expr) => {{ run_test_if_version_supported!($component, &[]) }};
+    ($component:expr) => {{ $crate::run_test_if_version_supported!($component, &[]) }};
     ($component:expr, $modules:expr) => {{
         let ctx = $crate::support::TestContext::with_modules($modules);
 
