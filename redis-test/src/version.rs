@@ -20,9 +20,18 @@ pub const REDIS_BLOOM_ANY: Component = ("redis:bf", (0, 0, 0));
 // Valkey forked off at Redis 7.2.4 and still reports its Redis version 7.2.4. So tests that run
 // on Redis<=7.2.4 automatically also run on any Valkey server, and we only need version guards for
 // later versions.
+pub const VALKEY_ANY: Component = ("valkey", (0, 0, 0));
+pub const VALKEY_7_2: Component = ("valkey", (7, 2, 15));
+pub const VALKEY_7_2_15: Component = ("valkey", (7, 2, 15));
+pub const VALKEY_8_0: Component = ("valkey", (8, 0, 0));
+pub const VALKEY_8_0_11: Component = ("valkey", (8, 0, 11));
 pub const VALKEY_8_1: Component = ("valkey", (8, 1, 0));
+pub const VALKEY_8_1_10: Component = ("valkey", (8, 1, 10));
 pub const VALKEY_9_0: Component = ("valkey", (9, 0, 0));
+pub const VALKEY_9_0_6: Component = ("valkey", (9, 0, 6));
 pub const VALKEY_9_1: Component = ("valkey", (9, 1, 0));
+pub const VALKEY_9_1_2: Component = ("valkey", (9, 1, 2));
+pub const VALKEY_9_2: Component = ("valkey", (9, 2, 0));
 
 /// Version of a software component
 pub type Version = (u32, u32, u32);

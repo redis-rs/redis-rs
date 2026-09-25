@@ -528,10 +528,17 @@ where
         let info = get_connection_info(node, &self.cluster_params);
 
         let mut conn = C::connect(info, Some(self.cluster_params.connection_timeout))?;
-        // If READONLY is sent to primary nodes, it will have no effect.
-        // We set this unconditionally, because we don't know whether we'll be making read calls
-        // to replicas. (We allow overriding routing per-call)
-        cmd("READONLY").exec(&mut conn)?;
+        if self.cluster_params.read_routing_factory.is_some() {
+            // If READONLY is sent to primary nodes, it will have no effect.
+            // We set this conditionally, because we don't know whether we'll be making read calls
+            // to replicas. (We allow overriding routing per-call)
+            cmd("READONLY")
+        } else {
+            // if readonly reading isn't set, we don't want to send READONLY, since some Redis providers don't support this command
+            // (for example, azure managed redis - https://redis.io/docs/latest/operate/rs/references/compatibility/commands/cluster/)
+            cmd("PING")
+        }
+        .exec(&mut conn)?;
         conn.set_read_timeout(*self.read_timeout.borrow())?;
         conn.set_write_timeout(*self.write_timeout.borrow())?;
         Ok(conn)
