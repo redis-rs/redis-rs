@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::fmt;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::net::{self, SocketAddr, TcpStream, ToSocketAddrs};
 use std::ops::DerefMut;
 use std::path::PathBuf;
@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use crate::cmd::{Cmd, cmd, pipe};
 use crate::errors::{ErrorKind, RedisError, ServerError, ServerErrorKind};
 use crate::io::tcp::{TcpSettings, stream_with_settings};
-use crate::parser::Parser;
+use crate::parser::{Parser, err_parser};
 use crate::pipeline::Pipeline;
 use crate::types::{
     FromRedisValue, HashMap, PushKind, RedisResult, SyncPushSender, ToRedisArgs, Value,
@@ -1162,6 +1162,27 @@ impl ActualConnection {
     }
 }
 
+/// Gives uniform, direct read access to the underlying stream regardless of
+/// which transport (plain TCP, TLS, Unix socket) backs the connection.
+///
+/// Used by [`Connection::client_list_iter`] to stream a reply's raw bytes
+/// off the wire without going through [`Parser`], so it doesn't have to
+/// duplicate the per-transport dispatch every other read path here already
+/// does.
+impl Read for ActualConnection {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::Tcp(TcpConnection { reader, .. }) => reader.read(buf),
+            #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
+            Self::TcpNativeTls(connection) => connection.reader.read(buf),
+            #[cfg(feature = "tls-rustls")]
+            Self::TcpRustls(connection) => connection.reader.read(buf),
+            #[cfg(unix)]
+            Self::Unix(UnixConnection { sock, .. }) => sock.read(buf),
+        }
+    }
+}
+
 #[cfg(feature = "tls-rustls")]
 pub(crate) fn create_rustls_config(
     insecure: bool,
@@ -1669,6 +1690,97 @@ impl Connection {
         self.read(true)
     }
 
+    /// Issues `CLIENT LIST` and returns an iterator over the individual
+    /// client-info lines of the reply, reading it directly off the wire
+    /// instead of buffering the whole reply first. Peak memory is roughly
+    /// one read-chunk plus the longest line, independent of client count.
+    ///
+    /// The returned iterator can be dropped early without desyncing the
+    /// connection. A push arriving *while the call is in flight* (between
+    /// sending the command and reading its reply) is not handled and
+    /// closes the connection -- avoid this on connections with concurrent
+    /// push traffic (e.g. client-side caching); use plain `CLIENT LIST`
+    /// via `query` there instead.
+    ///
+    /// Sync [`Connection`] only, for now -- there is no equivalent on
+    /// [`crate::aio::MultiplexedConnection`]/async connections or on the
+    /// cluster client.
+    pub fn client_list_iter(&mut self) -> RedisResult<ClientListIter<'_>> {
+        // Anything already buffered in the parser, or still owed from an
+        // earlier command, necessarily predates the command we are about to
+        // send below (we haven't sent it yet, and replies arrive in request
+        // order), so draining it first can only consume older traffic.
+        // Without this, `read_header`'s raw socket read below could land on
+        // stale bytes instead of CLIENT LIST's own reply, silently
+        // returning stale data mislabeled as the client list.
+        //
+        // Deliberately never goes through `recv_response`/`Connection::read`
+        // for this: both auto-continue once `messages_to_skip` debt is paid
+        // off, looping back to fetch what they assume is a legitimate
+        // *next* reply -- true when they're called for a command that was
+        // just sent, not here (no command has gone out yet at this point in
+        // `client_list_iter`). Taking that branch here would block waiting
+        // for a reply that will never arrive, since nothing will be sent
+        // until this very drain finishes. So this reads one value at a
+        // time via the full parser directly and decides for itself whether
+        // to loop again, for either reason to keep draining:
+        while self.parser.has_buffered_input() || self.messages_to_skip > 0 {
+            let value = self.parser.parse_value(&mut self.con);
+            self.try_send(&value);
+            match value {
+                // A push isn't a reply to any command: it never pays off
+                // `messages_to_skip` debt, and finding one on its own
+                // (nothing owed) isn't "another reply pending" either --
+                // just older traffic to skip past either way.
+                Ok(Value::Push { .. }) => continue,
+                Ok(other) => {
+                    if self.messages_to_skip > 0 {
+                        self.messages_to_skip -= 1;
+                    } else {
+                        return Err((
+                            ErrorKind::Client,
+                            "client_list_iter: cannot start streaming while another reply is pending",
+                            format!("{other:?}"),
+                        )
+                            .into());
+                    }
+                }
+                // A timeout here is the same "still waiting on a reply"
+                // situation `Connection::read` itself leaves the connection
+                // open and retriable for; only close it for something more
+                // serious (a dropped connection, a protocol error).
+                Err(err) if err.is_timeout() => return Err(err),
+                Err(err) => {
+                    self.close_connection();
+                    return Err(err);
+                }
+            }
+        }
+
+        let packed = cmd("CLIENT").arg("LIST").get_packed_command();
+        self.send_bytes(&packed)?;
+
+        let mut lines = BulkReplyLines::new();
+        if let Err(err) = lines.read_header(&mut self.con) {
+            // A clean server-side rejection of CLIENT LIST itself (e.g. an
+            // ACL/NOPERM error, or any other single-line error --
+            // including one `err_parser` doesn't recognize, which comes
+            // back as `ErrorKind::Extension` rather than
+            // `ErrorKind::Server`) fully consumes exactly one line and
+            // leaves the wire in sync -- unlike a genuine framing/IO
+            // error or an unexpected reply shape, it doesn't warrant
+            // tearing down an otherwise-healthy connection. `read_header`
+            // produces `Server`/`Extension` only via that one branch, so
+            // this check is exactly "did it take that branch", not a
+            // guess based on the error's contents.
+            if !matches!(err.kind(), ErrorKind::Server(_) | ErrorKind::Extension) {
+                self.close_connection();
+            }
+            return Err(err);
+        }
+        Ok(ClientListIter { con: self, lines })
+    }
+
     /// Sets the write timeout for the connection.
     ///
     /// If the provided value is `None`, then `send_packed_command` call will
@@ -1952,6 +2064,304 @@ impl Connection {
             .arg(pchannel)
             .set_no_response(true)
             .exec(self)
+    }
+}
+
+/// Streams the individual lines of a RESP bulk-string reply without
+/// buffering the whole thing in memory.
+///
+/// This is the reader-agnostic core behind [`ClientListIter`] (kept
+/// independent of [`Connection`]/[`ActualConnection`] so it can be driven
+/// against a plain `&[u8]` or a synthetic fault-injecting reader in tests,
+/// not just a live socket). Every read is bounded to exactly how many bytes
+/// are still owed for the current phase (header line, payload chunk, or
+/// trailing CRLF), so a single `read` call can never pull in bytes that
+/// belong to whatever the underlying stream sends after this reply.
+struct BulkReplyLines {
+    /// Payload bytes of the bulk-string reply not yet read off the wire.
+    remaining: u64,
+    /// Bytes of the trailing CRLF (after the payload) not yet read off the
+    /// wire; 0 once consumed, or from the start for a nil reply.
+    trailer_remaining: u8,
+    /// Payload bytes read off the wire but not yet split into a full line.
+    pending: Vec<u8>,
+    /// Reusable read buffer.
+    chunk: Box<[u8]>,
+    finished: bool,
+}
+
+/// A line from a [`BulkReplyLines`] reply was not valid UTF-8.
+fn invalid_line_utf8(err: std::string::FromUtf8Error) -> RedisError {
+    RedisError::from((
+        ErrorKind::Parse,
+        "CLIENT LIST reply line was not valid UTF-8",
+        err.to_string(),
+    ))
+}
+
+impl BulkReplyLines {
+    /// Read granularity for the payload; unrelated to (and much smaller
+    /// than) the number of clients a reply might describe.
+    const CHUNK_SIZE: usize = 16 * 1024;
+
+    /// Upper bound on the RESP header line (`$<len>\r\n`, `=<len>\r\n`, or a
+    /// single-line server error) read one byte at a time in `read_header`.
+    /// Generous for any of those shapes in practice, but still a bound: an
+    /// unterminated line (a misbehaving or malicious peer that never sends
+    /// `\n`) would otherwise grow `line` without limit.
+    const MAX_HEADER_LINE_LEN: usize = 4 * 1024;
+
+    fn new() -> Self {
+        Self {
+            remaining: 0,
+            trailer_remaining: 0,
+            pending: Vec::new(),
+            chunk: vec![0u8; Self::CHUNK_SIZE].into_boxed_slice(),
+            finished: false,
+        }
+    }
+
+    fn read_exact_bounded<R: Read>(reader: &mut R, want: usize) -> RedisResult<Vec<u8>> {
+        let mut buf = vec![0u8; want];
+        let mut filled = 0;
+        while filled < want {
+            let n = reader.read(&mut buf[filled..])?;
+            if n == 0 {
+                return Err(RedisError::from(io::Error::from(
+                    io::ErrorKind::UnexpectedEof,
+                )));
+            }
+            filled += n;
+        }
+        Ok(buf)
+    }
+
+    /// Reads and parses the RESP header line -- a bulk-string/verbatim-string
+    /// header (`$<len>\r\n` / `=<len>\r\n`) on success, or a single-line
+    /// server error (`-...\r\n`) if the server rejected `CLIENT LIST`
+    /// itself -- from `reader`, one byte at a time so a single `read` call
+    /// can never pull in payload bytes (whose count depends on `len`, not
+    /// known yet).
+    ///
+    /// Must be called exactly once, before any [`Self::next_line`] calls,
+    /// with `reader` positioned at the very start of the reply -- nothing
+    /// else pending ahead of it.
+    fn read_header<R: Read>(&mut self, reader: &mut R) -> RedisResult<()> {
+        let mut line = Vec::new();
+        loop {
+            let byte = Self::read_exact_bounded(reader, 1)?[0];
+            if byte == b'\n' {
+                break;
+            }
+            line.push(byte);
+            if line.len() > Self::MAX_HEADER_LINE_LEN {
+                return Err((ErrorKind::Parse, "CLIENT LIST reply header line too long").into());
+            }
+        }
+        if line.last() == Some(&b'\r') {
+            line.pop();
+        }
+        let Some((&marker, rest)) = line.split_first() else {
+            return Err((ErrorKind::Parse, "empty CLIENT LIST reply header").into());
+        };
+        if marker == b'-' {
+            // A single-line server error (e.g. an ACL/NOPERM rejection of
+            // CLIENT LIST itself) fully and cleanly consumes exactly this
+            // reply -- the wire is still in sync afterward, unlike any
+            // other unexpected marker below. Surfaced as a real,
+            // recognizable `ErrorKind::Server` error (via the same parser
+            // this crate uses for every other server error) specifically
+            // so the caller can tell this case apart and leave the
+            // connection open.
+            let text = from_utf8(rest).unwrap_or("<invalid error text>");
+            return Err(err_parser(text).into());
+        }
+        // Real servers reply to CLIENT LIST/INFO with a plain bulk string
+        // ($) under RESP2, but with a Verbatim String (=) under RESP3 --
+        // confirmed against a live server, not just from the spec. A
+        // verbatim string's declared length includes a 3-byte format tag
+        // plus ':' (e.g. "txt:") ahead of the actual text.
+        if marker != b'$' && marker != b'=' {
+            return Err((
+                ErrorKind::Client,
+                "client_list_iter: expected a bulk string or verbatim string reply for CLIENT LIST",
+                String::from_utf8_lossy(rest).into_owned(),
+            )
+                .into());
+        }
+        let len: i64 = from_utf8(rest)
+            .ok()
+            .and_then(|text| text.parse().ok())
+            .ok_or_else(|| {
+                RedisError::from((ErrorKind::Parse, "invalid CLIENT LIST reply length"))
+            })?;
+        self.remaining = len.max(0) as u64;
+        self.trailer_remaining = if len >= 0 { 2 } else { 0 };
+        if marker == b'=' && self.remaining > 0 {
+            // The 3-byte format tag + ':' is mandatory for a well-formed
+            // verbatim string; a declared length shorter than that is
+            // malformed, not a legitimately-short reply -- silently
+            // consuming whatever's there as a "truncated" prefix would
+            // accept garbage as a valid (empty) string instead of
+            // surfacing the error.
+            if self.remaining < 4 {
+                return Err((
+                    ErrorKind::Parse,
+                    "verbatim string reply shorter than its mandatory format-tag prefix",
+                )
+                    .into());
+            }
+            Self::read_exact_bounded(reader, 4)?;
+            self.remaining -= 4;
+        }
+        if self.remaining == 0 {
+            self.consume_trailer(reader)?;
+        }
+        Ok(())
+    }
+
+    /// Reads the trailing CRLF after the payload, bounded to exactly the
+    /// bytes still owed so it can't read into whatever follows this reply.
+    fn consume_trailer<R: Read>(&mut self, reader: &mut R) -> RedisResult<()> {
+        if self.trailer_remaining > 0 {
+            Self::read_exact_bounded(reader, self.trailer_remaining as usize)?;
+            self.trailer_remaining = 0;
+        }
+        Ok(())
+    }
+
+    /// Returns the next client-info line, `Ok(None)` once the reply is
+    /// fully consumed, or an error (after which every further call also
+    /// returns that same terminal state: `Ok(None)`).
+    fn next_line<R: Read>(&mut self, reader: &mut R) -> RedisResult<Option<String>> {
+        if self.finished {
+            return Ok(None);
+        }
+        loop {
+            if let Some(pos) = self.pending.iter().position(|&b| b == b'\n') {
+                let mut raw: Vec<u8> = self.pending.drain(..=pos).collect();
+                raw.pop(); // the '\n' itself
+                if raw.last() == Some(&b'\r') {
+                    raw.pop();
+                }
+                return String::from_utf8(raw).map(Some).map_err(|err| {
+                    // Fuse on error like every other exit from this function:
+                    // a further call must not resume yielding from whatever
+                    // was left in `pending`.
+                    self.finished = true;
+                    invalid_line_utf8(err)
+                });
+            }
+            if self.remaining == 0 {
+                if !self.pending.is_empty() {
+                    // A final line with no terminating '\n'. Yield it now
+                    // without touching the trailer -- deferred to the next
+                    // call, once nothing already-complete is left to lose
+                    // if that trailer read then fails.
+                    let raw = std::mem::take(&mut self.pending);
+                    return String::from_utf8(raw).map(Some).map_err(|err| {
+                        self.finished = true;
+                        invalid_line_utf8(err)
+                    });
+                }
+                self.finished = true;
+                self.consume_trailer(reader)?;
+                return Ok(None);
+            }
+
+            // Bounded to what's still owed for the payload: a single `read`
+            // can never pull in the trailing CRLF, let alone bytes for
+            // anything the underlying stream sends after this reply.
+            let want = usize::try_from(self.remaining)
+                .unwrap_or(usize::MAX)
+                .min(self.chunk.len());
+            let n = reader.read(&mut self.chunk[..want]).inspect_err(|_| {
+                self.finished = true;
+            })?;
+            if n == 0 {
+                self.finished = true;
+                return Err(RedisError::from(io::Error::from(
+                    io::ErrorKind::UnexpectedEof,
+                )));
+            }
+            self.pending.extend_from_slice(&self.chunk[..n]);
+            self.remaining -= n as u64;
+            // Loop back rather than consuming the trailer here even if
+            // `remaining` just hit zero: any complete lines this read
+            // completed still need to be drained from `pending` and
+            // returned (one per call) first, so a trailer-read failure
+            // can never discard an already-fully-received line.
+        }
+    }
+
+    /// Reads and discards whatever of the reply hasn't been consumed yet.
+    ///
+    /// An iterator can be dropped before it is fully drained (`.take(n)`,
+    /// an early `break`/`return`/`?`, a panic unwinding through it) -- all
+    /// ordinary ways to use a Rust iterator. Without this, the unread
+    /// remainder of the payload would sit on the socket and desync every
+    /// subsequent command on the connection. Bounded the same way as
+    /// `next_line`, so this still can't read past the end of the reply.
+    fn drain<R: Read>(&mut self, reader: &mut R) -> RedisResult<()> {
+        if self.finished {
+            return Ok(());
+        }
+        self.pending.clear();
+        while self.remaining > 0 {
+            let want = usize::try_from(self.remaining)
+                .unwrap_or(usize::MAX)
+                .min(self.chunk.len());
+            let n = reader.read(&mut self.chunk[..want])?;
+            if n == 0 {
+                self.finished = true;
+                return Err(RedisError::from(io::Error::from(
+                    io::ErrorKind::UnexpectedEof,
+                )));
+            }
+            self.remaining -= n as u64;
+        }
+        self.consume_trailer(reader)?;
+        self.finished = true;
+        Ok(())
+    }
+}
+
+/// Iterator over the individual client-info lines of a `CLIENT LIST` reply.
+///
+/// Returned by [`Connection::client_list_iter`]; see there for why this
+/// exists.
+pub struct ClientListIter<'a> {
+    con: &'a mut Connection,
+    lines: BulkReplyLines,
+}
+
+impl Iterator for ClientListIter<'_> {
+    type Item = RedisResult<String>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.lines.next_line(&mut self.con.con) {
+            Ok(Some(line)) => Some(Ok(line)),
+            Ok(None) => None,
+            Err(err) => {
+                // A protocol-level error (bad header) or a dropped
+                // connection both leave the byte stream desynced; shut the
+                // connection down rather than let a caller keep using it.
+                self.con.close_connection();
+                Some(Err(err))
+            }
+        }
+    }
+}
+
+impl Drop for ClientListIter<'_> {
+    /// Drains whatever of the reply the caller didn't consume, so an early
+    /// drop (`.take(n)`, an early `break`/`return`/`?`, ...) can't leave
+    /// unread bytes on the socket to desync the next command -- matches
+    /// `PubSub`'s Drop, which does the analogous cleanup for its state.
+    fn drop(&mut self) {
+        if self.lines.drain(&mut self.con.con).is_err() {
+            self.con.close_connection();
+        }
     }
 }
 
@@ -2798,5 +3208,659 @@ mod tests {
 
         // Check the connection setup pipeline
         assert_lib_name_in_connection_setup_pipeline(&redis_connection_info, "foo", "42.4711");
+    }
+
+    /// Reproduces the exact race a `CLIENT LIST` reply's raw byte stream
+    /// could be desynced by: a RESP3 push arriving while
+    /// `Connection::client_list_iter`'s `messages_to_skip` debt is still
+    /// being drained. Built directly over a `UnixStream::pair()` (not a
+    /// live server) so every byte's timing is under this test's control --
+    /// a real server can't be made to guarantee a push arrives strictly
+    /// before an outstanding stale reply.
+    #[cfg(unix)]
+    #[test]
+    fn client_list_iter_does_not_miscount_a_push_arriving_mid_skip_drain() {
+        use std::io::Write;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let (client_sock, mut server_sock) = UnixStream::pair().unwrap();
+
+        let mut con = Connection {
+            con: ActualConnection::Unix(UnixConnection {
+                sock: client_sock,
+                open: true,
+            }),
+            parser: Parser::new(),
+            db: 0,
+            pubsub: false,
+            protocol: ProtocolVersion::RESP3,
+            push_sender: None,
+            // Simulates an earlier command whose reply is still outstanding
+            // (e.g. its client-side read timed out via `set_read_timeout`).
+            messages_to_skip: 1,
+        };
+        let (tx, rx) = mpsc::channel();
+        con.set_push_sender(tx);
+
+        let server = std::thread::spawn(move || {
+            // A push, sent first.
+            server_sock
+                .write_all(b">2\r\n+invalidate\r\n*1\r\n$3\r\nfoo\r\n")
+                .unwrap();
+            server_sock.flush().unwrap();
+            // Give the reader every opportunity to have already parsed and
+            // returned from that write as its own, separate value before
+            // the next one arrives.
+            std::thread::sleep(Duration::from_millis(50));
+            // The stale command's real, still-outstanding reply. A plain
+            // bulk string deliberately: this is exactly the shape
+            // `BulkReplyLines::read_header` also accepts, so if the drain
+            // mistook the push above for having paid off the debt, this
+            // would be misread as CLIENT LIST's own header instead of
+            // being consumed as the debt.
+            server_sock.write_all(b"$5\r\nstale\r\n").unwrap();
+            server_sock.flush().unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+            // CLIENT LIST's real reply.
+            server_sock
+                .write_all(b"$17\r\nid=1 addr=1.2.3.4\r\n")
+                .unwrap();
+            server_sock.flush().unwrap();
+            // Drain (and discard) the CLIENT LIST command the client sent:
+            // dropping this end below with that still unread in its
+            // receive buffer would otherwise abort the socket (ECONNRESET
+            // on the peer) instead of closing it cleanly.
+            server_sock
+                .set_read_timeout(Some(Duration::from_millis(200)))
+                .unwrap();
+            let mut discard = [0u8; 256];
+            let _ = server_sock.read(&mut discard);
+        });
+
+        let lines: Vec<String> = con
+            .client_list_iter()
+            .unwrap()
+            .collect::<RedisResult<_>>()
+            .unwrap();
+        server.join().unwrap();
+
+        // The push must have been delivered to the push sender -- not
+        // miscounted as the debt payoff.
+        let push = rx.try_recv().expect("push should have been forwarded");
+        assert_eq!(push.kind, PushKind::Invalidate);
+        // And the actual CLIENT LIST reply, not the stale one, must be
+        // what came back.
+        assert_eq!(lines, vec!["id=1 addr=1.2.3.4".to_string()]);
+    }
+
+    /// Reproduces a hang: a client-side read timeout firing mid-value (not
+    /// on a clean value boundary) is an ordinary outcome of
+    /// `set_read_timeout` on a reply spanning more than one socket read,
+    /// and leaves whatever bytes had already arrived sitting in the
+    /// parser's buffer as an in-progress parse -- `has_buffered_input()` is
+    /// true even though nothing complete is queued. If `client_list_iter`
+    /// drained that the way an earlier version of it did (through
+    /// `recv_response`/`Connection::read`), completing that value would
+    /// trip `read`'s own auto-continuation (loop back for "the next
+    /// reply" once `messages_to_skip` debt hits zero) -- which blocks
+    /// forever here, since CLIENT LIST itself hasn't been sent yet at that
+    /// point for any such "next reply" to ever arrive for.
+    #[cfg(unix)]
+    #[test]
+    fn client_list_iter_does_not_hang_on_a_timeout_that_left_a_partial_value_buffered() {
+        use std::io::Write;
+        use std::time::Duration;
+
+        struct PartialThenTimeout {
+            chunk: &'static [u8],
+            emitted: bool,
+        }
+        impl Read for PartialThenTimeout {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                if !self.emitted {
+                    self.emitted = true;
+                    let n = self.chunk.len().min(buf.len());
+                    buf[..n].copy_from_slice(&self.chunk[..n]);
+                    Ok(n)
+                } else {
+                    Err(io::Error::from(io::ErrorKind::WouldBlock))
+                }
+            }
+        }
+
+        // Seed the parser with a bulk string ("$5\r\nhello\r\n") stuck
+        // mid-parse: only "hel" of its 5-byte body has arrived so far.
+        let mut parser = Parser::new();
+        let err = parser
+            .parse_value(PartialThenTimeout {
+                chunk: b"$5\r\nhel",
+                emitted: false,
+            })
+            .unwrap_err();
+        assert!(err.is_timeout());
+        assert!(parser.has_buffered_input());
+
+        let (client_sock, mut server_sock) = UnixStream::pair().unwrap();
+        // Turns a regression back into this hang into a bounded failure
+        // instead of actually hanging the test suite.
+        client_sock
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+
+        let mut con = Connection {
+            con: ActualConnection::Unix(UnixConnection {
+                sock: client_sock,
+                open: true,
+            }),
+            parser,
+            db: 0,
+            pubsub: false,
+            protocol: ProtocolVersion::RESP3,
+            push_sender: None,
+            // `Connection::read` would have incremented this when the
+            // timeout above occurred on a real socket.
+            messages_to_skip: 1,
+        };
+
+        let server = std::thread::spawn(move || {
+            // Completes the stale reply left mid-parse ("hel" + "lo\r\n" =
+            // "hello\r\n").
+            server_sock.write_all(b"lo\r\n").unwrap();
+            server_sock.flush().unwrap();
+
+            // Wait for the CLIENT LIST command the client sends once its
+            // drain is done, exactly as a real server would (it never
+            // sends a reply before the matching request arrives) --
+            // proves the drain actually finished and sent it, rather than
+            // this test racing ahead of a client that's still stuck.
+            server_sock
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut discard = [0u8; 256];
+            let n = server_sock.read(&mut discard).unwrap();
+            assert!(n > 0);
+
+            // Only now, CLIENT LIST's real reply.
+            server_sock
+                .write_all(b"$17\r\nid=1 addr=1.2.3.4\r\n")
+                .unwrap();
+            server_sock.flush().unwrap();
+        });
+
+        let lines: Vec<String> = con
+            .client_list_iter()
+            .unwrap()
+            .collect::<RedisResult<_>>()
+            .unwrap();
+        server.join().unwrap();
+
+        assert_eq!(lines, vec!["id=1 addr=1.2.3.4".to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn client_list_iter_leaves_the_connection_open_on_an_unrecognized_server_error_code() {
+        use std::io::Write;
+
+        let (client_sock, mut server_sock) = UnixStream::pair().unwrap();
+        let mut con = Connection {
+            con: ActualConnection::Unix(UnixConnection {
+                sock: client_sock,
+                open: true,
+            }),
+            parser: Parser::new(),
+            db: 0,
+            pubsub: false,
+            protocol: ProtocolVersion::RESP2,
+            push_sender: None,
+            messages_to_skip: 0,
+        };
+
+        let server = std::thread::spawn(move || {
+            // Wait for the CLIENT LIST request before replying, exactly
+            // as a real server would (never send a reply before its
+            // matching request arrives) -- avoids racing a client that
+            // hasn't sent it yet.
+            let mut discard = [0u8; 256];
+            let n = server_sock.read(&mut discard).unwrap();
+            assert!(n > 0);
+
+            // An error code `err_parser` doesn't recognize -- comes back
+            // as `ErrorKind::Extension`, not `ErrorKind::Server`, but is
+            // exactly as cleanly consumed as a recognized one.
+            server_sock
+                .write_all(b"-NOAUTH Authentication required.\r\n")
+                .unwrap();
+            server_sock.flush().unwrap();
+
+            // Likewise, wait for the follow-up PING before replying to it.
+            let n = server_sock.read(&mut discard).unwrap();
+            assert!(n > 0);
+            server_sock.write_all(b"+PONG\r\n").unwrap();
+            server_sock.flush().unwrap();
+        });
+
+        let err = match con.client_list_iter() {
+            Ok(_) => panic!("expected client_list_iter to fail on the NOAUTH rejection"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), ErrorKind::Extension);
+        assert!(con.is_open());
+
+        let pong: String = cmd("PING").query(&mut con).unwrap();
+        assert_eq!(pong, "PONG");
+        server.join().unwrap();
+    }
+
+    mod bulk_reply_lines {
+        use super::*;
+        use std::io::Cursor;
+
+        /// Wraps a byte source and returns at most `frag_size` bytes per
+        /// `read` call, regardless of how large a buffer the caller passes
+        /// in -- exercises the header/line logic against reads far smaller
+        /// than a real socket would ever hand back.
+        struct Fragmented<R> {
+            inner: R,
+            frag_size: usize,
+        }
+
+        impl<R: Read> Read for Fragmented<R> {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                let want = buf.len().min(self.frag_size);
+                self.inner.read(&mut buf[..want])
+            }
+        }
+
+        /// Returns `Ok(0)` (EOF) once `limit` bytes have been read, instead
+        /// of whatever the wrapped source would have produced -- simulates
+        /// a connection dropped mid-reply.
+        struct TruncateAfter<R> {
+            inner: R,
+            remaining: usize,
+        }
+
+        impl<R: Read> Read for TruncateAfter<R> {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                if self.remaining == 0 {
+                    return Ok(0);
+                }
+                let want = buf.len().min(self.remaining);
+                let n = self.inner.read(&mut buf[..want])?;
+                self.remaining -= n;
+                Ok(n)
+            }
+        }
+
+        /// Builds a full RESP bulk-string reply (`$<len>\r\n<body>\r\n`) for `body`.
+        fn bulk_reply(body: &[u8]) -> Vec<u8> {
+            let mut out = format!("${}\r\n", body.len()).into_bytes();
+            out.extend_from_slice(body);
+            out.extend_from_slice(b"\r\n");
+            out
+        }
+
+        /// Builds a RESP3 Verbatim String reply (`=<len>\r\ntxt:<body>\r\n`) --
+        /// what a real server sends for `CLIENT LIST`/`CLIENT INFO` under
+        /// RESP3, instead of the plain bulk string `bulk_reply` builds.
+        fn verbatim_reply(body: &[u8]) -> Vec<u8> {
+            let mut payload = b"txt:".to_vec();
+            payload.extend_from_slice(body);
+            let mut out = format!("={}\r\n", payload.len()).into_bytes();
+            out.extend_from_slice(&payload);
+            out.extend_from_slice(b"\r\n");
+            out
+        }
+
+        /// Drives a [`BulkReplyLines`] over `reader` to completion, asserting
+        /// it never returns an error, and collects the yielded lines.
+        fn collect_lines<R: Read>(mut reader: R) -> Vec<String> {
+            let mut lines = BulkReplyLines::new();
+            lines.read_header(&mut reader).expect("header");
+            let mut out = Vec::new();
+            while let Some(line) = lines.next_line(&mut reader).expect("line") {
+                out.push(line);
+            }
+            out
+        }
+
+        #[test]
+        fn single_line() {
+            let reply = bulk_reply(b"id=1 addr=127.0.0.1:1 name= age=0\n");
+            assert_eq!(
+                collect_lines(Cursor::new(reply)),
+                vec!["id=1 addr=127.0.0.1:1 name= age=0"]
+            );
+        }
+
+        #[test]
+        fn multiple_lines() {
+            let reply = bulk_reply(b"line1\nline2\nline3\n");
+            assert_eq!(
+                collect_lines(Cursor::new(reply)),
+                vec!["line1", "line2", "line3"]
+            );
+        }
+
+        #[test]
+        fn trailing_line_without_final_newline_is_still_yielded() {
+            // Real `CLIENT LIST` replies end every line with `\n`, but the
+            // reader shouldn't silently drop a trailing partial line if a
+            // server ever didn't.
+            let reply = bulk_reply(b"line1\nline2");
+            assert_eq!(collect_lines(Cursor::new(reply)), vec!["line1", "line2"]);
+        }
+
+        #[test]
+        fn nil_reply_yields_no_lines() {
+            let reply = b"$-1\r\n".to_vec();
+            assert_eq!(collect_lines(Cursor::new(reply)), Vec::<String>::new());
+        }
+
+        #[test]
+        fn empty_reply_yields_no_lines() {
+            let reply = bulk_reply(b"");
+            assert_eq!(collect_lines(Cursor::new(reply)), Vec::<String>::new());
+        }
+
+        #[test]
+        fn large_reply_across_many_chunk_boundaries() {
+            // Several multiples of the internal chunk size, with lines that
+            // don't evenly divide it, so at least some fall across a
+            // chunk-read boundary.
+            let expected: Vec<String> = (0..5000)
+                .map(|i| format!("id={i} addr=127.0.0.1:{i} cmd=client|list"))
+                .collect();
+            let body = expected.join("\n") + "\n";
+            assert!(body.len() > BulkReplyLines::CHUNK_SIZE * 3);
+            let reply = bulk_reply(body.as_bytes());
+            assert_eq!(collect_lines(Cursor::new(reply)), expected);
+        }
+
+        #[test]
+        fn fragmented_reads_yield_the_same_lines() {
+            let expected: Vec<String> = (0..200).map(|i| format!("id={i}")).collect();
+            let body = expected.join("\n") + "\n";
+            let reply = bulk_reply(body.as_bytes());
+            let fragmented = Fragmented {
+                inner: Cursor::new(reply),
+                frag_size: 3,
+            };
+            assert_eq!(collect_lines(fragmented), expected);
+        }
+
+        #[test]
+        fn never_reads_past_the_end_of_the_reply() {
+            // The core safety property: streaming a `CLIENT LIST` reply must
+            // not consume so much as one byte belonging to whatever comes
+            // next on the connection.
+            let body: String = (0..2000).map(|i| format!("id={i}\n")).collect();
+            let mut wire = bulk_reply(body.as_bytes());
+            let reply_len = wire.len();
+            wire.extend_from_slice(b"SENTINEL-DO-NOT-CONSUME");
+
+            let mut reader = Cursor::new(wire);
+            let mut lines = BulkReplyLines::new();
+            lines.read_header(&mut reader).unwrap();
+            let mut count = 0;
+            while lines.next_line(&mut reader).unwrap().is_some() {
+                count += 1;
+            }
+            assert_eq!(count, 2000);
+            assert_eq!(reader.position(), reply_len as u64);
+
+            let mut rest = String::new();
+            reader.read_to_string(&mut rest).unwrap();
+            assert_eq!(rest, "SENTINEL-DO-NOT-CONSUME");
+        }
+
+        #[test]
+        fn non_bulk_string_reply_is_an_error() {
+            let mut reader = Cursor::new(b"*2\r\n$1\r\na\r\n$1\r\nb\r\n".to_vec());
+            let mut lines = BulkReplyLines::new();
+            let err = lines.read_header(&mut reader).unwrap_err();
+            assert_eq!(err.kind(), ErrorKind::Client);
+        }
+
+        #[test]
+        fn server_error_reply_is_a_server_error_not_a_client_error() {
+            // A clean, single-line server rejection of CLIENT LIST itself
+            // (e.g. an ACL/NOPERM error) is surfaced as a real
+            // ErrorKind::Server, not the generic ErrorKind::Client used
+            // for a genuinely unexpected reply shape -- callers rely on
+            // this distinction to know the wire is still in sync.
+            let mut reader = Cursor::new(b"-ERR unknown command 'CLIENT'\r\n".to_vec());
+            let mut lines = BulkReplyLines::new();
+            let err = lines.read_header(&mut reader).unwrap_err();
+            assert_eq!(
+                err.kind(),
+                ErrorKind::Server(ServerErrorKind::ResponseError)
+            );
+            assert!(err.to_string().contains("unknown command"));
+        }
+
+        #[test]
+        fn unrecognized_server_error_code_is_still_a_clean_extension_error() {
+            // A single-line server error whose code `err_parser` doesn't
+            // recognize (e.g. NOAUTH) comes back as `ErrorKind::Extension`
+            // rather than `ErrorKind::Server`, but it's exactly as clean
+            // and wire-safe as a recognized one -- `read_header` produces
+            // Server/Extension only via this one branch, so callers must
+            // treat both the same way (leave the connection open).
+            let mut reader = Cursor::new(b"-NOAUTH Authentication required.\r\n".to_vec());
+            let mut lines = BulkReplyLines::new();
+            let err = lines.read_header(&mut reader).unwrap_err();
+            assert_eq!(err.kind(), ErrorKind::Extension);
+            assert!(err.to_string().contains("Authentication required"));
+        }
+
+        #[test]
+        fn unterminated_header_line_is_bounded_not_unbounded() {
+            // A misbehaving or malicious peer that never sends '\n' must
+            // not be able to grow the header buffer without limit.
+            let mut reader = Cursor::new(vec![b'$'; BulkReplyLines::MAX_HEADER_LINE_LEN * 2]);
+            let mut lines = BulkReplyLines::new();
+            let err = lines.read_header(&mut reader).unwrap_err();
+            assert_eq!(err.kind(), ErrorKind::Parse);
+        }
+
+        #[test]
+        fn malformed_length_is_an_error() {
+            let mut reader = Cursor::new(b"$notanumber\r\n".to_vec());
+            let mut lines = BulkReplyLines::new();
+            assert_eq!(
+                lines.read_header(&mut reader).unwrap_err().kind(),
+                ErrorKind::Parse
+            );
+        }
+
+        #[test]
+        fn truncated_before_header_ends_is_unexpected_eof() {
+            let mut reader = Cursor::new(b"$123".to_vec());
+            let mut lines = BulkReplyLines::new();
+            let err = lines.read_header(&mut reader).unwrap_err();
+            assert!(err.is_connection_dropped());
+        }
+
+        #[test]
+        fn truncated_mid_payload_is_unexpected_eof() {
+            let full = bulk_reply(b"id=1\nid=2\nid=3\n");
+            let mut reader = TruncateAfter {
+                inner: Cursor::new(full),
+                remaining: 7, // "$15\r\n" header (5 bytes) + "id" (2 bytes) -- cut mid-line
+            };
+            let mut lines = BulkReplyLines::new();
+            lines.read_header(&mut reader).unwrap();
+            let err = lines.next_line(&mut reader).unwrap_err();
+            assert!(err.is_connection_dropped());
+        }
+
+        #[test]
+        fn truncated_before_trailer_is_unexpected_eof() {
+            let body = b"id=1\nid=2\n";
+            let full = bulk_reply(body);
+            let cut = full.len() - 2; // drop the trailing CRLF
+            let mut reader = Cursor::new(full[..cut].to_vec());
+            let mut lines = BulkReplyLines::new();
+            lines.read_header(&mut reader).unwrap();
+            let mut received = Vec::new();
+            let mut last_err = None;
+            loop {
+                match lines.next_line(&mut reader) {
+                    Ok(Some(line)) => received.push(line),
+                    Ok(None) => break,
+                    Err(err) => {
+                        last_err = Some(err);
+                        break;
+                    }
+                }
+            }
+            // Both lines had already fully arrived (the whole body fits in
+            // one read, well before the truncated trailer is ever
+            // touched) -- a trailer-read failure must not discard lines
+            // that were already complete.
+            assert_eq!(received, vec!["id=1".to_string(), "id=2".to_string()]);
+            assert!(last_err.unwrap().is_connection_dropped());
+        }
+
+        #[test]
+        fn verbatim_string_shorter_than_its_format_tag_is_an_error() {
+            // A declared length under 4 can't hold the mandatory 3-byte
+            // format tag + ':' -- accepting it would silently treat
+            // malformed input as a valid (truncated) empty string.
+            let mut reader = Cursor::new(b"=2\r\ntx\r\n".to_vec());
+            let mut lines = BulkReplyLines::new();
+            let err = lines.read_header(&mut reader).unwrap_err();
+            assert_eq!(err.kind(), ErrorKind::Parse);
+        }
+
+        #[test]
+        fn invalid_utf8_line_is_a_parse_error() {
+            let mut body = b"id=1\n".to_vec();
+            body.extend_from_slice(&[0xff, 0xfe, b'\n']);
+            body.extend_from_slice(b"id=3\n");
+            let reply = bulk_reply(&body);
+            let mut reader = Cursor::new(reply);
+            let mut lines = BulkReplyLines::new();
+            lines.read_header(&mut reader).unwrap();
+            assert_eq!(
+                lines.next_line(&mut reader).unwrap(),
+                Some("id=1".to_string())
+            );
+            assert_eq!(
+                lines.next_line(&mut reader).unwrap_err().kind(),
+                ErrorKind::Parse
+            );
+            // Fused, like every other error exit: a further call must not
+            // resume yielding "id=3" from whatever was already buffered.
+            assert_eq!(lines.next_line(&mut reader).unwrap(), None);
+        }
+
+        #[test]
+        fn once_finished_further_calls_return_none() {
+            let reply = bulk_reply(b"id=1\n");
+            let mut reader = Cursor::new(reply);
+            let mut lines = BulkReplyLines::new();
+            lines.read_header(&mut reader).unwrap();
+            assert_eq!(
+                lines.next_line(&mut reader).unwrap(),
+                Some("id=1".to_string())
+            );
+            assert_eq!(lines.next_line(&mut reader).unwrap(), None);
+            assert_eq!(lines.next_line(&mut reader).unwrap(), None);
+        }
+
+        #[test]
+        fn resp3_verbatim_string_reply_is_handled_like_a_bulk_string() {
+            // What a real server actually sends for CLIENT LIST/CLIENT INFO
+            // under RESP3 -- confirmed against a live redis-server, not just
+            // from the spec: a Verbatim String, not a plain bulk string.
+            let reply = verbatim_reply(b"id=1\nid=2\nid=3\n");
+            assert_eq!(
+                collect_lines(Cursor::new(reply)),
+                vec!["id=1", "id=2", "id=3"]
+            );
+        }
+
+        #[test]
+        fn resp3_verbatim_string_format_tag_is_stripped_not_yielded() {
+            let reply = verbatim_reply(b"id=1\n");
+            let lines = collect_lines(Cursor::new(reply));
+            assert_eq!(lines, vec!["id=1"]);
+            assert!(!lines[0].contains("txt:"));
+        }
+
+        #[test]
+        fn resp3_empty_verbatim_string_yields_no_lines() {
+            let reply = verbatim_reply(b"");
+            assert_eq!(collect_lines(Cursor::new(reply)), Vec::<String>::new());
+        }
+
+        #[test]
+        fn resp3_verbatim_string_never_reads_past_the_end_of_the_reply() {
+            let body: String = (0..500).map(|i| format!("id={i}\n")).collect();
+            let mut wire = verbatim_reply(body.as_bytes());
+            let reply_len = wire.len();
+            wire.extend_from_slice(b"SENTINEL");
+
+            let mut reader = Cursor::new(wire);
+            let mut lines = BulkReplyLines::new();
+            lines.read_header(&mut reader).unwrap();
+            let mut count = 0;
+            while lines.next_line(&mut reader).unwrap().is_some() {
+                count += 1;
+            }
+            assert_eq!(count, 500);
+            assert_eq!(reader.position(), reply_len as u64);
+        }
+
+        #[test]
+        fn drain_after_partial_read_consumes_exactly_the_rest() {
+            let body: String = (0..1000).map(|i| format!("id={i}\n")).collect();
+            let mut wire = bulk_reply(body.as_bytes());
+            let reply_len = wire.len();
+            wire.extend_from_slice(b"SENTINEL");
+
+            let mut reader = Cursor::new(wire);
+            let mut lines = BulkReplyLines::new();
+            lines.read_header(&mut reader).unwrap();
+            // Read a few lines, then abandon the rest -- simulates dropping
+            // `ClientListIter` early (`.take(n)`, an early `break`, ...).
+            for _ in 0..3 {
+                lines.next_line(&mut reader).unwrap().unwrap();
+            }
+            lines.drain(&mut reader).unwrap();
+
+            assert_eq!(reader.position(), reply_len as u64);
+            let mut rest = String::new();
+            reader.read_to_string(&mut rest).unwrap();
+            assert_eq!(rest, "SENTINEL");
+        }
+
+        #[test]
+        fn drain_before_reading_anything_consumes_the_whole_reply() {
+            let mut wire = bulk_reply(b"id=1\nid=2\n");
+            let reply_len = wire.len();
+            wire.extend_from_slice(b"SENTINEL");
+
+            let mut reader = Cursor::new(wire);
+            let mut lines = BulkReplyLines::new();
+            lines.read_header(&mut reader).unwrap();
+            lines.drain(&mut reader).unwrap();
+
+            assert_eq!(reader.position(), reply_len as u64);
+        }
+
+        #[test]
+        fn drain_after_full_consumption_is_a_cheap_no_op() {
+            let reply = bulk_reply(b"id=1\n");
+            let mut reader = Cursor::new(reply);
+            let mut lines = BulkReplyLines::new();
+            lines.read_header(&mut reader).unwrap();
+            while lines.next_line(&mut reader).unwrap().is_some() {}
+            // Nothing left to read; must not block or error.
+            lines.drain(&mut reader).unwrap();
+        }
     }
 }
