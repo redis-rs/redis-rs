@@ -82,17 +82,17 @@ macro_rules! implement_command_async {
         $(#[$attr])*
         #[inline]
         #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-        fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
-            & $lifetime mut self
+        fn $name<$($tyargs: $ty + Send + Sync,)*>(
+            &mut self
             $(, $argname: $argty)*
-        ) -> crate::types::RedisFuture<$lifetime, if_redisresult!($rettype, strip_redisresult)>
+        ) -> impl Future<Output = RedisResult<if_redisresult!($rettype, strip_redisresult)>> + Send
 
         {
-            Box::pin(async move {
+            async move {
                 if_redisresult!($rettype, try, (Cmd::$name($($argname),*)))
                     .query_async(self)
                     .await
-            })
+            }
         }
     };
 }
@@ -383,18 +383,18 @@ macro_rules! implement_commands {
                 $(#[$attr])*
                 #[inline]
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-                fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)* RV>(
-                    & $lifetime mut self
+                fn $name<$($tyargs: $ty + Send + Sync,)* RV>(
+                    &mut self
                     $(, $argname: $argty)*
-                ) -> crate::types::RedisFuture<$lifetime, RV>
+                ) -> impl Future<Output = RedisResult<RV>> + Send
                 where
                     RV: FromRedisValue,
                 {
-                    Box::pin(async move {
+                    async move {
                         if_redisresult!($rettype, try, (Cmd::$name($($argname),*)))
                             .query_async(self)
                             .await
-                    })
+                    }
                 }
             )*
 
@@ -453,13 +453,13 @@ macro_rules! implement_commands {
             }
 
             /// Get a value from Redis and convert it to an `Option<isize>`.
-            fn get_int<$lifetime, K: ToSingleRedisArg + Send + Sync + $lifetime>(&$lifetime mut self, key: K) -> crate::types::RedisFuture<$lifetime, Option<isize>> {
-                Box::pin(async move { cmd("GET").arg(key).query_async(self).await })
+            fn get_int<K: ToSingleRedisArg + Send + Sync>(&mut self, key: K) -> impl Future<Output = RedisResult<Option<isize>>> + Send {
+                async move { cmd("GET").arg(key).query_async(self).await }
             }
 
             /// Get values from Redis and convert them to `Option<isize>`s.
-            fn mget_ints<$lifetime, K: ToRedisArgs + Send + Sync + $lifetime>(&$lifetime mut self, key: K) -> crate::types::RedisFuture<$lifetime, Vec<Option<isize>>> {
-                Box::pin(async move { cmd("MGET").arg(key).query_async(self).await })
+            fn mget_ints<K: ToRedisArgs + Send + Sync>(&mut self, key: K) -> impl Future<Output = RedisResult<Vec<Option<isize>>>> + Send {
+                async move { cmd("MGET").arg(key).query_async(self).await }
             }
         }
 

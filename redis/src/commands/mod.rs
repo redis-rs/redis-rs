@@ -295,7 +295,7 @@ implement_commands! {
 
     /// Sets multiple keys to their values.
     /// [Redis Docs](https://redis.io/commands/MSET)
-    fn mset<K: ToRedisArgs, V: ToRedisArgs>(items: &'a [(K, V)]) -> (()) {
+    fn mset<K: ToRedisArgs, V: ToRedisArgs>(items: &[(K, V)]) -> (()) {
         ready_cmd!("MSET", items).take()
     }
 
@@ -319,14 +319,14 @@ implement_commands! {
 
     /// Sets multiple keys to their values failing if at least one already exists.
     /// [Redis Docs](https://redis.io/commands/MSETNX)
-    fn mset_nx<K: ToRedisArgs, V: ToRedisArgs>(items: &'a [(K, V)]) -> (bool) {
+    fn mset_nx<K: ToRedisArgs, V: ToRedisArgs>(items: &[(K, V)]) -> (bool) {
         ready_cmd!("MSETNX", items).take()
     }
 
     /// Sets the given keys to their respective values.
     /// This command is an extension of the MSETNX that adds expiration and XX options.
     /// [Redis Docs](https://redis.io/commands/MSETEX)
-    fn mset_ex<K: ToRedisArgs, V: ToRedisArgs>(items: &'a [(K, V)], options: MSetOptions) -> (bool) {
+    fn mset_ex<K: ToRedisArgs, V: ToRedisArgs>(items: &[(K, V)], options: MSetOptions) -> (bool) {
         ready_cmd!("MSETEX", items.len(), items, options).take()
     }
 
@@ -686,7 +686,7 @@ implement_commands! {
 
     /// Set the value of one or more fields of a given hash key, and optionally set their expiration
     /// [Redis Docs](https://redis.io/commands/HSETEX)
-    fn hset_ex<K: ToSingleRedisArg, F: ToRedisArgs, V: ToRedisArgs>(key: K, hash_field_expiration_options: &'a HashFieldExpirationOptions, fields_values: &'a [(F, V)]) -> (bool) {
+    fn hset_ex<K: ToSingleRedisArg, F: ToRedisArgs, V: ToRedisArgs>(key: K, hash_field_expiration_options: &HashFieldExpirationOptions, fields_values: &[(F, V)]) -> (bool) {
         ready_cmd!("HSETEX", key, hash_field_expiration_options, "FIELDS", fields_values.len(), fields_values).take()
     }
 
@@ -699,7 +699,7 @@ implement_commands! {
 
     /// Sets multiple fields in a hash.
     /// [Redis Docs](https://redis.io/commands/HMSET)
-    fn hset_multiple<K: ToSingleRedisArg, F: ToRedisArgs, V: ToRedisArgs>(key: K, items: &'a [(F, V)]) -> (()) {
+    fn hset_multiple<K: ToSingleRedisArg, F: ToRedisArgs, V: ToRedisArgs>(key: K, items: &[(F, V)]) -> (()) {
         ready_cmd!("HMSET", key, items).take()
     }
 
@@ -1098,19 +1098,19 @@ implement_commands! {
 
     /// Add multiple members to a sorted set, or update its score if it already exists.
     /// [Redis Docs](https://redis.io/commands/ZADD)
-    fn zadd_multiple<K: ToSingleRedisArg, S: ToRedisArgs, M: ToRedisArgs>(key: K, items: &'a [(S, M)]) -> (usize) {
+    fn zadd_multiple<K: ToSingleRedisArg, S: ToRedisArgs, M: ToRedisArgs>(key: K, items: &[(S, M)]) -> (usize) {
         ready_cmd!("ZADD", key, items).take()
     }
 
      /// Add one member to a sorted set, or update its score if it already exists.
      /// [Redis Docs](https://redis.io/commands/ZADD)
-    fn zadd_options<K: ToSingleRedisArg, S: ToSingleRedisArg, M: ToSingleRedisArg>(key: K, member: M, score: S, options:&'a SortedSetAddOptions) -> usize{
+    fn zadd_options<K: ToSingleRedisArg, S: ToSingleRedisArg, M: ToSingleRedisArg>(key: K, member: M, score: S, options:&SortedSetAddOptions) -> usize{
         ready_cmd!("ZADD", key, options, score, member).take()
     }
 
     /// Add multiple members to a sorted set, or update its score if it already exists.
     /// [Redis Docs](https://redis.io/commands/ZADD)
-    fn zadd_multiple_options<K: ToSingleRedisArg, S: ToRedisArgs, M: ToRedisArgs>(key: K, items: &'a [(S, M)], options:&'a SortedSetAddOptions) -> (usize) {
+    fn zadd_multiple_options<K: ToSingleRedisArg, S: ToRedisArgs, M: ToRedisArgs>(key: K, items: &[(S, M)], options:&SortedSetAddOptions) -> (usize) {
         ready_cmd!("ZADD", key, options, items).take()
     }
 
@@ -1144,7 +1144,7 @@ implement_commands! {
     /// Intersect multiple sorted sets and store the resulting sorted set in
     /// a new key, applying per-key `WEIGHTS` and an optional `AGGREGATE` modifier.
     /// [Redis Docs](https://redis.io/commands/ZINTERSTORE)
-    fn zinterstore_with_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)], options: SortedSetOperationOptions) -> (usize) {
+    fn zinterstore_with_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &[(K, W)], options: SortedSetOperationOptions) -> (usize) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
         ready_cmd!("ZINTERSTORE", dstkey, keys.num_of_args(), keys, "WEIGHTS", weights, options).take()
     }
@@ -1159,7 +1159,7 @@ implement_commands! {
     /// [`Commands::zinter`], but with the ability to specify a weight for each
     /// sorted set by pairing each key with its corresponding weight.
     /// [Redis Docs](https://redis.io/commands/ZINTER)
-    fn zinter_with_weights<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)], options: SortedSetOperationOptions) -> (Vec<String>) {
+    fn zinter_with_weights<K: ToRedisArgs, W: ToRedisArgs>(keys: &[(K, W)], options: SortedSetOperationOptions) -> (Vec<String>) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
         ready_cmd!("ZINTER", keys.num_of_args(), keys, "WEIGHTS", weights, options).take()
     }
@@ -1172,7 +1172,7 @@ implement_commands! {
 
     /// [`Commands::zinter_with_weights`], but additionally returns the score of each member.
     /// [Redis Docs](https://redis.io/commands/ZINTER)
-    fn zinter_with_weights_withscores<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)], options: SortedSetOperationOptions) -> (Vec<(String, f64)>) {
+    fn zinter_with_weights_withscores<K: ToRedisArgs, W: ToRedisArgs>(keys: &[(K, W)], options: SortedSetOperationOptions) -> (Vec<(String, f64)>) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
         ready_cmd!("ZINTER", keys.num_of_args(), keys, "WEIGHTS", weights, options, "WITHSCORES").take()
     }
@@ -1401,7 +1401,7 @@ implement_commands! {
 
     /// Get the scores associated with multiple members in a sorted set.
     /// [Redis Docs](https://redis.io/commands/ZMSCORE)
-    fn zscore_multiple<K: ToSingleRedisArg, M: ToRedisArgs>(key: K, members: &'a [M]) -> (Vec<Option<f64>>) {
+    fn zscore_multiple<K: ToSingleRedisArg, M: ToRedisArgs>(key: K, members: &[M]) -> (Vec<Option<f64>>) {
         ready_cmd!("ZMSCORE", key, members).take()
     }
 
@@ -1416,7 +1416,7 @@ implement_commands! {
     /// Union multiple sorted sets and store the resulting sorted set in
     /// a new key, applying per-key `WEIGHTS` and an optional `AGGREGATE` modifier.
     /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
-    fn zunionstore_with_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &'a [(K, W)], options: SortedSetOperationOptions) -> (usize) {
+    fn zunionstore_with_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &[(K, W)], options: SortedSetOperationOptions) -> (usize) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
         ready_cmd!("ZUNIONSTORE", dstkey, keys.num_of_args(), keys, "WEIGHTS", weights, options).take()
     }
@@ -1431,7 +1431,7 @@ implement_commands! {
     /// [`Commands::zunion`], but with the ability to specify a weight for each
     /// sorted set by pairing each key with its corresponding weight.
     /// [Redis Docs](https://redis.io/commands/ZUNION)
-    fn zunion_with_weights<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)], options: SortedSetOperationOptions) -> (Vec<String>) {
+    fn zunion_with_weights<K: ToRedisArgs, W: ToRedisArgs>(keys: &[(K, W)], options: SortedSetOperationOptions) -> (Vec<String>) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
         ready_cmd!("ZUNION", keys.num_of_args(), keys, "WEIGHTS", weights, options).take()
     }
@@ -1444,7 +1444,7 @@ implement_commands! {
 
     /// [`Commands::zunion_with_weights`], but additionally returns the score of each member.
     /// [Redis Docs](https://redis.io/commands/ZUNION)
-    fn zunion_with_weights_withscores<K: ToRedisArgs, W: ToRedisArgs>(keys: &'a [(K, W)], options: SortedSetOperationOptions) -> (Vec<(String, f64)>) {
+    fn zunion_with_weights_withscores<K: ToRedisArgs, W: ToRedisArgs>(keys: &[(K, W)], options: SortedSetOperationOptions) -> (Vec<(String, f64)>) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
         ready_cmd!("ZUNION", keys.num_of_args(), keys, "WEIGHTS", weights, options, "WITHSCORES").take()
     }
@@ -1455,7 +1455,7 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/VADD)
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
-    fn vadd<K: ToRedisArgs, E: ToRedisArgs>(key: K, input: vector_sets::VectorAddInput<'a>, element: E) -> (bool) {
+    fn vadd<K: ToRedisArgs, E: ToRedisArgs>(key: K, input: vector_sets::VectorAddInput, element: E) -> (bool) {
         ready_cmd!("VADD", key, input, element).take()
     }
 
@@ -1463,7 +1463,7 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/VADD)
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
-    fn vadd_options<K: ToRedisArgs, E: ToRedisArgs>(key: K, input: vector_sets::VectorAddInput<'a>, element: E, options: &'a vector_sets::VAddOptions) -> (bool) {
+    fn vadd_options<K: ToRedisArgs, E: ToRedisArgs>(key: K, input: vector_sets::VectorAddInput, element: E, options: &vector_sets::VAddOptions) -> (bool) {
         ready_cmd!("VADD", key, options.reduction_dimension.map(|_| "REDUCE"), options.reduction_dimension, input, element, options).take()
     }
 
@@ -1497,7 +1497,7 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/VEMB)
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
-    fn vemb_options<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E, options: &'a vector_sets::VEmbOptions) -> Generic {
+    fn vemb_options<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E, options: &vector_sets::VEmbOptions) -> Generic {
         ready_cmd!("VEMB", key, element, options).take()
     }
 
@@ -1514,7 +1514,7 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/VSETATTR)
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
-    fn vsetattr<K: ToRedisArgs, E: ToRedisArgs, J: Serialize>(key: K, element: E, json_object: &'a J) -> (bool) {
+    fn vsetattr<K: ToRedisArgs, E: ToRedisArgs, J: Serialize>(key: K, element: E, json_object: &J) -> (bool) {
         let attributes_json = match serde_json::to_value(json_object) {
             Ok(serde_json::Value::String(s)) if s.is_empty() => "".to_string(),
             _ => serde_json::to_string(json_object).unwrap(),
@@ -1588,7 +1588,7 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/VSIM)
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
-    fn vsim<K: ToRedisArgs>(key: K, input: vector_sets::VectorSimilaritySearchInput<'a>) -> Generic {
+    fn vsim<K: ToRedisArgs>(key: K, input: vector_sets::VectorSimilaritySearchInput) -> Generic {
         ready_cmd!("VSIM", key, input).take()
     }
 
@@ -1596,7 +1596,7 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/VSIM)
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
-    fn vsim_options<K: ToRedisArgs>(key: K, input: vector_sets::VectorSimilaritySearchInput<'a>, options: &'a vector_sets::VSimOptions) -> Generic {
+    fn vsim_options<K: ToRedisArgs>(key: K, input: vector_sets::VectorSimilaritySearchInput, options: &vector_sets::VSimOptions) -> Generic {
         ready_cmd!("VSIM", key, input, options).take()
     }
 
@@ -1737,7 +1737,7 @@ implement_commands! {
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     /// [Redis Docs](https://redis.io/commands/ACL)
-    fn acl_setuser_rules<K: ToSingleRedisArg>(username: K, rules: &'a [acl::Rule]) -> () {
+    fn acl_setuser_rules<K: ToSingleRedisArg>(username: K, rules: &[acl::Rule]) -> () {
         ready_cmd!("ACL", "SETUSER", username, rules).take()
     }
 
@@ -1746,7 +1746,7 @@ implement_commands! {
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     /// [Redis Docs](https://redis.io/commands/ACL)
-    fn acl_deluser<K: ToRedisArgs>(usernames: &'a [K]) -> (usize) {
+    fn acl_deluser<K: ToRedisArgs>(usernames: &[K]) -> (usize) {
         ready_cmd!("ACL", "DELUSER", usernames).take()
     }
 
@@ -2029,7 +2029,7 @@ implement_commands! {
     fn xack<K: ToRedisArgs, G: ToRedisArgs, I: ToRedisArgs>(
         key: K,
         group: G,
-        ids: &'a [I]) -> (usize) {
+        ids: &[I]) -> (usize) {
         ready_cmd!("XACK", key, group, ids).take()
     }
 
@@ -2063,8 +2063,8 @@ implement_commands! {
     fn xnack<K: ToSingleRedisArg, G: ToSingleRedisArg, ID: ToSingleRedisArg>(
         key: K,
         group: G,
-        ids: &'a [ID],
-        options: &'a streams::StreamNackOptions
+        ids: &[ID],
+        options: &streams::StreamNackOptions
     ) -> (usize) {
         ready_cmd!("XNACK", key, group, options, "IDS", ids.len(), ids).take()
     }
@@ -2081,7 +2081,7 @@ implement_commands! {
     fn xadd<K: ToRedisArgs, ID: ToRedisArgs, F: ToRedisArgs, V: ToRedisArgs>(
         key: K,
         id: ID,
-        items: &'a [(F, V)]
+        items: &[(F, V)]
     ) -> (Option<String>) {
         ready_cmd!("XADD", key, id, items).take()
     }
@@ -2136,7 +2136,7 @@ implement_commands! {
         key: K,
         id: ID,
         items: I,
-        options: &'a streams::StreamAddOptions
+        options: &streams::StreamAddOptions
     ) -> (Option<String>) {
         ready_cmd!("XADD", key, options, id, items).take()
     }
@@ -2159,7 +2159,7 @@ implement_commands! {
         key: K,
         maxlen: streams::StreamMaxlen,
         id: ID,
-        items: &'a [(F, V)]
+        items: &[(F, V)]
     ) -> (Option<String>) {
         ready_cmd!("XADD", key, maxlen, id, items).take()
     }
@@ -2234,7 +2234,7 @@ implement_commands! {
         group: G,
         consumer: C,
         min_idle_time: MIT,
-        ids: &'a [ID]
+        ids: &[ID]
     ) -> (streams::StreamClaimReply) {
         ready_cmd!("XCLAIM", key, group, consumer, min_idle_time, ids).take()
     }
@@ -2286,7 +2286,7 @@ implement_commands! {
         group: G,
         consumer: C,
         min_idle_time: MIT,
-        ids: &'a [ID],
+        ids: &[ID],
         options: streams::StreamClaimOptions
     ) -> Generic {
         ready_cmd!("XCLAIM", key, group, consumer, min_idle_time, ids, options).take()
@@ -2303,7 +2303,7 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xdel<K: ToSingleRedisArg, ID: ToRedisArgs>(
         key: K,
-        ids: &'a [ID]
+        ids: &[ID]
     ) -> (usize) {
         ready_cmd!("XDEL", key, ids).take()
     }
@@ -2311,14 +2311,14 @@ implement_commands! {
     /// An extension of the Streams `XDEL` command that provides finer control over how message entries are deleted with respect to consumer groups.
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
-    fn xdel_ex<K: ToRedisArgs, ID: ToRedisArgs>(key: K, ids: &'a [ID], options: streams::StreamDeletionPolicy) -> (Vec<streams::XDelExStatusCode>) {
+    fn xdel_ex<K: ToRedisArgs, ID: ToRedisArgs>(key: K, ids: &[ID], options: streams::StreamDeletionPolicy) -> (Vec<streams::XDelExStatusCode>) {
         ready_cmd!("XDELEX", key, options, "IDS", ids.len(), ids).take()
     }
 
     /// A combination of `XACK` and `XDEL` that acknowledges and attempts to delete a list of `ids` for a given stream `key` and consumer `group`.
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
-    fn xack_del<K: ToRedisArgs, G: ToRedisArgs, ID: ToRedisArgs>(key: K, group: G, ids: &'a [ID], options: streams::StreamDeletionPolicy) -> (Vec<streams::XAckDelStatusCode>) {
+    fn xack_del<K: ToRedisArgs, G: ToRedisArgs, ID: ToRedisArgs>(key: K, group: G, ids: &[ID], options: streams::StreamDeletionPolicy) -> (Vec<streams::XAckDelStatusCode>) {
         ready_cmd!("XACKDEL", key, group, options, "IDS", ids.len(), ids).take()
     }
 
@@ -2657,8 +2657,8 @@ implement_commands! {
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xread<K: ToRedisArgs, ID: ToRedisArgs>(
-        keys: &'a [K],
-        ids: &'a [ID]
+        keys: &[K],
+        ids: &[ID]
     ) -> (Option<streams::StreamReadReply>) {
         ready_cmd!("XREAD", "STREAMS", keys, ids).take()
     }
@@ -2703,9 +2703,9 @@ implement_commands! {
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xread_options<K: ToRedisArgs, ID: ToRedisArgs>(
-        keys: &'a [K],
-        ids: &'a [ID],
-        options: &'a streams::StreamReadOptions
+        keys: &[K],
+        ids: &[ID],
+        options: &streams::StreamReadOptions
     ) -> (Option<streams::StreamReadReply>) {
         ready_cmd!(if options.read_only() {
             "XREAD"
@@ -2787,7 +2787,7 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xtrim_options<K: ToRedisArgs>(
         key: K,
-        options: &'a streams::StreamTrimOptions
+        options: &streams::StreamTrimOptions
     ) -> usize {
         ready_cmd!("XTRIM", key, options).take()
     }
@@ -2824,7 +2824,7 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xcfgset<K: ToRedisArgs>(
         key: K,
-        options: &'a streams::StreamConfigOptions
+        options: &streams::StreamConfigOptions
     ) -> String {
         ready_cmd!("XCFGSET", key, options).take()
     }
@@ -2871,8 +2871,8 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "search_unfinished")))]
     fn ft_create<K: ToSingleRedisArg>(
         index_name: K,
-        options: &'a CreateOptions,
-        schema: &'a SearchSchema
+        options: &CreateOptions,
+        schema: &SearchSchema
     ) -> (String) {
         ready_cmd!("FT.CREATE", index_name, options, "SCHEMA", schema).take()
     }
@@ -2905,7 +2905,7 @@ assert_eq!(invok_res, 3);
 "##)]
     #[cfg(feature = "script")]
     #[cfg_attr(docsrs, doc(cfg(feature = "script")))]
-    fn load_script<>(script: &'a crate::Script) -> String {
+    fn load_script<>(script: &crate::Script) -> String {
         ready_cmd!("SCRIPT", "LOAD", script).take()
     }
 
@@ -2940,7 +2940,7 @@ assert_eq!(invok_2_res, 5);
 "##)]
     #[cfg(feature = "script")]
     #[cfg_attr(docsrs, doc(cfg(feature = "script")))]
-    fn invoke_script<>(invocation: &'a crate::ScriptInvocation<'a>) -> Generic {
+    fn invoke_script<>(invocation: &crate::ScriptInvocation) -> Generic {
         ready_cmd!("EVALSHA", invocation).take()
     }
 
@@ -2967,7 +2967,7 @@ assert_eq!(invok_2_res, 5);
     /// FLUSHALL [ASYNC|SYNC]
     /// ```
     /// [Redis Docs](https://redis.io/commands/FLUSHALL)
-    fn flushall_options<>(options: &'a FlushAllOptions) -> () {
+    fn flushall_options<>(options: &FlushAllOptions) -> () {
         ready_cmd!("FLUSHALL", options).take()
     }
 
@@ -2992,7 +2992,7 @@ assert_eq!(invok_2_res, 5);
     /// FLUSHDB [ASYNC|SYNC]
     /// ```
     /// [Redis Docs](https://redis.io/commands/FLUSHDB)
-    fn flushdb_options<>(options: &'a FlushDbOptions) -> () {
+    fn flushdb_options<>(options: &FlushDbOptions) -> () {
         ready_cmd!("FLUSHDB", options).take()
     }
 
@@ -3001,14 +3001,14 @@ assert_eq!(invok_2_res, 5);
     /// Append the JSON `value` to the array at `path` after the last element in it.
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_arr_append<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V) -> (RedisResult<Generic>) {
+    fn json_arr_append<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &V) -> (RedisResult<Generic>) {
         cmd("JSON.ARRAPPEND").arg(key).arg(path).arg(serde_json::to_string(value)?).take()
     }
 
     /// Index array at `path`, returns first occurrence of `value`
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_arr_index<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V) -> (RedisResult<Generic>) {
+    fn json_arr_index<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &V) -> (RedisResult<Generic>) {
         cmd("JSON.ARRINDEX").arg(key).arg(path).arg(serde_json::to_string(value)?).take()
     }
 
@@ -3018,7 +3018,7 @@ assert_eq!(invok_2_res, 5);
     /// The default values for `start` and `stop` are `0`, so pass those in if you want them to take no effect
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_arr_index_ss<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V, start: &'a isize, stop: &'a isize) -> (RedisResult<Generic>) {
+    fn json_arr_index_ss<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &V, start: &isize, stop: &isize) -> (RedisResult<Generic>) {
         cmd("JSON.ARRINDEX").arg(key).arg(path).arg(serde_json::to_string(value)?).arg(start).arg(stop).take()
     }
 
@@ -3027,7 +3027,7 @@ assert_eq!(invok_2_res, 5);
     /// `index` must be within the array's range.
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_arr_insert<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, index: i64, value: &'a V) -> (RedisResult<Generic>) {
+    fn json_arr_insert<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, index: i64, value: &V) -> (RedisResult<Generic>) {
         cmd("JSON.ARRINSERT").arg(key).arg(path).arg(index).arg(serde_json::to_string(value)?).take()
     }
 
@@ -3117,7 +3117,7 @@ assert_eq!(invok_2_res, 5);
     /// Sets the JSON Value at `path` in `key`.
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_set<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V) -> (RedisResult<Generic>) {
+    fn json_set<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &V) -> (RedisResult<Generic>) {
         cmd("JSON.SET").arg(key).arg(path).arg(serde_json::to_string(value)?).take()
     }
 
@@ -3126,14 +3126,14 @@ assert_eq!(invok_2_res, 5);
     /// `options` carries the optional `NX`/`XX` existence check and the optional `FPHA <TYPE>` storage hint. See [`JsonSetOptions`](crate::json::JsonSetOptions).
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_set_options<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &'a V, options: &'a crate::json::JsonSetOptions) -> (RedisResult<Generic>) {
+    fn json_set_options<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &V, options: &crate::json::JsonSetOptions) -> (RedisResult<Generic>) {
         cmd("JSON.SET").arg(key).arg(path).arg(serde_json::to_string(value)?).arg(options).take()
     }
 
     /// Sets the value at the path per key, for every given tuple.
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    fn json_mset<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key_path_values: &'a [(K,P,V)]) -> (RedisResult<Generic>) {
+    fn json_mset<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key_path_values: &[(K,P,V)]) -> (RedisResult<Generic>) {
         let mut cmd = cmd("JSON.MSET");
 
         for (key, path, value) in key_path_values {
@@ -3324,7 +3324,7 @@ assert_eq!(invok_2_res, 5);
     /// [Valkey Docs](https://valkey.io/commands/bf.mexists/)
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
-    fn bf_mexists<K: ToSingleRedisArg, V: ToRedisArgs>(key: K, items: &'a [V]) -> (Vec<bool>) {
+    fn bf_mexists<K: ToSingleRedisArg, V: ToRedisArgs>(key: K, items: &[V]) -> (Vec<bool>) {
         ready_cmd!("BF.MEXISTS", key, items).take()
     }
 
@@ -4409,14 +4409,14 @@ pub trait AsyncHotkeysCommands: crate::aio::ConnectionLike + Send + Sync + Sized
     fn hotkeys_start(
         &mut self,
         opts: hotkeys::HotkeysOptions,
-    ) -> crate::types::RedisFuture<'_, ()> {
-        Box::pin(async move {
+    ) -> impl Future<Output = RedisResult<()>> + Send {
+        async move {
             cmd("HOTKEYS")
                 .arg("START")
                 .arg(opts)
                 .query_async(self)
                 .await
-        })
+        }
     }
 
     /// Get the current hot keys metrics.
@@ -4429,8 +4429,10 @@ pub trait AsyncHotkeysCommands: crate::aio::ConnectionLike + Send + Sync + Sized
     /// HOTKEYS GET
     /// ```
     /// [Redis Docs](https://redis.io/commands/hotkeys-get/)
-    fn hotkeys_get(&mut self) -> crate::types::RedisFuture<'_, Option<hotkeys::HotkeysResponse>> {
-        Box::pin(async move { cmd("HOTKEYS").arg("GET").query_async(self).await })
+    fn hotkeys_get(
+        &mut self,
+    ) -> impl Future<Output = RedisResult<Option<hotkeys::HotkeysResponse>>> + Send {
+        async move { cmd("HOTKEYS").arg("GET").query_async(self).await }
     }
 
     /// Stop tracking hot keys.
@@ -4442,8 +4444,8 @@ pub trait AsyncHotkeysCommands: crate::aio::ConnectionLike + Send + Sync + Sized
     /// HOTKEYS STOP
     /// ```
     /// [Redis Docs](https://redis.io/commands/hotkeys-stop/)
-    fn hotkeys_stop(&mut self) -> crate::types::RedisFuture<'_, bool> {
-        Box::pin(async move { cmd("HOTKEYS").arg("STOP").query_async(self).await })
+    fn hotkeys_stop(&mut self) -> impl Future<Output = RedisResult<bool>> + Send {
+        async move { cmd("HOTKEYS").arg("STOP").query_async(self).await }
     }
 
     /// Reset the hot keys tracking state.
@@ -4455,8 +4457,8 @@ pub trait AsyncHotkeysCommands: crate::aio::ConnectionLike + Send + Sync + Sized
     /// HOTKEYS RESET
     /// ```
     /// [Redis Docs](https://redis.io/commands/hotkeys-reset/)
-    fn hotkeys_reset(&mut self) -> crate::types::RedisFuture<'_, ()> {
-        Box::pin(async move { cmd("HOTKEYS").arg("RESET").query_async(self).await })
+    fn hotkeys_reset(&mut self) -> impl Future<Output = RedisResult<()>> + Send {
+        async move { cmd("HOTKEYS").arg("RESET").query_async(self).await }
     }
 }
 
