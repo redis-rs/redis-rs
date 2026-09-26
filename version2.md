@@ -10,6 +10,14 @@ redis = "2"
 
 ## Breaking Changes
 
+### `bool` can be parsed from `true`/`false` Redis strings (Breaking Change)
+
+The strings `0` and `1` already parsed to `bool` in earlier versions.
+
+Now additionally the strings `true` and `false` (both as `BulkString` and for consistence also as `SimpleString`) parse to their corresponding `bool`s to simplify parsing `JSON.TOGGLE` result.
+
+**Migration:** Check your use of conversion that you do _not_ rely on parsing to `bool`s fails for `true`/`false` strings.
+
 ### Async Commands now return impl Future (Breaking Change)
 
 Methods on `AsyncCommands`, `AsyncTypedCommands`, and `AsyncHotkeysCommands` now returns `impl Future<Output = RedisResult<...>>`.
@@ -58,18 +66,52 @@ if condition {
 
 ### JSON commands got promoted to standard commands (Breaking Change)
 
-`JsonCommands`, and `JsonAsyncCommands` got merged into `Commands`, and `JsonAsyncCommands`.
+`JsonCommands` got merged directly into `TypedCommands`, and `Commands`.
 
-**Migration:** Switch from `JsonCommands` and `JsonAsyncCommands` to `Commands` and `AsyncCommands`
+`JsonAsyncCommands` got merged directly into `AsyncTypedCommands`, and `AsyncCommands`.
+
+This made them first class citizens, gave better types, and allowed to strip the unneeded wrapping `RedisResult` in `Cmd`, `Pipeline`, and `ClusterPipeline` from the following functions:
+
+* `json_arr_len`
+* `json_arr_pop`
+* `json_arr_trim`
+* `json_clear`
+* `json_del`
+* `json_get`
+* `json_mget`
+* `json_num_incr_by`
+* `json_obj_keys`
+* `json_obj_len`
+* `json_str_append`
+* `json_str_len`
+* `json_toggle`
+* `json_type`
+
+**Migration:**
+1. **Switch from `JsonCommands` to `TypedCommands` and from `JsonAsyncCommands` to `AsyncTypedCommands` (or `Commands` and `AsyncCommands` if you do not care about types).
+1. **Drop the `?` (or `unwrap`, `expect`, ...) from affected JSON commands in `Cmd`, `Pipeline`, and `ClusterPipeline`**
 
 ```rust
 // Before:
 use redis::JsonCommands;
-use redis::JsonAsyncCommands;
+[...]
+let mut pipeline = redis::pipe();
+pipeline.get("foo")                       // No json command, hence no `?`
+        .json_type("key", ".path")?       // This `?` should vanish during migration
+let _: Value = pipeline.query(&mut con)?; // This `?` will stay
+
+let key_type: Value = con.json_type("key", ".path")?; // This `?` will stay, but the type can go away
+
 
 // After:
-use redis::Commands;
-use redis::AsyncCommands;
+use redis::TypedCommands;
+[...]
+let mut pipeline = redis::pipe();
+pipeline.get("foo")
+        .json_type("key", ".path");       // No `?` any longer, as queueing the command cannot fail
+let _: Value = pipeline.query(&mut con)?; // Still with `?`, as running the pipeline can still fail
+
+let key_type = con.json_type("key", ".path")?; // Still with `?`, as running the statement can still fail, but the type is now automatic
 ```
 
 ### Script loading on typed connections returns `String` (Breaking change)
