@@ -1163,18 +1163,30 @@ pub(crate) fn create_rustls_config(
     insecure: bool,
     tls_params: Option<TlsConnParams>,
 ) -> RedisResult<rustls::ClientConfig> {
+    // Building the default root store is expensive when the native store is enabled, since
+    // `load_native_certs` rescans the system trust store (~20ms). It is only consulted when the
+    // connection actually verifies certificates - with `insecure` the verifier is replaced by
+    // `NoCertificateVerification` below - and when the caller didn't supply a store of its own,
+    // so it is built lazily to avoid paying for it on every connection that ignores it.
+    let has_custom_root_store = tls_params
+        .as_ref()
+        .is_some_and(|params| params.root_cert_store.is_some());
+    let load_default_root_store = !insecure && !has_custom_root_store;
+
     #[allow(unused_mut)]
     let mut root_store = RootCertStore::empty();
-    #[cfg(feature = "tls-rustls-webpki-roots")]
-    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    #[cfg(feature = "tls-rustls-native-roots")]
-    {
-        let mut certificate_result = load_native_certs();
-        if let Some(error) = certificate_result.errors.pop() {
-            return Err(error.into());
-        }
-        for cert in certificate_result.certs {
-            root_store.add(cert)?;
+    if load_default_root_store {
+        #[cfg(feature = "tls-rustls-webpki-roots")]
+        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        #[cfg(feature = "tls-rustls-native-roots")]
+        {
+            let mut certificate_result = load_native_certs();
+            if let Some(error) = certificate_result.errors.pop() {
+                return Err(error.into());
+            }
+            for cert in certificate_result.certs {
+                root_store.add(cert)?;
+            }
         }
     }
 
