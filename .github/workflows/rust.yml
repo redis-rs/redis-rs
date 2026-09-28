@@ -10,6 +10,7 @@ env:
   CARGO_TERM_COLOR: always
   REDISRS_REDIS_JSON_PATH: "/tmp/librejson.so"
   REDISRS_REDIS_BLOOM_PATH: "/tmp/redisbloom.so"
+  REDISRS_REDIS_SEARCH_PATH: "/tmp/redisearch.so"
 
 concurrency:
   group: "${{ github.workflow }}-${{ github.head_ref || github.run_id || github.ref }}"
@@ -34,14 +35,13 @@ jobs:
             {  db-org: redis, db-name: redis, db-version: 6.2.24 },
             {  db-org: redis, db-name: redis, db-version: 7.0.15, json-module-version: v2.6.22 },
             {  db-org: redis, db-name: redis, db-version: 7.4.11, json-module-version: v2.6.22 },
-            {  db-org: redis, db-name: redis, db-version: 8.0.6, json-module-version: bundled, bloom-module-version: bundled },
-            {  db-org: redis, db-name: redis, db-version: 8.10.2, json-module-version: bundled, bloom-module-version: bundled },
+            {  db-org: redis, db-name: redis, db-version: 8.0.6, json-module-version: bundled, bloom-module-version: bundled, search-module-version: bundled },
+            {  db-org: redis, db-name: redis, db-version: 8.10.2, json-module-version: bundled, bloom-module-version: bundled, search-module-version: bundled },
             # valkey-bloom has some quirks with Valkey <8.1, so we only test it on >=8.1
             {  db-org: valkey-io, db-name: valkey, db-version: 7.2.14, json-module-version: v2.6.22 },
-            {  db-org: valkey-io, db-name: valkey, db-version: 8.0.11, json-module-version: v2.6.22 },
-            # Skipping Valkey 8.1 as it's too similar to 8.0
-            {  db-org: valkey-io, db-name: valkey, db-version: 9.0.6, json-module-version: v2.6.22, bloom-module-version: "valkey-bloom:1.0.1" },
-            # Skipping Valkey 9.1 as it's too similar to 9.0
+            {  db-org: valkey-io, db-name: valkey, db-version: 8.1.10, json-module-version: v2.6.22 },
+            # valkey-search 1.1+ requires Valkey core 9.0.1+, so we only test search on >=9.1
+            {  db-org: valkey-io, db-name: valkey, db-version: 9.1.2, json-module-version: v2.6.22, bloom-module-version: "valkey-bloom:1.0.1", search-module-version: "valkey-search:1.2.1" },
             #
             # KeyDB (#2203), Dragonfly (#2204), Kvrocks, ... are implicitly supported, but this support is not tested.
           ]
@@ -74,6 +74,11 @@ jobs:
         if: matrix.config.bloom-module-version == 'bundled'
         run: |
           cp "$HOME/db/redisbloom.so" "$REDISRS_REDIS_BLOOM_PATH"
+
+      - name: Copy bundled RediSearch into place
+        if: matrix.config.search-module-version == 'bundled'
+        run: |
+          cp "$HOME/db/redisearch.so" "$REDISRS_REDIS_SEARCH_PATH"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
@@ -188,6 +193,50 @@ jobs:
       - name: Run RedisBloom tests
         if: matrix.config.bloom-module-version != ''
         run: make test-module-bloom
+
+      - name: Load Valkey Search module from cache
+        if: startsWith(matrix.config.search-module-version, 'valkey-search:')
+        id: cache-valkey-search
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /tmp/valkey-search/.build-release/libsearch.so
+          key: ${{ runner.os }}-valkey-search-${{ matrix.config.search-module-version }}
+
+      - name: Build Valkey Search repo
+        if: startsWith(matrix.config.search-module-version, 'valkey-search:') && steps.cache-valkey-search.outputs.cache-hit != 'true'
+        env:
+          VALKEY_SEARCH: ${{ matrix.config.search-module-version }}
+        shell: bash
+        run: |
+          # Install the toolchain valkey-search's build expects. The heavier
+          # dependencies (grpc, protobuf, abseil, GTest, highwayhash) come from
+          # the prebuilt deps package that ci/build_ubuntu.sh fetches below.
+          sudo apt-get update
+          sudo apt-get install -y build-essential g++ git cmake ninja-build \
+            libssl-dev libsystemd-dev libbenchmark-dev clang-tidy clang-format
+
+          # Fetch and unpack valkey-search's code
+          cd /tmp
+          wget "https://github.com/valkey-io/valkey-search/archive/refs/tags/${VALKEY_SEARCH#*:}.tar.gz"
+          tar -xzf "${VALKEY_SEARCH#*:}.tar.gz"
+          rm -rf "valkey-search"
+          mv "valkey-search-${VALKEY_SEARCH#*:}" "valkey-search"
+
+          # Build it the way upstream's CI does: download the prebuilt dependency
+          # bundle and build with `--use-system-modules`, instead of compiling
+          # grpc/protobuf/abseil from source. Output lands in .build-release/libsearch.so.
+          cd "valkey-search"
+          ./ci/build_ubuntu.sh
+
+      - name: Copy Valkey Search into place
+        if: startsWith(matrix.config.search-module-version, 'valkey-search:')
+        run: |
+          cp /tmp/valkey-search/.build-release/libsearch.so "$REDISRS_REDIS_SEARCH_PATH"
+
+      - name: Run Search module tests
+        if: matrix.config.search-module-version != ''
+        run: make test-module-search
 
       - name: Cache RedisJSON
         if: matrix.config.json-module-version != '' && matrix.config.json-module-version != 'bundled'
