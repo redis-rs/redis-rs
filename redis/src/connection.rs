@@ -34,11 +34,7 @@ use std::sync::Arc;
 
 use crate::PushInfo;
 
-#[cfg(all(
-    feature = "tls-rustls",
-    not(feature = "tls-native-tls"),
-    not(feature = "tls-rustls-webpki-roots")
-))]
+#[cfg(feature = "tls-rustls-native-roots")]
 use rustls_native_certs::load_native_certs;
 
 #[cfg(feature = "tls-rustls")]
@@ -1171,11 +1167,7 @@ pub(crate) fn create_rustls_config(
     let mut root_store = RootCertStore::empty();
     #[cfg(feature = "tls-rustls-webpki-roots")]
     root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    #[cfg(all(
-        feature = "tls-rustls",
-        not(feature = "tls-native-tls"),
-        not(feature = "tls-rustls-webpki-roots")
-    ))]
+    #[cfg(feature = "tls-rustls-native-roots")]
     {
         let mut certificate_result = load_native_certs();
         if let Some(error) = certificate_result.errors.pop() {

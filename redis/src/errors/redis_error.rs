@@ -120,7 +120,7 @@ impl From<rustls::pki_types::InvalidDnsNameError> for RedisError {
     }
 }
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls-native-roots")]
 impl From<rustls_native_certs::Error> for RedisError {
     fn from(err: rustls_native_certs::Error) -> Self {
         Self {
