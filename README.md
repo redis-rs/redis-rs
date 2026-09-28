@@ -11,8 +11,8 @@ but low-level API. It uses a customizable type conversion trait so that any
 operation can return results in just the type you are expecting. This makes for
 a very pleasant development experience.
 
-Most Redis and ValKey version should work, but CI runs against Redis 6+
-and ValKey 7+.
+Most Redis and Valkey version should work, but CI runs against Redis 6+
+and Valkey 7+.
 
 The crate is called `redis` and you can depend on it via cargo:
 
