@@ -14,7 +14,7 @@ require = [
   "smol-rustls-comp",
 ]
 
-# tokio-rustls-comp or smol-rustls-comp should be used instead of this combination, and entra-id pulls tokio-comp
+# tokio-rustls-comp or smol-rustls-comp should be used instead of this combination
 [[rule]]
 when = ["tls-rustls-native-roots"]
 forbid = [
@@ -23,7 +23,7 @@ forbid = [
   "smol-comp",
 ]
 
-# tokio-rustls-comp or smol-rustls-comp should be used instead of this combination, and entra-id pulls tokio-comp
+# tokio-rustls-comp or smol-rustls-comp should be used instead of this combination
 [[rule]]
 when = ["tls-rustls-webpki-roots"]
 forbid = [
@@ -38,9 +38,7 @@ forbid = [
   "tokio-comp",
   "OR",
   "smol-comp",
-  "OR",
-  "entra-id",
-] # tokio-native-tls-comp or smol-native-tls-comp should be used instead of this combination, and entra-id pulls tokio-comp
+] # tokio-native-tls-comp or smol-native-tls-comp should be used instead of this combination
 
 # must choose rustls roots when working with rustls
 [[rule]]
@@ -87,6 +85,8 @@ forbid = [
   "tokio-native-tls-comp",
   "OR",
   "tokio-comp",
+  "OR",
+  "entra-id",
 ]
 
 # cluster-async is the feature for async work. We don't need to check cluster with any async runtime.
@@ -121,6 +121,18 @@ require = ["tokio-rustls-comp"]
 [[rule]]
 when = ["tls-rustls-webpki-roots", "entra-id"]
 require = ["tokio-rustls-comp"]
+
+[[rule]]
+when = ["tls-native-tls", "entra-id"]
+require = ["tokio-native-tls-comp"]
+
+[[rule]]
+when = ["tls-native-tls", "tokio-comp"]
+require = ["tokio-native-tls-comp"]
+
+[[rule]]
+when = ["tls-native-tls", "smol-comp"]
+require = ["smol-native-tls-comp"]
 
 [[rule]]
 when = ["tls-rustls-native-roots", "smol-comp"]
