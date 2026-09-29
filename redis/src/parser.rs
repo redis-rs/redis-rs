@@ -352,13 +352,21 @@ mod aio_support {
     use tokio::io::AsyncRead;
     use tokio_util::codec::{Decoder, Encoder};
 
+    /// A large frame must not permanently set the memory floor of a long-lived
+    /// connection. Keep ordinary frames' allocation for reuse.
+    pub(crate) const MAX_IDLE_CODEC_BUFFER: usize = 64 * 1024;
+    pub(crate) const REPLACEMENT_CODEC_BUFFER: usize = 8 * 1024;
+
     #[derive(Default)]
     pub struct ValueCodec {
         state: AnySendSyncPartialState,
+        large_read_buffer: bool,
+        large_write_buffer: bool,
     }
 
     impl ValueCodec {
         fn decode_stream(&mut self, bytes: &mut BytesMut, eof: bool) -> RedisResult<Option<Value>> {
+            self.large_read_buffer |= bytes.len() > MAX_IDLE_CODEC_BUFFER;
             let (opt, removed_len) = {
                 let buffer = &bytes[..];
                 let mut stream =
@@ -376,16 +384,31 @@ mod aio_support {
             };
 
             bytes.advance(removed_len);
+            if bytes.is_empty() && self.large_read_buffer {
+                *bytes = BytesMut::with_capacity(REPLACEMENT_CODEC_BUFFER);
+                self.large_read_buffer = false;
+            }
             match opt {
                 Some(result) => Ok(Some(result)),
                 None => Ok(None),
             }
+        }
+
+        /// Called before encoding a new request into a drained write buffer.
+        pub(crate) fn take_large_write_buffer(&mut self) -> bool {
+            std::mem::take(&mut self.large_write_buffer)
         }
     }
 
     impl Encoder<Vec<u8>> for ValueCodec {
         type Error = RedisError;
         fn encode(&mut self, item: Vec<u8>, dst: &mut BytesMut) -> Result<(), Self::Error> {
+            // Framed may have consumed the buffer with `advance`, making its
+            // reported capacity small while it still owns the large allocation.
+            if dst.is_empty() && self.take_large_write_buffer() {
+                *dst = BytesMut::with_capacity(REPLACEMENT_CODEC_BUFFER);
+            }
+            self.large_write_buffer |= dst.len().saturating_add(item.len()) > MAX_IDLE_CODEC_BUFFER;
             dst.extend_from_slice(item.as_ref());
             Ok(())
         }
@@ -481,6 +504,56 @@ mod tests {
     use super::*;
     use crate::errors::ErrorKind;
     use assert_matches::assert_matches;
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn codec_releases_large_drained_read_buffer() {
+        use bytes::BytesMut;
+        use tokio_util::codec::Decoder;
+
+        let mut codec = ValueCodec::default();
+        let payload = vec![b'x'; 512 * 1024];
+        let mut bytes = BytesMut::from(format!("${}\r\n", payload.len()).as_bytes());
+        bytes.extend_from_slice(&payload[..payload.len() / 2]);
+        assert_eq!(codec.decode(&mut bytes).unwrap(), None);
+        bytes.extend_from_slice(&payload[payload.len() / 2..]);
+        bytes.extend_from_slice(b"\r\n");
+        bytes.extend_from_slice(b"+OK\r\n");
+
+        assert_eq!(
+            codec.decode(&mut bytes).unwrap(),
+            Some(Value::BulkString(payload))
+        );
+        assert_eq!(&bytes[..], b"+OK\r\n");
+        assert_eq!(codec.decode(&mut bytes).unwrap(), Some(Value::Okay));
+        assert!(bytes.is_empty());
+        bytes.reserve(8 * 1024); // what Framed does before the next socket read
+        assert!(
+            bytes.capacity() <= 64 * 1024,
+            "read buffer retained {} bytes",
+            bytes.capacity()
+        );
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn codec_releases_large_drained_write_buffer_before_reuse() {
+        use bytes::BytesMut;
+        use tokio_util::codec::Encoder;
+
+        let mut codec = ValueCodec::default();
+        let mut bytes = BytesMut::new();
+        codec.encode(vec![b'x'; 512 * 1024], &mut bytes).unwrap();
+        bytes.clear(); // a completed transport flush
+        codec.encode(b"PING".to_vec(), &mut bytes).unwrap();
+
+        assert_eq!(&bytes[..], b"PING");
+        assert!(
+            bytes.capacity() <= 64 * 1024,
+            "write buffer retained {} bytes",
+            bytes.capacity()
+        );
+    }
 
     #[cfg(feature = "aio")]
     #[test]

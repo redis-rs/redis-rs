@@ -21,6 +21,7 @@ use {
     log::{debug, error, warn},
 };
 
+use bytes::BytesMut;
 use futures_util::{
     future::{Future, FutureExt},
     ready,
@@ -35,7 +36,24 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{self, Poll};
 use std::time::Duration;
-use tokio_util::codec::Decoder;
+use tokio_util::codec::{Decoder, Framed};
+
+/// Reclaim a large request buffer once its bytes have reached the transport.
+/// `BytesMut::advance` can mask retained capacity, so the codec tracks whether
+/// a large request was encoded.
+trait TrimDrainedWriteBuffer {
+    fn trim_drained_write_buffer(self: Pin<&mut Self>);
+}
+
+impl<C: AsyncRead + AsyncWrite + Unpin> TrimDrainedWriteBuffer for Framed<C, ValueCodec> {
+    fn trim_drained_write_buffer(self: Pin<&mut Self>) {
+        let framed = self.get_mut();
+        if framed.write_buffer().is_empty() && framed.codec_mut().take_large_write_buffer() {
+            *framed.write_buffer_mut() =
+                BytesMut::with_capacity(crate::parser::REPLACEMENT_CODEC_BUFFER);
+        }
+    }
+}
 
 // Senders which the result of a single request are sent through
 type PipelineOutput = oneshot::Sender<RedisResult<Value>>;
@@ -304,7 +322,10 @@ where
 
 impl<T> Sink<PipelineMessage> for PipelineSink<T>
 where
-    T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
+    T: Sink<Vec<u8>, Error = RedisError>
+        + Stream<Item = RedisResult<Value>>
+        + TrimDrainedWriteBuffer
+        + 'static,
 {
     type Error = ();
 
@@ -389,14 +410,18 @@ where
         if matches!(self.as_mut().poll_read(cx), Poll::Ready(Err(()))) {
             return Poll::Ready(Err(()));
         }
-        self.as_mut()
-            .project()
-            .sink_stream
-            .poll_flush(cx)
-            .map_err(|err| {
-                self.as_mut().send_disconnect_if_needed(&err);
-                self.send_result(Err(err));
-            })
+        let result = {
+            let mut sink_stream = self.as_mut().project().sink_stream;
+            let result = sink_stream.as_mut().poll_flush(cx);
+            if matches!(result, Poll::Ready(Ok(()))) {
+                sink_stream.trim_drained_write_buffer();
+            }
+            result
+        };
+        result.map_err(|err| {
+            self.as_mut().send_disconnect_if_needed(&err);
+            self.send_result(Err(err));
+        })
     }
 
     fn poll_close(
@@ -429,7 +454,7 @@ impl Pipeline {
         buffer_size: usize,
     ) -> (Self, impl Future<Output = ()>)
     where
-        T: Sink<Vec<u8>, Error = RedisError>,
+        T: Sink<Vec<u8>, Error = RedisError> + TrimDrainedWriteBuffer,
         T: Stream<Item = RedisResult<Value>>,
         T: Unpin + Send + 'static,
     {
@@ -1022,6 +1047,65 @@ impl MultiplexedConnection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn large_write_is_released_when_connection_becomes_idle() {
+        use futures_util::SinkExt;
+        use tokio::io::AsyncReadExt;
+
+        let (client, mut server) = tokio::io::duplex(1024 * 1024);
+        let mut pipeline = PipelineSink::new(
+            ValueCodec::default().framed(client),
+            None,
+            #[cfg(feature = "cache-aio")]
+            None,
+        );
+        let large = vec![b'x'; 512 * 1024];
+        pipeline
+            .feed(PipelineMessage {
+                input: large.clone(),
+                output: None,
+                expectation: None,
+            })
+            .await
+            .unwrap();
+        pipeline.flush().await.unwrap();
+        assert!(pipeline.sink_stream.write_buffer().is_empty());
+        pipeline.sink_stream.write_buffer_mut().reserve(8 * 1024);
+        assert!(
+            pipeline.sink_stream.write_buffer().capacity() <= 64 * 1024,
+            "idle write buffer retained {} bytes",
+            pipeline.sink_stream.write_buffer().capacity()
+        );
+        let mut received = vec![0; large.len()];
+        server.read_exact(&mut received).await.unwrap();
+        assert_eq!(received, large);
+    }
+
+    #[tokio::test]
+    async fn large_write_is_released_before_next_request_without_corrupting_it() {
+        use futures_util::SinkExt;
+        use tokio::io::AsyncReadExt;
+
+        let (client, mut server) = tokio::io::duplex(1024 * 1024);
+        let mut framed = ValueCodec::default().framed(client);
+        let large = vec![b'x'; 512 * 1024];
+        framed.send(large.clone()).await.unwrap();
+        assert!(framed.write_buffer().is_empty());
+        let mut received = vec![0; large.len()];
+        server.read_exact(&mut received).await.unwrap();
+        assert_eq!(received, large);
+
+        framed.send(b"PING".to_vec()).await.unwrap();
+        assert!(
+            framed.write_buffer().capacity() <= 64 * 1024,
+            "write buffer retained {} bytes after next request",
+            framed.write_buffer().capacity()
+        );
+        let mut small = [0; 4];
+        server.read_exact(&mut small).await.unwrap();
+        assert_eq!(&small, b"PING");
+    }
 
     #[test]
     fn test_pipeline_resolve_buffer_size_default() {
