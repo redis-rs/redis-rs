@@ -349,6 +349,124 @@ fn test_sentinel_connect_to_multiple_replicas() {
     );
 }
 
+fn connect_to_sentinel(context: &TestSentinelContext, index: usize) -> Connection {
+    let sentinel = context.sentinels_connection_info()[index].clone();
+    Client::open(sentinel).unwrap().get_connection().unwrap()
+}
+
+/// Makes the sentinel at `index` stop monitoring `master_name`, so it has no master for the
+/// name: the "null reply" of the Sentinel client specification.
+fn forget_master(context: &TestSentinelContext, index: usize, master_name: &str) {
+    let _: () = redis::cmd("SENTINEL")
+        .arg("REMOVE")
+        .arg(master_name)
+        .query(&mut connect_to_sentinel(context, index))
+        .unwrap();
+}
+
+/// Makes the sentinel at `index` monitor `master_name` at an address nothing listens on,
+/// and waits until it flags that master `s_down`. The other sentinels keep the real master.
+fn flag_master_down(context: &TestSentinelContext, index: usize, master_name: &str) {
+    forget_master(context, index, master_name);
+    let mut con = connect_to_sentinel(context, index);
+    let _: () = redis::cmd("SENTINEL")
+        .arg("MONITOR")
+        .arg(master_name)
+        .arg("127.0.0.1")
+        .arg(redis_test::utils::get_random_available_port())
+        .arg(1)
+        .query(&mut con)
+        .unwrap();
+    let _: () = redis::cmd("SENTINEL")
+        .arg("SET")
+        .arg(master_name)
+        .arg("down-after-milliseconds")
+        .arg(100)
+        .query(&mut con)
+        .unwrap();
+    for _ in 0..100 {
+        let master: HashMap<String, String> = redis::cmd("SENTINEL")
+            .arg("MASTER")
+            .arg(master_name)
+            .query(&mut con)
+            .unwrap();
+        if master["flags"].contains("s_down") {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("sentinel {index} never flagged {master_name} as s_down");
+}
+
+/// Denies `ROLE` and `INFO` on the master, so a client reaches it but cannot verify its role.
+fn deny_role_check_on_master(context: &mut TestSentinelContext, master_name: &str) {
+    let node_conn_info = context.sentinel_node_connection_info();
+    let master_client = context
+        .sentinel_mut()
+        .master_for(master_name, Some(&node_conn_info))
+        .unwrap();
+    let mut master_con = master_client.get_connection().unwrap();
+    let user: String = redis::cmd("ACL")
+        .arg("whoami")
+        .query(&mut master_con)
+        .unwrap();
+    let _: () = redis::cmd("ACL")
+        .arg("SETUSER")
+        .arg(&user)
+        .arg("-role")
+        .arg("-info")
+        .query(&mut master_con)
+        .unwrap();
+}
+
+#[test]
+fn test_sentinel_master_for_skips_a_sentinel_that_does_not_know_the_master() {
+    let master_name = "master1";
+    let mut context = TestSentinelContext::new(2, 2, 3);
+    let node_conn_info = context.sentinel_node_connection_info();
+    forget_master(&context, 0, master_name);
+
+    let master_client = context
+        .sentinel_mut()
+        .master_for(master_name, Some(&node_conn_info))
+        .unwrap();
+    let mut master_con = master_client.get_connection().unwrap();
+    assert_is_connection_to_master(&mut master_con);
+}
+
+#[test]
+fn test_sentinel_master_for_skips_a_sentinel_that_flags_the_master_down() {
+    let master_name = "master1";
+    let mut context = TestSentinelContext::new(2, 2, 3);
+    let node_conn_info = context.sentinel_node_connection_info();
+    flag_master_down(&context, 0, master_name);
+
+    let master_client = context
+        .sentinel_mut()
+        .master_for(master_name, Some(&node_conn_info))
+        .unwrap();
+    let mut master_con = master_client.get_connection().unwrap();
+    assert_is_connection_to_master(&mut master_con);
+}
+
+/// The master refuses the role check, and the last sentinel asked does not know the master.
+/// The master's error must reach the caller, not that sentinel's "not found".
+#[test]
+fn test_sentinel_master_for_reports_the_master_error_over_not_found() {
+    let master_name = "master1";
+    let mut context = TestSentinelContext::new(2, 2, 3);
+    let node_conn_info = context.sentinel_node_connection_info();
+    let last = context.sentinels_connection_info().len() - 1;
+    forget_master(&context, last, master_name);
+    deny_role_check_on_master(&mut context, master_name);
+
+    let err = context
+        .sentinel_mut()
+        .master_for(master_name, Some(&node_conn_info))
+        .unwrap_err();
+    assert_eq!(err.code(), Some("NOPERM"));
+}
+
 #[test]
 fn test_sentinel_server_down() {
     let number_of_replicas = 3;
@@ -770,6 +888,61 @@ pub mod async_tests {
             10,
         )
         .await;
+    }
+
+    #[async_test]
+    async fn test_sentinel_master_for_skips_a_sentinel_that_does_not_know_the_master_async() {
+        let master_name = "master1";
+        let mut context = TestSentinelContext::new(2, 2, 3);
+        let node_conn_info = context.sentinel_node_connection_info();
+        forget_master(&context, 0, master_name);
+
+        let master_client = context
+            .sentinel_mut()
+            .async_master_for(master_name, Some(&node_conn_info))
+            .await
+            .unwrap();
+        let mut master_con = master_client
+            .get_multiplexed_async_connection()
+            .await
+            .unwrap();
+        async_assert_is_connection_to_master(&mut master_con).await;
+    }
+
+    #[async_test]
+    async fn test_sentinel_master_for_skips_a_sentinel_that_flags_the_master_down_async() {
+        let master_name = "master1";
+        let mut context = TestSentinelContext::new(2, 2, 3);
+        let node_conn_info = context.sentinel_node_connection_info();
+        flag_master_down(&context, 0, master_name);
+
+        let master_client = context
+            .sentinel_mut()
+            .async_master_for(master_name, Some(&node_conn_info))
+            .await
+            .unwrap();
+        let mut master_con = master_client
+            .get_multiplexed_async_connection()
+            .await
+            .unwrap();
+        async_assert_is_connection_to_master(&mut master_con).await;
+    }
+
+    #[async_test]
+    async fn test_sentinel_master_for_reports_the_master_error_over_not_found_async() {
+        let master_name = "master1";
+        let mut context = TestSentinelContext::new(2, 2, 3);
+        let node_conn_info = context.sentinel_node_connection_info();
+        let last = context.sentinels_connection_info().len() - 1;
+        forget_master(&context, last, master_name);
+        deny_role_check_on_master(&mut context, master_name);
+
+        let err = context
+            .sentinel_mut()
+            .async_master_for(master_name, Some(&node_conn_info))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), Some("NOPERM"));
     }
 
     #[async_test]
