@@ -41,6 +41,7 @@ pub enum ServerType {
 pub enum Module {
     Bloom,
     Json,
+    Search,
 }
 
 /// A builder for [`RedisServer`]
@@ -602,6 +603,9 @@ impl RedisServerCommand {
                 }
                 Module::Bloom => {
                     self.load_module("REDISRS_MODULE_BLOOM_PATH", "Bloom");
+                }
+                Module::Search => {
+                    self.load_module("REDISRS_MODULE_SEARCH_PATH", "Search");
                 }
             }
         }
