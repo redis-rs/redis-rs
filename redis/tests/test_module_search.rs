@@ -589,7 +589,7 @@ where
             }
 
             // 5. Test all builder modifiers + all field modifiers combined progressively
-            let mut combined_field = combined_builder.clone().build();
+            let mut combined_field = combined_builder.build();
             for (field_suffix, field_modifier) in &field_modifiers {
                 combined_field = field_modifier(combined_field);
                 let index_name = format!("{base_name}_all_builders_fields_until_{field_suffix}");
