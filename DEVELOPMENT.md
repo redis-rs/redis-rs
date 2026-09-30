@@ -62,6 +62,7 @@ If automatic detection fails or you need finer control, use the following enviro
 | `REDISRS_SERVER_BIN` | Binary to start Redis (default: `redis-server`) |
 | `REDISRS_REDIS_BLOOM_PATH` | Path to the `bloom` module |
 | `REDISRS_REDIS_JSON_PATH` | Path to the `json` module |
+| `REDISRS_REDIS_SEARCH_PATH` | Path to the `search` module |
 | `PROTOCOL` | (Only to be used when running `cargo` manually`) If `RESP3`, tests connect using `RESP3`, otherwise using `RESP2` |
 
 
