@@ -499,7 +499,7 @@ fn test_module_search_ft_create_schema_geo_field() {
 
 type VectorFieldModifier = fn(VectorField) -> VectorField;
 
-fn run_ft_create_schema_flat_vector_field<C, F>(con: &mut C, mut on_created: F)
+fn run_ft_create_schema_flat_vector_field<C, F>(con: &mut C, is_valkey: bool, mut on_created: F)
 where
     C: redis::ConnectionLike,
     F: FnMut(&str),
@@ -511,21 +511,25 @@ where
     let builder_modifiers: Vec<(&'static str, FlatVectorFieldBuilderModifier)> =
         vec![("block_size", |builder| builder.block_size(1000))];
 
-    // Common field modifiers (applied after .build()) - not mutually exclusive
-    let field_modifiers: Vec<(&'static str, VectorFieldModifier)> = vec![
-        ("alias", |field| field.alias("vector_alias")),
-        ("index_missing", |field| field.index_missing(true)),
-    ];
+    // INDEXMISSING is Redis-only. Alias works on both servers.
+    let mut field_modifiers: Vec<(&'static str, VectorFieldModifier)> =
+        vec![("alias", |field| field.alias("vector_alias"))];
+    if !is_valkey {
+        field_modifiers.push(("index_missing", |field| field.index_missing(true)));
+    }
 
-    // For each Vector type
-    for (vector_type_name, vector_type) in [
-        ("float32", VectorType::Float32),
-        ("float64", VectorType::Float64),
-        ("bfloat16", VectorType::BFloat16),
-        ("float16", VectorType::Float16),
-        ("int8", VectorType::Int8),
-        ("uint8", VectorType::UInt8),
-    ] {
+    // Valkey Search supports FLOAT32 only.
+    let mut vector_types = vec![("float32", VectorType::Float32)];
+    if !is_valkey {
+        vector_types.extend([
+            ("float64", VectorType::Float64),
+            ("bfloat16", VectorType::BFloat16),
+            ("float16", VectorType::Float16),
+            ("int8", VectorType::Int8),
+            ("uint8", VectorType::UInt8),
+        ]);
+    }
+    for (vector_type_name, vector_type) in vector_types {
         // For each distance metric
         for (distance_metric_name, distance_metric) in [
             ("l2", DistanceMetric::L2),
@@ -609,10 +613,11 @@ where
 #[test]
 fn test_module_search_ft_create_schema_flat_vector_field() {
     let ctx = run_test_if_version_supported!(
-        [&[REDIS_CE_8_0][..], &[REDIS_SEARCH_8_0]],
+        &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
         &[Module::Search]
     );
-    run_ft_create_schema_flat_vector_field(&mut ctx.connection(), |_| {});
+    let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
+    run_ft_create_schema_flat_vector_field(&mut ctx.connection(), is_valkey, |_| {});
 }
 
 fn run_ft_create_schema_geoshape_field<C, F>(con: &mut C, mut on_created: F)
