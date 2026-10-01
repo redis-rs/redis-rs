@@ -19,6 +19,7 @@ use futures_channel::mpsc::{UnboundedReceiver, unbounded};
 use futures_channel::oneshot;
 use futures_util::future::{BoxFuture, FutureExt, Shared};
 use futures_util::stream::StreamExt;
+use std::num::NonZeroUsize;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -48,7 +49,7 @@ pub struct ConnectionManagerConfig {
     pub(crate) cache_config: Option<crate::caching::CacheConfig>,
     pipeline_buffer_size: Option<usize>,
     concurrency_limit: Option<usize>,
-    codec_buffer_trim_threshold: Option<usize>,
+    codec_buffer_trim_threshold: Option<Option<NonZeroUsize>>,
     /// Flush threshold for the outbound write buffer; see [`AsyncConnectionConfig::set_write_backpressure_boundary`].
     write_backpressure_boundary: Option<usize>,
     /// Optional credentials provider for dynamic authentication (e.g., token-based authentication)
@@ -285,7 +286,7 @@ impl ConnectionManagerConfig {
     /// Sets the codec buffer trim threshold for every managed connection.
     ///
     /// See [`AsyncConnectionConfig::set_codec_buffer_trim_threshold`] for details.
-    pub fn set_codec_buffer_trim_threshold(mut self, threshold: usize) -> Self {
+    pub fn set_codec_buffer_trim_threshold(mut self, threshold: Option<NonZeroUsize>) -> Self {
         self.codec_buffer_trim_threshold = Some(threshold);
         self
     }
@@ -913,9 +914,21 @@ mod tests {
     #[tokio::test]
     async fn test_lazy_connection_manager_wires_codec_buffer_trim_threshold() {
         let client = Client::open("redis://127.0.0.1/").unwrap();
-        let config = ConnectionManagerConfig::new().set_codec_buffer_trim_threshold(0);
+        let config = ConnectionManagerConfig::new().set_codec_buffer_trim_threshold(None);
         let manager = ConnectionManager::new_lazy_with_config(client, config).unwrap();
-        assert_eq!(manager.0.connection_config.codec_buffer_trim_threshold, 0);
+        assert_eq!(
+            manager.0.connection_config.codec_buffer_trim_threshold,
+            None
+        );
+
+        let client = Client::open("redis://127.0.0.1/").unwrap();
+        let config = ConnectionManagerConfig::new()
+            .set_codec_buffer_trim_threshold(NonZeroUsize::new(128 * 1024));
+        let manager = ConnectionManager::new_lazy_with_config(client, config).unwrap();
+        assert_eq!(
+            manager.0.connection_config.codec_buffer_trim_threshold,
+            NonZeroUsize::new(128 * 1024)
+        );
     }
 
     #[test]

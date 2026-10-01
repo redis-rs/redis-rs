@@ -13,6 +13,8 @@ use crate::{
     types::{RedisResult, Value},
 };
 #[cfg(feature = "aio")]
+use std::num::NonZeroUsize;
+#[cfg(feature = "aio")]
 use std::pin::Pin;
 
 #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
@@ -194,7 +196,7 @@ pub struct AsyncConnectionConfig {
     pub(crate) pipeline_buffer_size: Option<usize>,
     pub(crate) concurrency_limit: Option<usize>,
     /// Buffered read or write size above which a drained codec buffer is replaced.
-    pub(crate) codec_buffer_trim_threshold: usize,
+    pub(crate) codec_buffer_trim_threshold: Option<NonZeroUsize>,
     /// Flush threshold for the outbound write buffer; see [`AsyncConnectionConfig::set_write_backpressure_boundary`].
     pub(crate) write_backpressure_boundary: Option<usize>,
     /// A tracker of the connection's confirmed subscriptions, shared with the connection.
@@ -255,7 +257,7 @@ impl Default for AsyncConnectionConfig {
             dns_resolver: Default::default(),
             pipeline_buffer_size: None,
             concurrency_limit: None,
-            codec_buffer_trim_threshold: crate::parser::DEFAULT_CODEC_BUFFER_TRIM_THRESHOLD,
+            codec_buffer_trim_threshold: Some(crate::parser::DEFAULT_CODEC_BUFFER_TRIM_THRESHOLD),
             write_backpressure_boundary: None,
             subscription_tracker: None,
             #[cfg(feature = "token-based-authentication")]
@@ -387,10 +389,10 @@ impl AsyncConnectionConfig {
 
     /// Sets the size in bytes above which a drained read or write codec buffer is replaced.
     ///
-    /// The default is 64 KiB. Pass `0` to disable trimming. A nonzero value at or
-    /// below the 8 KiB replacement capacity is raised to one byte above that size.
+    /// The default is 64 KiB. Pass `None` to disable trimming. A value below
+    /// the 8 KiB replacement capacity is raised to that size.
     /// The replacement buffer has the same 8 KiB capacity as a new `Framed` connection.
-    pub fn set_codec_buffer_trim_threshold(mut self, threshold: usize) -> Self {
+    pub fn set_codec_buffer_trim_threshold(mut self, threshold: Option<NonZeroUsize>) -> Self {
         self.codec_buffer_trim_threshold = threshold;
         self
     }
@@ -802,9 +804,14 @@ mod test {
         let config = AsyncConnectionConfig::new();
         assert_eq!(
             config.codec_buffer_trim_threshold,
-            crate::parser::DEFAULT_CODEC_BUFFER_TRIM_THRESHOLD
+            Some(crate::parser::DEFAULT_CODEC_BUFFER_TRIM_THRESHOLD)
         );
-        let disabled = config.set_codec_buffer_trim_threshold(0);
-        assert_eq!(disabled.codec_buffer_trim_threshold, 0);
+        let disabled = config.set_codec_buffer_trim_threshold(None);
+        assert_eq!(disabled.codec_buffer_trim_threshold, None);
+        let enabled = disabled.set_codec_buffer_trim_threshold(NonZeroUsize::new(128 * 1024));
+        assert_eq!(
+            enabled.codec_buffer_trim_threshold,
+            NonZeroUsize::new(128 * 1024)
+        );
     }
 }
