@@ -1104,7 +1104,7 @@ mod tests {
 
         let (client, mut server) = tokio::io::duplex(1024 * 1024);
         let mut pipeline = PipelineSink::new(
-            ValueCodec::with_trim_threshold(0).framed(client),
+            ValueCodec::with_trim_threshold(None).framed(client),
             None,
             #[cfg(feature = "cache-aio")]
             None,
