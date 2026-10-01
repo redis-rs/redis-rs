@@ -306,5 +306,8 @@ required-features = ["tokio-comp", "cache-aio"]
 name = "latency-aware-routing"
 required-features = ["cluster-async", "tokio-comp"]
 
+[[example]]
+name = "client_list_memory"
+
 [lints]
 workspace = true
