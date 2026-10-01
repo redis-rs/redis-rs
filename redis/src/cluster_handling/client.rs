@@ -74,6 +74,8 @@ struct BuilderParams {
     #[cfg(feature = "cluster-async")]
     connection_concurrency_limit: Option<usize>,
     #[cfg(feature = "cluster-async")]
+    codec_buffer_trim_threshold: Option<usize>,
+    #[cfg(feature = "cluster-async")]
     write_backpressure_boundary: Option<usize>,
     node_address_map: Option<HashMap<NodeAddress, NodeAddress>>,
     #[cfg(feature = "cluster-async")]
@@ -165,6 +167,8 @@ pub(crate) struct ClusterParams {
     #[cfg(feature = "cluster-async")]
     pub(crate) connection_concurrency_limit: Option<usize>,
     #[cfg(feature = "cluster-async")]
+    pub(crate) codec_buffer_trim_threshold: Option<usize>,
+    #[cfg(feature = "cluster-async")]
     pub(crate) write_backpressure_boundary: Option<usize>,
     pub(crate) node_address_map: Option<HashMap<NodeAddress, NodeAddress>>,
     #[cfg(feature = "cluster-async")]
@@ -233,6 +237,8 @@ impl ClusterParams {
             },
             #[cfg(feature = "cluster-async")]
             connection_concurrency_limit: value.connection_concurrency_limit,
+            #[cfg(feature = "cluster-async")]
+            codec_buffer_trim_threshold: value.codec_buffer_trim_threshold,
             #[cfg(feature = "cluster-async")]
             write_backpressure_boundary: value.write_backpressure_boundary,
             node_address_map: value.node_address_map,
@@ -706,6 +712,15 @@ impl ClusterClientBuilder {
         self
     }
 
+    /// Sets the codec buffer trim threshold in bytes for every async cluster node connection.
+    ///
+    /// See [`crate::AsyncConnectionConfig::set_codec_buffer_trim_threshold`] for details.
+    #[cfg(feature = "cluster-async")]
+    pub fn codec_buffer_trim_threshold(mut self, threshold: usize) -> Self {
+        self.builder_params.codec_buffer_trim_threshold = Some(threshold);
+        self
+    }
+
     /// Sets the flush threshold (backpressure boundary) for each node connection's outbound write buffer.
     ///
     /// See [`crate::AsyncConnectionConfig::set_write_backpressure_boundary`] for full semantics.
@@ -1149,6 +1164,16 @@ mod tests {
             client.cluster_params.write_backpressure_boundary,
             Some(16 * 1024 * 1024)
         );
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn codec_buffer_trim_threshold_reaches_cluster_params() {
+        let client = ClusterClient::builder(["redis://127.0.0.1:6379"])
+            .codec_buffer_trim_threshold(0)
+            .build()
+            .unwrap();
+        assert_eq!(client.cluster_params.codec_buffer_trim_threshold, Some(0));
     }
 
     #[test]

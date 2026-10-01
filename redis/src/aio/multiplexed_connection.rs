@@ -635,7 +635,8 @@ impl MultiplexedConnection {
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
-        let mut codec = ValueCodec::default().framed(stream);
+        let mut codec =
+            ValueCodec::with_trim_threshold(config.codec_buffer_trim_threshold).framed(stream);
         if let Some(boundary) = config.write_backpressure_boundary {
             codec.set_backpressure_boundary(boundary);
         }
@@ -1048,6 +1049,20 @@ impl MultiplexedConnection {
 mod tests {
     use super::*;
 
+    #[test]
+    fn framed_initial_buffers_match_replacement_capacity() {
+        let (client, _server) = tokio::io::duplex(64);
+        let framed = ValueCodec::default().framed(client);
+        assert_eq!(
+            framed.read_buffer().capacity(),
+            crate::parser::REPLACEMENT_CODEC_BUFFER
+        );
+        assert_eq!(
+            framed.write_buffer().capacity(),
+            crate::parser::REPLACEMENT_CODEC_BUFFER
+        );
+    }
+
     #[tokio::test]
     async fn large_write_is_released_when_connection_becomes_idle() {
         use futures_util::SinkExt;
@@ -1076,6 +1091,41 @@ mod tests {
             pipeline.sink_stream.write_buffer().capacity() <= 64 * 1024,
             "idle write buffer retained {} bytes",
             pipeline.sink_stream.write_buffer().capacity()
+        );
+        let mut received = vec![0; large.len()];
+        server.read_exact(&mut received).await.unwrap();
+        assert_eq!(received, large);
+    }
+
+    #[tokio::test]
+    async fn disabled_trimming_preserves_idle_write_buffer() {
+        use futures_util::SinkExt;
+        use tokio::io::AsyncReadExt;
+
+        let (client, mut server) = tokio::io::duplex(1024 * 1024);
+        let mut pipeline = PipelineSink::new(
+            ValueCodec::with_trim_threshold(0).framed(client),
+            None,
+            #[cfg(feature = "cache-aio")]
+            None,
+        );
+        let large = vec![b'x'; 512 * 1024];
+        pipeline
+            .feed(PipelineMessage {
+                input: large.clone(),
+                output: None,
+                expectation: None,
+            })
+            .await
+            .unwrap();
+        let write_buffer = pipeline.sink_stream.write_buffer();
+        let allocation_start = write_buffer.as_ptr();
+        let written = write_buffer.len();
+        pipeline.flush().await.unwrap();
+        assert!(pipeline.sink_stream.write_buffer().is_empty());
+        assert_eq!(
+            pipeline.sink_stream.write_buffer().as_ptr(),
+            allocation_start.wrapping_add(written)
         );
         let mut received = vec![0; large.len()];
         server.read_exact(&mut received).await.unwrap();

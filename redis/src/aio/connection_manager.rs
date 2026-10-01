@@ -46,6 +46,7 @@ pub struct ConnectionManagerConfig {
     pub(crate) cache_config: Option<crate::caching::CacheConfig>,
     pipeline_buffer_size: Option<usize>,
     concurrency_limit: Option<usize>,
+    codec_buffer_trim_threshold: Option<usize>,
     /// Flush threshold for the outbound write buffer; see [`AsyncConnectionConfig::set_write_backpressure_boundary`].
     write_backpressure_boundary: Option<usize>,
     /// Optional credentials provider for dynamic authentication (e.g., token-based authentication)
@@ -68,6 +69,7 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             cache_config,
             pipeline_buffer_size,
             concurrency_limit,
+            codec_buffer_trim_threshold,
             write_backpressure_boundary,
             #[cfg(feature = "token-based-authentication")]
             credentials_provider,
@@ -82,6 +84,7 @@ impl std::fmt::Debug for ConnectionManagerConfig {
             .field("resubscribe_automatically", &resubscribe_automatically)
             .field("pipeline_buffer_size", &pipeline_buffer_size)
             .field("concurrency_limit", &concurrency_limit)
+            .field("codec_buffer_trim_threshold", &codec_buffer_trim_threshold)
             .field("write_backpressure_boundary", &write_backpressure_boundary)
             .field(
                 "push_sender",
@@ -277,6 +280,14 @@ impl ConnectionManagerConfig {
         self
     }
 
+    /// Sets the codec buffer trim threshold for every managed connection.
+    ///
+    /// See [`AsyncConnectionConfig::set_codec_buffer_trim_threshold`] for details.
+    pub fn set_codec_buffer_trim_threshold(mut self, threshold: usize) -> Self {
+        self.codec_buffer_trim_threshold = Some(threshold);
+        self
+    }
+
     /// Sets the flush threshold (backpressure boundary) for the outbound write buffer.
     ///
     /// See [`AsyncConnectionConfig::set_write_backpressure_boundary`] for full semantics.
@@ -332,6 +343,7 @@ impl Default for ConnectionManagerConfig {
             cache_config: None,
             pipeline_buffer_size: None,
             concurrency_limit: None,
+            codec_buffer_trim_threshold: None,
             write_backpressure_boundary: None,
             #[cfg(feature = "token-based-authentication")]
             credentials_provider: None,
@@ -490,6 +502,9 @@ impl ConnectionManager {
             .set_response_timeout(config.response_timeout);
         connection_config.pipeline_buffer_size = config.pipeline_buffer_size;
         connection_config.concurrency_limit = config.concurrency_limit;
+        if let Some(threshold) = config.codec_buffer_trim_threshold {
+            connection_config = connection_config.set_codec_buffer_trim_threshold(threshold);
+        }
         connection_config.write_backpressure_boundary = config.write_backpressure_boundary;
 
         #[cfg(feature = "cache-aio")]
@@ -910,6 +925,14 @@ mod tests {
             manager.0.connection_config.write_backpressure_boundary,
             Some(16 * 1024 * 1024)
         );
+    }
+
+    #[tokio::test]
+    async fn test_lazy_connection_manager_wires_codec_buffer_trim_threshold() {
+        let client = Client::open("redis://127.0.0.1/").unwrap();
+        let config = ConnectionManagerConfig::new().set_codec_buffer_trim_threshold(0);
+        let manager = ConnectionManager::new_lazy_with_config(client, config).unwrap();
+        assert_eq!(manager.0.connection_config.codec_buffer_trim_threshold, 0);
     }
 
     #[test]

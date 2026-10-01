@@ -195,6 +195,8 @@ pub struct AsyncConnectionConfig {
     pub(crate) dns_resolver: Option<std::sync::Arc<dyn AsyncDNSResolver>>,
     pub(crate) pipeline_buffer_size: Option<usize>,
     pub(crate) concurrency_limit: Option<usize>,
+    /// Buffered read or write size above which a drained codec buffer is replaced.
+    pub(crate) codec_buffer_trim_threshold: usize,
     /// Flush threshold for the outbound write buffer; see [`AsyncConnectionConfig::set_write_backpressure_boundary`].
     pub(crate) write_backpressure_boundary: Option<usize>,
     /// Optional credentials provider for dynamic authentication (e.g., token-based authentication)
@@ -214,6 +216,7 @@ impl Default for AsyncConnectionConfig {
             dns_resolver: Default::default(),
             pipeline_buffer_size: None,
             concurrency_limit: None,
+            codec_buffer_trim_threshold: crate::parser::DEFAULT_CODEC_BUFFER_TRIM_THRESHOLD,
             write_backpressure_boundary: None,
             #[cfg(feature = "token-based-authentication")]
             credentials_provider: None,
@@ -328,6 +331,16 @@ impl AsyncConnectionConfig {
     /// buffer contention may increase overall latency and cause upstream timeouts.
     pub fn set_pipeline_buffer_size(mut self, size: usize) -> Self {
         self.pipeline_buffer_size = Some(size);
+        self
+    }
+
+    /// Sets the size in bytes above which a drained read or write codec buffer is replaced.
+    ///
+    /// The default is 64 KiB. Pass `0` to disable trimming. A nonzero value at or
+    /// below the 8 KiB replacement capacity is raised to one byte above that size.
+    /// The replacement buffer has the same 8 KiB capacity as a new `Framed` connection.
+    pub fn set_codec_buffer_trim_threshold(mut self, threshold: usize) -> Self {
+        self.codec_buffer_trim_threshold = threshold;
         self
     }
 
@@ -730,5 +743,17 @@ mod test {
     fn test_async_connection_config_write_backpressure_boundary_custom() {
         let config = AsyncConnectionConfig::new().set_write_backpressure_boundary(16 * 1024 * 1024);
         assert_eq!(config.write_backpressure_boundary, Some(16 * 1024 * 1024));
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn test_async_connection_config_codec_buffer_trim_threshold() {
+        let config = AsyncConnectionConfig::new();
+        assert_eq!(
+            config.codec_buffer_trim_threshold,
+            crate::parser::DEFAULT_CODEC_BUFFER_TRIM_THRESHOLD
+        );
+        let disabled = config.set_codec_buffer_trim_threshold(0);
+        assert_eq!(disabled.codec_buffer_trim_threshold, 0);
     }
 }

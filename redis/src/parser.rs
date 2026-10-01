@@ -354,19 +354,41 @@ mod aio_support {
 
     /// A large frame must not permanently set the memory floor of a long-lived
     /// connection. Keep ordinary frames' allocation for reuse.
-    pub(crate) const MAX_IDLE_CODEC_BUFFER: usize = 64 * 1024;
+    pub(crate) const DEFAULT_CODEC_BUFFER_TRIM_THRESHOLD: usize = 64 * 1024;
     pub(crate) const REPLACEMENT_CODEC_BUFFER: usize = 8 * 1024;
 
-    #[derive(Default)]
     pub struct ValueCodec {
         state: AnySendSyncPartialState,
+        trim_threshold: usize,
         large_read_buffer: bool,
         large_write_buffer: bool,
     }
 
+    impl Default for ValueCodec {
+        fn default() -> Self {
+            Self::with_trim_threshold(DEFAULT_CODEC_BUFFER_TRIM_THRESHOLD)
+        }
+    }
+
     impl ValueCodec {
+        pub(crate) fn with_trim_threshold(threshold: usize) -> Self {
+            let trim_threshold = if threshold == 0 {
+                0
+            } else {
+                threshold.max(REPLACEMENT_CODEC_BUFFER + 1)
+            };
+            Self {
+                state: AnySendSyncPartialState::default(),
+                trim_threshold,
+                large_read_buffer: false,
+                large_write_buffer: false,
+            }
+        }
+
         fn decode_stream(&mut self, bytes: &mut BytesMut, eof: bool) -> RedisResult<Option<Value>> {
-            self.large_read_buffer |= bytes.len() > MAX_IDLE_CODEC_BUFFER;
+            if self.trim_threshold != 0 {
+                self.large_read_buffer |= bytes.len() > self.trim_threshold;
+            }
             let (opt, removed_len) = {
                 let buffer = &bytes[..];
                 let mut stream =
@@ -405,10 +427,13 @@ mod aio_support {
         fn encode(&mut self, item: Vec<u8>, dst: &mut BytesMut) -> Result<(), Self::Error> {
             // Framed may have consumed the buffer with `advance`, making its
             // reported capacity small while it still owns the large allocation.
-            if dst.is_empty() && self.take_large_write_buffer() {
-                *dst = BytesMut::with_capacity(REPLACEMENT_CODEC_BUFFER);
+            if self.trim_threshold != 0 {
+                if dst.is_empty() && self.take_large_write_buffer() {
+                    *dst = BytesMut::with_capacity(REPLACEMENT_CODEC_BUFFER);
+                }
+                self.large_write_buffer |=
+                    dst.len().saturating_add(item.len()) > self.trim_threshold;
             }
-            self.large_write_buffer |= dst.len().saturating_add(item.len()) > MAX_IDLE_CODEC_BUFFER;
             dst.extend_from_slice(item.as_ref());
             Ok(())
         }
@@ -553,6 +578,81 @@ mod tests {
             "write buffer retained {} bytes",
             bytes.capacity()
         );
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn codec_can_disable_buffer_trimming() {
+        use bytes::BytesMut;
+        use tokio_util::codec::Encoder;
+
+        let mut codec = ValueCodec::with_trim_threshold(0);
+        let mut bytes = BytesMut::with_capacity(128 * 1024);
+        codec.encode(vec![b'x'; 100 * 1024], &mut bytes).unwrap();
+        bytes.clear();
+        codec.encode(b"PING".to_vec(), &mut bytes).unwrap();
+
+        assert_eq!(bytes.capacity(), 128 * 1024);
+        assert_eq!(&bytes[..], b"PING");
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn codec_can_disable_read_buffer_trimming() {
+        use bytes::BytesMut;
+        use tokio_util::codec::Decoder;
+
+        let mut codec = ValueCodec::with_trim_threshold(0);
+        let payload = vec![b'x'; 100 * 1024];
+        let mut bytes = BytesMut::with_capacity(128 * 1024);
+        bytes.extend_from_slice(format!("${}\r\n", payload.len()).as_bytes());
+        bytes.extend_from_slice(&payload);
+        bytes.extend_from_slice(b"\r\n");
+        let allocation_start = bytes.as_ptr();
+        let consumed = bytes.len();
+        assert_eq!(
+            codec.decode(&mut bytes).unwrap(),
+            Some(Value::BulkString(payload))
+        );
+        assert!(bytes.is_empty());
+        assert_eq!(bytes.as_ptr(), allocation_start.wrapping_add(consumed));
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn codec_clamps_small_nonzero_trim_threshold() {
+        use bytes::BytesMut;
+        use tokio_util::codec::Encoder;
+
+        let mut codec = ValueCodec::with_trim_threshold(1);
+        let mut bytes = BytesMut::with_capacity(16 * 1024);
+        codec.encode(vec![b'x'; 4 * 1024], &mut bytes).unwrap();
+        bytes.clear();
+        codec.encode(b"PING".to_vec(), &mut bytes).unwrap();
+
+        assert_eq!(bytes.capacity(), 16 * 1024);
+        assert_eq!(&bytes[..], b"PING");
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn codec_trims_at_configured_threshold() {
+        use bytes::BytesMut;
+        use tokio_util::codec::Encoder;
+
+        let mut codec = ValueCodec::with_trim_threshold(256 * 1024);
+        let mut bytes = BytesMut::with_capacity(128 * 1024);
+        codec.encode(vec![b'x'; 100 * 1024], &mut bytes).unwrap();
+        bytes.clear();
+        codec.encode(b"PING".to_vec(), &mut bytes).unwrap();
+        assert_eq!(bytes.capacity(), 128 * 1024);
+
+        bytes.clear();
+        codec.encode(vec![b'x'; 300 * 1024], &mut bytes).unwrap();
+        bytes.clear();
+        codec.encode(b"PING".to_vec(), &mut bytes).unwrap();
+        assert!(bytes.capacity() <= REPLACEMENT_CODEC_BUFFER + 4);
+        assert_eq!(&bytes[..], b"PING");
     }
 
     #[cfg(feature = "aio")]
