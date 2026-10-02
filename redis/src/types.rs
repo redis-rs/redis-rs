@@ -53,7 +53,7 @@ pub enum Expiry {
 }
 
 /// Helper enum that is used to define expiry time for SET command
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub enum SetExpiry {
     /// EX seconds -- Set the specified expire time, in seconds.
