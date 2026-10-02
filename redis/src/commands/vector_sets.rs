@@ -173,7 +173,7 @@ impl ToRedisArgs for EmbeddingInput<'_> {
 }
 
 /// Represents different ways to input data for vector add commands
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum VectorAddInput<'a> {
     /// Binary representation of 32-bit floating point values
