@@ -3489,7 +3489,7 @@ impl PubSubCommands for Connection {
 ///     con.scan_options(opts)
 /// }
 /// ```
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ScanOptions {
     pattern: Option<String>,
     count: Option<usize>,
