@@ -82,6 +82,14 @@ impl TryFrom<&str> for NodeAddress {
     }
 }
 
+impl FromStr for NodeAddress {
+    type Err = RedisError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::try_from(value)
+    }
+}
+
 impl TryFrom<&ConnectionAddr> for NodeAddress {
     type Error = RedisError;
 
