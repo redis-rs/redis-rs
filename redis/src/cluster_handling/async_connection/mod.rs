@@ -1883,6 +1883,9 @@ where
     if let Some(limit) = params.connection_concurrency_limit {
         config = config.set_concurrency_limit(limit);
     }
+    if let Some(threshold) = params.codec_buffer_trim_threshold {
+        config = config.set_codec_buffer_trim_threshold(threshold);
+    }
     if let Some(boundary) = params.write_backpressure_boundary {
         config = config.set_write_backpressure_boundary(boundary);
     }
