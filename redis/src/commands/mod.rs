@@ -3864,7 +3864,7 @@ impl ToRedisArgs for MSetOptions {
 ///     con.flushall_options(&opts)
 /// }
 /// ```
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct FlushAllOptions {
     /// Blocking (`SYNC`) waits for completion, non-blocking (`ASYNC`) runs in the background
     pub blocking: bool,
