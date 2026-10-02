@@ -141,7 +141,7 @@ pub enum RadiusOrder {
 ///     con.geo_radius(key, longitude, latitude, meters, Unit::Meters, opts)
 /// }
 /// ```
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct RadiusOptions {
     with_coord: bool,
     with_dist: bool,
