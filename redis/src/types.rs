@@ -2505,7 +2505,7 @@ impl ProtocolVersion {
 }
 
 /// Helper enum that is used to define option for the hash expire commands
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub enum ExpireOption {
     /// NONE -- Set expiration regardless of the field's current expiration.
