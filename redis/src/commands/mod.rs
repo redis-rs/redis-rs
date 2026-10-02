@@ -4075,7 +4075,7 @@ impl ToRedisArgs for UpdateCheck {
 }
 
 /// Options for the [ZADD](https://redis.io/commands/zadd) command
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct SortedSetAddOptions {
     conditional_set: Option<ExistenceCheck>,
     conditional_update: Option<UpdateCheck>,
