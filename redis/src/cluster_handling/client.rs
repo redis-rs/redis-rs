@@ -80,7 +80,7 @@ struct BuilderParams {
     max_connection_attempts: Option<NonZeroUsize>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct RetryParams {
     pub(crate) number_of_retries: u32,
     max_wait_time: u64,
