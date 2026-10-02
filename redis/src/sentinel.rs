@@ -1418,6 +1418,26 @@ pub struct SentinelClientBuilder {
     client_to_sentinel_params: BuilderConnectionParams,
 }
 
+impl std::fmt::Debug for SentinelClientBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            sentinels,
+            service_name,
+            server_type,
+            client_to_redis_params,
+            client_to_sentinel_params,
+        } = self;
+
+        f.debug_struct("SentinelClientBuilder")
+            .field("sentinels", sentinels)
+            .field("service_name", service_name)
+            .field("server_type", server_type)
+            .field("client_to_redis_params", client_to_redis_params)
+            .field("client_to_sentinel_params", client_to_sentinel_params)
+            .finish()
+    }
+}
+
 impl SentinelClientBuilder {
     /// Creates a new `SentinelClientBuilder`
     /// - `sentinels` - Addresses of Redis Sentinel nodes (not regular Redis nodes)
