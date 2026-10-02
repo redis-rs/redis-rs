@@ -133,7 +133,7 @@ impl ToRedisArgs for VSimOptions {
 /// - 32-bit floats
 /// - 64-bit floats
 /// - Strings (e.g., numbers as strings)
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum EmbeddingInput<'a> {
     /// 32-bit floating point input
