@@ -37,7 +37,7 @@ pub(crate) fn redacted_if_set<T>(value: &Option<T>) -> &'static str {
 }
 
 /// Helper enum that is used to define expiry time
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum Expiry {
     /// EX seconds -- Set the specified expire time, in seconds.
