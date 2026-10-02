@@ -23,7 +23,7 @@ use crate::{RedisWrite, ToRedisArgs};
 ///     con.vsim_options(key, VectorSimilaritySearchInput::Element(element), &opts)
 /// }
 /// ```
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct VSimOptions {
     /// Include similarity scores in the results
     with_scores: bool,
