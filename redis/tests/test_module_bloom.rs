@@ -121,7 +121,7 @@ fn test_module_bloom_infos() {
     if ctx.supports(REDIS_BLOOM_ANY) {
         assert_eq!(bf_type, ValueType::BloomFilterRedis);
     } else {
-        assert_eq!(bf_type, ValueType::BloomFilterValKey);
+        assert_eq!(bf_type, ValueType::BloomFilterValkey);
     }
     assert_eq!(
         con.bf_info(KEY_1)
