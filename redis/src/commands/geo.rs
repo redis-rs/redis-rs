@@ -7,6 +7,7 @@ use crate::types::{FromRedisValue, RedisWrite, ToRedisArgs, ToSingleRedisArg, Va
 ///
 /// [1]: ../trait.Commands.html#method.geo_dist
 /// [2]: ../trait.Commands.html#method.geo_radius
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum Unit {
     /// Represents meters.
