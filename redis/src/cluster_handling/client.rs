@@ -905,6 +905,20 @@ pub struct ClusterClient {
     cluster_params: ClusterParams,
 }
 
+impl std::fmt::Debug for ClusterClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            initial_nodes,
+            cluster_params,
+        } = self;
+
+        f.debug_struct("ClusterClient")
+            .field("initial_nodes", initial_nodes)
+            .field("cluster_params", cluster_params)
+            .finish()
+    }
+}
+
 impl ClusterClient {
     /// Creates a `ClusterClient` with the default parameters.
     ///
@@ -1092,7 +1106,7 @@ mod tests {
             "redis://:password2@127.0.0.1:6378",
             "redis://:password3@127.0.0.1:6377",
         ]);
-        assert!(result.is_err());
+        result.unwrap_err();
     }
 
     #[test]
@@ -1102,7 +1116,7 @@ mod tests {
             "redis://user2:password@127.0.0.1:6378",
             "redis://user1:password@127.0.0.1:6377",
         ]);
-        assert!(result.is_err());
+        result.unwrap_err();
     }
 
     #[test]
@@ -1112,7 +1126,7 @@ mod tests {
             "redis://127.0.0.1:6378",
             "redis://127.0.0.1:6377",
         ]);
-        assert!(result.is_err());
+        result.unwrap_err();
     }
 
     #[test]
@@ -1122,7 +1136,7 @@ mod tests {
             "redis://127.0.0.1:6378",
             "redis://127.0.0.1:6377",
         ]);
-        assert!(result.is_err());
+        result.unwrap_err();
     }
 
     #[test]
@@ -1139,7 +1153,7 @@ mod tests {
     #[test]
     fn give_empty_initial_nodes() {
         let client = ClusterClient::new(Vec::<String>::new());
-        assert!(client.is_err());
+        client.unwrap_err();
     }
 
     #[test]
@@ -1177,7 +1191,7 @@ mod tests {
         ])
         .database_id(7)
         .build();
-        assert!(result.is_err());
+        result.unwrap_err();
     }
 
     #[test]
@@ -1189,7 +1203,7 @@ mod tests {
         ])
         .database_id(0)
         .build();
-        assert!(result.is_err());
+        result.unwrap_err();
     }
 
     #[test]
@@ -1225,7 +1239,7 @@ mod tests {
             "redis://127.0.0.1:6378/5",
             "redis://127.0.0.1:6377/4",
         ]);
-        assert!(result.is_err());
+        result.unwrap_err();
     }
 
     #[cfg(feature = "cluster-async")]
