@@ -3359,6 +3359,7 @@ assert_eq!(invok_2_res, 5);
 /// Allows pubsub callbacks to stop receiving messages.
 ///
 /// Arbitrary data may be returned from `Break`.
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum ControlFlow<U> {
     /// Continues.
