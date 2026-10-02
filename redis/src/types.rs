@@ -99,7 +99,7 @@ impl ToRedisArgs for SetExpiry {
 }
 
 /// Helper enum that is used to define existence checks
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub enum ExistenceCheck {
     /// NX -- Only set the key if it does not already exist.
