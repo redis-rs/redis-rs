@@ -3742,7 +3742,7 @@ impl<Db: ToString> ToSingleRedisArg for CopyOptions<Db> {}
 ///     con.set_options(key, value, opts)
 /// }
 /// ```
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct SetOptions {
     conditional_set: Option<ExistenceCheck>,
     /// IFEQ `match-value` - Set the key's value and expiration only if its current value is equal to `match-value`.
