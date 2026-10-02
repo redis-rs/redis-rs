@@ -407,6 +407,7 @@ impl fmt::Display for PushKind {
     }
 }
 
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum MapIter<'a> {
     Array(std::slice::Iter<'a, Value>),
