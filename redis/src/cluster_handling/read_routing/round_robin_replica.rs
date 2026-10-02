@@ -7,6 +7,7 @@ use crate::cluster_handling::slot_range_map::SlotRangeMap;
 
 /// Per-shard counters indexed by slot range for O(log n) lookup.
 /// All ranges belonging to the same shard share one `Arc<AtomicUsize>`.
+#[derive(Debug)]
 struct SlotCounters {
     slots: SlotRangeMap<Arc<AtomicUsize>>,
 }
