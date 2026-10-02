@@ -12,7 +12,7 @@ use crate::errors::{ErrorKind, RedisError};
 #[cfg(feature = "cluster-async")]
 use crate::io::AsyncDNSResolver;
 use crate::io::tcp::TcpSettings;
-use crate::types::{ProtocolVersion, RedisResult};
+use crate::types::{ProtocolVersion, RedisResult, redacted_if_set, set_or_unset};
 use crate::{TlsMode, cluster};
 use arcstr::ArcStr;
 use rand::RngExt;
@@ -245,6 +245,71 @@ pub(crate) struct ClusterParams {
     pub(crate) node_address_map: Option<HashMap<NodeAddress, NodeAddress>>,
     #[cfg(feature = "cluster-async")]
     pub(crate) max_connection_attempts: Option<NonZeroUsize>,
+}
+
+impl std::fmt::Debug for ClusterParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            password,
+            username,
+            read_routing_factory,
+            tls,
+            retry_params,
+            tls_params,
+            connection_timeout,
+            response_timeout,
+            protocol,
+            database_id,
+            #[cfg(feature = "cluster-async")]
+            async_push_sender,
+            tcp_settings,
+            #[cfg(feature = "cluster-async")]
+            async_dns_resolver,
+            #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
+            cache_manager,
+            #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
+            credentials_provider,
+            #[cfg(feature = "cluster-async")]
+            overall_response_timeout,
+            #[cfg(feature = "cluster-async")]
+            connection_concurrency_limit,
+            #[cfg(feature = "cluster-async")]
+            write_backpressure_boundary,
+            node_address_map,
+            #[cfg(feature = "cluster-async")]
+            max_connection_attempts,
+        } = self;
+
+        let mut str = f.debug_struct("ClusterParams");
+        str.field("password", &redacted_if_set(password))
+            .field("username", username)
+            .field("tls", tls)
+            .field("retry_params", retry_params)
+            .field("tls_params", tls_params)
+            .field("connection_timeout", connection_timeout)
+            .field("response_timeout", response_timeout)
+            .field("protocol", protocol)
+            .field("database_id", database_id)
+            .field("tcp_settings", tcp_settings)
+            .field("node_address_map", node_address_map)
+            .field("read_routing_factory", &set_or_unset(read_routing_factory));
+
+        #[cfg(feature = "cluster-async")]
+        str.field("overall_response_timeout", overall_response_timeout)
+            .field("connection_concurrency_limit", connection_concurrency_limit)
+            .field("write_backpressure_boundary", write_backpressure_boundary)
+            .field("max_connection_attempts", max_connection_attempts)
+            .field("async_push_sender", &set_or_unset(async_push_sender))
+            .field("async_dns_resolver", &set_or_unset(async_dns_resolver));
+
+        #[cfg(all(feature = "cache-aio", feature = "cluster-async"))]
+        str.field("cache_manager", &set_or_unset(cache_manager));
+
+        #[cfg(all(feature = "token-based-authentication", feature = "cluster-async"))]
+        str.field("credentials_provider", &set_or_unset(credentials_provider));
+
+        str.finish()
+    }
 }
 
 impl ClusterParams {
