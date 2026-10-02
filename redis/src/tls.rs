@@ -5,6 +5,7 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 use crate::connection::TlsConnParams;
+use crate::types::redacted_if_set;
 use crate::{Client, ConnectionAddr, ConnectionInfo, ErrorKind, RedisError, RedisResult};
 
 /// Structure to hold mTLS client _certificate_ and _key_ binaries in PEM format
@@ -42,6 +43,21 @@ pub struct TlsCertificates {
     pub client_tls: Option<ClientTlsConfig>,
     /// root certificate byte stream in PEM format if the local truststore is *not* to be used
     pub root_cert: Option<Vec<u8>>,
+}
+
+impl std::fmt::Debug for TlsCertificates {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            client_tls,
+            root_cert,
+        } = self;
+
+        // Both fields are certificates, so their contents are never printed.
+        f.debug_struct("TlsCertificates")
+            .field("client_tls", &redacted_if_set(client_tls))
+            .field("root_cert", &redacted_if_set(root_cert))
+            .finish()
+    }
 }
 
 pub(crate) fn inner_build_with_tls(
