@@ -3896,7 +3896,7 @@ impl ToSingleRedisArg for FlushAllOptions {}
 pub type FlushDbOptions = FlushAllOptions;
 
 /// Options for the HSETEX command
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct HashFieldExpirationOptions {
     existence_check: Option<FieldExistenceCheck>,
     expiration: Option<SetExpiry>,
