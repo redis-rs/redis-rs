@@ -103,7 +103,7 @@ impl<T: ToRedisArgs> ToRedisArgs for Coord<T> {
 ///
 /// [1]: https://redis.io/commands/georadius
 /// [2]: https://redis.io/commands/georadiusbymember
-#[derive(Default)]
+#[derive(Default, Debug)]
 #[non_exhaustive]
 pub enum RadiusOrder {
     /// Don't sort the results
