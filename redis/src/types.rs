@@ -16,6 +16,27 @@ use std::str::from_utf8;
 
 use crate::errors::{RedisError, ServerError};
 
+/// Renders an `Option` as `"set"` or `"not set"` for `Debug` output.
+///
+/// Used for configuration fields whose payload has no useful `Debug` representation - trait
+/// objects and closures - where whether one was supplied is the only meaningful information.
+#[cfg(feature = "aio")]
+pub(crate) fn set_or_unset<T>(value: &Option<T>) -> &'static str {
+    if value.is_some() { "set" } else { "not set" }
+}
+
+/// Renders an `Option` as `"<redacted>"` or `"not set"` for `Debug` output.
+///
+/// Used for secrets, so that a configured value is acknowledged without revealing it.
+#[cfg(any(feature = "tls-rustls", feature = "cluster", feature = "sentinel"))]
+pub(crate) fn redacted_if_set<T>(value: &Option<T>) -> &'static str {
+    if value.is_some() {
+        "<redacted>"
+    } else {
+        "not set"
+    }
+}
+
 /// Helper enum that is used to define expiry time
 #[derive(Clone)]
 #[non_exhaustive]
