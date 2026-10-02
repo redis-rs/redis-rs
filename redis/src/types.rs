@@ -435,6 +435,7 @@ impl<'a> Iterator for MapIter<'a> {
     }
 }
 
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum OwnedMapIter {
     Array(std::vec::IntoIter<Value>),
