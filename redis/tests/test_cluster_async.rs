@@ -1369,6 +1369,94 @@ mod cluster_async {
         assert_eq!(ping_attempts.load(Ordering::Relaxed), 1);
     }
 
+    // This is a test to prevent a regression from a deadlock seen from https://github.com/redis-rs/redis-rs/issues/2418.
+    // The test does a number of GET commands with random start times where some run into MOVED and some run into a connection error.
+    // Random delays are added to each command's response so that we get a mix of MOVED/connection_errors interleaved together.
+    #[test]
+    fn test_async_cluster_requests_complete_while_refreshes_and_reconnects_overlap() {
+        use rand::{RngExt, SeedableRng, rngs::StdRng};
+
+        const REQUESTS: usize = 100;
+        // Each seed is a different interleaving; not every one hits the deadlock, so run several.
+        const SEEDS: u64 = 10;
+        let name = "test_async_cluster_requests_complete_while_refreshes_and_reconnects_overlap";
+        for seed in 0..SEEDS {
+            let rng = Arc::new(std::sync::Mutex::new(StdRng::seed_from_u64(seed)));
+            let MockEnv {
+                async_connection: connection,
+                handler: _handler,
+                runtime,
+                ..
+            } = MockEnv::with_client_builder(
+                ClusterClient::builder(vec![&*format!("redis://{name}")]),
+                name,
+                {
+                    let rng = rng.clone();
+                    move |cmd: &[u8], port| {
+                        respond_startup_two_nodes(name, cmd)?;
+                        // 5061 -> slot of {bar} (owned by 6379)
+                        // 12182 -> slot of {foo} (owned by 6380)
+                        let (slot, owner) = if contains_slice(cmd, b"{foo}") {
+                            (12182, 6380)
+                        } else {
+                            (5061, 6379)
+                        };
+                        let moved = || {
+                            parse_redis_value(
+                                format!("-MOVED {slot} {name}:{owner}\r\n").as_bytes(),
+                            )
+                        };
+
+                        if port != owner {
+                            return Err(moved());
+                        }
+
+                        match rng.lock().unwrap().random_range(0..10) {
+                            // A MOVED to the node that already owns the slot: only starts a refresh.
+                            0 => Err(moved()),
+                            1 => Err(Err(broken_pipe_error())),
+                            _ => Err(Ok(Value::BulkString(b"value".to_vec()))),
+                        }
+                    }
+                },
+            );
+
+            add_mock_delay(name, {
+                let rng = rng.clone();
+                move |_, _| Duration::from_millis(rng.lock().unwrap().random_range(0..50))
+            });
+
+            let completed = runtime.block_on(async move {
+                tokio::time::pause();
+                let tasks: Vec<_> = (0..REQUESTS)
+                    .map(|i| {
+                        let start = Duration::from_millis(rng.lock().unwrap().random_range(0..500));
+                        // {foo} hashes to node 6380, {bar} to node 6379.
+                        let key = if i % 2 == 0 {
+                            format!("{{foo}}{i}")
+                        } else {
+                            format!("{{bar}}{i}")
+                        };
+                        let mut connection = connection.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(start).await;
+                            cmd("GET")
+                                .arg(key)
+                                .query_async::<Value>(&mut connection)
+                                .await
+                        })
+                    })
+                    .collect();
+                tokio::time::timeout(Duration::from_secs(600), futures::future::join_all(tasks))
+                    .await
+            });
+            assert!(
+                completed.is_ok(),
+                "seed {seed}: some requests never completed; the cluster connection is stuck"
+            );
+        }
+    }
+
     #[test]
     fn test_async_cluster_reset_routing_if_redirect_fails() {
         let name = "test_async_cluster_reset_routing_if_redirect_fails";
