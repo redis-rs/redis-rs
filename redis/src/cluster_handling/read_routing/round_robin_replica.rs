@@ -18,6 +18,7 @@ struct SlotCounters {
 /// on every call to [`route_read`](ReadRoutingStrategy::route_read). This
 /// ensures that reads to different shards rotate independently — a hot shard
 /// won't skew the rotation for other shards.
+#[derive(Debug)]
 pub struct RoundRobinReplicaStrategy {
     state: Arc<RwLock<SlotCounters>>,
 }
