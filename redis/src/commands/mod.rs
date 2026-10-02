@@ -3573,7 +3573,7 @@ impl ToRedisArgs for ScanOptions {
 ///     con.lpos(key, value, opts)
 /// }
 /// ```
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct LposOptions {
     count: Option<usize>,
     maxlen: Option<usize>,
