@@ -8,7 +8,7 @@ use crate::search::{CreateOptions, SearchSchema};
 use crate::types::{
     ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, IncrexResult,
     IntegerReplyOrNoOp, NumericBehavior, RedisResult, RedisWrite, SetExpiry, ToRedisArgs,
-    ToSingleRedisArg, ValueComparison,
+    ToSingleRedisArg, ValueComparison, set_or_unset,
 };
 
 #[cfg(feature = "vector-sets")]
@@ -3986,6 +3986,28 @@ pub struct IncrexOptions<T> {
     upper_bound: Option<T>,
     expiration: Option<Expiry>,
     enx: bool,
+}
+
+impl<T> std::fmt::Debug for IncrexOptions<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            saturate,
+            lower_bound,
+            upper_bound,
+            expiration,
+            enx,
+        } = self;
+
+        // `T` is unbounded, so deriving `Debug` would add a `T: Debug` bound to the type.
+        // Report only whether a bound was supplied.
+        f.debug_struct("IncrexOptions")
+            .field("saturate", saturate)
+            .field("lower_bound", &set_or_unset(lower_bound))
+            .field("upper_bound", &set_or_unset(upper_bound))
+            .field("expiration", expiration)
+            .field("enx", enx)
+            .finish()
+    }
 }
 
 impl<T: ToSingleRedisArg> IncrexOptions<T> {
