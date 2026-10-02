@@ -125,7 +125,7 @@ impl ToRedisArgs for ExistenceCheck {
 }
 
 /// Helper enum that is used to define field existence checks
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub enum FieldExistenceCheck {
     /// FNX -- Only set the fields if all do not already exist.
