@@ -17,6 +17,21 @@ pub struct ClientTlsConfig {
     pub client_key: Vec<u8>,
 }
 
+impl std::fmt::Debug for ClientTlsConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Destructured so that adding or removing a field breaks this impl; the bindings are
+        // unused because neither field's contents may be printed.
+        let Self {
+            client_cert: _,
+            client_key: _,
+        } = self;
+        f.debug_struct("ClientTlsConfig")
+            .field("client_cert", &"<redacted>")
+            .field("client_key", &"<redacted>")
+            .finish()
+    }
+}
+
 /// Structure to hold TLS certificates
 /// - `client_tls`: binaries of clientkey and certificate within a `ClientTlsConfig` structure if mTLS is used
 /// - `root_cert`: binary CA certificate in PEM format if CA is not in local truststore
