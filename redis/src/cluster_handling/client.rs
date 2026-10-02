@@ -408,6 +408,20 @@ pub struct ClusterClientBuilder {
     builder_params: BuilderParams,
 }
 
+impl std::fmt::Debug for ClusterClientBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            initial_nodes,
+            builder_params,
+        } = self;
+
+        f.debug_struct("ClusterClientBuilder")
+            .field("initial_nodes", initial_nodes)
+            .field("builder_params", builder_params)
+            .finish()
+    }
+}
+
 impl ClusterClientBuilder {
     /// Creates a new `ClusterClientBuilder` with the provided initial_nodes.
     ///
