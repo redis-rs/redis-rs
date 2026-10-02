@@ -345,7 +345,7 @@ impl ToRedisArgs for VAddOptions {
 ///     con.vemb_options(key, element, &opts)
 /// }
 /// ```
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct VEmbOptions {
     /// Returns the raw internal representation of the approximate vector associated with a given element in the vector set
     raw_representation: bool,
