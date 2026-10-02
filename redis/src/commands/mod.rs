@@ -3818,7 +3818,7 @@ impl ToRedisArgs for SetOptions {
 ///     con.mset_ex(&[("key1", "value1"), ("key2", "value2")], opts)
 /// }
 /// ```
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct MSetOptions {
     conditional_set: Option<ExistenceCheck>,
     expiration: Option<SetExpiry>,
