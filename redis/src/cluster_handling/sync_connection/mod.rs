@@ -88,6 +88,8 @@ use crate::cmd::{Cmd, cmd};
 use crate::connection::{Connection, ConnectionInfo, ConnectionLike, connect};
 use crate::errors::{ErrorKind, RedisError, RetryMethod};
 use crate::parser::parse_redis_value;
+#[cfg(feature = "cluster-async")]
+use crate::types::set_or_unset;
 use crate::types::{HashMap, RedisResult, Value};
 use pipeline::UNROUTABLE_ERROR;
 use rand::{rng, seq::IteratorRandom};
@@ -235,6 +237,29 @@ pub struct ClusterConfig {
     pub(crate) async_push_sender: Option<std::sync::Arc<dyn crate::aio::AsyncPushSender>>,
     #[cfg(feature = "cluster-async")]
     pub(crate) async_dns_resolver: Option<std::sync::Arc<dyn crate::io::AsyncDNSResolver>>,
+}
+
+impl std::fmt::Debug for ClusterConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            connection_timeout,
+            response_timeout,
+            #[cfg(feature = "cluster-async")]
+            async_push_sender,
+            #[cfg(feature = "cluster-async")]
+            async_dns_resolver,
+        } = self;
+
+        let mut str = f.debug_struct("ClusterConfig");
+        str.field("connection_timeout", connection_timeout)
+            .field("response_timeout", response_timeout);
+
+        #[cfg(feature = "cluster-async")]
+        str.field("async_push_sender", &set_or_unset(async_push_sender))
+            .field("async_dns_resolver", &set_or_unset(async_dns_resolver));
+
+        str.finish()
+    }
 }
 
 impl ClusterConfig {
