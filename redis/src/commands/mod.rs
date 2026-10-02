@@ -3637,6 +3637,7 @@ impl ToRedisArgs for LposOptions {
 }
 
 /// Enum for the LEFT | RIGHT args used by some commands
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum Direction {
     /// Targets the first element (head) of the list
