@@ -239,7 +239,7 @@ pub enum VectorQuantization {
 ///     con.vadd_options(key, VectorAddInput::Values(EmbeddingInput::Float64(vector)), element, &opts)
 /// }
 /// ```
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct VAddOptions {
     /// Implements random projection to reduce the dimensionality of the vector.
     /// The projection matrix is saved and reloaded along with the vector set.
