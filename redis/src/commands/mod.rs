@@ -4049,7 +4049,7 @@ impl<T: ToRedisArgs> ToRedisArgs for IncrexOptions<T> {
 }
 
 /// Helper enum that is used to define update checks
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub enum UpdateCheck {
     /// LT -- Only update if the new score is less than the current.
