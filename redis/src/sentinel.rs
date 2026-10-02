@@ -144,7 +144,10 @@ use crate::tls::retrieve_tls_certificates;
 use crate::{
     Client, Cmd, Connection, ConnectionAddr, ErrorKind, FromRedisValue, IntoConnectionInfo,
     ProtocolVersion, RedisConnectionInfo, RedisError, Role, TlsMode, cmd,
-    connection::ConnectionInfo, errors::ServerErrorKind, io::tcp::TcpSettings, types::RedisResult,
+    connection::ConnectionInfo,
+    errors::ServerErrorKind,
+    io::tcp::TcpSettings,
+    types::{RedisResult, redacted_if_set},
 };
 
 fn not_a_sentinel_error() -> RedisError {
@@ -1373,6 +1376,34 @@ struct BuilderConnectionParams {
     tcp_settings: TcpSettings,
     #[cfg(feature = "tls-rustls")]
     certificates: Option<TlsCertificates>,
+}
+
+impl std::fmt::Debug for BuilderConnectionParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            tls_mode,
+            db,
+            username,
+            password,
+            protocol,
+            tcp_settings,
+            #[cfg(feature = "tls-rustls")]
+            certificates,
+        } = self;
+
+        let mut str = f.debug_struct("BuilderConnectionParams");
+        str.field("tls_mode", tls_mode)
+            .field("db", db)
+            .field("username", username)
+            .field("password", &redacted_if_set(password))
+            .field("protocol", protocol)
+            .field("tcp_settings", tcp_settings);
+
+        #[cfg(feature = "tls-rustls")]
+        str.field("certificates", &redacted_if_set(certificates));
+
+        str.finish()
+    }
 }
 
 /// Used to configure and build a [`SentinelClient`].
