@@ -166,7 +166,7 @@ pub struct Sentinel {
 
 /// Holds the connection information that a sentinel should use when connecting to the
 /// servers (masters and replicas) belonging to it.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct SentinelNodeConnectionInfo {
     /// The TLS mode of the connection, or None if we do not want to connect using TLS
     /// (just a plain TCP connection).
