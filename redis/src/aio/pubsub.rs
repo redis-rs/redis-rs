@@ -41,7 +41,7 @@ struct PipelineMessage {
 /// stop working.
 /// The sink isn't independent from the stream - dropping
 /// the stream will cause the sink to return errors on requests.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct PubSubSink {
     sender: UnboundedSender<PipelineMessage>,
 }
