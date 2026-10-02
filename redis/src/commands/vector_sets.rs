@@ -372,7 +372,7 @@ impl ToRedisArgs for VEmbOptions {
 
 /// Represents different ways to input query data for vector similarity search commands
 #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum VectorSimilaritySearchInput<'a> {
     /// Binary representation of 32-bit floating point values to use as a reference
