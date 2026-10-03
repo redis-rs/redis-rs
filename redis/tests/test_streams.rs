@@ -8,7 +8,7 @@ mod support;
 use crate::support::*;
 
 use assert_matches::assert_matches;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::slice;
 use std::str;
 use std::thread::sleep;
@@ -2152,6 +2152,95 @@ fn test_xtrim_options() {
         &StreamTrimOptions::minid(StreamTrimmingMode::Exact, "1-76"),
     );
     assert_eq!(result, Ok(50));
+}
+
+#[test]
+fn test_xsetid() {
+    // Tests the following commands....
+    // xsetid
+    // xinfo_stream
+    let ctx = TestContext::new();
+    let mut con = ctx.connection();
+
+    xadd(&mut con);
+    assert_eq!(con.xinfo_stream("k1").unwrap().last_generated_id, "1000-1");
+
+    // move the last generated ID forward, the entries stay untouched
+    con.xsetid("k1", "2000-0").unwrap();
+    assert_eq!(con.xinfo_stream("k1").unwrap().last_generated_id, "2000-0");
+    assert_eq!(con.xlen("k1"), Ok(2));
+
+    // IDs up to the new last generated ID are not accepted anymore
+    con.xadd("k1", "2000-0", &[("h", "w")]).unwrap_err();
+
+    // redo the connection because of the error above
+    con = ctx.connection();
+    let result = con.xadd("k1", "2000-1", &[("h", "w")]).unwrap();
+    assert_eq!(result.unwrap(), "2000-1");
+
+    // an ID that is smaller than the top item of the stream is rejected
+    con.xsetid("k2", "1-0").unwrap_err();
+
+    con = ctx.connection();
+    assert_eq!(con.xinfo_stream("k2").unwrap().last_generated_id, "2000-1");
+}
+
+fn xinfo_stream_raw(con: &mut Connection, key: &str) -> HashMap<String, redis::Value> {
+    redis::cmd("XINFO")
+        .arg("STREAM")
+        .arg(key)
+        .query(con)
+        .unwrap()
+}
+
+#[test]
+fn test_xsetid_options() {
+    // Tests the following commands....
+    // xsetid_options
+    let ctx = run_test_if_version_supported!(REDIS_CE_7_0);
+    let mut con = ctx.connection();
+
+    xadd(&mut con);
+
+    let opts = StreamSetIdOptions::default()
+        .entries_added(10)
+        .max_deleted_id("1000-0");
+    con.xsetid_options("k1", "2000-0", &opts).unwrap();
+
+    let info = xinfo_stream_raw(&mut con, "k1");
+    assert_eq!(
+        redis::from_redis_value::<String>(info["last-generated-id"].clone()).unwrap(),
+        "2000-0"
+    );
+    assert_eq!(
+        redis::from_redis_value::<u64>(info["entries-added"].clone()).unwrap(),
+        10
+    );
+    assert_eq!(
+        redis::from_redis_value::<String>(info["max-deleted-entry-id"].clone()).unwrap(),
+        "1000-0"
+    );
+
+    // each option can be given on its own
+    let opts = StreamSetIdOptions::default().entries_added(20);
+    con.xsetid_options("k1", "3000-0", &opts).unwrap();
+    let info = xinfo_stream_raw(&mut con, "k1");
+    assert_eq!(
+        redis::from_redis_value::<u64>(info["entries-added"].clone()).unwrap(),
+        20
+    );
+
+    let opts = StreamSetIdOptions::default().max_deleted_id("2000-0");
+    con.xsetid_options("k1", "4000-0", &opts).unwrap();
+    let info = xinfo_stream_raw(&mut con, "k1");
+    assert_eq!(
+        redis::from_redis_value::<String>(info["max-deleted-entry-id"].clone()).unwrap(),
+        "2000-0"
+    );
+
+    // the server validates the metadata against the stream, which holds 2 entries
+    let opts = StreamSetIdOptions::default().entries_added(1);
+    con.xsetid_options("k2", "2000-1", &opts).unwrap_err();
 }
 
 #[test]

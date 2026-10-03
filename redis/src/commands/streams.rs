@@ -1600,6 +1600,62 @@ impl ToRedisArgs for StreamNackOptions {
     }
 }
 
+/// Builder options for the [`xsetid_options`] command (Redis 7.0+).
+///
+/// Both options are optional and independent of each other.
+///
+/// ```rust
+/// use redis::streams::StreamSetIdOptions;
+///
+/// let opts = StreamSetIdOptions::default()
+///     .entries_added(100)
+///     .max_deleted_id("1000-0");
+/// ```
+///
+/// [`xsetid_options`]: ../trait.Commands.html#method.xsetid_options
+#[cfg(feature = "streams")]
+#[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+#[derive(Debug, Default)]
+pub struct StreamSetIdOptions {
+    /// Set the `ENTRIESADDED` cmd arg.
+    entries_added: Option<u64>,
+    /// Set the `MAXDELETEDID` cmd arg.
+    max_deleted_id: Option<String>,
+}
+
+#[cfg(feature = "streams")]
+impl StreamSetIdOptions {
+    /// Set the number of entries that were added to the stream during its lifetime
+    /// (`ENTRIESADDED`).
+    pub fn entries_added(mut self, entries_added: u64) -> Self {
+        self.entries_added = Some(entries_added);
+        self
+    }
+
+    /// Set the greatest entry ID that was ever deleted from the stream (`MAXDELETEDID`).
+    pub fn max_deleted_id(mut self, max_deleted_id: impl Into<String>) -> Self {
+        self.max_deleted_id = Some(max_deleted_id.into());
+        self
+    }
+}
+
+#[cfg(feature = "streams")]
+impl ToRedisArgs for StreamSetIdOptions {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        if let Some(entries_added) = self.entries_added {
+            out.write_arg(b"ENTRIESADDED");
+            entries_added.write_redis_args(out);
+        }
+        if let Some(max_deleted_id) = self.max_deleted_id.as_ref() {
+            out.write_arg(b"MAXDELETEDID");
+            out.write_arg(max_deleted_id.as_bytes());
+        }
+    }
+}
+
 /// Status codes returned by the `XACKDEL` command
 #[cfg(feature = "streams")]
 #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
@@ -1648,6 +1704,41 @@ mod tests {
         cmd.pop();
 
         assert_eq!(cmd, expected);
+    }
+
+    mod stream_set_id_options {
+        use super::*;
+
+        #[test]
+        fn default_writes_no_args() {
+            assert_command_eq(StreamSetIdOptions::default(), b"");
+        }
+
+        #[test]
+        fn entries_added_only() {
+            assert_command_eq(
+                StreamSetIdOptions::default().entries_added(7),
+                b"ENTRIESADDED 7",
+            );
+        }
+
+        #[test]
+        fn max_deleted_id_only() {
+            assert_command_eq(
+                StreamSetIdOptions::default().max_deleted_id("5-1"),
+                b"MAXDELETEDID 5-1",
+            );
+        }
+
+        #[test]
+        fn both_options_are_written_in_command_order() {
+            assert_command_eq(
+                StreamSetIdOptions::default()
+                    .max_deleted_id("5-1")
+                    .entries_added(7),
+                b"ENTRIESADDED 7 MAXDELETEDID 5-1",
+            );
+        }
     }
 
     mod stream_auto_claim_reply {

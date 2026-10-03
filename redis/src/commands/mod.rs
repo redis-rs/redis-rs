@@ -2914,6 +2914,52 @@ implement_commands! {
             .take()
     }
 
+    /// Set the last generated `last_id` of a stream `key`.
+    ///
+    /// The server rejects an ID that is smaller than the ID of the stream's top item.
+    ///
+    /// ```text
+    /// XSETID <key> <last_id>
+    /// ```
+    /// [Redis Docs](https://redis.io/commands/XSETID)
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xsetid<K: ToSingleRedisArg, ID: ToSingleRedisArg>(
+        key: K,
+        last_id: ID
+    ) -> () {
+        cmd("XSETID").arg(key).arg(last_id).take()
+    }
+
+    /// Set the last generated `last_id` of a stream `key`, together with the
+    /// `ENTRIESADDED` and/or `MAXDELETEDID` metadata (Redis 7.0+).
+    ///
+    /// ```no_run
+    /// use redis::{Commands, RedisResult};
+    /// use redis::streams::StreamSetIdOptions;
+    /// let client = redis::Client::open("redis://127.0.0.1/0").unwrap();
+    /// let mut con = client.get_connection().unwrap();
+    ///
+    /// let opts = StreamSetIdOptions::default()
+    ///     .entries_added(100)
+    ///     .max_deleted_id("1000-0");
+    /// let _: RedisResult<()> = con.xsetid_options("k1", "2000-0", &opts);
+    /// ```
+    ///
+    /// ```text
+    /// XSETID <key> <last_id> [ENTRIESADDED <entries_added>] [MAXDELETEDID <max_deleted_id>]
+    /// ```
+    /// [Redis Docs](https://redis.io/commands/XSETID)
+    #[cfg(feature = "streams")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
+    fn xsetid_options<K: ToSingleRedisArg, ID: ToSingleRedisArg>(
+        key: K,
+        last_id: ID,
+        options: &'a streams::StreamSetIdOptions
+    ) -> () {
+        cmd("XSETID").arg(key).arg(last_id).arg(options).take()
+    }
+
     /// Trim a stream `key` to a MAXLEN count.
     ///
     /// ```text
