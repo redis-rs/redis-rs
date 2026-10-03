@@ -28,7 +28,7 @@ pub(crate) fn set_or_unset<T>(value: &Option<T>) -> &'static str {
 /// Renders an `Option` as `"<redacted>"` or `"not set"` for `Debug` output.
 ///
 /// Used for secrets, so that a configured value is acknowledged without revealing it.
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "sentinel"))]
 pub(crate) fn redacted_if_set<T>(value: &Option<T>) -> &'static str {
     if value.is_some() {
         "<redacted>"
