@@ -18,7 +18,9 @@ futures = { version = "0.3", optional = true }
 tempfile = "3.27.0"
 socket2 = "0.6"
 rand = "0.10"
-rustls = { version = "0.23", optional = true, default-features = false, features = ["ring"] }
+rustls = { version = "0.23", optional = true, default-features = false, features = [
+  "ring",
+] }
 
 [features]
 aio = ["futures", "redis/aio", "redis/tokio-comp"]
@@ -26,7 +28,7 @@ tls-rustls = ["dep:rustls", "rustls/std", "redis/tls-rustls"]
 # Both store features can be enabled together; `redis` then trusts the union of both stores.
 tls-rustls-native-roots = ["tls-rustls", "redis/tls-rustls-native-roots"]
 tls-rustls-webpki-roots = ["tls-rustls", "redis/tls-rustls-webpki-roots"]
-tls-rustls-insecure = ["redis/tls-rustls-insecure", "tls-rustls"]
+tls-rustls-insecure = ["tls-rustls", "redis/tls-rustls-insecure"]
 tokio-rustls-comp = ["redis/tokio-rustls-comp"]
 
 [dev-dependencies]

@@ -14,37 +14,26 @@ require = [
   "smol-rustls-comp",
 ]
 
-# tokio-rustls-comp or smol-rustls-comp should be used instead of this combination
+# Anything that selects TLS should use TLS aware runtimes 
 [[rule]]
-when = ["tls-rustls-native-roots"]
+when = [
+  "tls-rustls-native-roots",
+  "OR",
+  "tls-rustls-webpki-roots",
+  "OR",
+  "tls-native-tls",
+  "OR",
+  "tls-rustls-insecure",
+]
 forbid = [
   "tokio-comp",
   "OR",
   "smol-comp",
 ]
-
-# tokio-rustls-comp or smol-rustls-comp should be used instead of this combination
-[[rule]]
-when = ["tls-rustls-webpki-roots"]
-forbid = [
-  "tokio-comp",
-  "OR",
-  "smol-comp",
-]
-
-[[rule]]
-when = ["tls-native-tls"]
-forbid = [
-  "tokio-comp",
-  "OR",
-  "smol-comp",
-] # tokio-native-tls-comp or smol-native-tls-comp should be used instead of this combination
 
 # must choose rustls roots when working with rustls
 [[rule]]
 when = [
-  "tls-rustls-insecure",
-  "OR",
   "tokio-rustls-comp",
   "OR",
   "smol-rustls-comp",
@@ -66,6 +55,8 @@ forbid = [
   "tls-rustls-webpki-roots",
   "OR",
   "tls-rustls-native-roots",
+  "OR",
+  "tls-rustls-insecure",
   "OR",
   "smol-rustls-comp",
 ]
@@ -144,6 +135,10 @@ require = ["tokio-rustls-comp"]
 
 [[rule]]
 when = ["tls-rustls-native-roots", "entra-id"]
+require = ["tokio-rustls-comp"]
+
+[[rule]]
+when = ["tls-rustls-insecure", "entra-id"]
 require = ["tokio-rustls-comp"]
 
 # ------------------------------------------------------------------------
