@@ -20,7 +20,6 @@ use crate::errors::{RedisError, ServerError};
 ///
 /// Used for configuration fields whose payload has no useful `Debug` representation - trait
 /// objects and closures - where whether one was supplied is the only meaningful information.
-#[cfg(any(feature = "aio", feature = "cluster"))]
 pub(crate) fn set_or_unset<T>(value: &Option<T>) -> &'static str {
     if value.is_some() { "set" } else { "not set" }
 }
