@@ -144,7 +144,10 @@ use crate::tls::retrieve_tls_certificates;
 use crate::{
     Client, Cmd, Connection, ConnectionAddr, ErrorKind, FromRedisValue, IntoConnectionInfo,
     ProtocolVersion, RedisConnectionInfo, RedisError, Role, TlsMode, cmd,
-    connection::ConnectionInfo, errors::ServerErrorKind, io::tcp::TcpSettings, types::RedisResult,
+    connection::ConnectionInfo,
+    errors::ServerErrorKind,
+    io::tcp::TcpSettings,
+    types::{RedisResult, redacted_if_set},
 };
 
 fn not_a_sentinel_error() -> RedisError {
@@ -166,7 +169,7 @@ pub struct Sentinel {
 
 /// Holds the connection information that a sentinel should use when connecting to the
 /// servers (masters and replicas) belonging to it.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct SentinelNodeConnectionInfo {
     /// The TLS mode of the connection, or None if we do not want to connect using TLS
     /// (just a plain TCP connection).
@@ -1375,6 +1378,34 @@ struct BuilderConnectionParams {
     certificates: Option<TlsCertificates>,
 }
 
+impl std::fmt::Debug for BuilderConnectionParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            tls_mode,
+            db,
+            username,
+            password,
+            protocol,
+            tcp_settings,
+            #[cfg(feature = "tls-rustls")]
+            certificates,
+        } = self;
+
+        let mut str = f.debug_struct("BuilderConnectionParams");
+        str.field("tls_mode", tls_mode)
+            .field("db", db)
+            .field("username", username)
+            .field("password", &redacted_if_set(password))
+            .field("protocol", protocol)
+            .field("tcp_settings", tcp_settings);
+
+        #[cfg(feature = "tls-rustls")]
+        str.field("certificates", &redacted_if_set(certificates));
+
+        str.finish()
+    }
+}
+
 /// Used to configure and build a [`SentinelClient`].
 /// There are two connections that can be configured independently
 /// 1. The connection towards the redis nodes (configured via `set_client_to_redis_..` functions)
@@ -1385,6 +1416,26 @@ pub struct SentinelClientBuilder {
     server_type: SentinelServerType,
     client_to_redis_params: BuilderConnectionParams,
     client_to_sentinel_params: BuilderConnectionParams,
+}
+
+impl std::fmt::Debug for SentinelClientBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            sentinels,
+            service_name,
+            server_type,
+            client_to_redis_params,
+            client_to_sentinel_params,
+        } = self;
+
+        f.debug_struct("SentinelClientBuilder")
+            .field("sentinels", sentinels)
+            .field("service_name", service_name)
+            .field("server_type", server_type)
+            .field("client_to_redis_params", client_to_redis_params)
+            .field("client_to_sentinel_params", client_to_sentinel_params)
+            .finish()
+    }
 }
 
 impl SentinelClientBuilder {
