@@ -258,6 +258,7 @@ impl ToRedisArgs for RadiusOptions {
 ///
 /// [1]: ../trait.Commands.html#method.geo_radius
 /// [2]: ../trait.Commands.html#method.geo_radius_by_member
+#[derive(Debug)]
 pub struct RadiusSearchResult {
     /// The name that was found.
     pub name: String,

@@ -176,6 +176,7 @@ pub use runtime::prefer_tokio;
 pub(super) use runtime::*;
 
 /// An error showing that the receiver
+#[derive(Debug)]
 pub struct SendError;
 
 /// A trait for sender parts of a channel that can be used for sending push messages from async

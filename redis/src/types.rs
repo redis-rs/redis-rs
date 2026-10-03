@@ -407,6 +407,7 @@ impl fmt::Display for PushKind {
     }
 }
 
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum MapIter<'a> {
     Array(std::slice::Iter<'a, Value>),
@@ -434,6 +435,7 @@ impl<'a> Iterator for MapIter<'a> {
     }
 }
 
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum OwnedMapIter {
     Array(std::vec::IntoIter<Value>),
