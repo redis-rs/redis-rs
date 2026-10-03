@@ -5,6 +5,7 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 use crate::connection::TlsConnParams;
+use crate::types::redacted_if_set;
 use crate::{Client, ConnectionAddr, ConnectionInfo, ErrorKind, RedisError, RedisResult};
 
 /// Structure to hold mTLS client _certificate_ and _key_ binaries in PEM format
@@ -17,6 +18,21 @@ pub struct ClientTlsConfig {
     pub client_key: Vec<u8>,
 }
 
+impl std::fmt::Debug for ClientTlsConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Destructured so that adding or removing a field breaks this impl; the bindings are
+        // unused because neither field's contents may be printed.
+        let Self {
+            client_cert: _,
+            client_key: _,
+        } = self;
+        f.debug_struct("ClientTlsConfig")
+            .field("client_cert", &"<redacted>")
+            .field("client_key", &"<redacted>")
+            .finish()
+    }
+}
+
 /// Structure to hold TLS certificates
 /// - `client_tls`: binaries of clientkey and certificate within a `ClientTlsConfig` structure if mTLS is used
 /// - `root_cert`: binary CA certificate in PEM format if CA is not in local truststore
@@ -27,6 +43,21 @@ pub struct TlsCertificates {
     pub client_tls: Option<ClientTlsConfig>,
     /// root certificate byte stream in PEM format if the local truststore is *not* to be used
     pub root_cert: Option<Vec<u8>>,
+}
+
+impl std::fmt::Debug for TlsCertificates {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            client_tls,
+            root_cert,
+        } = self;
+
+        // Both fields are certificates, so their contents are never printed.
+        f.debug_struct("TlsCertificates")
+            .field("client_tls", &redacted_if_set(client_tls))
+            .field("root_cert", &redacted_if_set(root_cert))
+            .finish()
+    }
 }
 
 pub(crate) fn inner_build_with_tls(

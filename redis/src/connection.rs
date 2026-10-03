@@ -97,7 +97,7 @@ pub fn parse_redis_url(input: &str) -> Option<url::Url> {
 /// TlsMode indicates use or do not use verification of certification.
 ///
 /// Check [ConnectionAddr](ConnectionAddr::TcpTls::insecure) for more.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 #[non_exhaustive]
 pub enum TlsMode {
     /// Secure verify certification.
