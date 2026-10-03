@@ -125,7 +125,7 @@ redis = { version = "1", features = ["smol-native-tls-comp"] }
 To use `rustls`, choose the root certificate store explicitly (see below):
 
 ```
-redis = { version = "1", features = ["tls-rustls", "tls-rustls-native-roots"] }
+redis = { version = "1", features = ["tls-rustls-native-roots"] }
 
 # if you use tokio
 redis = { version = "1", features = ["tokio-rustls-comp", "tls-rustls-native-roots"] }

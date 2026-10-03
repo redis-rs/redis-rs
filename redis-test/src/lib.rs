@@ -61,8 +61,8 @@
 
 // `tls-rustls` only enables the rustls crate. The source of the root certificates must be selected
 // explicitly through `tls-rustls-native-roots` or `tls-rustls-webpki-roots`; enabling both loads
-// the union of both stores. `tls-rustls-insecure` does not need a root store, since it disables
-// certificate verification.
+// the union of both stores. `tls-rustls-insecure` does not need a root store, since it allows
+// the user to disable certificate verification.
 #[cfg(all(
     feature = "tls-rustls",
     not(feature = "tls-rustls-insecure"),
