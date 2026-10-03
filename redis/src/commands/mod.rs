@@ -8,7 +8,7 @@ use crate::search::{CreateOptions, SearchSchema};
 use crate::types::{
     ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, IncrexResult,
     IntegerReplyOrNoOp, NumericBehavior, RedisResult, RedisWrite, SetExpiry, ToRedisArgs,
-    ToSingleRedisArg, ValueComparison,
+    ToSingleRedisArg, ValueComparison, set_or_unset,
 };
 
 #[cfg(feature = "vector-sets")]
@@ -3359,6 +3359,7 @@ assert_eq!(invok_2_res, 5);
 /// Allows pubsub callbacks to stop receiving messages.
 ///
 /// Arbitrary data may be returned from `Break`.
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum ControlFlow<U> {
     /// Continues.
@@ -3488,7 +3489,7 @@ impl PubSubCommands for Connection {
 ///     con.scan_options(opts)
 /// }
 /// ```
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ScanOptions {
     pattern: Option<String>,
     count: Option<usize>,
@@ -3572,7 +3573,7 @@ impl ToRedisArgs for ScanOptions {
 ///     con.lpos(key, value, opts)
 /// }
 /// ```
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct LposOptions {
     count: Option<usize>,
     maxlen: Option<usize>,
@@ -3636,6 +3637,7 @@ impl ToRedisArgs for LposOptions {
 }
 
 /// Enum for the LEFT | RIGHT args used by some commands
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum Direction {
     /// Targets the first element (head) of the list
@@ -3741,7 +3743,7 @@ impl<Db: ToString> ToSingleRedisArg for CopyOptions<Db> {}
 ///     con.set_options(key, value, opts)
 /// }
 /// ```
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct SetOptions {
     conditional_set: Option<ExistenceCheck>,
     /// IFEQ `match-value` - Set the key's value and expiration only if its current value is equal to `match-value`.
@@ -3817,7 +3819,7 @@ impl ToRedisArgs for SetOptions {
 ///     con.mset_ex(&[("key1", "value1"), ("key2", "value2")], opts)
 /// }
 /// ```
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct MSetOptions {
     conditional_set: Option<ExistenceCheck>,
     expiration: Option<SetExpiry>,
@@ -3863,7 +3865,7 @@ impl ToRedisArgs for MSetOptions {
 ///     con.flushall_options(&opts)
 /// }
 /// ```
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct FlushAllOptions {
     /// Blocking (`SYNC`) waits for completion, non-blocking (`ASYNC`) runs in the background
     pub blocking: bool,
@@ -3895,7 +3897,7 @@ impl ToSingleRedisArg for FlushAllOptions {}
 pub type FlushDbOptions = FlushAllOptions;
 
 /// Options for the HSETEX command
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct HashFieldExpirationOptions {
     existence_check: Option<FieldExistenceCheck>,
     expiration: Option<SetExpiry>,
@@ -3986,6 +3988,28 @@ pub struct IncrexOptions<T> {
     enx: bool,
 }
 
+impl<T> std::fmt::Debug for IncrexOptions<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            saturate,
+            lower_bound,
+            upper_bound,
+            expiration,
+            enx,
+        } = self;
+
+        // `T` is unbounded, so deriving `Debug` would add a `T: Debug` bound to the type.
+        // Report only whether a bound was supplied.
+        f.debug_struct("IncrexOptions")
+            .field("saturate", saturate)
+            .field("lower_bound", &set_or_unset(lower_bound))
+            .field("upper_bound", &set_or_unset(upper_bound))
+            .field("expiration", expiration)
+            .field("enx", enx)
+            .finish()
+    }
+}
+
 impl<T: ToSingleRedisArg> IncrexOptions<T> {
     /// Instead of rejecting an out-of-bounds operation,
     /// clamp the result to the specified bound or to the type's limit when no explicit bound is set.
@@ -4048,7 +4072,7 @@ impl<T: ToRedisArgs> ToRedisArgs for IncrexOptions<T> {
 }
 
 /// Helper enum that is used to define update checks
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub enum UpdateCheck {
     /// LT -- Only update if the new score is less than the current.
@@ -4074,7 +4098,7 @@ impl ToRedisArgs for UpdateCheck {
 }
 
 /// Options for the [ZADD](https://redis.io/commands/zadd) command
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct SortedSetAddOptions {
     conditional_set: Option<ExistenceCheck>,
     conditional_update: Option<UpdateCheck>,
