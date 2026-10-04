@@ -488,11 +488,12 @@ impl Pipeline {
                 .await
                 .map_err(|_| None)?;
 
-            receiver.await
-            // The `sender` was dropped which likely means that the stream part
-            // failed for one reason or another
-            .map_err(|_| None)
-            .and_then(|res| res.map_err(Some))
+            receiver
+                .await
+                // The `sender` was dropped which likely means that the stream part
+                // failed for one reason or another
+                .map_err(|_| None)
+                .and_then(|res| res.map_err(Some))
         };
 
         match timeout {
