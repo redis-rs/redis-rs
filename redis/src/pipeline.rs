@@ -16,6 +16,36 @@ pub struct Pipeline {
     pub(crate) ignore_errors: bool,
 }
 
+/// How many confirmation messages the server will send for a pub/sub subscription command.
+///
+/// Subscription commands (`SUBSCRIBE`, `UNSUBSCRIBE`, `PSUBSCRIBE`, `PUNSUBSCRIBE`) are answered
+/// with one confirmation per argument, even when the channel or pattern wasn't subscribed. A
+/// command without arguments is rejected with a single error, except for `UNSUBSCRIBE` and
+/// `PUNSUBSCRIBE`, which remove all of the client's current subscriptions of that kind - in that
+/// case the server sends one confirmation per active subscription (or a single confirmation with
+/// a nil channel when there are none), and the exact count is only known when the confirmations
+/// start arriving.
+/// See <https://github.com/redis-rs/redis-rs/issues/2423>.
+///
+/// The counts of the `UnsubscribeAll*` variants are resolved from the connection's tracked
+/// subscriptions, which can drift from the server if it drops subscriptions without sending
+/// per-channel confirmations (the known case is the RESP3 `RESET` command). See
+/// `SubscriptionSets` in the `aio` module for how that state is maintained and where it can
+/// fall out of sync.
+#[cfg(feature = "aio")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ExpectedConfirmations {
+    /// Exactly this many confirmations are still pending, counting the confirmation that is
+    /// currently being processed.
+    Count(usize),
+    /// One confirmation per channel the connection is subscribed to when the command runs.
+    /// Resolved from the connection's tracked subscriptions when the first confirmation arrives.
+    UnsubscribeAllChannels,
+    /// One confirmation per pattern the connection is subscribed to when the command runs.
+    /// Resolved from the connection's tracked subscriptions when the first confirmation arrives.
+    UnsubscribeAllPatterns,
+}
+
 /// A pipeline allows you to send multiple commands in one go to the
 /// redis server.  API wise it's very similar to just using a command
 /// but it allows multiple commands to be chained and some features such

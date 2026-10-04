@@ -1397,6 +1397,196 @@ mod basic_async {
             // no more messages should be sent.
             assert_matches!(rx.try_recv(), Err(_));
         }
+
+        // Asserts that a `PING` response wasn't corrupted by the confirmations of another
+        // command that is still in flight. RESP2 replies with an array while the connection is
+        // in subscribed mode, and with a simple string otherwise; RESP3 always replies with a
+        // simple string.
+        fn assert_is_pong(response: Value) {
+            match response {
+                Value::SimpleString(message) => assert_eq!(message, "PONG"),
+                Value::Array(values) => {
+                    assert_eq!(values.first(), Some(&redis_value!("pong")));
+                }
+                other => panic!("the ping response was corrupted: {other:?}"),
+            }
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[async_test]
+        async fn test_pubsub_subscribe_awaits_all_confirmations_issue_2423() {
+            let ctx = TestContext::new();
+            let (mut sink, mut stream) = ctx.async_pubsub().await.unwrap().split();
+            let mut ping_sink = sink.clone();
+            let mut publish_conn = ctx.async_connection().await.unwrap();
+
+            let (subscribe_result, ping_result) = futures::future::join(
+                sink.subscribe(&["issue-2423-sub-a", "issue-2423-sub-b"]),
+                ping_sink.ping::<Value>(),
+            )
+            .await;
+
+            subscribe_result.unwrap();
+            assert_is_pong(ping_result.unwrap());
+
+            // The connection isn't left with unattributed confirmations, so it still works.
+            assert_is_pong(sink.ping::<Value>().await.unwrap());
+
+            // Messages for the subscribed channels are still passed through to the stream.
+            for channel in ["issue-2423-sub-a", "issue-2423-sub-b"] {
+                let _: () = publish_conn.publish(channel, "banana").await.unwrap();
+            }
+            for _ in 0..2 {
+                let message = stream.next().await.unwrap();
+                assert_eq!(message.get_payload::<String>().unwrap(), "banana");
+            }
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[async_test]
+        async fn test_pubsub_unsubscribe_awaits_all_confirmations_issue_2423() {
+            let ctx = TestContext::new();
+            let (mut sink, mut stream) = ctx.async_pubsub().await.unwrap().split();
+            let mut ping_sink = sink.clone();
+            let mut publish_conn = ctx.async_connection().await.unwrap();
+
+            sink.subscribe(&["issue-2423-unsub-a", "issue-2423-unsub-b"])
+                .await
+                .unwrap();
+            // A pattern stays subscribed while the channels are unsubscribed, so messages can
+            // still be received afterwards.
+            sink.psubscribe("issue-2423-unsub-stay-*").await.unwrap();
+
+            let (unsubscribe_result, ping_result) = futures::future::join(
+                sink.unsubscribe(&["issue-2423-unsub-a", "issue-2423-unsub-b"]),
+                ping_sink.ping::<Value>(),
+            )
+            .await;
+
+            unsubscribe_result.unwrap();
+            assert_is_pong(ping_result.unwrap());
+
+            let _: () = publish_conn
+                .publish("issue-2423-unsub-stay-channel", "banana")
+                .await
+                .unwrap();
+            let message = stream.next().await.unwrap();
+            assert_eq!(message.get_payload::<String>().unwrap(), "banana");
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[async_test]
+        async fn test_pubsub_psubscribe_punsubscribe_await_confirmations_issue_2423() {
+            let ctx = TestContext::new();
+            let (mut sink, mut stream) = ctx.async_pubsub().await.unwrap().split();
+            let mut ping_sink = sink.clone();
+            let mut publish_conn = ctx.async_connection().await.unwrap();
+
+            // A channel stays subscribed while the patterns are unsubscribed, so messages can
+            // still be received afterwards.
+            sink.subscribe("issue-2423-psub-stay").await.unwrap();
+
+            let (psubscribe_result, ping_result) = futures::future::join(
+                sink.psubscribe(&["issue-2423-pat-a*", "issue-2423-pat-b*"]),
+                ping_sink.ping::<Value>(),
+            )
+            .await;
+            psubscribe_result.unwrap();
+            assert_is_pong(ping_result.unwrap());
+
+            let (punsubscribe_result, ping_result) = futures::future::join(
+                sink.punsubscribe(&["issue-2423-pat-a*", "issue-2423-pat-b*"]),
+                ping_sink.ping::<Value>(),
+            )
+            .await;
+            punsubscribe_result.unwrap();
+            assert_is_pong(ping_result.unwrap());
+
+            let _: () = publish_conn
+                .publish("issue-2423-psub-stay", "banana")
+                .await
+                .unwrap();
+            let message = stream.next().await.unwrap();
+            assert_eq!(message.get_payload::<String>().unwrap(), "banana");
+        }
+
+        // A zero-argument UNSUBSCRIBE/PUNSUBSCRIBE is answered with one confirmation per active
+        // subscription (or a single confirmation with a nil channel when there are none), so the
+        // number of confirmations is resolved from the tracked subscriptions when the first
+        // confirmation arrives.
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[async_test]
+        async fn test_pubsub_empty_unsubscribe_does_not_corrupt_connection_issue_2423() {
+            let ctx = TestContext::new();
+            let (mut sink, mut stream) = ctx.async_pubsub().await.unwrap().split();
+            let mut ping_sink = sink.clone();
+            let mut publish_conn = ctx.async_connection().await.unwrap();
+
+            sink.subscribe(&["issue-2423-empty-a", "issue-2423-empty-b"])
+                .await
+                .unwrap();
+            // A pattern stays subscribed while the channels are unsubscribed.
+            sink.psubscribe("issue-2423-empty-pat-stay-*")
+                .await
+                .unwrap();
+
+            let (unsubscribe_result, ping_result) = futures::future::join(
+                sink.unsubscribe(Vec::<String>::new()),
+                ping_sink.ping::<Value>(),
+            )
+            .await;
+            unsubscribe_result.unwrap();
+            assert_is_pong(ping_result.unwrap());
+
+            // The staying pattern still receives messages after the channels were unsubscribed.
+            let _: () = publish_conn
+                .publish("issue-2423-empty-pat-stay-x", "banana")
+                .await
+                .unwrap();
+            let message = stream.next().await.unwrap();
+            assert_eq!(message.get_payload::<String>().unwrap(), "banana");
+
+            // An empty unsubscribe with no channels is answered with a single confirmation.
+            sink.unsubscribe(Vec::<String>::new()).await.unwrap();
+
+            // A channel stays subscribed while the patterns are unsubscribed.
+            sink.subscribe("issue-2423-empty-c").await.unwrap();
+            let (punsubscribe_result, ping_result) = futures::future::join(
+                sink.punsubscribe(Vec::<String>::new()),
+                ping_sink.ping::<Value>(),
+            )
+            .await;
+            punsubscribe_result.unwrap();
+            assert_is_pong(ping_result.unwrap());
+
+            // The staying channel still receives messages after the patterns were unsubscribed.
+            let _: () = publish_conn
+                .publish("issue-2423-empty-c", "banana")
+                .await
+                .unwrap();
+            let message = stream.next().await.unwrap();
+            assert_eq!(message.get_payload::<String>().unwrap(), "banana");
+        }
+
+        // A subscription command that is rejected by the server is answered with a single error
+        // rather than with confirmations, and the error must not be swallowed.
+        #[async_test]
+        async fn test_pubsub_rejected_subscribe_fails_without_waiting_issue_2423() {
+            let ctx = TestContext::new();
+            let mut pubsub_conn = ctx.async_pubsub().await.unwrap();
+
+            let error = pubsub_conn
+                .subscribe(Vec::<String>::new())
+                .await
+                .unwrap_err();
+            assert_eq!(
+                error.kind(),
+                ErrorKind::Server(ServerErrorKind::ResponseError)
+            );
+
+            // The connection is still usable.
+            assert_is_pong(pubsub_conn.ping::<Value>().await.unwrap());
+        }
     }
 
     #[async_test]
