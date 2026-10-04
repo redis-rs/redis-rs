@@ -231,8 +231,8 @@ impl std::fmt::Debug for AsyncConnectionConfig {
             .field("pipeline_buffer_size", pipeline_buffer_size)
             .field("concurrency_limit", concurrency_limit)
             .field("write_backpressure_boundary", write_backpressure_boundary)
-            .field("subscription_tracker", &set_or_unset(subscription_tracker))
             .field("push_sender", &set_or_unset(push_sender))
+            .field("subscription_tracker", &set_or_unset(subscription_tracker))
             .field("dns_resolver", &set_or_unset(dns_resolver));
 
         #[cfg(feature = "cache-aio")]
@@ -322,6 +322,17 @@ impl AsyncConnectionConfig {
         sender: std::sync::Arc<dyn AsyncPushSender>,
     ) -> Self {
         self.push_sender = Some(sender);
+        self
+    }
+
+    #[cfg(any(feature = "connection-manager", feature = "cluster-async"))]
+    pub(crate) fn set_subscription_tracker_internal(
+        mut self,
+        subscription_tracker: std::sync::Arc<
+            std::sync::Mutex<crate::subscription_tracker::SubscriptionTracker>,
+        >,
+    ) -> Self {
+        self.subscription_tracker = Some(subscription_tracker);
         self
     }
 

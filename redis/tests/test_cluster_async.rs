@@ -3017,21 +3017,6 @@ mod cluster_async {
             }
         }
 
-        async fn get_push_with_timeout(
-            rx: &mut UnboundedReceiver<PushInfo>,
-            timeout: Duration,
-        ) -> RedisResult<PushInfo> {
-            Ok(rx
-                .recv()
-                .timeout(futures_time::time::Duration::from(timeout))
-                .await?
-                .unwrap())
-        }
-
-        async fn get_push(rx: &mut UnboundedReceiver<PushInfo>) -> RedisResult<PushInfo> {
-            get_push_with_timeout(rx, Duration::from_millis(5)).await
-        }
-
         async fn check_publishing(
             publish_conn: &mut ClusterConnection,
             rx: &mut UnboundedReceiver<PushInfo>,
@@ -3535,6 +3520,159 @@ mod cluster_async {
                 rx.try_recv(),
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty)
             );
+        }
+
+        // The scenarios build all of their names, and their probe key, from this tag. A cluster
+        // connection holds a separate connection per node, so the tag is a hash tag that maps all
+        // of the scenario's subscriptions, and its probe key, to the same slot and node.
+        const CLUSTER_TAG: &str = "{issue-2423-cluster}";
+
+        // Runs a scenario on a fresh cluster connection that passes its pushes to the returned
+        // channel. Subscriptions on a cluster connection require RESP3.
+        async fn assert_scenario_on_cluster(kind: SubscriptionKind, scenario: Scenario) {
+            if !use_protocol().supports_resp3() {
+                return;
+            }
+
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
+                builder.push_sender(tx.clone())
+            });
+            let conn = ctx.async_connection().await;
+
+            assert_scenario_on(CLUSTER_TAG, kind, scenario, conn, &mut rx).await;
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[async_test]
+        async fn test_pub_sub_subscribe_awaits_all_confirmations_issue_2423() {
+            assert_scenario_on_cluster(SubscriptionKind::Channel, Scenario::Subscribe).await;
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[async_test]
+        async fn test_pub_sub_psubscribe_awaits_all_confirmations_issue_2423() {
+            assert_scenario_on_cluster(SubscriptionKind::Pattern, Scenario::Subscribe).await;
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[async_test]
+        async fn test_pub_sub_unsubscribe_awaits_all_confirmations_issue_2423() {
+            assert_scenario_on_cluster(SubscriptionKind::Channel, Scenario::Unsubscribe).await;
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[async_test]
+        async fn test_pub_sub_punsubscribe_awaits_all_confirmations_issue_2423() {
+            assert_scenario_on_cluster(SubscriptionKind::Pattern, Scenario::Unsubscribe).await;
+        }
+
+        // A zero-argument unsubscribe isn't routed by a key, so it is sent to a random node that
+        // might not hold the tested subscriptions, and its confirmation count can't be derived.
+        // Unsubscribing with explicit arguments is routed by the first argument's slot, so it is
+        // served by the same connection as the subscription command.
+        //
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[async_test]
+        async fn test_pub_sub_partial_unsubscribe_leaves_connection_usable_issue_2423() {
+            assert_scenario_on_cluster(SubscriptionKind::Channel, Scenario::PartialUnsubscribe)
+                .await;
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[async_test]
+        async fn test_pub_sub_partial_punsubscribe_leaves_connection_usable_issue_2423() {
+            assert_scenario_on_cluster(SubscriptionKind::Pattern, Scenario::PartialUnsubscribe)
+                .await;
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[async_test]
+        async fn test_pub_sub_multi_channel_ssubscribe_sunsubscribe_issue_2423() {
+            if !use_protocol().supports_resp3() {
+                return;
+            }
+
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
+                builder.push_sender(tx.clone())
+            });
+            skip_if_context_does_not_support!(ctx, REDIS_CE_7_0);
+
+            let mut connection = ctx.async_connection().await;
+            let mut request_conn = connection.clone();
+
+            // The sharded channels share a hash tag, so they map to the same slot and node.
+            let channel = "{issue-2423-shard}a";
+            let channels = [channel, "{issue-2423-shard}b"];
+            let stay = "{issue-2423-shard}stay";
+            set_probe_key(&mut request_conn, channel).await;
+
+            let mut command_conn = connection.clone();
+            assert_requests_uncorrupted_during(
+                command_conn.ssubscribe(&channels),
+                &connection,
+                channel,
+            )
+            .await;
+
+            assert_push(
+                &mut rx,
+                PushKind::SSubscribe,
+                vec![redis_value!(channel), redis_value!(1)],
+            )
+            .await;
+            assert_push(
+                &mut rx,
+                PushKind::SSubscribe,
+                vec![redis_value!(channels[1]), redis_value!(2)],
+            )
+            .await;
+
+            // A sharded channel stays subscribed while the others are unsubscribed, so messages
+            // are still passed.
+            connection.ssubscribe(stay).await.unwrap();
+            assert_push(
+                &mut rx,
+                PushKind::SSubscribe,
+                vec![redis_value!(stay), redis_value!(3)],
+            )
+            .await;
+
+            let mut command_conn = connection.clone();
+            assert_requests_uncorrupted_during(
+                command_conn.sunsubscribe(&channels),
+                &connection,
+                channel,
+            )
+            .await;
+
+            // Both unsubscribe confirmations were passed to the push sender as well, and their
+            // count includes the channel that stayed subscribed.
+            assert_push(
+                &mut rx,
+                PushKind::SUnsubscribe,
+                vec![redis_value!(channel), redis_value!(2)],
+            )
+            .await;
+            assert_push(
+                &mut rx,
+                PushKind::SUnsubscribe,
+                vec![redis_value!(channels[1]), redis_value!(1)],
+            )
+            .await;
+
+            // The staying sharded channel still receives messages.
+            let _: () = request_conn.spublish(stay, "banana").await.unwrap();
+            assert_push(
+                &mut rx,
+                PushKind::SMessage,
+                vec![redis_value!(stay), redis_value!("banana")],
+            )
+            .await;
+
+            // The connection isn't left with unattributed confirmations, so it still works.
+            assert_connection_usable(&mut connection, channel).await;
         }
     }
 

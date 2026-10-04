@@ -1,20 +1,21 @@
-#[cfg(any(feature = "cluster-async", test))]
+#[cfg(test)]
 use core::str;
+#[cfg(any(feature = "cluster-async", test))]
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 #[cfg(any(feature = "connection-manager", feature = "cluster-async", test))]
 use crate::Pipeline;
 use crate::Value;
-#[cfg(any(feature = "cluster-async", test))]
+#[cfg(test)]
 use crate::{Arg, Cmd};
 
 /// The kind of subscription that a server confirmation changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SubscriptionKind {
-    /// A regular pub/sub channel.
     Channel,
-    /// A pub/sub pattern.
     Pattern,
+    ShardChannel,
 }
 
 /// A subscription change described by a server confirmation of a subscription command.
@@ -30,18 +31,21 @@ pub(crate) struct SubscriptionChange {
 }
 
 /// The subscriptions a connection has confirmed, used to resolve how many confirmations a
-/// zero-argument `UNSUBSCRIBE` or `PUNSUBSCRIBE` is answered with: the server sends one
-/// confirmation per active subscription, and the reply doesn't carry that count.
+/// zero-argument `UNSUBSCRIBE`, `PUNSUBSCRIBE` or `SUNSUBSCRIBE` is answered with: the server
+/// sends one confirmation per active subscription, and the reply doesn't carry that count.
 /// See <https://github.com/redis-rs/redis-rs/issues/2423>.
 ///
 /// Confirmations are applied in order, so the tracked sets match the server whenever a command's
 /// first confirmation arrives. They can drift apart if the server drops subscriptions without
 /// per-channel confirmations - the known case is the RESP3 `RESET` command - which makes a
 /// zero-argument unsubscribe resolve the wrong count.
+///
+/// A shared instance (`Arc<Mutex<_>>`) is written by the connection(s) that read the
+/// confirmations; its other holders only read it. A cluster connection shares one instance between
+/// all of its node connections, so it tracks the cluster's subscriptions in one place.
 #[derive(Default)]
 pub(crate) struct SubscriptionTracker {
     subscriptions: HashSet<Vec<u8>>,
-    #[cfg(any(feature = "connection-manager", feature = "cluster-async", test))]
     s_subscriptions: HashSet<Vec<u8>>,
     p_subscriptions: HashSet<Vec<u8>>,
 }
@@ -51,28 +55,22 @@ pub(crate) enum SubscriptionAction {
     Unsubscribe,
     PSubscribe,
     PUnsubscribe,
-    #[cfg(any(feature = "cluster-async", test))]
     SSubscribe,
-    #[cfg(any(feature = "cluster-async", test))]
     Sunsubscribe,
 }
 
 impl SubscriptionAction {
     fn additive(&self) -> bool {
         match self {
-            Self::Subscribe | Self::PSubscribe => true,
-            #[cfg(any(feature = "cluster-async", test))]
-            Self::SSubscribe => true,
+            Self::Subscribe | Self::PSubscribe | Self::SSubscribe => true,
 
-            Self::Unsubscribe | Self::PUnsubscribe => false,
-            #[cfg(any(feature = "cluster-async", test))]
-            Self::Sunsubscribe => false,
+            Self::Unsubscribe | Self::PUnsubscribe | Self::Sunsubscribe => false,
         }
     }
 }
 
 impl SubscriptionTracker {
-    #[cfg(any(feature = "cluster-async", test))]
+    #[cfg(test)]
     pub(crate) fn to_request(
         cmd: &Cmd,
     ) -> Option<(SubscriptionAction, impl Iterator<Item = Vec<u8>>)> {
@@ -120,7 +118,6 @@ impl SubscriptionTracker {
             SubscriptionAction::PSubscribe | SubscriptionAction::PUnsubscribe => {
                 &mut self.p_subscriptions
             }
-            #[cfg(any(feature = "cluster-async", test))]
             SubscriptionAction::SSubscribe | SubscriptionAction::Sunsubscribe => {
                 &mut self.s_subscriptions
             }
@@ -147,6 +144,8 @@ impl SubscriptionTracker {
             (SubscriptionKind::Channel, false) => SubscriptionAction::Unsubscribe,
             (SubscriptionKind::Pattern, true) => SubscriptionAction::PSubscribe,
             (SubscriptionKind::Pattern, false) => SubscriptionAction::PUnsubscribe,
+            (SubscriptionKind::ShardChannel, true) => SubscriptionAction::SSubscribe,
+            (SubscriptionKind::ShardChannel, false) => SubscriptionAction::Sunsubscribe,
         };
         if let Some(channel) = change.channel {
             self.update_with_request(action, core::iter::once(channel));
@@ -160,33 +159,128 @@ impl SubscriptionTracker {
         let subscriptions = match kind {
             SubscriptionKind::Channel => &self.subscriptions,
             SubscriptionKind::Pattern => &self.p_subscriptions,
+            SubscriptionKind::ShardChannel => &self.s_subscriptions,
         };
         subscriptions.len().max(1)
     }
 
-    #[cfg(any(feature = "connection-manager", feature = "cluster-async", test))]
+    #[cfg(any(feature = "connection-manager", test))]
     pub(crate) fn get_subscription_pipeline(&self) -> Pipeline {
         let mut pipeline = crate::pipe();
-        if !self.subscriptions.is_empty() {
-            let cmd = pipeline.cmd("SUBSCRIBE");
-            for channel in self.subscriptions.iter() {
-                cmd.arg(channel);
+        append_subscription_command(
+            &mut pipeline,
+            "SUBSCRIBE",
+            self.subscriptions.iter().map(Vec::as_slice),
+        );
+        append_subscription_command(
+            &mut pipeline,
+            "SSUBSCRIBE",
+            self.s_subscriptions.iter().map(Vec::as_slice),
+        );
+        append_subscription_command(
+            &mut pipeline,
+            "PSUBSCRIBE",
+            self.p_subscriptions.iter().map(Vec::as_slice),
+        );
+        pipeline
+    }
+
+    /// Builds the resubscription pipeline for the subscriptions that `owner` maps to `target`.
+    ///
+    /// Cluster connections use this to resubscribe a single reconnected node without building the
+    /// pipelines of the other nodes.
+    #[cfg(any(feature = "cluster-async", test))]
+    pub(crate) fn get_subscription_pipeline_for_owner<K>(
+        &self,
+        target: &K,
+        mut owner: impl FnMut(&[u8]) -> Option<K>,
+    ) -> Pipeline
+    where
+        K: Eq,
+    {
+        let mut channels = Vec::new();
+        let mut shard_channels = Vec::new();
+        let mut patterns = Vec::new();
+
+        for subscription in &self.subscriptions {
+            if owner(subscription).as_ref() == Some(target) {
+                channels.push(subscription.as_slice());
             }
         }
-        if !self.s_subscriptions.is_empty() {
-            let cmd = pipeline.cmd("SSUBSCRIBE");
-            for channel in self.s_subscriptions.iter() {
-                cmd.arg(channel);
+        for subscription in &self.s_subscriptions {
+            if owner(subscription).as_ref() == Some(target) {
+                shard_channels.push(subscription.as_slice());
             }
         }
-        if !self.p_subscriptions.is_empty() {
-            let cmd = pipeline.cmd("PSUBSCRIBE");
-            for channel in self.p_subscriptions.iter() {
-                cmd.arg(channel);
+        for subscription in &self.p_subscriptions {
+            if owner(subscription).as_ref() == Some(target) {
+                patterns.push(subscription.as_slice());
             }
         }
 
+        let mut pipeline = crate::pipe();
+        append_subscription_command(&mut pipeline, "SUBSCRIBE", channels);
+        append_subscription_command(&mut pipeline, "SSUBSCRIBE", shard_channels);
+        append_subscription_command(&mut pipeline, "PSUBSCRIBE", patterns);
         pipeline
+    }
+
+    /// Builds one resubscription pipeline per owner that `owner` maps a tracked subscription to.
+    ///
+    /// Cluster connections use this to build a pipeline for each node from the subscriptions
+    /// whose slots the node currently owns. Subscriptions without an owner are skipped.
+    #[cfg(any(feature = "cluster-async", test))]
+    pub(crate) fn get_subscription_pipelines_by<K>(
+        &self,
+        mut owner: impl FnMut(&[u8]) -> Option<K>,
+    ) -> HashMap<K, Pipeline>
+    where
+        K: Eq + std::hash::Hash,
+    {
+        let mut groups: HashMap<K, [Vec<&[u8]>; 3]> = HashMap::new();
+        for subscription in &self.subscriptions {
+            if let Some(owner) = owner(subscription) {
+                groups.entry(owner).or_default()[0].push(subscription.as_slice());
+            }
+        }
+        for subscription in &self.s_subscriptions {
+            if let Some(owner) = owner(subscription) {
+                groups.entry(owner).or_default()[1].push(subscription.as_slice());
+            }
+        }
+        for subscription in &self.p_subscriptions {
+            if let Some(owner) = owner(subscription) {
+                groups.entry(owner).or_default()[2].push(subscription.as_slice());
+            }
+        }
+
+        groups
+            .into_iter()
+            .map(|(owner, [channels, shard_channels, patterns])| {
+                let mut pipeline = crate::pipe();
+                append_subscription_command(&mut pipeline, "SUBSCRIBE", channels);
+                append_subscription_command(&mut pipeline, "SSUBSCRIBE", shard_channels);
+                append_subscription_command(&mut pipeline, "PSUBSCRIBE", patterns);
+                (owner, pipeline)
+            })
+            .collect()
+    }
+}
+
+#[cfg(any(feature = "connection-manager", feature = "cluster-async", test))]
+fn append_subscription_command<'a>(
+    pipeline: &mut Pipeline,
+    command: &str,
+    subscriptions: impl IntoIterator<Item = &'a [u8]>,
+) {
+    let mut subscriptions = subscriptions.into_iter().peekable();
+    if subscriptions.peek().is_none() {
+        return;
+    }
+
+    let cmd = pipeline.cmd(command);
+    for subscription in subscriptions {
+        cmd.arg(subscription);
     }
 }
 
@@ -202,6 +296,8 @@ pub(crate) fn subscription_change(value: &Value) -> Option<SubscriptionChange> {
                 crate::PushKind::Unsubscribe => (SubscriptionKind::Channel, false),
                 crate::PushKind::PSubscribe => (SubscriptionKind::Pattern, true),
                 crate::PushKind::PUnsubscribe => (SubscriptionKind::Pattern, false),
+                crate::PushKind::SSubscribe => (SubscriptionKind::ShardChannel, true),
+                crate::PushKind::SUnsubscribe => (SubscriptionKind::ShardChannel, false),
                 _ => return None,
             };
             ((kind, subscribed), data.first().and_then(value_channel))
@@ -213,6 +309,8 @@ pub(crate) fn subscription_change(value: &Value) -> Option<SubscriptionChange> {
                     b"unsubscribe" => (SubscriptionKind::Channel, false),
                     b"psubscribe" => (SubscriptionKind::Pattern, true),
                     b"punsubscribe" => (SubscriptionKind::Pattern, false),
+                    b"ssubscribe" => (SubscriptionKind::ShardChannel, true),
+                    b"sunsubscribe" => (SubscriptionKind::ShardChannel, false),
                     _ => return None,
                 },
                 _ => return None,
@@ -310,6 +408,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_group_subscriptions_by_owner() {
+        let mut tracker = SubscriptionTracker::default();
+
+        tracker.update_with_cmd(cmd("subscribe").arg("foo").arg("bar"));
+        tracker.update_with_cmd(cmd("PSUBSCRIBE").arg("fo*o").arg("b*ar"));
+        tracker.update_with_cmd(cmd("SSUBSCRIBE").arg("sfoo").arg("sbar"));
+
+        let result = tracker.get_subscription_pipelines_by(|subscription| {
+            subscription.contains(&b'b').then_some(())
+        });
+        assert_eq!(result.len(), 1);
+        let result = result.get(&()).unwrap();
+        let mut expected = pipe();
+        expected
+            .cmd("SUBSCRIBE")
+            .arg("bar")
+            .cmd("SSUBSCRIBE")
+            .arg("sbar")
+            .cmd("PSUBSCRIBE")
+            .arg("b*ar");
+        assert_eq!(
+            result.get_packed_pipeline(),
+            expected.get_packed_pipeline(),
+            "{}",
+            String::from_utf8(result.get_packed_pipeline()).unwrap()
+        );
+
+        let only_b = tracker.get_subscription_pipeline_for_owner(&(), |subscription| {
+            subscription.contains(&b'b').then_some(())
+        });
+        assert_eq!(only_b.get_packed_pipeline(), expected.get_packed_pipeline());
+
+        let empty = tracker.get_subscription_pipelines_by(|_| None::<()>);
+        assert!(empty.is_empty());
+    }
+
     impl SubscriptionTracker {
         fn update_with_cmd<'a>(&'a mut self, cmd: &'a Cmd) {
             if let Some((action, args)) = Self::to_request(cmd) {
@@ -363,6 +498,18 @@ mod tests {
                 false,
                 b"punsubscribe".as_slice(),
             ),
+            (
+                PushKind::SSubscribe,
+                SubscriptionKind::ShardChannel,
+                true,
+                b"ssubscribe".as_slice(),
+            ),
+            (
+                PushKind::SUnsubscribe,
+                SubscriptionKind::ShardChannel,
+                false,
+                b"sunsubscribe".as_slice(),
+            ),
         ];
 
         for (push_kind, kind, subscribed, name) in cases {
@@ -410,7 +557,11 @@ mod tests {
         let mut subscriptions = SubscriptionTracker::default();
 
         // With nothing tracked, the server still sends a single confirmation with a nil channel.
-        for kind in [SubscriptionKind::Channel, SubscriptionKind::Pattern] {
+        for kind in [
+            SubscriptionKind::Channel,
+            SubscriptionKind::Pattern,
+            SubscriptionKind::ShardChannel,
+        ] {
             assert_eq!(subscriptions.unsubscribe_all_target(kind), 1);
         }
 
@@ -418,6 +569,7 @@ mod tests {
         let kinds = [
             (SubscriptionKind::Channel, b"channel".as_slice()),
             (SubscriptionKind::Pattern, b"pattern".as_slice()),
+            (SubscriptionKind::ShardChannel, b"shard".as_slice()),
         ];
         for (kind, name) in kinds {
             subscriptions.apply(SubscriptionChange {
@@ -453,6 +605,10 @@ mod tests {
         );
         assert_eq!(
             subscriptions.unsubscribe_all_target(SubscriptionKind::Pattern),
+            1
+        );
+        assert_eq!(
+            subscriptions.unsubscribe_all_target(SubscriptionKind::ShardChannel),
             1
         );
 

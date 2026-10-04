@@ -1680,6 +1680,105 @@ mod basic_async {
             set_probe_key(&mut conn, &key).await;
             assert_connection_usable(&mut conn, &key).await;
         }
+
+        // Runs a scenario on a fresh connection manager that passes its pushes to the returned
+        // channel. Subscriptions on a connection manager require RESP3.
+        #[cfg(feature = "connection-manager")]
+        async fn assert_scenario_on_connection_manager(kind: SubscriptionKind, scenario: Scenario) {
+            let ctx = TestContext::new();
+            if !ctx.protocol.supports_resp3() {
+                return;
+            }
+
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let config = redis::aio::ConnectionManagerConfig::new().set_push_sender(tx);
+            let conn = ctx
+                .client
+                .get_connection_manager_with_config(config)
+                .await
+                .unwrap();
+
+            assert_scenario_on(TAG, kind, scenario, conn, &mut rx).await;
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[cfg(feature = "connection-manager")]
+        #[async_test]
+        async fn test_connection_manager_subscribe_awaits_all_confirmations_issue_2423() {
+            assert_scenario_on_connection_manager(SubscriptionKind::Channel, Scenario::Subscribe)
+                .await;
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[cfg(feature = "connection-manager")]
+        #[async_test]
+        async fn test_connection_manager_psubscribe_awaits_all_confirmations_issue_2423() {
+            assert_scenario_on_connection_manager(SubscriptionKind::Pattern, Scenario::Subscribe)
+                .await;
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[cfg(feature = "connection-manager")]
+        #[async_test]
+        async fn test_connection_manager_unsubscribe_awaits_all_confirmations_issue_2423() {
+            assert_scenario_on_connection_manager(SubscriptionKind::Channel, Scenario::Unsubscribe)
+                .await;
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[cfg(feature = "connection-manager")]
+        #[async_test]
+        async fn test_connection_manager_punsubscribe_awaits_all_confirmations_issue_2423() {
+            assert_scenario_on_connection_manager(SubscriptionKind::Pattern, Scenario::Unsubscribe)
+                .await;
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[cfg(feature = "connection-manager")]
+        #[async_test]
+        async fn test_connection_manager_partial_unsubscribe_leaves_connection_usable_issue_2423() {
+            assert_scenario_on_connection_manager(
+                SubscriptionKind::Channel,
+                Scenario::PartialUnsubscribe,
+            )
+            .await;
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[cfg(feature = "connection-manager")]
+        #[async_test]
+        async fn test_connection_manager_partial_punsubscribe_leaves_connection_usable_issue_2423()
+        {
+            assert_scenario_on_connection_manager(
+                SubscriptionKind::Pattern,
+                Scenario::PartialUnsubscribe,
+            )
+            .await;
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[cfg(feature = "connection-manager")]
+        #[async_test]
+        async fn test_connection_manager_empty_unsubscribe_does_not_corrupt_connection_issue_2423()
+        {
+            assert_scenario_on_connection_manager(
+                SubscriptionKind::Channel,
+                Scenario::EmptyUnsubscribe,
+            )
+            .await;
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[cfg(feature = "connection-manager")]
+        #[async_test]
+        async fn test_connection_manager_empty_punsubscribe_does_not_corrupt_connection_issue_2423()
+        {
+            assert_scenario_on_connection_manager(
+                SubscriptionKind::Pattern,
+                Scenario::EmptyUnsubscribe,
+            )
+            .await;
+        }
     }
 
     #[async_test]

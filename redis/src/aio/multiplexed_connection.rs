@@ -304,6 +304,10 @@ where
                     ExpectedConfirmations::UnsubscribeAllPatterns => {
                         Some(SubscriptionKind::Pattern)
                     }
+                    #[cfg(feature = "cluster-async")]
+                    ExpectedConfirmations::UnsubscribeAllShardChannels => {
+                        Some(SubscriptionKind::ShardChannel)
+                    }
                     ExpectedConfirmations::Count(_) => None,
                 };
                 if let Some(kind) = kind {
@@ -391,6 +395,8 @@ where
                     // reached when the response isn't a confirmation.
                     ExpectedConfirmations::UnsubscribeAllChannels
                     | ExpectedConfirmations::UnsubscribeAllPatterns => 1,
+                    #[cfg(feature = "cluster-async")]
+                    ExpectedConfirmations::UnsubscribeAllShardChannels => 1,
                 };
                 if buffer.len() < expected {
                     // Need to gather more response values
