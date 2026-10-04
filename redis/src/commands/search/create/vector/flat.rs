@@ -1,11 +1,10 @@
 //! Defines the options and builder for vector fields using the FLAT indexing algorithm.
-use super::{SchemaVectorField, VectorField};
+use super::{VectorAlgorithm, VectorField, VectorFieldCommon};
 use crate::{RedisWrite, ToRedisArgs};
 
 /// Options for vectors using the FLAT indexing algorithm
 #[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct FlatVectorOptions {
+pub(crate) struct FlatVectorOptions {
     block_size: Option<u32>,
 }
 
@@ -34,14 +33,14 @@ impl ToRedisArgs for FlatVectorOptions {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct FlatVectorFieldBuilder {
-    base: SchemaVectorField,
+    common: VectorFieldCommon,
     block_size: Option<u32>,
 }
 
 impl FlatVectorFieldBuilder {
-    pub(super) fn new(base: SchemaVectorField) -> Self {
+    pub(super) fn new(common: VectorFieldCommon) -> Self {
         Self {
-            base,
+            common,
             block_size: None,
         }
     }
@@ -58,24 +57,24 @@ impl FlatVectorFieldBuilder {
 
     /// Set the alias for the field.
     pub fn alias(mut self, alias: impl Into<String>) -> Self {
-        self.base.base = self.base.base.alias(alias);
+        self.common = self.common.alias(alias);
         self
     }
 
     /// Set index missing. This allows searching for missing values - documents that do not contain a specific field.
     pub fn index_missing(mut self, index_missing: bool) -> Self {
-        self.base.base = self.base.base.index_missing(index_missing);
+        self.common = self.common.index_missing(index_missing);
         self
     }
 
     /// Build the vector field.
     pub fn build(self) -> VectorField {
-        VectorField::Flat(
-            self.base,
-            FlatVectorOptions {
+        VectorField {
+            common: self.common,
+            algorithm: VectorAlgorithm::Flat(FlatVectorOptions {
                 block_size: self.block_size,
-            },
-        )
+            }),
+        }
     }
 }
 
@@ -145,6 +144,24 @@ mod tests {
         assert_eq!(
             ft_create.into_args(),
             "FT.CREATE index SCHEMA embedding VECTOR FLAT 8 TYPE FLOAT32 DIM 2 DISTANCE_METRIC L2 BLOCK_SIZE 1000"
+        );
+    }
+
+    /// The alias comes before `VECTOR`, `BLOCK_SIZE` is counted with the shared attributes, and
+    /// `INDEXMISSING` comes after all counted attributes.
+    #[test]
+    fn test_vector_field_flat_with_all_options() {
+        let schema = schema! {
+            VECTOR_FIELD_NAME => VectorField::flat(VectorType::Float32, 2, DistanceMetric::L2)
+                .block_size(1000)
+                .alias(CUSTOM_ALIAS)
+                .index_missing(true)
+                .build(),
+        };
+        let ft_create = FtCreateCommand::new(INDEX_NAME, schema);
+        assert_eq!(
+            ft_create.into_args(),
+            "FT.CREATE index SCHEMA embedding AS custom_alias VECTOR FLAT 8 TYPE FLOAT32 DIM 2 DISTANCE_METRIC L2 BLOCK_SIZE 1000 INDEXMISSING"
         );
     }
 
