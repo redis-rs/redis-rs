@@ -94,12 +94,6 @@ mod tests {
     // VECTOR Field Tests
     // ============================================================================
     #[test]
-    #[should_panic(expected = "Vector dimension must be positive (greater than 0)")]
-    fn test_flat_vector_zero_dimension_panics() {
-        let _ = VectorField::flat(VectorType::Float32, 0, DistanceMetric::Cosine);
-    }
-
-    #[test]
     fn test_vector_field_with_valid_dimension_one() {
         let schema = schema! {
             VECTOR_FIELD_NAME => VectorField::flat(VectorType::Float32, 1, DistanceMetric::Cosine)

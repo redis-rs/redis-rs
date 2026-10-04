@@ -216,11 +216,6 @@ impl VectorField {
         dim: u32,
         distance_metric: DistanceMetric,
     ) -> FlatVectorFieldBuilder {
-        assert!(
-            dim > 0,
-            "Vector dimension must be positive (greater than 0)"
-        );
-
         FlatVectorFieldBuilder::new(SchemaVectorField {
             base: BaseSchemaField::new(FieldType::Vector),
             algorithm: VectorAlgorithm::Flat,
@@ -228,5 +223,25 @@ impl VectorField {
             dim,
             distance_metric,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema;
+    use crate::search::FtCreateCommand;
+
+    /// The dimension is not checked on the client; the server rejects invalid values.
+    #[test]
+    fn test_zero_dimension_is_sent_to_server() {
+        let schema = schema! {
+            "embedding" => VectorField::flat(VectorType::Float32, 0, DistanceMetric::Cosine).build(),
+        };
+        let ft_create = FtCreateCommand::new("index", schema);
+        assert_eq!(
+            ft_create.into_args(),
+            "FT.CREATE index SCHEMA embedding VECTOR FLAT 6 TYPE FLOAT32 DIM 0 DISTANCE_METRIC COSINE"
+        );
     }
 }
