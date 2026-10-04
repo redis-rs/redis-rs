@@ -5,8 +5,7 @@ use crate::support::*;
 use redis::Commands;
 use redis::schema;
 use redis::search::*;
-use redis_test::run_test_if_version_supported;
-use redis_test::server::Module;
+use test_macros::single_server_test;
 
 static TEXT_FIELD_NAME: &str = "title";
 static NUMERIC_FIELD_NAME: &str = "price";
@@ -137,12 +136,9 @@ fn run_modifier_matrix<C, T>(
 
 // Basic create — Redis and Valkey.
 
-#[test]
-fn test_module_search_ft_create_with_an_empty_index_name() {
-    let ctx = run_test_if_version_supported!(
-        &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search]
-    );
+#[single_server_test(module = "search")]
+fn test_module_search_ft_create_with_an_empty_index_name(ctx: TestContext) {
+    skip_if_context_does_not_support!(ctx, [REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY]);
     let mut con = ctx.connection();
     let empty_index_name = "";
     let options = CreateOptions::new();
@@ -179,25 +175,19 @@ where
     assert_index_already_exists_error(con.ft_create::<_, String>(index_name, &options, &schema));
 }
 
-#[test]
-fn test_module_search_simple_ft_create() {
-    let ctx = run_test_if_version_supported!(
-        &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search]
-    );
+#[single_server_test(module = "search")]
+fn test_module_search_simple_ft_create(ctx: TestContext) {
+    skip_if_context_does_not_support!(ctx, [REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY]);
     run_simple_ft_create(&mut ctx.connection(), "index", |_| {});
 }
 
 // FT.CREATE create options and per-field-type schema coverage.
 
-#[test]
-fn test_module_search_ft_create_create_options() {
+#[single_server_test(module = "search")]
+fn test_module_search_ft_create_create_options(ctx: TestContext) {
     // Portable options on both servers; the full option matrix (e.g. FILTER,
     // TEMPORARY, MAXTEXTFIELDS) on Redis only, as valkey-search rejects it.
-    let ctx = run_test_if_version_supported!(
-        &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search]
-    );
+    skip_if_context_does_not_support!(ctx, [REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY]);
     let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
     let mut con = ctx.connection();
     let schema = schema! {
@@ -308,14 +298,11 @@ where
     }
 }
 
-#[test]
-fn test_module_search_ft_create_schema_text_field() {
+#[single_server_test(module = "search")]
+fn test_module_search_ft_create_schema_text_field(ctx: TestContext) {
     // Portable subset on both servers; the full matrix (e.g. SORTABLE UNF,
     // PHONETIC, INDEXMISSING) on Redis only, as valkey-search rejects it.
-    let ctx = run_test_if_version_supported!(
-        &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search]
-    );
+    skip_if_context_does_not_support!(ctx, [REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY]);
     let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
     run_ft_create_schema_text_field(&mut ctx.connection(), is_valkey, |_| {});
 }
@@ -374,14 +361,11 @@ where
     }
 }
 
-#[test]
-fn test_module_search_ft_create_schema_tag_field() {
+#[single_server_test(module = "search")]
+fn test_module_search_ft_create_schema_tag_field(ctx: TestContext) {
     // Portable subset on both servers; the full matrix (e.g. SORTABLE UNF,
     // WITHSUFFIXTRIE, INDEXMISSING) on Redis only, as valkey-search rejects it.
-    let ctx = run_test_if_version_supported!(
-        &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search]
-    );
+    skip_if_context_does_not_support!(ctx, [REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY]);
     let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
     run_ft_create_schema_tag_field(&mut ctx.connection(), is_valkey, |_| {});
 }
@@ -435,14 +419,11 @@ where
     }
 }
 
-#[test]
-fn test_module_search_ft_create_schema_numeric_field() {
+#[single_server_test(module = "search")]
+fn test_module_search_ft_create_schema_numeric_field(ctx: TestContext) {
     // Portable subset on both servers; the full matrix (e.g. SORTABLE UNF,
     // INDEXMISSING) on Redis only, as valkey-search rejects it.
-    let ctx = run_test_if_version_supported!(
-        &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search]
-    );
+    skip_if_context_does_not_support!(ctx, [REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY]);
     let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
     run_ft_create_schema_numeric_field(&mut ctx.connection(), is_valkey, |_| {});
 }
@@ -490,10 +471,10 @@ where
     );
 }
 
-#[test]
-fn test_module_search_ft_create_schema_geo_field() {
+#[single_server_test(module = "search")]
+fn test_module_search_ft_create_schema_geo_field(ctx: TestContext) {
     // Redis-only: valkey-search has no GEO field type.
-    let ctx = run_test_if_version_supported!(REDIS_SEARCH_8_0, &[Module::Search]);
+    skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
     run_ft_create_schema_geo_field(&mut ctx.connection(), |_| {});
 }
 
@@ -544,9 +525,9 @@ where
     }
 }
 
-#[test]
-fn test_module_search_ft_create_schema_geoshape_field() {
+#[single_server_test(module = "search")]
+fn test_module_search_ft_create_schema_geoshape_field(ctx: TestContext) {
     // Redis-only: valkey-search has no GEOSHAPE field type.
-    let ctx = run_test_if_version_supported!(REDIS_SEARCH_8_0, &[Module::Search]);
+    skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
     run_ft_create_schema_geoshape_field(&mut ctx.connection(), |_| {});
 }
