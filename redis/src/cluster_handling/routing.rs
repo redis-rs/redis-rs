@@ -1320,7 +1320,7 @@ mod tests_routing {
         cmd.arg("foo") // key slot 12182
             .arg("bar") // value
             .arg("foo2") // key slot 1044
-            .arg("bar2")    // value
+            .arg("bar2") // value
             .arg("{foo}foo3") // key slot 12182
             .arg("bar3"); // value
         let routing = RoutingInfo::for_routable(&cmd);
@@ -1363,8 +1363,7 @@ mod tests_routing {
     #[test]
     fn test_multi_shard_key_with_two_arg_triples() {
         let mut cmd = cmd("JSON.MSET");
-        cmd
-            .arg("foo") // key slot 12182
+        cmd.arg("foo") // key slot 12182
             .arg("$.a") // path
             .arg("bar") // value
             .arg("foo2") // key slot 1044

@@ -939,7 +939,7 @@ fn test_xreadgroup_claim_with_idle_and_incoming_messages() {
             &[">"],
             &StreamReadOptions::default()
                 .group(group_name, consumer2)
-                .claim(5)  // Claim messages idle for at least 5ms
+                .claim(5) // Claim messages idle for at least 5ms
                 .count(10),
         )
         .unwrap();
