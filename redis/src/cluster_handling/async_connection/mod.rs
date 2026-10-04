@@ -676,8 +676,13 @@ where
         };
 
         let convert_result = |res: Result<RedisResult<Response>, _>| {
-            res.map_err(|_| RedisError::from((ErrorKind::Client, "request wasn't handled due to internal failure"))) // this happens only if the result sender is dropped before usage.
-               .and_then(|res| res.map(extract_result))
+            res.map_err(|_| {
+                RedisError::from((
+                    ErrorKind::Client,
+                    "request wasn't handled due to internal failure",
+                ))
+            }) // this happens only if the result sender is dropped before usage.
+            .and_then(|res| res.map(extract_result))
         };
 
         let get_receiver = |(_, receiver): (_, oneshot::Receiver<RedisResult<Response>>)| async {

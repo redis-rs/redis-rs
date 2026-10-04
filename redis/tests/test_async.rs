@@ -1160,10 +1160,11 @@ mod basic_async {
             conn.lpush::<&str, &str, ()>("key", "value").await.unwrap();
 
             redis::pipe()
-                        .get("key") // WRONGTYPE
-                        .llen("key")
-                        .exec_async(&mut conn)
-                        .await.unwrap_err();
+                .get("key") // WRONGTYPE
+                .llen("key")
+                .exec_async(&mut conn)
+                .await
+                .unwrap_err();
 
             let list: Vec<String> = conn.lrange("key", 0, -1).await.unwrap();
 
@@ -1210,7 +1211,7 @@ mod basic_async {
                 .req_packed_commands(
                     redis::pipe()
                         .get("key") // WRONGTYPE
-                                .llen("key"),
+                        .llen("key"),
                     0,
                     2,
                 )

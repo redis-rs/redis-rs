@@ -613,13 +613,16 @@ mod token_based_authentication_acl_tests {
 
         // Create a user with the JWT token as password and full permissions
         println!("Setting up Redis user with JWT token authentication...");
-        let result = admin_con.req_packed_command(redis::cmd("ACL")
-            .arg("SETUSER")
-            .arg(expected_username)
-            .arg("on")  // Enable the user
-            .arg(format!(">{}", MOCKED_TOKEN.as_str())) // Set JWT token as plain text password
-            .arg("~*")  // Allow access to all keys
-            .arg("+@all"))  // Allow all commands
+        let result = admin_con
+            .req_packed_command(
+                redis::cmd("ACL")
+                    .arg("SETUSER")
+                    .arg(expected_username)
+                    .arg("on") // Enable the user
+                    .arg(format!(">{}", MOCKED_TOKEN.as_str())) // Set JWT token as plain text password
+                    .arg("~*") // Allow access to all keys
+                    .arg("+@all"),
+            ) // Allow all commands
             .await;
         assert_eq!(result, Ok(redis::Value::Okay));
 
@@ -670,14 +673,17 @@ mod token_based_authentication_acl_tests {
     async fn add_users_with_jwt_tokens(ctx: &TestContext) {
         let mut admin_con = ctx.async_connection().await.unwrap();
         for (username, token_payload) in CREDENTIALS.iter() {
-            let result = admin_con.req_packed_command(redis::cmd("ACL")
-            .arg("SETUSER")
-            .arg(username)
-            .arg("on")  // Enable the user
-            .arg(format!(">{token_payload}")) // Set JWT token as plain text password
-            .arg("~*")  // Allow access to all keys
-            .arg("+@all"))  // Allow all commands
-            .await;
+            let result = admin_con
+                .req_packed_command(
+                    redis::cmd("ACL")
+                        .arg("SETUSER")
+                        .arg(username)
+                        .arg("on") // Enable the user
+                        .arg(format!(">{token_payload}")) // Set JWT token as plain text password
+                        .arg("~*") // Allow access to all keys
+                        .arg("+@all"),
+                ) // Allow all commands
+                .await;
             assert_eq!(result, Ok(redis::Value::Okay));
         }
     }
