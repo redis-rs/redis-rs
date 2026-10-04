@@ -315,6 +315,26 @@ mod tests {
     #[cfg (unix)]
     fn resp3_unix () { let mut ctx = crate :: support :: TestContextBuilder :: new (). module (redis_test :: server :: Module :: Bloom) . protocol (redis :: ProtocolVersion :: RESP3) . server_type (redis_test :: server :: ServerType :: Unix) . build () ; test_internal (& mut ctx) ; } }"#
     )]
+    #[case::search(
+        r#"search"#,
+        r#"fn test(ctx: &mut TestContext) {}"#,
+        r#"mod test { use super :: * ; fn test_internal (ctx : & mut TestContext) { } #[test]
+    fn resp2_tcp () { let mut ctx = crate :: support :: TestContextBuilder :: new (). module (redis_test :: server :: Module :: Search) . protocol (redis :: ProtocolVersion :: RESP2) . server_type (redis_test :: server :: ServerType :: Tcp) . build () ; test_internal (& mut ctx) ; }
+    #[test]
+    #[cfg (any (feature = "tls-rustls" , feature = "tls-native-tls"))]
+    fn resp2_tls () { let mut ctx = crate :: support :: TestContextBuilder :: new (). module (redis_test :: server :: Module :: Search) . protocol (redis :: ProtocolVersion :: RESP2) . server_type (redis_test :: server :: ServerType :: TcpTls) . build () ; test_internal (& mut ctx) ; }
+    #[test]
+    #[cfg (unix)]
+    fn resp2_unix () { let mut ctx = crate :: support :: TestContextBuilder :: new (). module (redis_test :: server :: Module :: Search) . protocol (redis :: ProtocolVersion :: RESP2) . server_type (redis_test :: server :: ServerType :: Unix) . build () ; test_internal (& mut ctx) ; }
+    #[test]
+    fn resp3_tcp () { let mut ctx = crate :: support :: TestContextBuilder :: new (). module (redis_test :: server :: Module :: Search) . protocol (redis :: ProtocolVersion :: RESP3) . server_type (redis_test :: server :: ServerType :: Tcp) . build () ; test_internal (& mut ctx) ; }
+    #[test]
+    #[cfg (any (feature = "tls-rustls" , feature = "tls-native-tls"))]
+    fn resp3_tls () { let mut ctx = crate :: support :: TestContextBuilder :: new (). module (redis_test :: server :: Module :: Search) . protocol (redis :: ProtocolVersion :: RESP3) . server_type (redis_test :: server :: ServerType :: TcpTls) . build () ; test_internal (& mut ctx) ; }
+    #[test]
+    #[cfg (unix)]
+    fn resp3_unix () { let mut ctx = crate :: support :: TestContextBuilder :: new (). module (redis_test :: server :: Module :: Search) . protocol (redis :: ProtocolVersion :: RESP3) . server_type (redis_test :: server :: ServerType :: Unix) . build () ; test_internal (& mut ctx) ; } }"#
+    )]
     #[case::bool(
         r#""#,
         r#"fn test(flag: bool) {}"#,

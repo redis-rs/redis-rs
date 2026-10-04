@@ -30,6 +30,7 @@ fn module_expr_for_name(name: &str) -> proc_macro2::TokenStream {
     match name {
         "json" => quote! { .module(redis_test::server::Module::Json) },
         "bloom" => quote! { .module(redis_test::server::Module::Bloom) },
+        "search" => quote! { .module(redis_test::server::Module::Search) },
         other => {
             let msg = syn::LitStr::new(
                 &format!("unsupported module name: \"{other}\""),
@@ -62,6 +63,8 @@ pub(crate) fn parse_module_from_attr(attr: &TokenStream2) -> proc_macro2::TokenS
                         Some(quote! { .module(redis_test::server::Module::Json) })
                     } else if path.is_ident("bloom") {
                         Some(quote! { .module(redis_test::server::Module::Bloom) })
+                    } else if path.is_ident("search") {
+                        Some(quote! { .module(redis_test::server::Module::Search) })
                     } else {
                         None
                     }
@@ -350,6 +353,14 @@ mod tests {
     }
 
     #[test]
+    fn module_from_attr_search() {
+        assert_full(
+            &parse_module_from_attr(&attr_stream("search")),
+            ".module(redis_test::server::Module::Search)",
+        );
+    }
+
+    #[test]
     fn module_from_attr_none() {
         assert_full(&parse_module_from_attr(&attr_stream("")), "");
     }
@@ -367,6 +378,14 @@ mod tests {
         assert_full(
             &parse_module_from_attr(&attr_stream(r#"module = "bloom""#)),
             ".module(redis_test::server::Module::Bloom)",
+        );
+    }
+
+    #[test]
+    fn module_from_attr_named_search() {
+        assert_full(
+            &parse_module_from_attr(&attr_stream(r#"module = "search""#)),
+            ".module(redis_test::server::Module::Search)",
         );
     }
 
