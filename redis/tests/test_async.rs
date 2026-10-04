@@ -822,6 +822,10 @@ mod basic_async {
 
         use super::*;
 
+        // The scenarios build all of their names, and their probe key, from this tag. The
+        // connection serves all of the subscriptions, so the tag is a plain prefix.
+        const TAG: &str = "issue-2423";
+
         #[async_test]
         async fn test_pub_sub_subscription() {
             let ctx = TestContext::new();
@@ -1400,20 +1404,6 @@ mod basic_async {
             assert_matches!(rx.try_recv(), Err(_));
         }
 
-        // Asserts that a `PING` response wasn't corrupted by the confirmations of another
-        // command that is still in flight. RESP2 replies with an array while the connection is
-        // in subscribed mode, and with a simple string otherwise; RESP3 always replies with a
-        // simple string.
-        fn assert_is_pong(response: Value) {
-            match response {
-                Value::SimpleString(message) => assert_eq!(message, "PONG"),
-                Value::Array(values) => {
-                    assert_eq!(values.first(), Some(&redis_value!("pong")));
-                }
-                other => panic!("the ping response was corrupted: {other:?}"),
-            }
-        }
-
         // Runs `command` concurrently with a PING on a clone of the sink, and asserts that the
         // command succeeded and that the PING response wasn't corrupted by the command's
         // confirmations.
@@ -1438,43 +1428,6 @@ mod basic_async {
             assert_eq!(message.get_payload::<String>().unwrap(), "banana");
         }
 
-        // The kind of subscription that a command applies to, so that the same scenario can be
-        // tested for both channels and patterns.
-        #[derive(Clone, Copy)]
-        enum SubscriptionKind {
-            Channel,
-            Pattern,
-        }
-
-        impl SubscriptionKind {
-            // The opposite kind, used to keep the connection subscribed to something while the
-            // tested kind is unsubscribed.
-            fn other(self) -> Self {
-                match self {
-                    Self::Channel => Self::Pattern,
-                    Self::Pattern => Self::Channel,
-                }
-            }
-
-            async fn subscribe(self, sink: &mut PubSubSink, channels: &[&str]) -> RedisResult<()> {
-                match self {
-                    Self::Channel => sink.subscribe(channels).await,
-                    Self::Pattern => sink.psubscribe(channels).await,
-                }
-            }
-
-            async fn unsubscribe(
-                self,
-                sink: &mut PubSubSink,
-                channels: &[&str],
-            ) -> RedisResult<()> {
-                match self {
-                    Self::Channel => sink.unsubscribe(channels).await,
-                    Self::Pattern => sink.punsubscribe(channels).await,
-                }
-            }
-        }
-
         async fn assert_subscribe_awaits_all_confirmations(kind: SubscriptionKind) {
             let ctx = TestContext::new();
             let (mut sink, mut stream) = ctx.async_pubsub().await.unwrap().split();
@@ -1494,13 +1447,11 @@ mod basic_async {
             }
         }
 
-        // https://github.com/redis-rs/redis-rs/issues/2423
         #[async_test]
         async fn test_pubsub_subscribe_awaits_all_confirmations_issue_2423() {
             assert_subscribe_awaits_all_confirmations(SubscriptionKind::Channel).await;
         }
 
-        // https://github.com/redis-rs/redis-rs/issues/2423
         #[async_test]
         async fn test_pubsub_psubscribe_awaits_all_confirmations_issue_2423() {
             assert_subscribe_awaits_all_confirmations(SubscriptionKind::Pattern).await;
@@ -1527,13 +1478,11 @@ mod basic_async {
             assert_receives_message(&mut publish_conn, &mut stream, "issue-2423-unsub-stay").await;
         }
 
-        // https://github.com/redis-rs/redis-rs/issues/2423
         #[async_test]
         async fn test_pubsub_unsubscribe_awaits_all_confirmations_issue_2423() {
             assert_unsubscribe_awaits_all_confirmations(SubscriptionKind::Channel).await;
         }
 
-        // https://github.com/redis-rs/redis-rs/issues/2423
         #[async_test]
         async fn test_pubsub_punsubscribe_awaits_all_confirmations_issue_2423() {
             assert_unsubscribe_awaits_all_confirmations(SubscriptionKind::Pattern).await;
@@ -1575,13 +1524,11 @@ mod basic_async {
             assert_receives_message(&mut publish_conn, &mut stream, "issue-2423-partial-a").await;
         }
 
-        // https://github.com/redis-rs/redis-rs/issues/2423
         #[async_test]
         async fn test_pubsub_partial_unsubscribe_leaves_connection_usable_issue_2423() {
             assert_partial_unsubscribe_leaves_connection_usable(SubscriptionKind::Channel).await;
         }
 
-        // https://github.com/redis-rs/redis-rs/issues/2423
         #[async_test]
         async fn test_pubsub_partial_punsubscribe_leaves_connection_usable_issue_2423() {
             assert_partial_unsubscribe_leaves_connection_usable(SubscriptionKind::Pattern).await;
@@ -1591,7 +1538,7 @@ mod basic_async {
         // subscription (or a single confirmation with a nil channel when there are none), so the
         // number of confirmations is resolved from the tracked subscriptions when the first
         // confirmation arrives.
-        // https://github.com/redis-rs/redis-rs/issues/2423
+
         async fn assert_empty_unsubscribe_does_not_corrupt_connection(kind: SubscriptionKind) {
             let ctx = TestContext::new();
             let (mut sink, mut stream) = ctx.async_pubsub().await.unwrap().split();
@@ -1617,13 +1564,11 @@ mod basic_async {
             kind.unsubscribe(&mut sink, &[]).await.unwrap();
         }
 
-        // https://github.com/redis-rs/redis-rs/issues/2423
         #[async_test]
         async fn test_pubsub_empty_unsubscribe_does_not_corrupt_connection_issue_2423() {
             assert_empty_unsubscribe_does_not_corrupt_connection(SubscriptionKind::Channel).await;
         }
 
-        // https://github.com/redis-rs/redis-rs/issues/2423
         #[async_test]
         async fn test_pubsub_empty_punsubscribe_does_not_corrupt_connection_issue_2423() {
             assert_empty_unsubscribe_does_not_corrupt_connection(SubscriptionKind::Pattern).await;
@@ -1647,6 +1592,93 @@ mod basic_async {
 
             // The connection is still usable.
             assert_is_pong(pubsub_conn.ping::<Value>().await.unwrap());
+        }
+
+        // Runs a scenario on a fresh multiplexed connection that passes its pushes to the
+        // returned channel. Subscriptions on a multiplexed connection require RESP3.
+        async fn assert_scenario_on_multiplexed(kind: SubscriptionKind, scenario: Scenario) {
+            let ctx = TestContext::new();
+            if !ctx.protocol.supports_resp3() {
+                return;
+            }
+
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let config = redis::AsyncConnectionConfig::new().set_push_sender(tx);
+            let conn = ctx
+                .client
+                .get_multiplexed_async_connection_with_config(&config)
+                .await
+                .unwrap();
+
+            assert_scenario_on(TAG, kind, scenario, conn, &mut rx).await;
+        }
+
+        #[async_test]
+        async fn test_multiplexed_subscribe_awaits_all_confirmations_issue_2423() {
+            assert_scenario_on_multiplexed(SubscriptionKind::Channel, Scenario::Subscribe).await;
+        }
+
+        #[async_test]
+        async fn test_multiplexed_psubscribe_awaits_all_confirmations_issue_2423() {
+            assert_scenario_on_multiplexed(SubscriptionKind::Pattern, Scenario::Subscribe).await;
+        }
+
+        #[async_test]
+        async fn test_multiplexed_unsubscribe_awaits_all_confirmations_issue_2423() {
+            assert_scenario_on_multiplexed(SubscriptionKind::Channel, Scenario::Unsubscribe).await;
+        }
+
+        #[async_test]
+        async fn test_multiplexed_punsubscribe_awaits_all_confirmations_issue_2423() {
+            assert_scenario_on_multiplexed(SubscriptionKind::Pattern, Scenario::Unsubscribe).await;
+        }
+
+        #[async_test]
+        async fn test_multiplexed_partial_unsubscribe_leaves_connection_usable_issue_2423() {
+            assert_scenario_on_multiplexed(SubscriptionKind::Channel, Scenario::PartialUnsubscribe)
+                .await;
+        }
+
+        #[async_test]
+        async fn test_multiplexed_partial_punsubscribe_leaves_connection_usable_issue_2423() {
+            assert_scenario_on_multiplexed(SubscriptionKind::Pattern, Scenario::PartialUnsubscribe)
+                .await;
+        }
+
+        #[async_test]
+        async fn test_multiplexed_empty_unsubscribe_does_not_corrupt_connection_issue_2423() {
+            assert_scenario_on_multiplexed(SubscriptionKind::Channel, Scenario::EmptyUnsubscribe)
+                .await;
+        }
+
+        #[async_test]
+        async fn test_multiplexed_empty_punsubscribe_does_not_corrupt_connection_issue_2423() {
+            assert_scenario_on_multiplexed(SubscriptionKind::Pattern, Scenario::EmptyUnsubscribe)
+                .await;
+        }
+
+        // A subscription command that is rejected by the server is answered with a single error
+        // rather than with confirmations, so the request must not wait for confirmations that
+        // will never arrive.
+        #[async_test]
+        async fn test_multiplexed_rejected_subscribe_fails_without_waiting_issue_2423() {
+            let ctx = TestContext::new();
+            if !ctx.protocol.supports_resp3() {
+                return;
+            }
+
+            let mut conn = ctx.client.get_multiplexed_async_connection().await.unwrap();
+
+            let error = conn.subscribe(Vec::<String>::new()).await.unwrap_err();
+            assert_eq!(
+                error.kind(),
+                ErrorKind::Server(ServerErrorKind::ResponseError)
+            );
+
+            // The connection is still usable.
+            let key = probe_key(TAG);
+            set_probe_key(&mut conn, &key).await;
+            assert_connection_usable(&mut conn, &key).await;
         }
     }
 

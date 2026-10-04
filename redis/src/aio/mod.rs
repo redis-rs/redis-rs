@@ -7,7 +7,7 @@ use crate::connection::{
 use crate::io::AsyncDNSResolver;
 use crate::pipeline::ExpectedConfirmations;
 use crate::types::{RedisFuture, RedisResult, Value};
-use crate::{ErrorKind, PushInfo, RedisError, errors::closed_connection_error};
+use crate::{ErrorKind, PushInfo, RedisError, ToRedisArgs, errors::closed_connection_error};
 use ::tokio::io::{AsyncRead, AsyncWrite};
 use futures_util::{
     future::{Future, FutureExt},
@@ -133,6 +133,28 @@ impl SubscribeLikeCommand {
             ExpectedConfirmations::Count(args_count)
         }
     }
+}
+
+/// Sends a subscription command through the given connection, returning only after the server
+/// sent all of the command's confirmations, so that surplus confirmations aren't attributed to
+/// the next request. See <https://github.com/redis-rs/redis-rs/issues/2423>.
+pub(crate) async fn send_subscribe_like_command(
+    connection: &mut impl ConnectionLike,
+    command: SubscribeLikeCommand,
+    args: impl ToRedisArgs,
+) -> RedisResult<()> {
+    let arg_count = args.num_of_args();
+
+    let mut pipeline = crate::Pipeline::new();
+    pipeline.cmd(command.name()).arg(args);
+    pipeline.subscription_confirmations = Some(command.expected_confirmations(arg_count));
+
+    // The pipeline is a single server command, so it holds a single concurrency limit permit
+    // and expects a single response unit, regardless of the number of confirmations it will be
+    // answered with. The exact expectations are carried on the pipeline itself.
+    let responses = connection.req_packed_commands(&pipeline, 0, 1).await?;
+    Value::extract_error_vec(responses)?;
+    Ok(())
 }
 
 async fn execute_connection_pipeline<T>(
