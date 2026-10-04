@@ -5,6 +5,7 @@ use crate::connection::{
     connection_setup_pipeline,
 };
 use crate::io::AsyncDNSResolver;
+use crate::pipeline::ExpectedConfirmations;
 use crate::types::{RedisFuture, RedisResult, Value};
 use crate::{ErrorKind, PushInfo, RedisError, errors::closed_connection_error};
 use ::tokio::io::{AsyncRead, AsyncWrite};
@@ -95,6 +96,44 @@ pub trait ConnectionLike {
     /// also might be incorrect if the connection like object is not
     /// actually connected.
     fn get_db(&self) -> i64;
+}
+
+/// The pub/sub subscription commands that are answered with one confirmation per argument.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SubscribeLikeCommand {
+    Subscribe,
+    Unsubscribe,
+    PSubscribe,
+    PUnsubscribe,
+}
+
+impl SubscribeLikeCommand {
+    /// The name of the command as sent to the server.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Subscribe => "SUBSCRIBE",
+            Self::Unsubscribe => "UNSUBSCRIBE",
+            Self::PSubscribe => "PSUBSCRIBE",
+            Self::PUnsubscribe => "PUNSUBSCRIBE",
+        }
+    }
+
+    /// How many confirmations the server sends for this command when called with `args`.
+    pub(crate) fn expected_confirmations(self, args: &[Vec<u8>]) -> ExpectedConfirmations {
+        let length = args.len();
+        if length == 0 {
+            match self {
+                // A zero-argument un/psubscribe removes all of the connection's current
+                // subscriptions of that kind, so the count depends on the connection's state.
+                Self::Unsubscribe => ExpectedConfirmations::UnsubscribeAllChannels,
+                Self::PUnsubscribe => ExpectedConfirmations::UnsubscribeAllPatterns,
+                // A SUBSCRIBE/PSUBSCRIBE without arguments is rejected with a single error.
+                Self::Subscribe | Self::PSubscribe => ExpectedConfirmations::Count(1),
+            }
+        } else {
+            ExpectedConfirmations::Count(length)
+        }
+    }
 }
 
 async fn execute_connection_pipeline<T>(

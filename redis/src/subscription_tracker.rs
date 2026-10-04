@@ -1,13 +1,47 @@
-#![allow(dead_code)]
-
+#[cfg(any(feature = "cluster-async", test))]
 use core::str;
 use std::collections::HashSet;
 
-use crate::{Arg, Cmd, Pipeline};
+#[cfg(any(feature = "connection-manager", feature = "cluster-async", test))]
+use crate::Pipeline;
+use crate::Value;
+#[cfg(any(feature = "cluster-async", test))]
+use crate::{Arg, Cmd};
 
+/// The kind of subscription that a server confirmation changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SubscriptionKind {
+    /// A regular pub/sub channel.
+    Channel,
+    /// A pub/sub pattern.
+    Pattern,
+}
+
+/// A subscription change described by a server confirmation of a subscription command.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SubscriptionChange {
+    /// The kind of subscription the change affects.
+    pub(crate) kind: SubscriptionKind,
+    /// `true` if the subscription was added, `false` if it was removed.
+    pub(crate) subscribed: bool,
+    /// The channel or pattern the confirmation refers to. `None` for the nil channel sent when
+    /// an unsubscribe-all command had nothing to unsubscribe from.
+    pub(crate) channel: Option<Vec<u8>>,
+}
+
+/// The subscriptions a connection has confirmed, used to resolve how many confirmations a
+/// zero-argument `UNSUBSCRIBE` or `PUNSUBSCRIBE` is answered with: the server sends one
+/// confirmation per active subscription, and the reply doesn't carry that count.
+/// See <https://github.com/redis-rs/redis-rs/issues/2423>.
+///
+/// Confirmations are applied in order, so the tracked sets match the server whenever a command's
+/// first confirmation arrives. They can drift apart if the server drops subscriptions without
+/// per-channel confirmations - the known case is the RESP3 `RESET` command - which makes a
+/// zero-argument unsubscribe resolve the wrong count.
 #[derive(Default)]
 pub(crate) struct SubscriptionTracker {
     subscriptions: HashSet<Vec<u8>>,
+    #[cfg(any(feature = "connection-manager", feature = "cluster-async", test))]
     s_subscriptions: HashSet<Vec<u8>>,
     p_subscriptions: HashSet<Vec<u8>>,
 }
@@ -17,21 +51,28 @@ pub(crate) enum SubscriptionAction {
     Unsubscribe,
     PSubscribe,
     PUnsubscribe,
+    #[cfg(any(feature = "cluster-async", test))]
     SSubscribe,
+    #[cfg(any(feature = "cluster-async", test))]
     Sunsubscribe,
 }
 
 impl SubscriptionAction {
     fn additive(&self) -> bool {
         match self {
-            Self::Subscribe | Self::PSubscribe | Self::SSubscribe => true,
+            Self::Subscribe | Self::PSubscribe => true,
+            #[cfg(any(feature = "cluster-async", test))]
+            Self::SSubscribe => true,
 
-            Self::Unsubscribe | Self::PUnsubscribe | Self::Sunsubscribe => false,
+            Self::Unsubscribe | Self::PUnsubscribe => false,
+            #[cfg(any(feature = "cluster-async", test))]
+            Self::Sunsubscribe => false,
         }
     }
 }
 
 impl SubscriptionTracker {
+    #[cfg(any(feature = "cluster-async", test))]
     pub(crate) fn to_request(
         cmd: &Cmd,
     ) -> Option<(SubscriptionAction, impl Iterator<Item = Vec<u8>>)> {
@@ -79,6 +120,7 @@ impl SubscriptionTracker {
             SubscriptionAction::PSubscribe | SubscriptionAction::PUnsubscribe => {
                 &mut self.p_subscriptions
             }
+            #[cfg(any(feature = "cluster-async", test))]
             SubscriptionAction::SSubscribe | SubscriptionAction::Sunsubscribe => {
                 &mut self.s_subscriptions
             }
@@ -95,13 +137,34 @@ impl SubscriptionTracker {
         }
     }
 
-    #[cfg(test)]
-    fn update_with_cmd<'a>(&'a mut self, cmd: &'a Cmd) {
-        if let Some((action, args)) = Self::to_request(cmd) {
-            self.update_with_request(action, args);
+    /// Applies a server confirmation to the tracked subscriptions.
+    ///
+    /// A confirmation that carries no channel (the nil channel the server sends when an
+    /// unsubscribe-all had nothing to unsubscribe from) does not change the tracked state.
+    pub(crate) fn apply(&mut self, change: SubscriptionChange) {
+        let action = match (change.kind, change.subscribed) {
+            (SubscriptionKind::Channel, true) => SubscriptionAction::Subscribe,
+            (SubscriptionKind::Channel, false) => SubscriptionAction::Unsubscribe,
+            (SubscriptionKind::Pattern, true) => SubscriptionAction::PSubscribe,
+            (SubscriptionKind::Pattern, false) => SubscriptionAction::PUnsubscribe,
+        };
+        if let Some(channel) = change.channel {
+            self.update_with_request(action, core::iter::once(channel));
         }
     }
 
+    /// The number of subscriptions of the given kind that the server was aware of when it
+    /// started confirming an unsubscribe-all command. Always at least 1, since the server sends
+    /// a single confirmation with a nil channel when there's nothing to unsubscribe from.
+    pub(crate) fn unsubscribe_all_target(&self, kind: SubscriptionKind) -> usize {
+        let subscriptions = match kind {
+            SubscriptionKind::Channel => &self.subscriptions,
+            SubscriptionKind::Pattern => &self.p_subscriptions,
+        };
+        subscriptions.len().max(1)
+    }
+
+    #[cfg(any(feature = "connection-manager", feature = "cluster-async", test))]
     pub(crate) fn get_subscription_pipeline(&self) -> Pipeline {
         let mut pipeline = crate::pipe();
         if !self.subscriptions.is_empty() {
@@ -127,9 +190,55 @@ impl SubscriptionTracker {
     }
 }
 
+/// Extracts the subscription change that a server confirmation describes.
+///
+/// Returns `None` for values that aren't subscription confirmations (e.g. messages or `PONG`
+/// replies).
+pub(crate) fn subscription_change(value: &Value) -> Option<SubscriptionChange> {
+    let ((kind, subscribed), channel) = match value {
+        Value::Push { kind, data } => {
+            let (kind, subscribed) = match kind {
+                crate::PushKind::Subscribe => (SubscriptionKind::Channel, true),
+                crate::PushKind::Unsubscribe => (SubscriptionKind::Channel, false),
+                crate::PushKind::PSubscribe => (SubscriptionKind::Pattern, true),
+                crate::PushKind::PUnsubscribe => (SubscriptionKind::Pattern, false),
+                _ => return None,
+            };
+            ((kind, subscribed), data.first().and_then(value_channel))
+        }
+        Value::Array(data) => {
+            let (kind, subscribed) = match data.first() {
+                Some(Value::BulkString(kind)) => match kind.as_slice() {
+                    b"subscribe" => (SubscriptionKind::Channel, true),
+                    b"unsubscribe" => (SubscriptionKind::Channel, false),
+                    b"psubscribe" => (SubscriptionKind::Pattern, true),
+                    b"punsubscribe" => (SubscriptionKind::Pattern, false),
+                    _ => return None,
+                },
+                _ => return None,
+            };
+            ((kind, subscribed), data.get(1).and_then(value_channel))
+        }
+        _ => return None,
+    };
+
+    Some(SubscriptionChange {
+        kind,
+        subscribed,
+        channel,
+    })
+}
+
+fn value_channel(value: &Value) -> Option<Vec<u8>> {
+    match value {
+        Value::BulkString(channel) => Some(channel.clone()),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::{cmd, pipe};
+    use crate::{PushKind, Value, cmd, pipe};
 
     use super::*;
 
@@ -198,6 +307,176 @@ mod tests {
             expected.get_packed_pipeline(),
             "{}",
             String::from_utf8(result.get_packed_pipeline()).unwrap()
+        );
+    }
+
+    impl SubscriptionTracker {
+        fn update_with_cmd<'a>(&'a mut self, cmd: &'a Cmd) {
+            if let Some((action, args)) = Self::to_request(cmd) {
+                self.update_with_request(action, args);
+            }
+        }
+    }
+
+    fn push_confirmation(kind: PushKind, channel: &[u8]) -> Value {
+        Value::Push {
+            kind,
+            data: vec![Value::BulkString(channel.to_vec()), Value::Int(1)],
+        }
+    }
+
+    fn array_confirmation(kind: &str, channel: &[u8]) -> Value {
+        Value::Array(vec![
+            Value::BulkString(kind.as_bytes().to_vec()),
+            Value::BulkString(channel.to_vec()),
+            Value::Int(1),
+        ])
+    }
+
+    /// Fails when a subscription kind is added to `PushKind` without being handled by
+    /// `subscription_change`: it would stop being tracked and corrupt the confirmation counts
+    /// that `SubscriptionTracker` resolves.
+    #[test]
+    fn subscription_change_recognizes_every_subscription_kind() {
+        let cases = [
+            (
+                PushKind::Subscribe,
+                SubscriptionKind::Channel,
+                true,
+                b"subscribe".as_slice(),
+            ),
+            (
+                PushKind::Unsubscribe,
+                SubscriptionKind::Channel,
+                false,
+                b"unsubscribe".as_slice(),
+            ),
+            (
+                PushKind::PSubscribe,
+                SubscriptionKind::Pattern,
+                true,
+                b"psubscribe".as_slice(),
+            ),
+            (
+                PushKind::PUnsubscribe,
+                SubscriptionKind::Pattern,
+                false,
+                b"punsubscribe".as_slice(),
+            ),
+        ];
+
+        for (push_kind, kind, subscribed, name) in cases {
+            // RESP3: the confirmation arrives as a push message.
+            let change = subscription_change(&push_confirmation(push_kind, b"channel"))
+                .expect("RESP3 subscription confirmation must be recognized");
+            assert_eq!(change.kind, kind);
+            assert_eq!(change.subscribed, subscribed);
+            assert_eq!(change.channel.as_deref(), Some(b"channel".as_slice()));
+
+            // RESP2: the confirmation arrives as an array.
+            let name = std::str::from_utf8(name).unwrap();
+            let change = subscription_change(&array_confirmation(name, b"channel"))
+                .expect("RESP2 subscription confirmation must be recognized");
+            assert_eq!(change.kind, kind);
+            assert_eq!(change.subscribed, subscribed);
+            assert_eq!(change.channel.as_deref(), Some(b"channel".as_slice()));
+        }
+    }
+
+    #[test]
+    fn subscription_change_ignores_values_that_are_not_confirmations() {
+        for kind in [
+            PushKind::Message,
+            PushKind::PMessage,
+            PushKind::SMessage,
+            PushKind::Invalidate,
+            PushKind::Other("pong".to_owned()),
+            PushKind::Disconnection,
+        ] {
+            assert!(subscription_change(&push_confirmation(kind, b"channel")).is_none());
+        }
+        assert!(
+            subscription_change(&array_confirmation("message", b"channel")).is_none(),
+            "a regular pub/sub message isn't a subscription confirmation"
+        );
+        assert!(
+            subscription_change(&Value::SimpleString("PONG".to_owned())).is_none(),
+            "a PONG reply isn't a subscription confirmation"
+        );
+    }
+
+    #[test]
+    fn unsubscribe_all_target_follows_the_tracked_sets() {
+        let mut subscriptions = SubscriptionTracker::default();
+
+        // With nothing tracked, the server still sends a single confirmation with a nil channel.
+        for kind in [SubscriptionKind::Channel, SubscriptionKind::Pattern] {
+            assert_eq!(subscriptions.unsubscribe_all_target(kind), 1);
+        }
+
+        // Each kind is tracked independently.
+        let kinds = [
+            (SubscriptionKind::Channel, b"channel".as_slice()),
+            (SubscriptionKind::Pattern, b"pattern".as_slice()),
+        ];
+        for (kind, name) in kinds {
+            subscriptions.apply(SubscriptionChange {
+                kind,
+                subscribed: true,
+                channel: Some(name.to_vec()),
+            });
+        }
+        for (kind, _) in kinds {
+            assert_eq!(subscriptions.unsubscribe_all_target(kind), 1);
+        }
+
+        // Subscribing twice to the same channel only counts once.
+        subscriptions.apply(SubscriptionChange {
+            kind: SubscriptionKind::Channel,
+            subscribed: true,
+            channel: Some(b"channel".to_vec()),
+        });
+        assert_eq!(
+            subscriptions.unsubscribe_all_target(SubscriptionKind::Channel),
+            1
+        );
+
+        // A second channel is counted, without affecting the other kinds.
+        subscriptions.apply(SubscriptionChange {
+            kind: SubscriptionKind::Channel,
+            subscribed: true,
+            channel: Some(b"second".to_vec()),
+        });
+        assert_eq!(
+            subscriptions.unsubscribe_all_target(SubscriptionKind::Channel),
+            2
+        );
+        assert_eq!(
+            subscriptions.unsubscribe_all_target(SubscriptionKind::Pattern),
+            1
+        );
+
+        // Unsubscribing removes it again.
+        subscriptions.apply(SubscriptionChange {
+            kind: SubscriptionKind::Channel,
+            subscribed: false,
+            channel: Some(b"channel".to_vec()),
+        });
+        assert_eq!(
+            subscriptions.unsubscribe_all_target(SubscriptionKind::Channel),
+            1
+        );
+
+        // A confirmation with a nil channel (the server had nothing to unsubscribe from) is a
+        // no-op rather than removing a real subscription.
+        subscriptions.apply(SubscriptionChange {
+            kind: SubscriptionKind::Channel,
+            subscribed: false,
+            channel: None,
+        });
+        assert_eq!(
+            subscriptions.unsubscribe_all_target(SubscriptionKind::Channel),
+            1
         );
     }
 }
