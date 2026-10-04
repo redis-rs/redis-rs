@@ -51,14 +51,9 @@ test-module-bloom:
 
 test-module-search:
 	@echo "===================================================================="
-	@echo "Testing RESP2 with RediSearch module"
+	@echo "Testing RediSearch module"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo nextest run -p redis --locked --all-features --profile module_search
-
-	@echo "===================================================================="
-	@echo "Testing RESP3 with RediSearch module"
-	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 PROTOCOL=RESP3 cargo nextest run -p redis --locked --all-features --profile module_search
+	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run -p redis --locked --all-features --profile module_search
 
 test-modules: test-module-json test-module-bloom test-module-search
 
