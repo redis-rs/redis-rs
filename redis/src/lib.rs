@@ -775,7 +775,7 @@ pub use crate::commands::search;
 #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
 pub use commands::geo;
 
-#[cfg(any(feature = "connection-manager", feature = "cluster-async"))]
+#[cfg(feature = "aio")]
 mod subscription_tracker;
 
 #[cfg(feature = "cluster")]
