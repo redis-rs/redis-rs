@@ -108,8 +108,7 @@ impl TestContextBuilder {
     ///
     /// * `refiner` - See [`RedisServerBuilder::refine_and_build`]
     pub fn refine_and_build(self, refiner: impl FnOnce(&mut RedisServerCommand)) -> TestContext {
-        let server = self.server_builder.refine_and_build(refiner);
-        TestContext::from_server(server, self.protocol)
+        TestContext::from_builder_with_refiner(self, refiner)
     }
 }
 
@@ -160,13 +159,16 @@ impl Default for TestContext {
 }
 
 impl TestContext {
-    /// Builds a new instance from a [`RedisServer`]
+    /// Builds a new instance from a [`TestContextBuilder`]
     // We intentionally do _not_ implement `From<RedisServer>` as that would be public.
     //
-    // Instead, users should to go through `TestContextBuilder` to limit the points of entry and
-    // hence help us with maintenance.
-    fn from_server(mut server: RedisServer, protocol: Option<ProtocolVersion>) -> Self {
-        let protocol = protocol.unwrap_or_else(use_protocol);
+    // Instead, users should use the [`TestContextBuilder`] to trigger the building.
+    fn from_builder_with_refiner(
+        builder: TestContextBuilder,
+        refiner: impl FnOnce(&mut RedisServerCommand),
+    ) -> Self {
+        let mut server = builder.server_builder.refine_and_build(refiner);
+        let protocol = builder.protocol.unwrap_or_else(use_protocol);
         let client = build_single_client(
             server.connection_info_with_protocol(protocol),
             &server.tls_paths,
