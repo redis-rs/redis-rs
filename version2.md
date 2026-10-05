@@ -10,6 +10,10 @@ redis = "2"
 
 ## Breaking Changes
 
+### `ValueType::BloomFilterValKey` (upper-case `K` in `Key`) was renamed to `ValueType::BloomFilterValkey` (lower-case `k`) (Breaking Change)
+
+`Valkey` is spelled with lower-case `k`, so we adjust it's use in code accordingly.
+
 ### Async Commands now return impl Future (Breaking Change)
 
 Methods on `AsyncCommands`, `AsyncTypedCommands`, and `AsyncHotkeysCommands` now returns `impl Future<Output = RedisResult<...>>`.
