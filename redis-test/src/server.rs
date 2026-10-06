@@ -35,6 +35,23 @@ pub enum ServerType {
     Unix,
 }
 
+impl ServerType {
+    pub fn get_intended() -> Self {
+        match env::var("REDISRS_SERVER_TYPE")
+            .ok()
+            .as_ref()
+            .map(|x| &x[..])
+        {
+            Some("tcp+tls") => Self::TcpTls,
+            Some("unix") => Self::Unix,
+            Some("tcp") | None => Self::Tcp,
+            Some(val) => {
+                panic!("Unknown server type {val:?}");
+            }
+        }
+    }
+}
+
 /// Represents a module that can be loaded into the Redis server.
 #[derive(Clone)]
 #[non_exhaustive]
@@ -207,23 +224,6 @@ pub struct RedisServer {
     ///
     /// See [`RedisServerBuilder::panicking_drop_info_output`].
     pub panicking_drop_info_output: Output,
-}
-
-impl ServerType {
-    pub fn get_intended() -> Self {
-        match env::var("REDISRS_SERVER_TYPE")
-            .ok()
-            .as_ref()
-            .map(|x| &x[..])
-        {
-            Some("tcp+tls") => Self::TcpTls,
-            Some("unix") => Self::Unix,
-            Some("tcp") | None => Self::Tcp,
-            Some(val) => {
-                panic!("Unknown server type {val:?}");
-            }
-        }
-    }
 }
 
 impl Drop for RedisServer {
