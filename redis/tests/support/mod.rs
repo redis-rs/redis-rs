@@ -14,10 +14,18 @@ use redis::{ClientTlsConfig, TlsCertificates};
 use redis::{Pipeline, Value};
 #[cfg(feature = "aio")]
 use redis::{aio, cmd};
+#[allow(unused_imports)]
+pub use redis_test::run_test_if_version_supported;
+#[allow(unused_imports)]
+pub use redis_test::skip_if_context_does_not_support;
 #[cfg(feature = "tls-rustls")]
 use redis_test::utils::TlsFilePaths;
+#[allow(unused_imports)]
+pub use redis_test::utils::build_single_client;
 #[cfg(feature = "tls-rustls")]
 pub use redis_test::utils::load_certs_from_file;
+#[allow(unused_imports)]
+pub use redis_test::utils::start_tls_crypto_provider;
 #[allow(unused_imports)]
 pub use redis_test::version::*;
 #[allow(unused_imports)]
