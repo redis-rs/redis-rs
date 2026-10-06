@@ -23,7 +23,7 @@ use crate::{RedisWrite, ToRedisArgs};
 ///     con.vsim_options(key, VectorSimilaritySearchInput::Element(element), &opts)
 /// }
 /// ```
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct VSimOptions {
     /// Include similarity scores in the results
     with_scores: bool,
@@ -133,7 +133,7 @@ impl ToRedisArgs for VSimOptions {
 /// - 32-bit floats
 /// - 64-bit floats
 /// - Strings (e.g., numbers as strings)
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum EmbeddingInput<'a> {
     /// 32-bit floating point input
@@ -173,7 +173,7 @@ impl ToRedisArgs for EmbeddingInput<'_> {
 }
 
 /// Represents different ways to input data for vector add commands
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum VectorAddInput<'a> {
     /// Binary representation of 32-bit floating point values
@@ -239,7 +239,7 @@ pub enum VectorQuantization {
 ///     con.vadd_options(key, VectorAddInput::Values(EmbeddingInput::Float64(vector)), element, &opts)
 /// }
 /// ```
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct VAddOptions {
     /// Implements random projection to reduce the dimensionality of the vector.
     /// The projection matrix is saved and reloaded along with the vector set.
@@ -345,7 +345,7 @@ impl ToRedisArgs for VAddOptions {
 ///     con.vemb_options(key, element, &opts)
 /// }
 /// ```
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct VEmbOptions {
     /// Returns the raw internal representation of the approximate vector associated with a given element in the vector set
     raw_representation: bool,
@@ -372,7 +372,7 @@ impl ToRedisArgs for VEmbOptions {
 
 /// Represents different ways to input query data for vector similarity search commands
 #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum VectorSimilaritySearchInput<'a> {
     /// Binary representation of 32-bit floating point values to use as a reference

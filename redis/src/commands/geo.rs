@@ -7,6 +7,7 @@ use crate::types::{FromRedisValue, RedisWrite, ToRedisArgs, ToSingleRedisArg, Va
 ///
 /// [1]: ../trait.Commands.html#method.geo_dist
 /// [2]: ../trait.Commands.html#method.geo_radius
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum Unit {
     /// Represents meters.
@@ -102,7 +103,7 @@ impl<T: ToRedisArgs> ToRedisArgs for Coord<T> {
 ///
 /// [1]: https://redis.io/commands/georadius
 /// [2]: https://redis.io/commands/georadiusbymember
-#[derive(Default)]
+#[derive(Default, Debug)]
 #[non_exhaustive]
 pub enum RadiusOrder {
     /// Don't sort the results
@@ -140,7 +141,7 @@ pub enum RadiusOrder {
 ///     con.geo_radius(key, longitude, latitude, meters, Unit::Meters, opts)
 /// }
 /// ```
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct RadiusOptions {
     with_coord: bool,
     with_dist: bool,

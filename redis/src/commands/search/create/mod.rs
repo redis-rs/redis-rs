@@ -101,6 +101,7 @@ use crate::Cmd;
 ///     .options(CreateOptions::new().on(IndexDataType::Hash))
 ///     .into_cmd();
 /// ```
+#[derive(Debug)]
 pub struct FtCreateCommand {
     index: String,
     options: CreateOptions,

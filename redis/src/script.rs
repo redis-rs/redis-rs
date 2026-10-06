@@ -145,6 +145,20 @@ pub struct ScriptInvocation<'a> {
     keys: Vec<Vec<u8>>,
 }
 
+impl std::fmt::Debug for ScriptInvocation<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { script, args, keys } = self;
+
+        f.debug_struct("ScriptInvocation")
+            .field("script", script)
+            // The arguments and keys are caller-provided and may carry secrets, so only their
+            // count is reported.
+            .field("args", &args.len())
+            .field("keys", &keys.len())
+            .finish()
+    }
+}
+
 /// This type collects keys and other arguments for the script so that it
 /// can be then invoked.  While the `Script` type itself holds the script,
 /// the `ScriptInvocation` holds the arguments that should be invoked until
