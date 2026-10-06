@@ -329,8 +329,15 @@ impl RedisServer {
             .prefix("redis")
             .tempdir()
             .expect("failed to create tempdir");
-        let log_file = tempdir.path().join("redis.log");
-        redis_cmd.arg2("--logfile", log_file.clone());
+        let log_file = tempfile::Builder::new()
+            .prefix("server-")
+            .suffix(".log")
+            .disable_cleanup(true) // Cleanup is handled by `tempdir` (above)
+            .tempfile_in(tempdir.path())
+            .expect("failed to create log file")
+            .path()
+            .to_path_buf();
+        redis_cmd.arg2("--logfile", &log_file);
         if get_major_version() > 6 {
             redis_cmd.arg2("--enable-debug-command", "yes");
         }
