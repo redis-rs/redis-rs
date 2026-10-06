@@ -475,7 +475,10 @@ impl RedisServer {
 
             let log_info = match self.log_file_contents() {
                 Ok(contents) => {
-                    format!("Server logs:\n{contents}")
+                    format!(
+                        "Server logs (file: {} ):\n{contents}",
+                        self.log_file.as_path().display()
+                    )
                 }
                 Err(err) => {
                     format!("Server logs not available: {err}")
