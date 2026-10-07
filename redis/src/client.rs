@@ -6,6 +6,8 @@ use crate::aio::{AsyncPushSender, DefaultAsyncDNSResolver};
 use crate::auth::StreamingCredentialsProvider;
 #[cfg(feature = "aio")]
 use crate::io::AsyncDNSResolver;
+#[cfg(feature = "aio")]
+use crate::types::set_or_unset;
 use crate::{
     connection::{Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo, connect},
     types::{RedisResult, Value},
@@ -196,6 +198,42 @@ pub struct AsyncConnectionConfig {
     /// Optional credentials provider for dynamic authentication (e.g., token-based authentication)
     #[cfg(feature = "token-based-authentication")]
     pub(crate) credentials_provider: Option<std::sync::Arc<dyn StreamingCredentialsProvider>>,
+}
+
+#[cfg(feature = "aio")]
+impl std::fmt::Debug for AsyncConnectionConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            response_timeout,
+            connection_timeout,
+            push_sender,
+            #[cfg(feature = "cache-aio")]
+            cache,
+            dns_resolver,
+            pipeline_buffer_size,
+            concurrency_limit,
+            write_backpressure_boundary,
+            #[cfg(feature = "token-based-authentication")]
+            credentials_provider,
+        } = self;
+
+        let mut str = f.debug_struct("AsyncConnectionConfig");
+        str.field("response_timeout", response_timeout)
+            .field("connection_timeout", connection_timeout)
+            .field("pipeline_buffer_size", pipeline_buffer_size)
+            .field("concurrency_limit", concurrency_limit)
+            .field("write_backpressure_boundary", write_backpressure_boundary)
+            .field("push_sender", &set_or_unset(push_sender))
+            .field("dns_resolver", &set_or_unset(dns_resolver));
+
+        #[cfg(feature = "cache-aio")]
+        str.field("cache", &set_or_unset(cache));
+
+        #[cfg(feature = "token-based-authentication")]
+        str.field("credentials_provider", &set_or_unset(credentials_provider));
+
+        str.finish()
+    }
 }
 
 #[cfg(feature = "aio")]

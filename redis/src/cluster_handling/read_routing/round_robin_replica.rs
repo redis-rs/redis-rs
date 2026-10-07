@@ -7,6 +7,7 @@ use crate::cluster_handling::slot_range_map::SlotRangeMap;
 
 /// Per-shard counters indexed by slot range for O(log n) lookup.
 /// All ranges belonging to the same shard share one `Arc<AtomicUsize>`.
+#[derive(Debug)]
 struct SlotCounters {
     slots: SlotRangeMap<Arc<AtomicUsize>>,
 }
@@ -17,6 +18,7 @@ struct SlotCounters {
 /// on every call to [`route_read`](ReadRoutingStrategy::route_read). This
 /// ensures that reads to different shards rotate independently — a hot shard
 /// won't skew the rotation for other shards.
+#[derive(Debug)]
 pub struct RoundRobinReplicaStrategy {
     state: Arc<RwLock<SlotCounters>>,
 }

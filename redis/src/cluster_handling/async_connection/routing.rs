@@ -180,9 +180,9 @@ mod pipeline_routing_tests {
             .get("foo") // route to replica of slot 12182
             .flushall() // route to all masters
             .add_command(cmd("EVAL")) // route randomly
-            .cmd("CONFIG")
+            .cmd("CONFIG") // unkeyed command
             .arg("GET")
-            .arg("timeout") // unkeyed command
+            .arg("timeout")
             .set("foo", "bar"); // route to primary of slot 12182
 
         assert_eq!(
@@ -215,15 +215,15 @@ mod pipeline_routing_tests {
 
         pipeline
             .set("{foo}bar", "baz") // route to primary of slot 12182
-            .cmd("CONFIG")
+            .cmd("CONFIG") // unkeyed command
             .arg("GET")
-            .arg("timeout") // unkeyed command
+            .arg("timeout")
             .set("foo", "bar") // route to primary of slot 12182
-            .cmd("DEBUG")
+            .cmd("DEBUG") // unkeyed command
             .arg("PAUSE")
-            .arg("100") // unkeyed command
-            .cmd("ECHO")
-            .arg("hello world"); // unkeyed command
+            .arg("100")
+            .cmd("ECHO") // unkeyed command
+            .arg("hello world");
 
         assert_eq!(
             route_for_pipeline(&pipeline),

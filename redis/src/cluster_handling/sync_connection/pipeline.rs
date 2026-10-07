@@ -43,7 +43,7 @@ fn is_illegal_cmd(cmd: &str) -> bool {
 }
 
 /// Represents a Redis Cluster command pipeline.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ClusterPipeline {
     data: Vec<u8>,
     args: Vec<Arg<usize>>,

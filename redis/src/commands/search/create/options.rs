@@ -73,7 +73,7 @@ impl ToRedisArgs for SearchLanguage {
 
 /// [Optional arguments](https://redis.io/docs/latest/commands/ft.create/#optional-arguments) for the FT.CREATE command
 #[must_use = "Options have no effect unless passed to a command"]
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 #[non_exhaustive]
 pub struct CreateOptions {
     on: Option<IndexDataType>,
