@@ -126,7 +126,7 @@
 use crate::aio::MultiplexedConnection as AsyncConnection;
 use arcstr::ArcStr;
 #[cfg(feature = "aio")]
-use futures_util::StreamExt;
+use futures_util::{StreamExt, stream::FuturesOrdered};
 use log::warn;
 use rand::RngExt;
 #[cfg(feature = "r2d2")]
@@ -612,21 +612,22 @@ async fn async_get_valid_replicas_addresses(
         .await)
 }
 
+/// Replaces the cached connection with a new one, cached only once `ROLE` confirms it
+/// is a sentinel. Clearing the cache first makes this safe to drop at any `.await`:
+/// the cache is then empty, never an unverified connection.
 #[cfg(feature = "aio")]
 async fn async_reconnect(
     connection: &mut Option<AsyncConnection>,
     connection_info: &ConnectionInfo,
 ) -> RedisResult<()> {
+    *connection = None;
     let sentinel_client = Client::open(connection_info.clone())?;
-    let new_connection = sentinel_client.get_multiplexed_async_connection().await?;
-    connection.replace(new_connection);
-    let role: Role = crate::cmd("ROLE")
-        .query_async(connection.as_mut().unwrap())
-        .await?;
+    let mut new_connection = sentinel_client.get_multiplexed_async_connection().await?;
+    let role: Role = crate::cmd("ROLE").query_async(&mut new_connection).await?;
     if !matches!(role, Role::Sentinel { .. }) {
-        *connection = None;
         return Err(not_a_sentinel_error());
     }
+    *connection = Some(new_connection);
     Ok(())
 }
 
@@ -1029,80 +1030,51 @@ impl Sentinel {
             .await
     }
 
-    /// Async version of [Self::find_master_address]: each sentinel is asked in turn until
-    /// one yields a valid master, and an error met on a named master outranks "not found".
-    #[cfg(not(feature = "tls-rustls"))]
+    /// Async version of [Self::find_master_address]. Every sentinel is asked at once and
+    /// the replies are taken in the configured order: the first one that yields a valid
+    /// master wins, and an error met on a named master outranks "not found". Only the
+    /// sentinel queries run concurrently; the master named in each reply is checked one
+    /// reply at a time, so a normal lookup still dials the master once.
+    ///
+    /// Queries still in flight when a master is found are dropped, which is safe:
+    /// [MultiplexedConnection] is cancellation-safe and [async_reconnect] only caches a
+    /// connection once it is verified.
     async fn async_find_master_address(
         &mut self,
         service_name: &str,
         node_connection_info: &SentinelNodeConnectionInfo,
     ) -> RedisResult<ConnectionInfo> {
-        let mut master_err = None;
-        let mut last_err = None;
-        for (connection_info, cached_connection) in self
+        #[cfg(feature = "tls-rustls")]
+        let certs = &self.certs;
+        let mut replies: FuturesOrdered<_> = self
             .sentinels_connection_info
             .iter()
             .zip(self.async_connections_cache.iter_mut())
-        {
-            let masters = match async_try_single_sentinel(
-                sentinel_masters_cmd(),
-                connection_info,
-                cached_connection,
-            )
-            .await
-            {
+            .map(|(connection_info, cached_connection)| {
+                async_try_single_sentinel::<Vec<HashMap<String, String>>>(
+                    sentinel_masters_cmd(),
+                    connection_info,
+                    cached_connection,
+                )
+            })
+            .collect();
+
+        let mut master_err = None;
+        let mut last_err = None;
+        while let Some(reply) = replies.next().await {
+            let masters = match reply {
                 Ok(masters) => masters,
                 Err(err) => {
                     last_err = Some(err);
                     continue;
                 }
             };
-            match async_find_valid_master(masters, service_name, node_connection_info).await {
-                Ok(address) => return Ok(address),
-                Err(err) if err.kind() == ErrorKind::MasterNameNotFoundBySentinel => {
-                    last_err = Some(err);
-                }
-                Err(err) => master_err = Some(err),
-            }
-        }
-
-        // We can unwrap here because we know there is at least one connection info.
-        Err(master_err
-            .or(last_err)
-            .expect("There should be at least one connection info"))
-    }
-
-    /// See the non-TLS variant: each sentinel is asked in turn until one yields a valid
-    /// master, and an error met on a named master outranks "not found".
-    #[cfg(feature = "tls-rustls")]
-    async fn async_find_master_address(
-        &mut self,
-        service_name: &str,
-        node_connection_info: &SentinelNodeConnectionInfo,
-    ) -> RedisResult<ConnectionInfo> {
-        let mut master_err = None;
-        let mut last_err = None;
-        for (connection_info, cached_connection) in self
-            .sentinels_connection_info
-            .iter()
-            .zip(self.async_connections_cache.iter_mut())
-        {
-            let masters = match async_try_single_sentinel(
-                sentinel_masters_cmd(),
-                connection_info,
-                cached_connection,
-            )
-            .await
-            {
-                Ok(masters) => masters,
-                Err(err) => {
-                    last_err = Some(err);
-                    continue;
-                }
-            };
-            match async_find_valid_master(masters, service_name, node_connection_info, &self.certs)
-                .await
-            {
+            #[cfg(not(feature = "tls-rustls"))]
+            let found = async_find_valid_master(masters, service_name, node_connection_info).await;
+            #[cfg(feature = "tls-rustls")]
+            let found =
+                async_find_valid_master(masters, service_name, node_connection_info, certs).await;
+            match found {
                 Ok(address) => return Ok(address),
                 Err(err) if err.kind() == ErrorKind::MasterNameNotFoundBySentinel => {
                     last_err = Some(err);
