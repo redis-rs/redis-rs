@@ -5,6 +5,7 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 use crate::connection::TlsConnParams;
+use crate::types::redacted_if_set;
 use crate::{Client, ConnectionAddr, ConnectionInfo, ErrorKind, RedisError, RedisResult};
 
 /// Structure to hold mTLS client _certificate_ and _key_ binaries in PEM format
@@ -25,6 +26,21 @@ impl ClientTlsConfig {
             client_cert,
             client_key,
         }
+    }
+}
+
+impl std::fmt::Debug for ClientTlsConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Destructured so that adding or removing a field breaks this impl; the bindings are
+        // unused because neither field's contents may be printed.
+        let Self {
+            client_cert: _,
+            client_key: _,
+        } = self;
+        f.debug_struct("ClientTlsConfig")
+            .field("client_cert", &"<redacted>")
+            .field("client_key", &"<redacted>")
+            .finish()
     }
 }
 
@@ -57,6 +73,21 @@ impl TlsCertificates {
     pub fn root_cert(mut self, root_cert: Vec<u8>) -> Self {
         self.root_cert = Some(root_cert);
         self
+    }
+}
+
+impl std::fmt::Debug for TlsCertificates {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            client_tls,
+            root_cert,
+        } = self;
+
+        // Both fields are certificates, so their contents are never printed.
+        f.debug_struct("TlsCertificates")
+            .field("client_tls", &redacted_if_set(client_tls))
+            .field("root_cert", &redacted_if_set(root_cert))
+            .finish()
     }
 }
 

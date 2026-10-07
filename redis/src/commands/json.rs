@@ -51,7 +51,7 @@ impl ToRedisArgs for FphaType {
 /// let _: () = con.json_set_options("my_key", "$", &[1.0_f32, 2.0], &opts)?;
 /// # Ok(()) }
 /// ```
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct JsonSetOptions {
     conditional_set: Option<ExistenceCheck>,
     fpha_type: Option<FphaType>,
