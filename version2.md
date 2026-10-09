@@ -190,6 +190,12 @@ let opts1 = ScanOptions::default().with_type(ValueType::JSON); // Use `ValueType
 let opts2 = ScanOptions::default().with_type("your-custom-type".into()); // Convert to `ValueType`
 ```
 
+### `RedisServer` had the `log_file` function removed (Breaking Change)
+
+The `log_file` function required to pass a `tempfile`, which was impractical.
+
+Use `log_file_contents` function to directly get the contents of the log file, or if you need the file name, directly use the `log_file` field instead.
+
 ### `RedisServer::new...` got removed; use `RedisServerBuilder` instead (Breaking Change)
 
 Over time `RedisServer::new...` methods grew in parameters and made them hard to use.
