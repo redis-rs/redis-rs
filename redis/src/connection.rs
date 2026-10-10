@@ -2806,7 +2806,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "tls-native-tls", not(feature = "tls-rustls")))]
 mod tls_handshake_tests {
     use super::*;
     use crate::{ConnectionAddr, ErrorKind, RedisConnectionInfo, connection::ConnectionInfo};
@@ -2814,7 +2814,6 @@ mod tls_handshake_tests {
     use std::thread;
     use std::time::Duration;
 
-    #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
     #[test]
     fn tls_handshake_error_with_timeout_is_returned_not_panicked() {
         // A server that accepts a TCP connection but never performs a TLS handshake
