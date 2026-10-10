@@ -408,7 +408,17 @@ pub(crate) fn combine_and_sort_array_results(
     for (key_indices, value) in result_indices.into_iter().zip(values) {
         match value {
             Value::Array(values) => {
-                assert_eq!(values.len(), key_indices.len());
+                if values.len() != key_indices.len() {
+                    return Err(RedisError::from((
+                        ErrorKind::Client,
+                        "Mismatch in the number of results returned by a shard in a multi-slot command.",
+                        format!(
+                            "Expected: {:?}, Found: {:?}",
+                            key_indices.len(),
+                            values.len()
+                        ),
+                    )));
+                }
                 for (index, value) in key_indices.iter().zip(values) {
                     results[*index] = value;
                 }
@@ -1536,6 +1546,46 @@ mod tests_routing {
                 Value::Nil
             ])
         );
+    }
+
+    #[test]
+    fn test_combining_results_into_single_array_shard_with_too_few_results() {
+        // A shard that returns fewer results than the number of keys routed to it
+        // (e.g. `MGET k1 k2 k3 k4` where the second slot's shard returns a single value)
+        // should produce an error, not a panic.
+        let res1 = Value::Array(vec![Value::Nil, Value::Nil]);
+        let res2 = Value::Array(vec![Value::Nil]);
+        let results = super::combine_and_sort_array_results(
+            vec![res1, res2],
+            &[
+                (Route(5061, SlotAddr::Master), vec![0, 1]),
+                (Route(12182, SlotAddr::Master), vec![2, 3]),
+            ],
+            &MultiSlotArgPattern::KeysOnly,
+        );
+
+        let err = results.unwrap_err();
+        assert_eq!(err.kind(), crate::ErrorKind::Client);
+    }
+
+    #[test]
+    fn test_combining_results_into_single_array_shard_with_too_many_results() {
+        // A shard that returns more results than the number of keys routed to it
+        // (e.g. `MGET k1 k2 k3 k4` where the second slot's shard returns three values)
+        // should produce an error, not a panic.
+        let res1 = Value::Array(vec![Value::Nil, Value::Nil]);
+        let res2 = Value::Array(vec![Value::Nil, Value::Nil, Value::Nil]);
+        let results = super::combine_and_sort_array_results(
+            vec![res1, res2],
+            &[
+                (Route(5061, SlotAddr::Master), vec![0, 1]),
+                (Route(12182, SlotAddr::Master), vec![2, 3]),
+            ],
+            &MultiSlotArgPattern::KeysOnly,
+        );
+
+        let err = results.unwrap_err();
+        assert_eq!(err.kind(), crate::ErrorKind::Client);
     }
 
     #[test]
