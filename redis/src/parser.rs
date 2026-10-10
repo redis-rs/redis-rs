@@ -24,7 +24,13 @@ use combine::{
 
 const MAX_RECURSE_DEPTH: usize = 100;
 
-fn err_parser(line: &str) -> ServerError {
+/// Parses a RESP simple-error line's text (the bytes after the leading `-`
+/// and before the trailing `\r\n`) into a [`ServerError`].
+///
+/// `pub(crate)` so `Connection::client_list_iter`'s raw reader can reuse it
+/// for the one non-parser-mediated place this crate decodes a server error
+/// by hand (see `redis::connection::BulkReplyLines::read_header`).
+pub(crate) fn err_parser(line: &str) -> ServerError {
     let mut pieces = line.splitn(2, ' ');
     let kind = match pieces.next().unwrap() {
         "ERR" => ServerErrorKind::ResponseError,
@@ -465,6 +471,18 @@ impl Parser {
             Ok(result) => Ok(result),
         }
     }
+
+    /// Whether the parser is holding any bytes it has already read off the
+    /// wire but not yet handed back as a parsed value -- e.g. a RESP3 push
+    /// message received ahead of a request's reply.
+    ///
+    /// Used by callers that want to read a reply's raw bytes directly off
+    /// the connection instead of through [`Parser::parse_value`] (see
+    /// `Connection::client_list_iter`), to make sure there is nothing
+    /// buffered here that they would otherwise silently skip past.
+    pub(crate) fn has_buffered_input(&self) -> bool {
+        !self.decoder.buffer().is_empty()
+    }
 }
 
 /// Parses bytes into a redis value.
@@ -481,6 +499,30 @@ mod tests {
     use super::*;
     use crate::errors::ErrorKind;
     use assert_matches::assert_matches;
+
+    /// `client_list_iter`'s pending-reply check relies on `has_buffered_input`
+    /// correctly reflecting bytes the decoder already pulled off a reader but
+    /// hasn't handed back as a parsed value yet -- e.g. two replies that
+    /// arrived in the same underlying read.
+    #[test]
+    fn has_buffered_input_reflects_unconsumed_decoder_bytes() {
+        let mut parser = Parser::new();
+        assert!(!parser.has_buffered_input());
+
+        let both = b"+OK\r\n+ALSO-OK\r\n".as_slice();
+        assert_eq!(parser.parse_value(both).unwrap(), Value::Okay);
+        // The second reply's bytes were already read into the decoder along
+        // with the first's, and haven't been parsed out yet.
+        assert!(parser.has_buffered_input());
+
+        // Draining it (a real read of `&[]` -- the decoder is fully driven
+        // from what it already buffered, not from this empty reader) clears it.
+        assert_eq!(
+            parser.parse_value(&[][..]).unwrap(),
+            Value::SimpleString("ALSO-OK".into())
+        );
+        assert!(!parser.has_buffered_input());
+    }
 
     #[cfg(feature = "aio")]
     #[test]

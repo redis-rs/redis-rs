@@ -12,9 +12,9 @@ mod basic {
     use rand::{RngExt, rng};
 
     use redis::{
-        Client, Connection, ConnectionInfo, ConnectionLike, ControlFlow, CopyOptions, ErrorKind,
-        ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, HashFieldExpirationOptions,
-        IncrexOptions,
+        Client, ClientListIter, Connection, ConnectionInfo, ConnectionLike, ControlFlow,
+        CopyOptions, ErrorKind, ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck,
+        HashFieldExpirationOptions, IncrexOptions,
         IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply},
         MSetOptions, ProtocolVersion, PubSubCommands, PushInfo, PushKind, RedisConnectionInfo,
         RedisResult, Role, ScanOptions, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs,
@@ -4865,6 +4865,238 @@ mod basic {
             *client_info.get("lib-ver").expect("lib-ver should exist"),
             "42.4711"
         );
+    }
+
+    #[test]
+    fn client_list_iter_matches_generic_client_list() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+        let mut other = ctx.connection(); // keep at least one extra client around
+
+        let expected: String = redis::cmd("CLIENT").arg("LIST").query(&mut other).unwrap();
+        let expected_lines: Vec<&str> = expected.lines().collect();
+
+        let lines: Vec<String> = con
+            .client_list_iter()
+            .unwrap()
+            .collect::<RedisResult<_>>()
+            .unwrap();
+
+        // Not a byte-for-byte comparison: `con` itself shows up in its own
+        // `client_list_iter()` call but not in `other`'s `CLIENT LIST`, so
+        // compare the connections both calls agree on instead.
+        assert!(lines.len() >= expected_lines.len());
+        for line in &expected_lines {
+            let id = line
+                .split_whitespace()
+                .find_map(|f| f.strip_prefix("id="))
+                .unwrap();
+            assert!(
+                lines.iter().any(|l| l.contains(&format!("id={id} "))),
+                "client {id} from the plain CLIENT LIST reply is missing from client_list_iter's"
+            );
+        }
+    }
+
+    #[test]
+    fn client_list_iter_reflects_every_connected_client() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+        let extra: Vec<Connection> = std::iter::repeat_with(|| ctx.connection())
+            .take(20)
+            .collect();
+
+        let lines: Vec<String> = con
+            .client_list_iter()
+            .unwrap()
+            .collect::<RedisResult<_>>()
+            .unwrap();
+
+        // At least +1 for `con` itself; not asserted exactly because a
+        // just-closed setup connection (from `TestContext::new`'s internal
+        // `flushdb`) can still briefly show up under heavy parallel-test
+        // load before the server notices the socket closed.
+        assert!(lines.len() > extra.len());
+        assert!(lines.len() <= extra.len() + 5);
+        for line in &lines {
+            assert!(line.contains("addr="), "not a client-info line: {line:?}");
+        }
+        drop(extra);
+    }
+
+    #[test]
+    fn client_list_iter_errors_safely_on_an_unexpected_pending_reply() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        // Send a command but don't read its reply -- `client_list_iter`
+        // bypasses the normal parser, so this reply (not a bulk string)
+        // desyncs it. It must fail clearly rather than misinterpret the
+        // pending "+PONG" as `CLIENT LIST`'s header.
+        con.send_packed_command(&redis::cmd("PING").get_packed_command())
+            .unwrap();
+
+        let err = match con.client_list_iter() {
+            Ok(_) => panic!("expected client_list_iter to fail with a pending reply queued"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), ErrorKind::Client);
+        assert!(err.to_string().contains("PONG"));
+        // The desync is unrecoverable, so the connection is closed rather
+        // than left in a state a caller might keep using.
+        assert!(!con.is_open());
+    }
+
+    #[test]
+    fn client_list_iter_leaves_the_connection_open_after_a_server_side_rejection() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        // Revoke the CLIENT command entirely (command-level ACL denial,
+        // supported since ACL was introduced in Redis 6.0 -- subcommand-
+        // level syntax like `-client|list` needs Redis 7.0+), so the
+        // server itself rejects CLIENT LIST with a clean, single-line
+        // error -- unlike an unexpected pending reply (a genuine desync),
+        // this doesn't corrupt the byte stream, so the connection must
+        // stay usable.
+        redis::cmd("ACL")
+            .arg("SETUSER")
+            .arg("default")
+            .arg("-client")
+            .exec(&mut con)
+            .unwrap();
+
+        let err = match con.client_list_iter() {
+            Ok(_) => panic!("expected client_list_iter to fail once CLIENT LIST is denied"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), ErrorKind::Server(ServerErrorKind::NoPerm));
+        assert!(con.is_open());
+
+        // Restore the permission and confirm the connection still works
+        // normally afterward.
+        redis::cmd("ACL")
+            .arg("SETUSER")
+            .arg("default")
+            .arg("+client")
+            .exec(&mut con)
+            .unwrap();
+        let pong: String = redis::cmd("PING").query(&mut con).unwrap();
+        assert_eq!(pong, "PONG");
+    }
+
+    #[test]
+    fn client_list_iter_works_immediately_after_connecting() {
+        // Sanity check that connection setup itself doesn't leave anything
+        // buffered that would trip `client_list_iter`'s pending-reply check.
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+        // Named explicitly (not inferred) so this also proves `ClientListIter`
+        // is actually reachable as a public type, not just usable via `for`/
+        // `.collect()` type inference.
+        let it: ClientListIter<'_> = con.client_list_iter().unwrap();
+        let lines: Vec<String> = it.collect::<RedisResult<_>>().unwrap();
+        assert_eq!(lines.len(), 1);
+    }
+
+    #[test]
+    fn client_list_iter_recovers_from_a_prior_timed_out_command() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        con.set_read_timeout(Some(Duration::from_millis(1)))
+            .unwrap();
+        let res = con.blpop("client_list_iter_timeout_key", 0.03);
+        assert!(res.unwrap_err().is_timeout());
+        assert!(con.is_open());
+        con.set_read_timeout(None).unwrap();
+
+        // The BLPOP reply hasn't necessarily arrived yet (the server has its
+        // own ~0.03s timeout to observe first). `client_list_iter` has to
+        // drain that debt (`messages_to_skip`) itself -- without that, its
+        // raw socket read could land on the stale BLPOP reply and silently
+        // return it mislabeled as CLIENT LIST output.
+        let lines: Vec<String> = con
+            .client_list_iter()
+            .unwrap()
+            .collect::<RedisResult<_>>()
+            .unwrap();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("addr="));
+    }
+
+    #[test]
+    fn client_list_iter_works_over_resp3() {
+        // Real servers reply to CLIENT LIST with a RESP3 Verbatim String
+        // (marker `=`), not a plain bulk string (marker `$`), under RESP3 --
+        // this must not be mistaken for an unexpected reply shape.
+        let ctx = TestContext::new();
+        let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);
+        let connection_info = ctx.server.connection_info().set_redis_settings(redis);
+        let mut con = redis::Client::open(connection_info)
+            .unwrap()
+            .get_connection()
+            .unwrap();
+
+        let lines: Vec<String> = con
+            .client_list_iter()
+            .unwrap()
+            .collect::<RedisResult<_>>()
+            .unwrap();
+
+        // Not asserted as exactly 1: see the comment in
+        // `client_list_iter_reflects_every_connected_client` about a
+        // just-closed setup connection occasionally still being visible
+        // under heavy parallel-test load.
+        //
+        // Not asserted on a "resp=3" field either: CLIENT LIST's line
+        // format has grown fields across versions and this crate's CI
+        // matrix reaches back to Redis 6.2, where it isn't present -- the
+        // RESP3-vs-RESP2 distinction this test cares about is entirely in
+        // how the *reply itself* is framed (Verbatim String vs bulk
+        // string), already exercised by `client_list_iter()` succeeding
+        // here at all and by the "txt:" check below, not by any one field
+        // in its payload.
+        assert!(!lines.is_empty());
+        assert!(lines.iter().any(|l| l.contains("addr=")));
+        // The RESP3 verbatim-string format tag must not leak into any line.
+        assert!(!lines.iter().any(|l| l.contains("txt:")));
+    }
+
+    #[test]
+    fn client_list_iter_early_drop_does_not_desync_the_connection() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+        let _extra: Vec<Connection> = std::iter::repeat_with(|| ctx.connection())
+            .take(10)
+            .collect();
+
+        {
+            let mut it = con.client_list_iter().unwrap();
+            // Consume one line and abandon the rest -- an entirely ordinary
+            // way to use an iterator (same as `.take(1)` or an early
+            // `break`), which must not leave unread reply bytes on the wire.
+            it.next().unwrap().unwrap();
+        }
+
+        let pong: String = redis::cmd("PING").query(&mut con).unwrap();
+        assert_eq!(pong, "PONG");
+        assert!(con.is_open());
+    }
+
+    #[test]
+    fn client_list_iter_dropped_without_reading_anything_does_not_desync() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+        let _extra: Vec<Connection> = std::iter::repeat_with(|| ctx.connection())
+            .take(10)
+            .collect();
+
+        drop(con.client_list_iter().unwrap());
+
+        let pong: String = redis::cmd("PING").query(&mut con).unwrap();
+        assert_eq!(pong, "PONG");
+        assert!(con.is_open());
     }
 }
 
