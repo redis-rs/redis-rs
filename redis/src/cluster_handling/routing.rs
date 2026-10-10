@@ -179,6 +179,13 @@ pub(crate) fn logical_aggregate(values: Vec<Value>, op: LogicalAggregateOp) -> R
         let mut acc = if acc.is_empty() {
             vec![initial_value; values.len()]
         } else {
+            if values.len() != acc.len() {
+                return Err((
+                    ErrorKind::UnexpectedReturnType,
+                    "expected all shards to return the same number of results",
+                )
+                    .into());
+            }
             acc
         };
         for (index, value) in values.into_iter().enumerate() {
@@ -1027,8 +1034,9 @@ fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
 #[cfg(test)]
 mod tests_routing {
     use super::{
-        AggregateOp, MultiSlotArgPattern, MultipleNodeRoutingInfo, ResponsePolicy, Route,
-        RoutingInfo, SingleNodeRoutingInfo, SlotAddr, command_for_multi_slot_indices,
+        AggregateOp, LogicalAggregateOp, MultiSlotArgPattern, MultipleNodeRoutingInfo,
+        ResponsePolicy, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr,
+        command_for_multi_slot_indices,
     };
     use crate::{Value, cmd, parser::parse_redis_value};
     use assert_matches::assert_matches;
@@ -1536,6 +1544,37 @@ mod tests_routing {
                 Value::Nil
             ])
         );
+    }
+
+    #[test]
+    fn test_logical_aggregate() {
+        let results = super::logical_aggregate(
+            vec![
+                Value::Array(vec![Value::Int(1), Value::Int(0)]),
+                Value::Array(vec![Value::Int(1), Value::Int(1)]),
+            ],
+            LogicalAggregateOp::And,
+        )
+        .unwrap();
+
+        assert_eq!(results, Value::Array(vec![Value::Int(1), Value::Int(0)]));
+    }
+
+    #[test]
+    fn test_logical_aggregate_shards_with_mismatched_response_lengths() {
+        // Shards respond to `SCRIPT EXISTS` with one boolean per script, so a shard
+        // returning a different number of results (e.g. from a misbehaving server)
+        // should produce an error, not an out-of-bounds panic.
+        let results = super::logical_aggregate(
+            vec![
+                Value::Array(vec![Value::Int(1)]),
+                Value::Array(vec![Value::Int(1), Value::Int(1)]),
+            ],
+            LogicalAggregateOp::And,
+        );
+
+        let err = results.unwrap_err();
+        assert_eq!(err.kind(), crate::ErrorKind::UnexpectedReturnType);
     }
 
     #[test]
