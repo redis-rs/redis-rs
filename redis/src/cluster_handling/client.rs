@@ -1042,6 +1042,7 @@ impl ClusterClient {
 #[cfg(test)]
 mod tests {
     use super::{ClusterClient, ClusterClientBuilder, ConnectionInfo, IntoConnectionInfo};
+    #[cfg(feature = "cluster-async")]
     use std::time::Duration;
 
     fn get_connection_data() -> Vec<ConnectionInfo> {

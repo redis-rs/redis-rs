@@ -748,6 +748,170 @@ fn test_module_search_ft_create_schema_hnsw_vector_field() {
     run_ft_create_schema_hnsw_vector_field(&mut ctx.connection(), is_valkey, |_| {});
 }
 
+fn run_ft_create_schema_vamana_vector_field<C, F>(con: &mut C, mut on_created: F)
+where
+    C: redis::ConnectionLike,
+    F: FnMut(&str),
+{
+    const DIM: u32 = 128;
+
+    // Common field modifiers (applied after .build()) - not mutually exclusive
+    let field_modifiers: Vec<(&'static str, VectorFieldModifier)> = vec![
+        ("alias", |field| field.alias("vector_alias")),
+        ("index_missing", |field| field.index_missing(true)),
+    ];
+
+    // All compression types
+    let compression_types: Vec<(&'static str, CompressionType)> = vec![
+        ("lvq4", CompressionType::LVQ4),
+        ("lvq8", CompressionType::LVQ8),
+        ("lvq4x4", CompressionType::LVQ4x4),
+        ("lvq4x8", CompressionType::LVQ4x8),
+        ("leanvec4x8", CompressionType::LeanVec4x8),
+        ("leanvec8x8", CompressionType::LeanVec8x8),
+    ];
+
+    // Note: VAMANA only supports float types (Float16, Float32)
+    // Uses VamanaVectorType for compile-time type safety
+    for (vector_type_name, vector_type) in [
+        ("float16", VamanaVectorType::Float16),
+        ("float32", VamanaVectorType::Float32),
+    ] {
+        // For each distance metric
+        for (distance_metric_name, distance_metric) in [
+            ("l2", DistanceMetric::L2),
+            ("ip", DistanceMetric::IP),
+            ("cosine", DistanceMetric::Cosine),
+        ] {
+            // For each compression type
+            for (compression_name, compression_type) in &compression_types {
+                let base_name = format!(
+                    "idx_vamana_{vector_type_name}_{distance_metric_name}_{compression_name}"
+                );
+
+                // Build the list of builder modifiers based on compression type
+                // reduce only applies to LeanVec4x8 and LeanVec8x8
+                let is_leanvec = matches!(
+                    compression_type,
+                    CompressionType::LeanVec4x8 | CompressionType::LeanVec8x8
+                );
+
+                type VamanaVectorFieldBuilderModifier =
+                    Box<dyn Fn(VamanaVectorFieldBuilder) -> VamanaVectorFieldBuilder>;
+                let builder_modifiers: Vec<(&'static str, VamanaVectorFieldBuilderModifier)> = {
+                    let compression = *compression_type;
+                    let mut modifiers: Vec<(&'static str, VamanaVectorFieldBuilderModifier)> = vec![
+                        (
+                            "compression",
+                            Box::new(move |builder| builder.compression(compression)),
+                        ),
+                        (
+                            "construction_window_size",
+                            Box::new(|builder| builder.construction_window_size(300)),
+                        ),
+                        (
+                            "graph_max_degree",
+                            Box::new(|builder| builder.graph_max_degree(128)),
+                        ),
+                        (
+                            "search_window_size",
+                            Box::new(|builder| builder.search_window_size(20)),
+                        ),
+                        ("epsilon", Box::new(|builder| builder.epsilon(0.02))),
+                        (
+                            "training_threshold",
+                            Box::new(|builder| builder.training_threshold(2048)),
+                        ),
+                    ];
+
+                    if is_leanvec {
+                        modifiers.push(("reduce", Box::new(|builder| builder.reduce(64))));
+                    }
+
+                    modifiers
+                };
+
+                // 1. Test each builder modifier individually
+                for (builder_suffix, builder_modifier) in &builder_modifiers {
+                    let index_name = format!("{base_name}_builder_{builder_suffix}");
+                    let schema = schema! {
+                        VECTOR_FIELD_NAME => builder_modifier(VectorField::vamana(vector_type, DIM, distance_metric)).build()
+                    };
+                    assert_eq!(
+                        con.ft_create(&index_name, &CreateOptions::new(), &schema),
+                        Ok("OK".to_string())
+                    );
+                    on_created(&index_name);
+                }
+
+                // 2. Test each common field modifier individually
+                for (field_suffix, field_modifier) in &field_modifiers {
+                    let index_name = format!("{base_name}_field_{field_suffix}");
+                    let schema = schema! {
+                        VECTOR_FIELD_NAME => field_modifier(VectorField::vamana(vector_type, DIM, distance_metric).build())
+                    };
+                    assert_eq!(
+                        con.ft_create(&index_name, &CreateOptions::new(), &schema),
+                        Ok("OK".to_string())
+                    );
+                    on_created(&index_name);
+                }
+
+                // 3. Test all builder modifiers combined progressively
+                let mut combined_builder = VectorField::vamana(vector_type, DIM, distance_metric);
+                for (builder_suffix, builder_modifier) in &builder_modifiers {
+                    combined_builder = builder_modifier(combined_builder);
+                    let index_name = format!("{base_name}_builders_until_{builder_suffix}");
+                    let schema = schema! {
+                        VECTOR_FIELD_NAME => combined_builder.clone().build()
+                    };
+                    assert_eq!(
+                        con.ft_create(&index_name, &CreateOptions::new(), &schema),
+                        Ok("OK".to_string())
+                    );
+                    on_created(&index_name);
+                }
+
+                // 4. Test all builder modifiers + each field modifier
+                for (field_suffix, field_modifier) in &field_modifiers {
+                    let index_name = format!("{base_name}_all_builders_with_{field_suffix}");
+                    let schema = schema! {
+                        VECTOR_FIELD_NAME => field_modifier(combined_builder.clone().build())
+                    };
+                    assert_eq!(
+                        con.ft_create(&index_name, &CreateOptions::new(), &schema),
+                        Ok("OK".to_string())
+                    );
+                    on_created(&index_name);
+                }
+
+                // 5. Test all builder modifiers + all field modifiers combined progressively
+                let mut combined_field = combined_builder.build();
+                for (field_suffix, field_modifier) in &field_modifiers {
+                    combined_field = field_modifier(combined_field);
+                    let index_name =
+                        format!("{base_name}_all_builders_fields_until_{field_suffix}");
+                    let schema = schema! {
+                        VECTOR_FIELD_NAME => combined_field.clone()
+                    };
+                    assert_eq!(
+                        con.ft_create(&index_name, &CreateOptions::new(), &schema),
+                        Ok("OK".to_string())
+                    );
+                    on_created(&index_name);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_module_search_ft_create_schema_vamana_vector_field() {
+    // Redis-only: valkey-search has no SVS-VAMANA algorithm. The algorithm was introduced in Redis 8.2.
+    let ctx = run_test_if_version_supported!(REDIS_SEARCH_8_2, &[Module::Search]);
+    run_ft_create_schema_vamana_vector_field(&mut ctx.connection(), |_| {});
+}
+
 fn run_ft_create_schema_geoshape_field<C, F>(con: &mut C, mut on_created: F)
 where
     C: redis::ConnectionLike,
@@ -800,4 +964,101 @@ fn test_module_search_ft_create_schema_geoshape_field() {
     // Redis-only: valkey-search has no GEOSHAPE field type.
     let ctx = run_test_if_version_supported!(REDIS_SEARCH_8_0, &[Module::Search]);
     run_ft_create_schema_geoshape_field(&mut ctx.connection(), |_| {});
+}
+
+// Redis only: `PrimaryConnections` relies on RediSearch's internal `_FT.DEBUG` command.
+#[cfg(feature = "cluster")]
+mod cluster {
+    use super::*;
+
+    #[test]
+    fn test_module_search_simple_ft_create() {
+        let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_simple_ft_create(&mut ctx.connection(), "index", |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_module_search_ft_create_schema_text_field() {
+        let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_text_field(&mut ctx.connection(), false, |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_module_search_ft_create_schema_tag_field() {
+        let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_tag_field(&mut ctx.connection(), false, |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_module_search_ft_create_schema_numeric_field() {
+        let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_numeric_field(&mut ctx.connection(), false, |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_module_search_ft_create_schema_geo_field() {
+        let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_geo_field(&mut ctx.connection(), |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_module_search_ft_create_schema_geoshape_field() {
+        let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_geoshape_field(&mut ctx.connection(), |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_module_search_ft_create_schema_flat_vector_field() {
+        let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_flat_vector_field(&mut ctx.connection(), false, |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_module_search_ft_create_schema_hnsw_vector_field() {
+        let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_hnsw_vector_field(&mut ctx.connection(), false, |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
+
+    #[test]
+    fn test_module_search_ft_create_schema_vamana_vector_field() {
+        // The VAMANA index was introduced in Redis 8.2.
+        let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_2);
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+        run_ft_create_schema_vamana_vector_field(&mut ctx.connection(), |name| {
+            primaries.assert_index_propagated(name);
+        });
+    }
 }
