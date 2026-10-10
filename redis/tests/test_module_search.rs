@@ -620,6 +620,134 @@ fn test_module_search_ft_create_schema_flat_vector_field() {
     run_ft_create_schema_flat_vector_field(&mut ctx.connection(), is_valkey, |_| {});
 }
 
+fn run_ft_create_schema_hnsw_vector_field<C, F>(con: &mut C, is_valkey: bool, mut on_created: F)
+where
+    C: redis::ConnectionLike,
+    F: FnMut(&str),
+{
+    const DIM: u32 = 128;
+
+    type HnswVectorFieldBuilderModifier = fn(HnswVectorFieldBuilder) -> HnswVectorFieldBuilder;
+    // HNSW-specific builder modifiers (applied before .build())
+    // EPSILON is Redis-only. The other options work on both servers.
+    let mut builder_modifiers: Vec<(&'static str, HnswVectorFieldBuilderModifier)> = vec![
+        ("m", |builder| builder.m(16)),
+        ("ef_construction", |builder| builder.ef_construction(200)),
+        ("ef_runtime", |builder| builder.ef_runtime(20)),
+    ];
+    if !is_valkey {
+        builder_modifiers.push(("epsilon", |builder| builder.epsilon(0.01)));
+    }
+
+    // INDEXMISSING is Redis-only. Alias works on both servers.
+    let mut field_modifiers: Vec<(&'static str, VectorFieldModifier)> =
+        vec![("alias", |field| field.alias("vector_alias"))];
+    if !is_valkey {
+        field_modifiers.push(("index_missing", |field| field.index_missing(true)));
+    }
+
+    // Valkey Search supports FLOAT32 only.
+    let mut vector_types = vec![("float32", VectorType::Float32)];
+    if !is_valkey {
+        vector_types.extend([
+            ("float64", VectorType::Float64),
+            ("bfloat16", VectorType::BFloat16),
+            ("float16", VectorType::Float16),
+            ("int8", VectorType::Int8),
+            ("uint8", VectorType::UInt8),
+        ]);
+    }
+    for (vector_type_name, vector_type) in vector_types {
+        // For each distance metric
+        for (distance_metric_name, distance_metric) in [
+            ("l2", DistanceMetric::L2),
+            ("ip", DistanceMetric::IP),
+            ("cosine", DistanceMetric::Cosine),
+        ] {
+            let base_name = format!("idx_hnsw_{vector_type_name}_{distance_metric_name}");
+
+            // 1. Test each builder modifier individually
+            for (builder_suffix, builder_modifier) in &builder_modifiers {
+                let index_name = format!("{base_name}_builder_{builder_suffix}");
+                let schema = schema! {
+                    VECTOR_FIELD_NAME => builder_modifier(VectorField::hnsw(vector_type, DIM, distance_metric)).build()
+                };
+                assert_eq!(
+                    con.ft_create(&index_name, &CreateOptions::new(), &schema),
+                    Ok("OK".to_string())
+                );
+                on_created(&index_name);
+            }
+
+            // 2. Test each common field modifier individually
+            for (field_suffix, field_modifier) in &field_modifiers {
+                let index_name = format!("{base_name}_field_{field_suffix}");
+                let schema = schema! {
+                    VECTOR_FIELD_NAME => field_modifier(VectorField::hnsw(vector_type, DIM, distance_metric).build())
+                };
+                assert_eq!(
+                    con.ft_create(&index_name, &CreateOptions::new(), &schema),
+                    Ok("OK".to_string())
+                );
+                on_created(&index_name);
+            }
+
+            // 3. Test all builder modifiers combined progressively
+            let mut combined_builder = VectorField::hnsw(vector_type, DIM, distance_metric);
+            for (builder_suffix, builder_modifier) in &builder_modifiers {
+                combined_builder = builder_modifier(combined_builder);
+                let index_name = format!("{base_name}_builders_until_{builder_suffix}");
+                let schema = schema! {
+                    VECTOR_FIELD_NAME => combined_builder.clone().build()
+                };
+                assert_eq!(
+                    con.ft_create(&index_name, &CreateOptions::new(), &schema),
+                    Ok("OK".to_string())
+                );
+                on_created(&index_name);
+            }
+
+            // 4. Test all builder modifiers + each field modifier
+            for (field_suffix, field_modifier) in &field_modifiers {
+                let index_name = format!("{base_name}_all_builders_with_{field_suffix}");
+                let schema = schema! {
+                    VECTOR_FIELD_NAME => field_modifier(combined_builder.clone().build())
+                };
+                assert_eq!(
+                    con.ft_create(&index_name, &CreateOptions::new(), &schema),
+                    Ok("OK".to_string())
+                );
+                on_created(&index_name);
+            }
+
+            // 5. Test all builder modifiers + all field modifiers combined progressively
+            let mut combined_field = combined_builder.build();
+            for (field_suffix, field_modifier) in &field_modifiers {
+                combined_field = field_modifier(combined_field);
+                let index_name = format!("{base_name}_all_builders_fields_until_{field_suffix}");
+                let schema = schema! {
+                    VECTOR_FIELD_NAME => combined_field.clone()
+                };
+                assert_eq!(
+                    con.ft_create(&index_name, &CreateOptions::new(), &schema),
+                    Ok("OK".to_string())
+                );
+                on_created(&index_name);
+            }
+        }
+    }
+}
+
+#[test]
+fn test_module_search_ft_create_schema_hnsw_vector_field() {
+    let ctx = run_test_if_version_supported!(
+        &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
+        &[Module::Search]
+    );
+    let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
+    run_ft_create_schema_hnsw_vector_field(&mut ctx.connection(), is_valkey, |_| {});
+}
+
 fn run_ft_create_schema_geoshape_field<C, F>(con: &mut C, mut on_created: F)
 where
     C: redis::ConnectionLike,
