@@ -957,7 +957,12 @@ impl ActualConnection {
                             };
                         }
                         match (tcp, last_error) {
-                            (Some(tcp), _) => tls_connector.connect(host, tcp).unwrap(),
+                            (Some(tcp), _) => match tls_connector.connect(host, tcp) {
+                                Ok(res) => res,
+                                Err(e) => {
+                                    fail!((ErrorKind::Io, "SSL Handshake error", e.to_string()));
+                                }
+                            },
                             (None, Some(e)) => {
                                 fail!(e);
                             }
@@ -2798,5 +2803,44 @@ mod tests {
 
         // Check the connection setup pipeline
         assert_lib_name_in_connection_setup_pipeline(&redis_connection_info, "foo", "42.4711");
+    }
+}
+
+#[cfg(all(test, feature = "tls-native-tls", not(feature = "tls-rustls")))]
+mod tls_handshake_tests {
+    use super::*;
+    use crate::{ConnectionAddr, ErrorKind, RedisConnectionInfo, connection::ConnectionInfo};
+    use std::net::TcpListener;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn tls_handshake_error_with_timeout_is_returned_not_panicked() {
+        // A server that accepts a TCP connection but never performs a TLS handshake
+        // fails the handshake; a connection timeout must not turn that into a panic.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            // Accept and immediately drop the stream to close the connection.
+            let _ = listener.accept();
+        });
+
+        let info = ConnectionInfo {
+            addr: ConnectionAddr::TcpTls {
+                host: "127.0.0.1".to_string(),
+                port,
+                insecure: false,
+                tls_params: None,
+            },
+            redis: RedisConnectionInfo::default(),
+            tcp_settings: Default::default(),
+        };
+
+        let result = match connect(&info, Some(Duration::from_secs(5))) {
+            Ok(_) => panic!("expected the TLS handshake against a plain TCP server to fail"),
+            Err(err) => err,
+        };
+        assert_eq!(result.kind(), ErrorKind::Io);
+        assert!(result.to_string().contains("SSL Handshake error"));
     }
 }
