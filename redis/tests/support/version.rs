@@ -18,6 +18,7 @@ pub const REDIS_JSON_8_8: Component = ("ReJSON", (8, 8, 0));
 pub const REDIS_BLOOM_ANY: Component = ("redis:bf", (0, 0, 0));
 
 pub const REDIS_SEARCH_8_0: Component = ("redis:search", (8, 0, 0));
+pub const REDIS_SEARCH_8_2: Component = ("redis:search", (8, 2, 0));
 // TODO: pin to the real minimum once the version decoder
 // handles valkey-search's bit-shifted `ver` (e.g. 66049 == 1.2.1, but we
 // currently decode as 6.60.49). Until then, accept any version.
