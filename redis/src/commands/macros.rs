@@ -40,18 +40,42 @@ macro_rules! if_redisresult {
     };
 }
 
+/// Converts the returned value for typed commands
+///
+/// This macro is used to resolve the `via` for typed commands
+///
+/// For typed commands without a `via`, the `$body` is used as is. (The `$body` return value is
+/// converted by `$rettype`'s [`FromRedisValue`](crate::FromRedisValue) implementation)
+///
+/// For typed commands with `via`, the `$ret_conv_fn` gets applied to `$body`.
+///
+/// # Arguments
+///
+/// * `$ret_conv_fn` - (optional) If present, convert `$body`'s output  using this function. It
+///   has to take a `Value` as input and map it to `Result<T, ParsingError>`, where `T` is the typed
+///   commands final output type. If missing, `$body` is returned as is.
+/// * `$body` - The command's implementation. It has to yield a `Value`
+macro_rules! convert_ret {
+    ($ret_conv_fn:ident, { $($body:tt)* }) => {
+        Ok($ret_conv_fn({ $($body)* }?)?)
+    };
+    (, { $($body:tt)* }) => {
+        $($body)*
+    };
+}
+
 #[cfg(feature = "aio")]
 macro_rules! implement_command_async {
     // Expand the `Generic` return type to `RV`
     (
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-            $($argname:ident: $argty:ty),*) -> Generic
+            $($argname:ident: $argty:ty),*) -> Generic $(via $ret_conv_fn:ident)?
     ) => {
         implement_command_async!(
             $(#[$attr])+
             fn $name<$($tyargs : $ty,)* RV: FromRedisValue>(
-                $($argname: $argty),*) -> RV
+                $($argname: $argty),*) -> RV $(via $ret_conv_fn)?
         );
     };
 
@@ -59,12 +83,12 @@ macro_rules! implement_command_async {
     (
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-            $($argname:ident: $argty:ty),*) -> (RedisResult<Generic>)
+            $($argname:ident: $argty:ty),*) -> (RedisResult<Generic>) $(via $ret_conv_fn:ident)?
     ) => {
         implement_command_async!(
             $(#[$attr])+
             fn $name<$($tyargs : $ty,)* RV: FromRedisValue>(
-                $($argname: $argty),*) -> (RedisResult<RV>)
+                $($argname: $argty),*) -> (RedisResult<RV>) $(via $ret_conv_fn)?
         );
     };
 
@@ -72,7 +96,7 @@ macro_rules! implement_command_async {
     (
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-            $($argname:ident: $argty:ty),*) -> $rettype:tt
+            $($argname:ident: $argty:ty),*) -> $rettype:tt $(via $ret_conv_fn:ident)?
     ) => {
         $(#[$attr])*
         #[inline]
@@ -84,9 +108,11 @@ macro_rules! implement_command_async {
 
         {
             async move {
-                if_redisresult!($rettype, try, (Cmd::$name($($argname),*)))
-                    .query_async(self)
-                    .await
+                convert_ret!($($ret_conv_fn)?, {
+                    if_redisresult!($rettype, try, (Cmd::$name($($argname),*)))
+                        .query_async(self)
+                        .await
+                    })
             }
         }
     };
@@ -97,12 +123,12 @@ macro_rules! implement_command_sync {
     (
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-            $($argname:ident: $argty:ty),*) -> Generic
+            $($argname:ident: $argty:ty),*) -> Generic $(via $ret_conv_fn:ident)?
     ) => {
         implement_command_sync!(
             $(#[$attr])+
             fn $name<$($tyargs : $ty,)* RV: FromRedisValue>(
-                $($argname: $argty),*) -> RV
+                $($argname: $argty),*) -> RV $(via $ret_conv_fn)?
         );
     };
 
@@ -110,12 +136,12 @@ macro_rules! implement_command_sync {
     (
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-            $($argname:ident: $argty:ty),*) -> (RedisResult<Generic>)
+            $($argname:ident: $argty:ty),*) -> (RedisResult<Generic>) $(via $ret_conv_fn:ident)?
     ) => {
         implement_command_sync!(
             $(#[$attr])+
             fn $name<$($tyargs : $ty,)* RV: FromRedisValue>(
-                $($argname: $argty),*) -> (RedisResult<RV>)
+                $($argname: $argty),*) -> (RedisResult<RV>) $(via $ret_conv_fn)?
         );
     };
 
@@ -123,7 +149,7 @@ macro_rules! implement_command_sync {
     (
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-            $($argname:ident: $argty:ty),*) -> $rettype:tt
+            $($argname:ident: $argty:ty),*) -> $rettype:tt $(via $ret_conv_fn:ident)?
     ) => {
         $(#[$attr])*
         #[inline]
@@ -134,8 +160,10 @@ macro_rules! implement_command_sync {
         ) -> RedisResult<if_redisresult!($rettype, strip_redisresult)>
 
         {
-            if_redisresult!($rettype, try, (Cmd::$name($($argname),*)))
+            convert_ret!($($ret_conv_fn)?, {
+                if_redisresult!($rettype, try, { (Cmd::$name($($argname),*)) })
                 .query(self)
+            })
         }
     };
 }
@@ -274,7 +302,7 @@ macro_rules! implement_commands {
         $(
             $(#[$attr:meta])+
             fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-                $($argname:ident: $argty:ty),*) -> $rettype:tt { $($body:tt)* }
+                $($argname:ident: $argty:ty),*) -> $rettype:tt $(via $ret_conv_fn:ident)? { $($body:tt)* }
         )*
     ) =>
     (
@@ -403,7 +431,7 @@ macro_rules! implement_commands {
                     $(#[$attr])*
                     fn $name<$($tyargs: $ty),*>(
                         $($argname: $argty),*
-                    ) -> $rettype
+                    ) -> $rettype $(via $ret_conv_fn)?
                 }
             )*
 
@@ -433,7 +461,7 @@ macro_rules! implement_commands {
                     $(#[$attr])*
                     fn $name<$($tyargs: $ty),*>(
                         $($argname: $argty),*
-                    ) -> $rettype
+                    ) -> $rettype $(via $ret_conv_fn)?
                 }
             )*
 
