@@ -789,8 +789,9 @@ where
                     "idx_vamana_{vector_type_name}_{distance_metric_name}_{compression_name}"
                 );
 
-                // Build the list of builder modifiers based on compression type
-                // reduce only applies to LeanVec4x8 and LeanVec8x8
+                // Build the list of builder modifiers based on compression type.
+                // training_threshold needs a compression type and reduce needs LeanVec4x8 or
+                // LeanVec8x8, so their modifiers set compression too.
                 let is_leanvec = matches!(
                     compression_type,
                     CompressionType::LeanVec4x8 | CompressionType::LeanVec8x8
@@ -820,12 +821,17 @@ where
                         ("epsilon", Box::new(|builder| builder.epsilon(0.02))),
                         (
                             "training_threshold",
-                            Box::new(|builder| builder.training_threshold(2048)),
+                            Box::new(move |builder| {
+                                builder.compression(compression).training_threshold(2048)
+                            }),
                         ),
                     ];
 
                     if is_leanvec {
-                        modifiers.push(("reduce", Box::new(|builder| builder.reduce(64))));
+                        modifiers.push((
+                            "reduce",
+                            Box::new(move |builder| builder.compression(compression).reduce(64)),
+                        ));
                     }
 
                     modifiers
@@ -902,6 +908,35 @@ where
                 }
             }
         }
+    }
+
+    // The builder sends the conditional parameters as given, so the server rejects them
+    // when their compression type is missing.
+    for (name, builder) in [
+        (
+            "training_threshold_without_compression",
+            VectorField::vamana(VamanaVectorType::Float32, DIM, DistanceMetric::L2)
+                .training_threshold(2048),
+        ),
+        (
+            "reduce_without_leanvec",
+            VectorField::vamana(VamanaVectorType::Float32, DIM, DistanceMetric::L2)
+                .compression(CompressionType::LVQ8)
+                .reduce(64),
+        ),
+    ] {
+        let result = con.ft_create::<_, String>(
+            format!("idx_vamana_invalid_{name}"),
+            &CreateOptions::new(),
+            &schema! { VECTOR_FIELD_NAME => builder.build() },
+        );
+        let server_error = redis::ServerError::try_from(result.unwrap_err()).unwrap();
+        assert!(
+            server_error
+                .details()
+                .is_some_and(|details| details.contains("irrelevant")),
+            "{name}: {server_error:?}"
+        );
     }
 }
 
