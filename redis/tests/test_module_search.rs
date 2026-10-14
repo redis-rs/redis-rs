@@ -141,7 +141,7 @@ fn run_modifier_matrix<C, T>(
 fn test_module_search_ft_create_with_an_empty_index_name() {
     let ctx = run_test_if_version_supported!(
         &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search]
+        &[Module::Search(vec![])]
     );
     let mut con = ctx.connection();
     let empty_index_name = "";
@@ -183,7 +183,7 @@ where
 fn test_module_search_simple_ft_create() {
     let ctx = run_test_if_version_supported!(
         &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search]
+        &[Module::Search(vec![])]
     );
     run_simple_ft_create(&mut ctx.connection(), "index", |_| {});
 }
@@ -196,7 +196,7 @@ fn test_module_search_ft_create_create_options() {
     // TEMPORARY, MAXTEXTFIELDS) on Redis only, as valkey-search rejects it.
     let ctx = run_test_if_version_supported!(
         &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search]
+        &[Module::Search(vec![])]
     );
     let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
     let mut con = ctx.connection();
@@ -314,7 +314,7 @@ fn test_module_search_ft_create_schema_text_field() {
     // PHONETIC, INDEXMISSING) on Redis only, as valkey-search rejects it.
     let ctx = run_test_if_version_supported!(
         &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search]
+        &[Module::Search(vec![])]
     );
     let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
     run_ft_create_schema_text_field(&mut ctx.connection(), is_valkey, |_| {});
@@ -380,7 +380,7 @@ fn test_module_search_ft_create_schema_tag_field() {
     // WITHSUFFIXTRIE, INDEXMISSING) on Redis only, as valkey-search rejects it.
     let ctx = run_test_if_version_supported!(
         &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search]
+        &[Module::Search(vec![])]
     );
     let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
     run_ft_create_schema_tag_field(&mut ctx.connection(), is_valkey, |_| {});
@@ -441,7 +441,7 @@ fn test_module_search_ft_create_schema_numeric_field() {
     // INDEXMISSING) on Redis only, as valkey-search rejects it.
     let ctx = run_test_if_version_supported!(
         &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search]
+        &[Module::Search(vec![])]
     );
     let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
     run_ft_create_schema_numeric_field(&mut ctx.connection(), is_valkey, |_| {});
@@ -493,7 +493,7 @@ where
 #[test]
 fn test_module_search_ft_create_schema_geo_field() {
     // Redis-only: valkey-search has no GEO field type.
-    let ctx = run_test_if_version_supported!(REDIS_SEARCH_8_0, &[Module::Search]);
+    let ctx = run_test_if_version_supported!(REDIS_SEARCH_8_0, &[Module::Search(vec![])]);
     run_ft_create_schema_geo_field(&mut ctx.connection(), |_| {});
 }
 
@@ -614,7 +614,7 @@ where
 fn test_module_search_ft_create_schema_flat_vector_field() {
     let ctx = run_test_if_version_supported!(
         &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search]
+        &[Module::Search(vec![])]
     );
     let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
     run_ft_create_schema_flat_vector_field(&mut ctx.connection(), is_valkey, |_| {});
@@ -742,7 +742,7 @@ where
 fn test_module_search_ft_create_schema_hnsw_vector_field() {
     let ctx = run_test_if_version_supported!(
         &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search]
+        &[Module::Search(vec![])]
     );
     let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
     run_ft_create_schema_hnsw_vector_field(&mut ctx.connection(), is_valkey, |_| {});
@@ -943,7 +943,7 @@ where
 #[test]
 fn test_module_search_ft_create_schema_vamana_vector_field() {
     // Redis-only: valkey-search has no SVS-VAMANA algorithm. The algorithm was introduced in Redis 8.2.
-    let ctx = run_test_if_version_supported!(REDIS_SEARCH_8_2, &[Module::Search]);
+    let ctx = run_test_if_version_supported!(REDIS_SEARCH_8_2, &[Module::Search(vec![])]);
     run_ft_create_schema_vamana_vector_field(&mut ctx.connection(), |_| {});
 }
 
@@ -997,11 +997,10 @@ where
 #[test]
 fn test_module_search_ft_create_schema_geoshape_field() {
     // Redis-only: valkey-search has no GEOSHAPE field type.
-    let ctx = run_test_if_version_supported!(REDIS_SEARCH_8_0, &[Module::Search]);
+    let ctx = run_test_if_version_supported!(REDIS_SEARCH_8_0, &[Module::Search(vec![])]);
     run_ft_create_schema_geoshape_field(&mut ctx.connection(), |_| {});
 }
 
-// Redis only: `PrimaryConnections` relies on RediSearch's internal `_FT.DEBUG` command.
 #[cfg(feature = "cluster")]
 mod cluster {
     use super::*;
@@ -1009,7 +1008,7 @@ mod cluster {
     #[test]
     fn test_module_search_simple_ft_create() {
         let ctx = setup_cluster_with_search_module();
-        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        skip_if_context_does_not_support!(ctx, &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..]);
         let mut primaries = PrimaryConnections::from_cluster(&ctx);
         run_simple_ft_create(&mut ctx.connection(), "index", |name| {
             primaries.assert_index_propagated(name);
@@ -1019,9 +1018,10 @@ mod cluster {
     #[test]
     fn test_module_search_ft_create_schema_text_field() {
         let ctx = setup_cluster_with_search_module();
-        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        skip_if_context_does_not_support!(ctx, &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..]);
+        let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
         let mut primaries = PrimaryConnections::from_cluster(&ctx);
-        run_ft_create_schema_text_field(&mut ctx.connection(), false, |name| {
+        run_ft_create_schema_text_field(&mut ctx.connection(), is_valkey, |name| {
             primaries.assert_index_propagated(name);
         });
     }
@@ -1029,9 +1029,10 @@ mod cluster {
     #[test]
     fn test_module_search_ft_create_schema_tag_field() {
         let ctx = setup_cluster_with_search_module();
-        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        skip_if_context_does_not_support!(ctx, &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..]);
+        let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
         let mut primaries = PrimaryConnections::from_cluster(&ctx);
-        run_ft_create_schema_tag_field(&mut ctx.connection(), false, |name| {
+        run_ft_create_schema_tag_field(&mut ctx.connection(), is_valkey, |name| {
             primaries.assert_index_propagated(name);
         });
     }
@@ -1039,15 +1040,17 @@ mod cluster {
     #[test]
     fn test_module_search_ft_create_schema_numeric_field() {
         let ctx = setup_cluster_with_search_module();
-        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        skip_if_context_does_not_support!(ctx, &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..]);
+        let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
         let mut primaries = PrimaryConnections::from_cluster(&ctx);
-        run_ft_create_schema_numeric_field(&mut ctx.connection(), false, |name| {
+        run_ft_create_schema_numeric_field(&mut ctx.connection(), is_valkey, |name| {
             primaries.assert_index_propagated(name);
         });
     }
 
     #[test]
     fn test_module_search_ft_create_schema_geo_field() {
+        // Redis-only: valkey-search has no GEO field type.
         let ctx = setup_cluster_with_search_module();
         skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
         let mut primaries = PrimaryConnections::from_cluster(&ctx);
@@ -1058,6 +1061,7 @@ mod cluster {
 
     #[test]
     fn test_module_search_ft_create_schema_geoshape_field() {
+        // Redis-only: valkey-search has no GEOSHAPE field type.
         let ctx = setup_cluster_with_search_module();
         skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
         let mut primaries = PrimaryConnections::from_cluster(&ctx);
@@ -1069,9 +1073,10 @@ mod cluster {
     #[test]
     fn test_module_search_ft_create_schema_flat_vector_field() {
         let ctx = setup_cluster_with_search_module();
-        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        skip_if_context_does_not_support!(ctx, &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..]);
+        let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
         let mut primaries = PrimaryConnections::from_cluster(&ctx);
-        run_ft_create_schema_flat_vector_field(&mut ctx.connection(), false, |name| {
+        run_ft_create_schema_flat_vector_field(&mut ctx.connection(), is_valkey, |name| {
             primaries.assert_index_propagated(name);
         });
     }
@@ -1079,16 +1084,17 @@ mod cluster {
     #[test]
     fn test_module_search_ft_create_schema_hnsw_vector_field() {
         let ctx = setup_cluster_with_search_module();
-        skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_0);
+        skip_if_context_does_not_support!(ctx, &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..]);
+        let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
         let mut primaries = PrimaryConnections::from_cluster(&ctx);
-        run_ft_create_schema_hnsw_vector_field(&mut ctx.connection(), false, |name| {
+        run_ft_create_schema_hnsw_vector_field(&mut ctx.connection(), is_valkey, |name| {
             primaries.assert_index_propagated(name);
         });
     }
 
     #[test]
     fn test_module_search_ft_create_schema_vamana_vector_field() {
-        // The VAMANA index was introduced in Redis 8.2.
+        // Redis-only: valkey-search has no SVS-VAMANA algorithm. The algorithm was introduced in Redis 8.2.
         let ctx = setup_cluster_with_search_module();
         skip_if_context_does_not_support!(ctx, REDIS_SEARCH_8_2);
         let mut primaries = PrimaryConnections::from_cluster(&ctx);

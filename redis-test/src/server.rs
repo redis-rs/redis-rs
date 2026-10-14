@@ -34,7 +34,9 @@ enum ServerType {
 pub enum Module {
     Bloom,
     Json,
-    Search,
+    /// The Search module, loaded with the given module arguments.
+    /// Pass an empty `Vec` to load it without arguments.
+    Search(Vec<String>),
 }
 
 /// A standalone Redis server instance for testing.
@@ -216,12 +218,19 @@ impl RedisServer {
 
                     redis_cmd.arg("--loadmodule").arg(path);
                 }
-                Module::Search => {
+                Module::Search(args) => {
                     let path = env::var("REDISRS_REDIS_SEARCH_PATH").expect(
                         "Unable to find path to RediSearch at REDISRS_REDIS_SEARCH_PATH, is it set?",
                     );
 
-                    redis_cmd.arg("--loadmodule").arg(path);
+                    if args.is_empty() {
+                        redis_cmd.arg("--loadmodule").arg(path);
+                    } else {
+                        // Pass the path and the module args as one `--loadmodule` directive.
+                        // Otherwise the server reads module args that start with `--`
+                        // (e.g. `--use-coordinator`) as its own config options.
+                        redis_cmd.arg(format!("--loadmodule {path} {}", args.join(" ")));
+                    }
                 }
             }
         }
