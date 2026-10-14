@@ -133,11 +133,11 @@ pub use self::cluster::*;
 pub use self::mock_cluster::*;
 
 #[cfg(all(feature = "cluster", feature = "search_unfinished"))]
-mod search;
+mod cluster_search;
 
 #[cfg(all(feature = "cluster", feature = "search_unfinished"))]
 #[allow(unused_imports)]
-pub use self::search::*;
+pub use self::cluster_search::*;
 
 #[cfg(feature = "sentinel")]
 mod sentinel;

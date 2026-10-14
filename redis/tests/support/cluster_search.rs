@@ -23,25 +23,27 @@ pub fn setup_cluster_with_search_module() -> TestClusterContext {
 /// Maintains one direct connection per primary, allowing each node to be polled
 /// without incurring the cost of reconnecting for every index check.
 pub struct PrimaryConnections {
-    cons: Vec<(redis::ConnectionAddr, redis::Connection)>,
+    connections: Vec<(redis::ConnectionAddr, redis::Connection)>,
 }
 
 impl PrimaryConnections {
     /// Connect to every primary and wait until their Search shard connections are established.
+    /// Replicas are skipped, so the cluster may have any number of them.
     pub fn from_cluster(ctx: &TestClusterContext) -> Self {
-        let cons = ctx
+        let connections = ctx
             .cluster
             .iter_servers()
-            .map(|server| {
+            .filter_map(|server| {
                 let addr = server.client_addr().clone();
-                let con = redis::Client::open(server.connection_info())
+                let mut connection = redis::Client::open(server.connection_info())
                     .unwrap()
                     .get_connection()
                     .unwrap();
-                (addr, con)
+                let role: redis::Role = redis::cmd("ROLE").query(&mut connection).unwrap();
+                matches!(role, redis::Role::Primary { .. }).then_some((addr, connection))
             })
             .collect();
-        let mut primaries = Self { cons };
+        let mut primaries = Self { connections };
         primaries.wait_for_search_shard_connections();
         primaries
     }
@@ -53,14 +55,14 @@ impl PrimaryConnections {
         const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
         const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
 
-        let expected_peers = self.cons.len();
+        let expected_peers = self.connections.len();
         let deadline = std::time::Instant::now() + TIMEOUT;
         loop {
             let mut pending: Option<(redis::ConnectionAddr, ShardConnectionStates)> = None;
-            for (addr, con) in &mut self.cons {
+            for (addr, connection) in &mut self.connections {
                 let states: ShardConnectionStates = redis::cmd("_FT.DEBUG")
                     .arg("SHARD_CONNECTION_STATES")
-                    .query(con)
+                    .query(connection)
                     .unwrap();
                 let ready = states.len() == expected_peers
                     && states.iter().all(|(_, conns)| {
@@ -91,10 +93,10 @@ impl PrimaryConnections {
     pub fn assert_index_propagated(&mut self, index_name: &str) {
         const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
         const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
-        for (addr, con) in &mut self.cons {
+        for (addr, connection) in &mut self.connections {
             let deadline = std::time::Instant::now() + TIMEOUT;
             loop {
-                let indexes: Vec<String> = redis::cmd("FT._LIST").query(con).unwrap();
+                let indexes: Vec<String> = redis::cmd("FT._LIST").query(connection).unwrap();
                 if indexes.iter().any(|name| name == index_name) {
                     break;
                 }
