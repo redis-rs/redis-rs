@@ -3,7 +3,7 @@ use std::{env, process, thread::sleep, time::Duration};
 use tempfile::TempDir;
 
 use crate::{
-    server::{Module, RedisServer},
+    server::{Module, RedisServer, search_module_path},
     utils::{
         TlsFilePaths, build_keys_and_certs_for_tls_with_hostname, get_random_available_port,
         get_random_available_port_with_offset,
@@ -160,7 +160,22 @@ impl RedisCluster {
         };
         let mut chosen_ports = std::collections::HashSet::new();
         // Reserve the search gRPC port too. RediSearch does not use it, but reserving it does no harm.
-        let loads_search = modules.iter().any(|m| matches!(m, Module::Search(_)));
+        let loads_search = modules.iter().any(|m| matches!(m, Module::Search));
+        let search_directive = env::var("REDISRS_REDIS_SEARCH_CLUSTER_ARGS")
+            .ok()
+            .filter(|args| loads_search && !args.is_empty())
+            // Pass the path and the args as one `--loadmodule` directive. Otherwise the server
+            // reads args that start with `--` as its own config options.
+            .map(|args| format!("--loadmodule {} {args}", search_module_path()));
+        // `RedisServer` cannot pass args to a module, so the directive above loads Search instead.
+        let modules: Vec<Module> = if search_directive.is_some() {
+            modules
+                .into_iter()
+                .filter(|m| !matches!(m, Module::Search))
+                .collect()
+        } else {
+            modules
+        };
 
         let mut folders = vec![];
         let mut addrs = vec![];
@@ -214,6 +229,9 @@ impl RedisCluster {
                         .arg("5000")
                         .arg("--aclfile")
                         .arg(&acl_path);
+                    if let Some(directive) = &search_directive {
+                        cmd.arg(directive);
+                    }
                     if let Some(num_databases) = cluster_databases {
                         cmd.arg("--cluster-databases")
                             .arg(num_databases.to_string());

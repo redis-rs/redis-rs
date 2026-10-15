@@ -141,7 +141,7 @@ fn run_modifier_matrix<C, T>(
 fn test_module_search_ft_create_with_an_empty_index_name() {
     let ctx = run_test_if_version_supported!(
         &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search(vec![])]
+        &[Module::Search]
     );
     let mut con = ctx.connection();
     let empty_index_name = "";
@@ -183,7 +183,7 @@ where
 fn test_module_search_simple_ft_create() {
     let ctx = run_test_if_version_supported!(
         &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search(vec![])]
+        &[Module::Search]
     );
     run_simple_ft_create(&mut ctx.connection(), "index", |_| {});
 }
@@ -196,7 +196,7 @@ fn test_module_search_ft_create_create_options() {
     // TEMPORARY, MAXTEXTFIELDS) on Redis only, as valkey-search rejects it.
     let ctx = run_test_if_version_supported!(
         &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search(vec![])]
+        &[Module::Search]
     );
     let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
     let mut con = ctx.connection();
@@ -314,7 +314,7 @@ fn test_module_search_ft_create_schema_text_field() {
     // PHONETIC, INDEXMISSING) on Redis only, as valkey-search rejects it.
     let ctx = run_test_if_version_supported!(
         &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search(vec![])]
+        &[Module::Search]
     );
     let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
     run_ft_create_schema_text_field(&mut ctx.connection(), is_valkey, |_| {});
@@ -380,7 +380,7 @@ fn test_module_search_ft_create_schema_tag_field() {
     // WITHSUFFIXTRIE, INDEXMISSING) on Redis only, as valkey-search rejects it.
     let ctx = run_test_if_version_supported!(
         &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search(vec![])]
+        &[Module::Search]
     );
     let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
     run_ft_create_schema_tag_field(&mut ctx.connection(), is_valkey, |_| {});
@@ -441,7 +441,7 @@ fn test_module_search_ft_create_schema_numeric_field() {
     // INDEXMISSING) on Redis only, as valkey-search rejects it.
     let ctx = run_test_if_version_supported!(
         &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search(vec![])]
+        &[Module::Search]
     );
     let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
     run_ft_create_schema_numeric_field(&mut ctx.connection(), is_valkey, |_| {});
@@ -493,7 +493,7 @@ where
 #[test]
 fn test_module_search_ft_create_schema_geo_field() {
     // Redis-only: valkey-search has no GEO field type.
-    let ctx = run_test_if_version_supported!(REDIS_SEARCH_8_0, &[Module::Search(vec![])]);
+    let ctx = run_test_if_version_supported!(REDIS_SEARCH_8_0, &[Module::Search]);
     run_ft_create_schema_geo_field(&mut ctx.connection(), |_| {});
 }
 
@@ -614,7 +614,7 @@ where
 fn test_module_search_ft_create_schema_flat_vector_field() {
     let ctx = run_test_if_version_supported!(
         &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search(vec![])]
+        &[Module::Search]
     );
     let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
     run_ft_create_schema_flat_vector_field(&mut ctx.connection(), is_valkey, |_| {});
@@ -742,7 +742,7 @@ where
 fn test_module_search_ft_create_schema_hnsw_vector_field() {
     let ctx = run_test_if_version_supported!(
         &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..],
-        &[Module::Search(vec![])]
+        &[Module::Search]
     );
     let is_valkey = ctx.supports(VALKEY_SEARCH_ANY);
     run_ft_create_schema_hnsw_vector_field(&mut ctx.connection(), is_valkey, |_| {});
@@ -943,7 +943,7 @@ where
 #[test]
 fn test_module_search_ft_create_schema_vamana_vector_field() {
     // Redis-only: valkey-search has no SVS-VAMANA algorithm. The algorithm was introduced in Redis 8.2.
-    let ctx = run_test_if_version_supported!(REDIS_SEARCH_8_2, &[Module::Search(vec![])]);
+    let ctx = run_test_if_version_supported!(REDIS_SEARCH_8_2, &[Module::Search]);
     run_ft_create_schema_vamana_vector_field(&mut ctx.connection(), |_| {});
 }
 
@@ -997,7 +997,7 @@ where
 #[test]
 fn test_module_search_ft_create_schema_geoshape_field() {
     // Redis-only: valkey-search has no GEOSHAPE field type.
-    let ctx = run_test_if_version_supported!(REDIS_SEARCH_8_0, &[Module::Search(vec![])]);
+    let ctx = run_test_if_version_supported!(REDIS_SEARCH_8_0, &[Module::Search]);
     run_ft_create_schema_geoshape_field(&mut ctx.connection(), |_| {});
 }
 

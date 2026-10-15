@@ -8,34 +8,17 @@ use redis_test::server::Module;
 type ShardConnectionStates = Vec<(String, Vec<String>)>;
 
 /// Build a 3-primary cluster with the search module loaded on every node.
-/// On Valkey, load valkey-search with `--use-coordinator`, so that it runs in cluster mode.
 ///
 /// Check the server version before calling [`PrimaryConnections::from_cluster`],
 /// because it expects RediSearch or valkey-search to be loaded.
 pub fn setup_cluster_with_search_module() -> TestClusterContext {
-    let module_args = if server_is_valkey() {
-        vec!["--use-coordinator".to_string()]
-    } else {
-        vec![]
-    };
     let ctx = TestClusterContext::new_with_config(RedisClusterConfiguration {
         num_nodes: 3,
-        modules: vec![Module::Search(module_args)],
+        modules: vec![Module::Search],
         ..Default::default()
     });
     ctx.wait_for_cluster_up();
     ctx
-}
-
-/// Check whether the server binary is Valkey. The module args must be known before the
-/// servers start, so this asks the binary instead of a running server.
-fn server_is_valkey() -> bool {
-    let bin = std::env::var("REDISRS_SERVER_BIN").unwrap_or_else(|_| "redis-server".to_string());
-    let output = std::process::Command::new(&bin)
-        .arg("-v")
-        .output()
-        .unwrap_or_else(|err| panic!("Failed to run {bin} -v: {err}"));
-    String::from_utf8_lossy(&output.stdout).starts_with("Valkey")
 }
 
 /// Maintains one direct connection per primary, allowing each node to be polled

@@ -361,7 +361,7 @@ macro_rules! skip_if_context_does_not_support {
 ///
 /// With modules:
 /// ```ignore
-/// let ctx = run_test_if_version_supported!(REDIS_CE_8_0, &[Module::Search(vec![])]);
+/// let ctx = run_test_if_version_supported!(REDIS_CE_8_0, &[Module::Search]);
 /// ```
 #[macro_export]
 macro_rules! run_test_if_version_supported {
