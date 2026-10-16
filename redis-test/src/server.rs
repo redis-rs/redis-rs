@@ -217,11 +217,7 @@ impl RedisServer {
                     redis_cmd.arg("--loadmodule").arg(path);
                 }
                 Module::Search => {
-                    let path = env::var("REDISRS_REDIS_SEARCH_PATH").expect(
-                        "Unable to find path to RediSearch at REDISRS_REDIS_SEARCH_PATH, is it set?",
-                    );
-
-                    redis_cmd.arg("--loadmodule").arg(path);
+                    redis_cmd.arg("--loadmodule").arg(search_module_path());
                 }
             }
         }
@@ -365,4 +361,9 @@ fn get_major_version(server_binary: &str) -> u8 {
     let (_, res) = full_string.split_once(" v=").unwrap();
     let (res, _) = res.split_once(".").unwrap();
     res.parse().unwrap()
+}
+
+pub(crate) fn search_module_path() -> String {
+    env::var("REDISRS_REDIS_SEARCH_PATH")
+        .expect("Unable to find path to RediSearch at REDISRS_REDIS_SEARCH_PATH, is it set?")
 }

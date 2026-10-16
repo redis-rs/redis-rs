@@ -3,9 +3,16 @@ use std::{env, process, thread::sleep, time::Duration};
 use tempfile::TempDir;
 
 use crate::{
-    server::{Module, RedisServer},
-    utils::{TlsFilePaths, build_keys_and_certs_for_tls_with_hostname, get_random_available_port},
+    server::{Module, RedisServer, search_module_path},
+    utils::{
+        TlsFilePaths, build_keys_and_certs_for_tls_with_hostname, get_random_available_port,
+        get_random_available_port_with_offset,
+    },
 };
+
+/// In cluster mode, valkey-search listens for gRPC on the node port plus this offset.
+/// See <https://github.com/valkey-io/valkey-search/blob/1.2.1/docs/topics/search.md#cluster-mode>.
+const SEARCH_GRPC_PORT_OFFSET: u16 = 20294;
 
 /// Configuration for creating a Redis Cluster.
 pub struct RedisClusterConfiguration {
@@ -152,6 +159,23 @@ impl RedisCluster {
             ports.into_iter().map(Some).collect()
         };
         let mut chosen_ports = std::collections::HashSet::new();
+        // Reserve the search gRPC port too. RediSearch does not use it, but reserving it does no harm.
+        let loads_search = modules.iter().any(|m| matches!(m, Module::Search));
+        let search_directive = env::var("REDISRS_REDIS_SEARCH_CLUSTER_ARGS")
+            .ok()
+            .filter(|args| loads_search && !args.is_empty())
+            // Pass the path and the args as one `--loadmodule` directive. Otherwise the server
+            // reads args that start with `--` as its own config options.
+            .map(|args| format!("--loadmodule {} {args}", search_module_path()));
+        // `RedisServer` cannot pass args to a module, so the directive above loads Search instead.
+        let modules: Vec<Module> = if search_directive.is_some() {
+            modules
+                .into_iter()
+                .filter(|m| !matches!(m, Module::Search))
+                .collect()
+        } else {
+            modules
+        };
 
         let mut folders = vec![];
         let mut addrs = vec![];
@@ -205,6 +229,9 @@ impl RedisCluster {
                         .arg("5000")
                         .arg("--aclfile")
                         .arg(&acl_path);
+                    if let Some(directive) = &search_directive {
+                        cmd.arg(directive);
+                    }
                     if let Some(num_databases) = cluster_databases {
                         cmd.arg("--cluster-databases")
                             .arg(num_databases.to_string());
@@ -263,6 +290,17 @@ impl RedisCluster {
                 for _ in 0..5 {
                     let port = match port_option {
                         Some(port) => port,
+                        None if loads_search => loop {
+                            let port =
+                                get_random_available_port_with_offset(SEARCH_GRPC_PORT_OFFSET);
+                            let grpc_port = port + SEARCH_GRPC_PORT_OFFSET;
+                            if chosen_ports.contains(&port) || chosen_ports.contains(&grpc_port) {
+                                continue;
+                            }
+                            chosen_ports.insert(port);
+                            chosen_ports.insert(grpc_port);
+                            break port;
+                        },
                         None => loop {
                             let port = get_random_available_port();
                             if chosen_ports.contains(&port) {
