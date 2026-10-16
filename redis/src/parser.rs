@@ -649,16 +649,12 @@ impl FramePreflight {
                             }
                         }
                         b'*' | b'%' | b'~' | b'|' | b'>' => {
-                            let children = declaration
-                                .map(|count| match marker {
-                                    b'*' | b'~' | b'>' => usize::try_from(count).ok(),
-                                    b'%' => usize::try_from(count).ok()?.checked_mul(2),
-                                    b'|' => {
-                                        usize::try_from(count).ok()?.checked_mul(2)?.checked_add(1)
-                                    }
-                                    _ => None,
-                                })
-                                .flatten();
+                            let children = declaration.and_then(|count| match marker {
+                                b'*' | b'~' | b'>' => usize::try_from(count).ok(),
+                                b'%' => usize::try_from(count).ok()?.checked_mul(2),
+                                b'|' => usize::try_from(count).ok()?.checked_mul(2)?.checked_add(1),
+                                _ => None,
+                            });
                             if let Some(children) = children {
                                 let minimum = children.checked_mul(3).ok_or(())?;
                                 if self.frame_bytes.checked_add(minimum).ok_or(())? > limit {
