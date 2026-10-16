@@ -14,6 +14,9 @@ use std::ops::Deref;
 use std::str::{from_utf8, Utf8Error};
 use std::string::FromUtf8Error;
 
+#[cfg(feature = "aio")]
+pub(crate) const RESPONSE_TOO_LARGE_MARKER: &str = "REDIS_RS_INTERNAL_RESPONSE_TOO_LARGE";
+
 macro_rules! invalid_type_error {
     ($v:expr, $det:expr) => {{
         fail!(invalid_type_error_inner!($v, $det))

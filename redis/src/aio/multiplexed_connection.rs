@@ -3,7 +3,10 @@ use crate::aio::setup_connection;
 #[cfg(feature = "cache-aio")]
 use crate::caching::{CacheManager, CacheStatistics, PrepareCacheResult};
 use crate::parser::ValueCodec;
-use crate::types::{closed_connection_error, RedisError, RedisFuture, RedisResult, Value};
+use crate::types::{
+    closed_connection_error, ErrorKind, RedisError, RedisFuture, RedisResult, ServerError, Value,
+    RESPONSE_TOO_LARGE_MARKER,
+};
 use crate::{
     check_resp3, cmd, cmd::Cmd, AsyncConnectionConfig, ProtocolVersion, PushInfo,
     RedisConnectionInfo, ToRedisArgs,
@@ -46,6 +49,8 @@ struct PipelineResponseExpectation {
     skipped_response_count: usize,
     // The number of responses to keep in the buffer
     expected_response_count: usize,
+    // Responses can contain errors and therefore not increase the value buffer length.
+    received_response_count: usize,
     // whether the pipelined request is a transaction
     is_transaction: bool,
 }
@@ -171,6 +176,14 @@ where
     fn send_result(self: Pin<&mut Self>, result: RedisResult<Value>) {
         let self_ = self.project();
         let result = match result {
+            Ok(Value::ServerError(ServerError::ExtensionError { ref code, .. }))
+                if code == RESPONSE_TOO_LARGE_MARKER =>
+            {
+                Err(RedisError::from((
+                    ErrorKind::ResponseTooLarge,
+                    "response frame too large",
+                )))
+            }
             // If this push message isn't a reply, we'll pass it as-is to the push manager and stop iterating
             Ok(Value::Push { kind, data }) if !kind.has_reply() => {
                 #[cfg(feature = "cache-aio")]
@@ -211,6 +224,7 @@ where
                     PipelineResponseExpectation {
                         expected_response_count,
                         skipped_response_count,
+                        received_response_count,
                         is_transaction,
                     },
             } => {
@@ -237,7 +251,8 @@ where
                     }
                 }
 
-                if buffer.len() < *expected_response_count {
+                *received_response_count += 1;
+                if *received_response_count < *expected_response_count {
                     // Need to gather more response values
                     self_.in_flight.push_front(entry);
                     return;
@@ -587,6 +602,7 @@ impl MultiplexedConnection {
                             Some(PipelineResponseExpectation {
                                 skipped_response_count: 0,
                                 expected_response_count: pipeline.commands.len(),
+                                received_response_count: 0,
                                 is_transaction: false,
                             }),
                             self.response_timeout,
@@ -623,6 +639,7 @@ impl MultiplexedConnection {
                     Some(PipelineResponseExpectation {
                         skipped_response_count,
                         expected_response_count,
+                        received_response_count: 0,
                         is_transaction: cacheable_pipeline.transaction_mode,
                     }),
                     self.response_timeout,
@@ -638,6 +655,7 @@ impl MultiplexedConnection {
                 Some(PipelineResponseExpectation {
                     skipped_response_count: offset,
                     expected_response_count: count,
+                    received_response_count: 0,
                     is_transaction: cmd.is_transaction(),
                 }),
                 self.response_timeout,

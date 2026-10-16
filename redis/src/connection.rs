@@ -1674,7 +1674,7 @@ impl Connection {
                 return result;
             };
             let Some(io_error) = err.as_io_error() else {
-                if err.is_response_too_large() {
+                if err.is_response_too_large() && !self.parser.last_response_was_dropped() {
                     self.close_connection();
                 }
                 if self.messages_to_skip > 0 {

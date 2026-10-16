@@ -4,6 +4,8 @@ use std::{
     str,
 };
 
+#[cfg(feature = "aio")]
+use crate::types::RESPONSE_TOO_LARGE_MARKER;
 use crate::types::{
     ErrorKind, PushKind, RedisError, RedisResult, ServerError, ServerErrorKind, Value,
     VerbatimFormat,
@@ -372,57 +374,78 @@ mod aio_support {
         }
 
         fn decode_stream(&mut self, bytes: &mut BytesMut, eof: bool) -> RedisResult<Option<Value>> {
-            let new_start = if self.max_response_bytes.is_some() {
-                self.last_seen_len.min(bytes.len())
-            } else {
-                0
-            };
-            let new_bytes = &bytes[new_start..];
-            let new_bytes_len = new_bytes.len();
-            let (scanned, frame_complete) = if let Some(limit) = self.max_response_bytes {
-                self.preflight
-                    .scan(new_bytes, limit)
-                    .map_err(|()| response_too_large())?
-            } else {
-                (new_bytes.len(), false)
-            };
-            let (opt, removed_len) = {
-                let buffer = &bytes[..];
-                let mut stream =
-                    combine::easy::Stream(combine::stream::MaybePartialStream(buffer, !eof));
-                match combine::stream::decode_tokio(value(None), &mut stream, &mut self.state) {
-                    Ok(x) => x,
-                    Err(err) => {
-                        let err = err
-                            .map_position(|pos| pos.translate_position(buffer))
-                            .map_range(|range| format!("{range:?}"))
-                            .to_string();
-                        return Err(RedisError::from((
-                            ErrorKind::ParseError,
-                            "parse error",
-                            err,
-                        )));
-                    }
-                }
-            };
-
-            bytes.advance(removed_len);
-            match opt {
-                Some(result) => {
-                    self.last_seen_len = 0;
-                    Ok(Some(result))
-                }
-                None => {
-                    if self.max_response_bytes.is_some()
-                        && !frame_complete
-                        && scanned == new_bytes_len
-                    {
-                        self.last_seen_len = bytes.len();
+            loop {
+                let new_start = if self.max_response_bytes.is_some() {
+                    self.last_seen_len.min(bytes.len())
+                } else {
+                    0
+                };
+                let new_bytes = &bytes[new_start..];
+                let new_bytes_len = new_bytes.len();
+                let (scanned, frame_complete, exceeded, frame_marker) =
+                    if let Some(limit) = self.max_response_bytes {
+                        self.preflight
+                            .scan(new_bytes, limit)
+                            .map_err(|()| response_too_large())?
                     } else {
-                        self.last_seen_len = 0;
+                        (new_bytes.len(), false, false, None)
+                    };
+                if exceeded {
+                    bytes.advance(new_start + scanned);
+                    self.state = AnySendSyncPartialState::default();
+                    self.last_seen_len = 0;
+                    if !frame_complete {
+                        return Ok(None);
                     }
-                    Ok(None)
+                    if frame_marker == Some(b'>') {
+                        if bytes.is_empty() {
+                            return Ok(None);
+                        }
+                        continue;
+                    }
+                    return Ok(Some(Value::ServerError(ServerError::ExtensionError {
+                        code: RESPONSE_TOO_LARGE_MARKER.to_string(),
+                        detail: None,
+                    })));
                 }
+                let (opt, removed_len) = {
+                    let buffer = &bytes[..];
+                    let mut stream =
+                        combine::easy::Stream(combine::stream::MaybePartialStream(buffer, !eof));
+                    match combine::stream::decode_tokio(value(None), &mut stream, &mut self.state) {
+                        Ok(x) => x,
+                        Err(err) => {
+                            let err = err
+                                .map_position(|pos| pos.translate_position(buffer))
+                                .map_range(|range| format!("{range:?}"))
+                                .to_string();
+                            return Err(RedisError::from((
+                                ErrorKind::ParseError,
+                                "parse error",
+                                err,
+                            )));
+                        }
+                    }
+                };
+
+                bytes.advance(removed_len);
+                return match opt {
+                    Some(result) => {
+                        self.last_seen_len = 0;
+                        Ok(Some(result))
+                    }
+                    None => {
+                        if self.max_response_bytes.is_some()
+                            && !frame_complete
+                            && scanned == new_bytes_len
+                        {
+                            self.last_seen_len = bytes.len();
+                        } else {
+                            self.last_seen_len = 0;
+                        }
+                        Ok(None)
+                    }
+                };
             }
         }
     }
@@ -475,6 +498,7 @@ pub struct Parser {
     decoder: Decoder<AnySendSyncPartialState, PointerOffset<[u8]>>,
     max_response_bytes: Option<usize>,
     pending_bytes: VecDeque<u8>,
+    last_response_was_dropped: bool,
 }
 
 impl Default for Parser {
@@ -497,6 +521,7 @@ impl Parser {
             decoder: Decoder::new(),
             max_response_bytes: None,
             pending_bytes: VecDeque::new(),
+            last_response_was_dropped: false,
         }
     }
 
@@ -504,19 +529,26 @@ impl Parser {
 
     /// Parses synchronously into a single value from the reader.
     pub fn parse_value<T: Read>(&mut self, mut reader: T) -> RedisResult<Value> {
+        self.last_response_was_dropped = false;
         if let Some(limit) = self.max_response_bytes {
             let exceeded = std::rc::Rc::new(std::cell::Cell::new(false));
+            let dropped = std::rc::Rc::new(std::cell::Cell::new(false));
             let mut reader = ResponseLimitReader::new(
                 &mut reader,
                 limit,
                 &mut self.pending_bytes,
                 exceeded.clone(),
+                dropped.clone(),
             );
             let mut decoder = &mut self.decoder;
             let result = combine::decode!(decoder, reader, value(None), |input, _| {
                 combine::stream::easy::Stream::from(input)
             });
             if exceeded.get() {
+                self.last_response_was_dropped = dropped.get();
+                if dropped.get() {
+                    self.decoder = Decoder::new();
+                }
                 return Err(response_too_large());
             }
             return match result {
@@ -532,6 +564,10 @@ impl Parser {
             Err(err) => Err(to_redis_err!(err, decoder)),
             Ok(result) => Ok(result),
         }
+    }
+
+    pub(crate) fn last_response_was_dropped(&self) -> bool {
+        self.last_response_was_dropped
     }
 
     /// Sets a maximum number of bytes accepted for each response frame.
@@ -550,6 +586,9 @@ struct FramePreflight {
     frame_bytes: usize,
     line: Vec<u8>,
     marker: Option<u8>,
+    frame_marker: Option<u8>,
+    completed_marker: Option<u8>,
+    exceeded: bool,
     bulk_remaining: usize,
     aggregate_remaining: Vec<usize>,
     #[cfg(test)]
@@ -557,9 +596,10 @@ struct FramePreflight {
 }
 
 impl FramePreflight {
-    fn scan(&mut self, bytes: &[u8], limit: usize) -> Result<(usize, bool), ()> {
+    fn scan(&mut self, bytes: &[u8], limit: usize) -> Result<(usize, bool, bool, Option<u8>), ()> {
         let mut cursor = 0;
         let mut frame_complete = false;
+        self.completed_marker = None;
         while cursor < bytes.len() {
             if self.bulk_remaining > 0 {
                 let count = self.bulk_remaining.min(bytes.len() - cursor);
@@ -601,7 +641,7 @@ impl FramePreflight {
                             {
                                 let remaining = length.checked_add(2).ok_or(())?;
                                 if self.frame_bytes.checked_add(remaining).ok_or(())? > limit {
-                                    return Err(());
+                                    self.exceeded = true;
                                 }
                                 self.bulk_remaining = remaining;
                             } else {
@@ -622,7 +662,7 @@ impl FramePreflight {
                             if let Some(children) = children {
                                 let minimum = children.checked_mul(3).ok_or(())?;
                                 if self.frame_bytes.checked_add(minimum).ok_or(())? > limit {
-                                    return Err(());
+                                    self.exceeded = true;
                                 }
                                 if children == 0 {
                                     frame_complete = self.complete_value();
@@ -643,24 +683,32 @@ impl FramePreflight {
                     }
                 }
             } else {
+                if self.frame_marker.is_none() && self.aggregate_remaining.is_empty() {
+                    self.frame_marker = Some(byte);
+                }
                 self.marker = Some(byte);
             }
         }
-        Ok((cursor, frame_complete))
+        let exceeded = self.exceeded;
+        let completed_marker = self.completed_marker;
+        if frame_complete {
+            self.exceeded = false;
+        }
+        Ok((cursor, frame_complete, exceeded, completed_marker))
     }
 
     fn account_bytes(&mut self, count: usize, limit: usize) -> Result<(), ()> {
         self.frame_bytes = self.frame_bytes.checked_add(count).ok_or(())?;
         if self.frame_bytes > limit {
-            Err(())
-        } else {
-            Ok(())
+            self.exceeded = true;
         }
+        Ok(())
     }
 
     fn complete_value(&mut self) -> bool {
         loop {
             let Some(remaining) = self.aggregate_remaining.last_mut() else {
+                self.completed_marker = self.frame_marker.take();
                 self.frame_bytes = 0;
                 self.line.clear();
                 self.marker = None;
@@ -680,7 +728,10 @@ impl FramePreflight {
 #[cfg(test)]
 fn response_frame_exceeds(bytes: &[u8], limit: usize) -> bool {
     let mut preflight = FramePreflight::default();
-    matches!(preflight.scan(bytes, limit), Err(()))
+    preflight
+        .scan(bytes, limit)
+        .map(|(_, _, exceeded, _)| exceeded)
+        .unwrap_or(true)
 }
 
 struct ResponseLimitReader<'a, R> {
@@ -691,6 +742,7 @@ struct ResponseLimitReader<'a, R> {
     preflight: FramePreflight,
     complete: bool,
     exceeded: std::rc::Rc<std::cell::Cell<bool>>,
+    dropped: std::rc::Rc<std::cell::Cell<bool>>,
 }
 
 impl<'a, R> ResponseLimitReader<'a, R> {
@@ -699,6 +751,7 @@ impl<'a, R> ResponseLimitReader<'a, R> {
         limit: usize,
         pending: &'a mut VecDeque<u8>,
         exceeded: std::rc::Rc<std::cell::Cell<bool>>,
+        dropped: std::rc::Rc<std::cell::Cell<bool>>,
     ) -> Self {
         Self {
             inner,
@@ -708,6 +761,7 @@ impl<'a, R> ResponseLimitReader<'a, R> {
             preflight: FramePreflight::default(),
             complete: false,
             exceeded,
+            dropped,
         }
     }
 
@@ -730,8 +784,15 @@ impl<'a, R> ResponseLimitReader<'a, R> {
         }
 
         match self.preflight.scan(&chunk[..count], self.limit) {
-            Ok((consumed, complete)) => {
-                self.ready.extend(&chunk[..consumed]);
+            Ok((consumed, complete, exceeded, _)) => {
+                if exceeded {
+                    self.exceeded.set(true);
+                    if complete {
+                        self.dropped.set(true);
+                    }
+                } else {
+                    self.ready.extend(&chunk[..consumed]);
+                }
                 if complete {
                     self.complete = true;
                     for byte in chunk[consumed..count].iter().rev() {
@@ -875,7 +936,7 @@ mod tests {
     #[test]
     fn parser_accepts_exact_frame_budget_and_resets_for_next_frame() {
         let mut response = b"$1015\r\n".to_vec();
-        response.extend(std::iter::repeat_n(b'x', 1_015));
+        response.extend(std::iter::repeat(b'x').take(1_015));
         response.extend_from_slice(b"\r\n+OK\r\n");
         let mut reader = std::io::Cursor::new(response);
         let mut parser = Parser::new().set_max_response_bytes(Some(1_024));
@@ -895,7 +956,7 @@ mod tests {
     #[test]
     fn response_limit_reader_batches_bulk_payload_reads() {
         let mut response = b"$32768\r\n".to_vec();
-        response.extend(std::iter::repeat_n(b'x', 32_768));
+        response.extend(std::iter::repeat(b'x').take(32_768));
         response.extend_from_slice(b"\r\n");
         let source = CountingReader {
             inner: std::io::Cursor::new(response),
@@ -905,7 +966,8 @@ mod tests {
         };
         let exceeded = std::rc::Rc::new(std::cell::Cell::new(false));
         let mut pending = VecDeque::new();
-        let mut reader = ResponseLimitReader::new(source, 40_000, &mut pending, exceeded);
+        let dropped = std::rc::Rc::new(std::cell::Cell::new(false));
+        let mut reader = ResponseLimitReader::new(source, 40_000, &mut pending, exceeded, dropped);
         let mut buffer = [0; 8_192];
         while reader.read(&mut buffer).expect("bounded read succeeds") > 0 {}
 
@@ -955,25 +1017,32 @@ mod tests {
 
     #[cfg(feature = "aio")]
     #[test]
-    fn value_codec_rejects_oversized_declared_bulk_across_chunks() {
-        let mut codec = ValueCodec::with_max_response_bytes(Some(1_024));
+    fn value_codec_discards_oversized_bulk_across_chunks_and_preserves_next_frame() {
+        const LIMIT: usize = 1_024;
+        let mut response = format!("${}\r\n", LIMIT * 2).into_bytes();
+        response.extend(std::iter::repeat(b'x').take(LIMIT * 2));
+        response.extend_from_slice(b"\r\n+OK\r\n");
+        let mut codec = ValueCodec::with_max_response_bytes(Some(LIMIT));
         let mut bytes = bytes::BytesMut::new();
 
-        for chunk in b"$999999999\r\n".chunks(3) {
+        for chunk in response.chunks(127) {
             bytes.extend_from_slice(chunk);
             let result: RedisResult<Option<Value>> = codec.decode(&mut bytes);
-            if let Err(error) = result {
-                assert!(error.is_response_too_large());
+            if let Some(Value::ServerError(ServerError::ExtensionError { code, .. })) =
+                result.expect("complete oversized frame is discarded without closing the codec")
+            {
+                assert_eq!(code, RESPONSE_TOO_LARGE_MARKER);
+                assert_eq!(&bytes[..], b"+OK\r\n");
                 return;
             }
             assert!(bytes.len() <= 1_024 + 8 * 1_024);
         }
-        panic!("oversized bulk declaration was not rejected");
+        panic!("oversized bulk response was not reported after draining");
     }
 
     #[cfg(feature = "aio")]
     #[test]
-    fn value_codec_rejects_oversized_aggregate_before_allocating_elements() {
+    fn value_codec_does_not_buffer_oversized_declared_aggregates_before_draining() {
         for response in [
             &b"*999999999\r\n"[..],
             &b"%999999999\r\n"[..],
@@ -983,18 +1052,37 @@ mod tests {
         ] {
             let mut codec = ValueCodec::with_max_response_bytes(Some(1_024));
             let mut bytes = bytes::BytesMut::new();
-            let mut rejected = false;
             for chunk in response.chunks(2) {
                 bytes.extend_from_slice(chunk);
                 let result: RedisResult<Option<Value>> = codec.decode(&mut bytes);
-                if let Err(error) = result {
-                    assert!(error.is_response_too_large(), "{response:?}: {error}");
-                    rejected = true;
-                    break;
-                }
+                assert_eq!(
+                    result.expect("incomplete oversized aggregate is drained lazily"),
+                    None
+                );
+                assert!(bytes.len() <= response.len(), "{response:?}: {bytes:?}");
             }
-            assert!(rejected, "{response:?} was not rejected");
         }
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn value_codec_reports_oversized_aggregate_after_draining_the_frame() {
+        let mut response = b"*1\r\n".to_vec();
+        response.extend_from_slice(format!("${}\r\n", 1_025).as_bytes());
+        response.extend(std::iter::repeat(b'x').take(1_025));
+        response.extend_from_slice(b"\r\n+OK\r\n");
+        let mut codec = ValueCodec::with_max_response_bytes(Some(1_024));
+        let mut bytes = bytes::BytesMut::from(response.as_slice());
+
+        let result = codec
+            .decode(&mut bytes)
+            .expect("oversized aggregate is reported as a frame result");
+        assert!(matches!(
+            result,
+            Some(Value::ServerError(ServerError::ExtensionError { code, .. }))
+                if code == RESPONSE_TOO_LARGE_MARKER
+        ));
+        assert_eq!(&bytes[..], b"+OK\r\n");
     }
 
     #[cfg(feature = "aio")]
@@ -1004,8 +1092,8 @@ mod tests {
         let mut bytes = bytes::BytesMut::from(&b"+OK\r\n*999999999\r\n"[..]);
 
         assert_eq!(codec.decode(&mut bytes).unwrap(), Some(Value::Okay));
-        let error = codec.decode(&mut bytes).unwrap_err();
-        assert!(error.is_response_too_large());
+        assert_eq!(codec.decode(&mut bytes).unwrap(), None);
+        assert!(bytes.is_empty());
     }
 
     #[cfg(feature = "aio")]
