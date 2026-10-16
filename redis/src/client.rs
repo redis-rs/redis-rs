@@ -5,7 +5,10 @@ use crate::aio::{AsyncPushSender, DefaultAsyncDNSResolver};
 #[cfg(feature = "aio")]
 use crate::io::{tcp::TcpSettings, AsyncDNSResolver};
 use crate::{
-    connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
+    connection::{
+        connect, connect_with_max_response_bytes, Connection, ConnectionInfo, ConnectionLike,
+        IntoConnectionInfo,
+    },
     types::{RedisResult, Value},
 };
 #[cfg(feature = "aio")]
@@ -45,6 +48,23 @@ pub struct Client {
 /// let con = client.get_connection().unwrap();
 /// ```
 impl Client {
+    /// Opens a connection with additional response parsing limits.
+    pub fn get_connection_with_config(&self, config: &ConnectionConfig) -> RedisResult<Connection> {
+        connect_with_max_response_bytes(&self.connection_info, None, config.max_response_bytes)
+    }
+
+    /// Opens a connection with a timeout and additional response parsing limits.
+    pub fn get_connection_with_timeout_and_config(
+        &self,
+        timeout: Duration,
+        config: &ConnectionConfig,
+    ) -> RedisResult<Connection> {
+        connect_with_max_response_bytes(
+            &self.connection_info,
+            Some(timeout),
+            config.max_response_bytes,
+        )
+    }
     /// Connects to a redis server and returns a client.  This does not
     /// actually open a connection yet but it does perform some basic
     /// checks on the URL that might make the operation fail.
@@ -166,6 +186,25 @@ impl Client {
     }
 }
 
+/// Options for creating a synchronous connection.
+#[derive(Clone, Debug, Default)]
+pub struct ConnectionConfig {
+    pub(crate) max_response_bytes: Option<usize>,
+}
+
+impl ConnectionConfig {
+    /// Creates a connection configuration with default behavior.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Limits each parsed response frame to the specified number of bytes.
+    pub fn set_max_response_bytes(mut self, max_response_bytes: Option<usize>) -> Self {
+        self.max_response_bytes = max_response_bytes;
+        self
+    }
+}
+
 #[cfg(feature = "cache-aio")]
 #[derive(Clone)]
 pub(crate) enum Cache {
@@ -187,10 +226,16 @@ pub struct AsyncConnectionConfig {
     pub(crate) cache: Option<Cache>,
     pub(crate) tcp_settings: TcpSettings,
     pub(crate) dns_resolver: Option<std::sync::Arc<dyn AsyncDNSResolver>>,
+    pub(crate) max_response_bytes: Option<usize>,
 }
 
 #[cfg(feature = "aio")]
 impl AsyncConnectionConfig {
+    /// Limits each parsed response frame to the specified number of bytes.
+    pub fn set_max_response_bytes(mut self, max_response_bytes: Option<usize>) -> Self {
+        self.max_response_bytes = max_response_bytes;
+        self
+    }
     /// Creates a new instance of the options with nothing set
     pub fn new() -> Self {
         Self::default()
@@ -922,9 +967,35 @@ impl ConnectionLike for Client {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::{io::Write, net::TcpListener, thread};
 
     #[test]
     fn regression_293_parse_ipv6_with_interface() {
         assert!(Client::open(("fe80::cafe:beef%eno1", 6379)).is_ok());
+    }
+
+    #[test]
+    fn sync_connection_config_limits_handshake_responses() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test listener");
+        let port = listener.local_addr().expect("listener address").port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept test connection");
+            let response = format!("+{}\r\n", "x".repeat(1_024));
+            stream
+                .write_all(response.as_bytes())
+                .expect("write oversized handshake response");
+        });
+
+        let client = Client::open(format!("redis://127.0.0.1:{port}/?protocol=resp3"))
+            .expect("parse test Redis URL");
+        let result = client.get_connection_with_config(
+            &ConnectionConfig::new().set_max_response_bytes(Some(1_024)),
+        );
+        let Err(error) = result else {
+            panic!("oversized HELLO response must fail during connection setup");
+        };
+        server.join().expect("join test server");
+
+        assert!(error.is_response_too_large());
     }
 }

@@ -1098,6 +1098,14 @@ pub fn connect(
     connection_info: &ConnectionInfo,
     timeout: Option<Duration>,
 ) -> RedisResult<Connection> {
+    connect_with_max_response_bytes(connection_info, timeout, None)
+}
+
+pub fn connect_with_max_response_bytes(
+    connection_info: &ConnectionInfo,
+    timeout: Option<Duration>,
+    max_response_bytes: Option<usize>,
+) -> RedisResult<Connection> {
     let start = Instant::now();
     let con: ActualConnection = ActualConnection::new(&connection_info.addr, timeout)?;
 
@@ -1116,6 +1124,7 @@ pub fn connect(
     let con = setup_connection(
         con,
         &connection_info.redis,
+        max_response_bytes,
         #[cfg(feature = "cache-aio")]
         None,
     )?;
@@ -1337,11 +1346,12 @@ fn execute_connection_pipeline(
 fn setup_connection(
     con: ActualConnection,
     connection_info: &RedisConnectionInfo,
+    max_response_bytes: Option<usize>,
     #[cfg(feature = "cache-aio")] cache_config: Option<crate::caching::CacheConfig>,
 ) -> RedisResult<Connection> {
     let mut rv = Connection {
         con,
-        parser: Parser::new(),
+        parser: Parser::new().set_max_response_bytes(max_response_bytes),
         db: connection_info.db,
         pubsub: false,
         protocol: connection_info.protocol,
@@ -1664,6 +1674,9 @@ impl Connection {
                 return result;
             };
             let Some(io_error) = err.as_io_error() else {
+                if err.is_response_too_large() {
+                    self.close_connection();
+                }
                 if self.messages_to_skip > 0 {
                     self.messages_to_skip -= 1;
                     continue;

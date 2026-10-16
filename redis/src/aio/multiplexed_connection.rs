@@ -492,7 +492,8 @@ impl MultiplexedConnection {
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
-        let mut codec = ValueCodec::default().framed(stream);
+        let mut codec =
+            ValueCodec::with_max_response_bytes(config.max_response_bytes).framed(stream);
         if config.push_sender.is_some() {
             check_resp3!(
                 connection_info.protocol,

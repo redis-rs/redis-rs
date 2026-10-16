@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     io::{self, Read},
     str,
 };
@@ -350,10 +351,41 @@ mod aio_support {
     #[derive(Default)]
     pub struct ValueCodec {
         state: AnySendSyncPartialState,
+        max_response_bytes: Option<usize>,
+        preflight: FramePreflight,
+        last_seen_len: usize,
     }
 
     impl ValueCodec {
+        pub(crate) fn with_max_response_bytes(max_response_bytes: Option<usize>) -> Self {
+            Self {
+                state: AnySendSyncPartialState::default(),
+                max_response_bytes,
+                preflight: FramePreflight::default(),
+                last_seen_len: 0,
+            }
+        }
+
+        #[cfg(test)]
+        pub(super) fn scanned_bytes(&self) -> usize {
+            self.preflight.scanned_bytes
+        }
+
         fn decode_stream(&mut self, bytes: &mut BytesMut, eof: bool) -> RedisResult<Option<Value>> {
+            let new_start = if self.max_response_bytes.is_some() {
+                self.last_seen_len.min(bytes.len())
+            } else {
+                0
+            };
+            let new_bytes = &bytes[new_start..];
+            let new_bytes_len = new_bytes.len();
+            let (scanned, frame_complete) = if let Some(limit) = self.max_response_bytes {
+                self.preflight
+                    .scan(new_bytes, limit)
+                    .map_err(|()| response_too_large())?
+            } else {
+                (new_bytes.len(), false)
+            };
             let (opt, removed_len) = {
                 let buffer = &bytes[..];
                 let mut stream =
@@ -376,8 +408,21 @@ mod aio_support {
 
             bytes.advance(removed_len);
             match opt {
-                Some(result) => Ok(Some(result)),
-                None => Ok(None),
+                Some(result) => {
+                    self.last_seen_len = 0;
+                    Ok(Some(result))
+                }
+                None => {
+                    if self.max_response_bytes.is_some()
+                        && !frame_complete
+                        && scanned == new_bytes_len
+                    {
+                        self.last_seen_len = bytes.len();
+                    } else {
+                        self.last_seen_len = 0;
+                    }
+                    Ok(None)
+                }
             }
         }
     }
@@ -428,6 +473,8 @@ pub use self::aio_support::*;
 /// The internal redis response parser.
 pub struct Parser {
     decoder: Decoder<AnySendSyncPartialState, PointerOffset<[u8]>>,
+    max_response_bytes: Option<usize>,
+    pending_bytes: VecDeque<u8>,
 }
 
 impl Default for Parser {
@@ -448,6 +495,8 @@ impl Parser {
     pub fn new() -> Parser {
         Parser {
             decoder: Decoder::new(),
+            max_response_bytes: None,
+            pending_bytes: VecDeque::new(),
         }
     }
 
@@ -455,6 +504,26 @@ impl Parser {
 
     /// Parses synchronously into a single value from the reader.
     pub fn parse_value<T: Read>(&mut self, mut reader: T) -> RedisResult<Value> {
+        if let Some(limit) = self.max_response_bytes {
+            let exceeded = std::rc::Rc::new(std::cell::Cell::new(false));
+            let mut reader = ResponseLimitReader::new(
+                &mut reader,
+                limit,
+                &mut self.pending_bytes,
+                exceeded.clone(),
+            );
+            let mut decoder = &mut self.decoder;
+            let result = combine::decode!(decoder, reader, value(None), |input, _| {
+                combine::stream::easy::Stream::from(input)
+            });
+            if exceeded.get() {
+                return Err(response_too_large());
+            }
+            return match result {
+                Err(err) => Err(to_redis_err!(err, decoder)),
+                Ok(result) => Ok(result),
+            };
+        }
         let mut decoder = &mut self.decoder;
         let result = combine::decode!(decoder, reader, value(None), |input, _| {
             combine::stream::easy::Stream::from(input)
@@ -463,6 +532,237 @@ impl Parser {
             Err(err) => Err(to_redis_err!(err, decoder)),
             Ok(result) => Ok(result),
         }
+    }
+
+    /// Sets a maximum number of bytes accepted for each response frame.
+    pub fn set_max_response_bytes(mut self, max_response_bytes: Option<usize>) -> Self {
+        self.max_response_bytes = max_response_bytes;
+        self
+    }
+}
+
+fn response_too_large() -> RedisError {
+    RedisError::from((ErrorKind::ResponseTooLarge, "response frame too large"))
+}
+
+#[derive(Default)]
+struct FramePreflight {
+    frame_bytes: usize,
+    line: Vec<u8>,
+    marker: Option<u8>,
+    bulk_remaining: usize,
+    aggregate_remaining: Vec<usize>,
+    #[cfg(test)]
+    scanned_bytes: usize,
+}
+
+impl FramePreflight {
+    fn scan(&mut self, bytes: &[u8], limit: usize) -> Result<(usize, bool), ()> {
+        let mut cursor = 0;
+        let mut frame_complete = false;
+        while cursor < bytes.len() {
+            if self.bulk_remaining > 0 {
+                let count = self.bulk_remaining.min(bytes.len() - cursor);
+                self.account_bytes(count, limit)?;
+                self.bulk_remaining -= count;
+                #[cfg(test)]
+                {
+                    self.scanned_bytes += count;
+                }
+                cursor += count;
+                if self.bulk_remaining == 0 {
+                    frame_complete = self.complete_value();
+                    if frame_complete {
+                        break;
+                    }
+                }
+                continue;
+            }
+
+            self.account_bytes(1, limit)?;
+            let byte = bytes[cursor];
+            cursor += 1;
+            #[cfg(test)]
+            {
+                self.scanned_bytes += 1;
+            }
+            if let Some(marker) = self.marker {
+                self.line.push(byte);
+                if byte == b'\n' {
+                    let declaration =
+                        std::str::from_utf8(&self.line[..self.line.len().saturating_sub(2)])
+                            .ok()
+                            .and_then(|value| value.parse::<i64>().ok());
+                    self.line.clear();
+                    self.marker = None;
+                    match marker {
+                        b'$' | b'!' | b'=' => {
+                            if let Some(length) = declaration.and_then(|n| usize::try_from(n).ok())
+                            {
+                                let remaining = length.checked_add(2).ok_or(())?;
+                                if self.frame_bytes.checked_add(remaining).ok_or(())? > limit {
+                                    return Err(());
+                                }
+                                self.bulk_remaining = remaining;
+                            } else {
+                                frame_complete = self.complete_value();
+                            }
+                        }
+                        b'*' | b'%' | b'~' | b'|' | b'>' => {
+                            let children = declaration
+                                .map(|count| match marker {
+                                    b'*' | b'~' | b'>' => usize::try_from(count).ok(),
+                                    b'%' => usize::try_from(count).ok()?.checked_mul(2),
+                                    b'|' => {
+                                        usize::try_from(count).ok()?.checked_mul(2)?.checked_add(1)
+                                    }
+                                    _ => None,
+                                })
+                                .flatten();
+                            if let Some(children) = children {
+                                let minimum = children.checked_mul(3).ok_or(())?;
+                                if self.frame_bytes.checked_add(minimum).ok_or(())? > limit {
+                                    return Err(());
+                                }
+                                if children == 0 {
+                                    frame_complete = self.complete_value();
+                                } else {
+                                    if self.aggregate_remaining.len() >= MAX_RECURSE_DEPTH {
+                                        return Err(());
+                                    }
+                                    self.aggregate_remaining.push(children);
+                                }
+                            } else {
+                                frame_complete = self.complete_value();
+                            }
+                        }
+                        _ => frame_complete = self.complete_value(),
+                    }
+                    if frame_complete {
+                        break;
+                    }
+                }
+            } else {
+                self.marker = Some(byte);
+            }
+        }
+        Ok((cursor, frame_complete))
+    }
+
+    fn account_bytes(&mut self, count: usize, limit: usize) -> Result<(), ()> {
+        self.frame_bytes = self.frame_bytes.checked_add(count).ok_or(())?;
+        if self.frame_bytes > limit {
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn complete_value(&mut self) -> bool {
+        loop {
+            let Some(remaining) = self.aggregate_remaining.last_mut() else {
+                self.frame_bytes = 0;
+                self.line.clear();
+                self.marker = None;
+                self.bulk_remaining = 0;
+                return true;
+            };
+            *remaining -= 1;
+            if *remaining > 0 {
+                return false;
+            }
+            self.aggregate_remaining.pop();
+        }
+    }
+}
+
+#[cfg(feature = "aio")]
+#[cfg(test)]
+fn response_frame_exceeds(bytes: &[u8], limit: usize) -> bool {
+    let mut preflight = FramePreflight::default();
+    matches!(preflight.scan(bytes, limit), Err(()))
+}
+
+struct ResponseLimitReader<'a, R> {
+    inner: R,
+    limit: usize,
+    pending: &'a mut VecDeque<u8>,
+    ready: VecDeque<u8>,
+    preflight: FramePreflight,
+    complete: bool,
+    exceeded: std::rc::Rc<std::cell::Cell<bool>>,
+}
+
+impl<'a, R> ResponseLimitReader<'a, R> {
+    fn new(
+        inner: R,
+        limit: usize,
+        pending: &'a mut VecDeque<u8>,
+        exceeded: std::rc::Rc<std::cell::Cell<bool>>,
+    ) -> Self {
+        Self {
+            inner,
+            limit,
+            pending,
+            ready: VecDeque::new(),
+            preflight: FramePreflight::default(),
+            complete: false,
+            exceeded,
+        }
+    }
+
+    fn prepare_next_chunk(&mut self) -> io::Result<usize>
+    where
+        R: Read,
+    {
+        let mut chunk = [0; 8_192];
+        let count = if self.pending.is_empty() {
+            self.inner.read(&mut chunk)?
+        } else {
+            let count = self.pending.len().min(chunk.len());
+            for byte in &mut chunk[..count] {
+                *byte = self.pending.pop_front().expect("length checked");
+            }
+            count
+        };
+        if count == 0 {
+            return Ok(0);
+        }
+
+        match self.preflight.scan(&chunk[..count], self.limit) {
+            Ok((consumed, complete)) => {
+                self.ready.extend(&chunk[..consumed]);
+                if complete {
+                    self.complete = true;
+                    for byte in chunk[consumed..count].iter().rev() {
+                        self.pending.push_front(*byte);
+                    }
+                }
+                Ok(consumed)
+            }
+            Err(()) => {
+                self.exceeded.set(true);
+                Err(io::Error::other("redis-response-too-large"))
+            }
+        }
+    }
+}
+
+impl<R: Read> Read for ResponseLimitReader<'_, R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        while self.ready.is_empty() && !self.complete {
+            if self.prepare_next_chunk()? == 0 {
+                return Ok(0);
+            }
+        }
+        let count = buffer.len().min(self.ready.len());
+        for byte in &mut buffer[..count] {
+            *byte = self.ready.pop_front().expect("length checked");
+        }
+        Ok(count)
     }
 }
 
@@ -478,6 +778,276 @@ pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "aio")]
+    use tokio_util::codec::Decoder;
+
+    struct CountingReader {
+        inner: std::io::Cursor<Vec<u8>>,
+        calls: usize,
+        multi_byte_calls: usize,
+        largest_request: usize,
+    }
+
+    impl Read for CountingReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            self.calls += 1;
+            self.largest_request = self.largest_request.max(buffer.len());
+            self.multi_byte_calls += usize::from(buffer.len() > 1);
+            self.inner.read(buffer)
+        }
+    }
+
+    #[test]
+    fn parser_rejects_declared_bulk_larger_than_frame_budget() {
+        let mut parser = Parser::new().set_max_response_bytes(Some(1_024));
+        let mut reader = std::io::Cursor::new(b"$999999999\r\n".as_slice());
+
+        let error = parser.parse_value(&mut reader).unwrap_err();
+
+        assert!(error.is_response_too_large());
+        assert_eq!(reader.position(), 12);
+    }
+
+    #[test]
+    fn parser_rejects_oversized_aggregate_before_allocating_elements() {
+        for response in [
+            &b"*999999999\r\n"[..],
+            &b"%999999999\r\n"[..],
+            &b"~999999999\r\n"[..],
+            &b"|999999999\r\n"[..],
+            &b">999999999\r\n"[..],
+        ] {
+            let mut parser = Parser::new().set_max_response_bytes(Some(1_024));
+            let error = parser.parse_value(response).unwrap_err();
+            assert!(error.is_response_too_large(), "{response:?}: {error}");
+        }
+    }
+
+    #[test]
+    fn parser_rejects_aggregate_count_overflow_before_allocating_elements() {
+        for response in [
+            &b"*9223372036854775807\r\n"[..],
+            &b"%9223372036854775807\r\n"[..],
+            &b"~9223372036854775807\r\n"[..],
+            &b"|9223372036854775807\r\n"[..],
+            &b">9223372036854775807\r\n"[..],
+        ] {
+            let mut parser = Parser::new().set_max_response_bytes(Some(usize::MAX));
+            let mut reader = std::io::Cursor::new(response);
+
+            let error = parser.parse_value(&mut reader).unwrap_err();
+
+            assert!(error.is_response_too_large(), "{response:?}: {error}");
+            assert_eq!(reader.position(), response.len() as u64);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "aio")]
+    fn parser_preflights_all_aggregate_count_markers() {
+        for response in [
+            &b"*999999999\r\n"[..],
+            &b"%999999999\r\n"[..],
+            &b"~999999999\r\n"[..],
+            &b"|999999999\r\n"[..],
+            &b">999999999\r\n"[..],
+        ] {
+            assert!(response_frame_exceeds(response, 1_024), "{response:?}");
+        }
+        assert!(response_frame_exceeds(
+            b"%9223372036854775807\r\n",
+            usize::MAX
+        ));
+    }
+
+    #[test]
+    fn parser_rejects_invalid_negative_map_and_blob_lengths_without_panicking() {
+        for response in [b"%-1\r\n".as_slice(), b"|-1\r\n", b"!-1\r\n", b"=-1\r\n"] {
+            let result = std::panic::catch_unwind(|| parse_redis_value(response));
+            assert!(result.is_ok(), "parser panicked for {response:?}");
+            assert!(
+                result.unwrap().is_err(),
+                "invalid frame was accepted: {response:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parser_accepts_exact_frame_budget_and_resets_for_next_frame() {
+        let mut response = b"$1015\r\n".to_vec();
+        response.extend(std::iter::repeat_n(b'x', 1_015));
+        response.extend_from_slice(b"\r\n+OK\r\n");
+        let mut reader = std::io::Cursor::new(response);
+        let mut parser = Parser::new().set_max_response_bytes(Some(1_024));
+
+        let value = parser
+            .parse_value(&mut reader)
+            .expect("frame at budget is accepted");
+        assert_eq!(value, Value::BulkString(vec![b'x'; 1_015]));
+        assert_eq!(
+            parser
+                .parse_value(&mut reader)
+                .expect("next frame starts fresh"),
+            Value::Okay
+        );
+    }
+
+    #[test]
+    fn response_limit_reader_batches_bulk_payload_reads() {
+        let mut response = b"$32768\r\n".to_vec();
+        response.extend(std::iter::repeat_n(b'x', 32_768));
+        response.extend_from_slice(b"\r\n");
+        let source = CountingReader {
+            inner: std::io::Cursor::new(response),
+            calls: 0,
+            multi_byte_calls: 0,
+            largest_request: 0,
+        };
+        let exceeded = std::rc::Rc::new(std::cell::Cell::new(false));
+        let mut pending = VecDeque::new();
+        let mut reader = ResponseLimitReader::new(source, 40_000, &mut pending, exceeded);
+        let mut buffer = [0; 8_192];
+        while reader.read(&mut buffer).expect("bounded read succeeds") > 0 {}
+
+        let source = reader.inner;
+        assert!(source.multi_byte_calls >= 4);
+        assert!(
+            source.calls <= 15,
+            "unexpected read count: {}",
+            source.calls
+        );
+        assert!(source.largest_request <= 8_192);
+    }
+
+    #[test]
+    fn response_limit_reader_buffers_header_reads_and_retains_following_frames() {
+        let source = CountingReader {
+            inner: std::io::Cursor::new(b"+OK\r\n+PONG\r\n".to_vec()),
+            calls: 0,
+            multi_byte_calls: 0,
+            largest_request: 0,
+        };
+        let mut reader = source;
+        let mut parser = Parser::new().set_max_response_bytes(Some(16));
+
+        assert_eq!(parser.parse_value(&mut reader).unwrap(), Value::Okay);
+        assert_eq!(
+            parser.parse_value(&mut reader).unwrap(),
+            Value::SimpleString("PONG".into())
+        );
+        assert_eq!(reader.calls, 1);
+        assert_eq!(reader.largest_request, 8_192);
+    }
+
+    #[test]
+    fn parser_does_not_treat_bulk_payload_as_an_aggregate_header() {
+        let payload = b"*999999999\r\n";
+        let mut response = format!("${}\r\n", payload.len()).into_bytes();
+        response.extend_from_slice(payload);
+        response.extend_from_slice(b"\r\n");
+        let mut parser = Parser::new().set_max_response_bytes(Some(1_024));
+
+        assert_eq!(
+            parser.parse_value(response.as_slice()).unwrap(),
+            Value::BulkString(payload.to_vec())
+        );
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn value_codec_rejects_oversized_declared_bulk_across_chunks() {
+        let mut codec = ValueCodec::with_max_response_bytes(Some(1_024));
+        let mut bytes = bytes::BytesMut::new();
+
+        for chunk in b"$999999999\r\n".chunks(3) {
+            bytes.extend_from_slice(chunk);
+            let result: RedisResult<Option<Value>> = codec.decode(&mut bytes);
+            if let Err(error) = result {
+                assert!(error.is_response_too_large());
+                return;
+            }
+            assert!(bytes.len() <= 1_024 + 8 * 1_024);
+        }
+        panic!("oversized bulk declaration was not rejected");
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn value_codec_rejects_oversized_aggregate_before_allocating_elements() {
+        for response in [
+            &b"*999999999\r\n"[..],
+            &b"%999999999\r\n"[..],
+            &b"~999999999\r\n"[..],
+            &b"|999999999\r\n"[..],
+            &b">999999999\r\n"[..],
+        ] {
+            let mut codec = ValueCodec::with_max_response_bytes(Some(1_024));
+            let mut bytes = bytes::BytesMut::new();
+            let mut rejected = false;
+            for chunk in response.chunks(2) {
+                bytes.extend_from_slice(chunk);
+                let result: RedisResult<Option<Value>> = codec.decode(&mut bytes);
+                if let Err(error) = result {
+                    assert!(error.is_response_too_large(), "{response:?}: {error}");
+                    rejected = true;
+                    break;
+                }
+            }
+            assert!(rejected, "{response:?} was not rejected");
+        }
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn value_codec_does_not_reject_a_later_frame_with_the_current_frame() {
+        let mut codec = ValueCodec::with_max_response_bytes(Some(1_024));
+        let mut bytes = bytes::BytesMut::from(&b"+OK\r\n*999999999\r\n"[..]);
+
+        assert_eq!(codec.decode(&mut bytes).unwrap(), Some(Value::Okay));
+        let error = codec.decode(&mut bytes).unwrap_err();
+        assert!(error.is_response_too_large());
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn value_codec_does_not_treat_bulk_payload_as_an_aggregate_header() {
+        let payload = b"*999999999\r\n";
+        let mut response = format!("${}\r\n", payload.len()).into_bytes();
+        response.extend_from_slice(payload);
+        response.extend_from_slice(b"\r\n");
+        let mut codec = ValueCodec::with_max_response_bytes(Some(1_024));
+        let mut bytes = bytes::BytesMut::from(response.as_slice());
+
+        assert_eq!(
+            codec.decode(&mut bytes).unwrap(),
+            Some(Value::BulkString(payload.to_vec()))
+        );
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn value_codec_scans_chunked_frame_bytes_once() {
+        let payload = vec![b'x'; 1024 * 1024];
+        let mut response = format!("${}\r\n", payload.len()).into_bytes();
+        response.extend_from_slice(&payload);
+        response.extend_from_slice(b"\r\n");
+        let expected_scanned = response.len();
+        let mut codec = ValueCodec::with_max_response_bytes(Some(expected_scanned));
+        let mut bytes = bytes::BytesMut::new();
+        let mut decoded = None;
+
+        for chunk in response.chunks(4 * 1_024) {
+            bytes.extend_from_slice(chunk);
+            let result = codec.decode(&mut bytes).expect("frame is within the limit");
+            if let Some(value) = result {
+                decoded = Some(value);
+                break;
+            }
+        }
+
+        assert_eq!(decoded, Some(Value::BulkString(payload)));
+        assert_eq!(codec.scanned_bytes(), expected_scanned);
+    }
 
     #[cfg(feature = "aio")]
     #[test]

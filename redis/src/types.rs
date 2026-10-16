@@ -93,6 +93,8 @@ pub enum NumericBehavior {
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
 #[non_exhaustive]
 pub enum ErrorKind {
+    /// The response frame exceeded the configured maximum byte size.
+    ResponseTooLarge,
     /// The server generated an invalid response.
     ResponseError,
     /// The parser failed to parse the server response.
@@ -836,6 +838,11 @@ pub enum RetryMethod {
 
 /// Indicates a general failure in the library.
 impl RedisError {
+    /// Returns whether this error was produced because a response frame exceeded its configured byte limit.
+    pub fn is_response_too_large(&self) -> bool {
+        self.kind() == ErrorKind::ResponseTooLarge
+    }
+
     /// Returns the kind of the error.
     pub fn kind(&self) -> ErrorKind {
         match self.repr {
@@ -906,6 +913,7 @@ impl RedisError {
             ErrorKind::Serialize => "serializing",
             ErrorKind::RESP3NotSupported => "resp3 is not supported by server",
             ErrorKind::ParseError => "parse error",
+            ErrorKind::ResponseTooLarge => "response frame too large",
             ErrorKind::NoSub => {
                 "Server declined unsubscribe related command in non-subscribed mode"
             }
@@ -1079,6 +1087,7 @@ impl RedisError {
             ErrorKind::NoSub => RetryMethod::NoRetry,
 
             ErrorKind::ParseError => RetryMethod::Reconnect,
+            ErrorKind::ResponseTooLarge => RetryMethod::Reconnect,
             ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
             ErrorKind::ClusterConnectionNotFound => RetryMethod::ReconnectFromInitialConnections,
 
