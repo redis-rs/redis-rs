@@ -2244,4 +2244,255 @@ mod basic_async {
         )
         .unwrap();
     }
+    #[cfg(test)]
+    mod response_limit_async {
+        use super::*;
+        use std::{
+            io::{BufRead, BufReader, Read as _, Write},
+            net::{TcpListener, TcpStream},
+            thread,
+        };
+
+        const RESPONSE_LIMIT: usize = 32;
+        const LARGE_PAYLOAD: &[u8] =
+            b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+        fn start_server() -> (String, TcpListener) {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            (address.to_string(), listener)
+        }
+
+        fn read_command(reader: &mut BufReader<TcpStream>) -> Vec<Vec<u8>> {
+            let mut line = Vec::new();
+            reader.read_until(b'\n', &mut line).unwrap();
+            assert!(line.starts_with(b"*"), "expected RESP array, got {line:?}");
+            let count: usize = std::str::from_utf8(&line[1..line.len() - 2])
+                .unwrap()
+                .parse()
+                .unwrap();
+
+            (0..count)
+                .map(|_| {
+                    line.clear();
+                    reader.read_until(b'\n', &mut line).unwrap();
+                    assert!(
+                        line.starts_with(b"$"),
+                        "expected bulk argument, got {line:?}"
+                    );
+                    let len: usize = std::str::from_utf8(&line[1..line.len() - 2])
+                        .unwrap()
+                        .parse()
+                        .unwrap();
+                    let mut argument = vec![0; len];
+                    reader.read_exact(&mut argument).unwrap();
+                    let mut crlf = [0; 2];
+                    reader.read_exact(&mut crlf).unwrap();
+                    assert_eq!(&crlf, b"\r\n");
+                    argument
+                })
+                .collect()
+        }
+
+        fn assert_command(reader: &mut BufReader<TcpStream>, expected: &[&[u8]]) {
+            assert_eq!(read_command(reader), expected);
+        }
+
+        fn oversized_bulk_frame() -> Vec<u8> {
+            let mut frame = format!("${}\r\n", LARGE_PAYLOAD.len()).into_bytes();
+            frame.extend_from_slice(LARGE_PAYLOAD);
+            frame.extend_from_slice(b"\r\n");
+            assert!(frame.len() > RESPONSE_LIMIT);
+            frame
+        }
+
+        fn read_resp3_setup(reader: &mut BufReader<TcpStream>) {
+            assert_command(reader, &[b"HELLO", b"3"]);
+            reader
+                .get_mut()
+                .write_all(b"%1\r\n+server\r\n+redis\r\n")
+                .unwrap();
+            #[cfg(not(feature = "disable-client-setinfo"))]
+            {
+                assert_command(reader, &[b"CLIENT", b"SETINFO", b"LIB-NAME", b"redis-rs"]);
+                assert_command(
+                    reader,
+                    &[
+                        b"CLIENT",
+                        b"SETINFO",
+                        b"LIB-VER",
+                        env!("CARGO_PKG_VERSION").as_bytes(),
+                    ],
+                );
+                reader.get_mut().write_all(b"+OK\r\n+OK\r\n").unwrap();
+            }
+        }
+
+        fn resp3_client(address: &str) -> redis::Client {
+            redis::Client::open(format!("redis://{address}/?protocol=resp3")).unwrap()
+        }
+
+        #[rstest]
+        #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+        #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+        #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+        fn multiplexed_connection_drops_oversized_response_and_reads_next_response(
+            #[case] runtime: RuntimeType,
+        ) {
+            block_on_all(
+                async {
+                    let (address, listener) = start_server();
+                    let server = thread::spawn(move || {
+                        let (stream, _) = listener.accept().unwrap();
+                        let mut reader = BufReader::new(stream);
+                        read_resp3_setup(&mut reader);
+                        assert_command(&mut reader, &[b"GET", b"large"]);
+                        let mut response = oversized_bulk_frame();
+                        response.extend_from_slice(b"+PONG\r\n");
+                        reader.get_mut().write_all(&response).unwrap();
+                        assert_command(&mut reader, &[b"PING"]);
+                        reader.get_mut().write_all(b"+PONG\r\n").unwrap();
+                    });
+
+                    let config = redis::AsyncConnectionConfig::new()
+                        .set_max_response_bytes(Some(RESPONSE_LIMIT))
+                        .set_response_timeout(std::time::Duration::from_secs(2));
+                    let mut connection = resp3_client(&address)
+                        .get_multiplexed_async_connection_with_config(&config)
+                        .await
+                        .unwrap();
+                    let error = cmd("GET")
+                        .arg("large")
+                        .query_async::<Value>(&mut connection)
+                        .await
+                        .unwrap_err();
+                    assert_eq!(error.kind(), ErrorKind::ResponseTooLarge, "{error:?}");
+                    let pong: String = cmd("PING").query_async(&mut connection).await.unwrap();
+                    assert_eq!(pong, "PONG");
+                    server.join().unwrap();
+                    Ok(())
+                },
+                runtime,
+            )
+            .unwrap();
+        }
+
+        #[rstest]
+        #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+        #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+        #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+        fn multiplexed_pipeline_drains_oversized_response_and_keeps_following_responses_aligned(
+            #[case] runtime: RuntimeType,
+        ) {
+            block_on_all(
+                async {
+                    let (address, listener) = start_server();
+                    let server = thread::spawn(move || {
+                        let (stream, _) = listener.accept().unwrap();
+                        let mut reader = BufReader::new(stream);
+                        read_resp3_setup(&mut reader);
+                        assert_command(&mut reader, &[b"GET", b"large"]);
+                        assert_command(&mut reader, &[b"GET", b"small"]);
+                        let mut responses = oversized_bulk_frame();
+                        responses.extend_from_slice(b"+SMALL\r\n");
+                        reader.get_mut().write_all(&responses).unwrap();
+                        assert_command(&mut reader, &[b"PING"]);
+                        reader.get_mut().write_all(b"+PONG\r\n").unwrap();
+                    });
+
+                    let config = redis::AsyncConnectionConfig::new()
+                        .set_max_response_bytes(Some(RESPONSE_LIMIT))
+                        .set_response_timeout(std::time::Duration::from_secs(2));
+                    let mut connection = resp3_client(&address)
+                        .get_multiplexed_async_connection_with_config(&config)
+                        .await
+                        .unwrap();
+                    let error = pipe()
+                        .cmd("GET")
+                        .arg("large")
+                        .cmd("GET")
+                        .arg("small")
+                        .query_async::<Vec<Value>>(&mut connection)
+                        .await
+                        .unwrap_err();
+                    assert_eq!(error.kind(), ErrorKind::ResponseTooLarge, "{error:?}");
+                    let pong: String = cmd("PING").query_async(&mut connection).await.unwrap();
+                    assert_eq!(pong, "PONG");
+                    server.join().unwrap();
+                    Ok(())
+                },
+                runtime,
+            )
+            .unwrap();
+        }
+
+        #[rstest]
+        #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+        #[cfg_attr(feature = "async-std-comp", case::async_std(RuntimeType::AsyncStd))]
+        #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
+        fn multiplexed_connection_drops_oversized_pubsub_message_and_receives_next_message(
+            #[case] runtime: RuntimeType,
+        ) {
+            block_on_all(
+                async {
+                    let (address, listener) = start_server();
+                    let server = thread::spawn(move || {
+                        let (stream, _) = listener.accept().unwrap();
+                        let mut reader = BufReader::new(stream);
+                        read_resp3_setup(&mut reader);
+                        assert_command(&mut reader, &[b"SUBSCRIBE", b"ch"]);
+                        reader
+                            .get_mut()
+                            .write_all(b">3\r\n+subscribe\r\n$2\r\nch\r\n:1\r\n")
+                            .unwrap();
+
+                        let mut responses =
+                            format!(">3\r\n+message\r\n$2\r\nch\r\n${}\r\n", LARGE_PAYLOAD.len())
+                                .into_bytes();
+                        responses.extend_from_slice(LARGE_PAYLOAD);
+                        responses
+                            .extend_from_slice(b"\r\n>3\r\n+message\r\n$2\r\nch\r\n$2\r\nok\r\n");
+                        reader.get_mut().write_all(&responses).unwrap();
+
+                        assert_command(&mut reader, &[b"PING"]);
+                        reader.get_mut().write_all(b"+PONG\r\n").unwrap();
+                    });
+
+                    let (push_sender, mut push_receiver) = tokio::sync::mpsc::unbounded_channel();
+                    let config = redis::AsyncConnectionConfig::new()
+                        .set_max_response_bytes(Some(RESPONSE_LIMIT))
+                        .set_response_timeout(std::time::Duration::from_secs(2))
+                        .set_push_sender(push_sender);
+                    let mut connection = resp3_client(&address)
+                        .get_multiplexed_async_connection_with_config(&config)
+                        .await
+                        .unwrap();
+                    connection.subscribe("ch").await.unwrap();
+                    let subscribe = push_receiver
+                        .recv()
+                        .timeout(futures_time::time::Duration::from_secs(2))
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(subscribe.kind, redis::PushKind::Subscribe);
+
+                    let message = push_receiver
+                        .recv()
+                        .timeout(futures_time::time::Duration::from_secs(2))
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(message.kind, redis::PushKind::Message);
+                    assert_eq!(message.data[1], Value::BulkString(b"ok".to_vec()));
+
+                    let pong: String = cmd("PING").query_async(&mut connection).await.unwrap();
+                    assert_eq!(pong, "PONG");
+                    server.join().unwrap();
+                    Ok(())
+                },
+                runtime,
+            )
+            .unwrap();
+        }
+    }
 }

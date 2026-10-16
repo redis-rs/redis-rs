@@ -250,11 +250,11 @@ impl ToRedisArgs for RadiusOptions {
             RadiusOrder::Desc => n += 1,
             _ => {}
         };
-        if self.store.is_some() {
-            n += 1 + self.store.as_ref().unwrap().len();
+        if let Some(store) = &self.store {
+            n += 1 + store.len();
         }
-        if self.store_dist.is_some() {
-            n += 1 + self.store_dist.as_ref().unwrap().len();
+        if let Some(store_dist) = &self.store_dist {
+            n += 1 + store_dist.len();
         }
         n
     }

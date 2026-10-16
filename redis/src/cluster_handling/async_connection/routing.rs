@@ -27,8 +27,9 @@ impl<C> From<InternalSingleNodeRouting<C>> for InternalRoutingInfo<C> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(super) enum InternalSingleNodeRouting<C> {
+    #[default]
     Random,
     SpecificNode(Route),
     ByAddress(String),
@@ -40,12 +41,6 @@ pub(super) enum InternalSingleNodeRouting<C> {
         redirect: Redirect,
         previous_routing: Box<InternalSingleNodeRouting<C>>,
     },
-}
-
-impl<C> Default for InternalSingleNodeRouting<C> {
-    fn default() -> Self {
-        Self::Random
-    }
 }
 
 impl<C> From<SingleNodeRoutingInfo> for InternalSingleNodeRouting<C> {
