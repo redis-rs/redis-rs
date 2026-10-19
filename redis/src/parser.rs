@@ -352,17 +352,33 @@ mod aio_support {
     use tokio::io::AsyncRead;
     use tokio_util::codec::{Decoder, Encoder};
 
-    /// Decodes Redis replies out of an async byte stream.
+    /// Decodes Redis replies from an async byte stream.
     ///
-    /// Harness-visible through the `doc(hidden)` re-export in `lib.rs` so the
-    /// codec-level microbenchmarks can drive it directly.
+    /// `doc(hidden)`-re-exported in `lib.rs` so the codec microbenchmarks can
+    /// drive it directly.
     #[derive(Default)]
     pub struct ValueCodec {
         state: AnySendSyncPartialState,
+        /// Whether `combine` is partway through a reply. If it is, the front of
+        /// the buffer is mid-reply and must not be read as a new kind byte, so
+        /// the fast path in [`Self::decode_stream`] stays out of the way.
+        in_progress: bool,
     }
 
     impl ValueCodec {
         fn decode_stream(&mut self, bytes: &mut BytesMut, eof: bool) -> RedisResult<Option<Value>> {
+            // Settle `+`/`:` replies before `combine` can start walking them.
+            // Only at a reply boundary: once it has consumed part of a reply,
+            // the front of the buffer is mid-reply, not a new kind byte.
+            let scalar = if self.in_progress {
+                None
+            } else {
+                fast_scalar(bytes)
+            };
+            if let Some((value, consumed)) = scalar {
+                bytes.advance(consumed);
+                return Ok(Some(value));
+            }
             let (opt, removed_len) = {
                 let buffer = &bytes[..];
                 let mut stream =
@@ -370,6 +386,9 @@ mod aio_support {
                 match combine::stream::decode_tokio(value(None), &mut stream, &mut self.state) {
                     Ok(x) => x,
                     Err(err) => {
+                        // The reply was rejected; start the next input from a
+                        // general parse.
+                        self.in_progress = false;
                         let err = err
                             .map_position(|pos| pos.translate_position(buffer))
                             .map_range(|range| format!("{range:?}"))
@@ -381,8 +400,14 @@ mod aio_support {
 
             bytes.advance(removed_len);
             match opt {
-                Some(result) => Ok(Some(result)),
-                None => Ok(None),
+                Some(result) => {
+                    self.in_progress = false;
+                    Ok(Some(result))
+                }
+                None => {
+                    self.in_progress = true;
+                    Ok(None)
+                }
             }
         }
     }
@@ -430,6 +455,36 @@ mod aio_support {
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 pub use self::aio_support::*;
 
+/// Parses a top-level `+<utf8>\r\n` or `:<int>\r\n` reply, returning its value
+/// and the number of bytes it occupies.
+///
+/// Returns `None` for anything else -- another kind, an incomplete line, or
+/// content `combine` must judge (invalid UTF-8, an integer it would reject) --
+/// so the caller can fall back to it, errors included. Nested values never
+/// reach this; `combine` parses those.
+fn fast_scalar(buffer: &[u8]) -> Option<(Value, usize)> {
+    let (&kind, rest) = buffer.split_first()?;
+    if !matches!(kind, b'+' | b':') {
+        return None;
+    }
+    let line_end = rest.windows(2).position(|window| window == b"\r\n")?;
+    let line = &rest[..line_end];
+    // Kind byte, line, CRLF.
+    let consumed = line_end + 3;
+    let value = match kind {
+        b'+' => match str::from_utf8(line).ok()? {
+            // The same convention `simple_string` implements.
+            "OK" => Value::Okay,
+            text => Value::SimpleString(text.into()),
+        },
+        // `int` trims the line before parsing it, so this does too: anything it
+        // would reject falls back to it (and its error) rather than being
+        // judged differently here.
+        _ => Value::Int(str::from_utf8(line).ok()?.trim().parse().ok()?),
+    };
+    Some((value, consumed))
+}
+
 /// The internal redis response parser.
 pub struct Parser {
     decoder: Decoder<AnySendSyncPartialState, PointerOffset<[u8]>>,
@@ -476,6 +531,11 @@ impl Parser {
 /// This is the most straightforward way to parse something into a low
 /// level redis value instead of having to use a whole parser.
 pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
+    // Settle a top-level line-type scalar before `combine`; anything it
+    // declines goes through the general parser, errors included.
+    if let Some((value, _consumed)) = fast_scalar(bytes) {
+        return Ok(value);
+    }
     let mut parser = Parser::new();
     parser.parse_value(bytes)
 }
@@ -527,6 +587,144 @@ mod tests {
         let result = codec.decode_eof(&mut bytes).unwrap().unwrap();
 
         assert_eq!(result, Value::Okay);
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn decode_fast_path_line_scalars() {
+        use tokio_util::codec::Decoder;
+        let mut codec = ValueCodec::default();
+
+        let mut bytes = bytes::BytesMut::from(&b"+OK\r\n:42\r\n"[..]);
+        assert_eq!(codec.decode(&mut bytes), Ok(Some(Value::Okay)));
+        assert_eq!(codec.decode(&mut bytes), Ok(Some(Value::Int(42))));
+        assert!(bytes.is_empty());
+        assert_eq!(codec.decode(&mut bytes), Ok(None));
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn decode_fast_path_leaves_other_kinds_to_the_general_parse() {
+        use tokio_util::codec::Decoder;
+        let mut codec = ValueCodec::default();
+
+        let mut bytes = bytes::BytesMut::from(&b"$3\r\nfoo\r\n"[..]);
+        assert_eq!(
+            codec.decode(&mut bytes),
+            Ok(Some(Value::BulkString(b"foo".to_vec())))
+        );
+        assert!(bytes.is_empty());
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn decode_fast_path_declines_payloads_it_cannot_vouch_for() {
+        use tokio_util::codec::Decoder;
+
+        // An integer the general parser rejects must be reported as such, not
+        // silently accepted by the fast path.
+        let mut codec = ValueCodec::default();
+        let mut bytes = bytes::BytesMut::from(&b":garbage\r\n"[..]);
+        let err = codec.decode(&mut bytes).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Parse);
+        assert_eq!(
+            err.to_string(),
+            "Incompatible type - Parse error at 1\nExpected integer, got garbage\n"
+        );
+
+        // Likewise invalid UTF-8 in a simple string.
+        let mut codec = ValueCodec::default();
+        let mut bytes = bytes::BytesMut::from(&b"+\xff\r\n"[..]);
+        let err = codec.decode(&mut bytes).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Parse);
+        assert_eq!(
+            err.to_string(),
+            "Incompatible type - Parse error at 1\ninvalid utf-8 sequence of 1 bytes from index 0\n"
+        );
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn decode_split_line_scalar_is_not_misread_as_the_next_kind() {
+        use tokio_util::codec::Decoder;
+        let mut codec = ValueCodec::default();
+
+        // `combine` may consume the `+` before the rest of the line arrives, so
+        // the buffer stands at `:42` in the middle of the reply. Reading that
+        // as a new integer reply would return 42 instead of the simple string
+        // ":42", so the fast path must stay out of an unfinished reply.
+        let mut bytes = bytes::BytesMut::from(&b"+:42"[..]);
+        assert_eq!(codec.decode(&mut bytes), Ok(None));
+        bytes.extend_from_slice(b"\r\n");
+        assert_eq!(
+            codec.decode(&mut bytes),
+            Ok(Some(Value::SimpleString(":42".to_string())))
+        );
+        assert!(bytes.is_empty());
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn decode_split_line_scalar_resumes() {
+        use tokio_util::codec::Decoder;
+        let mut codec = ValueCodec::default();
+
+        let mut bytes = bytes::BytesMut::from(&b"+OK"[..]);
+        assert_eq!(codec.decode(&mut bytes), Ok(None));
+        bytes.extend_from_slice(b"\r\n");
+        assert_eq!(codec.decode(&mut bytes), Ok(Some(Value::Okay)));
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn decode_split_bulk_payload_is_not_misread_as_a_scalar() {
+        use tokio_util::codec::Decoder;
+        let mut codec = ValueCodec::default();
+
+        // A bulk payload may itself start with a kind byte. The header is
+        // consumed before the payload completes, so the buffer stands at `+OK`
+        // in the middle of the reply; it has to be reported as payload, not as
+        // an `OK` status reply.
+        let mut bytes = bytes::BytesMut::from(&b"$3\r\n+OK"[..]);
+        assert_eq!(codec.decode(&mut bytes), Ok(None));
+        bytes.extend_from_slice(b"\r\n");
+        assert_eq!(
+            codec.decode(&mut bytes),
+            Ok(Some(Value::BulkString(b"+OK".to_vec())))
+        );
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn parse_redis_value_fast_path_agrees_with_the_general_parse() {
+        assert_eq!(parse_redis_value(b"+OK\r\n").unwrap(), Value::Okay);
+        assert_eq!(
+            parse_redis_value(b"+hello\r\n").unwrap(),
+            Value::SimpleString("hello".to_string())
+        );
+        assert_eq!(parse_redis_value(b":42\r\n").unwrap(), Value::Int(42));
+        // The general parser trims integer lines, and so must the fast path.
+        assert_eq!(parse_redis_value(b": 42 \r\n").unwrap(), Value::Int(42));
+        // A `:` after `+` is line content, not a nested kind.
+        assert_eq!(
+            parse_redis_value(b"+:42\r\n").unwrap(),
+            Value::SimpleString(":42".to_string())
+        );
+        // Trailing input is left alone, as the general parser leaves it.
+        assert_eq!(parse_redis_value(b"+OK\r\n:1\r\n").unwrap(), Value::Okay);
+        // Rejected payloads still go through the general parser's error.
+        let err = parse_redis_value(b":garbage\r\n").unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Parse);
+        assert_eq!(
+            err.to_string(),
+            "Incompatible type - Parse error at 1\nExpected integer, got garbage\n"
+        );
+        let err = parse_redis_value(b"+\xff\r\n").unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Parse);
+        assert_eq!(
+            err.to_string(),
+            "Incompatible type - Parse error at 1\ninvalid utf-8 sequence of 1 bytes from index 0\n"
+        );
     }
 
     #[test]
