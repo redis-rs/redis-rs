@@ -292,6 +292,10 @@ impl ClientCertificate {
 
 impl std::fmt::Debug for ClientCertificate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            pkcs12: _,
+            password: _,
+        } = self;
         f.debug_struct("ClientCertificate")
             .field("pkcs12", &"<PKCS12>")
             .field("password", &self.password.as_ref().map(|_| "<password>"))
@@ -822,6 +826,14 @@ mod tests {
                 .to_string()
                 .contains("Scope cannot be empty")
         );
+    }
+
+    #[test]
+    fn test_client_certificate_debug_is_redacted() {
+        let cert = ClientCertificate::new(b"pkcs12-data".to_vec()).set_password("hunter2");
+        let debug = format!("{cert:?}");
+        assert!(!debug.contains("pkcs12-data"));
+        assert!(!debug.contains("hunter2"));
     }
 
     #[test]

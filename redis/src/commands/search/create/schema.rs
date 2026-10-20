@@ -2,6 +2,7 @@
 use super::fields::{
     SchemaGeoField, SchemaGeoShapeField, SchemaNumericField, SchemaTagField, SchemaTextField,
 };
+use super::vector::VectorField;
 use crate::{RedisWrite, ToRedisArgs};
 
 /// Field definition for schema
@@ -16,6 +17,8 @@ pub enum FieldDefinition {
     Geo(SchemaGeoField),
     /// Tag field
     Tag(SchemaTagField),
+    /// Vector field
+    Vector(VectorField),
     /// Geo shape field
     GeoShape(SchemaGeoShapeField),
 }
@@ -30,6 +33,7 @@ impl ToRedisArgs for FieldDefinition {
             Self::Numeric(nf) => nf.write_redis_args(out),
             Self::Geo(gf) => gf.write_redis_args(out),
             Self::Tag(tf) => tf.write_redis_args(out),
+            Self::Vector(v) => v.write_redis_args(out),
             Self::GeoShape(gs) => gs.write_redis_args(out),
         }
     }
@@ -56,6 +60,12 @@ impl From<SchemaGeoField> for FieldDefinition {
 impl From<SchemaTagField> for FieldDefinition {
     fn from(field: SchemaTagField) -> Self {
         Self::Tag(field)
+    }
+}
+
+impl From<VectorField> for FieldDefinition {
+    fn from(field: VectorField) -> Self {
+        Self::Vector(field)
     }
 }
 
