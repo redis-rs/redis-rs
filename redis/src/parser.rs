@@ -367,15 +367,16 @@ mod aio_support {
 
     impl ValueCodec {
         fn decode_stream(&mut self, bytes: &mut BytesMut, eof: bool) -> RedisResult<Option<Value>> {
-            // Settle `+`/`:` replies before `combine` can start walking them.
-            // Only at a reply boundary: once it has consumed part of a reply,
-            // the front of the buffer is mid-reply, not a new kind byte.
-            let scalar = if self.in_progress {
+            // Settle replies the direct paths can materialize before `combine`
+            // can start walking them. Only at a reply boundary: once it has
+            // consumed part of a reply, the front of the buffer is mid-reply,
+            // not a new kind byte.
+            let direct = if self.in_progress {
                 None
             } else {
-                fast_scalar(bytes)
+                fast_value(bytes)
             };
-            if let Some((value, consumed)) = scalar {
+            if let Some((value, consumed)) = direct {
                 bytes.advance(consumed);
                 return Ok(Some(value));
             }
@@ -455,6 +456,48 @@ mod aio_support {
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]
 pub use self::aio_support::*;
 
+/// Finds the end of the line that starts at `start`, returning `(end, after)`
+/// where `buffer[start..end]` is the line without its CRLF and `after` is the
+/// index just past the CRLF.
+#[inline]
+fn line_bounds(buffer: &[u8], start: usize) -> Option<(usize, usize)> {
+    let rest = buffer.get(start..)?;
+    let at = rest.windows(2).position(|window| window == b"\r\n")?;
+    Some((start + at, start + at + 2))
+}
+
+/// The UTF-8 text of the line starting at `start`, plus the index just past it.
+#[inline]
+fn line_str(buffer: &[u8], start: usize) -> Option<(&str, usize)> {
+    let (end, after) = line_bounds(buffer, start)?;
+    Some((str::from_utf8(&buffer[start..end]).ok()?, after))
+}
+
+/// Parses the canonical decimal form `-?[0-9]+`.
+///
+/// Returns `None` for anything else -- whitespace, a leading `+`, a non-digit,
+/// or `i64::MIN`'s magnitude -- so the caller can fall back to the more
+/// permissive general parser (which trims and uses `str::parse`).
+#[inline(always)]
+fn fast_int_line(line: &[u8]) -> Option<i64> {
+    let (negative, digits) = match line.split_first()? {
+        (b'-', rest) => (true, rest),
+        (_, _) => (false, line),
+    };
+    if digits.is_empty() {
+        return None;
+    }
+    let mut value: i64 = 0;
+    for &byte in digits {
+        let digit = byte.wrapping_sub(b'0');
+        if digit > 9 {
+            return None;
+        }
+        value = value.checked_mul(10)?.checked_add(digit as i64)?;
+    }
+    Some(if negative { -value } else { value })
+}
+
 /// Parses a top-level `+<utf8>\r\n` or `:<int>\r\n` reply, returning its value
 /// and the number of bytes it occupies.
 ///
@@ -462,6 +505,7 @@ pub use self::aio_support::*;
 /// content `combine` must judge (invalid UTF-8, an integer it would reject) --
 /// so the caller can fall back to it, errors included. Nested values never
 /// reach this; `combine` parses those.
+#[inline]
 fn fast_scalar(buffer: &[u8]) -> Option<(Value, usize)> {
     let (&kind, rest) = buffer.split_first()?;
     if !matches!(kind, b'+' | b':') {
@@ -472,17 +516,128 @@ fn fast_scalar(buffer: &[u8]) -> Option<(Value, usize)> {
     // Kind byte, line, CRLF.
     let consumed = line_end + 3;
     let value = match kind {
-        b'+' => match str::from_utf8(line).ok()? {
-            // The same convention `simple_string` implements.
-            "OK" => Value::Okay,
-            text => Value::SimpleString(text.into()),
-        },
-        // `int` trims the line before parsing it, so this does too: anything it
-        // would reject falls back to it (and its error) rather than being
+        b'+' => {
+            if line == b"OK" {
+                // Comparing the bytes first avoids a UTF-8 check for the most
+                // common status reply.
+                Value::Okay
+            } else {
+                Value::SimpleString(str::from_utf8(line).ok()?.into())
+            }
+        }
+        // `int` trims the line before parsing it, so anything but the canonical
+        // decimal form falls back to it (and its error) rather than being
         // judged differently here.
-        _ => Value::Int(str::from_utf8(line).ok()?.trim().parse().ok()?),
+        _ => match fast_int_line(line) {
+            Some(value) => Value::Int(value),
+            None => Value::Int(str::from_utf8(line).ok()?.trim().parse().ok()?),
+        },
     };
     Some((value, consumed))
+}
+
+/// Parses `+`, `:`, `_`, `,`, `#` and aggregates of those without invoking
+/// `combine`.
+///
+/// Only values that are owned outright are accepted. A non-`OK` simple string
+/// and a bulk string both need an allocation on this branch, so they are left
+/// to the general parser; in return, this can build an array of integers,
+/// booleans, nils, doubles, and `OK`s directly. Anything invalid or incomplete
+/// is also declined, so `combine` still owns error reporting.
+fn fast_frameless_value(buffer: &[u8], pos: usize, depth: usize) -> Option<(Value, usize)> {
+    if depth > MAX_RECURSE_DEPTH {
+        return None;
+    }
+    match *buffer.get(pos)? {
+        b':' => {
+            let (end, after) = line_bounds(buffer, pos + 1)?;
+            Some((Value::Int(fast_int_line(&buffer[pos + 1..end])?), after))
+        }
+        b'+' => {
+            let (line, after) = line_str(buffer, pos + 1)?;
+            (line == "OK").then_some((Value::Okay, after))
+        }
+        b'_' => {
+            // `line` validates UTF-8 even though the payload is ignored, and
+            // the fast path has to reject exactly what `combine` rejects.
+            let (_, after) = line_str(buffer, pos + 1)?;
+            Some((Value::Nil, after))
+        }
+        b',' => {
+            let (line, after) = line_str(buffer, pos + 1)?;
+            Some((Value::Double(line.trim().parse().ok()?), after))
+        }
+        b'#' => {
+            let (line, after) = line_str(buffer, pos + 1)?;
+            match line {
+                "t" => Some((Value::Boolean(true), after)),
+                "f" => Some((Value::Boolean(false), after)),
+                _ => None,
+            }
+        }
+        b'*' => {
+            let (end, after) = line_bounds(buffer, pos + 1)?;
+            let length = fast_int_line(&buffer[pos + 1..end])?;
+            if length < 0 {
+                return Some((Value::Nil, after));
+            }
+            let length = usize::try_from(length).ok()?;
+            // Every accepted child takes at least three bytes (`_\r\n`), so a
+            // length that cannot fit in the rest of the buffer is incomplete.
+            // This also keeps a malicious header from reserving a huge vector
+            // before the input is known to contain that many elements.
+            if length > buffer.len().saturating_sub(after) / 3 {
+                return None;
+            }
+            let mut items = Vec::with_capacity(length);
+            let mut at = after;
+            for _ in 0..length {
+                let (item, next) = fast_frameless_value(buffer, at, depth + 1)?;
+                items.push(item);
+                at = next;
+            }
+            Some((Value::Array(items), at))
+        }
+        _ => None,
+    }
+}
+
+/// Parses a complete `$<length>\r\n<payload>\r\n` reply.
+///
+/// Unlike the fast scalar paths, this has to allocate the payload: on this
+/// branch `Value::BulkString` owns a `Vec<u8>`. It still avoids walking
+/// `combine` for the common bulk reply, but it cannot avoid the copy.
+fn fast_bulk_value(buffer: &[u8]) -> Option<(Value, usize)> {
+    let (line, payload_start) = line_str(buffer, 1)?;
+    let length: i64 = line.trim().parse().ok()?;
+    if length < 0 {
+        return Some((Value::Nil, payload_start));
+    }
+    let length = usize::try_from(length).ok()?;
+    let payload_end = payload_start.checked_add(length)?;
+    let after = payload_end.checked_add(2)?;
+    if buffer.len() < after || &buffer[payload_end..after] != b"\r\n" {
+        return None;
+    }
+    Some((
+        Value::BulkString(buffer[payload_start..payload_end].to_vec()),
+        after,
+    ))
+}
+
+/// Tries the direct paths for the reply at the start of `buffer`.
+///
+/// Line scalars keep their own small function so they stay inlined; the
+/// frameless aggregate and bulk paths are deliberately separate so their code
+/// does not bloat the common `+OK`/integer case.
+#[inline]
+fn fast_value(buffer: &[u8]) -> Option<(Value, usize)> {
+    match buffer.first()? {
+        b'+' | b':' => fast_scalar(buffer),
+        b'$' => fast_bulk_value(buffer),
+        b'*' | b'_' | b',' | b'#' => fast_frameless_value(buffer, 0, 1),
+        _ => None,
+    }
 }
 
 /// The internal redis response parser.
@@ -531,9 +686,9 @@ impl Parser {
 /// This is the most straightforward way to parse something into a low
 /// level redis value instead of having to use a whole parser.
 pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
-    // Settle a top-level line-type scalar before `combine`; anything it
-    // declines goes through the general parser, errors included.
-    if let Some((value, _consumed)) = fast_scalar(bytes) {
+    // Settle replies the direct paths can materialize before `combine`;
+    // anything they decline goes through the general parser, errors included.
+    if let Some((value, _consumed)) = fast_value(bytes) {
         return Ok(value);
     }
     let mut parser = Parser::new();
@@ -604,15 +759,20 @@ mod tests {
 
     #[cfg(feature = "aio")]
     #[test]
-    fn decode_fast_path_leaves_other_kinds_to_the_general_parse() {
+    fn decode_fast_path_bulk_reply() {
         use tokio_util::codec::Decoder;
         let mut codec = ValueCodec::default();
 
-        let mut bytes = bytes::BytesMut::from(&b"$3\r\nfoo\r\n"[..]);
+        let mut bytes = bytes::BytesMut::from(&b"$3\r\nfoo\r\n$0\r\n\r\n$-1\r\n"[..]);
         assert_eq!(
             codec.decode(&mut bytes),
             Ok(Some(Value::BulkString(b"foo".to_vec())))
         );
+        assert_eq!(
+            codec.decode(&mut bytes),
+            Ok(Some(Value::BulkString(Vec::new())))
+        );
+        assert_eq!(codec.decode(&mut bytes), Ok(Some(Value::Nil)));
         assert!(bytes.is_empty());
     }
 
@@ -725,6 +885,131 @@ mod tests {
             err.to_string(),
             "Incompatible type - Parse error at 1\ninvalid utf-8 sequence of 1 bytes from index 0\n"
         );
+    }
+
+    #[test]
+    fn direct_values_match_the_general_parser() {
+        // Every payload the direct paths claim has to produce exactly the value
+        // `combine` produces, and every payload they decline has to keep
+        // reaching it (errors included).
+        let payloads: &[&[u8]] = &[
+            // Line scalars, including forms `fast_int_line` declines.
+            b"+OK\r\n",
+            b"+\r\n",
+            b"+GET 123\r\n",
+            b"+\xff\xfe\r\n",
+            b":1\r\n",
+            b":-5\r\n",
+            b":+5\r\n",
+            b": 7\r\n",
+            b":001\r\n",
+            b":-0\r\n",
+            b":-9223372036854775808\r\n",
+            b":9223372036854775808\r\n",
+            b":abc\r\n",
+            // Bulk strings, including empty, null, binary, and malformed.
+            b"$0\r\n\r\n",
+            b"$3\r\nfoo\r\n",
+            b"$3\r\nfoo\r\n:1\r\n",
+            b"$3\r\nf\xffo\r\n",
+            b"$-1\r\n",
+            b"$-2\r\n",
+            b"$ 3 \r\nfoo\r\n",
+            b"$+3\r\nfoo\r\n",
+            b"$03\r\nfoo\r\n",
+            b"$3\r\nfooXX",
+            b"$3\r\nfoo\rX",
+            b"$3\r\nfoo",
+            b"$9999999999999\r\n",
+            // Frameless aggregates and their fallbacks.
+            b"*0\r\n",
+            b"*-1\r\n",
+            b"*3\r\n:100\r\n:101\r\n:102\r\n",
+            b"*3\r\n+OK\r\n#t\r\n_\r\n",
+            b"*2\r\n,1.5\r\n:2\r\n",
+            b"*2\r\n,inf\r\n:nan\r\n",
+            b"*1\r\n*1\r\n:1\r\n",
+            b"*2\r\n_ignored\r\n:1\r\n",
+            b"* 2 \r\n:1\r\n:2\r\n",
+            b"*+2\r\n:1\r\n:2\r\n",
+            b"*3\r\n+GET\r\n:1\r\n$3\r\nfoo\r\n",
+            b"*1\r\n:abc\r\n",
+            b"*1\r\n#x\r\n",
+            b"*2\r\n_\xff\r\n:1\r\n",
+            b"*1\r\n",
+            b"*9223372036854775807\r\n",
+            // Top-level frameless scalars.
+            b"_\r\n",
+            b"_\xff\r\n",
+            b",1.5\r\n",
+            b",garbage\r\n",
+            b"#t\r\n",
+            b"#x\r\n",
+            // Unknown kinds still go through the general parser.
+            b"|1\r\n+key\r\n:1\r\n+data\r\n",
+        ];
+        for payload in payloads {
+            let expected = Parser::new().parse_value(*payload);
+            let actual = parse_redis_value(payload);
+            match (expected, actual) {
+                (Ok(expected), Ok(actual)) => assert_eq!(actual, expected, "{payload:?}"),
+                (Err(expected), Err(actual)) => {
+                    assert_eq!(actual.kind(), expected.kind(), "{payload:?}")
+                }
+                (expected, actual) => panic!("{payload:?}: {expected:?} but got {actual:?}"),
+            }
+        }
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn decode_fast_path_frameless_aggregates() {
+        use tokio_util::codec::Decoder;
+        let mut codec = ValueCodec::default();
+
+        let mut bytes = bytes::BytesMut::from(b"*3\r\n:100\r\n:101\r\n:102\r\n+OK\r\n".as_slice());
+        assert_eq!(
+            codec.decode(&mut bytes),
+            Ok(Some(Value::Array(vec![
+                Value::Int(100),
+                Value::Int(101),
+                Value::Int(102)
+            ])))
+        );
+        assert_eq!(codec.decode(&mut bytes), Ok(Some(Value::Okay)));
+        assert!(bytes.is_empty());
+    }
+
+    #[cfg(feature = "aio")]
+    #[test]
+    fn decode_split_frameless_aggregate_resumes() {
+        use tokio_util::codec::Decoder;
+        let mut codec = ValueCodec::default();
+
+        // The first read lets the direct path see a partial aggregate; combine
+        // takes over and resumes it on later reads.
+        let payload = b"*3\r\n:10\r\n:20\r\n:30\r\n+OK\r\n";
+        let split = payload.len() - b"+OK\r\n".len();
+        let mut bytes = bytes::BytesMut::new();
+
+        for &byte in &payload[..split - 1] {
+            bytes.extend_from_slice(&[byte]);
+            assert_eq!(codec.decode(&mut bytes), Ok(None));
+        }
+        bytes.extend_from_slice(&payload[split - 1..split]);
+        assert_eq!(
+            codec.decode(&mut bytes),
+            Ok(Some(Value::Array(vec![
+                Value::Int(10),
+                Value::Int(20),
+                Value::Int(30)
+            ])))
+        );
+        assert!(bytes.is_empty());
+
+        bytes.extend_from_slice(&payload[split..]);
+        assert_eq!(codec.decode(&mut bytes), Ok(Some(Value::Okay)));
+        assert!(bytes.is_empty());
     }
 
     #[test]
