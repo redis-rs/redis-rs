@@ -331,6 +331,8 @@ impl ClusterParams {
                 client_tls_params: None,
                 #[cfg(feature = "tls-rustls")]
                 root_cert_store: None,
+                #[cfg(native_tls_selected)]
+                native_tls_params: None,
                 danger_accept_invalid_hostnames: false,
             });
             tls_params.danger_accept_invalid_hostnames = true;

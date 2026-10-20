@@ -25,7 +25,7 @@ use std::os::unix::net::UnixStream;
 use crate::commands::resp3_hello;
 use arcstr::ArcStr;
 #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
-use native_tls::{TlsConnector, TlsStream};
+use native_tls::TlsStream;
 
 #[cfg(feature = "tls-rustls")]
 use rustls::{RootCertStore, StreamOwned};
@@ -43,6 +43,8 @@ use rustls_native_certs::load_native_certs;
 
 #[cfg(feature = "tls-rustls")]
 use crate::tls::ClientTlsParams;
+#[cfg(native_tls_selected)]
+use crate::tls::NativeTlsParams;
 
 // Non-exhaustive to prevent construction outside this crate
 #[derive(Clone, Debug)]
@@ -51,8 +53,58 @@ pub struct TlsConnParams {
     pub(crate) client_tls_params: Option<ClientTlsParams>,
     #[cfg(feature = "tls-rustls")]
     pub(crate) root_cert_store: Option<RootCertStore>,
+    #[cfg(native_tls_selected)]
+    pub(crate) native_tls_params: Option<NativeTlsParams>,
     #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
     pub(crate) danger_accept_invalid_hostnames: bool,
+}
+
+// Returns a builder rather than a connector because each backend wraps it differently:
+// `native_tls` and `tokio_native_tls` call `build`, while `async_native_tls::TlsConnector`
+// is converted from the builder itself.
+#[cfg(native_tls_selected)]
+pub(crate) fn create_native_tls_connector_builder(
+    insecure: bool,
+    tls_params: Option<TlsConnParams>,
+) -> native_tls::TlsConnectorBuilder {
+    let mut builder = native_tls::TlsConnector::builder();
+
+    if insecure {
+        builder
+            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_hostnames(true)
+            .use_sni(false);
+        return builder;
+    }
+
+    let Some(tls_params) = tls_params else {
+        return builder;
+    };
+
+    builder.danger_accept_invalid_hostnames(tls_params.danger_accept_invalid_hostnames);
+
+    let Some(NativeTlsParams {
+        identity,
+        root_certs,
+    }) = tls_params.native_tls_params
+    else {
+        return builder;
+    };
+
+    if let Some(identity) = identity {
+        builder.identity(identity);
+    }
+
+    if !root_certs.is_empty() {
+        // Supplying root certificates replaces the platform trust store rather than adding to
+        // it, so that the rustls backend and this one trust the same set.
+        builder.disable_built_in_roots(true);
+        for root_cert in root_certs {
+            builder.add_root_certificate(root_cert);
+        }
+    }
+
+    builder
 }
 
 static DEFAULT_PORT: u16 = 6379;
@@ -205,6 +257,8 @@ impl ConnectionAddr {
                     client_tls_params: None,
                     #[cfg(feature = "tls-rustls")]
                     root_cert_store: None,
+                    #[cfg(native_tls_selected)]
+                    native_tls_params: None,
                     danger_accept_invalid_hostnames: insecure,
                 });
             }
@@ -918,19 +972,8 @@ impl ActualConnection {
                 insecure,
                 ref tls_params,
             } => {
-                let tls_connector = if insecure {
-                    TlsConnector::builder()
-                        .danger_accept_invalid_certs(true)
-                        .danger_accept_invalid_hostnames(true)
-                        .use_sni(false)
-                        .build()?
-                } else if let Some(params) = tls_params {
-                    TlsConnector::builder()
-                        .danger_accept_invalid_hostnames(params.danger_accept_invalid_hostnames)
-                        .build()?
-                } else {
-                    TlsConnector::new()?
-                };
+                let tls_connector =
+                    create_native_tls_connector_builder(insecure, tls_params.clone()).build()?;
                 let addr = (host.as_str(), port);
                 let tls = match timeout {
                     None => {

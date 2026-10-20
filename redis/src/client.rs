@@ -15,7 +15,7 @@ use crate::{
 #[cfg(feature = "aio")]
 use std::pin::Pin;
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 use crate::tls::{TlsCertificates, inner_build_with_tls};
 
 #[cfg(feature = "cache-aio")]
@@ -159,7 +159,7 @@ impl Client {
     ///     Ok(())
     /// }
     /// ```
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
     pub fn build_with_tls<C: IntoConnectionInfo>(
         conn_info: C,
         tls_certs: TlsCertificates,

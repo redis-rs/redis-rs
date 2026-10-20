@@ -815,11 +815,14 @@ pub use cluster_handling::async_connection as cluster_async;
 #[cfg_attr(docsrs, doc(cfg(feature = "sentinel")))]
 pub mod sentinel;
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 mod tls;
 
-#[cfg(feature = "tls-rustls")]
-#[cfg_attr(docsrs, doc(cfg(feature = "tls-rustls")))]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
+#[cfg_attr(
+    docsrs,
+    doc(cfg(any(feature = "tls-rustls", feature = "tls-native-tls")))
+)]
 pub use crate::tls::{ClientTlsConfig, TlsCertificates};
 
 #[cfg(feature = "cache-aio")]

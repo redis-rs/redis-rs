@@ -13,6 +13,8 @@ use crate::aio::{AsyncStream, RedisRuntime};
 use crate::types::RedisResult;
 
 #[cfg(all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp")))]
+use crate::connection::create_native_tls_connector_builder;
+#[cfg(all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp")))]
 use async_native_tls::{TlsConnector, TlsStream};
 
 #[cfg(feature = "smol-rustls-comp")]
@@ -185,17 +187,10 @@ impl RedisRuntime for Smol {
         tcp_settings: &crate::io::tcp::TcpSettings,
     ) -> RedisResult<Self> {
         let tcp_stream = connect_tcp(&socket_addr, tcp_settings).await?;
-        let tls_connector = if insecure {
-            TlsConnector::new()
-                .danger_accept_invalid_certs(true)
-                .danger_accept_invalid_hostnames(true)
-                .use_sni(false)
-        } else if let Some(params) = tls_params {
-            TlsConnector::new()
-                .danger_accept_invalid_hostnames(params.danger_accept_invalid_hostnames)
-        } else {
-            TlsConnector::new()
-        };
+        let tls_connector = TlsConnector::from(create_native_tls_connector_builder(
+            insecure,
+            tls_params.clone(),
+        ));
         Ok(tls_connector
             .connect(hostname, tcp_stream)
             .await
