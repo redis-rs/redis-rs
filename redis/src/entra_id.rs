@@ -265,12 +265,25 @@ const TOKEN_REFRESH_BUFFER_SECS: u64 = 240;
 ///
 /// The certificate data should be base64-encoded PKCS12 content.
 /// If the PKCS12 archive is password-protected, provide the password via `password`.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ClientCertificate {
     /// Base64-encoded PKCS12 certificate data
     pub base64_pkcs12: String,
     /// The certificate's password if any
     pub password: Option<String>,
+}
+
+impl std::fmt::Debug for ClientCertificate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            base64_pkcs12: _,
+            password,
+        } = self;
+        f.debug_struct("ClientCertificate")
+            .field("base64_pkcs12", &"<redacted>")
+            .field("password", &password.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 type Subscriptions = Vec<Sender<RedisResult<BasicAuth>>>;
@@ -746,6 +759,17 @@ mod tests {
                 .to_string()
                 .contains("Scope cannot be empty")
         );
+    }
+
+    #[test]
+    fn test_client_certificate_debug_is_redacted() {
+        let cert = ClientCertificate {
+            base64_pkcs12: "pkcs12-data".to_string(),
+            password: Some("hunter2".to_string()),
+        };
+        let debug = format!("{cert:?}");
+        assert!(!debug.contains("pkcs12-data"));
+        assert!(!debug.contains("hunter2"));
     }
 
     #[test]
