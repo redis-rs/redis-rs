@@ -4,7 +4,7 @@ use futures_util::Stream;
 use std::pin::Pin;
 
 /// Basic authentication credentials for a Redis connection
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct BasicAuth {
     /// The username for authentication
     pub(crate) username: String,
@@ -39,6 +39,19 @@ impl BasicAuth {
     }
 }
 
+impl std::fmt::Debug for BasicAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            username,
+            password: _,
+        } = self;
+        f.debug_struct("BasicAuth")
+            .field("username", username)
+            .field("password", &"<redacted>")
+            .finish()
+    }
+}
+
 /// Trait for providing credentials in a streaming fashion
 ///
 /// This allows connections to subscribe to credential updates and automatically
@@ -47,4 +60,17 @@ impl BasicAuth {
 pub trait StreamingCredentialsProvider: Send + Sync {
     /// Get an independent stream of credentials.
     fn subscribe(&self) -> Pin<Box<dyn Stream<Item = RedisResult<BasicAuth>> + Send + 'static>>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_does_not_print_password() {
+        let auth = BasicAuth::new("user".to_string(), "hunter2".to_string());
+        let debug = format!("{auth:?}");
+        assert!(debug.contains("user"));
+        assert!(!debug.contains("hunter2"));
+    }
 }

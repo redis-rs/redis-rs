@@ -179,6 +179,13 @@ pub(crate) fn logical_aggregate(values: Vec<Value>, op: LogicalAggregateOp) -> R
         let mut acc = if acc.is_empty() {
             vec![initial_value; values.len()]
         } else {
+            if values.len() != acc.len() {
+                return Err((
+                    ErrorKind::UnexpectedReturnType,
+                    "expected all shards to return the same number of results",
+                )
+                    .into());
+            }
             acc
         };
         for (index, value) in values.into_iter().enumerate() {
@@ -408,7 +415,17 @@ pub(crate) fn combine_and_sort_array_results(
     for (key_indices, value) in result_indices.into_iter().zip(values) {
         match value {
             Value::Array(values) => {
-                assert_eq!(values.len(), key_indices.len());
+                if values.len() != key_indices.len() {
+                    return Err(RedisError::from((
+                        ErrorKind::Client,
+                        "Mismatch in the number of results returned by a shard in a multi-slot command.",
+                        format!(
+                            "Expected: {:?}, Found: {:?}",
+                            key_indices.len(),
+                            values.len()
+                        ),
+                    )));
+                }
                 for (index, value) in key_indices.iter().zip(values) {
                     results[*index] = value;
                 }
@@ -738,6 +755,7 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"COMMAND"
         | b"CONFIG GET"
         | b"ECHO"
+        | b"FT.CREATE"
         | b"FUNCTION LIST"
         | b"LASTSAVE"
         | b"LOLWUT"
@@ -1040,8 +1058,9 @@ fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
 #[cfg(test)]
 mod tests_routing {
     use super::{
-        AggregateOp, MultiSlotArgPattern, MultipleNodeRoutingInfo, ResponsePolicy, Route,
-        RoutingInfo, SingleNodeRoutingInfo, SlotAddr, command_for_multi_slot_indices,
+        AggregateOp, LogicalAggregateOp, MultiSlotArgPattern, MultipleNodeRoutingInfo,
+        ResponsePolicy, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr,
+        command_for_multi_slot_indices,
     };
     use crate::{Value, cmd, parser::parse_redis_value};
     use assert_matches::assert_matches;
@@ -1268,6 +1287,38 @@ mod tests_routing {
                 std::str::from_utf8(cmd.arg_idx(0).unwrap()).unwrap()
             );
         }
+    }
+
+    #[test]
+    fn test_ft_create_is_routed_as_a_keyless_command() {
+        // The index name is not a key, so FT.CREATE must not be routed by its first argument.
+        assert_eq!(
+            RoutingInfo::for_routable(
+                cmd("FT.CREATE")
+                    .arg("idx")
+                    .arg("ON")
+                    .arg("HASH")
+                    .arg("SCHEMA")
+                    .arg("title")
+                    .arg("TEXT")
+            ),
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+        );
+    }
+
+    #[cfg(feature = "search_unfinished")]
+    #[test]
+    fn test_ft_create_command_builder_is_routed_as_a_keyless_command() {
+        use crate::schema;
+        use crate::search::{FtCreateCommand, SchemaTextField};
+
+        let cmd =
+            FtCreateCommand::new("idx", schema! { "title" => SchemaTextField::new() }).into_cmd();
+
+        assert_eq!(
+            RoutingInfo::for_routable(&cmd),
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+        );
     }
 
     #[test]
@@ -1549,6 +1600,77 @@ mod tests_routing {
                 Value::Nil
             ])
         );
+    }
+
+    #[test]
+    fn test_combining_results_into_single_array_shard_with_too_few_results() {
+        // A shard that returns fewer results than the number of keys routed to it
+        // (e.g. `MGET k1 k2 k3 k4` where the second slot's shard returns a single value)
+        // should produce an error, not a panic.
+        let res1 = Value::Array(vec![Value::Nil, Value::Nil]);
+        let res2 = Value::Array(vec![Value::Nil]);
+        let results = super::combine_and_sort_array_results(
+            vec![res1, res2],
+            &[
+                (Route(5061, SlotAddr::Master), vec![0, 1]),
+                (Route(12182, SlotAddr::Master), vec![2, 3]),
+            ],
+            &MultiSlotArgPattern::KeysOnly,
+        );
+
+        let err = results.unwrap_err();
+        assert_eq!(err.kind(), crate::ErrorKind::Client);
+    }
+
+    #[test]
+    fn test_combining_results_into_single_array_shard_with_too_many_results() {
+        // A shard that returns more results than the number of keys routed to it
+        // (e.g. `MGET k1 k2 k3 k4` where the second slot's shard returns three values)
+        // should produce an error, not a panic.
+        let res1 = Value::Array(vec![Value::Nil, Value::Nil]);
+        let res2 = Value::Array(vec![Value::Nil, Value::Nil, Value::Nil]);
+        let results = super::combine_and_sort_array_results(
+            vec![res1, res2],
+            &[
+                (Route(5061, SlotAddr::Master), vec![0, 1]),
+                (Route(12182, SlotAddr::Master), vec![2, 3]),
+            ],
+            &MultiSlotArgPattern::KeysOnly,
+        );
+
+        let err = results.unwrap_err();
+        assert_eq!(err.kind(), crate::ErrorKind::Client);
+    }
+
+    #[test]
+    fn test_logical_aggregate() {
+        let results = super::logical_aggregate(
+            vec![
+                Value::Array(vec![Value::Int(1), Value::Int(0)]),
+                Value::Array(vec![Value::Int(1), Value::Int(1)]),
+            ],
+            LogicalAggregateOp::And,
+        )
+        .unwrap();
+
+        assert_eq!(results, Value::Array(vec![Value::Int(1), Value::Int(0)]));
+    }
+
+    #[test]
+    fn test_logical_aggregate_shards_with_mismatched_response_lengths() {
+        // Shards respond to `SCRIPT EXISTS` with one boolean per script, so a shard
+        // returning a different number of results (e.g. from a misbehaving server)
+        // should produce an error, not an out-of-bounds panic.
+        let results = super::logical_aggregate(
+            vec![
+                Value::Array(vec![Value::Int(1)]),
+                Value::Array(vec![Value::Int(1), Value::Int(1)]),
+            ],
+            LogicalAggregateOp::And,
+        );
+
+        let err = results.unwrap_err();
+        assert_eq!(err.kind(), crate::ErrorKind::UnexpectedReturnType);
     }
 
     #[test]
