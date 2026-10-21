@@ -123,10 +123,10 @@ impl CacheManager {
         json_path_key: Option<&[u8]>,
     ) {
         buffer.clear();
-        buffer.extend_from_slice(single_command_name);
-        buffer.extend_from_slice(redis_key);
+        push_cmd_key_part(buffer, single_command_name);
+        push_cmd_key_part(buffer, redis_key);
         if let Some(json_path_key) = json_path_key {
-            buffer.extend_from_slice(json_path_key);
+            push_cmd_key_part(buffer, json_path_key);
         }
     }
 
@@ -224,9 +224,14 @@ impl CacheManager {
             None => return PrepCacheItem::NotCacheable,
         };
 
-        let cmd_key = cmd.data.as_slice();
+        let mut cmd_key = Vec::with_capacity(cmd.data.len());
+        for arg in cmd.args_iter() {
+            if let crate::cmd::Arg::Simple(arg) = arg {
+                push_cmd_key_part(&mut cmd_key, arg);
+            }
+        }
 
-        if let Some(value) = self.get(redis_key, cmd_key) {
+        if let Some(value) = self.get(redis_key, &cmd_key) {
             return PrepCacheItem::Cached(value);
         }
 
@@ -317,6 +322,13 @@ impl CacheManager {
     }
 }
 
+/// Appends one command argument to a cache key, prefixed with its length so that
+/// argument boundaries are part of the key (`HMGET h a b` must not match `HMGET h ab`).
+fn push_cmd_key_part(buffer: &mut Vec<u8>, part: &[u8]) {
+    buffer.extend_from_slice(&part.len().to_le_bytes());
+    buffer.extend_from_slice(part);
+}
+
 /// Checks if the given command is cacheable and supports multiple keys.
 /// If the command is cacheable, it returns a tuple containing the command name as a string
 /// and the single variant of the command (e.g., "MGET" maps to "GET").
@@ -368,6 +380,67 @@ mod tests {
             Some(Value::Int(3)),
             "Key must be alive, client value must be picked"
         );
+    }
+
+    #[test]
+    fn test_argument_boundaries_are_part_of_cmd_key() {
+        let cache_manager = CacheManager::new(CacheConfig::new());
+        let expire = Instant::now().add(Duration::from_secs(10));
+
+        let assert_no_collision = |first: Cmd, second: Cmd| {
+            let PrepCacheItem::NotCached(CacheableCommand::Single(scc)) =
+                cache_manager.get_cached_cmd(&first)
+            else {
+                panic!("first command must be cacheable and not cached yet");
+            };
+            cache_manager.insert(
+                scc.redis_key,
+                &scc.cmd_key,
+                Value::Int(1),
+                expire,
+                &Value::Nil,
+            );
+            assert!(matches!(
+                cache_manager.get_cached_cmd(&first),
+                PrepCacheItem::Cached(Value::Int(1))
+            ));
+            assert!(
+                matches!(
+                    cache_manager.get_cached_cmd(&second),
+                    PrepCacheItem::NotCached(_)
+                ),
+                "{second:?} must not be served from the cache entry of {first:?}"
+            );
+        };
+
+        assert_no_collision(
+            crate::cmd("HMGET").arg("hash").arg("a").arg("b").clone(),
+            crate::cmd("HMGET").arg("hash").arg("ab").clone(),
+        );
+        assert_no_collision(
+            crate::cmd("GETRANGE").arg("str").arg(1).arg(23).clone(),
+            crate::cmd("GETRANGE").arg("str").arg(12).arg(3).clone(),
+        );
+
+        // GET and MGET must still share cache entries.
+        let get = crate::cmd("GET").arg("key").clone();
+        let PrepCacheItem::NotCached(CacheableCommand::Single(scc)) =
+            cache_manager.get_cached_cmd(&get)
+        else {
+            panic!("GET must be cacheable and not cached yet");
+        };
+        cache_manager.insert(
+            scc.redis_key,
+            &scc.cmd_key,
+            Value::Int(2),
+            expire,
+            &Value::Nil,
+        );
+        let mget = crate::cmd("MGET").arg("key").clone();
+        assert!(matches!(
+            cache_manager.get_cached_cmd(&mget),
+            PrepCacheItem::Cached(Value::Array(values)) if values == vec![Value::Int(2)]
+        ));
     }
 
     #[test]

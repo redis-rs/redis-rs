@@ -50,7 +50,7 @@ impl CacheablePipeline<'_> {
 
 pub(crate) struct SingleCachedCommand<'a> {
     pub(crate) redis_key: &'a [u8],
-    pub(crate) cmd_key: &'a [u8],
+    pub(crate) cmd_key: Vec<u8>,
     pub(crate) cmd: &'a Cmd,
     pub(crate) client_side_expire: Instant,
 }
@@ -88,7 +88,7 @@ impl CacheableCommand<'_> {
                     if !matches!(&reply, &Value::ServerError(_)) {
                         cache_manager.insert(
                             cached_command.redis_key,
-                            cached_command.cmd_key,
+                            &cached_command.cmd_key,
                             reply.clone(),
                             cached_command.client_side_expire,
                             &pttl,
