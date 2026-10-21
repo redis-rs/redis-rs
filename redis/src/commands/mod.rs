@@ -1307,7 +1307,7 @@ implement_commands! {
 
     /// Return a range of members in a sorted set, by score with scores.
     /// [Redis Docs](https://redis.io/commands/ZRANGEBYSCORE)
-    fn zrangebyscore_withscores<K: ToSingleRedisArg, M: ToSingleRedisArg, MM: ToSingleRedisArg>(key: K, min: M, max: MM) -> (Vec<(String, usize)>) {
+    fn zrangebyscore_withscores<K: ToSingleRedisArg, M: ToSingleRedisArg, MM: ToSingleRedisArg>(key: K, min: M, max: MM) -> (Vec<(String, f64)>) {
         ready_cmd!("ZRANGEBYSCORE", key, min, max, "WITHSCORES").take()
     }
 
@@ -1321,7 +1321,7 @@ implement_commands! {
     /// Return a range of members in a sorted set, by score with limit with scores.
     /// [Redis Docs](https://redis.io/commands/ZRANGEBYSCORE)
     fn zrangebyscore_limit_withscores<K: ToSingleRedisArg, M: ToSingleRedisArg, MM: ToSingleRedisArg>
-            (key: K, min: M, max: MM, offset: isize, count: isize) -> (Vec<(String, usize)>) {
+            (key: K, min: M, max: MM, offset: isize, count: isize) -> (Vec<(String, f64)>) {
         ready_cmd!("ZRANGEBYSCORE", key, min, max, "WITHSCORES", "LIMIT", offset, count).take()
     }
 
@@ -1365,7 +1365,7 @@ implement_commands! {
     /// Return a range of members in a sorted set, by index, with scores
     /// ordered from high to low.
     /// [Redis Docs](https://redis.io/commands/ZREVRANGE)
-    fn zrevrange_withscores<K: ToSingleRedisArg>(key: K, start: isize, stop: isize) -> (Vec<String>) {
+    fn zrevrange_withscores<K: ToSingleRedisArg>(key: K, start: isize, stop: isize) -> (Vec<(String, f64)>) {
         ready_cmd!("ZREVRANGE", key, start, stop, "WITHSCORES").take()
     }
 
@@ -1377,7 +1377,7 @@ implement_commands! {
 
     /// Return a range of members in a sorted set, by score with scores.
     /// [Redis Docs](https://redis.io/commands/ZREVRANGEBYSCORE)
-    fn zrevrangebyscore_withscores<K: ToSingleRedisArg, MM: ToSingleRedisArg, M: ToSingleRedisArg>(key: K, max: MM, min: M) -> (Vec<String>) {
+    fn zrevrangebyscore_withscores<K: ToSingleRedisArg, MM: ToSingleRedisArg, M: ToSingleRedisArg>(key: K, max: MM, min: M) -> (Vec<(String, f64)>) {
         ready_cmd!("ZREVRANGEBYSCORE", key, max, min, "WITHSCORES").take()
     }
 
@@ -1391,7 +1391,7 @@ implement_commands! {
     /// Return a range of members in a sorted set, by score with limit with scores.
     /// [Redis Docs](https://redis.io/commands/ZREVRANGEBYSCORE)
     fn zrevrangebyscore_limit_withscores<K: ToSingleRedisArg, MM: ToSingleRedisArg, M: ToSingleRedisArg>
-            (key: K, max: MM, min: M, offset: isize, count: isize) -> (Vec<String>) {
+            (key: K, max: MM, min: M, offset: isize, count: isize) -> (Vec<(String, f64)>) {
         ready_cmd!("ZREVRANGEBYSCORE", key, max, min, "WITHSCORES", "LIMIT", offset, count).take()
     }
 

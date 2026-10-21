@@ -546,3 +546,35 @@ For the `Fn(PushInfo) -> Result<(), T>` push sender, the closure's error type `T
 * If a closure passed to `set_push_sender` / `push_sender` uses an error type `T` that doesn't implement `Display`, make `T` implement `Display` or map it to one (e.g. return `Err(error.to_string())`).
 * If you implemented `AsyncPushSender`, you'll need to define a printable error types.
 * Push delivery failures are no longer silent: they are reported through the `SendError` value and logged as warnings. Expect these warnings when a push receiver is dropped while the connection is still active.
+
+### `(Async)TypedCommands` sorted-set range commands return `(member, score)` pairs (Breaking Change)
+
+Following [issue #2483](https://github.com/redis-rs/redis-rs/issues/2483).
+The typed commands for the sorted-set range commands that return scores were inconsistent: `zrange_withscores` already returned `Vec<(String, f64)>` but the other commands declared an integer score type or a flat list of strings.
+
+Their return types are now updated to:
+- `zrangebyscore_withscores`: `Vec<(String, f64)>` (was `Vec<(String, usize)>`)
+- `zrangebyscore_limit_withscores`: `Vec<(String, f64)>` (was `Vec<(String, usize)>`)
+- `zrevrange_withscores`: `Vec<(String, f64)>` (was `Vec<String>`)
+- `zrevrangebyscore_withscores`: `Vec<(String, f64)>` (was `Vec<String>`)
+- `zrevrangebyscore_limit_withscores`: `Vec<(String, f64)>` (was `Vec<String>`)
+
+**Migration:** Destructure each entry as a `(member, score)` pair. Code that relied on integer scores can cast them back with `score as usize`.
+The cast is exact for non-negative integer scores that fit in `usize`.
+Fractional scores are truncated and negative or out-of-range ones saturate at `0` / `usize::MAX`.
+
+If a different score type is needed, choose it explicitly through the untyped `Commands` trait (sync) or `AsyncCommands` trait (async).
+
+Note: the old flat `Vec<String>` does not parse the RESP3 reply, which is an array of `[member, score]` pairs, and the old `usize` score type fails on fractional or negative scores.
+
+```rust
+// Before:
+let flat: Vec<String> = con.zrevrange_withscores("z", 0, -1)?;
+let ints: Vec<(String, usize)> = con.zrangebyscore_withscores("z", 0, 10)?;
+
+// After:
+let pairs: Vec<(String, f64)> = con.zrevrange_withscores("z", 0, -1)?;
+let scores: Vec<(String, f64)> = con.zrangebyscore_withscores("z", 0, 10)?;
+// only for scores that are known to be whole and non-negative
+let ints: Vec<(String, usize)> = scores.into_iter().map(|(m, s)| (m, s as usize)).collect();
+```
