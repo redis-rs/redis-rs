@@ -560,8 +560,6 @@ Their return types are now updated to:
 - `zrevrangebyscore_limit_withscores`: `Vec<(String, f64)>` (was `Vec<String>`)
 
 **Migration:** Destructure each entry as a `(member, score)` pair. Code that relied on integer scores can cast them back with `score as usize`.
-The cast is exact for non-negative integer scores that fit in `usize`.
-Fractional scores are truncated and negative or out-of-range ones saturate at `0` / `usize::MAX`.
 
 If a different score type is needed, choose it explicitly through the untyped `Commands` trait (sync) or `AsyncCommands` trait (async).
 
