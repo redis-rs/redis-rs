@@ -150,7 +150,11 @@ pub(crate) fn retrieve_tls_certificates(
         root_cert_store,
         // Populated as well as the rustls fields, for a build in which another runtime selects
         // `native-tls`.
-        #[cfg(native_tls_selected)]
+        #[cfg(any(
+            all(feature = "tls-native-tls", not(feature = "tls-rustls")),
+            all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
+            all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
+        ))]
         native_tls_params: parse_native_tls_params(certificates)?,
         #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
         danger_accept_invalid_hostnames: false,
@@ -171,14 +175,22 @@ pub(crate) fn retrieve_tls_certificates(
 ///
 /// Parsed when the client is built rather than when it connects, so that a malformed PEM is
 /// reported at the call that supplied it.
-#[cfg(native_tls_selected)]
+#[cfg(any(
+    all(feature = "tls-native-tls", not(feature = "tls-rustls")),
+    all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
+    all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
+))]
 #[derive(Clone)]
 pub(crate) struct NativeTlsParams {
     pub(crate) identity: Option<native_tls::Identity>,
     pub(crate) root_certs: Vec<native_tls::Certificate>,
 }
 
-#[cfg(native_tls_selected)]
+#[cfg(any(
+    all(feature = "tls-native-tls", not(feature = "tls-rustls")),
+    all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
+    all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
+))]
 impl std::fmt::Debug for NativeTlsParams {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NativeTlsParams")
@@ -188,7 +200,11 @@ impl std::fmt::Debug for NativeTlsParams {
     }
 }
 
-#[cfg(native_tls_selected)]
+#[cfg(any(
+    all(feature = "tls-native-tls", not(feature = "tls-rustls")),
+    all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
+    all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
+))]
 pub(crate) fn parse_native_tls_params(
     certificates: &TlsCertificates,
 ) -> RedisResult<Option<NativeTlsParams>> {

@@ -331,7 +331,11 @@ impl ClusterParams {
                 client_tls_params: None,
                 #[cfg(feature = "tls-rustls")]
                 root_cert_store: None,
-                #[cfg(native_tls_selected)]
+                #[cfg(any(
+                    all(feature = "tls-native-tls", not(feature = "tls-rustls")),
+                    all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
+                    all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
+                ))]
                 native_tls_params: None,
                 danger_accept_invalid_hostnames: false,
             });

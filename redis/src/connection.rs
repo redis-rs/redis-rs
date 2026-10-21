@@ -43,7 +43,13 @@ use rustls_native_certs::load_native_certs;
 
 #[cfg(feature = "tls-rustls")]
 use crate::tls::ClientTlsParams;
-#[cfg(native_tls_selected)]
+// `native-tls` is only reachable for a runtime whose rustls counterpart is disabled, so the
+// certificate handling it needs is compiled in only when at least one such runtime is enabled.
+#[cfg(any(
+    all(feature = "tls-native-tls", not(feature = "tls-rustls")),
+    all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
+    all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
+))]
 use crate::tls::NativeTlsParams;
 
 // Non-exhaustive to prevent construction outside this crate
@@ -53,7 +59,11 @@ pub struct TlsConnParams {
     pub(crate) client_tls_params: Option<ClientTlsParams>,
     #[cfg(feature = "tls-rustls")]
     pub(crate) root_cert_store: Option<RootCertStore>,
-    #[cfg(native_tls_selected)]
+    #[cfg(any(
+        all(feature = "tls-native-tls", not(feature = "tls-rustls")),
+        all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
+        all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
+    ))]
     pub(crate) native_tls_params: Option<NativeTlsParams>,
     #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
     pub(crate) danger_accept_invalid_hostnames: bool,
@@ -62,7 +72,11 @@ pub struct TlsConnParams {
 // Returns a builder rather than a connector because each backend wraps it differently:
 // `native_tls` and `tokio_native_tls` call `build`, while `async_native_tls::TlsConnector`
 // is converted from the builder itself.
-#[cfg(native_tls_selected)]
+#[cfg(any(
+    all(feature = "tls-native-tls", not(feature = "tls-rustls")),
+    all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
+    all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
+))]
 pub(crate) fn create_native_tls_connector_builder(
     insecure: bool,
     tls_params: Option<TlsConnParams>,
@@ -257,7 +271,11 @@ impl ConnectionAddr {
                     client_tls_params: None,
                     #[cfg(feature = "tls-rustls")]
                     root_cert_store: None,
-                    #[cfg(native_tls_selected)]
+                    #[cfg(any(
+                        all(feature = "tls-native-tls", not(feature = "tls-rustls")),
+                        all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
+                        all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
+                    ))]
                     native_tls_params: None,
                     danger_accept_invalid_hostnames: insecure,
                 });
