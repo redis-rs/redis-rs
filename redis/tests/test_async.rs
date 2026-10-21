@@ -818,6 +818,8 @@ mod basic_async {
     mod pub_sub {
         use std::time::Duration;
 
+        use redis::aio::{MultiplexedConnection, PubSubSink, PubSubStream};
+
         use super::*;
 
         #[async_test]
@@ -1396,6 +1398,255 @@ mod basic_async {
 
             // no more messages should be sent.
             assert_matches!(rx.try_recv(), Err(_));
+        }
+
+        // Asserts that a `PING` response wasn't corrupted by the confirmations of another
+        // command that is still in flight. RESP2 replies with an array while the connection is
+        // in subscribed mode, and with a simple string otherwise; RESP3 always replies with a
+        // simple string.
+        fn assert_is_pong(response: Value) {
+            match response {
+                Value::SimpleString(message) => assert_eq!(message, "PONG"),
+                Value::Array(values) => {
+                    assert_eq!(values.first(), Some(&redis_value!("pong")));
+                }
+                other => panic!("the ping response was corrupted: {other:?}"),
+            }
+        }
+
+        // Runs `command` concurrently with a PING on a clone of the sink, and asserts that the
+        // command succeeded and that the PING response wasn't corrupted by the command's
+        // confirmations.
+        async fn assert_ping_uncorrupted_during(
+            command: impl std::future::Future<Output = RedisResult<()>>,
+            ping_sink: &mut PubSubSink,
+        ) {
+            let (command_result, ping_result) =
+                futures::future::join(command, ping_sink.ping::<Value>()).await;
+            command_result.unwrap();
+            assert_is_pong(ping_result.unwrap());
+        }
+
+        // Publishes "banana" to `channel` and asserts that the stream receives it.
+        async fn assert_receives_message(
+            publish_conn: &mut MultiplexedConnection,
+            stream: &mut PubSubStream,
+            channel: &str,
+        ) {
+            let _: () = publish_conn.publish(channel, "banana").await.unwrap();
+            let message = stream.next().await.unwrap();
+            assert_eq!(message.get_payload::<String>().unwrap(), "banana");
+        }
+
+        // The kind of subscription that a command applies to, so that the same scenario can be
+        // tested for both channels and patterns.
+        #[derive(Clone, Copy)]
+        enum SubscriptionKind {
+            Channel,
+            Pattern,
+        }
+
+        impl SubscriptionKind {
+            // The opposite kind, used to keep the connection subscribed to something while the
+            // tested kind is unsubscribed.
+            fn other(self) -> Self {
+                match self {
+                    Self::Channel => Self::Pattern,
+                    Self::Pattern => Self::Channel,
+                }
+            }
+
+            async fn subscribe(self, sink: &mut PubSubSink, channels: &[&str]) -> RedisResult<()> {
+                match self {
+                    Self::Channel => sink.subscribe(channels).await,
+                    Self::Pattern => sink.psubscribe(channels).await,
+                }
+            }
+
+            async fn unsubscribe(
+                self,
+                sink: &mut PubSubSink,
+                channels: &[&str],
+            ) -> RedisResult<()> {
+                match self {
+                    Self::Channel => sink.unsubscribe(channels).await,
+                    Self::Pattern => sink.punsubscribe(channels).await,
+                }
+            }
+        }
+
+        async fn assert_subscribe_awaits_all_confirmations(kind: SubscriptionKind) {
+            let ctx = TestContext::new();
+            let (mut sink, mut stream) = ctx.async_pubsub().await.unwrap().split();
+            let mut ping_sink = sink.clone();
+            let mut publish_conn = ctx.async_connection().await.unwrap();
+
+            let channels = ["issue-2423-sub-a", "issue-2423-sub-b"];
+            assert_ping_uncorrupted_during(kind.subscribe(&mut sink, &channels), &mut ping_sink)
+                .await;
+
+            // The connection isn't left with unattributed confirmations, so it still works.
+            assert_is_pong(sink.ping::<Value>().await.unwrap());
+
+            // Messages for the subscribed channels are still passed through to the stream.
+            for channel in channels {
+                assert_receives_message(&mut publish_conn, &mut stream, channel).await;
+            }
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[async_test]
+        async fn test_pubsub_subscribe_awaits_all_confirmations_issue_2423() {
+            assert_subscribe_awaits_all_confirmations(SubscriptionKind::Channel).await;
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[async_test]
+        async fn test_pubsub_psubscribe_awaits_all_confirmations_issue_2423() {
+            assert_subscribe_awaits_all_confirmations(SubscriptionKind::Pattern).await;
+        }
+
+        async fn assert_unsubscribe_awaits_all_confirmations(kind: SubscriptionKind) {
+            let ctx = TestContext::new();
+            let (mut sink, mut stream) = ctx.async_pubsub().await.unwrap().split();
+            let mut ping_sink = sink.clone();
+            let mut publish_conn = ctx.async_connection().await.unwrap();
+
+            let channels = ["issue-2423-unsub-a", "issue-2423-unsub-b"];
+            kind.subscribe(&mut sink, &channels).await.unwrap();
+            // A subscription of the other kind stays subscribed, so messages can still be
+            // received afterwards.
+            kind.other()
+                .subscribe(&mut sink, &["issue-2423-unsub-stay"])
+                .await
+                .unwrap();
+
+            assert_ping_uncorrupted_during(kind.unsubscribe(&mut sink, &channels), &mut ping_sink)
+                .await;
+
+            assert_receives_message(&mut publish_conn, &mut stream, "issue-2423-unsub-stay").await;
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[async_test]
+        async fn test_pubsub_unsubscribe_awaits_all_confirmations_issue_2423() {
+            assert_unsubscribe_awaits_all_confirmations(SubscriptionKind::Channel).await;
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[async_test]
+        async fn test_pubsub_punsubscribe_awaits_all_confirmations_issue_2423() {
+            assert_unsubscribe_awaits_all_confirmations(SubscriptionKind::Pattern).await;
+        }
+
+        // Subscribing to one channel and then unsubscribing from it and from channels that were
+        // never subscribed must leave the connection usable - the server sends a confirmation
+        // for every argument, including the ones that weren't subscribed.
+        async fn assert_partial_unsubscribe_leaves_connection_usable(kind: SubscriptionKind) {
+            let ctx = TestContext::new();
+            let (mut sink, mut stream) = ctx.async_pubsub().await.unwrap().split();
+            let mut ping_sink = sink.clone();
+            let mut publish_conn = ctx.async_connection().await.unwrap();
+
+            kind.subscribe(&mut sink, &["issue-2423-partial-a"])
+                .await
+                .unwrap();
+
+            assert_ping_uncorrupted_during(
+                kind.unsubscribe(
+                    &mut sink,
+                    &[
+                        "issue-2423-partial-a",
+                        "issue-2423-partial-b",
+                        "issue-2423-partial-c",
+                    ],
+                ),
+                &mut ping_sink,
+            )
+            .await;
+
+            // The connection isn't left with unattributed confirmations, so it still works.
+            assert_is_pong(sink.ping::<Value>().await.unwrap());
+
+            // Messages can still be received after re-subscribing.
+            kind.subscribe(&mut sink, &["issue-2423-partial-a"])
+                .await
+                .unwrap();
+            assert_receives_message(&mut publish_conn, &mut stream, "issue-2423-partial-a").await;
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[async_test]
+        async fn test_pubsub_partial_unsubscribe_leaves_connection_usable_issue_2423() {
+            assert_partial_unsubscribe_leaves_connection_usable(SubscriptionKind::Channel).await;
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[async_test]
+        async fn test_pubsub_partial_punsubscribe_leaves_connection_usable_issue_2423() {
+            assert_partial_unsubscribe_leaves_connection_usable(SubscriptionKind::Pattern).await;
+        }
+
+        // A zero-argument UNSUBSCRIBE/PUNSUBSCRIBE is answered with one confirmation per active
+        // subscription (or a single confirmation with a nil channel when there are none), so the
+        // number of confirmations is resolved from the tracked subscriptions when the first
+        // confirmation arrives.
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        async fn assert_empty_unsubscribe_does_not_corrupt_connection(kind: SubscriptionKind) {
+            let ctx = TestContext::new();
+            let (mut sink, mut stream) = ctx.async_pubsub().await.unwrap().split();
+            let mut ping_sink = sink.clone();
+            let mut publish_conn = ctx.async_connection().await.unwrap();
+
+            let channels = ["issue-2423-empty-a", "issue-2423-empty-b"];
+            kind.subscribe(&mut sink, &channels).await.unwrap();
+            // A subscription of the other kind stays subscribed, so messages can still be
+            // received after the subscriptions of this kind are removed.
+            kind.other()
+                .subscribe(&mut sink, &["issue-2423-empty-stay"])
+                .await
+                .unwrap();
+
+            assert_ping_uncorrupted_during(kind.unsubscribe(&mut sink, &[]), &mut ping_sink).await;
+
+            // The staying subscription still receives messages.
+            assert_receives_message(&mut publish_conn, &mut stream, "issue-2423-empty-stay").await;
+
+            // An empty unsubscribe with no subscriptions of this kind is answered with a single
+            // confirmation.
+            kind.unsubscribe(&mut sink, &[]).await.unwrap();
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[async_test]
+        async fn test_pubsub_empty_unsubscribe_does_not_corrupt_connection_issue_2423() {
+            assert_empty_unsubscribe_does_not_corrupt_connection(SubscriptionKind::Channel).await;
+        }
+
+        // https://github.com/redis-rs/redis-rs/issues/2423
+        #[async_test]
+        async fn test_pubsub_empty_punsubscribe_does_not_corrupt_connection_issue_2423() {
+            assert_empty_unsubscribe_does_not_corrupt_connection(SubscriptionKind::Pattern).await;
+        }
+
+        // A subscription command that is rejected by the server is answered with a single error
+        // rather than with confirmations, and the error must not be swallowed.
+        #[async_test]
+        async fn test_pubsub_rejected_subscribe_fails_without_waiting_issue_2423() {
+            let ctx = TestContext::new();
+            let mut pubsub_conn = ctx.async_pubsub().await.unwrap();
+
+            let error = pubsub_conn
+                .subscribe(Vec::<String>::new())
+                .await
+                .unwrap_err();
+            assert_eq!(
+                error.kind(),
+                ErrorKind::Server(ServerErrorKind::ResponseError)
+            );
+
+            // The connection is still usable.
+            assert_is_pong(pubsub_conn.ping::<Value>().await.unwrap());
         }
     }
 

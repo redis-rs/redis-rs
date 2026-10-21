@@ -16,6 +16,25 @@ pub struct Pipeline {
     pub(crate) ignore_errors: bool,
 }
 
+/// How many confirmation messages the server sends for a pub/sub subscription command.
+///
+/// Subscription commands are confirmed once per argument, even when the channel or pattern
+/// wasn't already subscribed. A zero-argument subscribe is rejected with a single error, while a
+/// zero-argument unsubscribe removes all of the connection's current subscriptions of that kind
+/// and is confirmed once per each - the reply doesn't carry that count, so the `UnsubscribeAll*`
+/// variants are resolved from the connection's tracked subscriptions when the first confirmation
+/// arrives. See <https://github.com/redis-rs/redis-rs/issues/2423>.
+#[cfg(feature = "aio")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ExpectedConfirmations {
+    /// Exactly this many confirmations are pending, including the one being processed.
+    Count(usize),
+    /// One confirmation per tracked channel.
+    UnsubscribeAllChannels,
+    /// One confirmation per tracked pattern.
+    UnsubscribeAllPatterns,
+}
+
 /// A pipeline allows you to send multiple commands in one go to the
 /// redis server.  API wise it's very similar to just using a command
 /// but it allows multiple commands to be chained and some features such
