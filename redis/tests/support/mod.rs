@@ -119,6 +119,13 @@ where
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
 mod cluster;
 
+#[cfg(feature = "aio")]
+mod pubsub;
+
+#[cfg(feature = "aio")]
+#[allow(unused_imports)]
+pub use self::pubsub::*;
+
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
 mod mock_cluster;
 

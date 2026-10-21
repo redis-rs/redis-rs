@@ -14,6 +14,10 @@ pub struct Pipeline {
     pub(crate) transaction_mode: bool,
     pub(crate) ignored_commands: HashSet<usize>,
     pub(crate) ignore_errors: bool,
+    /// Set for a pipeline that holds a single subscription command, to describe how the server
+    /// will confirm it. See [`ExpectedConfirmations`].
+    #[cfg(feature = "aio")]
+    pub(crate) subscription_confirmations: Option<ExpectedConfirmations>,
 }
 
 /// How many confirmation messages the server sends for a pub/sub subscription command.
@@ -25,7 +29,7 @@ pub struct Pipeline {
 /// variants are resolved from the connection's tracked subscriptions when the first confirmation
 /// arrives. See <https://github.com/redis-rs/redis-rs/issues/2423>.
 #[cfg(feature = "aio")]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ExpectedConfirmations {
     /// Exactly this many confirmations are pending, including the one being processed.
     Count(usize),
@@ -70,6 +74,8 @@ impl Pipeline {
             transaction_mode: false,
             ignored_commands: HashSet::new(),
             ignore_errors: false,
+            #[cfg(feature = "aio")]
+            subscription_confirmations: None,
         }
     }
 

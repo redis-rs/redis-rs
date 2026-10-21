@@ -1,11 +1,16 @@
-use super::{AsyncPushSender, ConnectionLike, Runtime, SharedHandleContainer, TaskHandle};
+use super::{
+    AsyncPushSender, ConnectionLike, Runtime, SharedHandleContainer, SubscribeLikeCommand,
+    TaskHandle, send_subscribe_like_command,
+};
 #[cfg(feature = "cache-aio")]
 use crate::caching::{CacheManager, CacheStatistics, PrepCacheItem};
+use crate::pipeline::ExpectedConfirmations;
+use crate::subscription_tracker::{SubscriptionKind, SubscriptionTracker, subscription_change};
 use crate::{
     AsyncConnectionConfig, ProtocolVersion, PushInfo, RedisConnectionInfo, ServerError,
     ToRedisArgs,
     aio::setup_connection,
-    check_resp3, cmd,
+    check_resp3,
     cmd::Cmd,
     errors::{ErrorKind, RedisError, closed_connection_error},
     parser::ValueCodec,
@@ -32,7 +37,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::fmt::Debug;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::task::{self, Poll};
 use std::time::Duration;
 use tokio_util::codec::Decoder;
@@ -59,11 +64,57 @@ enum ResponseAggregate {
 struct PipelineResponseExpectation {
     // The number of responses to skip before starting to save responses in the buffer.
     skipped_response_count: usize,
-    // The number of responses to keep in the buffer
-    expected_response_count: usize,
-    // whether the pipelined request is a transaction
-    is_transaction: bool,
+    // The number of responses that the request is waiting for.
+    expected: ExpectedConfirmations,
+    // How the request's responses are handled, beyond skipping and buffering them.
+    kind: RequestKind,
     seen_responses: usize,
+}
+
+/// The kinds of requests that await a specific number of responses.
+#[derive(Clone, Copy)]
+enum RequestKind {
+    /// A pipeline of regular commands.
+    Pipeline,
+    /// A transaction: a server error in one of its skipped responses is recorded, since it's
+    /// an error that will cause the transaction to fail.
+    Transaction,
+    /// A subscription command: the server rejects it with a single error instead of with its
+    /// confirmations, so waiting for confirmations that will never arrive would block the
+    /// request until it times out.
+    SubscribeLike,
+}
+
+impl PipelineResponseExpectation {
+    /// An expectation for a pipeline of regular commands: `expected_response_count` responses,
+    /// after skipping `skipped_response_count` of them.
+    fn pipeline(
+        skipped_response_count: usize,
+        expected_response_count: usize,
+        is_transaction: bool,
+    ) -> Self {
+        Self {
+            skipped_response_count,
+            expected: ExpectedConfirmations::Count(expected_response_count),
+            kind: if is_transaction {
+                RequestKind::Transaction
+            } else {
+                RequestKind::Pipeline
+            },
+            seen_responses: 0,
+        }
+    }
+
+    /// An expectation for a pipeline that holds a single subscription command, which the server
+    /// confirms `expected` times (see [`ExpectedConfirmations`]).
+    fn subscribe_like(skipped_response_count: usize, expected: ExpectedConfirmations) -> Self {
+        Self {
+            skipped_response_count,
+            expected,
+            kind: RequestKind::SubscribeLike,
+            seen_responses: 0,
+        }
+    }
 }
 
 impl ResponseAggregate {
@@ -119,6 +170,11 @@ pin_project! {
         error: Option<RedisError>,
         push_sender: Option<Arc<dyn AsyncPushSender>>,
         cache_manager: Option<CacheManager>,
+        // The subscriptions the connection has confirmed so far, used to determine how many
+        // confirmations a zero-argument un/psubscribe will be answered with. Shared, by
+        // reference, with the layer that owns the connection so that it can resubscribe with
+        // the same state without allocating a second copy.
+        subscriptions: Arc<Mutex<SubscriptionTracker>>,
     }
 }
 
@@ -130,6 +186,11 @@ pin_project! {
         in_flight: VecDeque<InFlight>,
         error: Option<RedisError>,
         push_sender: Option<Arc<dyn AsyncPushSender>>,
+        // The subscriptions the connection has confirmed so far, used to determine how many
+        // confirmations a zero-argument un/psubscribe will be answered with. Shared, by
+        // reference, with the layer that owns the connection so that it can resubscribe with
+        // the same state without allocating a second copy.
+        subscriptions: Arc<Mutex<SubscriptionTracker>>,
     }
 }
 
@@ -152,6 +213,7 @@ where
     fn new(
         sink_stream: T,
         push_sender: Option<Arc<dyn AsyncPushSender>>,
+        subscriptions: Arc<Mutex<SubscriptionTracker>>,
         #[cfg(feature = "cache-aio")] cache_manager: Option<CacheManager>,
     ) -> Self
     where
@@ -164,6 +226,7 @@ where
             push_sender,
             #[cfg(feature = "cache-aio")]
             cache_manager,
+            subscriptions,
         }
     }
 
@@ -214,6 +277,55 @@ where
             _ => result,
         };
 
+        // Track the subscriptions that the server confirms, so that the number of confirmations
+        // of a zero-argument unsubscribe can be determined when its first confirmation arrives.
+        // Only push values are considered, since a regular command's response may be an array
+        // that happens to look like a confirmation.
+        let change = match &result {
+            Ok(value @ Value::Push { .. }) => subscription_change(value),
+            _ => None,
+        };
+        if let Some(change) = change {
+            // Requests are completed in the order they were sent, so if the oldest request
+            // awaits the confirmations of an unsubscribe-all, then this confirmation is its
+            // first confirmation. The number of confirmations is derived from the tracked
+            // subscriptions before the current confirmation is applied to them, which are
+            // exactly the subscriptions that existed when the command ran - all commands that
+            // were sent before it are confirmed by now, even if they were sent concurrently.
+            let update_subscriptions = if let Some(InFlight {
+                response_aggregate: ResponseAggregate::Pipeline { expectation, .. },
+                ..
+            }) = self_.in_flight.front_mut()
+            {
+                let kind = match expectation.expected {
+                    ExpectedConfirmations::UnsubscribeAllChannels => {
+                        Some(SubscriptionKind::Channel)
+                    }
+                    ExpectedConfirmations::UnsubscribeAllPatterns => {
+                        Some(SubscriptionKind::Pattern)
+                    }
+                    ExpectedConfirmations::Count(_) => None,
+                };
+                if let Some(kind) = kind {
+                    let expected = self_
+                        .subscriptions
+                        .lock()
+                        .unwrap()
+                        .unsubscribe_all_target(kind);
+                    expectation.expected = ExpectedConfirmations::Count(expected);
+
+                    false
+                } else {
+                    true
+                }
+            } else {
+                true
+            };
+            if update_subscriptions {
+                self_.subscriptions.lock().unwrap().apply(change);
+            }
+        }
+
         let mut entry = match self_.in_flight.pop_front() {
             Some(entry) => entry,
             None => return,
@@ -228,30 +340,37 @@ where
             ResponseAggregate::Pipeline {
                 buffer,
                 error_or_errors,
-                expectation:
-                    PipelineResponseExpectation {
-                        expected_response_count,
-                        skipped_response_count,
-                        is_transaction,
-                        seen_responses,
-                    },
+                expectation,
             } => {
-                *seen_responses += 1;
-                if *skipped_response_count > 0 {
+                expectation.seen_responses += 1;
+                if expectation.skipped_response_count > 0 {
                     // server errors in skipped values are still counted for errors in transactions, since they're errors that will cause the transaction to fail,
                     // and we only skip values in transaction.
-                    if *is_transaction && let ErrorOrErrors::Errors(errs) = error_or_errors {
+                    if matches!(expectation.kind, RequestKind::Transaction)
+                        && let ErrorOrErrors::Errors(errs) = error_or_errors
+                    {
                         match result {
                             Ok(Value::ServerError(err)) => {
-                                errs.push((*seen_responses - 2, err)); // - 1 to offset the early increment, and -1 to offset the added MULTI call.
+                                errs.push((expectation.seen_responses - 2, err)); // - 1 to offset the early increment, and -1 to offset the added MULTI call.
                             }
                             Err(err) => *error_or_errors = ErrorOrErrors::FirstError(err),
                             _ => {}
                         }
                     }
 
-                    *skipped_response_count -= 1;
+                    expectation.skipped_response_count -= 1;
                     self_.in_flight.push_front(entry);
+                    return;
+                }
+
+                if matches!(expectation.kind, RequestKind::SubscribeLike)
+                    && matches!(result, Err(_) | Ok(Value::ServerError(_)))
+                {
+                    // The server rejected the subscription command with a single error instead
+                    // of with its confirmations, so there's nothing more to wait for.
+                    if let Some(output) = entry.output.take() {
+                        _ = output.send(result);
+                    }
                     return;
                 }
 
@@ -266,7 +385,14 @@ where
                     }
                 }
 
-                if buffer.len() < *expected_response_count {
+                let expected = match expectation.expected {
+                    ExpectedConfirmations::Count(count) => count,
+                    // Resolved to `Count` when the first confirmation arrived, so this is only
+                    // reached when the response isn't a confirmation.
+                    ExpectedConfirmations::UnsubscribeAllChannels
+                    | ExpectedConfirmations::UnsubscribeAllPatterns => 1,
+                };
+                if buffer.len() < expected {
                     // Need to gather more response values
                     self_.in_flight.push_front(entry);
                     return;
@@ -425,6 +551,7 @@ impl Pipeline {
     fn new<T>(
         sink_stream: T,
         push_sender: Option<Arc<dyn AsyncPushSender>>,
+        subscriptions: Arc<Mutex<SubscriptionTracker>>,
         #[cfg(feature = "cache-aio")] cache_manager: Option<CacheManager>,
         buffer_size: usize,
     ) -> (Self, impl Future<Output = ()>)
@@ -438,6 +565,7 @@ impl Pipeline {
         let sink = PipelineSink::new(
             sink_stream,
             push_sender,
+            subscriptions,
             #[cfg(feature = "cache-aio")]
             cache_manager,
         );
@@ -688,9 +816,11 @@ impl MultiplexedConnection {
             );
         }
 
+        let subscriptions = config.subscription_tracker.clone().unwrap_or_default();
         let (pipeline, driver) = Pipeline::new(
             codec,
             config.push_sender,
+            subscriptions,
             #[cfg(feature = "cache-aio")]
             cache_manager_opt.clone(),
             Pipeline::resolve_buffer_size(config.pipeline_buffer_size),
@@ -791,12 +921,11 @@ impl MultiplexedConnection {
                         .pipeline
                         .send_recv(
                             pipeline.get_packed_pipeline(),
-                            Some(PipelineResponseExpectation {
-                                skipped_response_count: 0,
-                                expected_response_count: pipeline.commands.len(),
-                                is_transaction: false,
-                                seen_responses: 0,
-                            }),
+                            Some(PipelineResponseExpectation::pipeline(
+                                0,
+                                pipeline.commands.len(),
+                                false,
+                            )),
                             self.response_timeout,
                             cmd.is_no_response(),
                         )
@@ -826,12 +955,22 @@ impl MultiplexedConnection {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
+        // A pipeline that holds a single subscription command is a single server command, so it
+        // holds a single concurrency limit permit regardless of the number of confirmations that
+        // it will be answered with.
+        let subscription_confirmations = cmd.subscription_confirmations;
+        let permit_count = if subscription_confirmations.is_some() {
+            1
+        } else {
+            count
+        };
+
         // Try to acquire 1 permit per command in the pipeline: block on the first to guarantee
         // progress, then grab as many more as are immediately available without blocking.
         // This roughly reflects the pipeline's load on the server while avoiding deadlock --
         // a large pipeline can always proceed even if it can't acquire all permits.
         let _permits = if let Some(limiter) = &self.concurrency_limiter {
-            let capacity = permit_vec_capacity(count, limiter.limit);
+            let capacity = permit_vec_capacity(permit_count, limiter.limit);
             let mut permits = Vec::with_capacity(capacity);
             permits.push(limiter.semaphore.acquire().await);
             for _ in 1..capacity {
@@ -845,7 +984,9 @@ impl MultiplexedConnection {
             Vec::new()
         };
         #[cfg(feature = "cache-aio")]
-        if let Some(cache_manager) = &self.cache_manager {
+        if let Some(cache_manager) = &self.cache_manager
+            && subscription_confirmations.is_none()
+        {
             let (cacheable_pipeline, pipeline, (skipped_response_count, expected_response_count)) =
                 cache_manager.get_cached_pipeline(cmd);
             if pipeline.is_empty() {
@@ -855,12 +996,11 @@ impl MultiplexedConnection {
                 .pipeline
                 .send_recv(
                     pipeline.get_packed_pipeline(),
-                    Some(PipelineResponseExpectation {
+                    Some(PipelineResponseExpectation::pipeline(
                         skipped_response_count,
                         expected_response_count,
-                        is_transaction: cacheable_pipeline.transaction_mode,
-                        seen_responses: 0,
-                    }),
+                        cacheable_pipeline.transaction_mode,
+                    )),
                     self.response_timeout,
                     false,
                 )
@@ -868,16 +1008,15 @@ impl MultiplexedConnection {
 
             return cacheable_pipeline.resolve(cache_manager, result);
         }
+        let expectation = match subscription_confirmations {
+            Some(expected) => PipelineResponseExpectation::subscribe_like(offset, expected),
+            None => PipelineResponseExpectation::pipeline(offset, count, cmd.is_transaction()),
+        };
         let value = self
             .pipeline
             .send_recv(
                 cmd.get_packed_pipeline(),
-                Some(PipelineResponseExpectation {
-                    skipped_response_count: offset,
-                    expected_response_count: count,
-                    is_transaction: cmd.is_transaction(),
-                    seen_responses: 0,
-                }),
+                Some(expectation),
                 self.response_timeout,
                 false,
             )
@@ -934,10 +1073,7 @@ impl MultiplexedConnection {
     /// ```
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
-        let mut cmd = cmd("SUBSCRIBE");
-        cmd.arg(channel_name);
-        cmd.exec_async(self).await?;
-        Ok(())
+        send_subscribe_like_command(self, SubscribeLikeCommand::Subscribe, channel_name).await
     }
 
     /// Unsubscribes from channel(s).
@@ -956,10 +1092,7 @@ impl MultiplexedConnection {
     /// ```
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
-        let mut cmd = cmd("UNSUBSCRIBE");
-        cmd.arg(channel_name);
-        cmd.exec_async(self).await?;
-        Ok(())
+        send_subscribe_like_command(self, SubscribeLikeCommand::Unsubscribe, channel_name).await
     }
 
     /// Subscribes to new channel(s) with pattern(s).
@@ -982,10 +1115,7 @@ impl MultiplexedConnection {
     /// ```
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
-        let mut cmd = cmd("PSUBSCRIBE");
-        cmd.arg(channel_pattern);
-        cmd.exec_async(self).await?;
-        Ok(())
+        send_subscribe_like_command(self, SubscribeLikeCommand::PSubscribe, channel_pattern).await
     }
 
     /// Unsubscribes from channel pattern(s).
@@ -993,10 +1123,7 @@ impl MultiplexedConnection {
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.protocol);
-        let mut cmd = cmd("PUNSUBSCRIBE");
-        cmd.arg(channel_pattern);
-        cmd.exec_async(self).await?;
-        Ok(())
+        send_subscribe_like_command(self, SubscribeLikeCommand::PUnsubscribe, channel_pattern).await
     }
 }
 
@@ -1023,6 +1150,7 @@ impl MultiplexedConnection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cmd;
 
     #[test]
     fn test_pipeline_resolve_buffer_size_default() {

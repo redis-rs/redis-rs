@@ -199,6 +199,9 @@ pub struct AsyncConnectionConfig {
     pub(crate) concurrency_limit: Option<usize>,
     /// Flush threshold for the outbound write buffer; see [`AsyncConnectionConfig::set_write_backpressure_boundary`].
     pub(crate) write_backpressure_boundary: Option<usize>,
+    /// A tracker of the connection's confirmed subscriptions, shared with the connection.
+    pub(crate) subscription_tracker:
+        Option<std::sync::Arc<std::sync::Mutex<crate::subscription_tracker::SubscriptionTracker>>>,
     /// Optional credentials provider for dynamic authentication (e.g., token-based authentication)
     #[cfg(feature = "token-based-authentication")]
     pub(crate) credentials_provider: Option<std::sync::Arc<dyn StreamingCredentialsProvider>>,
@@ -217,6 +220,7 @@ impl std::fmt::Debug for AsyncConnectionConfig {
             pipeline_buffer_size,
             concurrency_limit,
             write_backpressure_boundary,
+            subscription_tracker,
             #[cfg(feature = "token-based-authentication")]
             credentials_provider,
         } = self;
@@ -227,6 +231,7 @@ impl std::fmt::Debug for AsyncConnectionConfig {
             .field("pipeline_buffer_size", pipeline_buffer_size)
             .field("concurrency_limit", concurrency_limit)
             .field("write_backpressure_boundary", write_backpressure_boundary)
+            .field("subscription_tracker", &set_or_unset(subscription_tracker))
             .field("push_sender", &set_or_unset(push_sender))
             .field("dns_resolver", &set_or_unset(dns_resolver));
 
@@ -253,6 +258,7 @@ impl Default for AsyncConnectionConfig {
             pipeline_buffer_size: None,
             concurrency_limit: None,
             write_backpressure_boundary: None,
+            subscription_tracker: None,
             #[cfg(feature = "token-based-authentication")]
             credentials_provider: None,
         }
