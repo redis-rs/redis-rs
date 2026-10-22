@@ -10,7 +10,7 @@ use redis::{
 use redis::{aio, cmd};
 use redis_test::server::{Module, RedisServer, use_protocol};
 use redis_test::utils::{TlsFilePaths, get_random_available_port};
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 use std::{
     fs::File,
     io::{BufReader, Read},
@@ -19,7 +19,7 @@ use std::{io, thread::sleep, time::Duration};
 
 #[cfg(feature = "cache-aio")]
 use redis::caching::CacheConfig;
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 use redis::{ClientTlsConfig, TlsCertificates};
 
 #[macro_use]
@@ -172,7 +172,7 @@ impl TestContext {
         Self::with_modules(&[])
     }
 
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
     pub fn new_with_mtls() -> Self {
         Self::with_modules_and_tls(&[], true, None)
     }
@@ -487,7 +487,7 @@ where
     }
 }
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 pub fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> TlsCertificates {
     let ca_file = File::open(&tls_file_paths.ca_crt).expect("Cannot open CA cert file");
     let mut root_cert_vec = Vec::new();
@@ -516,7 +516,7 @@ pub fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> TlsCertificates {
     }
 }
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
     connection_info: T,
     tls_file_params: &Option<TlsFilePaths>,
@@ -528,7 +528,7 @@ pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
             load_certs_from_file(
                 tls_file_params
                     .as_ref()
-                    .expect("Expected certificates when `tls-rustls` feature is enabled"),
+                    .expect("Expected certificates when mTLS is enabled"),
             ),
         )
     } else {
@@ -575,7 +575,7 @@ pub(crate) fn build_single_client_with_separate_client_cert<T: redis::IntoConnec
     )
 }
 
-#[cfg(not(feature = "tls-rustls"))]
+#[cfg(not(any(feature = "tls-rustls", feature = "tls-native-tls")))]
 pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
     connection_info: T,
     _tls_file_params: &Option<TlsFilePaths>,

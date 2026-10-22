@@ -1933,7 +1933,7 @@ mod basic_async {
         assert!(stream.next().await.is_none());
     }
 
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
     mod mtls_test {
         use super::*;
 
