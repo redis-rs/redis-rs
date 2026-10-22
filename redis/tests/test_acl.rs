@@ -1066,14 +1066,12 @@ mod token_based_authentication_acl_tests {
         // and no credential update can fix it (the re-auth task already exited)
         println!("Verifying server rejects commands after user invalidation...");
         let result: redis::RedisResult<String> = whoami_cmd.query_async(&mut con).await;
+        let err = result.unwrap_err();
         assert!(
-            result.is_err(),
-            "Commands should fail after the authenticated user is deleted from the server."
+            err.is_io_error(),
+            "expected the server to close the connection after user invalidation, got: {err}"
         );
-        println!(
-            "Server correctly rejected command after user invalidation: {}",
-            result.unwrap_err()
-        );
+        println!("Server correctly rejected command after user invalidation: {err}");
     }
 
     #[cfg(feature = "cluster-async")]

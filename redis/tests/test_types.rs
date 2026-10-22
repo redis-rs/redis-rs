@@ -409,9 +409,17 @@ mod types {
             Value::BulkString("3".into()),
         ])]);
         for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
-            parse_mode
-                .parse_redis_value::<Vec<(u8, u8)>>(val.clone())
-                .unwrap_err();
+            let err = RedisError::from(
+                parse_mode
+                    .parse_redis_value::<Vec<(u8, u8)>>(val.clone())
+                    .unwrap_err(),
+            );
+            assert_eq!(err.kind(), ErrorKind::Parse);
+            assert!(
+                err.to_string()
+                    .contains("Vector with length 1 doesn't have arity of 2"),
+                "unexpected error: {err}"
+            );
         }
     }
 

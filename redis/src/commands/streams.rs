@@ -1652,13 +1652,18 @@ mod tests {
 
     mod stream_auto_claim_reply {
         use super::*;
-        use crate::Value;
+        use crate::{ErrorKind, RedisError, Value};
 
         #[test]
         fn short_response() {
             let value = Value::Array(vec![Value::BulkString("1713465536578-0".into())]);
 
-            StreamAutoClaimReply::from_redis_value(value).unwrap_err();
+            let err = RedisError::from(StreamAutoClaimReply::from_redis_value(value).unwrap_err());
+            assert_eq!(err.kind(), ErrorKind::Parse);
+            assert!(
+                err.to_string().contains("Incorrect number of items"),
+                "unexpected error: {err}"
+            );
         }
 
         #[test]
