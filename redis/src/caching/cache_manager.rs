@@ -86,12 +86,20 @@ impl CacheManager {
     }
 
     pub(crate) fn handle_push_value(&self, kind: &PushKind, data: &[Value]) {
-        if kind == &PushKind::Invalidate
-            && let Some(Value::Array(redis_key)) = data.first()
-            && let Some(redis_key) = redis_key.first()
-            && let Ok(redis_key) = FromRedisValue::from_redis_value_ref(redis_key)
-        {
-            self.lru.invalidate(&redis_key);
+        if kind != &PushKind::Invalidate {
+            return;
+        }
+        match data.first() {
+            Some(Value::Array(redis_keys)) => {
+                for redis_key in redis_keys {
+                    if let Ok(redis_key) = FromRedisValue::from_redis_value_ref(redis_key) {
+                        self.lru.invalidate(&redis_key);
+                    }
+                }
+            }
+            // The server sends a null instead of a list of keys after FLUSHALL / FLUSHDB.
+            Some(Value::Nil) => self.lru.invalidate_all(),
+            _ => {}
         }
     }
 
@@ -494,6 +502,45 @@ mod tests {
             cache_manager.get_cached_cmd(CmdRef::from_cmd(&mget)),
             PrepCacheItem::Cached(Value::Array(values)) if values == vec![Value::Int(2)]
         ));
+    }
+
+    #[test]
+    fn test_invalidate_push_messages() {
+        let redis_key = b"test_redis_key".as_slice();
+        let redis_key_2 = b"test_redis_key_2".as_slice();
+        let redis_key_3 = b"test_redis_key_3".as_slice();
+        let cmd_key = b"test_cmd_key".as_slice();
+
+        let cache_manager = CacheManager::new(CacheConfig::new());
+        let secs_10 = Instant::now().add(Duration::from_secs(10));
+        let do_inserts = || {
+            for (i, key) in [redis_key, redis_key_2, redis_key_3]
+                .into_iter()
+                .enumerate()
+            {
+                cache_manager.insert(key, cmd_key, Value::Int(i as i64), secs_10, &Value::Int(-1));
+            }
+        };
+
+        do_inserts();
+        // A single invalidation message can carry several keys.
+        cache_manager.handle_push_value(
+            &PushKind::Invalidate,
+            &[Value::Array(vec![
+                Value::BulkString(redis_key.to_vec()),
+                Value::BulkString(redis_key_2.to_vec()),
+            ])],
+        );
+        assert_eq!(cache_manager.get(redis_key, cmd_key), None);
+        assert_eq!(cache_manager.get(redis_key_2, cmd_key), None);
+        assert_eq!(cache_manager.get(redis_key_3, cmd_key), Some(Value::Int(2)));
+
+        do_inserts();
+        // FLUSHALL / FLUSHDB are reported with a null instead of a list of keys.
+        cache_manager.handle_push_value(&PushKind::Invalidate, &[Value::Nil]);
+        assert_eq!(cache_manager.get(redis_key, cmd_key), None);
+        assert_eq!(cache_manager.get(redis_key_2, cmd_key), None);
+        assert_eq!(cache_manager.get(redis_key_3, cmd_key), None);
     }
 
     #[test]

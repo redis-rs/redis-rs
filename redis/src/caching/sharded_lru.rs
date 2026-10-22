@@ -181,6 +181,21 @@ impl ShardedLRU {
         }
     }
 
+    pub(crate) fn invalidate_all(&self) {
+        for shard in &self.shards {
+            let mut lru_cache = shard
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let invalidated = lru_cache
+                .iter()
+                .map(|(_, cache_item)| cache_item.value_list.len())
+                .sum();
+            lru_cache.clear();
+            drop(lru_cache);
+            self.statistics.increase_invalidate(invalidated);
+        }
+    }
+
     pub(crate) fn increase_epoch(&self) -> usize {
         self.last_epoch.fetch_add(1, Ordering::Relaxed)
     }
