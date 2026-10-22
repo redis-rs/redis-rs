@@ -39,7 +39,7 @@ use crate::PushInfo;
     not(feature = "tls-native-tls"),
     not(feature = "tls-rustls-webpki-roots")
 ))]
-use rustls_native_certs::load_native_certs;
+use crate::tls::NativeCertBundle;
 
 #[cfg(feature = "tls-rustls")]
 use crate::tls::ClientTlsParams;
@@ -1243,13 +1243,8 @@ pub(crate) fn create_rustls_config(
         not(feature = "tls-rustls-webpki-roots")
     ))]
     {
-        let mut certificate_result = load_native_certs();
-        if let Some(error) = certificate_result.errors.pop() {
-            return Err(error.into());
-        }
-        for cert in certificate_result.certs {
-            root_store.add(cert)?;
-        }
+        static NATIVE_CERTS: NativeCertBundle = NativeCertBundle::new();
+        root_store.extend(NATIVE_CERTS.load()?.roots);
     }
 
     let config = rustls::ClientConfig::builder();
