@@ -381,7 +381,8 @@ jobs:
   benchmark:
     needs: lint
     if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
+    # Redis 8.0.2's bundled RediSearch uses ATOMIC_VAR_INIT, removed in GCC 15's default C23 mode.
+    runs-on: ubuntu-24.04
     env:
       rust_ver: stable
     steps:
