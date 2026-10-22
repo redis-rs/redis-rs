@@ -1145,12 +1145,16 @@ mod basic_async {
         async fn test_pipe_errors_do_not_affect_subsequent_commands(mut conn: impl AsyncCommands) {
             conn.lpush::<&str, &str, ()>("key", "value").await.unwrap();
 
-            redis::pipe()
+            let err = redis::pipe()
                 .get("key") // WRONGTYPE
                 .llen("key")
                 .exec_async(&mut conn)
                 .await
                 .unwrap_err();
+            assert_eq!(err.kind(), ErrorKind::Extension);
+            let server_errors = err.into_server_errors().unwrap();
+            assert_eq!(server_errors.len(), 1);
+            assert_eq!(server_errors[0].1.code(), "WRONGTYPE");
 
             let list: Vec<String> = conn.lrange("key", 0, -1).await.unwrap();
 
@@ -2280,7 +2284,9 @@ mod basic_async {
             drop(ctx);
 
             let result: RedisResult<String> = manager.get("key").await;
-            result.unwrap_err();
+            let err = result.unwrap_err();
+            assert_eq!(err.kind(), ErrorKind::Io);
+            assert!(err.is_unrecoverable_error(), "{err}");
 
             let _ctx = TestContext::new_with_addr(addr);
 

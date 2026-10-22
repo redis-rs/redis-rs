@@ -1324,7 +1324,10 @@ pub mod bb8_pool_tests {
 
         // since max_size is 5 and we haven't freed any connection this try should fail
         let try_conn = pool.get().await;
-        try_conn.unwrap_err();
+        assert!(
+            matches!(&try_conn, Err(bb8::RunError::TimedOut)),
+            "expected the pool to time out, got {try_conn:?}"
+        );
 
         let mut client_id_set = HashSet::new();
 

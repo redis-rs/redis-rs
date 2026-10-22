@@ -1047,8 +1047,17 @@ impl ClusterClient {
 #[cfg(test)]
 mod tests {
     use super::{ClusterClient, ClusterClientBuilder, ConnectionInfo, IntoConnectionInfo};
+    use crate::{ErrorKind, RedisError};
     #[cfg(feature = "cluster-async")]
     use std::time::Duration;
+
+    fn assert_invalid_client_config_error(error: RedisError, expected_message: &str) {
+        assert_eq!(error.kind(), ErrorKind::InvalidClientConfig);
+        assert!(
+            error.to_string().contains(expected_message),
+            "unexpected error: {error}"
+        );
+    }
 
     fn get_connection_data() -> Vec<ConnectionInfo> {
         vec![
@@ -1112,7 +1121,10 @@ mod tests {
             "redis://:password2@127.0.0.1:6378",
             "redis://:password3@127.0.0.1:6377",
         ]);
-        result.unwrap_err();
+        assert_invalid_client_config_error(
+            result.unwrap_err(),
+            "Cannot use different password among initial nodes.",
+        );
     }
 
     #[test]
@@ -1122,7 +1134,10 @@ mod tests {
             "redis://user2:password@127.0.0.1:6378",
             "redis://user1:password@127.0.0.1:6377",
         ]);
-        result.unwrap_err();
+        assert_invalid_client_config_error(
+            result.unwrap_err(),
+            "Cannot use different username among initial nodes.",
+        );
     }
 
     #[test]
@@ -1132,7 +1147,10 @@ mod tests {
             "redis://127.0.0.1:6378",
             "redis://127.0.0.1:6377",
         ]);
-        result.unwrap_err();
+        assert_invalid_client_config_error(
+            result.unwrap_err(),
+            "Cannot use different protocol among initial nodes.",
+        );
     }
 
     #[test]
@@ -1142,7 +1160,10 @@ mod tests {
             "redis://127.0.0.1:6378",
             "redis://127.0.0.1:6377",
         ]);
-        result.unwrap_err();
+        assert_invalid_client_config_error(
+            result.unwrap_err(),
+            "Cannot use different TLS modes among initial nodes.",
+        );
     }
 
     #[test]
@@ -1152,7 +1173,10 @@ mod tests {
             "rediss://127.0.0.1:6378/",
             "redis://127.0.0.1:6377",
         ]);
-        result.unwrap_err();
+        assert_invalid_client_config_error(
+            result.unwrap_err(),
+            "Cannot use different TLS modes among initial nodes.",
+        );
     }
 
     #[test]
@@ -1169,7 +1193,7 @@ mod tests {
     #[test]
     fn give_empty_initial_nodes() {
         let client = ClusterClient::new(Vec::<String>::new());
-        client.unwrap_err();
+        assert_invalid_client_config_error(client.unwrap_err(), "Initial nodes can't be empty.");
     }
 
     #[test]
@@ -1207,7 +1231,10 @@ mod tests {
         ])
         .database_id(7)
         .build();
-        result.unwrap_err();
+        assert_invalid_client_config_error(
+            result.unwrap_err(),
+            "Cannot use different database among initial nodes.",
+        );
     }
 
     #[test]
@@ -1219,7 +1246,10 @@ mod tests {
         ])
         .database_id(0)
         .build();
-        result.unwrap_err();
+        assert_invalid_client_config_error(
+            result.unwrap_err(),
+            "Cannot use different database among initial nodes.",
+        );
     }
 
     #[test]
@@ -1255,7 +1285,10 @@ mod tests {
             "redis://127.0.0.1:6378/5",
             "redis://127.0.0.1:6377/4",
         ]);
-        result.unwrap_err();
+        assert_invalid_client_config_error(
+            result.unwrap_err(),
+            "Cannot use different database among initial nodes.",
+        );
     }
 
     #[cfg(feature = "cluster-async")]

@@ -8,6 +8,7 @@ use std::time::Duration;
 use crate::support::{AvailableComponents, build_single_client, start_tls_crypto_provider};
 use redis::Connection;
 use redis::ConnectionInfo;
+use redis::ErrorKind;
 use redis::ProtocolVersion;
 use redis::RedisResult;
 #[cfg(feature = "cluster-async")]
@@ -216,7 +217,9 @@ impl TestClusterContext {
 
             // subsequent unauthenticated command should fail:
             if let Ok(mut con) = self.build_single_client_connection(server) {
-                redis::cmd("PING").exec(&mut con).unwrap_err();
+                let err = redis::cmd("PING").exec(&mut con).unwrap_err();
+                assert_eq!(err.kind(), ErrorKind::Extension);
+                assert_eq!(err.code(), Some("NOAUTH"));
             }
         }
     }

@@ -2639,8 +2639,9 @@ mod basic {
 
         let ping = redis::cmd("PING").query::<String>(&mut con);
 
-        assert_matches!(ping, Err(_));
-        eprintln!("{}", ping.unwrap_err());
+        let err = ping.unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Io);
+        eprintln!("{err}");
         assert!(!con.is_open());
     }
 
