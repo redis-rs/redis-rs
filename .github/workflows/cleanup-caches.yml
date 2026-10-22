@@ -1,0 +1,40 @@
+name: Cleanup PR caches
+
+on:
+  # Use pull_request_target so the job has a write-capable token for PRs from
+  # forks. This workflow only deletes caches scoped to the PR; it never checks
+  # out or executes code from the pull request.
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  actions: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete caches scoped to this PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: refs/pull/${{ github.event.pull_request.number }}/merge
+        run: |
+          set -euo pipefail
+
+          echo "Fetching caches for $BRANCH"
+          cache_ids=$(gh cache list --ref "$BRANCH" --limit 100 --json id --jq '.[].id')
+
+          if [ -z "$cache_ids" ]; then
+            echo "No caches found."
+            exit 0
+          fi
+
+          echo "Deleting caches..."
+          while IFS= read -r cache_id; do
+            [ -n "$cache_id" ] || continue
+            echo "Deleting cache $cache_id"
+            gh cache delete "$cache_id" || echo "Failed to delete cache $cache_id"
+          done <<< "$cache_ids"
+
+          echo "Done"
