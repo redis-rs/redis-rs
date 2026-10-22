@@ -352,6 +352,10 @@ mod aio_support {
     use tokio::io::AsyncRead;
     use tokio_util::codec::{Decoder, Encoder};
 
+    /// Decodes Redis replies out of an async byte stream.
+    ///
+    /// Harness-visible through the `doc(hidden)` re-export in `lib.rs` so the
+    /// codec-level microbenchmarks can drive it directly.
     #[derive(Default)]
     pub struct ValueCodec {
         state: AnySendSyncPartialState,
