@@ -484,12 +484,11 @@ impl ClusterClientBuilder {
         } else {
             &None
         };
-        let tls = if cluster_params.tls.is_none() {
+        // `None` here is a valid mode (plain TCP), so track whether it came from the first node.
+        let tls = cluster_params.tls.is_none().then(|| {
             cluster_params.tls = first_node.addr.tls_mode();
             cluster_params.tls
-        } else {
-            None
-        };
+        });
         let protocol = if cluster_params.protocol.is_none() {
             cluster_params.protocol = Some(first_node.redis.protocol);
             cluster_params.protocol
@@ -537,7 +536,7 @@ impl ClusterClientBuilder {
                 )));
             }
 
-            if tls.is_some() && node.addr.tls_mode() != tls {
+            if tls.is_some_and(|tls| node.addr.tls_mode() != tls) {
                 return Err(RedisError::from((
                     ErrorKind::InvalidClientConfig,
                     "Cannot use different TLS modes among initial nodes.",
@@ -1141,6 +1140,16 @@ mod tests {
         let result = ClusterClient::new(vec![
             "rediss://127.0.0.1:6379/",
             "redis://127.0.0.1:6378",
+            "redis://127.0.0.1:6377",
+        ]);
+        result.unwrap_err();
+    }
+
+    #[test]
+    fn fail_if_received_different_tls_after_plain_initial_node() {
+        let result = ClusterClient::new(vec![
+            "redis://127.0.0.1:6379",
+            "rediss://127.0.0.1:6378/",
             "redis://127.0.0.1:6377",
         ]);
         result.unwrap_err();
