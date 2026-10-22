@@ -1010,7 +1010,7 @@ impl StreamId {
             if let Some(v) = values.first_mut() {
                 stream_id.id = from_redis_value(std::mem::take(v))?;
             }
-            if let Some(v) = values.first_mut() {
+            if let Some(v) = values.get_mut(1) {
                 stream_id.map = from_redis_value(std::mem::take(v))?;
             }
         }

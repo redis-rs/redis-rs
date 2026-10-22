@@ -190,7 +190,12 @@ fn test_xgroup_create() {
     // key should exist
     let reply = con.xinfo_stream("k1").unwrap();
     assert_eq!(&reply.first_entry.id, "1000-0");
+    assert_eq!(reply.first_entry.len(), 2);
+    assert_eq!(reply.first_entry.get("hello"), Some("world".to_string()));
+    assert_eq!(reply.first_entry.get("redis"), Some("streams".to_string()));
     assert_eq!(&reply.last_entry.id, "1000-1");
+    assert_eq!(reply.last_entry.len(), 1);
+    assert_eq!(reply.last_entry.get("hello"), Some("world2".to_string()));
     assert_eq!(&reply.last_generated_id, "1000-1");
 
     // xgroup create (existing stream)
