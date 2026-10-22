@@ -265,6 +265,89 @@ mod basic_async {
     }
 
     #[async_test]
+    async fn test_async_typed_sorted_set_range_withscores_returns_member_score_pairs(
+        mut con: impl redis::AsyncTypedCommands,
+    ) {
+        assert_eq!(
+            con.zadd_multiple(
+                "my_zset_async",
+                &[
+                    (1.0, "one"),
+                    (1.5, "onehalf"),
+                    (-0.5, "minushalf"),
+                    (-2.0, "minus2"),
+                    (5.0, "plus5"),
+                    (f64::INFINITY, "posinf"),
+                    (f64::NEG_INFINITY, "neginf")
+                ]
+            )
+            .await,
+            Ok(7)
+        );
+
+        assert_eq!(
+            con.zrangebyscore_withscores("my_zset_async", "-inf", "+inf")
+                .await,
+            Ok(vec![
+                ("neginf".to_string(), f64::NEG_INFINITY),
+                ("minus2".to_string(), -2.0),
+                ("minushalf".to_string(), -0.5),
+                ("one".to_string(), 1.0),
+                ("onehalf".to_string(), 1.5),
+                ("plus5".to_string(), 5.0),
+                ("posinf".to_string(), f64::INFINITY)
+            ])
+        );
+        assert_eq!(
+            con.zrangebyscore_withscores("my_zset_async", -3, 2).await,
+            Ok(vec![
+                ("minus2".to_string(), -2.0),
+                ("minushalf".to_string(), -0.5),
+                ("one".to_string(), 1.0),
+                ("onehalf".to_string(), 1.5)
+            ])
+        );
+        assert_eq!(
+            con.zrangebyscore_limit_withscores("my_zset_async", -3, 2, 1, 2)
+                .await,
+            Ok(vec![
+                ("minushalf".to_string(), -0.5),
+                ("one".to_string(), 1.0)
+            ])
+        );
+        assert_eq!(
+            con.zrevrange_withscores("my_zset_async", 0, -1).await,
+            Ok(vec![
+                ("posinf".to_string(), f64::INFINITY),
+                ("plus5".to_string(), 5.0),
+                ("onehalf".to_string(), 1.5),
+                ("one".to_string(), 1.0),
+                ("minushalf".to_string(), -0.5),
+                ("minus2".to_string(), -2.0),
+                ("neginf".to_string(), f64::NEG_INFINITY)
+            ])
+        );
+        assert_eq!(
+            con.zrevrangebyscore_withscores("my_zset_async", 2, -3)
+                .await,
+            Ok(vec![
+                ("onehalf".to_string(), 1.5),
+                ("one".to_string(), 1.0),
+                ("minushalf".to_string(), -0.5),
+                ("minus2".to_string(), -2.0)
+            ])
+        );
+        assert_eq!(
+            con.zrevrangebyscore_limit_withscores("my_zset_async", 2, -3, 1, 2)
+                .await,
+            Ok(vec![
+                ("one".to_string(), 1.0),
+                ("minushalf".to_string(), -0.5)
+            ])
+        );
+    }
+
+    #[async_test]
     async fn test_dont_panic_on_closed_multiplexed_connection() {
         let ctx = TestContext::default();
         let client = ctx.client.clone();
