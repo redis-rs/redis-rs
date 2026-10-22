@@ -1319,6 +1319,20 @@ where
             Cow::Owned(inner) => inner.write_redis_args(out),
         }
     }
+
+    fn describe_numeric_behavior(&self) -> NumericBehavior {
+        match self {
+            Cow::Borrowed(inner) => inner.describe_numeric_behavior(),
+            Cow::Owned(inner) => inner.describe_numeric_behavior(),
+        }
+    }
+
+    fn num_of_args(&self) -> usize {
+        match self {
+            Cow::Borrowed(inner) => inner.num_of_args(),
+            Cow::Owned(inner) => inner.num_of_args(),
+        }
+    }
 }
 
 impl<'a, T> ToSingleRedisArg for Cow<'a, T>

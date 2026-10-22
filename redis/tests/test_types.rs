@@ -779,6 +779,29 @@ mod types {
     }
 
     #[test]
+    fn test_cow_types_num_of_args_and_numeric_behavior() {
+        use redis::NumericBehavior;
+        use std::borrow::Cow;
+
+        let keys = vec!["key1", "key2"];
+        assert_eq!(Cow::Borrowed(keys.as_slice()).num_of_args(), 2);
+        assert_eq!(Cow::<[&str]>::Owned(keys).num_of_args(), 2);
+
+        let array = vec![0u8, 4, 2, 3, 1];
+        assert_eq!(Cow::Borrowed(array.as_slice()).num_of_args(), 1);
+        assert_eq!(Cow::<[u8]>::Owned(array).num_of_args(), 1);
+
+        assert_eq!(
+            Cow::Borrowed(&1.5f64).describe_numeric_behavior(),
+            NumericBehavior::NumberIsFloat
+        );
+        assert_eq!(
+            Cow::<f64>::Owned(1.5).describe_numeric_behavior(),
+            NumericBehavior::NumberIsFloat
+        );
+    }
+
+    #[test]
     fn test_large_usize_array_to_redis_args_and_back() {
         use crate::support::encode_value;
 
