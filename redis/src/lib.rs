@@ -848,6 +848,13 @@ mod parser;
 mod script;
 mod types;
 
+#[cfg(all(
+    feature = "tls-rustls",
+    not(feature = "tls-native-tls"),
+    not(feature = "tls-rustls-webpki-roots")
+))]
+pub use connection::invalidate_cert_bundle;
+
 macro_rules! check_resp3 {
     ($protocol: expr) => {
         if !$protocol.supports_resp3() {
