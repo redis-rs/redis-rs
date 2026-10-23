@@ -63,8 +63,17 @@ fn test_bigdecimal() {
 fn test_bigint() {
     test::<num_bigint::BigInt>("-1427247692705959881058285969449495136382746623");
 
+    let v = num_bigint::BigInt::from_redis_value_ref(&Value::Double(-1e20));
+    assert_eq!(
+        v,
+        Ok(num_bigint::BigInt::from_str("-100000000000000000000").unwrap())
+    );
+
     let v = num_bigint::BigInt::from_redis_value_ref(&Value::Double(1.5));
-    assert_matches!(v, Err(_));
+    assert_eq!(
+        v.unwrap_err().to_string(),
+        "Incompatible type - \"Could not convert from double.\" (value was double(1.5))"
+    );
 }
 
 #[test]
@@ -72,6 +81,15 @@ fn test_bigint() {
 fn test_biguint() {
     test::<num_bigint::BigUint>("1427247692705959881058285969449495136382746623");
 
+    let v = num_bigint::BigUint::from_redis_value_ref(&Value::Double(1e20));
+    assert_eq!(
+        v,
+        Ok(num_bigint::BigUint::from_str("100000000000000000000").unwrap())
+    );
+
     let v = num_bigint::BigUint::from_redis_value_ref(&Value::Double(1.5));
-    assert_matches!(v, Err(_));
+    assert_eq!(
+        v.unwrap_err().to_string(),
+        "Incompatible type - \"Could not convert from double.\" (value was double(1.5))"
+    );
 }
