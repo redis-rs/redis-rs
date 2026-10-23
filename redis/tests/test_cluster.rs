@@ -383,7 +383,9 @@ mod cluster {
                 expected.push(r);
             }
         }
-        pipe.exec(&mut con).unwrap_err();
+        let err = pipe.exec(&mut con).unwrap_err();
+        assert_eq!(err.kind(), ServerErrorKind::ResponseError.into());
+        assert_eq!(err.code(), Some("ERR"));
 
         std::thread::sleep(std::time::Duration::from_secs(5));
 

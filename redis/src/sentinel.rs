@@ -155,6 +155,12 @@ fn not_a_sentinel_error() -> RedisError {
     RedisError::from((ErrorKind::InvalidClientConfig, ERR_MSG))
 }
 
+/// How many sentinels an async master lookup asks at once. Failures are expected to be rare,
+/// so a small window is enough: the next sentinel's lookup runs while a slow or broken one is
+/// still being waited on, instead of only after it.
+#[cfg(feature = "aio")]
+const MAX_CONCURRENT_SENTINEL_LOOKUPS: usize = 3;
+
 /// The Sentinel type, serves as a special purpose client which builds other clients on
 /// demand.
 pub struct Sentinel {
@@ -615,24 +621,22 @@ async fn async_get_valid_replicas_addresses(
         .await)
 }
 
+/// Connects to the sentinel at `connection_info`, and returns the connection only once
+/// `ROLE` confirms that it is a sentinel.
 #[cfg(feature = "aio")]
-async fn async_reconnect(
-    connection: &mut Option<AsyncConnection>,
-    connection_info: &ConnectionInfo,
-) -> RedisResult<()> {
+async fn async_reconnect(connection_info: &ConnectionInfo) -> RedisResult<AsyncConnection> {
     let sentinel_client = Client::open(connection_info.clone())?;
-    let new_connection = sentinel_client.get_multiplexed_async_connection().await?;
-    connection.replace(new_connection);
-    let role: Role = crate::cmd("ROLE")
-        .query_async(connection.as_mut().unwrap())
-        .await?;
+    let mut connection = sentinel_client.get_multiplexed_async_connection().await?;
+    let role: Role = crate::cmd("ROLE").query_async(&mut connection).await?;
     if !matches!(role, Role::Sentinel { .. }) {
-        *connection = None;
         return Err(not_a_sentinel_error());
     }
-    Ok(())
+    Ok(connection)
 }
 
+/// Runs `cmd` on the sentinel at `connection_info`, through the cached connection if there
+/// is one. Only a connection [async_reconnect] has verified is ever cached, so the caller may
+/// drop this future at any `.await`.
 #[cfg(feature = "aio")]
 async fn async_try_single_sentinel<T: FromRedisValue>(
     cmd: Cmd,
@@ -640,14 +644,17 @@ async fn async_try_single_sentinel<T: FromRedisValue>(
     cached_connection: &mut Option<AsyncConnection>,
 ) -> RedisResult<T> {
     if cached_connection.is_none() {
-        async_reconnect(cached_connection, connection_info).await?;
+        *cached_connection = Some(async_reconnect(connection_info).await?);
     }
 
     let result = cmd.query_async(cached_connection.as_mut().unwrap()).await;
 
     if let Err(err) = result {
         if err.is_unrecoverable_error() || err.is_io_error() {
-            async_reconnect(cached_connection, connection_info).await?;
+            // Forget the broken connection first, so a reconnect that fails or is dropped
+            // leaves nothing cached.
+            *cached_connection = None;
+            *cached_connection = Some(async_reconnect(connection_info).await?);
             cmd.query_async(cached_connection.as_mut().unwrap()).await
         } else {
             Err(err)
@@ -821,12 +828,6 @@ impl Sentinel {
         Err(last_err.expect("There should be at least one connection info"))
     }
 
-    /// Get a list of all masters (using the command SENTINEL MASTERS) from the
-    /// sentinels.
-    fn get_sentinel_masters(&mut self) -> RedisResult<Vec<HashMap<String, String>>> {
-        self.try_all_sentinels(sentinel_masters_cmd())
-    }
-
     fn get_sentinel_replicas(
         &mut self,
         service_name: &str,
@@ -834,24 +835,59 @@ impl Sentinel {
         self.try_all_sentinels(sentinel_replicas_cmd(service_name))
     }
 
-    #[cfg(not(feature = "tls-rustls"))]
+    /// Ask each sentinel in turn for a valid master named `service_name`.
+    ///
+    /// A sentinel that answers without a valid master for the name does not end the
+    /// search: the next sentinel is asked. Step 2 of the Sentinel client specification
+    /// asks for this when a sentinel does not know the name ("if a null reply is
+    /// received, the client should try the next Sentinel in the list"). A sentinel that
+    /// flags its master `s_down`/`o_down`, or names a node that is not a master, is skipped
+    /// the same way, since its view can be stale while another sentinel's is current.
+    ///
+    /// If no sentinel yields a master, an error met on a master that a sentinel named (a
+    /// failed connection, or a refused `ROLE`) is returned in preference to
+    /// [ErrorKind::MasterNameNotFoundBySentinel], because it is the one the caller can act
+    /// on. Otherwise the last error is returned.
     fn find_master_address(
         &mut self,
         service_name: &str,
         node_connection_info: &SentinelNodeConnectionInfo,
     ) -> RedisResult<ConnectionInfo> {
-        let masters = self.get_sentinel_masters()?;
-        find_valid_master(masters, service_name, node_connection_info)
-    }
+        let mut master_err = None;
+        let mut last_err = None;
+        for (connection_info, cached_connection) in self
+            .sentinels_connection_info
+            .iter()
+            .zip(self.connections_cache.iter_mut())
+        {
+            let masters = match try_single_sentinel(
+                sentinel_masters_cmd(),
+                connection_info,
+                cached_connection,
+            ) {
+                Ok(masters) => masters,
+                Err(err) => {
+                    last_err = Some(err);
+                    continue;
+                }
+            };
+            #[cfg(not(feature = "tls-rustls"))]
+            let found = find_valid_master(masters, service_name, node_connection_info);
+            #[cfg(feature = "tls-rustls")]
+            let found = find_valid_master(masters, service_name, node_connection_info, &self.certs);
+            match found {
+                Ok(address) => return Ok(address),
+                Err(err) if err.kind() == ErrorKind::MasterNameNotFoundBySentinel => {
+                    last_err = Some(err);
+                }
+                Err(err) => master_err = Some(err),
+            }
+        }
 
-    #[cfg(feature = "tls-rustls")]
-    fn find_master_address(
-        &mut self,
-        service_name: &str,
-        node_connection_info: &SentinelNodeConnectionInfo,
-    ) -> RedisResult<ConnectionInfo> {
-        let masters = self.get_sentinel_masters()?;
-        find_valid_master(masters, service_name, node_connection_info, &self.certs)
+        // We can unwrap here because we know there is at least one connection info.
+        Err(master_err
+            .or(last_err)
+            .expect("There should be at least one connection info"))
     }
 
     #[cfg(not(feature = "tls-rustls"))]
@@ -957,10 +993,6 @@ impl Sentinel {
         Err(last_err.expect("There should be at least one connection info"))
     }
 
-    async fn async_get_sentinel_masters(&mut self) -> RedisResult<Vec<HashMap<String, String>>> {
-        self.async_try_all_sentinels(sentinel_masters_cmd()).await
-    }
-
     async fn async_get_sentinel_replicas(
         &mut self,
         service_name: &str,
@@ -969,24 +1001,66 @@ impl Sentinel {
             .await
     }
 
-    #[cfg(not(feature = "tls-rustls"))]
+    /// Async version of [Self::find_master_address]. Up to
+    /// [MAX_CONCURRENT_SENTINEL_LOOKUPS] sentinels are asked at once, each lookup checking the
+    /// master its sentinel names, and the results are taken in the configured order: the first
+    /// one that yields a valid master wins, and an error met on a named master outranks "not
+    /// found".
+    ///
+    /// Lookups still in flight when a master is found are dropped, which is safe:
+    /// [MultiplexedConnection] is cancellation-safe and [async_try_single_sentinel] caches
+    /// only a connection [async_reconnect] has verified.
     async fn async_find_master_address(
         &mut self,
         service_name: &str,
         node_connection_info: &SentinelNodeConnectionInfo,
     ) -> RedisResult<ConnectionInfo> {
-        let masters = self.async_get_sentinel_masters().await?;
-        async_find_valid_master(masters, service_name, node_connection_info).await
-    }
+        #[cfg(feature = "tls-rustls")]
+        let certs = &self.certs;
+        // Collected before the stream is built: with the closure inside the stream, rustc
+        // cannot prove this future `Send`, which `bb8` requires. The futures are lazy, so
+        // `buffered` still runs at most `MAX_CONCURRENT_SENTINEL_LOOKUPS` of them at once.
+        let lookups: Vec<_> = self
+            .sentinels_connection_info
+            .iter()
+            .zip(self.async_connections_cache.iter_mut())
+            .map(|(connection_info, cached_connection)| async move {
+                // The outer result is the sentinel's, the inner one the check of its master.
+                let masters = async_try_single_sentinel::<Vec<HashMap<String, String>>>(
+                    sentinel_masters_cmd(),
+                    connection_info,
+                    cached_connection,
+                )
+                .await?;
+                #[cfg(not(feature = "tls-rustls"))]
+                let found =
+                    async_find_valid_master(masters, service_name, node_connection_info).await;
+                #[cfg(feature = "tls-rustls")]
+                let found =
+                    async_find_valid_master(masters, service_name, node_connection_info, certs)
+                        .await;
+                Ok::<_, RedisError>(found)
+            })
+            .collect();
+        let mut lookups =
+            futures_util::stream::iter(lookups).buffered(MAX_CONCURRENT_SENTINEL_LOOKUPS);
 
-    #[cfg(feature = "tls-rustls")]
-    async fn async_find_master_address(
-        &mut self,
-        service_name: &str,
-        node_connection_info: &SentinelNodeConnectionInfo,
-    ) -> RedisResult<ConnectionInfo> {
-        let masters = self.async_get_sentinel_masters().await?;
-        async_find_valid_master(masters, service_name, node_connection_info, &self.certs).await
+        let mut master_err = None;
+        let mut last_err = None;
+        while let Some(lookup) = lookups.next().await {
+            match lookup {
+                Ok(Ok(address)) => return Ok(address),
+                Ok(Err(err)) if err.kind() != ErrorKind::MasterNameNotFoundBySentinel => {
+                    master_err = Some(err);
+                }
+                Ok(Err(err)) | Err(err) => last_err = Some(err),
+            }
+        }
+
+        // We can unwrap here because we know there is at least one connection info.
+        Err(master_err
+            .or(last_err)
+            .expect("There should be at least one connection info"))
     }
 
     #[cfg(not(feature = "tls-rustls"))]

@@ -128,7 +128,7 @@ vector-sets = ["dep:serde", "serde/derive", "dep:serde_json"]
 search_unfinished = []
 cluster = ["dep:crc16", "dep:rand"]
 script = ["dep:sha1_smol"]
-tls-native-tls = ["dep:native-tls"]
+tls-native-tls = ["dep:native-tls", "redis-test/tls-native-tls"]
 tls-rustls = ["dep:rustls", "rustls/std"]
 tls-rustls-insecure = ["tls-rustls"]
 tls-rustls-native-roots = [
@@ -253,6 +253,17 @@ harness = false
 name = "bench_basic"
 harness = false
 required-features = ["tokio-comp"]
+
+# Parser/decoding microbenchmarks. No server required.
+[[bench]]
+name = "bench_decode"
+harness = false
+
+# Codec-level decode microbenchmarks (reused ValueCodec). No server required.
+[[bench]]
+name = "bench_codec"
+harness = false
+required-features = ["aio"]
 
 [[bench]]
 name = "bench_cluster"

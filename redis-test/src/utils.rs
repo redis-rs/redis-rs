@@ -1,15 +1,15 @@
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 use redis::ClientTlsConfig;
 use redis::RedisResult;
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 use redis::TlsCertificates;
 use socket2::{Domain, Socket, Type};
 use std::ffi::OsStr;
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 use std::fs::File;
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 use std::io::BufReader;
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 use std::io::Read;
 use std::io::Write;
 use std::net::{SocketAddr, TcpListener};
@@ -424,7 +424,7 @@ pub fn start_tls_crypto_provider() {
     }
 }
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 pub fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> TlsCertificates {
     let ca_file = File::open(&tls_file_paths.ca_crt).expect("Cannot open CA cert file");
     let mut root_cert_vec = Vec::new();
@@ -450,7 +450,7 @@ pub fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> TlsCertificates {
         .root_cert(root_cert_vec)
 }
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 pub fn build_single_client<T: redis::IntoConnectionInfo>(
     connection_info: T,
     tls_file_params: &Option<TlsFilePaths>,
@@ -462,7 +462,7 @@ pub fn build_single_client<T: redis::IntoConnectionInfo>(
             load_certs_from_file(
                 tls_file_params
                     .as_ref()
-                    .expect("Expected certificates when `tls-rustls` feature is enabled"),
+                    .expect("Expected certificates when mTLS is enabled"),
             ),
         )
     } else {
@@ -470,7 +470,7 @@ pub fn build_single_client<T: redis::IntoConnectionInfo>(
     }
 }
 
-#[cfg(not(feature = "tls-rustls"))]
+#[cfg(not(any(feature = "tls-rustls", feature = "tls-native-tls")))]
 pub fn build_single_client<T: redis::IntoConnectionInfo>(
     connection_info: T,
     _tls_file_params: &Option<TlsFilePaths>,

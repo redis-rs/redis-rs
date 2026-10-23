@@ -686,6 +686,10 @@ pub use crate::connection::{
     RedisConnectionInfo, TlsMode, parse_redis_url, transaction,
 };
 pub use crate::parser::{Parser, parse_redis_value};
+// Harness-only: lets the codec-level bench drive `ValueCodec` directly.
+#[cfg(feature = "aio")]
+#[doc(hidden)]
+pub use crate::parser::ValueCodec;
 pub use crate::pipeline::Pipeline;
 #[cfg(feature = "script")]
 #[cfg_attr(docsrs, doc(cfg(feature = "script")))]
@@ -790,7 +794,7 @@ pub use crate::commands::search;
 #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
 pub use commands::geo;
 
-#[cfg(any(feature = "connection-manager", feature = "cluster-async"))]
+#[cfg(feature = "aio")]
 mod subscription_tracker;
 
 #[cfg(feature = "cluster")]
@@ -830,11 +834,14 @@ pub use cluster_handling::async_connection as cluster_async;
 #[cfg_attr(docsrs, doc(cfg(feature = "sentinel")))]
 pub mod sentinel;
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 mod tls;
 
-#[cfg(feature = "tls-rustls")]
-#[cfg_attr(docsrs, doc(cfg(feature = "tls-rustls")))]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
+#[cfg_attr(
+    docsrs,
+    doc(cfg(any(feature = "tls-rustls", feature = "tls-native-tls")))
+)]
 pub use crate::tls::{ClientTlsConfig, TlsCertificates};
 
 #[cfg(feature = "cache-aio")]
