@@ -298,3 +298,25 @@ pub fn get_random_available_port() -> u16 {
     }
     panic!("Couldn't get a valid port");
 }
+
+/// Finds a random port where both `port` and `port + offset` are free. Use it for servers
+/// that also listen on a second port at a fixed offset from the main one.
+/// Like [`get_random_available_port`], this is racy.
+pub fn get_random_available_port_with_offset(offset: u16) -> u16 {
+    // Keep `port + 10000` (the cluster bus port) valid too.
+    let max_port = u16::MAX - offset.max(10000);
+    for _ in 0..10000 {
+        let port = rand::random_range(1024..=max_port);
+        if port_is_free(port) && port_is_free(port + offset) {
+            return port;
+        }
+    }
+    panic!("Couldn't get a valid port with offset {offset}");
+}
+
+fn port_is_free(port: u16) -> bool {
+    // Bind without `SO_REUSEADDR`, so the bind fails if any socket already uses the port.
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+    socket.bind(&addr.into()).is_ok()
+}
