@@ -108,7 +108,10 @@ mod routing;
 use crate::{
     AsyncConnectionConfig, Cmd, ConnectionInfo, ErrorKind, IntoConnectionInfo, PushInfo,
     RedisError, RedisFuture, RedisResult, ToRedisArgs, Value,
-    aio::{ConnectionLike, HandleContainer, MultiplexedConnection, Runtime},
+    aio::{
+        ConnectionLike, HandleContainer, MultiplexedConnection, Runtime, SubscribeLikeCommand,
+        send_subscribe_like_command,
+    },
     check_resp3,
     cluster_async::{addressed_push_sender::AddressedPushSender, request::ResultExpectation},
     cluster_handling::{
@@ -117,7 +120,8 @@ use crate::{
         get_connection_info,
         read_routing::ReadRoutingStrategy,
         routing::{
-            MultipleNodeRoutingInfo, Redirect, ResponsePolicy, RoutingInfo, SingleNodeRoutingInfo,
+            MultipleNodeRoutingInfo, Redirect, ResponsePolicy, Route, RoutingInfo,
+            SingleNodeRoutingInfo, SlotAddr,
         },
         slot_cmd,
         slot_map::{SlotMap, SlotRange},
@@ -362,10 +366,7 @@ where
     /// ```
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.state.protocol);
-        let mut cmd = cmd("SUBSCRIBE");
-        cmd.arg(channel_name);
-        cmd.exec_async(self).await?;
-        Ok(())
+        send_subscribe_like_command(self, SubscribeLikeCommand::Subscribe, channel_name).await
     }
 
     /// Unsubscribes from channel(s).
@@ -373,10 +374,7 @@ where
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.state.protocol);
-        let mut cmd = cmd("UNSUBSCRIBE");
-        cmd.arg(channel_name);
-        cmd.exec_async(self).await?;
-        Ok(())
+        send_subscribe_like_command(self, SubscribeLikeCommand::Unsubscribe, channel_name).await
     }
 
     /// Subscribes to new channel(s) with pattern(s).
@@ -404,10 +402,7 @@ where
     /// ```
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.state.protocol);
-        let mut cmd = cmd("PSUBSCRIBE");
-        cmd.arg(channel_pattern);
-        cmd.exec_async(self).await?;
-        Ok(())
+        send_subscribe_like_command(self, SubscribeLikeCommand::PSubscribe, channel_pattern).await
     }
 
     /// Unsubscribes from channel pattern(s).
@@ -415,10 +410,7 @@ where
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.state.protocol);
-        let mut cmd = cmd("PUNSUBSCRIBE");
-        cmd.arg(channel_pattern);
-        cmd.exec_async(self).await?;
-        Ok(())
+        send_subscribe_like_command(self, SubscribeLikeCommand::PUnsubscribe, channel_pattern).await
     }
 
     /// Subscribes to a new sharded channel(s).
@@ -444,10 +436,7 @@ where
     /// ```
     pub async fn ssubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.state.protocol);
-        let mut cmd = cmd("SSUBSCRIBE");
-        cmd.arg(channel_name);
-        cmd.exec_async(self).await?;
-        Ok(())
+        send_subscribe_like_command(self, SubscribeLikeCommand::SSubscribe, channel_name).await
     }
 
     /// Unsubscribes from sharded channel(s).
@@ -455,10 +444,7 @@ where
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn sunsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.state.protocol);
-        let mut cmd = cmd("SUNSUBSCRIBE");
-        cmd.arg(channel_name);
-        cmd.exec_async(self).await?;
-        Ok(())
+        send_subscribe_like_command(self, SubscribeLikeCommand::SUnsubscribe, channel_name).await
     }
     /// Gets [`CacheStatistics`] for cluster connection if caching is enabled.
     #[cfg(feature = "cache-aio")]
@@ -469,6 +455,11 @@ where
 }
 
 type ConnectionMap<C> = HashMap<NodeAddress, ConnState<C>>;
+
+/// The cluster-wide subscription tracker, present only when the cluster tracks subscriptions (i.e.
+/// it has a push sender). Every node's connection shares it, so the subscriptions confirmed by all
+/// nodes are tracked in one place.
+type SharedSubscriptionTracker = Option<Arc<Mutex<SubscriptionTracker>>>;
 
 enum ConnState<C> {
     // Connection has been successfully established at some point.
@@ -542,7 +533,7 @@ struct InnerCore<C> {
     cluster_params: ClusterParams,
     pending_requests_tx: mpsc::UnboundedSender<PendingRequest<C>>,
     initial_nodes: Vec<ConnectionInfo>,
-    subscription_tracker: Option<Mutex<SubscriptionTracker>>,
+    subscription_tracker: SharedSubscriptionTracker,
     routing_strategy: Option<Box<dyn ReadRoutingStrategy>>,
     push_sender: UnboundedSender<(NodeAddress, PushInfo)>,
 }
@@ -817,19 +808,7 @@ where
         match self.get_connection(route).await {
             Ok((addr, mut conn)) => (
                 addr.into(),
-                conn.req_packed_command(&cmd)
-                    .await
-                    .inspect(|res| {
-                        if !matches!(res, Value::ServerError(_))
-                            && let Some(tracker) = &self.subscription_tracker
-                            && let Some((action, args)) =
-                                SubscriptionTracker::to_request(cmd.as_ref())
-                        {
-                            let mut tracker = tracker.lock().unwrap();
-                            tracker.update_with_request(action, args);
-                        }
-                    })
-                    .map(Response::Single),
+                conn.req_packed_command(&cmd).await.map(Response::Single),
             ),
             Err(err) => (OperationTarget::NotFound, Err(err)),
         }
@@ -847,37 +826,6 @@ where
                 OperationTarget::Node { address: addr },
                 conn.req_packed_commands(&pipeline, offset, count)
                     .await
-                    .inspect(|res| {
-                        let Some(tracker) = &self.subscription_tracker else {
-                            return;
-                        };
-                        let res = if pipeline.is_transaction() {
-                            debug_assert_eq!(res.len(), 1);
-                            match res[0] {
-                                Value::Array(ref arr) => arr,
-                                _ => res,
-                            }
-                        } else {
-                            res
-                        };
-                        let mut iterator = pipeline
-                            .cmd_iter()
-                            .enumerate()
-                            .flat_map(|(index, cmd)| {
-                                if matches!(res[index], Value::ServerError(_)) {
-                                    None
-                                } else {
-                                    SubscriptionTracker::to_request(cmd)
-                                }
-                            })
-                            .peekable();
-                        if iterator.peek().is_some() {
-                            let mut tracker = tracker.lock().unwrap();
-                            for (action, args) in iterator {
-                                tracker.update_with_request(action, args);
-                            }
-                        }
-                    })
                     .map(Response::Multiple),
             ),
             Err(err) => (OperationTarget::NotFound, Err(err)),
@@ -1003,7 +951,14 @@ where
     }
 
     async fn connect_check_and_add(&self, addr: &NodeAddress) -> RedisResult<C> {
-        let conn = connect_and_check::<C>(addr, &self.cluster_params, &self.push_sender).await?;
+        let subscription_tracker = self.subscription_tracker.clone();
+        let conn = connect_and_check::<C>(
+            addr,
+            &self.cluster_params,
+            &self.push_sender,
+            subscription_tracker,
+        )
+        .await?;
         self.conn_lock
             .write()
             .await
@@ -1051,7 +1006,14 @@ where
         if !found {
             for (addr, state) in &mut *connections {
                 let prev = std::mem::replace(state, ConnState::Connecting).into_conn();
-                match get_or_create_conn(addr, prev, &self.cluster_params, &self.push_sender).await
+                match get_or_create_conn(
+                    addr,
+                    prev,
+                    &self.cluster_params,
+                    &self.push_sender,
+                    self.subscription_tracker.clone(),
+                )
+                .await
                 {
                     Ok(mut conn) => {
                         let res = Self::query_slots(&mut conn, addr, slots).await;
@@ -1081,9 +1043,15 @@ where
 
         let nodes = slots.values().flatten().cloned().collect::<HashSet<_>>();
 
+        // The tracker keeps subscriptions of nodes that left the topology: their slots may now be
+        // served by another node, which the resubscription below moves the subscriptions to.
         connections.retain(|addr, _| nodes.contains(addr));
 
         self.refresh_connections_locked(connections, nodes).await;
+
+        // The slot map may have changed, so resubscribe every node only to the subscriptions whose
+        // slots it now owns.
+        self.resubscribe_all(connections, slots);
 
         Ok(())
     }
@@ -1104,6 +1072,7 @@ where
                         connection,
                         &self.cluster_params,
                         &self.push_sender,
+                        self.subscription_tracker.clone(),
                     )
                     .await;
                     (addr, res)
@@ -1122,93 +1091,50 @@ where
             .await;
     }
 
-    fn resubscribe_all(&self) {
-        let Some(subscription_tracker) = self.subscription_tracker.as_ref() else {
+    /// Re-subscribes every connection to the tracked subscriptions whose slots it currently owns.
+    fn resubscribe_all(&self, connections: &ConnectionMap<C>, slot_map: &SlotMap) {
+        let Some(tracker) = self.subscription_tracker.as_ref() else {
             return;
         };
+        let mut pipelines = {
+            let tracker = tracker.lock().unwrap();
+            subscription_pipelines(&tracker, slot_map, self.routing_strategy.as_deref())
+        };
 
-        let subscription_pipe = subscription_tracker
-            .lock()
-            .unwrap()
-            .get_subscription_pipeline();
-
-        // we send request per cmd, instead of sending the pipe together, in order to send each command to the relevant node, instead of all together to a single node.
-        let requests = subscription_pipe.into_cmd_iter().map(|cmd| {
-            let routing = RoutingInfo::for_routable(&cmd)
-                .unwrap_or(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
-                .into();
-            PendingRequest {
-                retry: 0,
-                sender: request::ResultExpectation::Internal,
-                cmd: CmdArg::Cmd {
-                    cmd: Arc::new(cmd),
-                    routing,
-                },
+        for addr in connections.keys() {
+            if let Some(subscription_pipe) = pipelines.remove(addr) {
+                self.send_subscription_pipeline(addr, subscription_pipe);
             }
-        });
-
-        for request in requests {
-            let _ = self
-                .pending_requests_tx
-                .send(request)
-                .inspect_err(|err| debug!("failed internal send {err}"));
         }
     }
 
-    fn resubscribe_node(&self, reconnected_addr: &NodeAddress) {
-        let Some(subscription_tracker) = self.subscription_tracker.as_ref() else {
+    /// Re-subscribes a reconnected connection to the tracked subscriptions whose slots it owns.
+    async fn resubscribe_node(&self, reconnected_addr: &NodeAddress) {
+        let Some(tracker) = self.subscription_tracker.as_ref() else {
             return;
         };
+        let read_guard = self.conn_lock.read().await;
+        let subscription_pipe = subscriptions_for_node(
+            &tracker.lock().unwrap(),
+            &read_guard.1,
+            reconnected_addr,
+            self.routing_strategy.as_deref(),
+        );
+        drop(read_guard);
 
-        // Determine if there are other connected nodes
-        let guard = self.conn_lock.try_read().ok();
-        let other_nodes_connected = if let Some(guard) = &guard {
-            guard.0.iter().any(|(addr, state)| {
-                addr != reconnected_addr && matches!(state, ConnState::Connected(_))
-            })
-        } else {
-            false
-        };
+        self.send_subscription_pipeline(reconnected_addr, subscription_pipe);
+    }
 
-        let subscription_pipe = subscription_tracker
-            .lock()
-            .unwrap()
-            .get_subscription_pipeline();
-
-        let requests = subscription_pipe.into_cmd_iter().filter_map(|cmd| {
-            let routing = RoutingInfo::for_routable(&cmd)
-                .unwrap_or(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random));
-
-            match &routing {
-                RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route)) => {
-                    // For specific node routing (like SSUBSCRIBE/shard pubsub),
-                    // only send if it routes to the reconnected_addr.
-                    let target_addr = guard.as_ref().and_then(|g| {
-                        g.1.slot_addr_for_route(*route, self.routing_strategy.as_deref())
-                    });
-                    if target_addr != Some(reconnected_addr) {
-                        return None;
-                    }
-                }
-                // For random/any-node routing (like SUBSCRIBE/PSUBSCRIBE),
-                // only send if this is the first connected node.
-                _ if other_nodes_connected => {
-                    return None;
-                }
-                _ => {}
-            }
-
-            Some(PendingRequest {
+    fn send_subscription_pipeline(&self, addr: &NodeAddress, subscription_pipe: crate::Pipeline) {
+        for cmd in subscription_pipe.into_cmd_iter() {
+            let request = PendingRequest {
                 retry: 0,
                 sender: request::ResultExpectation::Internal,
                 cmd: CmdArg::Cmd {
                     cmd: Arc::new(cmd),
-                    routing: routing.into(),
+                    routing: InternalSingleNodeRouting::<C>::ByAddress(addr.clone()).into(),
                 },
-            })
-        });
-
-        for request in requests {
+            };
             let _ = self
                 .pending_requests_tx
                 .send(request)
@@ -1279,7 +1205,15 @@ where
             prev_conn
         };
 
-        match get_or_create_conn(&addr, prev, &core.cluster_params, &core.push_sender).await {
+        match get_or_create_conn(
+            &addr,
+            prev,
+            &core.cluster_params,
+            &core.push_sender,
+            core.subscription_tracker.clone(),
+        )
+        .await
+        {
             Ok(conn) => {
                 let newly_installed = {
                     let mut guard = core.conn_lock.write().await;
@@ -1294,10 +1228,7 @@ where
 
                 if newly_installed {
                     info!("ClusterConnInner: reconnected to {addr:?} ");
-                    // TODO: make the resubscribe semantic more granular.
-                    // Right now resubscribe() re-sends every subscription across all nodes.
-                    // We should re-subscribe for the newly repaired node.
-                    core.resubscribe_node(&addr);
+                    core.resubscribe_node(&addr).await;
                 }
                 break;
             }
@@ -1382,7 +1313,7 @@ where
         has_push_sender: bool,
     ) -> Self {
         let subscription_tracker =
-            has_push_sender.then(|| Mutex::new(SubscriptionTracker::default()));
+            has_push_sender.then(|| Arc::new(Mutex::new(SubscriptionTracker::default())));
 
         let routing_strategy = cluster_params
             .read_routing_factory
@@ -1418,11 +1349,14 @@ where
         initial_nodes: &[ConnectionInfo],
         params: &ClusterParams,
         push_sender: &UnboundedSender<(NodeAddress, PushInfo)>,
+        subscription_tracker: &SharedSubscriptionTracker,
     ) -> RedisResult<ConnectionMap<C>> {
         let (connections, error) = stream::iter(initial_nodes.iter().cloned())
             .map(async move |info| {
                 let addr = NodeAddress::try_from(&info.addr)?;
-                let result = connect_and_check(&addr, params, push_sender).await;
+                let result =
+                    connect_and_check(&addr, params, push_sender, subscription_tracker.clone())
+                        .await;
                 match result {
                     Ok(conn) => Ok((addr, conn)),
                     Err(e) => {
@@ -1474,6 +1408,7 @@ where
                 &inner.initial_nodes,
                 &inner.cluster_params,
                 &inner.push_sender,
+                &inner.subscription_tracker,
             )
             .await?;
             *inner.conn_lock.write().await = (connection_map, SlotMap::new());
@@ -1553,9 +1488,6 @@ where
                 Ok(())
             }
         };
-        if res.is_ok() {
-            self.inner.resubscribe_all();
-        }
         Poll::Ready(res)
     }
 
@@ -1676,11 +1608,48 @@ where
     }
 }
 
+fn subscription_pipelines(
+    tracker: &SubscriptionTracker,
+    slot_map: &SlotMap,
+    routing_strategy: Option<&dyn ReadRoutingStrategy>,
+) -> HashMap<NodeAddress, crate::Pipeline> {
+    tracker.get_subscription_pipelines_by(|subscription| {
+        subscription_owner(slot_map, subscription, routing_strategy)
+    })
+}
+
+fn subscriptions_for_node(
+    tracker: &SubscriptionTracker,
+    slot_map: &SlotMap,
+    addr: &NodeAddress,
+    routing_strategy: Option<&dyn ReadRoutingStrategy>,
+) -> crate::Pipeline {
+    tracker.get_subscription_pipeline_for_owner(addr, |subscription| {
+        subscription_owner(slot_map, subscription, routing_strategy)
+    })
+}
+
+fn subscription_owner(
+    slot_map: &SlotMap,
+    subscription: &[u8],
+    routing_strategy: Option<&dyn ReadRoutingStrategy>,
+) -> Option<NodeAddress> {
+    slot_map
+        .slot_addr_for_route(
+            // Subscription commands are routed by their first channel, and are marked read-only,
+            // so they use `ReplicaOptional` like `RoutingInfo` does.
+            Route::with_key(subscription, SlotAddr::ReplicaOptional),
+            routing_strategy,
+        )
+        .cloned()
+}
+
 async fn get_or_create_conn<C>(
     addr: &NodeAddress,
     conn_option: Option<C>,
     params: &ClusterParams,
     push_sender: &UnboundedSender<(NodeAddress, PushInfo)>,
+    subscription_tracker: Option<Arc<Mutex<SubscriptionTracker>>>,
 ) -> RedisResult<C>
 where
     C: Connect + ConnectionLike + Clone + Send + Sync + 'static,
@@ -1690,7 +1659,7 @@ where
     {
         Ok(conn)
     } else {
-        connect_and_check(addr, params, push_sender).await
+        connect_and_check(addr, params, push_sender, subscription_tracker).await
     }
 }
 
@@ -1861,6 +1830,7 @@ async fn connect_and_check<C>(
     node: &NodeAddress,
     params: &ClusterParams,
     push_sender: &UnboundedSender<(NodeAddress, PushInfo)>,
+    subscription_tracker: Option<Arc<Mutex<SubscriptionTracker>>>,
 ) -> RedisResult<C>
 where
     C: ConnectionLike + Connect + Send + 'static,
@@ -1869,6 +1839,10 @@ where
     let mut config =
         AsyncConnectionConfig::default().set_connection_timeout(Some(params.connection_timeout));
     config = config.set_response_timeout(params.response_timeout);
+
+    if let Some(subscription_tracker) = subscription_tracker {
+        config = config.set_subscription_tracker_internal(subscription_tracker);
+    }
 
     if info.redis.protocol.supports_resp3() {
         config =
@@ -1933,4 +1907,160 @@ where
         .iter()
         .filter_map(|(addr, state)| state.connected().map(|conn| (addr.clone(), conn)))
         .choose(&mut rng())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+    use crate::{
+        cluster_handling::{
+            read_routing::ReadCandidates,
+            slot_map::{SlotMap, SlotRange},
+        },
+        pipe,
+        subscription_tracker::SubscriptionAction,
+    };
+
+    fn addr(value: &str) -> NodeAddress {
+        NodeAddress::try_from(value).unwrap()
+    }
+
+    fn subscribe(tracker: &mut SubscriptionTracker, action: SubscriptionAction, args: &[&str]) {
+        tracker.update_with_request(action, args.iter().map(|arg| arg.as_bytes().to_vec()));
+    }
+
+    #[test]
+    fn subscription_pipelines_follow_the_owned_slots() {
+        let node1 = addr("node1:6379");
+        let node2 = addr("node2:6379");
+        let slot_map = SlotMap::from_slots(vec![
+            SlotRange::new(0, 10_000, node1.clone(), vec![]),
+            SlotRange::new(10_001, 16_383, node2.clone(), vec![]),
+        ]);
+
+        let mut tracker = SubscriptionTracker::default();
+        // "foo" hashes to slot 12182, while "bar" hashes to slot 5061.
+        subscribe(&mut tracker, SubscriptionAction::Subscribe, &["foo", "bar"]);
+        subscribe(
+            &mut tracker,
+            SubscriptionAction::PSubscribe,
+            &["{foo}pattern", "{bar}pattern"],
+        );
+        subscribe(
+            &mut tracker,
+            SubscriptionAction::SSubscribe,
+            &["{foo}shard", "{bar}shard"],
+        );
+
+        let pipelines = subscription_pipelines(&tracker, &slot_map, None);
+        assert_eq!(pipelines.len(), 2);
+
+        let mut expected = pipe();
+        expected
+            .cmd("SUBSCRIBE")
+            .arg("bar")
+            .cmd("SSUBSCRIBE")
+            .arg("{bar}shard")
+            .cmd("PSUBSCRIBE")
+            .arg("{bar}pattern");
+        assert_eq!(
+            pipelines[&node1].get_packed_pipeline(),
+            expected.get_packed_pipeline()
+        );
+
+        let mut expected = pipe();
+        expected
+            .cmd("SUBSCRIBE")
+            .arg("foo")
+            .cmd("SSUBSCRIBE")
+            .arg("{foo}shard")
+            .cmd("PSUBSCRIBE")
+            .arg("{foo}pattern");
+        assert_eq!(
+            pipelines[&node2].get_packed_pipeline(),
+            expected.get_packed_pipeline()
+        );
+    }
+
+    #[test]
+    fn subscriptions_follow_slots_when_ownership_changes() {
+        let node1 = addr("node1:6379");
+        let node2 = addr("node2:6379");
+
+        let mut tracker = SubscriptionTracker::default();
+        subscribe(&mut tracker, SubscriptionAction::Subscribe, &["foo"]);
+
+        let before = SlotMap::from_slots(vec![SlotRange::new(0, 16_383, node1.clone(), vec![])]);
+        let after = SlotMap::from_slots(vec![SlotRange::new(0, 16_383, node2.clone(), vec![])]);
+
+        let mut expected = pipe();
+        expected.cmd("SUBSCRIBE").arg("foo");
+
+        assert_eq!(
+            subscriptions_for_node(&tracker, &before, &node1, None).get_packed_pipeline(),
+            expected.get_packed_pipeline()
+        );
+        assert_eq!(
+            subscriptions_for_node(&tracker, &before, &node2, None).get_packed_pipeline(),
+            pipe().get_packed_pipeline()
+        );
+
+        assert_eq!(
+            subscriptions_for_node(&tracker, &after, &node1, None).get_packed_pipeline(),
+            pipe().get_packed_pipeline()
+        );
+        assert_eq!(
+            subscriptions_for_node(&tracker, &after, &node2, None).get_packed_pipeline(),
+            expected.get_packed_pipeline()
+        );
+    }
+
+    #[derive(Default)]
+    struct AlternatingReplicaStrategy {
+        calls: AtomicUsize,
+    }
+
+    impl ReadRoutingStrategy for AlternatingReplicaStrategy {
+        fn route_read<'a>(&self, candidates: &ReadCandidates<'a>) -> &'a NodeAddress {
+            let replicas = match candidates {
+                ReadCandidates::AnyNode(candidates) => candidates.replicas(),
+                ReadCandidates::ReplicasOnly(candidates) => candidates.replicas(),
+            };
+            let index = self.calls.fetch_add(1, Ordering::Relaxed);
+            replicas.get(index % replicas.len()).expect("non-empty")
+        }
+    }
+
+    #[test]
+    fn subscriptions_are_resolved_once_per_resubscription_pass() {
+        let primary = addr("primary:6379");
+        let replica1 = addr("replica1:6379");
+        let replica2 = addr("replica2:6379");
+        let slot_map = SlotMap::from_slots(vec![SlotRange::new(
+            0,
+            16_383,
+            primary,
+            vec![replica1.clone(), replica2],
+        )]);
+
+        let mut tracker = SubscriptionTracker::default();
+        subscribe(&mut tracker, SubscriptionAction::Subscribe, &["foo"]);
+
+        let strategy = AlternatingReplicaStrategy::default();
+        let pipelines = subscription_pipelines(&tracker, &slot_map, Some(&strategy));
+
+        // The strategy alternates between the replicas, so resolving the owner more than once could
+        // send the same subscription to both replicas.
+        assert_eq!(strategy.calls.load(Ordering::Relaxed), 1);
+        assert_eq!(pipelines.len(), 1);
+
+        let mut expected = pipe();
+        expected.cmd("SUBSCRIBE").arg("foo");
+        assert_eq!(
+            pipelines[&replica1].get_packed_pipeline(),
+            expected.get_packed_pipeline()
+        );
+    }
 }

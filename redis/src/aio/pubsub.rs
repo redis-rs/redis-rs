@@ -185,8 +185,8 @@ where
 /// Completes the request awaiting a confirmation and records the subscription change that the
 /// confirmation reports.
 ///
-/// `change` is `None` for confirmations that don't change the tracked subscriptions: `PONG`
-/// replies and confirmations of shard channels.
+/// `change` is `None` for confirmations that don't change the tracked subscriptions, such as
+/// `PONG` replies.
 fn handle_confirmation(
     in_flight: &mut VecDeque<PendingRequest>,
     subscriptions: &mut SubscriptionTracker,
@@ -208,6 +208,10 @@ fn handle_confirmation(
                 }
                 ExpectedConfirmations::UnsubscribeAllPatterns => {
                     subscriptions.unsubscribe_all_target(SubscriptionKind::Pattern)
+                }
+                #[cfg(feature = "cluster-async")]
+                ExpectedConfirmations::UnsubscribeAllShardChannels => {
+                    subscriptions.unsubscribe_all_target(SubscriptionKind::ShardChannel)
                 }
             };
             if expected <= 1 {

@@ -37,6 +37,9 @@ pub(crate) enum ExpectedConfirmations {
     UnsubscribeAllChannels,
     /// One confirmation per tracked pattern.
     UnsubscribeAllPatterns,
+    /// One confirmation per tracked sharded channel.
+    #[cfg(feature = "cluster-async")]
+    UnsubscribeAllShardChannels,
 }
 
 /// A pipeline allows you to send multiple commands in one go to the

@@ -105,6 +105,10 @@ pub(crate) enum SubscribeLikeCommand {
     Unsubscribe,
     PSubscribe,
     PUnsubscribe,
+    #[cfg(feature = "cluster-async")]
+    SSubscribe,
+    #[cfg(feature = "cluster-async")]
+    SUnsubscribe,
 }
 
 impl SubscribeLikeCommand {
@@ -115,6 +119,10 @@ impl SubscribeLikeCommand {
             Self::Unsubscribe => "UNSUBSCRIBE",
             Self::PSubscribe => "PSUBSCRIBE",
             Self::PUnsubscribe => "PUNSUBSCRIBE",
+            #[cfg(feature = "cluster-async")]
+            Self::SSubscribe => "SSUBSCRIBE",
+            #[cfg(feature = "cluster-async")]
+            Self::SUnsubscribe => "SUNSUBSCRIBE",
         }
     }
 
@@ -126,8 +134,13 @@ impl SubscribeLikeCommand {
                 // subscriptions of that kind, so the count depends on the connection's state.
                 Self::Unsubscribe => ExpectedConfirmations::UnsubscribeAllChannels,
                 Self::PUnsubscribe => ExpectedConfirmations::UnsubscribeAllPatterns,
-                // A SUBSCRIBE/PSUBSCRIBE without arguments is rejected with a single error.
+                #[cfg(feature = "cluster-async")]
+                Self::SUnsubscribe => ExpectedConfirmations::UnsubscribeAllShardChannels,
+                // A SUBSCRIBE/PSUBSCRIBE/SSUBSCRIBE without arguments is rejected with a single
+                // error.
                 Self::Subscribe | Self::PSubscribe => ExpectedConfirmations::Count(1),
+                #[cfg(feature = "cluster-async")]
+                Self::SSubscribe => ExpectedConfirmations::Count(1),
             }
         } else {
             ExpectedConfirmations::Count(args_count)
