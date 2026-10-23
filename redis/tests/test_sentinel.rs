@@ -374,10 +374,21 @@ fn forget_master(context: &TestSentinelContext, index: usize, master_name: &str)
 fn flag_master_down(context: &TestSentinelContext, index: usize, master_name: &str) {
     // A sentinel whose timer runs late (a loaded test machine) enters TILT mode and flags
     // nothing down for 30 s. Leave TILT and do not re-enter it. `SENTINEL DEBUG` exists
-    // since Redis 7.0; an older server keeps its defaults, so the error is ignored.
-    let _: redis::RedisResult<String> = redis::cmd("SENTINEL")
+    // since Redis 7.0; an older server rejects it as an unknown subcommand and keeps its
+    // defaults. Any other reply is a failure.
+    let reply: redis::RedisResult<String> = redis::cmd("SENTINEL")
         .arg(&["DEBUG", "tilt-period", "1", "tilt-trigger", "60000"])
         .query(&mut connect_to_sentinel(context, index));
+    match reply {
+        Ok(reply) => assert_eq!(reply, "OK"),
+        Err(err) => assert!(
+            err.code() == Some("ERR")
+                && err
+                    .detail()
+                    .is_some_and(|detail| detail.starts_with("Unknown subcommand")),
+            "unexpected reply to SENTINEL DEBUG: {err}"
+        ),
+    }
     forget_master(context, index, master_name);
     let dead_port = redis_test::utils::get_random_available_port().to_string();
     sentinel_command_ok(
@@ -466,6 +477,19 @@ fn deny_role_check_on_master(context: &TestSentinelContext, master_name: &str) {
         .query(&mut master_con)
         .unwrap();
     assert_eq!(reply, "OK");
+}
+
+/// Stops the server the sentinels name as `master_name`'s master. No sentinel flags it down
+/// for a while: the harness keeps Sentinel's default `down-after-milliseconds` (30 s).
+fn stop_master(context: &mut TestSentinelContext, master_name: &str) {
+    let (_, master_port) = master_addr_from_sentinel(context, 0, master_name);
+    context
+        .cluster
+        .servers
+        .iter_mut()
+        .find(|server| server.host_and_port().map(|(_, port)| port) == Some(master_port))
+        .unwrap()
+        .stop();
 }
 
 #[test]
@@ -563,6 +587,22 @@ fn test_sentinel_master_for_reports_the_master_error_over_not_found() {
         .master_for(master_name, Some(&node_conn_info))
         .unwrap_err();
     assert_eq!(err.code(), Some("NOPERM"));
+}
+
+/// Every sentinel still names the master, but it is stopped: the lookup must fail with the
+/// refused connection from dialling it rather than return a client for it.
+#[test]
+fn test_sentinel_master_for_reports_an_error_when_the_master_is_down() {
+    let master_name = "master1";
+    let mut context = TestSentinelContext::new(2, 2, 3);
+    let node_conn_info = context.sentinel_node_connection_info();
+    stop_master(&mut context, master_name);
+
+    let err = context
+        .sentinel_mut()
+        .master_for(master_name, Some(&node_conn_info))
+        .unwrap_err();
+    assert!(err.is_connection_refusal(), "{err}");
 }
 
 #[test]
@@ -1098,6 +1138,21 @@ pub mod async_tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), Some("NOPERM"));
+    }
+
+    #[async_test]
+    async fn test_sentinel_master_for_reports_an_error_when_the_master_is_down_async() {
+        let master_name = "master1";
+        let mut context = TestSentinelContext::new(2, 2, 3);
+        let node_conn_info = context.sentinel_node_connection_info();
+        stop_master(&mut context, master_name);
+
+        let err = context
+            .sentinel_mut()
+            .async_master_for(master_name, Some(&node_conn_info))
+            .await
+            .unwrap_err();
+        assert!(err.is_connection_refusal(), "{err}");
     }
 
     #[async_test]
