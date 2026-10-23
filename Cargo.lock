@@ -2137,7 +2137,7 @@ dependencies = [
 
 [[package]]
 name = "redis"
-version = "1.7.1"
+version = "1.8.0"
 dependencies = [
  "ahash 0.8.11",
  "anyhow",
