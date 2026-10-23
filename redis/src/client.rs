@@ -15,7 +15,7 @@ use crate::{
 #[cfg(feature = "aio")]
 use std::pin::Pin;
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 use crate::tls::{TlsCertificates, inner_build_with_tls};
 
 #[cfg(feature = "cache-aio")]
@@ -155,7 +155,7 @@ impl Client {
     ///     Ok(())
     /// }
     /// ```
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
     pub fn build_with_tls<C: IntoConnectionInfo>(
         conn_info: C,
         tls_certs: TlsCertificates,
@@ -195,6 +195,9 @@ pub struct AsyncConnectionConfig {
     pub(crate) concurrency_limit: Option<usize>,
     /// Flush threshold for the outbound write buffer; see [`AsyncConnectionConfig::set_write_backpressure_boundary`].
     pub(crate) write_backpressure_boundary: Option<usize>,
+    /// A tracker of the connection's confirmed subscriptions, shared with the connection.
+    pub(crate) subscription_tracker:
+        Option<std::sync::Arc<std::sync::Mutex<crate::subscription_tracker::SubscriptionTracker>>>,
     /// Optional credentials provider for dynamic authentication (e.g., token-based authentication)
     #[cfg(feature = "token-based-authentication")]
     pub(crate) credentials_provider: Option<std::sync::Arc<dyn StreamingCredentialsProvider>>,
@@ -213,6 +216,7 @@ impl std::fmt::Debug for AsyncConnectionConfig {
             pipeline_buffer_size,
             concurrency_limit,
             write_backpressure_boundary,
+            subscription_tracker,
             #[cfg(feature = "token-based-authentication")]
             credentials_provider,
         } = self;
@@ -224,6 +228,7 @@ impl std::fmt::Debug for AsyncConnectionConfig {
             .field("concurrency_limit", concurrency_limit)
             .field("write_backpressure_boundary", write_backpressure_boundary)
             .field("push_sender", &set_or_unset(push_sender))
+            .field("subscription_tracker", &set_or_unset(subscription_tracker))
             .field("dns_resolver", &set_or_unset(dns_resolver));
 
         #[cfg(feature = "cache-aio")]
@@ -249,6 +254,7 @@ impl Default for AsyncConnectionConfig {
             pipeline_buffer_size: None,
             concurrency_limit: None,
             write_backpressure_boundary: None,
+            subscription_tracker: None,
             #[cfg(feature = "token-based-authentication")]
             credentials_provider: None,
         }
@@ -312,6 +318,17 @@ impl AsyncConnectionConfig {
         sender: std::sync::Arc<dyn AsyncPushSender>,
     ) -> Self {
         self.push_sender = Some(sender);
+        self
+    }
+
+    #[cfg(any(feature = "connection-manager", feature = "cluster-async"))]
+    pub(crate) fn set_subscription_tracker_internal(
+        mut self,
+        subscription_tracker: std::sync::Arc<
+            std::sync::Mutex<crate::subscription_tracker::SubscriptionTracker>,
+        >,
+    ) -> Self {
+        self.subscription_tracker = Some(subscription_tracker);
         self
     }
 

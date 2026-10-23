@@ -1,3 +1,44 @@
+### 1.8.0 (2026-10-23)
+
+#### Changes & Bug fixes
+
+* Use a const chunking function in tuple impl of FromRedisValue ([#2424](https://github.com/redis-rs/redis-rs/pull/2424) by @nihohit)
+* lint: Add `FromStr` for `NodeAddress` ([#2444](https://github.com/redis-rs/redis-rs/pull/2444) by @somechris)
+* Add Debug implementation to AsyncConnectionConfig, PubSubSink and dependent types ([#2450](https://github.com/redis-rs/redis-rs/pull/2450) by @nihohit)
+* Add Debug implementation to Sentinel configuration types ([#2451](https://github.com/redis-rs/redis-rs/pull/2451) by @nihohit)
+* Add debug impl for cluster config types ([#2453](https://github.com/redis-rs/redis-rs/pull/2453) by @nihohit)
+* Add Debug impls for command input types ([#2454](https://github.com/redis-rs/redis-rs/pull/2454) by @nihohit)
+* Add Debug impls for return types ([#2455](https://github.com/redis-rs/redis-rs/pull/2455) by @nihohit)
+* Add FLAT vector field support for `FT.CREATE` [5/8] ([#2319](https://github.com/redis-rs/redis-rs/pull/2319) by @StefanPalashev)
+* Replace assert with an error when a multi-slot shard returns a wrong result count ([#2471](https://github.com/redis-rs/redis-rs/pull/2471) by @17krishna8)
+* Handle TLS handshake errors when connecting with a timeout ([#2473](https://github.com/redis-rs/redis-rs/pull/2473) by @17krishna8)
+* Add HNSW vector field support for `FT.CREATE` [6/8] ([#2467](https://github.com/redis-rs/redis-rs/pull/2467) by @StefanPalashev)
+* Add SVS-VAMANA vector field support for `FT.CREATE` [7/8] ([#2468](https://github.com/redis-rs/redis-rs/pull/2468) by @StefanPalashev)
+* Route `FT.CREATE` as a keyless command and add cluster integration tests [8/8] ([#2469](https://github.com/redis-rs/redis-rs/pull/2469) by @StefanPalashev)
+* Reject mismatched shard response lengths in logical_aggregate ([#2472](https://github.com/redis-rs/redis-rs/pull/2472) by @17krishna8)
+* Redact secrets in Debug for BasicAuth and ClientCertificate ([#2487](https://github.com/redis-rs/redis-rs/pull/2487) by @varun3257)
+* AsyncPubsub: await all confirmations of subscription commands ([#2475](https://github.com/redis-rs/redis-rs/pull/2475) by @nihohit)
+* Multiplexed Connection: await all confirmations of subscription commands ([#2491](https://github.com/redis-rs/redis-rs/pull/2491) by @nihohit)
+* fix(streams): parse the fields of XINFO STREAM's first and last entries ([#2494](https://github.com/redis-rs/redis-rs/pull/2494) by @LindseyZ1205)
+* Support custom root certificates under `tls-native-tls` ([#2488](https://github.com/redis-rs/redis-rs/pull/2488) by @MohitKS5)
+* Reject mixed TLS initial nodes regardless of order in ClusterClientBuilder ([#2496](https://github.com/redis-rs/redis-rs/pull/2496) by @varun3257)
+* fix(types): forward num_of_args and describe_numeric_behavior for Cow ([#2500](https://github.com/redis-rs/redis-rs/pull/2500) by @LindseyZ1205)
+* fix(connection-manager, cluster): await all confirmations of subscription commands ([#2504](https://github.com/redis-rs/redis-rs/pull/2504) by @nihohit)
+* sentinel: ask the next sentinel when one has no valid master for the name ([#2427](https://github.com/redis-rs/redis-rs/pull/2427) by @1jeffchristensen)
+
+#### CI & operational improvements
+
+* ci: Fix Valkey Bloom module caching ([#2420](https://github.com/redis-rs/redis-rs/pull/2420) by @nkaradzhov)
+* Add test harness and CI support for the Search module [4/8] ([#2318](https://github.com/redis-rs/redis-rs/pull/2318) by @StefanPalashev)
+* doc: Add the environment variable for the search module ([#2429](https://github.com/redis-rs/redis-rs/pull/2429) by @somechris)
+* feat: add a seeded randomized test to ensure that interleaved MOVED/broken_connection does not cause a deadlock ([#2425](https://github.com/redis-rs/redis-rs/pull/2425) by @virratanasangpunth)
+* Fix new nightly lints lints ([#2460](https://github.com/redis-rs/redis-rs/pull/2460) by @nihohit)
+* ci: Switch `lint-and-check` to stabilized dependencies format ([#2477](https://github.com/redis-rs/redis-rs/pull/2477) by @somechris)
+* Pin all github runners ([#2501](https://github.com/redis-rs/redis-rs/pull/2501) by @nihohit)
+* Add asserts on error content in tests. ([#2498](https://github.com/redis-rs/redis-rs/pull/2498) by @nihohit)
+* Improve caching ([#2497](https://github.com/redis-rs/redis-rs/pull/2497) by @nihohit)
+* Pick the parser microbenchmark harnesses over from #2199 ([#2484](https://github.com/redis-rs/redis-rs/pull/2484) by @nihohit)
+
 ### 1.7.1 (2026-09-25)
 
 #### Changes & Bug fixes

@@ -5,8 +5,9 @@ use crate::connection::{
     connection_setup_pipeline,
 };
 use crate::io::AsyncDNSResolver;
+use crate::pipeline::ExpectedConfirmations;
 use crate::types::{RedisFuture, RedisResult, Value};
-use crate::{ErrorKind, PushInfo, RedisError, errors::closed_connection_error};
+use crate::{ErrorKind, PushInfo, RedisError, ToRedisArgs, errors::closed_connection_error};
 use ::tokio::io::{AsyncRead, AsyncWrite};
 use futures_util::{
     future::{Future, FutureExt},
@@ -97,6 +98,78 @@ pub trait ConnectionLike {
     /// also might be incorrect if the connection like object is not
     /// actually connected.
     fn get_db(&self) -> i64;
+}
+
+/// The pub/sub subscription commands that are answered with one confirmation per argument.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SubscribeLikeCommand {
+    Subscribe,
+    Unsubscribe,
+    PSubscribe,
+    PUnsubscribe,
+    #[cfg(feature = "cluster-async")]
+    SSubscribe,
+    #[cfg(feature = "cluster-async")]
+    SUnsubscribe,
+}
+
+impl SubscribeLikeCommand {
+    /// The name of the command as sent to the server.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Subscribe => "SUBSCRIBE",
+            Self::Unsubscribe => "UNSUBSCRIBE",
+            Self::PSubscribe => "PSUBSCRIBE",
+            Self::PUnsubscribe => "PUNSUBSCRIBE",
+            #[cfg(feature = "cluster-async")]
+            Self::SSubscribe => "SSUBSCRIBE",
+            #[cfg(feature = "cluster-async")]
+            Self::SUnsubscribe => "SUNSUBSCRIBE",
+        }
+    }
+
+    /// How many confirmations the server sends for this command when called with `args`.
+    pub(crate) fn expected_confirmations(self, args_count: usize) -> ExpectedConfirmations {
+        if args_count == 0 {
+            match self {
+                // A zero-argument un/psubscribe removes all of the connection's current
+                // subscriptions of that kind, so the count depends on the connection's state.
+                Self::Unsubscribe => ExpectedConfirmations::UnsubscribeAllChannels,
+                Self::PUnsubscribe => ExpectedConfirmations::UnsubscribeAllPatterns,
+                #[cfg(feature = "cluster-async")]
+                Self::SUnsubscribe => ExpectedConfirmations::UnsubscribeAllShardChannels,
+                // A SUBSCRIBE/PSUBSCRIBE/SSUBSCRIBE without arguments is rejected with a single
+                // error.
+                Self::Subscribe | Self::PSubscribe => ExpectedConfirmations::Count(1),
+                #[cfg(feature = "cluster-async")]
+                Self::SSubscribe => ExpectedConfirmations::Count(1),
+            }
+        } else {
+            ExpectedConfirmations::Count(args_count)
+        }
+    }
+}
+
+/// Sends a subscription command through the given connection, returning only after the server
+/// sent all of the command's confirmations, so that surplus confirmations aren't attributed to
+/// the next request. See <https://github.com/redis-rs/redis-rs/issues/2423>.
+pub(crate) async fn send_subscribe_like_command(
+    connection: &mut impl ConnectionLike,
+    command: SubscribeLikeCommand,
+    args: impl ToRedisArgs,
+) -> RedisResult<()> {
+    let arg_count = args.num_of_args();
+
+    let mut pipeline = crate::Pipeline::new();
+    pipeline.cmd(command.name()).arg(args);
+    pipeline.subscription_confirmations = Some(command.expected_confirmations(arg_count));
+
+    // The pipeline is a single server command, so it holds a single concurrency limit permit
+    // and expects a single response unit, regardless of the number of confirmations it will be
+    // answered with. The exact expectations are carried on the pipeline itself.
+    let responses = connection.req_packed_commands(&pipeline, 0, 1).await?;
+    Value::extract_error_vec(responses)?;
+    Ok(())
 }
 
 async fn execute_connection_pipeline<T>(

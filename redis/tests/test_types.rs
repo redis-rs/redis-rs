@@ -710,9 +710,17 @@ mod types {
             Value::BulkString("3".into()),
         ])]);
         for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
-            parse_mode
-                .parse_redis_value::<Vec<(u8, u8)>>(val.clone())
-                .unwrap_err();
+            let err = RedisError::from(
+                parse_mode
+                    .parse_redis_value::<Vec<(u8, u8)>>(val.clone())
+                    .unwrap_err(),
+            );
+            assert_eq!(err.kind(), ErrorKind::Parse);
+            assert!(
+                err.to_string()
+                    .contains("Vector with length 1 doesn't have arity of 2"),
+                "unexpected error: {err}"
+            );
         }
     }
 
@@ -1146,6 +1154,29 @@ mod types {
             expected_array
         );
         assert_eq!(Cow::<[u8]>::Owned(array).to_redis_args(), expected_array);
+    }
+
+    #[test]
+    fn test_cow_types_num_of_args_and_numeric_behavior() {
+        use redis::NumericBehavior;
+        use std::borrow::Cow;
+
+        let keys = vec!["key1", "key2"];
+        assert_eq!(Cow::Borrowed(keys.as_slice()).num_of_args(), 2);
+        assert_eq!(Cow::<[&str]>::Owned(keys).num_of_args(), 2);
+
+        let array = vec![0u8, 4, 2, 3, 1];
+        assert_eq!(Cow::Borrowed(array.as_slice()).num_of_args(), 1);
+        assert_eq!(Cow::<[u8]>::Owned(array).num_of_args(), 1);
+
+        assert_eq!(
+            Cow::Borrowed(&1.5f64).describe_numeric_behavior(),
+            NumericBehavior::NumberIsFloat
+        );
+        assert_eq!(
+            Cow::<f64>::Owned(1.5).describe_numeric_behavior(),
+            NumericBehavior::NumberIsFloat
+        );
     }
 
     #[test]

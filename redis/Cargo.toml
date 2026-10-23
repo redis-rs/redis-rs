@@ -254,6 +254,17 @@ name = "bench_basic"
 harness = false
 required-features = ["tokio-comp"]
 
+# Parser/decoding microbenchmarks. No server required.
+[[bench]]
+name = "bench_decode"
+harness = false
+
+# Codec-level decode microbenchmarks (reused ValueCodec). No server required.
+[[bench]]
+name = "bench_codec"
+harness = false
+required-features = ["aio"]
+
 [[bench]]
 name = "bench_cluster"
 harness = false

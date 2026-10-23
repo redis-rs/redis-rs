@@ -27,7 +27,12 @@ pub(crate) fn set_or_unset<T>(value: &Option<T>) -> &'static str {
 /// Renders an `Option` as `"<redacted>"` or `"not set"` for `Debug` output.
 ///
 /// Used for secrets, so that a configured value is acknowledged without revealing it.
-#[cfg(any(feature = "tls-rustls", feature = "cluster", feature = "sentinel"))]
+#[cfg(any(
+    feature = "tls-rustls",
+    feature = "tls-native-tls",
+    feature = "cluster",
+    feature = "sentinel"
+))]
 pub(crate) fn redacted_if_set<T>(value: &Option<T>) -> &'static str {
     if value.is_some() {
         "<redacted>"
@@ -1540,6 +1545,20 @@ where
         match self {
             Cow::Borrowed(inner) => inner.args_size(),
             Cow::Owned(inner) => inner.args_size(),
+        }
+    }
+
+    fn describe_numeric_behavior(&self) -> NumericBehavior {
+        match self {
+            Cow::Borrowed(inner) => inner.describe_numeric_behavior(),
+            Cow::Owned(inner) => inner.describe_numeric_behavior(),
+        }
+    }
+
+    fn num_of_args(&self) -> usize {
+        match self {
+            Cow::Borrowed(inner) => inner.num_of_args(),
+            Cow::Owned(inner) => inner.num_of_args(),
         }
     }
 }

@@ -22,7 +22,7 @@ concurrency:
 jobs:
   build-and-test:
     needs: lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       matrix: &db-matrix
@@ -258,7 +258,7 @@ jobs:
   examples:
     needs: [lint, build-and-test]
     if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix: *db-matrix
@@ -338,7 +338,7 @@ jobs:
         run: cargo run --example bloom --features bloom
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         config: [
@@ -390,7 +390,7 @@ jobs:
   benchmark:
     needs: lint
     if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       rust_ver: stable
     steps:
@@ -424,7 +424,7 @@ jobs:
 
   flag-frenzy:
     needs: [lint, build-and-test]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master

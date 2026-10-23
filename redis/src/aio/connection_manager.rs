@@ -1,4 +1,7 @@
-use super::{AsyncPushSender, HandleContainer, RedisFuture};
+use super::{
+    AsyncPushSender, HandleContainer, RedisFuture, SubscribeLikeCommand,
+    send_subscribe_like_command,
+};
 #[cfg(feature = "cache-aio")]
 use crate::caching::CacheManager;
 use crate::{
@@ -6,9 +9,8 @@ use crate::{
     aio::{ConnectionLike, MultiplexedConnection, Runtime},
     check_resp3,
     client::{DEFAULT_CONNECTION_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT},
-    cmd,
     errors::RedisError,
-    subscription_tracker::{SubscriptionAction, SubscriptionTracker},
+    subscription_tracker::SubscriptionTracker,
     types::{RedisResult, Value},
 };
 use arc_swap::ArcSwap;
@@ -17,7 +19,6 @@ use futures_channel::oneshot;
 use futures_util::future::{BoxFuture, FutureExt, Shared};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
-use tokio::sync::Mutex;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 type OptionalPushSender = Option<Arc<dyn AsyncPushSender>>;
@@ -351,7 +352,7 @@ struct Internals {
     runtime: Runtime,
     retry_strategy: ExponentialBuilder,
     connection_config: AsyncConnectionConfig,
-    subscription_tracker: Option<Mutex<SubscriptionTracker>>,
+    subscription_tracker: Option<Arc<std::sync::Mutex<SubscriptionTracker>>>,
     #[cfg(feature = "cache-aio")]
     cache_manager: Option<CacheManager>,
     _task_handle: HandleContainer,
@@ -534,7 +535,16 @@ impl ConnectionManager {
 
         let subscription_tracker = config
             .resubscribe_automatically
-            .then(|| Mutex::new(SubscriptionTracker::default()));
+            .then(|| Arc::new(std::sync::Mutex::new(SubscriptionTracker::default())));
+        // Share the tracker with the connection so it records the confirmations it reads, and the
+        // manager can rebuild the subscription pipeline from the same state on reconnect without
+        // tracking the subscriptions itself.
+        let connection_config = match &subscription_tracker {
+            Some(subscription_tracker) => {
+                connection_config.set_subscription_tracker_internal(subscription_tracker.clone())
+            }
+            None => connection_config,
+        };
 
         let client_clone = client.clone();
         let retry_strategy_clone = retry_strategy;
@@ -628,15 +638,16 @@ impl ConnectionManager {
             connection_config = connection_config.set_cache_manager(new_cache_manager);
         }
         let new_connection: SharedRedisFuture<MultiplexedConnection> = async move {
-            let additional_commands = match &internals_clone.subscription_tracker {
-                Some(subscription_tracker) => Some(
-                    subscription_tracker
-                        .lock()
-                        .await
-                        .get_subscription_pipeline(),
-                ),
-                None => None,
-            };
+            let additional_commands =
+                internals_clone
+                    .subscription_tracker
+                    .as_ref()
+                    .map(|subscription_tracker| {
+                        subscription_tracker
+                            .lock()
+                            .unwrap()
+                            .get_subscription_pipeline()
+                    });
 
             let con = Self::new_connection(
                 &internals_clone.client,
@@ -718,21 +729,6 @@ impl ConnectionManager {
         result
     }
 
-    async fn update_subscription_tracker(
-        &self,
-        action: SubscriptionAction,
-        args: impl ToRedisArgs,
-    ) {
-        let Some(subscription_tracker) = &self.0.subscription_tracker else {
-            return;
-        };
-        let args = args.to_redis_args().into_iter();
-        subscription_tracker
-            .lock()
-            .await
-            .update_with_request(action, args);
-    }
-
     /// Subscribes to a new channel(s).
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the manager.
@@ -755,11 +751,7 @@ impl ConnectionManager {
     /// ```
     pub async fn subscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.0.client.connection_info.redis.protocol);
-        let mut cmd = cmd("SUBSCRIBE");
-        cmd.arg(&channel_name);
-        cmd.exec_async(self).await?;
-        self.update_subscription_tracker(SubscriptionAction::Subscribe, channel_name)
-            .await;
+        send_subscribe_like_command(self, SubscribeLikeCommand::Subscribe, &channel_name).await?;
 
         Ok(())
     }
@@ -769,11 +761,7 @@ impl ConnectionManager {
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn unsubscribe(&mut self, channel_name: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.0.client.connection_info.redis.protocol);
-        let mut cmd = cmd("UNSUBSCRIBE");
-        cmd.arg(&channel_name);
-        cmd.exec_async(self).await?;
-        self.update_subscription_tracker(SubscriptionAction::Unsubscribe, channel_name)
-            .await;
+        send_subscribe_like_command(self, SubscribeLikeCommand::Unsubscribe, &channel_name).await?;
         Ok(())
     }
 
@@ -799,11 +787,8 @@ impl ConnectionManager {
     /// ```
     pub async fn psubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.0.client.connection_info.redis.protocol);
-        let mut cmd = cmd("PSUBSCRIBE");
-        cmd.arg(&channel_pattern);
-        cmd.exec_async(self).await?;
-        self.update_subscription_tracker(SubscriptionAction::PSubscribe, channel_pattern)
-            .await;
+        send_subscribe_like_command(self, SubscribeLikeCommand::PSubscribe, &channel_pattern)
+            .await?;
         Ok(())
     }
 
@@ -812,11 +797,8 @@ impl ConnectionManager {
     /// This method is only available when the connection is using RESP3 protocol, and will return an error otherwise.
     pub async fn punsubscribe(&mut self, channel_pattern: impl ToRedisArgs) -> RedisResult<()> {
         check_resp3!(self.0.client.connection_info.redis.protocol);
-        let mut cmd = cmd("PUNSUBSCRIBE");
-        cmd.arg(&channel_pattern);
-        cmd.exec_async(self).await?;
-        self.update_subscription_tracker(SubscriptionAction::PUnsubscribe, channel_pattern)
-            .await;
+        send_subscribe_like_command(self, SubscribeLikeCommand::PUnsubscribe, &channel_pattern)
+            .await?;
         Ok(())
     }
 
