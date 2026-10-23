@@ -374,6 +374,12 @@ impl NativeCertBundle {
 
         Ok(guard.insert(store).clone())
     }
+
+    /// Purge the cached certs so that the next call to [`Self::load()`] causes
+    /// the bundle to be reparsed.
+    pub(crate) fn invalidate(&self) {
+        *self.parsed.lock().unwrap() = None;
+    }
 }
 
 #[cfg(all(
@@ -388,7 +394,7 @@ mod tests {
     /// The platform trust store is read at most once, and every caller observes
     /// the same set of roots.
     #[test]
-    fn test_native_cert_bundle_caches_successful_load() {
+    fn test_native_cert_bundle_cache() {
         let bundle = NativeCertBundle::new();
 
         // Reads the platform trust store.
@@ -415,5 +421,9 @@ mod tests {
         // The cached store was neither reloaded nor mutated.
         assert_eq!(first_ptr, cached_ptr(&bundle));
         assert_eq!(first.roots, second.roots);
+
+        // Invalidate the cached bundle.
+        bundle.invalidate();
+        assert!(bundle.parsed.lock().unwrap().is_none());
     }
 }
