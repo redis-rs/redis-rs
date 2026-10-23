@@ -2,15 +2,18 @@ name: Rust
 
 on:
   push:
-    branches: [main, 0.*.x, 1.*.x]
+    branches: [main, 0.*.x, 1.*.x, 2.*.x]
   pull_request:
-    branches: [main, 0.*.x, 1.*.x]
+    branches: [main, 0.*.x, 1.*.x, 2.*.x]
 
 env:
   CARGO_TERM_COLOR: always
-  REDISRS_REDIS_JSON_PATH: "/tmp/librejson.so"
-  REDISRS_REDIS_BLOOM_PATH: "/tmp/redisbloom.so"
-  REDISRS_REDIS_SEARCH_PATH: "/tmp/redisearch.so"
+  REDISRS_MODULE_JSON_PATH: "/tmp/librejson.so"
+  REDISRS_MODULE_BLOOM_PATH: "/tmp/redisbloom.so"
+  REDISRS_MODULE_SEARCH_PATH: "/tmp/redisearch.so"
+  REDISRS_TLS_KEY_CA: "/tmp/tls-ca.key"
+  REDISRS_TLS_KEY_SERVER: "/tmp/tls-server.key"
+  REDISRS_TLS_KEY_CLIENT: "/tmp/tls-client.key"
 
 concurrency:
   group: "${{ github.workflow }}-${{ github.head_ref || github.run_id || github.ref }}"
@@ -68,17 +71,17 @@ jobs:
       - name: Copy bundled RedisJSON into place
         if: matrix.config.json-module-version == 'bundled'
         run: |
-          cp "$HOME/db/rejson.so" "$REDISRS_REDIS_JSON_PATH"
+          cp "$HOME/db/rejson.so" "$REDISRS_MODULE_JSON_PATH"
 
       - name: Copy bundled RedisBloom into place
         if: matrix.config.bloom-module-version == 'bundled'
         run: |
-          cp "$HOME/db/redisbloom.so" "$REDISRS_REDIS_BLOOM_PATH"
+          cp "$HOME/db/redisbloom.so" "$REDISRS_MODULE_BLOOM_PATH"
 
       - name: Copy bundled RediSearch into place
         if: matrix.config.search-module-version == 'bundled'
         run: |
-          cp "$HOME/db/redisearch.so" "$REDISRS_REDIS_SEARCH_PATH"
+          cp "$HOME/db/redisearch.so" "$REDISRS_MODULE_SEARCH_PATH"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
@@ -92,6 +95,12 @@ jobs:
         uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
         with:
           tool: nextest
+
+      - name: Build re-usable TLS keys
+        run: |
+          openssl genrsa -out "$REDISRS_TLS_KEY_CA" 4096
+          openssl genrsa -out "$REDISRS_TLS_KEY_SERVER" 2048
+          openssl genrsa -out "$REDISRS_TLS_KEY_CLIENT" 2048
 
       - name: Run tests
         run: make test
@@ -111,24 +120,24 @@ jobs:
           cp ./Cargo.toml ./Cargo.toml.actual
           echo $'\nexclude = [\"./__ci/redis-json\"]' >> Cargo.toml
           cargo +stable build --release --manifest-path ./__ci/redis-json/Cargo.toml
-          mv ./__ci/redis-json/target/release/librejson.so ${{ env.REDISRS_REDIS_JSON_PATH }}
+          mv ./__ci/redis-json/target/release/librejson.so ${{ env.REDISRS_MODULE_JSON_PATH }}
           rm ./Cargo.toml; mv ./Cargo.toml.actual ./Cargo.toml
           rm -rf ./__ci/redis-json
 
       - name: Verify RedisJSON module
         if: matrix.config.json-module-version != ''
         run: |
-          if [ ! -f "${{ env.REDISRS_REDIS_JSON_PATH }}" ]; then
-            echo "ERROR: RedisJSON module not found at ${{ env.REDISRS_REDIS_JSON_PATH }}"
+          if [ ! -f "${{ env.REDISRS_MODULE_JSON_PATH }}" ]; then
+            echo "ERROR: RedisJSON module not found at ${{ env.REDISRS_MODULE_JSON_PATH }}"
             exit 1
           fi
-          ls -lh "${{ env.REDISRS_REDIS_JSON_PATH }}"
+          ls -lh "${{ env.REDISRS_MODULE_JSON_PATH }}"
 
           # Test that Redis can load the module
           echo "Testing Redis server with module..."
           TEST_PORT=16379
           TEST_LOG="/tmp/redis-module-test.log"
-          redis-server --port $TEST_PORT --loadmodule "${{ env.REDISRS_REDIS_JSON_PATH }}" \
+          redis-server --port $TEST_PORT --loadmodule "${{ env.REDISRS_MODULE_JSON_PATH }}" \
             --logfile "$TEST_LOG" --daemonize yes || {
             echo "ERROR: Failed to start Redis with module"
             cat "$TEST_LOG"
@@ -188,7 +197,7 @@ jobs:
       - name: Copy Valkey Bloom into place
         if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:')
         run: |
-          cp /tmp/valkey-bloom/target/release/libvalkey_bloom.so "$REDISRS_REDIS_BLOOM_PATH"
+          cp /tmp/valkey-bloom/target/release/libvalkey_bloom.so "$REDISRS_MODULE_BLOOM_PATH"
 
       - name: Run RedisBloom tests
         if: matrix.config.bloom-module-version != ''
@@ -232,7 +241,7 @@ jobs:
       - name: Copy Valkey Search into place
         if: startsWith(matrix.config.search-module-version, 'valkey-search:')
         run: |
-          cp /tmp/valkey-search/.build-release/libsearch.so "$REDISRS_REDIS_SEARCH_PATH"
+          cp /tmp/valkey-search/.build-release/libsearch.so "$REDISRS_MODULE_SEARCH_PATH"
 
       - name: Run Search module tests
         if: matrix.config.search-module-version != ''
@@ -243,7 +252,7 @@ jobs:
         id: cache-redisjson-save
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ env.REDISRS_REDIS_JSON_PATH }}
+          path: ${{ env.REDISRS_MODULE_JSON_PATH }}
           key: ${{ runner.os }}-redisjson-${{ matrix.config.json-module-version }}
 
   examples:
@@ -276,12 +285,12 @@ jobs:
       - name: Copy Valkey Bloom into place
         if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:')
         run: |
-          cp /tmp/valkey-bloom/target/release/libvalkey_bloom.so "$REDISRS_REDIS_BLOOM_PATH"
+          cp /tmp/valkey-bloom/target/release/libvalkey_bloom.so "$REDISRS_MODULE_BLOOM_PATH"
 
       - name: Copy bundled RedisBloom into place
         if: matrix.config.bloom-module-version == 'bundled'
         run: |
-          cp "$HOME/db/redisbloom.so" "$REDISRS_REDIS_BLOOM_PATH"
+          cp "$HOME/db/redisbloom.so" "$REDISRS_MODULE_BLOOM_PATH"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
@@ -293,10 +302,10 @@ jobs:
       - name: Start Redis
         run: |
           EXTRA_OPTS=()
-          if [ -e "$REDISRS_REDIS_BLOOM_PATH" ]
+          if [ -e "$REDISRS_MODULE_BLOOM_PATH" ]
           then
-            echo "Adding module '$REDISRS_REDIS_BLOOM_PATH'"
-            EXTRA_OPTS+=("--loadmodule" "$REDISRS_REDIS_BLOOM_PATH")
+            echo "Adding module '$REDISRS_MODULE_BLOOM_PATH'"
+            EXTRA_OPTS+=("--loadmodule" "$REDISRS_MODULE_BLOOM_PATH")
           fi
           redis-server "${EXTRA_OPTS[@]}" &
 
@@ -425,7 +434,7 @@ jobs:
 
       - run: |
           cargo install --git https://github.com/nihohit/flag-frenzy.git
-          flag-frenzy --package redis
+          make flag-frenzy
 
   windows-build:
     needs: [lint, build-and-test, examples]

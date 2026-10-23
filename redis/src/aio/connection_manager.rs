@@ -225,7 +225,7 @@ impl ConnectionManagerConfig {
     /// let messages = Arc::new(Mutex::new(Vec::new()));
     /// let config = ConnectionManagerConfig::new().set_push_sender(move |msg|{
     ///     let Ok(mut messages) = messages.lock() else {
-    ///         return Err(redis::aio::SendError);
+    ///         return Err("the push handler failed");
     ///     };
     ///     messages.push(msg);
     ///     Ok(())
@@ -692,7 +692,7 @@ impl ConnectionManager {
                 Self::reconnect(Arc::downgrade(&internals), internals.connection.load());
             }
             if let Some(sender) = external_sender.as_ref() {
-                let _ = sender.send(push_info);
+                crate::aio::send_push(sender.as_ref(), push_info);
             }
         }
     }

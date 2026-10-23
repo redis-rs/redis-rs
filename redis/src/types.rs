@@ -1,11 +1,11 @@
 use crate::errors::ParsingError;
 #[cfg(feature = "ahash")]
-pub(crate) use ahash::{AHashMap as HashMap, AHashSet as HashSet};
+pub(crate) use ahash::AHashMap as HashMap;
 #[cfg(feature = "num-bigint")]
 use num_bigint::BigInt;
 use std::borrow::Cow;
 #[cfg(not(feature = "ahash"))]
-pub(crate) use std::collections::{HashMap, HashSet};
+pub(crate) use std::collections::HashMap;
 use std::default::Default;
 use std::ffi::CString;
 use std::fmt;
@@ -101,6 +101,26 @@ impl ToRedisArgs for SetExpiry {
             }
         }
     }
+
+    #[inline]
+    fn num_of_args(&self) -> usize {
+        match self {
+            Self::EX(_) | Self::PX(_) | Self::EXAT(_) | Self::PXAT(_) => 2,
+            Self::KEEPTTL => 1,
+        }
+    }
+
+    #[inline]
+    fn args_size(&self) -> usize {
+        let mut buf = ::itoa::Buffer::new();
+        match self {
+            Self::EX(secs) => b"EX".len() + buf.format(*secs).len(),
+            Self::PX(millis) => b"PX".len() + buf.format(*millis).len(),
+            Self::EXAT(unix_time) => b"EXAT".len() + buf.format(*unix_time).len(),
+            Self::PXAT(unix_time) => b"PXAT".len() + buf.format(*unix_time).len(),
+            Self::KEEPTTL => b"KEEPTTL".len(),
+        }
+    }
 }
 
 /// Helper enum that is used to define existence checks
@@ -127,6 +147,16 @@ impl ToRedisArgs for ExistenceCheck {
             }
         }
     }
+
+    #[inline]
+    fn num_of_args(&self) -> usize {
+        1
+    }
+
+    #[inline]
+    fn args_size(&self) -> usize {
+        2
+    }
 }
 
 /// Helper enum that is used to define field existence checks
@@ -148,6 +178,16 @@ impl ToRedisArgs for FieldExistenceCheck {
             Self::FNX => out.write_arg(b"FNX"),
             Self::FXX => out.write_arg(b"FXX"),
         }
+    }
+
+    #[inline]
+    fn num_of_args(&self) -> usize {
+        1
+    }
+
+    #[inline]
+    fn args_size(&self) -> usize {
+        3
     }
 }
 
@@ -240,13 +280,13 @@ pub enum Value {
 #[non_exhaustive]
 pub enum ValueComparison {
     /// Value is equal
-    IFEQ(String),
+    IFEQ(Vec<u8>),
     /// Value is not equal
-    IFNE(String),
+    IFNE(Vec<u8>),
     /// Value's digest is equal
-    IFDEQ(String),
+    IFDEQ(Vec<u8>),
     /// Value's digest is not equal
-    IFDNE(String),
+    IFDNE(Vec<u8>),
 }
 
 impl ValueComparison {
@@ -257,7 +297,7 @@ impl ValueComparison {
     /// For SET: Sets the key only if its current value matches. Non-existent keys are not created.
     /// For DEL_EX: Deletes the key only if its current value matches. Non-existent keys are ignored.
     pub fn ifeq(value: impl ToSingleRedisArg) -> Self {
-        Self::IFEQ(Self::arg_to_string(value))
+        Self::IFEQ(to_single_arg(value))
     }
 
     /// Create a new IFNE (if not equal) comparison
@@ -267,7 +307,7 @@ impl ValueComparison {
     /// For SET: Sets the key only if its current value doesn't match. Non-existent keys are created.
     /// For DEL_EX: Deletes the key only if its current value doesn't match. Non-existent keys are ignored.
     pub fn ifne(value: impl ToSingleRedisArg) -> Self {
-        Self::IFNE(Self::arg_to_string(value))
+        Self::IFNE(to_single_arg(value))
     }
 
     /// Create a new IFDEQ (if digest equal) comparison
@@ -279,7 +319,7 @@ impl ValueComparison {
     ///
     /// Use [`calculate_value_digest`] to compute the digest of a value.
     pub fn ifdeq(digest: impl ToSingleRedisArg) -> Self {
-        Self::IFDEQ(Self::arg_to_string(digest))
+        Self::IFDEQ(to_single_arg(digest))
     }
 
     /// Create a new IFDNE (if digest not equal) comparison
@@ -291,13 +331,18 @@ impl ValueComparison {
     ///
     /// Use [`calculate_value_digest`] to compute the digest of a value.
     pub fn ifdne(digest: impl ToSingleRedisArg) -> Self {
-        Self::IFDNE(Self::arg_to_string(digest))
+        Self::IFDNE(to_single_arg(digest))
     }
+}
 
-    fn arg_to_string(value: impl ToSingleRedisArg) -> String {
-        let args = value.to_redis_args();
-        String::from_utf8_lossy(&args[0]).into_owned()
-    }
+fn to_single_arg(value: impl ToSingleRedisArg) -> Vec<u8> {
+    let mut vec = value.to_redis_args();
+    debug_assert_eq!(
+        vec.len(),
+        1,
+        "Value implementing ToSingleRedisArg has to become a single argument"
+    );
+    vec.pop().unwrap_or_default()
 }
 
 impl ToRedisArgs for ValueComparison {
@@ -308,20 +353,35 @@ impl ToRedisArgs for ValueComparison {
         match self {
             Self::IFEQ(value) => {
                 out.write_arg(b"IFEQ");
-                out.write_arg(value.as_bytes());
+                out.write_arg(value);
             }
             Self::IFNE(value) => {
                 out.write_arg(b"IFNE");
-                out.write_arg(value.as_bytes());
+                out.write_arg(value);
             }
             Self::IFDEQ(digest) => {
                 out.write_arg(b"IFDEQ");
-                out.write_arg(digest.as_bytes());
+                out.write_arg(digest);
             }
             Self::IFDNE(digest) => {
                 out.write_arg(b"IFDNE");
-                out.write_arg(digest.as_bytes());
+                out.write_arg(digest);
             }
+        }
+    }
+
+    #[inline]
+    fn num_of_args(&self) -> usize {
+        2
+    }
+
+    #[inline]
+    fn args_size(&self) -> usize {
+        match self {
+            Self::IFEQ(value) => b"IFEQ".len() + value.len(),
+            Self::IFNE(value) => b"IFNE".len() + value.len(),
+            Self::IFDEQ(value) => b"IFDEQ".len() + value.len(),
+            Self::IFDNE(value) => b"IFDNE".len() + value.len(),
         }
     }
 }
@@ -412,11 +472,24 @@ impl fmt::Display for PushKind {
     }
 }
 
+/// RESP3 returns key/value replies that RESP2 flattened into a single array as an
+/// array of two-element pairs instead (`ZRANGE ... WITHSCORES` and friends). Detect
+/// that shape so it converts into a map type just like the RESP2 shape does. This
+/// mirrors the check `<(K, V)>::from_redis_values` already makes via
+/// `Value::is_collection_of_len`.
+fn is_nested_pairs(items: &[Value]) -> bool {
+    !items.is_empty() && items.iter().all(|item| item.is_collection_of_len(2))
+}
+
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum MapIter<'a> {
     Array(std::slice::Iter<'a, Value>),
     Map(std::slice::Iter<'a, (Value, Value)>),
+    /// An array whose every element is itself a two-element collection. This is
+    /// the shape RESP3 uses where RESP2 used a flat key/value array, e.g. for
+    /// `ZRANGE ... WITHSCORES`.
+    NestedPairs(std::slice::Iter<'a, Value>),
 }
 
 impl<'a> Iterator for MapIter<'a> {
@@ -429,13 +502,14 @@ impl<'a> Iterator for MapIter<'a> {
                 let (k, v) = iter.next()?;
                 Some((k, v))
             }
+            MapIter::NestedPairs(iter) => iter.next()?.as_pair(),
         }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         match self {
-            MapIter::Array(iter) => iter.size_hint(),
             MapIter::Map(iter) => iter.size_hint(),
+            MapIter::Array(iter) | MapIter::NestedPairs(iter) => iter.size_hint(),
         }
     }
 }
@@ -445,6 +519,10 @@ impl<'a> Iterator for MapIter<'a> {
 pub enum OwnedMapIter {
     Array(std::vec::IntoIter<Value>),
     Map(std::vec::IntoIter<(Value, Value)>),
+    /// An array whose every element is itself a two-element collection. This is
+    /// the shape RESP3 uses where RESP2 used a flat key/value array, e.g. for
+    /// `ZRANGE ... WITHSCORES`.
+    NestedPairs(std::vec::IntoIter<Value>),
 }
 
 impl Iterator for OwnedMapIter {
@@ -454,6 +532,7 @@ impl Iterator for OwnedMapIter {
         match self {
             Self::Array(iter) => Some((iter.next()?, iter.next()?)),
             Self::Map(iter) => iter.next(),
+            Self::NestedPairs(iter) => iter.next()?.into_pair().ok(),
         }
     }
 
@@ -464,6 +543,7 @@ impl Iterator for OwnedMapIter {
                 (low / 2, high.map(|h| h / 2))
             }
             Self::Map(iter) => iter.size_hint(),
+            Self::NestedPairs(iter) => iter.size_hint(),
         }
     }
 }
@@ -514,9 +594,39 @@ impl Value {
     /// Returns an iterator of `(&Value, &Value)` if `self` is compatible with a map type
     pub fn as_map_iter(&self) -> Option<MapIter<'_>> {
         match self {
-            Self::Array(items) => (items.len() % 2 == 0).then(|| MapIter::Array(items.iter())),
+            Self::Array(items) => {
+                if is_nested_pairs(items) {
+                    Some(MapIter::NestedPairs(items.iter()))
+                } else {
+                    (items.len() % 2 == 0).then(|| MapIter::Array(items.iter()))
+                }
+            }
             Self::Map(items) => Some(MapIter::Map(items.iter())),
             _ => None,
+        }
+    }
+
+    /// If `self` is a two-element collection, return its two elements.
+    fn as_pair(&self) -> Option<(&Self, &Self)> {
+        match self {
+            Self::Array(items) | Self::Set(items) if items.len() == 2 => {
+                Some((&items[0], &items[1]))
+            }
+            Self::Map(items) if items.len() == 1 => Some((&items[0].0, &items[0].1)),
+            _ => None,
+        }
+    }
+
+    /// Owned counterpart of [`Self::as_pair`].
+    fn into_pair(self) -> Result<(Self, Self), Self> {
+        match self {
+            Self::Array(items) | Self::Set(items) if items.len() == 2 => {
+                let mut it = items.into_iter();
+                let (a, b) = (it.next().unwrap(), it.next().unwrap());
+                Ok((a, b))
+            }
+            Self::Map(items) if items.len() == 1 => Ok(items.into_iter().next().unwrap()),
+            other => Err(other),
         }
     }
 
@@ -525,7 +635,9 @@ impl Value {
     pub fn into_map_iter(self) -> Result<OwnedMapIter, Self> {
         match self {
             Self::Array(items) => {
-                if items.len() % 2 == 0 {
+                if is_nested_pairs(&items) {
+                    Ok(OwnedMapIter::NestedPairs(items.into_iter()))
+                } else if items.len() % 2 == 0 {
                     Ok(OwnedMapIter::Array(items.into_iter()))
                 } else {
                     Err(Self::Array(items))
@@ -767,6 +879,7 @@ pub enum Role {
 /// Replication information for a replica, as returned by the [`ROLE`][1] command.
 ///
 /// [1]: https://redis.io/docs/latest/commands/role/
+#[non_exhaustive]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ReplicaInfo {
     /// The IP of the replica.
@@ -775,6 +888,17 @@ pub struct ReplicaInfo {
     pub port: u16,
     /// The last acknowledged replication offset.
     pub replication_offset: i64,
+}
+
+impl ReplicaInfo {
+    /// Builds a new instance
+    pub fn new<S: Into<String>>(ip: S, port: u16, replication_offset: i64) -> Self {
+        Self {
+            ip: ip.into(),
+            port,
+            replication_offset,
+        }
+    }
 }
 
 impl FromRedisValue for ReplicaInfo {
@@ -1055,7 +1179,13 @@ impl RedisWrite for Vec<Vec<u8>> {
 ///
 /// This should be implemented only for types that are serialized into exactly one value,
 /// otherwise the compiler can't ensure the correctness of some commands.
-pub trait ToSingleRedisArg: ToRedisArgs {}
+pub trait ToSingleRedisArg: ToRedisArgs {
+    /// Returns an estimate of the number of bytes this single argument
+    /// will serialize to.
+    fn arg_size(&self) -> usize {
+        self.args_size()
+    }
+}
 
 /// Used to convert a value into one or multiple redis argument
 /// strings.  Most values will produce exactly one item but in
@@ -1084,6 +1214,7 @@ pub trait ToRedisArgs: Sized {
     /// to it's numeric behavior in a redis context.  This is used in
     /// some high level concepts to switch between different implementations
     /// of redis functions (for instance `INCR` vs `INCRBYFLOAT`).
+    #[inline]
     fn describe_numeric_behavior(&self) -> NumericBehavior {
         NumericBehavior::NonNumeric
     }
@@ -1094,8 +1225,23 @@ pub trait ToRedisArgs: Sized {
     /// between `GET` and `MGET` variants. Also, for some commands like HEXPIREDAT
     /// which require a specific number of arguments, this method can be used to
     /// know the number of arguments.
+    #[inline]
     fn num_of_args(&self) -> usize {
         1
+    }
+
+    /// Returns an estimate of the number of bytes that will be written to the
+    /// command for this value.
+    #[inline]
+    fn args_size(&self) -> usize {
+        0
+    }
+
+    /// Returns both the number of Redis arguments and the estimated number of bytes this value
+    /// will serialize to.
+    #[inline]
+    fn num_of_args_and_size(&self) -> (usize, usize) {
+        (self.num_of_args(), self.args_size())
     }
 
     /// This only exists internally as a workaround for the lack of
@@ -1122,7 +1268,28 @@ pub trait ToRedisArgs: Sized {
         }
     }
 
+    // this is used in absence of specialization to provide a default implementation for slices that can be overridden specifically for byte slices (&[u8])
     #[doc(hidden)]
+    #[inline]
+    fn num_of_args_and_size_for_slice(items: &[Self]) -> (usize, usize) {
+        items
+            .iter()
+            .map(|item| item.num_of_args_and_size())
+            .fold((0, 0), |(args, size), (item_args, item_size)| {
+                (args + item_args, size + item_size)
+            })
+    }
+
+    // this is used in absence of specialization to provide a default implementation for arrays that can be overridden specifically for byte arrays (&[u8; N])
+    #[doc(hidden)]
+    #[inline]
+    fn num_of_args_and_size_for_array<const N: usize>(items: &[Self; N]) -> (usize, usize) {
+        Self::num_of_args_and_size_for_slice(items.as_slice())
+    }
+
+    // this is used in absence of specialization to provide a default implementation for slices that can be overridden specifically for byte slices (&[u8])
+    #[doc(hidden)]
+    #[inline]
     fn is_single_vec_arg(items: &[Self]) -> bool {
         items.len() == 1 && items[0].num_of_args() <= 1
     }
@@ -1140,6 +1307,13 @@ macro_rules! itoa_based_to_redis_impl {
                 out.write_arg(s.as_bytes())
             }
 
+            #[inline]
+            fn args_size(&self) -> usize {
+                let mut buf = ::itoa::Buffer::new();
+                buf.format(*self).len()
+            }
+
+            #[inline]
             fn describe_numeric_behavior(&self) -> NumericBehavior {
                 $numeric
             }
@@ -1161,6 +1335,13 @@ macro_rules! non_zero_itoa_based_to_redis_impl {
                 out.write_arg(s.as_bytes())
             }
 
+            #[inline]
+            fn args_size(&self) -> usize {
+                let mut buf = ::itoa::Buffer::new();
+                buf.format(self.get()).len()
+            }
+
+            #[inline]
             fn describe_numeric_behavior(&self) -> NumericBehavior {
                 $numeric
             }
@@ -1182,6 +1363,13 @@ macro_rules! ryu_based_to_redis_impl {
                 out.write_arg(s.as_bytes())
             }
 
+            #[inline]
+            fn args_size(&self) -> usize {
+                let mut buf = ::ryu::Buffer::new();
+                buf.format(*self).len()
+            }
+
+            #[inline]
             fn describe_numeric_behavior(&self) -> NumericBehavior {
                 $numeric
             }
@@ -1201,6 +1389,12 @@ impl ToRedisArgs for u8 {
         out.write_arg(s.as_bytes());
     }
 
+    #[inline]
+    fn args_size(&self) -> usize {
+        let mut buf = ::itoa::Buffer::new();
+        buf.format(*self).len()
+    }
+
     fn write_args_from_slice<W>(items: &[Self], out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1208,6 +1402,17 @@ impl ToRedisArgs for u8 {
         out.write_arg(items);
     }
 
+    #[inline]
+    fn num_of_args_and_size_for_slice(items: &[Self]) -> (usize, usize) {
+        (1, items.len())
+    }
+
+    #[inline]
+    fn num_of_args_and_size_for_array<const N: usize>(_items: &[Self; N]) -> (usize, usize) {
+        (1, N)
+    }
+
+    #[inline]
     fn is_single_vec_arg(_items: &[Self]) -> bool {
         true
     }
@@ -1279,6 +1484,11 @@ impl ToRedisArgs for bool {
     {
         out.write_arg(if *self { b"1" } else { b"0" });
     }
+
+    #[inline]
+    fn args_size(&self) -> usize {
+        1
+    }
 }
 
 impl ToSingleRedisArg for bool {}
@@ -1290,6 +1500,11 @@ impl ToRedisArgs for String {
     {
         out.write_arg(self.as_bytes());
     }
+
+    #[inline]
+    fn args_size(&self) -> usize {
+        self.len()
+    }
 }
 impl ToSingleRedisArg for String {}
 
@@ -1299,6 +1514,11 @@ impl ToRedisArgs for &str {
         W: ?Sized + RedisWrite,
     {
         out.write_arg(self.as_bytes());
+    }
+
+    #[inline]
+    fn args_size(&self) -> usize {
+        self.len()
     }
 }
 
@@ -1317,6 +1537,14 @@ where
         match self {
             Cow::Borrowed(inner) => inner.write_redis_args(out),
             Cow::Owned(inner) => inner.write_redis_args(out),
+        }
+    }
+
+    #[inline]
+    fn args_size(&self) -> usize {
+        match self {
+            Cow::Borrowed(inner) => inner.args_size(),
+            Cow::Owned(inner) => inner.args_size(),
         }
     }
 
@@ -1353,6 +1581,7 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
         }
     }
 
+    #[inline]
     fn describe_numeric_behavior(&self) -> NumericBehavior {
         match *self {
             Some(ref x) => x.describe_numeric_behavior(),
@@ -1360,9 +1589,18 @@ impl<T: ToRedisArgs> ToRedisArgs for Option<T> {
         }
     }
 
+    #[inline]
     fn num_of_args(&self) -> usize {
         match *self {
             Some(ref x) => x.num_of_args(),
+            None => 0,
+        }
+    }
+
+    #[inline]
+    fn args_size(&self) -> usize {
+        match *self {
+            Some(ref x) => x.args_size(),
             None => 0,
         }
     }
@@ -1382,17 +1620,22 @@ macro_rules! impl_write_redis_args_for_collection {
                 ToRedisArgs::write_args_from_slice(self, out)
             }
 
+            #[inline]
             fn num_of_args(&self) -> usize {
-                if ToRedisArgs::is_single_vec_arg(&self[..]) {
-                    return 1;
-                }
-                if self.len() == 1 {
-                    self[0].num_of_args()
-                } else {
-                    self.len()
-                }
+                self.num_of_args_and_size().0
             }
 
+            #[inline]
+            fn args_size(&self) -> usize {
+                self.num_of_args_and_size().1
+            }
+
+            #[inline]
+            fn num_of_args_and_size(&self) -> (usize, usize) {
+                <T as ToRedisArgs>::num_of_args_and_size_for_slice(self)
+            }
+
+            #[inline]
             fn describe_numeric_behavior(&self) -> NumericBehavior {
                 NumericBehavior::NonNumeric
             }
@@ -1414,10 +1657,22 @@ macro_rules! deref_to_write_redis_args_impl {
                 (**self).write_redis_args(out)
             }
 
+            #[inline]
             fn num_of_args(&self) -> usize {
                 (**self).num_of_args()
             }
 
+            #[inline]
+            fn args_size(&self) -> usize {
+                (**self).args_size()
+            }
+
+            #[inline]
+            fn num_of_args_and_size(&self) -> (usize, usize) {
+                (**self).num_of_args_and_size()
+            }
+
+            #[inline]
             fn describe_numeric_behavior(&self) -> NumericBehavior {
                 (**self).describe_numeric_behavior()
             }
@@ -1461,8 +1716,23 @@ macro_rules! impl_to_redis_args_for_set {
                 ToRedisArgs::make_arg_iter_ref(self.iter(), out)
             }
 
+            #[inline]
             fn num_of_args(&self) -> usize {
-                self.len()
+                self.num_of_args_and_size().0
+            }
+
+            #[inline]
+            fn args_size(&self) -> usize {
+                self.num_of_args_and_size().1
+            }
+
+            #[inline]
+            fn num_of_args_and_size(&self) -> (usize, usize) {
+                self.iter()
+                    .map(|item| item.num_of_args_and_size())
+                    .fold((0, 0), |(args, size), (item_args, item_size)| {
+                        (args + item_args, size + item_size)
+                    })
             }
         }
     };
@@ -1516,8 +1786,27 @@ macro_rules! impl_to_redis_args_for_map {
                 }
             }
 
+            #[inline]
             fn num_of_args(&self) -> usize {
-                self.len()
+                self.num_of_args_and_size().0
+            }
+
+            #[inline]
+            fn args_size(&self) -> usize {
+                self.num_of_args_and_size().1
+            }
+
+            #[inline]
+            fn num_of_args_and_size(&self) -> (usize, usize) {
+                self.iter()
+                    .map(|(key, value)| {
+                        let (key_args, key_size) = key.num_of_args_and_size();
+                        let (value_args, value_size) = value.num_of_args_and_size();
+                        (key_args + value_args, key_size + value_size)
+                    })
+                    .fold((0, 0), |(args, size), (item_args, item_size)| {
+                        (args + item_args, size + item_size)
+                    })
             }
         }
     };
@@ -1560,10 +1849,24 @@ macro_rules! to_redis_args_for_tuple {
             }
 
             #[allow(non_snake_case, unused_variables)]
-            fn num_of_args(&self) -> usize {
+            #[inline] fn num_of_args(&self) -> usize {
                 let mut n: usize = 0;
                 $(let $name = (); n += 1;)*
                 n
+            }
+
+            #[allow(non_snake_case, unused_variables)]
+            #[inline] fn args_size(&self) -> usize {
+                let ($(ref $name,)*) = *self;
+                0 $( + $name.args_size())*
+            }
+
+            #[allow(non_snake_case, unused_variables)]
+            #[inline] fn num_of_args_and_size(&self) -> (usize, usize) {
+                let ($(ref $name,)*) = *self;
+                let args_count = 0usize $( + { let $name = (); 1usize })*;
+                let args_size = 0usize $( + $name.args_size())*;
+                (args_count, args_size)
             }
         }
     )
@@ -1590,15 +1893,19 @@ impl<T: ToRedisArgs, const N: usize> ToRedisArgs for &[T; N] {
         ToRedisArgs::write_args_from_slice(self.as_slice(), out);
     }
 
+    #[inline]
     fn num_of_args(&self) -> usize {
-        if ToRedisArgs::is_single_vec_arg(&self[..]) {
-            return 1;
-        }
-        if self.len() == 1 {
-            self[0].num_of_args()
-        } else {
-            self.len()
-        }
+        self.num_of_args_and_size().0
+    }
+
+    #[inline]
+    fn args_size(&self) -> usize {
+        self.num_of_args_and_size().1
+    }
+
+    #[inline]
+    fn num_of_args_and_size(&self) -> (usize, usize) {
+        <T as ToRedisArgs>::num_of_args_and_size_for_array(self)
     }
 }
 impl<const N: usize> ToSingleRedisArg for &[u8; N] {}
@@ -1740,7 +2047,7 @@ fn get_owned_inner_value(v: Value) -> Value {
     }
 }
 
-macro_rules! from_redis_value_for_num_internal {
+macro_rules! from_redis_value_for_float_internal {
     ($t:ty, $v:expr) => {{
         let v = if let Value::Attribute {
             data,
@@ -1767,11 +2074,77 @@ macro_rules! from_redis_value_for_num_internal {
     }};
 }
 
-macro_rules! from_redis_value_for_num {
+/// Same as `from_redis_value_for_float_internal`, but for integer types.
+///
+/// Every arm rejects a value that the requested type cannot represent, so that
+/// a reply converts to the same result whether the server sent it as a number
+/// or as a string.
+macro_rules! from_redis_value_for_int_internal {
+    ($t:ty, $v:expr) => {{
+        let v = if let Value::Attribute {
+            data,
+            attributes: _,
+        } = $v
+        {
+            data
+        } else {
+            $v
+        };
+        match *v {
+            Value::Int(val) => match <$t>::try_from(val) {
+                Ok(rv) => Ok(rv),
+                Err(_) => crate::errors::invalid_type_error!(
+                    v,
+                    "Integer is out of range for the requested type."
+                ),
+            },
+            Value::SimpleString(ref s) => match s.parse::<$t>() {
+                Ok(rv) => Ok(rv),
+                Err(_) => crate::errors::invalid_type_error!(v, "Could not convert from string."),
+            },
+            Value::BulkString(ref bytes) => match from_utf8(bytes)?.parse::<$t>() {
+                Ok(rv) => Ok(rv),
+                Err(_) => crate::errors::invalid_type_error!(v, "Could not convert from string."),
+            },
+            Value::Double(val) => {
+                // `<$t>::MAX as f64` rounds *up* to the next power of two for the
+                // wider integer types, so the upper bound is a strict `<` against
+                // `MAX as f64 + 1.0`. NaN and the infinities fail both
+                // comparisons, and a fractional value is not an integer, so all
+                // three are rejected the same way `str::parse` rejects them.
+                if val.fract() == 0.0 && val >= <$t>::MIN as f64 && val < <$t>::MAX as f64 + 1.0 {
+                    Ok(val as $t)
+                } else {
+                    crate::errors::invalid_type_error!(
+                        v,
+                        "Double is not an integer in range for the requested type."
+                    )
+                }
+            }
+            _ => crate::errors::invalid_type_error!(v, "Response type not convertible to numeric."),
+        }
+    }};
+}
+
+macro_rules! from_redis_value_for_float {
     ($t:ty) => {
         impl FromRedisValue for $t {
             fn from_redis_value_ref(v: &Value) -> Result<$t, ParsingError> {
-                from_redis_value_for_num_internal!($t, v)
+                from_redis_value_for_float_internal!($t, v)
+            }
+
+            fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
+                Self::from_redis_value_ref(&v)
+            }
+        }
+    };
+}
+
+macro_rules! from_redis_value_for_int {
+    ($t:ty) => {
+        impl FromRedisValue for $t {
+            fn from_redis_value_ref(v: &Value) -> Result<$t, ParsingError> {
+                from_redis_value_for_int_internal!($t, v)
             }
 
             fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
@@ -1783,7 +2156,7 @@ macro_rules! from_redis_value_for_num {
 
 impl FromRedisValue for u8 {
     fn from_redis_value_ref(v: &Value) -> Result<Self, ParsingError> {
-        from_redis_value_for_num_internal!(Self, v)
+        from_redis_value_for_int_internal!(Self, v)
     }
 
     fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
@@ -1799,19 +2172,19 @@ impl FromRedisValue for u8 {
     }
 }
 
-from_redis_value_for_num!(i8);
-from_redis_value_for_num!(i16);
-from_redis_value_for_num!(u16);
-from_redis_value_for_num!(i32);
-from_redis_value_for_num!(u32);
-from_redis_value_for_num!(i64);
-from_redis_value_for_num!(u64);
-from_redis_value_for_num!(i128);
-from_redis_value_for_num!(u128);
-from_redis_value_for_num!(f32);
-from_redis_value_for_num!(f64);
-from_redis_value_for_num!(isize);
-from_redis_value_for_num!(usize);
+from_redis_value_for_int!(i8);
+from_redis_value_for_int!(i16);
+from_redis_value_for_int!(u16);
+from_redis_value_for_int!(i32);
+from_redis_value_for_int!(u32);
+from_redis_value_for_int!(i64);
+from_redis_value_for_int!(u64);
+from_redis_value_for_int!(i128);
+from_redis_value_for_int!(u128);
+from_redis_value_for_float!(f32);
+from_redis_value_for_float!(f64);
+from_redis_value_for_int!(isize);
+from_redis_value_for_int!(usize);
 
 #[cfg(any(
     feature = "rust_decimal",
@@ -1873,18 +2246,18 @@ impl FromRedisValue for bool {
             Value::Nil => Ok(false),
             Value::Int(val) => Ok(val != 0),
             Value::SimpleString(ref s) => {
-                if &s[..] == "1" {
+                if &s[..] == "1" || &s[..] == "true" {
                     Ok(true)
-                } else if &s[..] == "0" {
+                } else if &s[..] == "0" || &s[..] == "false" {
                     Ok(false)
                 } else {
                     crate::errors::invalid_type_error!(v, "Response status not valid boolean");
                 }
             }
             Value::BulkString(ref bytes) => {
-                if bytes == b"1" {
+                if bytes == b"1" || bytes == b"true" {
                     Ok(true)
-                } else if bytes == b"0" {
+                } else if bytes == b"0" || bytes == b"false" {
                     Ok(false)
                 } else {
                     crate::errors::invalid_type_error!(v, "Response type not bool compatible.");
@@ -2449,6 +2822,11 @@ impl ToRedisArgs for uuid::Uuid {
     {
         out.write_arg(self.as_bytes());
     }
+
+    #[inline]
+    fn args_size(&self) -> usize {
+        self.as_bytes().len()
+    }
 }
 
 #[cfg(feature = "uuid")]
@@ -2554,8 +2932,22 @@ impl ToRedisArgs for ExpireOption {
             _ => {}
         }
     }
+
+    #[inline]
+    fn num_of_args(&self) -> usize {
+        1
+    }
+
+    #[inline]
+    fn args_size(&self) -> usize {
+        match self {
+            Self::NONE => b"NONE".len(),
+            Self::NX | Self::XX | Self::GT | Self::LT => 2,
+        }
+    }
 }
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 /// A push message from the server.
 pub struct PushInfo {
@@ -2566,6 +2958,17 @@ pub struct PushInfo {
 }
 
 impl PushInfo {
+    /// Builds a new instance
+    pub fn new(kind: PushKind) -> Self {
+        Self { kind, data: vec![] }
+    }
+
+    /// Sets the message's data
+    pub fn data(mut self, data: Vec<Value>) -> Self {
+        self.data = data;
+        self
+    }
+
     pub(crate) fn disconnect() -> Self {
         Self {
             kind: crate::PushKind::Disconnection,
@@ -2613,7 +3016,7 @@ pub enum ValueType {
     /// A Trie. [Redis Docs](https://redis.io/docs/latest/develop/ai/search-and-query/advanced-concepts/autocomplete/)
     Trie,
     /// A Bloom filter from Valkey's module. [Valkey Docs](https://valkey.io/topics/bloomfilters/)
-    BloomFilterValKey,
+    BloomFilterValkey,
     /// Any other value type not explicitly defined in [Redis Docs](https://redis.io/docs/latest/commands/type/)
     Unknown(String),
 }
@@ -2642,7 +3045,7 @@ impl<T: AsRef<str>> From<T> for ValueType {
             // Timeseries module
             "TSDB-TYPE" => Self::TimeSeries,
             // Bloom module (Valkey)
-            "bloomfltr" => Self::BloomFilterValKey,
+            "bloomfltr" => Self::BloomFilterValkey,
             // Fallback
             s => Self::Unknown(s.to_string()),
         }
@@ -2651,31 +3054,37 @@ impl<T: AsRef<str>> From<T> for ValueType {
 
 impl From<ValueType> for String {
     fn from(v: ValueType) -> Self {
+        <&ValueType as Into<&str>>::into(&v).to_string()
+    }
+}
+
+impl<'a> From<&'a ValueType> for &'a str {
+    fn from(v: &'a ValueType) -> &'a str {
         match v {
-            ValueType::None => "none".to_string(),
-            ValueType::String => "string".to_string(),
-            ValueType::List => "list".to_string(),
-            ValueType::Set => "set".to_string(),
-            ValueType::ZSet => "zset".to_string(),
-            ValueType::Hash => "hash".to_string(),
-            ValueType::Stream => "stream".to_string(),
-            ValueType::VectorSet => "vectorset".to_string(),
+            ValueType::None => "none",
+            ValueType::String => "string",
+            ValueType::List => "list",
+            ValueType::Set => "set",
+            ValueType::ZSet => "zset",
+            ValueType::Hash => "hash",
+            ValueType::Stream => "stream",
+            ValueType::VectorSet => "vectorset",
             // JSON module
-            ValueType::JSON => "ReJSON-RL".to_string(),
+            ValueType::JSON => "ReJSON-RL",
             // Bloom module (Redis)
-            ValueType::BloomFilterRedis => "MBbloom--".to_string(),
-            ValueType::CuckooFilter => "MBbloomCF".to_string(),
-            ValueType::TDigest => "TDIS-TYPE".to_string(),
-            ValueType::TopK => "TopK-TYPE".to_string(),
-            ValueType::CountMin => "CMSk-TYPE".to_string(),
+            ValueType::BloomFilterRedis => "MBbloom--",
+            ValueType::CuckooFilter => "MBbloomCF",
+            ValueType::TDigest => "TDIS-TYPE",
+            ValueType::TopK => "TopK-TYPE",
+            ValueType::CountMin => "CMSk-TYPE",
             // Search module
-            ValueType::Trie => "trietype0".to_string(),
+            ValueType::Trie => "trietype0",
             // Timeseries module
-            ValueType::TimeSeries => "TSDB-TYPE".to_string(),
+            ValueType::TimeSeries => "TSDB-TYPE",
             // Bloom module (Valkey)
-            ValueType::BloomFilterValKey => "bloomfltr".to_string(),
+            ValueType::BloomFilterValkey => "bloomfltr",
             // Fallback
-            ValueType::Unknown(s) => s,
+            ValueType::Unknown(s) => s.as_str(),
         }
     }
 }
@@ -2693,6 +3102,27 @@ impl FromRedisValue for ValueType {
             Value::SimpleString(s) => Ok(s.into()),
             _ => crate::errors::invalid_type_error!(v, "Value type should be a simple string"),
         }
+    }
+}
+
+impl ToRedisArgs for ValueType {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + RedisWrite,
+    {
+        let as_str = <&Self as Into<&str>>::into(self);
+        out.write_arg(as_str.as_bytes());
+    }
+
+    #[inline]
+    fn num_of_args(&self) -> usize {
+        1
+    }
+
+    #[inline]
+    fn args_size(&self) -> usize {
+        let as_str = <&Self as Into<&str>>::into(self);
+        as_str.len()
     }
 }
 

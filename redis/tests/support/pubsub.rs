@@ -47,7 +47,7 @@ pub async fn get_push(rx: &mut UnboundedReceiver<PushInfo>) -> RedisResult<PushI
 
 pub async fn assert_push(rx: &mut UnboundedReceiver<PushInfo>, kind: PushKind, data: Vec<Value>) {
     let push = get_push(rx).await.unwrap();
-    assert_eq!(push, PushInfo { kind, data });
+    assert_eq!(push, PushInfo::new(kind).data(data));
 }
 
 /// Asserts that the next confirmation that was passed to `rx` reports the subscription of `name`,
@@ -61,10 +61,7 @@ pub async fn assert_confirmation(
     let push = get_push_with_timeout(rx, PUSH_TIMEOUT).await.unwrap();
     assert_eq!(
         push,
-        PushInfo {
-            kind,
-            data: vec![redis_value!(name), redis_value!(remaining)],
-        }
+        PushInfo::new(kind).data(vec![redis_value!(name), redis_value!(remaining)]),
     );
 }
 
@@ -116,18 +113,13 @@ pub async fn assert_message_push<C: ConnectionLike + Send + Sync>(
     assert_eq!(
         push,
         match kind {
-            SubscriptionKind::Channel => PushInfo {
-                kind: PushKind::Message,
-                data: vec![redis_value!(channel), redis_value!("banana")],
-            },
-            SubscriptionKind::Pattern => PushInfo {
-                kind: PushKind::PMessage,
-                data: vec![
-                    redis_value!(pattern),
-                    redis_value!(channel),
-                    redis_value!("banana")
-                ],
-            },
+            SubscriptionKind::Channel => PushInfo::new(PushKind::Message)
+                .data(vec![redis_value!(channel), redis_value!("banana")]),
+            SubscriptionKind::Pattern => PushInfo::new(PushKind::PMessage).data(vec![
+                redis_value!(pattern),
+                redis_value!(channel),
+                redis_value!("banana")
+            ]),
         }
     );
 }

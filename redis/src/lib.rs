@@ -30,7 +30,9 @@
 //! using the `tls-rustls` or `tls-native-tls` features respectively. In order to enable TLS
 //! for async usage, the user must enable matching features for their runtime - either `tokio-native-tls-comp`,
 //! `tokio-rustls-comp`, `smol-native-tls-comp`, or `smol-rustls-comp`. Additionally, the
-//! `tls-rustls-webpki-roots` allows usage of of webpki-roots for the root certificate store.
+//! `tls-rustls-native-roots` and `tls-rustls-webpki-roots` features select the source of the root
+//! certificate store (the platform's native certificates or Mozilla's `webpki-roots` bundle); both
+//! can be enabled together, in which case the connection trusts the union of both stores.
 //!
 //! # TCP settings
 //!
@@ -90,7 +92,7 @@
 //! if so desired.  Some of them are turned on by default.
 //!
 //! * `acl`: enables acl support (enabled by default)
-//! * `bloom`: enables support for the Bloom filter module (optional)
+//! * `bloom`: enables support for the Bloom filter module (enabled by default)
 //! * `tokio-comp`: enables support for async usage with the Tokio runtime (optional)
 //! * `smol-comp`: enables support for async usage with the Smol runtime (optional)
 //! * `geospatial`: enables geospatial support (enabled by default)
@@ -646,6 +648,22 @@ let primary = sentinel.get_async_connection().await.unwrap();
 #![cfg_attr(not(test), forbid(clippy::infinite_loop))]
 // #![cfg_attr(not(test), forbid(clippy::cast_possible_truncation))]
 
+// The `tls-rustls` feature only enables the rustls crate. The source of the root certificates
+// must be selected explicitly through `tls-rustls-native-roots` or `tls-rustls-webpki-roots`; see
+// https://github.com/redis-rs/redis-rs/issues/2297. The two store features are independent and
+// can be enabled together, in which case the connection trusts the union of both stores.
+// `tls-rustls-insecure` does not need a root store, since it disables certificate verification.
+#[cfg(all(
+    feature = "tls-rustls",
+    not(feature = "tls-rustls-insecure"),
+    not(feature = "tls-rustls-native-roots"),
+    not(feature = "tls-rustls-webpki-roots")
+))]
+compile_error!(
+    "the `tls-rustls` feature requires a root certificate store: enable \
+     `tls-rustls-native-roots` or `tls-rustls-webpki-roots`"
+);
+
 // public api
 #[cfg(feature = "aio")]
 pub use crate::client::AsyncConnectionConfig;
@@ -654,9 +672,10 @@ pub use crate::client::Client;
 pub use crate::cmd::CommandCacheConfig;
 pub use crate::cmd::{Arg, Cmd, Iter, cmd, pack_command, pipe};
 pub use crate::commands::{
-    Commands, ControlFlow, CopyOptions, Direction, FlushAllOptions, FlushDbOptions,
+    Aggregate, Commands, ControlFlow, CopyOptions, Direction, FlushAllOptions, FlushDbOptions,
     HashFieldExpirationOptions, HotkeysCommands, IncrexOptions, LposOptions, MSetOptions,
-    PubSubCommands, ScanOptions, SetOptions, SortedSetAddOptions, TypedCommands, UpdateCheck,
+    PubSubCommands, ScanOptions, SetOptions, SortedSetAddOptions, SortedSetOperationOptions,
+    TypedCommands, UpdateCheck,
     hotkeys::{
         HOTKEYS_COUNT_MAX, HOTKEYS_COUNT_MIN, HotKeyEntry, HotkeysOptions, HotkeysResponse,
         SlotRange,
@@ -757,11 +776,7 @@ pub mod bloom;
 
 #[cfg(feature = "json")]
 #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-pub use crate::commands::{JsonCommands, json};
-
-#[cfg(all(feature = "json", feature = "aio"))]
-#[cfg_attr(docsrs, doc(cfg(all(feature = "json", feature = "aio"))))]
-pub use crate::commands::JsonAsyncCommands;
+pub use commands::json;
 
 #[cfg(feature = "aio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "aio")))]

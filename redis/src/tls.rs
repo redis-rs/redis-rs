@@ -13,12 +13,23 @@ use crate::{Client, ConnectionAddr, ConnectionInfo, ErrorKind, RedisError, Redis
 
 /// Structure to hold mTLS client _certificate_ and _key_ binaries in PEM format
 ///
+#[non_exhaustive]
 #[derive(Clone)]
 pub struct ClientTlsConfig {
     /// client certificate byte stream in PEM format
     pub client_cert: Vec<u8>,
     /// client key byte stream in PEM format
     pub client_key: Vec<u8>,
+}
+
+impl ClientTlsConfig {
+    /// Builds a new instance
+    pub fn new(client_cert: Vec<u8>, client_key: Vec<u8>) -> Self {
+        Self {
+            client_cert,
+            client_key,
+        }
+    }
 }
 
 impl std::fmt::Debug for ClientTlsConfig {
@@ -40,12 +51,32 @@ impl std::fmt::Debug for ClientTlsConfig {
 /// - `client_tls`: binaries of clientkey and certificate within a `ClientTlsConfig` structure if mTLS is used
 /// - `root_cert`: binary CA certificate in PEM format if CA is not in local truststore
 ///
-#[derive(Clone)]
+#[non_exhaustive]
+#[derive(Clone, Default)]
 pub struct TlsCertificates {
     /// 'ClientTlsConfig' containing client certificate and key if mTLS is to be used
     pub client_tls: Option<ClientTlsConfig>,
     /// root certificate byte stream in PEM format if the local truststore is *not* to be used
     pub root_cert: Option<Vec<u8>>,
+}
+
+impl TlsCertificates {
+    /// Builds a new instance
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets a client TLS Config
+    pub fn client_tls_config(mut self, client_tls_config: ClientTlsConfig) -> Self {
+        self.client_tls = Some(client_tls_config);
+        self
+    }
+
+    /// Sets a root certificate
+    pub fn root_cert(mut self, root_cert: Vec<u8>) -> Self {
+        self.root_cert = Some(root_cert);
+        self
+    }
 }
 
 impl std::fmt::Debug for TlsCertificates {

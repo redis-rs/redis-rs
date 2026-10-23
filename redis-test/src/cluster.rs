@@ -2,6 +2,8 @@ use std::{env, process, thread::sleep, time::Duration};
 
 use tempfile::TempDir;
 
+use crate::server::RedisServerBuilder;
+use crate::utils::CommandMultiArgs;
 use crate::{
     server::{Module, RedisServer},
     utils::{TlsFilePaths, build_keys_and_certs_for_tls_with_hostname, get_random_available_port},
@@ -9,21 +11,22 @@ use crate::{
 
 /// Configuration for creating a Redis Cluster.
 pub struct RedisClusterConfiguration {
-    pub num_nodes: u16,
-    pub num_replicas: u16,
-    pub modules: Vec<Module>,
-    pub tls_insecure: bool,
-    pub mtls_enabled: bool,
-    pub ports: Vec<u16>,
-    pub certs_with_ip_alts: bool,
+    num_nodes: u16,
+    num_replicas: u16,
+    modules: Vec<Module>,
+    require_secure_tls: bool,
+    mtls_enabled: bool,
+    ports: Vec<u16>,
+    certs_with_ip_alts: bool,
     /// Number of logical databases each node should expose (`--cluster-databases`).
     ///
     /// `None` leaves the server default (`1`, i.e. only database `0`). Setting a
     /// value greater than `1` requires a server that supports numbered databases
     /// in cluster mode (Valkey 9.0+); older servers fail to start with this flag.
-    pub cluster_databases: Option<u16>,
+    cluster_databases: Option<u16>,
     /// Custom DNS hostname for TLS certificate SAN (used when `certs_with_ip_alts` is false).
-    pub dns_hostname: Option<String>,
+    dns_hostname: Option<String>,
+    cluster_type: Option<ClusterType>,
 }
 
 impl RedisClusterConfiguration {
@@ -34,6 +37,72 @@ impl RedisClusterConfiguration {
             ..Default::default()
         }
     }
+
+    /// Set the number of nodes in the cluster.
+    pub fn num_nodes(mut self, num_nodes: u16) -> Self {
+        self.num_nodes = num_nodes;
+        self
+    }
+
+    /// Set the number of replicas per primary.
+    pub fn num_replicas(mut self, num_replicas: u16) -> Self {
+        self.num_replicas = num_replicas;
+        self
+    }
+
+    /// Set the modules to load into each server.
+    pub fn modules(mut self, modules: Vec<Module>) -> Self {
+        self.modules = modules;
+        self
+    }
+
+    /// Allow TLS connections to accept invalid certificates.
+    pub fn insecure_tls(mut self) -> Self {
+        self.require_secure_tls = false;
+        self
+    }
+
+    /// Set the cluster to enable mutual TLS (client certificate authentication).
+    pub fn mtls_enabled(mut self) -> Self {
+        self.mtls_enabled = true;
+        self
+    }
+
+    /// Set the explicit ports to use for the cluster nodes.
+    pub fn ports(mut self, ports: Vec<u16>) -> Self {
+        self.ports = ports;
+        self
+    }
+
+    /// Set the generated certificates to not include IP subject-alternative names.
+    pub fn certs_without_ip_alts(mut self) -> Self {
+        self.certs_with_ip_alts = false;
+        self
+    }
+
+    /// Set whether the generated certificates include IP subject-alternative names.
+    pub fn cluster_databases(mut self, cluster_databases: u16) -> Self {
+        self.cluster_databases = Some(cluster_databases);
+        self
+    }
+
+    pub fn dns_hostname(mut self, hostname: &str) -> Self {
+        self.dns_hostname = Some(hostname.to_string());
+        self
+    }
+
+    pub fn get_require_secure_tls(&self) -> bool {
+        self.require_secure_tls
+    }
+
+    pub fn get_mtls_enabled(&self) -> bool {
+        self.mtls_enabled
+    }
+
+    pub fn cluster_type(mut self, cluster_type: ClusterType) -> Self {
+        self.cluster_type = Some(cluster_type);
+        self
+    }
 }
 
 impl Default for RedisClusterConfiguration {
@@ -42,12 +111,13 @@ impl Default for RedisClusterConfiguration {
             num_nodes: 3,
             num_replicas: 0,
             modules: vec![],
-            tls_insecure: true,
+            require_secure_tls: true,
             mtls_enabled: false,
             ports: vec![],
             certs_with_ip_alts: true,
             cluster_databases: None,
             dns_hostname: None,
+            cluster_type: None,
         }
     }
 }
@@ -75,8 +145,8 @@ impl ClusterType {
         }
     }
 
-    fn build_addr(port: u16) -> redis::ConnectionAddr {
-        match Self::get_intended() {
+    fn build_addr(self, port: u16) -> redis::ConnectionAddr {
+        match self {
             Self::Tcp => redis::ConnectionAddr::Tcp("127.0.0.1".into(), port),
             Self::TcpTls => redis::ConnectionAddr::TcpTls {
                 host: "127.0.0.1".into(),
@@ -117,6 +187,7 @@ fn port_in_use(addr: &str) -> bool {
 /// let client = redis::cluster::ClusterClient::new(addresses).unwrap();
 /// let mut connection = client.get_connection().unwrap();
 /// ```
+#[non_exhaustive]
 pub struct RedisCluster {
     pub servers: Vec<RedisServer>,
     pub folders: Vec<TempDir>,
@@ -137,12 +208,13 @@ impl RedisCluster {
             num_nodes: nodes,
             num_replicas: replicas,
             modules,
-            tls_insecure,
+            require_secure_tls,
             mtls_enabled,
             ports,
             certs_with_ip_alts,
             cluster_databases,
             dns_hostname,
+            cluster_type,
         } = configuration;
 
         let optional_ports = if ports.is_empty() {
@@ -157,9 +229,10 @@ impl RedisCluster {
         let mut addrs = vec![];
         let mut tls_paths = None;
 
+        let cluster_type = cluster_type.unwrap_or_else(ClusterType::get_intended);
         let mut is_tls = false;
 
-        if let ClusterType::TcpTls = ClusterType::get_intended() {
+        if matches!(cluster_type, ClusterType::TcpTls) {
             // Create a shared set of keys in cluster mode
             let tempdir = tempfile::Builder::new()
                 .prefix("redis")
@@ -178,14 +251,12 @@ impl RedisCluster {
         let max_attempts = 5;
 
         let mut make_server = |port| {
-            RedisServer::new_with_addr_tls_modules_and_spawner(
-                ClusterType::build_addr(port),
-                None,
-                tls_paths.clone(),
-                mtls_enabled,
-                None, // cert_auth_field - not used in cluster tests
-                &modules,
-                |cmd| {
+            RedisServerBuilder::new()
+                .address(cluster_type.build_addr(port))
+                .tls_paths_opt(tls_paths.clone())
+                .mtls(mtls_enabled)
+                .modules(&modules)
+                .refine_and_build(|cmd| {
                     let tempdir = tempfile::Builder::new()
                         .prefix("redis")
                         .tempdir()
@@ -197,63 +268,46 @@ impl RedisCluster {
                         Self::password()
                     );
                     std::fs::write(&acl_path, acl_content).expect("failed to write acl file");
-                    cmd.arg("--cluster-enabled")
-                        .arg("yes")
-                        .arg("--cluster-config-file")
-                        .arg(tempdir.path().join("nodes.conf"))
-                        .arg("--cluster-node-timeout")
-                        .arg("5000")
-                        .arg("--aclfile")
-                        .arg(&acl_path);
+                    cmd.arg2("--cluster-enabled", "yes")
+                        .arg2("--cluster-config-file", tempdir.path().join("nodes.conf"))
+                        .arg2("--cluster-node-timeout", "5000")
+                        .arg2("--aclfile", &acl_path);
                     if let Some(num_databases) = cluster_databases {
-                        cmd.arg("--cluster-databases")
-                            .arg(num_databases.to_string());
+                        cmd.arg2("--cluster-databases", num_databases.to_string());
                     }
                     if is_tls {
-                        cmd.arg("--tls-cluster").arg("yes");
+                        cmd.arg2("--tls-cluster", "yes");
                         if replicas > 0 {
-                            cmd.arg("--tls-replication").arg("yes");
+                            cmd.arg2("--tls-replication", "yes");
                         }
                     }
                     cmd.current_dir(tempdir.path());
                     folders.push(tempdir);
-                    cmd.spawn().unwrap()
-                },
-            )
+                })
         };
 
         let verify_server = |server: &mut RedisServer| {
-            let process = &mut server.process;
-            match process.try_wait() {
-                Ok(Some(status)) => {
-                    let log_file_contents = server.log_file_contents();
-                    let err = format!(
-                        "redis server creation failed with status {status:?}.\nlog file: {log_file_contents:?}"
-                    );
-                    Err(err)
-                }
-                Ok(None) => {
-                    // wait for 10 seconds for the server to be available.
-                    let max_attempts = 200;
-                    let mut cur_attempts = 0;
-                    loop {
-                        if cur_attempts == max_attempts {
-                            let log_file_contents = server.log_file_contents();
-                            break Err(format!(
-                                "redis server creation failed: Address {} closed. {log_file_contents:?}",
-                                server.addr
-                            ));
-                        } else if port_in_use(&server.addr.to_string()) {
-                            break Ok(());
-                        }
-                        eprintln!("Waiting for redis process to initialize");
-                        sleep(Duration::from_millis(50));
-                        cur_attempts += 1;
+            if server.is_alive() {
+                // wait for 10 seconds for the server to be available.
+                let max_attempts = 200;
+                let mut cur_attempts = 0;
+                loop {
+                    if cur_attempts == max_attempts {
+                        let process_info = server.stop_with_info();
+                        break Err(format!(
+                            "redis server creation failed: Address {} closed.\n{process_info}",
+                            server.addr
+                        ));
+                    } else if port_in_use(&server.addr.to_string()) {
+                        break Ok(());
                     }
+                    eprintln!("Waiting for redis process to initialize");
+                    sleep(Duration::from_millis(50));
+                    cur_attempts += 1;
                 }
-                Err(e) => {
-                    panic!("Unexpected error in redis server creation {e}");
-                }
+            } else {
+                let process_info = server.stop_with_info();
+                Err(format!("redis server creation failed\n{process_info}"))
             }
         };
 
@@ -314,7 +368,7 @@ impl RedisCluster {
                     cmd.arg(ca_crt);
                     cmd.arg("--tls");
                 }
-            } else if !tls_insecure && tls_paths.is_some() {
+            } else if !require_secure_tls && tls_paths.is_some() {
                 let ca_crt = &tls_paths.as_ref().unwrap().ca_crt;
                 cmd.arg("--tls").arg("--cacert").arg(ca_crt);
             } else {
@@ -394,11 +448,10 @@ impl RedisCluster {
 
 fn wait_for_status_ok(cluster: &RedisCluster) {
     'server: for server in &cluster.servers {
-        let log_file = RedisServer::log_file(&server.tempdir);
-
         for _ in 1..500 {
-            let contents =
-                std::fs::read_to_string(&log_file).expect("Should have been able to read the file");
+            let contents = server
+                .log_file_contents()
+                .expect("Should have been able to read the file");
 
             if contents.contains("Cluster state changed: ok") {
                 continue 'server;

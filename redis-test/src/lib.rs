@@ -5,7 +5,7 @@
 //! * **Mock Connections**: `MockRedisConnection` implements `ConnectionLike` and can be
 //!   used in the same place as any other type that behaves like a Redis connection. This is useful
 //!   for writing unit tests without needing a real Redis server.
-//! * **Standalone Servers**: [`server::RedisServer`] provides an easy way to spin up
+//! * **Standalone Servers**: [`server::RedisServerBuilder`] provides an easy way to spin up
 //!   and manage a real local Redis instance for integration tests.
 //! * **Clusters**: [`cluster::RedisCluster`] provides functionality to spawn and configure
 //!   a local Redis cluster with multiple nodes and replicas.
@@ -30,11 +30,57 @@
 //! let result = my_exists(&mut mock_connection, "foo").unwrap();
 //! assert_eq!(result, true);
 //! ```
+//!
+//! # TLS helpers
+//!
+//! The TLS helpers [`utils::build_key_*`](utils::build_keys_and_certs_for_tls) and
+//! [`utils::build_client_cert_*`](utils::build_client_cert_with_custom_cn) generate new keys on
+//! each call. When using them heavily on entropy/resource-limited hosts, this quickly becomes time
+//! consuming.
+//!
+//! To instead re-use the same keys for each call, first generate the needed keys beforehand (this
+//! needs to be done only once):
+//!
+//! ```sh
+//! mkdir -p "$HOME/redis-rs-keys"
+//! openssl genrsa -out "$HOME/redis-rs-keys/ca.key" 4096
+//! openssl genrsa -out "$HOME/redis-rs-keys/client.key" 2048
+//! openssl genrsa -out "$HOME/redis-rs-keys/server.key" 2048
+//! ```
+//!
+//! Then tell your environment to use them for testing (this needs to be executed in each terminal
+//! that runs the tests):
+//!
+//! ```sh
+//! export REDISRS_TLS_KEY_CA="$HOME/redis-rs-keys/ca.key"
+//! export REDISRS_TLS_KEY_CLIENT="$HOME/redis-rs-keys/client.key"
+//! export REDISRS_TLS_KEY_SERVER="$HOME/redis-rs-keys/server.key"
+//! ```
+//!
+//! Now the TLS helpers will pick the pre-generated keys up, and perform better.
+
+// `tls-rustls` only enables the rustls crate. The source of the root certificates must be selected
+// explicitly through `tls-rustls-native-roots` or `tls-rustls-webpki-roots`; enabling both loads
+// the union of both stores. `tls-rustls-insecure` does not need a root store, since it allows
+// the user to disable certificate verification.
+#[cfg(all(
+    feature = "tls-rustls",
+    not(feature = "tls-rustls-insecure"),
+    not(feature = "tls-rustls-native-roots"),
+    not(feature = "tls-rustls-webpki-roots")
+))]
+compile_error!(
+    "the `tls-rustls` feature requires a root certificate store: enable \
+     `tls-rustls-native-roots` or `tls-rustls-webpki-roots`"
+);
 
 pub mod cluster;
 pub mod sentinel;
 pub mod server;
 pub mod utils;
+#[macro_use]
+pub mod version;
+pub mod test_context;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -48,6 +94,13 @@ use futures::{FutureExt, future};
 
 #[cfg(feature = "aio")]
 use redis::{RedisFuture, aio::ConnectionLike as AioConnectionLike};
+
+pub use test_context::{TestContext, TestContextBuilder};
+pub use version::{
+    AvailableComponents, REDIS_BLOOM_ANY, REDIS_CE_6_0, REDIS_CE_7_0, REDIS_CE_7_2, REDIS_CE_7_4,
+    REDIS_CE_8_0, REDIS_CE_8_2, REDIS_CE_8_4, REDIS_CE_8_6, REDIS_CE_8_8, REDIS_JSON_8_8,
+    TestContextVersioning, VALKEY_8_1, VALKEY_9_0, VALKEY_9_1,
+};
 
 /// Helper trait for converting test values into a `redis::Value` returned from a
 /// `MockRedisConnection`. This is necessary because neither `redis::types::ToRedisArgs`

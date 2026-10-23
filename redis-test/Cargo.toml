@@ -1,6 +1,6 @@
 [package]
 name = "redis-test"
-version = "1.0.4"
+version = "2.0.0-rc.1"
 edition = "2024"
 description = "Testing helpers for the `redis` crate"
 repository = "https://github.com/redis-rs/redis-rs"
@@ -12,21 +12,27 @@ rust-version = "1.88"
 bench = false
 
 [dependencies]
-redis = { version = "1", path = "../redis", default-features = false }
+redis = { version = "2.0.0-rc.1", path = "../redis", default-features = false }
 bytes = { version = "1", optional = true }
 futures = { version = "0.3", optional = true }
 tempfile = "3.27.0"
 socket2 = "0.6"
 rand = "0.10"
+rustls = { version = "0.23", optional = true, default-features = false, features = [
+  "ring",
+] }
 
 [features]
-aio = ["futures", "redis/aio"]
+aio = ["futures", "redis/aio", "redis/tokio-comp"]
+tls-native-tls = ["redis/tls-native-tls"]
+tls-rustls = ["dep:rustls", "rustls/std", "redis/tls-rustls"]
+# Both store features can be enabled together; `redis` then trusts the union of both stores.
+tls-rustls-native-roots = ["tls-rustls", "redis/tls-rustls-native-roots"]
+tls-rustls-webpki-roots = ["tls-rustls", "redis/tls-rustls-webpki-roots"]
+tls-rustls-insecure = ["tls-rustls", "redis/tls-rustls-insecure"]
+tokio-rustls-comp = ["redis/tokio-rustls-comp"]
 
 [dev-dependencies]
-redis = { version = "1", path = "../redis", features = [
-    "aio",
-    "tokio-comp",
-] }
 tokio = { workspace = true }
 
 [lints]

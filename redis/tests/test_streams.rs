@@ -2,10 +2,13 @@
 
 use redis::streams::*;
 use redis::{Connection, ToRedisArgs, TypedCommands};
+use redis_test::{
+    REDIS_CE_7_0, REDIS_CE_8_2, REDIS_CE_8_4, REDIS_CE_8_6, REDIS_CE_8_8, TestContext,
+    TestContextVersioning, run_test_if_version_supported,
+};
 
 #[macro_use]
 mod support;
-use crate::support::*;
 
 use assert_matches::assert_matches;
 use std::collections::BTreeMap;
@@ -102,7 +105,7 @@ fn test_assorted_1() {
     // xread
     // xlen
 
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     xadd(&mut con);
@@ -171,7 +174,7 @@ fn test_xgroup_create() {
     // xgroup_create
     // xinfo_groups
 
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     xadd(&mut con);
@@ -215,7 +218,7 @@ fn test_xgroup_createconsumer() {
     // Tests the following command....
     // xgroup_createconsumer
 
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     xadd(&mut con);
@@ -280,7 +283,7 @@ fn test_assorted_2() {
     // xpending_count
     // xpending_consumer_count
 
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     xadd(&mut con);
@@ -401,7 +404,7 @@ fn test_assorted_2() {
         id,
         consumer,
         times_delivered,
-        last_delivered_ms: _,
+        ..
     } in reply.ids
     {
         assert!(!id.is_empty());
@@ -419,7 +422,7 @@ fn assert_stream_pending_data(data: StreamPendingData) {
 
 #[test]
 fn test_xadd_maxlen_map() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     for i in 0..10 {
@@ -440,7 +443,7 @@ fn test_xadd_maxlen_map() {
 
 #[test]
 fn test_xadd_options() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // NoMKStream will return a nil when the stream does not exist
@@ -516,7 +519,7 @@ fn test_xadd_options() {
 #[test]
 fn test_xread_options_deleted_pel_entry() {
     // Test xread_options behaviour with deleted entry
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
     let result = con.xgroup_create_mkstream("k1", "g1", "$");
     assert_matches!(result, Ok(_));
@@ -573,7 +576,7 @@ fn create_group_add_and_read(con: &mut Connection) -> StreamReadReply {
 fn test_xautoclaim() {
     // Tests the following command....
     // xautoclaim_options
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // xautoclaim test basic idea:
@@ -639,7 +642,7 @@ fn test_xclaim() {
     // Tests the following commands....
     // xclaim
     // xclaim_options
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // xclaim test basic idea:
@@ -724,7 +727,7 @@ fn test_xclaim() {
 
 #[test]
 fn test_xclaim_last_id() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     let result = con.xgroup_create_mkstream("k1", "g1", "$");
@@ -1101,7 +1104,7 @@ fn test_xreadgroup_claim_multiple_streams() {
 fn test_xdel() {
     // Tests the following commands....
     // xdel
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // add some keys
@@ -2098,7 +2101,7 @@ fn test_xack_del() {
 fn test_xtrim() {
     // Tests the following commands....
     // xtrim
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // add some keys
@@ -2117,7 +2120,7 @@ fn test_xtrim() {
 fn test_xtrim_options() {
     // Tests the following commands....
     // xtrim_options
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // add some keys
@@ -2166,7 +2169,7 @@ fn test_xgroup() {
     // xgroup_destroy
     // xgroup_delconsumer
 
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // test xgroup create w/ mkstream @ 0
@@ -2210,7 +2213,7 @@ fn test_xrange() {
     // xrange_all
     // xrange_count
 
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     xadd(&mut con);
@@ -2236,7 +2239,7 @@ fn test_xrevrange() {
     // xrevrange_all
     // xrevrange_count
 
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     xadd(&mut con);
@@ -2264,7 +2267,7 @@ fn test_xautoclaim_invalid_pel_entries_claiming_full_entries() {
     // See https://github.com/redis-rs/redis-rs/issues/1798
     // Note that this issue also applies to xclaim.
 
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // xautoclaim-invalid basic idea:
@@ -2316,7 +2319,7 @@ fn test_xautoclaim_invalid_pel_entries_claiming_just_ids() {
     // See https://github.com/redis-rs/redis-rs/issues/1798
     // Note that this issue also applies to xclaim.
 
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // xautoclaim-invalid basic idea:
@@ -2336,7 +2339,7 @@ fn test_xautoclaim_invalid_pel_entries_claiming_just_ids() {
     let _ = con.xdel("k1", &[claim.id.clone(), claim_1.id.clone()]);
     sleep(Duration::from_millis(5));
 
-    let reply = con
+    let mut reply = con
         .xautoclaim_options(
             "k1",
             "g1",
@@ -2357,25 +2360,12 @@ fn test_xautoclaim_invalid_pel_entries_claiming_just_ids() {
             vec![claim.id.clone(), claim_1.id.clone()]
         );
     } else {
-        // on redis 6, the deleted entries appear when passing JUSTID
-        claimed_entries.insert(
-            0,
-            StreamId {
-                id: claim.id.clone(),
-                map: Default::default(),
-                milliseconds_elapsed_from_delivery: None,
-                delivered_count: None,
-            },
-        );
-        claimed_entries.insert(
-            1,
-            StreamId {
-                id: claim_1.id.clone(),
-                map: Default::default(),
-                milliseconds_elapsed_from_delivery: None,
-                delivered_count: None,
-            },
-        );
+        // On Redis <7, the deleted entries appear claimed when passing JUSTID
+        // So we check that they are present and skip over them
+        assert_eq!(reply.claimed[0].id, claim.id);
+        assert_eq!(reply.claimed[1].id, claim_1.id);
+        reply.claimed = reply.claimed.into_iter().skip(2).collect();
+
         assert_eq!(reply.claimed, claimed_entries);
         assert_eq!(reply.deleted_ids.len(), 0);
     }
@@ -2413,7 +2403,7 @@ mod idempotency_tests {
             .unwrap();
         assert!(id1.is_some());
         // Verify that the message was registered for tracking.
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.pids_tracked, 1);
         assert_eq!(info.iids_tracked, 1);
         assert_eq!(info.iids_duplicates, 0);
@@ -2429,7 +2419,7 @@ mod idempotency_tests {
         assert_eq!(id1, id2);
         assert_eq!(con.xlen(STREAM_NAME), Ok(1));
         // Verify that deduplication has taken place.
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.pids_tracked, 1);
         assert_eq!(info.iids_tracked, 1);
         assert_eq!(info.iids_duplicates, 1);
@@ -2444,7 +2434,7 @@ mod idempotency_tests {
         let reply = con.xrange_all(STREAM_NAME).unwrap();
         assert!(reply.ids[0].contains_key(FIELD_VALUES[0].0));
         // Verify that deduplication has taken place.
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.pids_tracked, 1);
         assert_eq!(info.iids_tracked, 1);
         assert_eq!(info.iids_duplicates, 2);
@@ -2458,7 +2448,7 @@ mod idempotency_tests {
         assert_ne!(id1, id4);
         assert_eq!(con.xlen(STREAM_NAME), Ok(2));
         // Verify that the message was registered for tracking.
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.pids_tracked, 1);
         assert_eq!(info.iids_tracked, 2);
         assert_eq!(info.iids_duplicates, 2);
@@ -2473,7 +2463,7 @@ mod idempotency_tests {
         assert_ne!(id4, id5);
         assert_eq!(con.xlen(STREAM_NAME), Ok(3));
         // Verify that the message was registered for tracking.
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.pids_tracked, 2);
         assert_eq!(info.iids_tracked, 3);
         assert_eq!(info.iids_duplicates, 2);
@@ -2495,7 +2485,7 @@ mod idempotency_tests {
             .unwrap();
         assert!(id1.is_some());
         // Verify that the message was registered for tracking.
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.pids_tracked, 1);
         assert_eq!(info.iids_tracked, 1);
         assert_eq!(info.iids_duplicates, 0);
@@ -2516,7 +2506,7 @@ mod idempotency_tests {
         assert_eq!(id1, id2);
         assert_eq!(con.xlen(STREAM_NAME), Ok(1));
         // Verify that deduplication has taken place.
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.pids_tracked, 1);
         assert_eq!(info.iids_tracked, 1);
         assert_eq!(info.iids_duplicates, 1);
@@ -2529,7 +2519,7 @@ mod idempotency_tests {
         assert_ne!(id1, id3);
         assert_eq!(con.xlen(STREAM_NAME), Ok(2));
         // Verify that the message was registered for tracking.
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.pids_tracked, 1);
         assert_eq!(info.iids_tracked, 2);
         assert_eq!(info.iids_duplicates, 1);
@@ -2543,7 +2533,7 @@ mod idempotency_tests {
         assert_ne!(id3, id4);
         assert_eq!(con.xlen(STREAM_NAME), Ok(3));
         // Verify that the message was registered for tracking.
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.pids_tracked, 2);
         assert_eq!(info.iids_tracked, 3);
         assert_eq!(info.iids_duplicates, 1);
@@ -2578,7 +2568,7 @@ mod idempotency_tests {
         assert_eq!(result, Ok(None));
 
         // Verify that the stream did not get created.
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME);
+        let info = con.xinfo_stream(STREAM_NAME);
         assert_matches!(&info, Err(e) if e.kind() == redis::ServerErrorKind::ResponseError.into()
             && e.code() == Some("ERR")
             && e.detail() == Some("no such key")
@@ -2589,7 +2579,7 @@ mod idempotency_tests {
             .map(|entry| con.xadd(STREAM_NAME, "*", &[entry]).unwrap().unwrap());
 
         // Verify that since idempotency was not used, no tracking of the messages has taken place.
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.pids_tracked, 0);
         assert_eq!(info.iids_tracked, 0);
         assert_eq!(info.iids_duplicates, 0);
@@ -2631,9 +2621,9 @@ mod idempotency_tests {
         // The stream should have been trimmed as its entries exceeded the maximum length.
         // As a result, the first entry should have been removed.
         assert_eq!(con.xlen(STREAM_NAME).unwrap(), INITIAL_STREAM_ENTRIES.len());
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
-        assert_eq!(info.base.first_entry.id, id2); // id1 should now be trimmed
-        assert_eq!(info.base.last_generated_id, id4);
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
+        assert_eq!(info.first_entry.id, id2); // id1 should now be trimmed
+        assert_eq!(info.last_generated_id, id4);
         // Additionally, verify that the message was registered for idempotency tracking.
         assert_eq!(info.pids_tracked, 1);
         assert_eq!(info.iids_tracked, 1);
@@ -2664,9 +2654,9 @@ mod idempotency_tests {
 
         // The stream should remain unchanged.
         assert_eq!(con.xlen(STREAM_NAME).unwrap(), INITIAL_STREAM_ENTRIES.len());
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
-        assert_eq!(info.base.first_entry.id, id2);
-        assert_eq!(info.base.last_generated_id, id4);
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
+        assert_eq!(info.first_entry.id, id2);
+        assert_eq!(info.last_generated_id, id4);
         // Additionally, verify that the message was deduplicated.
         assert_eq!(info.pids_tracked, 1);
         assert_eq!(info.iids_tracked, 1);
@@ -2693,9 +2683,9 @@ mod idempotency_tests {
         // The stream should have been trimmed again, as its entries once again exceeded the maximum length.
         // As a result, the first entry (second from the initial entries) should have been removed.
         assert_eq!(con.xlen(STREAM_NAME).unwrap(), INITIAL_STREAM_ENTRIES.len());
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
-        assert_eq!(info.base.first_entry.id, id3); // id2 should now be trimmed
-        assert_eq!(info.base.last_generated_id, id6);
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
+        assert_eq!(info.first_entry.id, id3); // id2 should now be trimmed
+        assert_eq!(info.last_generated_id, id6);
         // Additionally, verify that the message was registered for idempotency tracking.
         assert_eq!(info.pids_tracked, 1);
         assert_eq!(info.iids_tracked, 2);
@@ -2736,7 +2726,7 @@ mod idempotency_tests {
         let _: () = con
             .xgroup_create_mkstream(STREAM_NAME, "group", "$")
             .unwrap();
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         // Verify that initially the defaults are used.
         assert_eq!(info.idmp_duration, IDMP_DEFAULT_DURATION);
         assert_eq!(info.idmp_maxsize, IDMP_DEFAULT_MAXSIZE);
@@ -2750,7 +2740,7 @@ mod idempotency_tests {
             .unwrap(),
             "OK"
         );
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         // Verify that only the duration has changed.
         assert_eq!(info.idmp_duration, IDMP_CUSTOM_DURATION);
         assert_eq!(info.idmp_maxsize, IDMP_DEFAULT_MAXSIZE);
@@ -2764,7 +2754,7 @@ mod idempotency_tests {
             .unwrap(),
             "OK"
         );
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         // Verify that the new max size is applied and that the previously set duration is preserved.
         assert_eq!(info.idmp_duration, IDMP_CUSTOM_DURATION);
         assert_eq!(info.idmp_maxsize, IDMP_CUSTOM_MAXSIZE);
@@ -2775,7 +2765,7 @@ mod idempotency_tests {
             .idempotency_maxsize(IDMP_CUSTOM_MAXSIZE * 2)
             .unwrap();
         assert_eq!(con.xcfgset(STREAM_NAME, &opts).unwrap(), "OK");
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         // Verify that both parameters have changed and they are now doubled.
         assert_eq!(info.idmp_duration, IDMP_CUSTOM_DURATION * 2);
         assert_eq!(info.idmp_maxsize, IDMP_CUSTOM_MAXSIZE * 2);
@@ -2786,7 +2776,7 @@ mod idempotency_tests {
             .idempotency_seconds(IDMP_CUSTOM_DURATION)
             .unwrap();
         assert_eq!(con.xcfgset(STREAM_NAME, &opts).unwrap(), "OK");
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         // Verify that both parameters have changed and they are now set to the custom values.
         assert_eq!(info.idmp_duration, IDMP_CUSTOM_DURATION);
         assert_eq!(info.idmp_maxsize, IDMP_CUSTOM_MAXSIZE);
@@ -2815,7 +2805,7 @@ mod idempotency_tests {
         assert!(id2.is_some());
 
         // Verify that the IDMP map is populated.
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.pids_tracked, 1);
         assert_eq!(info.iids_tracked, 2);
         assert_eq!(info.iids_added, 2);
@@ -2828,7 +2818,7 @@ mod idempotency_tests {
         assert!(id3.is_some());
         assert_eq!(id1, id3);
 
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.iids_duplicates, 1);
 
         // Changing the configuration should clear the IDMP map.
@@ -2842,7 +2832,7 @@ mod idempotency_tests {
         );
 
         // Verify that the configuration was applied and the IDMP map was cleared.
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.idmp_duration, IDMP_CUSTOM_DURATION);
         assert_eq!(info.pids_tracked, 0);
         assert_eq!(info.iids_tracked, 0);
@@ -2861,7 +2851,7 @@ mod idempotency_tests {
         assert_ne!(id1, id4);
 
         // Verify the IDMP map is now tracking again.
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.pids_tracked, 1);
         assert_eq!(info.iids_tracked, 1);
         assert_eq!(info.iids_added, 3);
@@ -2874,7 +2864,7 @@ mod idempotency_tests {
         assert!(id5.is_some());
         assert_eq!(id4, id5);
 
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.iids_duplicates, 2);
 
         // Verify that changing maxsize also clears the IDMP map.
@@ -2887,7 +2877,7 @@ mod idempotency_tests {
             "OK"
         );
 
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.idmp_maxsize, IDMP_CUSTOM_MAXSIZE);
         assert_eq!(info.pids_tracked, 0);
         assert_eq!(info.iids_tracked, 0);
@@ -2923,7 +2913,7 @@ mod idempotency_tests {
             .unwrap(),
             "OK"
         );
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.idmp_maxsize, IDMP_MAXSIZE_LIMIT);
 
         // Add messages up to IDMP_MAXSIZE_LIMIT (2 IIDs).
@@ -2939,7 +2929,7 @@ mod idempotency_tests {
             .unwrap();
         assert!(id2.is_some());
 
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.pids_tracked, 1);
         assert_eq!(info.iids_tracked, 2);
         assert_eq!(info.iids_added, 2);
@@ -2953,7 +2943,7 @@ mod idempotency_tests {
         assert!(id3.is_some());
 
         // Verify that the IDMP map is still tracking exactly IDMP_MAXSIZE_LIMIT IIDs.
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.iids_tracked, IDMP_MAXSIZE_LIMIT as usize);
         assert_eq!(info.iids_added, 3);
 
@@ -2964,7 +2954,7 @@ mod idempotency_tests {
         assert!(id4.is_some());
         assert_ne!(id1, id4);
 
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.iids_added, 4);
         assert_eq!(info.iids_duplicates, 0);
 
@@ -2975,7 +2965,7 @@ mod idempotency_tests {
         assert!(id5.is_some());
         assert_eq!(id3, id5);
 
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.iids_duplicates, 1);
 
         // Test 2: Verify duration-based expiry
@@ -2992,7 +2982,7 @@ mod idempotency_tests {
             .unwrap(),
             "OK"
         );
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.idmp_duration, IDMP_SHORT_DURATION);
 
         // Add an idempotent message.
@@ -3009,7 +2999,7 @@ mod idempotency_tests {
         assert!(id2.is_some());
         assert_eq!(id1, id2);
 
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         assert_eq!(info.iids_tracked, 1);
         assert_eq!(info.iids_duplicates, 1);
 
@@ -3025,7 +3015,7 @@ mod idempotency_tests {
         assert!(id3.is_some());
         assert_ne!(id1, id3);
 
-        let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+        let info = con.xinfo_stream(STREAM_NAME).unwrap();
         // The IID should be tracked again (re-added after expiry).
         assert_eq!(info.iids_tracked, 1);
         assert_eq!(

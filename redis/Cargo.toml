@@ -1,6 +1,6 @@
 [package]
 name = "redis"
-version = "1.8.0"
+version = "2.0.0-rc.1"
 keywords = ["redis", "valkey", "cluster", "sentinel", "pubsub"]
 description = "Redis driver for Rust."
 repository = "https://github.com/redis-rs/redis-rs"
@@ -109,17 +109,17 @@ arcstr = "1.2.0"
 socket2 = { version = "0.6", features = ["all"] }
 
 # Only needed for Entra ID authentication
-azure_identity = { version = "0.31", optional = true, features = [
+azure_identity = { version = "1.0.0", optional = true, features = [
   "client_certificate",
 ] }
-azure_core = { version = "0.31", optional = true }
+azure_core = { version = "1.1.0", optional = true }
 base64 = { version = "0.22.1", optional = true }
 
 [target.'cfg(all(target_os = "wasi", target_env = "p2"))'.dependencies]
-tokio = { version = "1.51", features = ["sync"], optional = true }
+tokio = { workspace = true, features = ["sync"], optional = true }
 
 [features]
-default = ["acl", "streams", "geospatial", "script", "num-bigint"]
+default = ["acl", "streams", "geospatial", "script", "num-bigint", "bloom"]
 acl = []
 bloom = []
 geospatial = []
@@ -128,10 +128,19 @@ vector-sets = ["dep:serde", "serde/derive", "dep:serde_json"]
 search_unfinished = []
 cluster = ["dep:crc16", "dep:rand"]
 script = ["dep:sha1_smol"]
-tls-native-tls = ["dep:native-tls"]
-tls-rustls = ["dep:rustls", "rustls/std", "dep:rustls-native-certs"]
+tls-native-tls = ["dep:native-tls", "redis-test/tls-native-tls"]
+tls-rustls = ["dep:rustls", "rustls/std"]
 tls-rustls-insecure = ["tls-rustls"]
-tls-rustls-webpki-roots = ["tls-rustls", "dep:webpki-roots"]
+tls-rustls-native-roots = [
+  "tls-rustls",
+  "dep:rustls-native-certs",
+  "redis-test/tls-rustls-native-roots",
+]
+tls-rustls-webpki-roots = [
+  "tls-rustls",
+  "dep:webpki-roots",
+  "redis-test/tls-rustls-webpki-roots",
+]
 smol-comp = ["aio", "dep:smol", "dep:smol-timeout", "dep:async-io"]
 smol-native-tls-comp = ["smol-comp", "dep:async-native-tls", "tls-native-tls"]
 smol-rustls-comp = ["smol-comp", "dep:futures-rustls", "tls-rustls"]
@@ -171,6 +180,7 @@ aio = [
   "tokio-util/codec",
   "combine/tokio",
   "dep:cfg-if",
+  "redis-test/aio",
 ]
 
 [dev-dependencies]
@@ -200,7 +210,7 @@ required-features = ["tokio-comp"]
 
 [[test]]
 name = "parser"
-required-features = ["aio"]
+required-features = ["tokio-comp"]
 
 [[test]]
 name = "test_acl"
@@ -234,6 +244,10 @@ name = "test_digest_utils"
 [[test]]
 name = "test_tls_cert_auth"
 required-features = ["acl", "tls-rustls", "tokio-rustls-comp", "cluster"]
+
+[[bench]]
+name = "bench_pipeline_build"
+harness = false
 
 [[bench]]
 name = "bench_basic"

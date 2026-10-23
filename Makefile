@@ -43,9 +43,14 @@ test:
 	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=unix PROTOCOL=RESP3 RUST_BACKTRACE=1 cargo nextest run --locked -p redis --all-features --profile unix	
 
 	@echo "===================================================================="
-	@echo "Testing redis-test"
+	@echo "Testing redis-test without features"
 	@echo "===================================================================="
-	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run --locked -p redis-test
+	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run --locked -p redis-test --no-default-features
+
+	@echo "===================================================================="
+	@echo "Testing redis-test with all features"
+	@echo "===================================================================="
+	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run --locked -p redis-test --all-features
 
 test-module-json:
 	@echo "===================================================================="
@@ -92,6 +97,10 @@ docs:
 
 upload-docs: docs
 	@./upload-docs.sh
+
+flag-frenzy:
+#	# This requires nihohit's flag-frenzy variant from https://github.com/nihohit/flag-frenzy.git
+	flag-frenzy --config .config/flag-frenzy --package redis
 
 style-check:
 	@rustup component add rustfmt 2> /dev/null

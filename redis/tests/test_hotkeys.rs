@@ -5,8 +5,10 @@ mod support;
 
 #[cfg(test)]
 mod hotkeys {
-    use crate::support::*;
+
     use redis::{Commands, HotkeysCommands, HotkeysOptions, ProtocolVersion, RedisConnectionInfo};
+    use redis_test::{REDIS_CE_8_6, TestContext, run_test_if_version_supported};
+
     use rstest::rstest;
     use std::thread::sleep;
     use std::time::Duration;
@@ -256,6 +258,8 @@ mod hotkeys_cluster {
         Commands, ConnectionAddr, ConnectionInfo, HotkeysCommands, HotkeysOptions, HotkeysResponse,
         ProtocolVersion, RedisConnectionInfo, Value, cmd, from_redis_value,
     };
+    use redis_test::{REDIS_CE_8_6, skip_if_context_does_not_support};
+
     use rstest::rstest;
 
     /// Open a direct (non-cluster) connection to a specific node using `protocol`.
@@ -595,6 +599,8 @@ mod async_hotkeys {
     use redis::{
         AsyncCommands, AsyncHotkeysCommands, HotkeysOptions, ProtocolVersion, RedisConnectionInfo,
     };
+    use redis_test::{REDIS_CE_8_6, TestContext, run_test_if_version_supported};
+
     use rstest::rstest;
     use std::time::Duration;
 

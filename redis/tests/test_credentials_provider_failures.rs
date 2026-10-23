@@ -13,6 +13,7 @@ mod support;
 use futures_util::{Stream, StreamExt};
 use redis::auth::{BasicAuth, StreamingCredentialsProvider};
 use redis::{ErrorKind, RedisError, RedisResult};
+use redis_test::TestContext;
 use std::pin::Pin;
 use std::sync::Once;
 use support::*;
@@ -70,7 +71,7 @@ mod credentials_provider_failures_tests {
     #[async_test]
     async fn test_connection_fails_when_initial_credentials_request_returns_error() {
         init_logger();
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
 
         let provider = ImmediatelyFailingCredentialsProvider;
         let config = redis::AsyncConnectionConfig::new().set_credentials_provider(provider);
@@ -92,7 +93,7 @@ mod credentials_provider_failures_tests {
     #[async_test]
     async fn test_connection_fails_when_credentials_stream_closes() {
         init_logger();
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
 
         let provider = EmptyStreamCredentialsProvider;
         let config = redis::AsyncConnectionConfig::new().set_credentials_provider(provider);

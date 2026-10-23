@@ -223,7 +223,7 @@ where
                             .await;
                     }
                     if let Some(push_sender) = &external_push_sender {
-                        _ = push_sender.send(msg);
+                        crate::aio::send_push(push_sender.as_ref(), msg);
                     }
                 }
             }
@@ -1165,7 +1165,6 @@ where
 {
     {
         let mut guard = core.conn_lock.write().await;
-
         if matches!(
             guard.0.get(&addr),
             Some(ConnState::Reconnecting(_) | ConnState::Connecting)
@@ -1199,7 +1198,6 @@ where
 
             if !in_topology {
                 core.conn_lock.write().await.0.remove(&addr);
-
                 break;
             }
             prev_conn

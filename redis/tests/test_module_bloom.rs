@@ -2,7 +2,6 @@
 
 mod support;
 
-use crate::support::*;
 use assert_matches::assert_matches;
 use redis::bloom::{
     BloomFilterDumpChunk, BloomFilterDumpIterator, BloomFilterInfoType, BloomFilterInsertOptions,
@@ -10,6 +9,9 @@ use redis::bloom::{
 };
 use redis::{TypedCommands, ValueType};
 use redis_test::server::Module;
+use redis_test::{
+    REDIS_BLOOM_ANY, TestContextBuilder, TestContextVersioning, skip_if_context_does_not_support,
+};
 use std::vec;
 
 // Test keys
@@ -20,7 +22,7 @@ const KEY_3: &str = "test_bloom_3";
 /// Tries to assure single value updates work
 #[test]
 fn test_module_bloom_single_value_updates() {
-    let ctx = TestContext::with_modules(&[Module::Bloom]);
+    let ctx = TestContextBuilder::new().module(Module::Bloom).build();
     let mut con = ctx.connection();
 
     // Add a single value, and check containment
@@ -56,7 +58,7 @@ fn test_module_bloom_single_value_updates() {
 /// Tries to assure that multi-value updates work
 #[test]
 fn test_module_bloom_multiple_value_updates() {
-    let ctx = TestContext::with_modules(&[Module::Bloom]);
+    let ctx = TestContextBuilder::new().module(Module::Bloom).build();
     let mut con = ctx.connection();
 
     // Init the key by adding multiple values at once
@@ -97,8 +99,8 @@ fn test_module_bloom_multiple_value_updates() {
 
 /// Tries to assure that information functions work
 #[test]
-fn test_module_bloom_info() {
-    let ctx = TestContext::with_modules(&[Module::Bloom]);
+fn test_module_bloom_infos() {
+    let ctx = TestContextBuilder::new().module(Module::Bloom).build();
     let mut con = ctx.connection();
 
     // Check that getting info on a not yet existing key does not panic
@@ -119,7 +121,7 @@ fn test_module_bloom_info() {
     if ctx.supports(REDIS_BLOOM_ANY) {
         assert_eq!(bf_type, ValueType::BloomFilterRedis);
     } else {
-        assert_eq!(bf_type, ValueType::BloomFilterValKey);
+        assert_eq!(bf_type, ValueType::BloomFilterValkey);
     }
     assert_eq!(
         con.bf_info(KEY_1)
@@ -213,7 +215,7 @@ fn test_module_bloom_info() {
 /// Tries to assure that reserving is effective
 #[test]
 fn test_module_bloom_reserving() {
-    let ctx = TestContext::with_modules(&[Module::Bloom]);
+    let ctx = TestContextBuilder::new().module(Module::Bloom).build();
     let mut con = ctx.connection();
 
     // Reserving without options
@@ -253,7 +255,7 @@ fn test_module_bloom_reserving() {
 /// Tries to assure that dumping/loading works
 #[test]
 fn test_module_bloom_dump_and_load() {
-    let ctx = TestContext::with_modules(&[Module::Bloom]);
+    let ctx = TestContextBuilder::new().module(Module::Bloom).build();
     skip_if_context_does_not_support!(ctx, REDIS_BLOOM_ANY);
     let mut con = ctx.connection();
 
@@ -307,7 +309,7 @@ fn test_module_bloom_dump_and_load() {
 /// Tries to assure that dumping through an iterator works
 #[test]
 fn test_module_bloom_dump_iterator() {
-    let ctx = TestContext::with_modules(&[Module::Bloom]);
+    let ctx = TestContextBuilder::new().module(Module::Bloom).build();
     skip_if_context_does_not_support!(ctx, REDIS_BLOOM_ANY);
     let mut con = ctx.connection();
 

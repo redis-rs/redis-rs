@@ -177,6 +177,10 @@ impl<'a> ReplicasOnlyCandidates<'a> {
 /// The strategy is only called when there are replicas available for the
 /// target slot. If a slot has no replicas, the caller falls back to the
 /// primary without consulting the strategy.
+#[allow(
+    clippy::exhaustive_enums,
+    reason = "The effects of marking this 'non_exhaustive' are not ideal. See #2390."
+)]
 #[derive(Debug)]
 pub enum ReadCandidates<'a> {
     /// Any node (primary or replica) is acceptable for this read.

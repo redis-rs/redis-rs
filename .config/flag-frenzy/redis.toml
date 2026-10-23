@@ -14,25 +14,31 @@ require = [
   "smol-rustls-comp",
 ]
 
+# Anything that selects TLS should use TLS aware runtimes 
 [[rule]]
-when = ["tls-rustls"]
+when = [
+  "tls-rustls-native-roots",
+  "OR",
+  "tls-rustls-webpki-roots",
+  "OR",
+  "tls-native-tls",
+  "OR",
+  "tls-rustls-insecure",
+]
 forbid = [
   "tokio-comp",
   "OR",
   "smol-comp",
-] # tokio-rustls-comp or smol-rustls-comp should be used instead of this combination
+]
 
+# must choose rustls roots when working with rustls
 [[rule]]
-when = ["tls-native-tls"]
-forbid = [
-  "tokio-comp",
+when = [
+  "tokio-rustls-comp",
   "OR",
-  "smol-comp",
-] # tokio-native-tls-comp or smol-native-tls-comp should be used instead of this combination
-
-[[rule]]
-when = "tls-rustls-insecure"
-require = ["tls-rustls"]
+  "smol-rustls-comp",
+]
+require = ["tls-rustls-native-roots", "OR", "tls-rustls-webpki-roots"]
 
 # the native-tls features shouldn't be tested with the rustls features
 [[rule]]
@@ -48,7 +54,7 @@ forbid = [
   "OR",
   "tls-rustls-webpki-roots",
   "OR",
-  "tls-rustls",
+  "tls-rustls-native-roots",
   "OR",
   "tls-rustls-insecure",
   "OR",
@@ -70,6 +76,8 @@ forbid = [
   "tokio-native-tls-comp",
   "OR",
   "tokio-comp",
+  "OR",
+  "entra-id",
 ]
 
 # cluster-async is the feature for async work. We don't need to check cluster with any async runtime.
@@ -89,6 +97,8 @@ forbid = [
   "smol-comp",
   "OR",
   "smol-rustls-comp",
+  "OR",
+  "entra-id",
 ]
 
 [[rule]]
@@ -99,6 +109,38 @@ require = ["smol-rustls-comp"]
 when = ["tls-rustls-webpki-roots", "tokio-comp"]
 require = ["tokio-rustls-comp"]
 
+[[rule]]
+when = ["tls-rustls-webpki-roots", "entra-id"]
+require = ["tokio-rustls-comp"]
+
+[[rule]]
+when = ["tls-native-tls", "entra-id"]
+require = ["tokio-native-tls-comp"]
+
+[[rule]]
+when = ["tls-native-tls", "tokio-comp"]
+require = ["tokio-native-tls-comp"]
+
+[[rule]]
+when = ["tls-native-tls", "smol-comp"]
+require = ["smol-native-tls-comp"]
+
+[[rule]]
+when = ["tls-rustls-native-roots", "smol-comp"]
+require = ["smol-rustls-comp"]
+
+[[rule]]
+when = ["tls-rustls-native-roots", "tokio-comp"]
+require = ["tokio-rustls-comp"]
+
+[[rule]]
+when = ["tls-rustls-native-roots", "entra-id"]
+require = ["tokio-rustls-comp"]
+
+[[rule]]
+when = ["tls-rustls-insecure", "entra-id"]
+require = ["tokio-rustls-comp"]
+
 # ------------------------------------------------------------------------
 # Entra ID integration (requires Tokio-based async + TLS compatibility)
 # ------------------------------------------------------------------------
@@ -106,8 +148,7 @@ require = ["tokio-rustls-comp"]
 # Entra ID is Tokio-only; forbid Smol-based TLS runtimes
 [[rule]]
 when = "entra-id"
-require = ["tokio-comp"]
-forbid = ["smol-rustls-comp", "OR", "smol-native-tls-comp"]
+forbid = ["smol-rustls-comp", "OR", "smol-native-tls-comp", "OR", "smol-comp"]
 
 # The users are expected to use only one connection pool.
 [[rule]]
@@ -127,7 +168,7 @@ forbid = "bigdecimal"
 # These features can't run by themselves
 [[rule]]
 when = true
-forbid = ["aio", "OR", "token-based-authentication"]
+forbid = ["aio", "OR", "token-based-authentication", "OR", "tls-rustls"]
 
 # If you're using the library with sentinel or targeting connection manager, you probably don't want cluster connections
 [[rule]]
@@ -147,4 +188,6 @@ forbid = [
   "script",
   "OR",
   "num-bigint",
+  "OR",
+  "bloom",
 ]

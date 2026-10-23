@@ -8,11 +8,13 @@ use redis::cluster_routing::*;
 use redis::{AsyncCommands, RedisError, caching::CacheConfig};
 #[cfg(feature = "json")]
 use redis_test::server::Module;
+use redis_test::{REDIS_CE_7_2, TestContext, TestContextBuilder, run_test_if_version_supported};
 #[cfg(feature = "json")]
 use serde_json::json;
 use std::collections::HashMap;
 use std::time::Duration;
 use test_macros::async_test;
+
 mod support;
 
 macro_rules! assert_hit {
@@ -36,7 +38,7 @@ macro_rules! assert_invalidate {
 // Basic testing should work with both CacheMode::All and CacheMode::OptIn if commands has called cache()
 #[async_test]
 async fn test_cache_basic(test_with_optin: bool) {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -94,7 +96,7 @@ async fn test_cache_basic(test_with_optin: bool) {
 
 #[async_test]
 async fn test_cache_mget() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -150,7 +152,7 @@ async fn test_cache_mget() {
 #[cfg(feature = "json")]
 #[async_test]
 async fn test_module_json_cache_get_mget() {
-    let ctx = TestContext::with_modules(&[Module::Json]);
+    let ctx = TestContextBuilder::new().module(Module::Json).build();
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -220,7 +222,7 @@ async fn test_module_json_cache_get_mget() {
 #[cfg(feature = "json")]
 #[async_test]
 async fn test_module_json_cache_get_mget_different_paths() {
-    let ctx = TestContext::with_modules(&[Module::Json]);
+    let ctx = TestContextBuilder::new().module(Module::Json).build();
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -333,7 +335,7 @@ async fn test_module_json_cache_get_mget_different_paths() {
 
 #[async_test]
 async fn test_cache_is_not_target_type_dependent() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -352,7 +354,7 @@ async fn test_cache_is_not_target_type_dependent() {
 
 #[async_test]
 async fn test_cache_with_pipeline(atomic: bool) {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -400,7 +402,7 @@ async fn test_cache_with_pipeline(atomic: bool) {
 #[async_test]
 async fn test_cache_basic_partial_opt_in() {
     // In OptIn mode cache must not be utilized without explicit per command configuration.
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -466,7 +468,7 @@ async fn test_cache_basic_partial_opt_in() {
 #[async_test]
 async fn test_cache_pipeline_partial_opt_in(atomic: bool) {
     // In OptIn mode cache must not be utilized without explicit per command configuration.
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -521,7 +523,7 @@ async fn test_cache_pipeline_partial_opt_in(atomic: bool) {
 
 #[async_test]
 async fn test_cache_different_commands(test_with_opt_in: bool) {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -585,7 +587,7 @@ async fn test_cache_different_commands(test_with_opt_in: bool) {
 #[cfg(feature = "connection-manager")]
 #[async_test]
 async fn test_connection_manager_maintains_statistics_after_crashes(test_with_optin: bool) {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -629,7 +631,7 @@ async fn test_connection_manager_maintains_statistics_after_crashes(test_with_op
     assert!(result.unwrap_err().is_unrecoverable_error());
 
     // Start a new server, re-using the previous address
-    let _ctx = TestContext::new_with_addr(addr);
+    let _ctx = TestContextBuilder::new().address(addr).build();
 
     loop {
         if manager.send_packed_command(&get).await.is_ok() {
@@ -959,7 +961,7 @@ fn get_cmd(name: &str, enable_opt_in: bool) -> redis::Cmd {
 
 #[async_test]
 async fn test_readonly_commands_with_patterns_are_not_cached() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -978,7 +980,7 @@ async fn test_readonly_commands_with_patterns_are_not_cached() {
 
 #[async_test]
 async fn test_bitcount_is_handled_correctly() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -1032,7 +1034,7 @@ async fn test_bitcount_is_handled_correctly() {
 
 #[async_test]
 async fn test_that_a_pipeline_with_all_commands_cached_does_not_hang() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     if !ctx.protocol.supports_resp3() {
         return;
     }

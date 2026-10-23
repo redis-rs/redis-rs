@@ -11,11 +11,11 @@ type ShardConnectionStates = Vec<(String, Vec<String>)>;
 /// Check the server version before calling [`PrimaryConnections::from_cluster`],
 /// because it sends commands that only RediSearch supports.
 pub fn setup_cluster_with_search_module() -> TestClusterContext {
-    let ctx = TestClusterContext::new_with_config(RedisClusterConfiguration {
-        num_nodes: 3,
-        modules: vec![Module::Search],
-        ..Default::default()
-    });
+    let ctx = TestClusterContext::new_with_config(
+        RedisClusterConfiguration::default()
+            .num_nodes(3)
+            .modules(vec![Module::Search]),
+    );
     ctx.wait_for_cluster_up();
     ctx
 }

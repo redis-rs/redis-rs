@@ -4,6 +4,10 @@ mod support;
 
 #[cfg(test)]
 mod cluster_async {
+    #[cfg(feature = "tls-rustls")]
+    use redis_test::cluster::ClusterType;
+    #[cfg(feature = "tls-rustls")]
+    use redis_test::utils::load_certs_from_file;
     use std::{
         collections::HashMap,
         num::NonZeroUsize,
@@ -33,8 +37,13 @@ mod cluster_async {
     };
     use redis::{PushInfo, PushKind, cluster_async::ClusterConnection};
     use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
-    use redis_test::redis_value;
     use redis_test::server::use_protocol;
+    use redis_test::utils::build_single_client;
+    use redis_test::{
+        REDIS_CE_7_0, TestContextVersioning, VALKEY_9_0, redis_value,
+        run_test_if_version_supported, skip_if_context_does_not_support,
+    };
+
     use test_macros::async_test;
     use tokio::{join, sync::mpsc::UnboundedReceiver};
 
@@ -69,11 +78,9 @@ mod cluster_async {
         run_test_if_version_supported!(VALKEY_9_0);
 
         let cluster = TestClusterContext::new_with_config_and_builder(
-            RedisClusterConfiguration {
-                cluster_databases: Some(16),
-                tls_insecure: false,
-                ..Default::default()
-            },
+            RedisClusterConfiguration::default()
+                .cluster_databases(16)
+                .insecure_tls(),
             |builder| builder.database_id(4),
         );
 
@@ -295,11 +302,11 @@ mod cluster_async {
 
     #[async_test]
     async fn test_async_cluster_route_info_to_nodes() {
-        let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
-            num_nodes: 6,
-            num_replicas: 1,
-            ..Default::default()
-        });
+        let cluster = TestClusterContext::new_with_config(
+            RedisClusterConfiguration::default()
+                .num_nodes(6)
+                .num_replicas(1),
+        );
 
         let split_to_addresses_and_info = |res| -> (Vec<String>, Vec<String>) {
             if let Value::Map(values) = res {
@@ -326,7 +333,7 @@ mod cluster_async {
             .map(|server| server.connection_info())
             .collect();
         let client = ClusterClient::builder(cluster_addresses.clone())
-            .read_routing_strategy(RandomReplicaStrategy)
+            .read_routing_strategy(RandomReplicaStrategy::new())
             .build()
             .unwrap();
         let mut connection = client.get_async_connection().await.unwrap();
@@ -475,18 +482,16 @@ mod cluster_async {
     #[cfg(feature = "tls-rustls")]
     #[async_test]
     async fn test_async_cluster_default_reject_invalid_hostnames() {
-        use redis_test::cluster::ClusterType;
-
         if ClusterType::get_intended() != ClusterType::TcpTls {
             // Only TLS causes invalid certificates to be rejected as desired.
             return;
         }
 
-        let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
-            tls_insecure: false,
-            certs_with_ip_alts: false,
-            ..Default::default()
-        });
+        let cluster = TestClusterContext::new_with_config(
+            RedisClusterConfiguration::default()
+                .insecure_tls()
+                .certs_without_ip_alts(),
+        );
 
         assert!(cluster.client.get_async_connection().await.is_err());
     }
@@ -494,19 +499,15 @@ mod cluster_async {
     #[cfg(feature = "tls-rustls-insecure")]
     #[async_test]
     async fn test_async_cluster_danger_accept_invalid_hostnames() {
-        use redis_test::cluster::ClusterType;
-
         if ClusterType::get_intended() != ClusterType::TcpTls {
             // No point testing this TLS-specific mode in non-TLS configurations.
             return;
         }
 
         let cluster = TestClusterContext::new_with_config_and_builder(
-            RedisClusterConfiguration {
-                tls_insecure: false,
-                certs_with_ip_alts: false,
-                ..Default::default()
-            },
+            RedisClusterConfiguration::default()
+                .insecure_tls()
+                .certs_without_ip_alts(),
             |builder| builder.danger_accept_invalid_hostnames(true),
         );
 
@@ -517,20 +518,18 @@ mod cluster_async {
     #[cfg(feature = "tls-rustls")]
     #[async_test]
     async fn async_cluster_node_address_map_fixes_tls_hostname_mismatch() {
-        use redis_test::cluster::ClusterType;
-
         if ClusterType::get_intended() != ClusterType::TcpTls {
             return;
         }
 
         // Certs issued for "localhost" only (no IP SAN), so connecting via
         // 127.0.0.1 will fail TLS verification without node_address_map.
-        let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
-            tls_insecure: false,
-            certs_with_ip_alts: false,
-            dns_hostname: Some("localhost".to_string()),
-            ..Default::default()
-        });
+        let cluster = TestClusterContext::new_with_config(
+            RedisClusterConfiguration::default()
+                .insecure_tls()
+                .certs_without_ip_alts()
+                .dns_hostname("localhost"),
+        );
 
         let err = match cluster.client.get_async_connection().await {
             Ok(_) => panic!("connecting via IP address should fail TLS hostname verification"),
@@ -870,7 +869,7 @@ mod cluster_async {
             } = MockEnv::with_client_builder(
                 ClusterClient::builder(vec![&*format!("redis://{name}")])
                     .retries(0)
-                    .read_routing_strategy(RandomReplicaStrategy),
+                    .read_routing_strategy(RandomReplicaStrategy::new()),
                 name,
                 move |cmd: &[u8], _| {
                     if contains_slice(cmd, b"READONLY") {
@@ -1614,7 +1613,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |cmd: &[u8], port| {
                 respond_startup_with_replica(name, cmd)?;
@@ -1641,7 +1640,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |cmd: &[u8], port| {
                 respond_startup_with_replica(name, cmd)?;
@@ -1746,7 +1745,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(
@@ -1856,7 +1855,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |cmd: &[u8], port| {
                 respond_startup_with_replica(name, cmd)?;
@@ -1918,7 +1917,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -1953,7 +1952,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -1987,7 +1986,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -2021,7 +2020,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], _| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -2048,7 +2047,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], _port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -2079,7 +2078,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], _port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -2105,7 +2104,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -2138,7 +2137,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -2168,7 +2167,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -2205,7 +2204,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -2237,7 +2236,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -2271,7 +2270,7 @@ mod cluster_async {
             ..
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -2518,7 +2517,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(1)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             {
                 // There are two shards: [6379, 6380] and [6381, 6382].
@@ -2610,7 +2609,7 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], _| {
                 respond_startup_with_replica_using_config(
@@ -2677,10 +2676,7 @@ mod cluster_async {
         // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
         assert_matches!(result, Err(_));
 
-        let _cluster = RedisCluster::new(RedisClusterConfiguration {
-            ports: ports.clone(),
-            ..Default::default()
-        });
+        let _cluster = RedisCluster::new(RedisClusterConfiguration::default().ports(ports.clone()));
 
         let result = connection.req_packed_command(&cmd).await.unwrap();
         assert_eq!(result, redis_value!(simple:"PONG"));
@@ -2698,10 +2694,7 @@ mod cluster_async {
         drop(cluster);
 
         // recreate cluster
-        let _cluster = RedisCluster::new(RedisClusterConfiguration {
-            ports: ports.clone(),
-            ..Default::default()
-        });
+        let _cluster = RedisCluster::new(RedisClusterConfiguration::default().ports(ports.clone()));
 
         // explicitly route to all primaries and request all succeeded
         let result = connection
@@ -2988,20 +2981,16 @@ mod cluster_async {
             let push: PushInfo = get_push(rx).await.unwrap();
             assert_eq!(
                 push,
-                PushInfo {
-                    kind: PushKind::Subscribe,
-                    data: vec![redis_value!("regular-phonewave"), redis_value!(1)]
-                }
+                PushInfo::new(PushKind::Subscribe)
+                    .data(vec![redis_value!("regular-phonewave"), redis_value!(1)])
             );
 
             let _: () = pubsub_conn.psubscribe("phonewave*").await.unwrap();
             let push = get_push(rx).await.unwrap();
             assert_eq!(
                 push,
-                PushInfo {
-                    kind: PushKind::PSubscribe,
-                    data: vec![redis_value!("phonewave*"), redis_value!(2)]
-                }
+                PushInfo::new(PushKind::PSubscribe)
+                    .data(vec![redis_value!("phonewave*"), redis_value!(2)])
             );
 
             if supports_redis_7 {
@@ -3009,10 +2998,8 @@ mod cluster_async {
                 let push = get_push(rx).await.unwrap();
                 assert_eq!(
                     push,
-                    PushInfo {
-                        kind: PushKind::SSubscribe,
-                        data: vec![redis_value!("sphonewave"), redis_value!(1)]
-                    }
+                    PushInfo::new(PushKind::SSubscribe)
+                        .data(vec![redis_value!("sphonewave"), redis_value!(1)])
                 );
             }
         }
@@ -3029,10 +3016,10 @@ mod cluster_async {
             let push = get_push(rx).await.unwrap();
             assert_eq!(
                 push,
-                PushInfo {
-                    kind: PushKind::Message,
-                    data: vec![redis_value!("regular-phonewave"), redis_value!("banana"),]
-                }
+                PushInfo::new(PushKind::Message).data(vec![
+                    redis_value!("regular-phonewave"),
+                    redis_value!("banana"),
+                ])
             );
 
             let _: () = publish_conn
@@ -3042,14 +3029,11 @@ mod cluster_async {
             let push = get_push(rx).await.unwrap();
             assert_eq!(
                 push,
-                PushInfo {
-                    kind: PushKind::PMessage,
-                    data: vec![
-                        redis_value!("phonewave*"),
-                        redis_value!("phonewave-pattern"),
-                        redis_value!("banana"),
-                    ]
-                }
+                PushInfo::new(PushKind::PMessage).data(vec![
+                    redis_value!("phonewave*"),
+                    redis_value!("phonewave-pattern"),
+                    redis_value!("banana"),
+                ])
             );
 
             if supports_redis_7 {
@@ -3057,10 +3041,8 @@ mod cluster_async {
                 let push = get_push(rx).await.unwrap();
                 assert_eq!(
                     push,
-                    PushInfo {
-                        kind: PushKind::SMessage,
-                        data: vec![redis_value!("sphonewave"), redis_value!("banana"),]
-                    }
+                    PushInfo::new(PushKind::SMessage)
+                        .data(vec![redis_value!("sphonewave"), redis_value!("banana"),])
                 );
             }
         }
@@ -3146,38 +3128,30 @@ mod cluster_async {
             let push = get_push(&mut rx).await.unwrap();
             assert_eq!(
                 push,
-                PushInfo {
-                    kind: PushKind::Subscribe,
-                    data: vec![redis_value!("regular-phonewave"), redis_value!(1)]
-                }
+                PushInfo::new(PushKind::Subscribe)
+                    .data(vec![redis_value!("regular-phonewave"), redis_value!(1)])
             );
             let _: () = pubsub_conn.unsubscribe("regular-phonewave").await.unwrap();
             let push = get_push(&mut rx).await.unwrap();
             assert_eq!(
                 push,
-                PushInfo {
-                    kind: PushKind::Unsubscribe,
-                    data: vec![redis_value!("regular-phonewave"), redis_value!(0)]
-                }
+                PushInfo::new(PushKind::Unsubscribe)
+                    .data(vec![redis_value!("regular-phonewave"), redis_value!(0)])
             );
 
             let _: () = pubsub_conn.psubscribe("phonewave*").await.unwrap();
             let push = get_push(&mut rx).await.unwrap();
             assert_eq!(
                 push,
-                PushInfo {
-                    kind: PushKind::PSubscribe,
-                    data: vec![redis_value!("phonewave*"), redis_value!(1)]
-                }
+                PushInfo::new(PushKind::PSubscribe)
+                    .data(vec![redis_value!("phonewave*"), redis_value!(1)])
             );
             let _: () = pubsub_conn.punsubscribe("phonewave*").await.unwrap();
             let push = get_push(&mut rx).await.unwrap();
             assert_eq!(
                 push,
-                PushInfo {
-                    kind: PushKind::PUnsubscribe,
-                    data: vec![redis_value!("phonewave*"), redis_value!(0)]
-                }
+                PushInfo::new(PushKind::PUnsubscribe)
+                    .data(vec![redis_value!("phonewave*"), redis_value!(0)])
             );
 
             if supports_redis_7 {
@@ -3185,19 +3159,15 @@ mod cluster_async {
                 let push = get_push(&mut rx).await.unwrap();
                 assert_eq!(
                     push,
-                    PushInfo {
-                        kind: PushKind::SSubscribe,
-                        data: vec![redis_value!("sphonewave"), redis_value!(1)]
-                    }
+                    PushInfo::new(PushKind::SSubscribe)
+                        .data(vec![redis_value!("sphonewave"), redis_value!(1)])
                 );
                 let _: () = pubsub_conn.sunsubscribe("sphonewave").await.unwrap();
                 let push = get_push(&mut rx).await.unwrap();
                 assert_eq!(
                     push,
-                    PushInfo {
-                        kind: PushKind::SUnsubscribe,
-                        data: vec![redis_value!("sphonewave"), redis_value!(0)]
-                    }
+                    PushInfo::new(PushKind::SUnsubscribe)
+                        .data(vec![redis_value!("sphonewave"), redis_value!(0)])
                 );
             }
 
@@ -3273,13 +3243,10 @@ mod cluster_async {
                 let push = get_push(&mut rx).await.unwrap();
                 assert_eq!(
                     push,
-                    PushInfo {
-                        kind: PushKind::Subscribe,
-                        data: vec![
-                            redis_value!(format!("regular-phonewave{i}")),
-                            redis_value!(i),
-                        ]
-                    }
+                    PushInfo::new(PushKind::Subscribe).data(vec![
+                        redis_value!(format!("regular-phonewave{i}")),
+                        redis_value!(i),
+                    ])
                 );
             }
             let _: () = pubsub_conn
@@ -3290,13 +3257,10 @@ mod cluster_async {
                 let push = get_push(&mut rx).await.unwrap();
                 assert_eq!(
                     push,
-                    PushInfo {
-                        kind: PushKind::Unsubscribe,
-                        data: vec![
-                            redis_value!(format!("regular-phonewave{i}")),
-                            redis_value!(3 - i),
-                        ]
-                    }
+                    PushInfo::new(PushKind::Unsubscribe).data(vec![
+                        redis_value!(format!("regular-phonewave{i}")),
+                        redis_value!(3 - i),
+                    ])
                 );
             }
 
@@ -3308,10 +3272,10 @@ mod cluster_async {
                 let push = get_push(&mut rx).await.unwrap();
                 assert_eq!(
                     push,
-                    PushInfo {
-                        kind: PushKind::PSubscribe,
-                        data: vec![redis_value!(format!("phonewave*{i}")), redis_value!(i)]
-                    }
+                    PushInfo::new(PushKind::PSubscribe).data(vec![
+                        redis_value!(format!("phonewave*{i}")),
+                        redis_value!(i)
+                    ])
                 );
             }
 
@@ -3323,10 +3287,10 @@ mod cluster_async {
                 let push = get_push(&mut rx).await.unwrap();
                 assert_eq!(
                     push,
-                    PushInfo {
-                        kind: PushKind::PUnsubscribe,
-                        data: vec![redis_value!(format!("phonewave*{i}")), redis_value!(3 - i)]
-                    }
+                    PushInfo::new(PushKind::PUnsubscribe).data(vec![
+                        redis_value!(format!("phonewave*{i}")),
+                        redis_value!(3 - i)
+                    ])
                 );
             }
             if supports_redis_7 {
@@ -3339,10 +3303,10 @@ mod cluster_async {
                     let push = get_push(&mut rx).await.unwrap();
                     assert_eq!(
                         push,
-                        PushInfo {
-                            kind: PushKind::SSubscribe,
-                            data: vec![redis_value!(format!("{{sphonewave}}{i}")), redis_value!(i)]
-                        }
+                        PushInfo::new(PushKind::SSubscribe).data(vec![
+                            redis_value!(format!("{{sphonewave}}{i}")),
+                            redis_value!(i)
+                        ])
                     );
                 }
 
@@ -3354,13 +3318,10 @@ mod cluster_async {
                     let push = get_push(&mut rx).await.unwrap();
                     assert_eq!(
                         push,
-                        PushInfo {
-                            kind: PushKind::SUnsubscribe,
-                            data: vec![
-                                redis_value!(format!("{{sphonewave}}{i}")),
-                                redis_value!(3 - i),
-                            ]
-                        }
+                        PushInfo::new(PushKind::SUnsubscribe).data(vec![
+                            redis_value!(format!("{{sphonewave}}{i}")),
+                            redis_value!(3 - i),
+                        ])
                     );
                 }
             }
@@ -3399,20 +3360,12 @@ mod cluster_async {
             // we expect 1 disconnect per connection to node. 2 connections * 3 node = 6 disconnects.
             for _ in 0..6 {
                 let push = get_push(&mut rx).await.unwrap();
-                assert_eq!(
-                    push,
-                    PushInfo {
-                        kind: PushKind::Disconnection,
-                        data: vec![]
-                    }
-                );
+                assert_eq!(push, PushInfo::new(PushKind::Disconnection));
             }
 
             // recreate cluster
-            let _cluster = RedisCluster::new(RedisClusterConfiguration {
-                ports: ports.clone(),
-                ..Default::default()
-            });
+            let _cluster =
+                RedisCluster::new(RedisClusterConfiguration::default().ports(ports.clone()));
 
             // verify that we didn't get any disconnect notices, and collect any early resubscriptions.
             let mut pushes = Vec::new();
@@ -3432,20 +3385,26 @@ mod cluster_async {
             }
             // we expect only 3 resubscriptions.
             assert_matches!(rx.try_recv(), Err(_));
-            assert!(pushes.contains(&PushInfo {
-                kind: PushKind::Subscribe,
-                data: vec![redis_value!("regular-phonewave"), redis_value!(1)]
-            }));
-            assert!(pushes.contains(&PushInfo {
-                kind: PushKind::PSubscribe,
-                data: vec![redis_value!("phonewave*"), redis_value!(2)]
-            }));
+            assert!(
+                pushes.contains(
+                    &PushInfo::new(PushKind::Subscribe)
+                        .data(vec![redis_value!("regular-phonewave"), redis_value!(1)])
+                )
+            );
+            assert!(
+                pushes.contains(
+                    &PushInfo::new(PushKind::PSubscribe)
+                        .data(vec![redis_value!("phonewave*"), redis_value!(2)])
+                )
+            );
 
             if supports_redis_7 {
-                assert!(pushes.contains(&PushInfo {
-                    kind: PushKind::SSubscribe,
-                    data: vec![redis_value!("sphonewave"), redis_value!(1)]
-                }));
+                assert!(
+                    pushes.contains(
+                        &PushInfo::new(PushKind::SSubscribe)
+                            .data(vec![redis_value!("sphonewave"), redis_value!(1)])
+                    )
+                );
             }
 
             check_publishing(&mut publish_conn, &mut rx, supports_redis_7).await;
@@ -3482,20 +3441,12 @@ mod cluster_async {
                     .timeout(futures_time::time::Duration::from_millis(5))
                     .await
                     .unwrap();
-                assert_eq!(
-                    push,
-                    Some(PushInfo {
-                        kind: PushKind::Disconnection,
-                        data: vec![]
-                    })
-                );
+                assert_eq!(push, Some(PushInfo::new(PushKind::Disconnection)));
             }
 
             // recreate cluster
-            let _cluster = RedisCluster::new(RedisClusterConfiguration {
-                ports: ports.clone(),
-                ..Default::default()
-            });
+            let _cluster =
+                RedisCluster::new(RedisClusterConfiguration::default().ports(ports.clone()));
 
             // verify that we didn't get any disconnect notices.
             assert_eq!(

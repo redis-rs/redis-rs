@@ -83,6 +83,143 @@ mod types {
         assert_eq!(Rc::new(twobytesslice).num_of_args(), 2);
     }
 
+    #[test]
+    fn test_collection_args_size() {
+        let bytes: &[u8] = &[0, 42, 255];
+        assert_eq!(bytes.args_size(), bytes.len());
+
+        let byte_vec: Vec<u8> = vec![0, 42, 255];
+        assert_eq!(byte_vec.args_size(), byte_vec.len());
+        assert_eq!(vec![bytes, bytes].args_size(), byte_vec.len() * 2);
+
+        let numbers = [1_u16, 255_u16];
+        assert_eq!(numbers.as_slice().num_of_args(), numbers.len());
+        assert_eq!(numbers.as_slice().args_size(), 4);
+
+        let bytes_array_ref = &[0_u8, 42, 255];
+        assert_eq!(bytes_array_ref.num_of_args_and_size(), (1, 3));
+
+        let items: [(&str, &[u8]); 2] = [("foo1", bytes), ("foo2", bytes)];
+        let items_slice = items.as_slice();
+        assert_eq!(
+            <&[(&str, &[u8])] as ToRedisArgs>::num_of_args(&items_slice),
+            4
+        );
+        assert_eq!(
+            <&[(&str, &[u8])] as ToRedisArgs>::args_size(&items_slice),
+            8 + bytes.len() * 2
+        );
+    }
+
+    fn assert_arg_metadata<T: ToRedisArgs>(value: &T) {
+        assert_eq!(
+            value.num_of_args_and_size(),
+            (value.num_of_args(), value.args_size())
+        );
+    }
+
+    #[test]
+    fn test_collection_num_of_args_and_size_matches_separate_getters() {
+        let numbers = [1_u16, 255_u16];
+        let number_slice: &[u16] = &numbers;
+        assert_arg_metadata(&number_slice);
+
+        let mut mutable_numbers = [1_u16, 255_u16];
+        let mutable_number_slice: &mut [u16] = &mut mutable_numbers;
+        assert_arg_metadata(&mutable_number_slice);
+
+        let boxed_numbers: Box<[u16]> = vec![1_u16, 255_u16].into_boxed_slice();
+        assert_arg_metadata(&boxed_numbers);
+
+        let arc_numbers: Arc<[u16]> = Arc::from(vec![1_u16, 255_u16].into_boxed_slice());
+        assert_arg_metadata(&arc_numbers);
+
+        let rc_numbers: Rc<[u16]> = Rc::from(vec![1_u16, 255_u16].into_boxed_slice());
+        assert_arg_metadata(&rc_numbers);
+
+        let number_vec = vec![1_u16, 255_u16];
+        assert_arg_metadata(&number_vec);
+
+        let bytes = [0_u8, 42, 255];
+        let byte_slice: &[u8] = &bytes;
+        assert_arg_metadata(&byte_slice);
+
+        let mut mutable_bytes = [0_u8, 42, 255];
+        let mutable_byte_slice: &mut [u8] = &mut mutable_bytes;
+        assert_arg_metadata(&mutable_byte_slice);
+
+        let boxed_bytes: Box<[u8]> = vec![0_u8, 42, 255].into_boxed_slice();
+        assert_arg_metadata(&boxed_bytes);
+
+        let arc_bytes: Arc<[u8]> = Arc::from(vec![0_u8, 42, 255].into_boxed_slice());
+        assert_arg_metadata(&arc_bytes);
+
+        let rc_bytes: Rc<[u8]> = Rc::from(vec![0_u8, 42, 255].into_boxed_slice());
+        assert_arg_metadata(&rc_bytes);
+
+        let byte_vec = vec![0_u8, 42, 255];
+        assert_arg_metadata(&byte_vec);
+
+        let tuple_items: [(&str, &[u8]); 2] = [("foo1", byte_slice), ("foo2", byte_slice)];
+        let tuple_slice = tuple_items.as_slice();
+        assert_arg_metadata(&tuple_slice);
+
+        let number_array_ref = &numbers;
+        assert_arg_metadata(&number_array_ref);
+
+        let byte_array_ref = &bytes;
+        assert_arg_metadata(&byte_array_ref);
+
+        let tuple_array_ref = &tuple_items;
+        assert_arg_metadata(&tuple_array_ref);
+        assert_eq!(
+            tuple_array_ref.num_of_args_and_size(),
+            (4, 8 + byte_slice.len() * 2)
+        );
+
+        let number_hash_set = [1_u16, 255_u16].into_iter().collect::<HashSet<_>>();
+        assert_arg_metadata(&number_hash_set);
+
+        let number_btree_set = [1_u16, 255_u16]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_arg_metadata(&number_btree_set);
+
+        let number_hash_map = [("foo1", 1_u16), ("foo2", 255_u16)]
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_arg_metadata(&number_hash_map);
+
+        let number_btree_map = [("foo1", 1_u16), ("foo2", 255_u16)]
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_arg_metadata(&number_btree_map);
+    }
+
+    #[test]
+    fn test_deref_num_of_args_and_size_matches_separate_getters() {
+        let number = 255_u16;
+        let number_ref = &number;
+        assert_arg_metadata(&number_ref);
+
+        let mut mutable_number = 255_u16;
+        let number_mut_ref = &mut mutable_number;
+        assert_arg_metadata(&number_mut_ref);
+
+        let boxed_number = Box::new(255_u16);
+        assert_arg_metadata(&boxed_number);
+
+        let arc_number = Arc::new(255_u16);
+        assert_arg_metadata(&arc_number);
+
+        let rc_number = Rc::new(255_u16);
+        assert_arg_metadata(&rc_number);
+
+        let values = vec![1_u16, 255_u16];
+        let values_ref = &values;
+        assert_arg_metadata(&values_ref);
+    }
+
     /// The `FromRedisValue` trait provides two methods for parsing:
     /// - `fn from_redis_value_ref(&Value) -> Result<T, RedisError>`
     /// - `fn from_redis_value(Value) -> Result<T, RedisError>`
@@ -142,16 +279,8 @@ mod types {
                 Role::Primary {
                     replication_offset: 3129659,
                     replicas: vec![
-                        ReplicaInfo {
-                            ip: "127.0.0.1".to_string(),
-                            port: 9001,
-                            replication_offset: 3129242,
-                        },
-                        ReplicaInfo {
-                            ip: "127.0.0.1".to_string(),
-                            port: 9002,
-                            replication_offset: 3129543,
-                        },
+                        ReplicaInfo::new("127.0.0.1", 9001, 3129242),
+                        ReplicaInfo::new("127.0.0.1", 9002, 3129543),
                     ],
                 },
             ),
@@ -227,6 +356,178 @@ mod types {
 
             let bad_i: Result<u32, _> = parse_mode.parse_redis_value(redis_value!(simple:"-1"));
             assert_matches!(bad_i, Err(_));
+        }
+    }
+
+    /// A reply carries the same number whether the server encodes it as a
+    /// number or as a string, so both encodings have to convert to the same
+    /// result for every integer type.
+    mod numeric_and_string_replies_agree {
+        use quickcheck::quickcheck;
+        use redis::{FromRedisValue, Value};
+
+        fn string_value(s: String) -> Value {
+            Value::BulkString(s.into_bytes())
+        }
+
+        macro_rules! agree_on_int {
+            ($name:ident, $t:ty) => {
+                quickcheck! {
+                    fn $name(val: i64) -> bool {
+                        let from_int = <$t>::from_redis_value(Value::Int(val));
+                        let from_string =
+                            <$t>::from_redis_value(string_value(val.to_string()));
+                        match (from_int, from_string) {
+                            (Ok(a), Ok(b)) => a == b,
+                            (Err(_), Err(_)) => true,
+                            _ => false,
+                        }
+                    }
+                }
+            };
+        }
+
+        agree_on_int!(u8_agrees, u8);
+        agree_on_int!(i8_agrees, i8);
+        agree_on_int!(u16_agrees, u16);
+        agree_on_int!(i16_agrees, i16);
+        agree_on_int!(u32_agrees, u32);
+        agree_on_int!(i32_agrees, i32);
+        agree_on_int!(u64_agrees, u64);
+        agree_on_int!(i64_agrees, i64);
+        agree_on_int!(u128_agrees, u128);
+        agree_on_int!(i128_agrees, i128);
+        agree_on_int!(usize_agrees, usize);
+        agree_on_int!(isize_agrees, isize);
+
+        macro_rules! agree_on_double {
+            ($name:ident, $t:ty) => {
+                quickcheck! {
+                    fn $name(val: f64) -> bool {
+                        let from_double = <$t>::from_redis_value(Value::Double(val));
+                        // Negative zero is zero, but it writes as "-0" and
+                        // `str::parse` refuses a sign on an unsigned type, so
+                        // compare against the spelling of the value itself.
+                        let val = if val == 0.0 { 0.0 } else { val };
+                        // A whole number is written exactly by `{:.0}`, which is
+                        // what a server sending it as a string would write. Every
+                        // other double is spelled the way it prints, and none of
+                        // those spellings parse as an integer.
+                        let spelled = if val.is_finite() && val.fract() == 0.0 {
+                            format!("{val:.0}")
+                        } else {
+                            format!("{val}")
+                        };
+                        let from_string = <$t>::from_redis_value(string_value(spelled));
+                        match (from_double, from_string) {
+                            (Ok(a), Ok(b)) => a == b,
+                            (Err(_), Err(_)) => true,
+                            _ => false,
+                        }
+                    }
+                }
+            };
+        }
+
+        agree_on_double!(u8_agrees_on_double, u8);
+        agree_on_double!(i8_agrees_on_double, i8);
+        agree_on_double!(u32_agrees_on_double, u32);
+        agree_on_double!(i32_agrees_on_double, i32);
+        agree_on_double!(u64_agrees_on_double, u64);
+        agree_on_double!(i64_agrees_on_double, i64);
+        agree_on_double!(u128_agrees_on_double, u128);
+        agree_on_double!(i128_agrees_on_double, i128);
+    }
+
+    #[test]
+    fn test_out_of_range_integer_reply_is_an_error() {
+        for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+            // `TTL` replies with `:-1` when the key has no expiry and with `:-2`
+            // when it does not exist. Neither fits in an unsigned type, and used
+            // to wrap around to `u64::MAX` / `u64::MAX - 1` instead of erroring.
+            let bad: Result<u64, _> = parse_mode.parse_redis_value(Value::Int(-1));
+            assert_matches!(bad, Err(_));
+            let bad: Result<usize, _> = parse_mode.parse_redis_value(Value::Int(-2));
+            assert_matches!(bad, Err(_));
+            let bad: Result<u32, _> = parse_mode.parse_redis_value(Value::Int(-1));
+            assert_matches!(bad, Err(_));
+
+            // Too large for the narrower types.
+            let bad: Result<u8, _> = parse_mode.parse_redis_value(Value::Int(300));
+            assert_matches!(bad, Err(_));
+            let bad: Result<i8, _> = parse_mode.parse_redis_value(Value::Int(128));
+            assert_matches!(bad, Err(_));
+            let bad: Result<i32, _> = parse_mode.parse_redis_value(Value::Int(i64::MAX));
+            assert_matches!(bad, Err(_));
+
+            // An integer reply and the equivalent string reply must agree: the
+            // same command can reply with either depending on the protocol
+            // version in use.
+            let bad: Result<u8, _> =
+                parse_mode.parse_redis_value(Value::BulkString(b"300".to_vec()));
+            assert_matches!(bad, Err(_));
+
+            // Values that do fit still convert, including the exact boundaries.
+            assert_eq!(parse_mode.parse_redis_value(Value::Int(-1)), Ok(-1i64));
+            assert_eq!(parse_mode.parse_redis_value(Value::Int(255)), Ok(255u8));
+            assert_eq!(parse_mode.parse_redis_value(Value::Int(-128)), Ok(-128i8));
+            assert_eq!(parse_mode.parse_redis_value(Value::Int(127)), Ok(127i8));
+            assert_eq!(
+                parse_mode.parse_redis_value(Value::Int(i64::MAX)),
+                Ok(i64::MAX)
+            );
+            assert_eq!(
+                parse_mode.parse_redis_value(Value::Int(i64::MIN)),
+                Ok(i64::MIN as i128)
+            );
+        }
+    }
+
+    #[test]
+    fn test_out_of_range_double_reply_is_an_error() {
+        for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+            // RESP3 replies with a double where RESP2 replies with a bulk
+            // string, e.g. for `ZSCORE`. A score that does not fit used to
+            // saturate to `i64::MAX` (and NaN used to become `0`) rather than
+            // producing the error the string reply produces.
+            let bad: Result<i64, _> = parse_mode.parse_redis_value(Value::Double(3e40));
+            assert_matches!(bad, Err(_));
+            let bad: Result<u64, _> = parse_mode.parse_redis_value(Value::Double(-5.0));
+            assert_matches!(bad, Err(_));
+            let bad: Result<i64, _> = parse_mode.parse_redis_value(Value::Double(f64::NAN));
+            assert_matches!(bad, Err(_));
+            let bad: Result<i64, _> = parse_mode.parse_redis_value(Value::Double(f64::INFINITY));
+            assert_matches!(bad, Err(_));
+            let bad: Result<i64, _> =
+                parse_mode.parse_redis_value(Value::Double(f64::NEG_INFINITY));
+            assert_matches!(bad, Err(_));
+
+            // `i64::MAX as f64` rounds up to 2^63, which is out of range.
+            let bad: Result<i64, _> =
+                parse_mode.parse_redis_value(Value::Double(9223372036854775808.0));
+            assert_matches!(bad, Err(_));
+
+            // A fractional double is not an integer, the same way "1.9" is not
+            // one for `str::parse`.
+            let bad: Result<i64, _> = parse_mode.parse_redis_value(Value::Double(1.9));
+            assert_matches!(bad, Err(_));
+            let bad: Result<i64, _> = parse_mode.parse_redis_value(Value::Double(-1.9));
+            assert_matches!(bad, Err(_));
+
+            // Doubles that are whole numbers in range convert as before.
+            assert_eq!(parse_mode.parse_redis_value(Value::Double(1.0)), Ok(1i64));
+            assert_eq!(parse_mode.parse_redis_value(Value::Double(-1.0)), Ok(-1i64));
+            assert_eq!(
+                parse_mode.parse_redis_value(Value::Double(255.0)),
+                Ok(255u8)
+            );
+            assert_eq!(parse_mode.parse_redis_value(Value::Double(0.0)), Ok(0u64));
+
+            // Floating point targets are unaffected.
+            assert_eq!(
+                parse_mode.parse_redis_value(Value::Double(f64::INFINITY)),
+                Ok(f64::INFINITY)
+            );
         }
     }
 
@@ -470,6 +771,71 @@ mod types {
         }
     }
 
+    /// RESP3 replaces the flat `[member, score, member, score]` array RESP2 used
+    /// for `ZRANGE ... WITHSCORES` (and ZPOPMIN/ZPOPMAX/ZRANDMEMBER/ZDIFF/ZUNION/
+    /// ZINTER) with an array of `[member, score]` pairs. Both shapes must convert
+    /// into a map type identically. `Vec<(K, V)>` already handled both.
+    #[test]
+    fn test_map_from_resp3_array_of_pairs() {
+        type MapType = HashMap<String, f64>;
+
+        let expected: MapType = [("a".to_string(), 1.0), ("b".to_string(), 2.5)]
+            .into_iter()
+            .collect();
+
+        // RESP2: flat array.
+        let resp2 = Value::Array(vec![
+            Value::BulkString("a".into()),
+            Value::BulkString("1".into()),
+            Value::BulkString("b".into()),
+            Value::BulkString("2.5".into()),
+        ]);
+        // RESP3: array of two-element pairs.
+        let resp3 = Value::Array(vec![
+            Value::Array(vec![Value::BulkString("a".into()), Value::Double(1.0)]),
+            Value::Array(vec![Value::BulkString("b".into()), Value::Double(2.5)]),
+        ]);
+
+        for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+            assert_eq!(
+                parse_mode.parse_redis_value::<MapType>(resp2.clone()),
+                Ok(expected.clone())
+            );
+            assert_eq!(
+                parse_mode.parse_redis_value::<MapType>(resp3.clone()),
+                Ok(expected.clone())
+            );
+
+            // `Vec<(K, V)>` accepted both shapes before and must keep doing so.
+            let pairs: Vec<(String, f64)> = parse_mode.parse_redis_value(resp3.clone()).unwrap();
+            assert_eq!(pairs, vec![("a".to_string(), 1.0), ("b".to_string(), 2.5)]);
+
+            // An even-length array of pairs must not be paired up *as pairs*.
+            let four = Value::Array(vec![
+                Value::Array(vec![Value::BulkString("a".into()), Value::Double(1.0)]),
+                Value::Array(vec![Value::BulkString("b".into()), Value::Double(2.0)]),
+                Value::Array(vec![Value::BulkString("c".into()), Value::Double(3.0)]),
+                Value::Array(vec![Value::BulkString("d".into()), Value::Double(4.0)]),
+            ]);
+            let m: MapType = parse_mode.parse_redis_value(four).unwrap();
+            assert_eq!(m.len(), 4);
+            assert_eq!(m["d"], 4.0);
+
+            // An empty array is still an empty map, not a "nested pairs" array.
+            let empty: MapType = parse_mode.parse_redis_value(Value::Array(vec![])).unwrap();
+            assert!(empty.is_empty());
+
+            // A flat array of non-collections keeps the old pairwise behaviour.
+            let flat: HashMap<String, String> = parse_mode
+                .parse_redis_value(Value::Array(vec![
+                    Value::BulkString("k".into()),
+                    Value::BulkString("v".into()),
+                ]))
+                .unwrap();
+            assert_eq!(flat["k"], "v");
+        }
+    }
+
     #[cfg(feature = "hashbrown")]
     #[test]
     fn test_hashbrown_hashmap() {
@@ -559,6 +925,12 @@ mod types {
             let v = parse_mode.parse_redis_value(Value::BulkString("0".into()));
             assert_eq!(v, Ok(false));
 
+            let v = parse_mode.parse_redis_value(Value::BulkString("true".into()));
+            assert_eq!(v, Ok(true));
+
+            let v = parse_mode.parse_redis_value(Value::BulkString("false".into()));
+            assert_eq!(v, Ok(false));
+
             let v: Result<bool, _> =
                 parse_mode.parse_redis_value(Value::BulkString("garbage".into()));
             assert_matches!(v, Err(_));
@@ -567,6 +939,12 @@ mod types {
             assert_eq!(v, Ok(true));
 
             let v = parse_mode.parse_redis_value(redis_value!(simple:"0"));
+            assert_eq!(v, Ok(false));
+
+            let v = parse_mode.parse_redis_value(redis_value!(simple:"true"));
+            assert_eq!(v, Ok(true));
+
+            let v = parse_mode.parse_redis_value(redis_value!(simple:"false"));
             assert_eq!(v, Ok(false));
 
             let v: Result<bool, _> = parse_mode.parse_redis_value(redis_value!(simple:"garbage"));

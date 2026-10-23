@@ -3,6 +3,8 @@ use std::{fs::File, io::Write, thread::sleep, time::Duration};
 use redis::{Client, ConnectionAddr, FromRedisValue, RedisResult};
 use tempfile::TempDir;
 
+use crate::server::RedisServerBuilder;
+use crate::utils::CommandMultiArgs;
 use crate::{
     server::{Module, RedisServer},
     utils::{TlsFilePaths, build_keys_and_certs_for_tls, get_random_available_port},
@@ -24,6 +26,7 @@ use crate::{
 /// let mut sentinel_client = redis::sentinel::SentinelClient::build(sentinel_addresses, String::from("master0"), None, redis::sentinel::SentinelServerType::Master).unwrap();
 /// let mut connection = sentinel_client.get_connection().unwrap();
 /// ```
+#[non_exhaustive]
 pub struct RedisSentinelCluster {
     pub servers: Vec<RedisServer>,
     pub sentinel_servers: Vec<RedisServer>,
@@ -118,10 +121,8 @@ impl RedisSentinelCluster {
     }
 }
 
-const MTLS_NOT_ENABLED: bool = false;
-
-fn get_addr(port: u16) -> ConnectionAddr {
-    let addr = RedisServer::get_addr(port);
+fn get_addr_for_type(port: u16, server_type: crate::server::ServerType) -> ConnectionAddr {
+    let addr = RedisServer::get_addr_for_type(port, server_type);
     if let ConnectionAddr::Unix(_) = addr {
         panic!("Sentinels are not supported on unix sockets");
     }
@@ -131,64 +132,56 @@ fn get_addr(port: u16) -> ConnectionAddr {
 fn spawn_master_server(
     port: u16,
     dir: &TempDir,
-    tlspaths: &TlsFilePaths,
+    tlspaths: &Option<TlsFilePaths>,
     modules: &[Module],
+    server_type: crate::server::ServerType,
 ) -> RedisServer {
-    RedisServer::new_with_addr_tls_modules_and_spawner(
-        get_addr(port),
-        None,
-        Some(tlspaths.clone()),
-        MTLS_NOT_ENABLED,
-        None, // cert_auth_field - not used in sentinel tests
-        modules,
-        |cmd| {
+    RedisServerBuilder::new()
+        .address(get_addr_for_type(port, server_type))
+        .tls_paths_opt(tlspaths.clone())
+        .modules(modules)
+        .refine_and_build(|cmd| {
             // Minimize startup delay
-            cmd.arg("--repl-diskless-sync-delay").arg("0");
-            if let ConnectionAddr::TcpTls { .. } = get_addr(port) {
-                cmd.arg("--tls-replication").arg("yes");
+            cmd.arg2("--repl-diskless-sync-delay", "0");
+            if tlspaths.is_some() {
+                cmd.arg2("--tls-replication", "yes");
             }
             cmd.current_dir(dir.path());
-            cmd.spawn().unwrap()
-        },
-    )
+        })
 }
 
 fn spawn_replica_server(
     port: u16,
     master_port: u16,
     dir: &TempDir,
-    tlspaths: &TlsFilePaths,
+    tlspaths: &Option<TlsFilePaths>,
     modules: &[Module],
+    server_type: crate::server::ServerType,
 ) -> RedisServer {
     let config_file_path = dir.path().join("redis_config.conf");
     File::create(&config_file_path).unwrap();
 
-    RedisServer::new_with_addr_tls_modules_and_spawner(
-        get_addr(port),
-        Some(&config_file_path),
-        Some(tlspaths.clone()),
-        MTLS_NOT_ENABLED,
-        None, // cert_auth_field - not used in sentinel tests
-        modules,
-        |cmd| {
-            cmd.arg("--replicaof")
-                .arg("127.0.0.1")
-                .arg(master_port.to_string());
-            if let ConnectionAddr::TcpTls { .. } = get_addr(port) {
-                cmd.arg("--tls-replication").arg("yes");
+    RedisServerBuilder::new()
+        .address(get_addr_for_type(port, server_type))
+        .config(config_file_path)
+        .tls_paths_opt(tlspaths.clone())
+        .modules(modules)
+        .refine_and_build(|cmd| {
+            cmd.arg3("--replicaof", "127.0.0.1", master_port.to_string());
+            if tlspaths.is_some() {
+                cmd.arg2("--tls-replication", "yes");
             }
             cmd.current_dir(dir.path());
-            cmd.spawn().unwrap()
-        },
-    )
+        })
 }
 
 fn spawn_sentinel_server(
     port: u16,
     master_ports: &[u16],
     dir: &TempDir,
-    tlspaths: &TlsFilePaths,
+    tlspaths: &Option<TlsFilePaths>,
     modules: &[Module],
+    server_type: crate::server::ServerType,
 ) -> RedisServer {
     let config_file_path = dir.path().join("redis_config.conf");
     let mut file = File::create(&config_file_path).unwrap();
@@ -200,24 +193,21 @@ fn spawn_sentinel_server(
     }
     file.flush().unwrap();
 
-    RedisServer::new_with_addr_tls_modules_and_spawner(
-        get_addr(port),
-        Some(&config_file_path),
-        Some(tlspaths.clone()),
-        MTLS_NOT_ENABLED,
-        None, // cert_auth_field - not used in sentinel tests
-        modules,
-        |cmd| {
+    RedisServerBuilder::new()
+        .address(get_addr_for_type(port, server_type))
+        .config(config_file_path)
+        .tls_paths_opt(tlspaths.clone())
+        .modules(modules)
+        .refine_and_build(|cmd| {
             cmd.arg("--sentinel");
-            if let ConnectionAddr::TcpTls { .. } = get_addr(port) {
-                cmd.arg("--tls-replication").arg("yes");
+            if tlspaths.is_some() {
+                cmd.arg2("--tls-replication", "yes");
             }
             cmd.current_dir(dir.path());
-            cmd.spawn().unwrap()
-        },
-    )
+        })
 }
 
+#[non_exhaustive]
 pub struct SentinelError;
 
 pub fn wait_for_master_server(
@@ -328,7 +318,28 @@ fn wait_for_replicas_to_sync(cluster: &RedisSentinelCluster, masters: u16) {
 
 impl RedisSentinelCluster {
     pub fn new(masters: u16, replicas_per_master: u16, sentinels: u16) -> Self {
-        Self::with_modules(masters, replicas_per_master, sentinels, &[])
+        Self::with_modules_and_server_type(
+            masters,
+            replicas_per_master,
+            sentinels,
+            &[],
+            crate::server::ServerType::get_intended(),
+        )
+    }
+
+    pub fn new_with_server_type(
+        masters: u16,
+        replicas_per_master: u16,
+        sentinels: u16,
+        server_type: crate::server::ServerType,
+    ) -> Self {
+        Self::with_modules_and_server_type(
+            masters,
+            replicas_per_master,
+            sentinels,
+            &[],
+            server_type,
+        )
     }
 
     pub fn with_modules(
@@ -337,16 +348,25 @@ impl RedisSentinelCluster {
         sentinels: u16,
         modules: &[Module],
     ) -> Self {
+        Self::with_modules_and_server_type(
+            masters,
+            replicas_per_master,
+            sentinels,
+            modules,
+            crate::server::ServerType::get_intended(),
+        )
+    }
+
+    pub fn with_modules_and_server_type(
+        masters: u16,
+        replicas_per_master: u16,
+        sentinels: u16,
+        modules: &[Module],
+        server_type: crate::server::ServerType,
+    ) -> Self {
         let mut servers = vec![];
         let mut folders = vec![];
         let mut master_ports = vec![];
-
-        let tempdir = tempfile::Builder::new()
-            .prefix("redistls")
-            .tempdir()
-            .expect("failed to create tempdir");
-        let tlspaths = build_keys_and_certs_for_tls(&tempdir);
-        folders.push(tempdir);
 
         let required_number_of_sockets = masters * (replicas_per_master + 1) + sentinels;
         let mut available_ports = std::collections::HashSet::new();
@@ -355,13 +375,33 @@ impl RedisSentinelCluster {
         }
         let mut available_ports: Vec<_> = available_ports.into_iter().collect();
 
+        let tlspaths = matches!(
+            RedisServer::get_addr_for_type(available_ports[0], server_type),
+            ConnectionAddr::TcpTls { .. }
+        )
+        .then(|| {
+            let tempdir = tempfile::Builder::new()
+                .prefix("redistls")
+                .tempdir()
+                .expect("failed to create tempdir");
+            let tlspaths = build_keys_and_certs_for_tls(&tempdir);
+            folders.push(tempdir);
+            tlspaths
+        });
+
         for _ in 0..masters {
             let port = available_ports.pop().unwrap();
             let tempdir = tempfile::Builder::new()
                 .prefix("redis")
                 .tempdir()
                 .expect("failed to create tempdir");
-            servers.push(spawn_master_server(port, &tempdir, &tlspaths, modules));
+            servers.push(spawn_master_server(
+                port,
+                &tempdir,
+                &tlspaths,
+                modules,
+                server_type,
+            ));
             folders.push(tempdir);
             master_ports.push(port);
 
@@ -377,6 +417,7 @@ impl RedisSentinelCluster {
                     &tempdir,
                     &tlspaths,
                     modules,
+                    server_type,
                 ));
                 folders.push(tempdir);
             }
@@ -396,6 +437,7 @@ impl RedisSentinelCluster {
                 &tempdir,
                 &tlspaths,
                 modules,
+                server_type,
             ));
             folders.push(tempdir);
         }

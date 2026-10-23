@@ -35,6 +35,14 @@ impl TcpSettings {
     }
 
     /// Sets the value of the `TCP_NODELAY` option on this socket.
+    ///
+    /// Enabled (`true`) by default, disabling Nagle's algorithm, since Redis
+    /// traffic is strictly request-response: coalescing small writes only adds
+    /// latency (most visibly on multiplexed connections under concurrency,
+    /// where Nagle serializes writes to one per ACK round-trip). Set to `false`
+    /// to re-enable Nagle's algorithm, e.g. on packets-per-second-limited
+    /// cloud instances or metered/WAN links where fewer, larger packets are
+    /// preferable to lower latency.
     pub fn set_nodelay(self, nodelay: bool) -> Self {
         Self { nodelay, ..self }
     }
@@ -77,11 +85,16 @@ impl TcpSettings {
     }
 }
 
-#[allow(clippy::derivable_impls)]
 impl Default for TcpSettings {
     fn default() -> Self {
         Self {
-            nodelay: false,
+            // Enabled by default: RESP is strictly request-response and every
+            // write path in this crate already batches commands into a single
+            // buffer, so Nagle's algorithm only ever adds latency here — under
+            // multiplexed concurrency it serializes writes to one per ACK
+            // round-trip. Use `set_nodelay(false)` to re-enable Nagle (e.g. on
+            // packets-per-second-limited or metered links).
+            nodelay: true,
             #[cfg(not(target_family = "wasm"))]
             keepalive: None,
             linger_time: None,

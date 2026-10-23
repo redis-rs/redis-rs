@@ -1,92 +1,218 @@
 // Generate implementation for function skeleton, we use this for `AsyncTypedCommands` because we want to be able to handle having a return type specified or unspecified with a fallback
+
+/// Selects a value depending on whether the first argument is `RedisResult`
+///
+/// The following `$action`s (second argument) are supported:
+///
+/// * `strip_redisresult` - If `$selector` is a `RedisResult<SomeType>`, yield `SomeType`.
+///   Otherwise, yield the unmodified `$selector`.
+///
+///   This action does not take a `$target` argument, as it operates directly on `$selector`.
+/// * `try` - If `$selector` is a `RedisResult<...>`, yield `$target?`, otherwise `$target`.
+/// * `wrap_ok` - If `$selector` is a `RedisResult<...>`, yield `Ok($target)`, otherwise `$target`.
+/// * `wrap_redisresult` - If `$selector` is a `RedisResult<...>`, yield `RedisResult<$target>`,
+///   otherwise `$target`.
+///
+/// # Arguments
+///
+/// * `$selector` -  If it's a `RedisResult`, yield the result of executing `$action` on `$target`.
+///   Otherwise, yield the unmodified `$target`.
+/// * `$action` - The action to take. See this function's description for available actions.
+/// * `$target` - The target `tt` to take the action on.
+macro_rules! if_redisresult {
+    ((RedisResult<$type:ty>), strip_redisresult) => {
+        ($type)
+    };
+    ((RedisResult<$unused:ty>), try, $target:tt) => {
+        (($target)?)
+    };
+    ((RedisResult<$unused:ty>), wrap_ok, $target:tt) => {
+        (Ok($target))
+    };
+    ((RedisResult<$unused:ty>), wrap_redisresult, $target:tt) => {
+        (RedisResult<$target>)
+    };
+    ($other_type:ty, $i:ident, $target:tt) => {
+        $target
+    };
+    ($other_type:ty, $i:ident) => {
+        $other_type
+    };
+}
+
+/// Converts the returned value for typed commands
+///
+/// This macro is used to resolve the `via` for typed commands
+///
+/// For typed commands without a `via`, the `$body` is used as is. (The `$body` return value is
+/// converted by `$rettype`'s [`FromRedisValue`](crate::FromRedisValue) implementation)
+///
+/// For typed commands with `via`, the `$ret_conv_fn` gets applied to `$body`.
+///
+/// # Arguments
+///
+/// * `$ret_conv_fn` - (optional) If present, convert `$body`'s output  using this function. It
+///   has to take a `Value` as input and map it to `Result<T, ParsingError>`, where `T` is the typed
+///   commands final output type. If missing, `$body` is returned as is.
+/// * `$body` - The command's implementation. It has to yield a `Value`
+macro_rules! convert_ret {
+    ($ret_conv_fn:ident, { $($body:tt)* }) => {
+        Ok($ret_conv_fn({ $($body)* }?)?)
+    };
+    (, { $($body:tt)* }) => {
+        $($body)*
+    };
+}
+
 #[cfg(feature = "aio")]
 macro_rules! implement_command_async {
-    // If the return type is `Generic`, then we require the user to specify the return type
+    // Expand the `Generic` return type to `RV`
     (
-        $lifetime: lifetime
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-            $($argname:ident: $argty:ty),*) $body:block Generic
+            $($argname:ident: $argty:ty),*) -> Generic $(via $ret_conv_fn:ident)?
     ) => {
-        $(#[$attr])*
-        #[inline]
-        #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-        fn $name<$lifetime, RV: FromRedisValue, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
-            & $lifetime mut self
-            $(, $argname: $argty)*
-        ) -> crate::types::RedisFuture<$lifetime, RV>
-        {
-            Box::pin(async move { $body.query_async(self).await })
-        }
+        implement_command_async!(
+            $(#[$attr])+
+            fn $name<$($tyargs : $ty,)* RV: FromRedisValue>(
+                $($argname: $argty),*) -> RV $(via $ret_conv_fn)?
+        );
     };
 
-    // If return type is specified in the input skeleton, then we will return it in the generated function (note match rule `$rettype:ty`)
+    // Expand the `RedisResult<Generic>` return type to `RedisResult<RV>`
     (
-        $lifetime: lifetime
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-            $($argname:ident: $argty:ty),*) $body:block $rettype:ty
+            $($argname:ident: $argty:ty),*) -> (RedisResult<Generic>) $(via $ret_conv_fn:ident)?
+    ) => {
+        implement_command_async!(
+            $(#[$attr])+
+            fn $name<$($tyargs : $ty,)* RV: FromRedisValue>(
+                $($argname: $argty),*) -> (RedisResult<RV>) $(via $ret_conv_fn)?
+        );
+    };
+
+    // Actual implementation of the command
+    (
+        $(#[$attr:meta])+
+        fn $name:ident<$($tyargs:ident : $ty:ident),*>(
+            $($argname:ident: $argty:ty),*) -> $rettype:tt $(via $ret_conv_fn:ident)?
     ) => {
         $(#[$attr])*
         #[inline]
         #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-        fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
-            & $lifetime mut self
+        fn $name<$($tyargs: $ty + Send + Sync,)*>(
+            &mut self
             $(, $argname: $argty)*
-        ) -> crate::types::RedisFuture<$lifetime, $rettype>
+        ) -> impl Future<Output = RedisResult<if_redisresult!($rettype, strip_redisresult)>> + Send
 
         {
-            Box::pin(async move { $body.query_async(self).await })
+            async move {
+                convert_ret!($($ret_conv_fn)?, {
+                    if_redisresult!($rettype, try, (Cmd::$name($($argname),*)))
+                        .query_async(self)
+                        .await
+                    })
+            }
         }
     };
 }
 
 macro_rules! implement_command_sync {
-    // If the return type is `Generic`, then we require the user to specify the return type
+    // Expand the `Generic` return type to `RV`
     (
-        $lifetime: lifetime
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-            $($argname:ident: $argty:ty),*) $body:block Generic
+            $($argname:ident: $argty:ty),*) -> Generic $(via $ret_conv_fn:ident)?
     ) => {
-        $(#[$attr])*
-        #[inline]
-        #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-        fn $name<$lifetime, RV: FromRedisValue, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
-            & $lifetime mut self
-            $(, $argname: $argty)*
-        ) -> RedisResult<RV>
-        {
-            Cmd::$name($($argname),*).query(self)
-        }
+        implement_command_sync!(
+            $(#[$attr])+
+            fn $name<$($tyargs : $ty,)* RV: FromRedisValue>(
+                $($argname: $argty),*) -> RV $(via $ret_conv_fn)?
+        );
     };
 
-    // If return type is specified in the input skeleton, then we will return it in the generated function (note match rule `$rettype:ty`)
+    // Expand the `Generic` return type to `RedisResult<RV>`
     (
-        $lifetime: lifetime
         $(#[$attr:meta])+
         fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-            $($argname:ident: $argty:ty),*) $body:block $rettype:ty
+            $($argname:ident: $argty:ty),*) -> (RedisResult<Generic>) $(via $ret_conv_fn:ident)?
+    ) => {
+        implement_command_sync!(
+            $(#[$attr])+
+            fn $name<$($tyargs : $ty,)* RV: FromRedisValue>(
+                $($argname: $argty),*) -> (RedisResult<RV>) $(via $ret_conv_fn)?
+        );
+    };
+
+    // Actual implementation of the command
+    (
+        $(#[$attr:meta])+
+        fn $name:ident<$($tyargs:ident : $ty:ident),*>(
+            $($argname:ident: $argty:ty),*) -> $rettype:tt $(via $ret_conv_fn:ident)?
     ) => {
         $(#[$attr])*
         #[inline]
         #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-        fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)*>(
-            & $lifetime mut self
+        fn $name<$($tyargs: $ty + Send + Sync,)*>(
+            &mut self
             $(, $argname: $argty)*
-        ) -> RedisResult<$rettype>
+        ) -> RedisResult<if_redisresult!($rettype, strip_redisresult)>
 
         {
-            Cmd::$name($($argname),*).query(self)
+            convert_ret!($($ret_conv_fn)?, {
+                if_redisresult!($rettype, try, { (Cmd::$name($($argname),*)) })
+                .query(self)
+            })
         }
     };
 }
 
+macro_rules! ready_cmd {
+    ($name:expr $(, $arg:expr)*) => {{
+        let name = $name;
+        let args_count = 1usize;
+        let args_size = name.len();
+        $(
+            let (next_args_count, next_args_size) = $arg.num_of_args_and_size();
+            let args_count = args_count + next_args_count;
+            let args_size = args_size + next_args_size;
+        )*
+        let mut cmd = Cmd::with_capacity(args_count, args_size);
+        cmd.arg(name);
+        $(cmd.arg($arg);)*
+        cmd
+    }};
+}
+
+macro_rules! write_pipeline_command {
+    ($self:expr, { ready_cmd!($name:expr $(, $arg:expr)*).take() }) => {{
+        let name = $name;
+        let args_count = 1usize;
+        let args_size = name.len();
+        $(
+            let (next_args_count, next_args_size) = $arg.num_of_args_and_size();
+            let args_count = args_count + next_args_count;
+            let args_size = args_size + next_args_size;
+        )*
+        $self.reserve_for_args(args_count)
+          .reserve_for_data(args_size);
+        $self.start_command();
+        $crate::types::RedisWrite::write_arg($self, name.as_bytes());
+        $($self.arg($arg);)*
+        $self
+    }};
+
+    ($self:expr, $cmd:expr) => {{
+        $self.add_command($cmd)
+    }};
+}
+
 macro_rules! implement_iterators {
-    ($iter:expr, $ret:ty) => {
+    ($lifetime: lifetime, $iter:expr, $ret:ty) => {
         /// Incrementally iterate the keys space.
         #[inline]
-        fn scan<RV: FromRedisValue>(&mut self) -> $ret {
+        fn scan<$lifetime, RV: FromRedisValue + $lifetime>(&$lifetime mut self) -> $ret {
             let mut c = cmd("SCAN");
             c.cursor_arg(0);
             $iter(c, self)
@@ -94,7 +220,7 @@ macro_rules! implement_iterators {
 
         /// Incrementally iterate the keys space with options.
         #[inline]
-        fn scan_options<RV: FromRedisValue>(&mut self, opts: ScanOptions) -> $ret {
+        fn scan_options<$lifetime, RV: FromRedisValue + $lifetime>(&$lifetime mut self, opts: ScanOptions) -> $ret {
             let mut c = cmd("SCAN");
             c.cursor_arg(0).arg(opts);
             $iter(c, self)
@@ -102,7 +228,7 @@ macro_rules! implement_iterators {
 
         /// Incrementally iterate the keys space for keys matching a pattern.
         #[inline]
-        fn scan_match<P: ToSingleRedisArg, RV: FromRedisValue>(&mut self, pattern: P) -> $ret {
+        fn scan_match<$lifetime, P: ToSingleRedisArg, RV: FromRedisValue + $lifetime>(&$lifetime mut self, pattern: P) -> $ret {
             let mut c = cmd("SCAN");
             c.cursor_arg(0).arg("MATCH").arg(pattern);
             $iter(c, self)
@@ -110,7 +236,7 @@ macro_rules! implement_iterators {
 
         /// Incrementally iterate hash fields and associated values.
         #[inline]
-        fn hscan<K: ToSingleRedisArg, RV: FromRedisValue>(&mut self, key: K) -> $ret {
+        fn hscan<$lifetime, K: ToSingleRedisArg, RV: FromRedisValue + $lifetime>(&$lifetime mut self, key: K) -> $ret {
             let mut c = cmd("HSCAN");
             c.arg(key).cursor_arg(0);
             $iter(c, self)
@@ -119,8 +245,8 @@ macro_rules! implement_iterators {
         /// Incrementally iterate hash fields and associated values for
         /// field names matching a pattern.
         #[inline]
-        fn hscan_match<K: ToSingleRedisArg, P: ToSingleRedisArg, RV: FromRedisValue>(
-            &mut self,
+        fn hscan_match<$lifetime, K: ToSingleRedisArg, P: ToSingleRedisArg, RV: FromRedisValue + $lifetime>(
+            &$lifetime mut self,
             key: K,
             pattern: P,
         ) -> $ret {
@@ -131,7 +257,7 @@ macro_rules! implement_iterators {
 
         /// Incrementally iterate set elements.
         #[inline]
-        fn sscan<K: ToSingleRedisArg, RV: FromRedisValue>(&mut self, key: K) -> $ret {
+        fn sscan<$lifetime, K: ToSingleRedisArg, RV: FromRedisValue + $lifetime>(&$lifetime mut self, key: K) -> $ret {
             let mut c = cmd("SSCAN");
             c.arg(key).cursor_arg(0);
             $iter(c, self)
@@ -139,8 +265,8 @@ macro_rules! implement_iterators {
 
         /// Incrementally iterate set elements for elements matching a pattern.
         #[inline]
-        fn sscan_match<K: ToSingleRedisArg, P: ToSingleRedisArg, RV: FromRedisValue>(
-            &mut self,
+        fn sscan_match<$lifetime, K: ToSingleRedisArg, P: ToSingleRedisArg, RV: FromRedisValue + $lifetime>(
+            &$lifetime mut self,
             key: K,
             pattern: P,
         ) -> $ret {
@@ -151,7 +277,7 @@ macro_rules! implement_iterators {
 
         /// Incrementally iterate sorted set elements.
         #[inline]
-        fn zscan<K: ToSingleRedisArg, RV: FromRedisValue>(&mut self, key: K) -> $ret {
+        fn zscan<$lifetime, K: ToSingleRedisArg, RV: FromRedisValue + $lifetime>(&$lifetime mut self, key: K) -> $ret {
             let mut c = cmd("ZSCAN");
             c.arg(key).cursor_arg(0);
             $iter(c, self)
@@ -159,8 +285,8 @@ macro_rules! implement_iterators {
 
         /// Incrementally iterate sorted set elements for elements matching a pattern.
         #[inline]
-        fn zscan_match<K: ToSingleRedisArg, P: ToSingleRedisArg, RV: FromRedisValue>(
-            &mut self,
+        fn zscan_match<$lifetime, K: ToSingleRedisArg, P: ToSingleRedisArg, RV: FromRedisValue + $lifetime>(
+            &$lifetime mut self,
             key: K,
             pattern: P,
         ) -> $ret {
@@ -173,11 +299,10 @@ macro_rules! implement_iterators {
 
 macro_rules! implement_commands {
     (
-        $lifetime: lifetime
         $(
             $(#[$attr:meta])+
             fn $name:ident<$($tyargs:ident : $ty:ident),*>(
-                $($argname:ident: $argty:ty),*) -> $rettype:tt $body:block
+                $($argname:ident: $argty:ty),*) -> $rettype:tt $(via $ret_conv_fn:ident)? { $($body:tt)* }
         )*
     ) =>
     (
@@ -215,23 +340,28 @@ macro_rules! implement_commands {
                 $(#[$attr])*
                 #[inline]
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-                fn $name<$lifetime, $($tyargs: $ty, )* RV: FromRedisValue>(
+                fn $name<$($tyargs: $ty, )* RV: FromRedisValue>(
                     &mut self $(, $argname: $argty)*) -> RedisResult<RV>
-                    { Cmd::$name($($argname),*).query(self) }
+                    {
+                        if_redisresult!($rettype, try, (Cmd::$name($($argname),*)))
+                            .query(self)
+                    }
             )*
 
             implement_iterators! {
+                'a,
                 |c: Cmd, this| c.iter(this),
-                RedisResult<Iter<'_, RV>>
+                RedisResult<Iter<'a, RV>>
             }
         }
 
         impl Cmd {
             $(
                 $(#[$attr])*
+                #[inline]
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-                pub fn $name<$lifetime, $($tyargs: $ty),*>($($argname: $argty),*) -> Self {
-                    $body
+                pub fn $name<$($tyargs: $ty),*>($($argname: $argty),*) -> if_redisresult!($rettype, wrap_redisresult, Self) {
+                    if_redisresult!($rettype, wrap_ok, { $($body)* })
                 }
             )*
         }
@@ -271,20 +401,25 @@ macro_rules! implement_commands {
                 $(#[$attr])*
                 #[inline]
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-                fn $name<$lifetime, $($tyargs: $ty + Send + Sync + $lifetime,)* RV>(
-                    & $lifetime mut self
+                fn $name<$($tyargs: $ty + Send + Sync,)* RV>(
+                    &mut self
                     $(, $argname: $argty)*
-                ) -> crate::types::RedisFuture<$lifetime, RV>
+                ) -> impl Future<Output = RedisResult<RV>> + Send
                 where
                     RV: FromRedisValue,
                 {
-                    Box::pin(async move { ($body).query_async(self).await })
+                    async move {
+                        if_redisresult!($rettype, try, (Cmd::$name($($argname),*)))
+                            .query_async(self)
+                            .await
+                    }
                 }
             )*
 
             implement_iterators! {
-                |c: Cmd, this| Box::pin(async move { c.iter_async(this).await }),
-                crate::types::RedisFuture<'_, crate::cmd::AsyncIter<'_, RV>>
+                'a,
+                |c: Cmd, this| async move { c.iter_async(this).await },
+                impl Future<Output = RedisResult<crate::cmd::AsyncIter<'a, RV>>> + Send
             }
         }
 
@@ -293,21 +428,17 @@ macro_rules! implement_commands {
         pub trait TypedCommands : ConnectionLike+Sized {
             $(
                 implement_command_sync! {
-                    $lifetime
                     $(#[$attr])*
                     fn $name<$($tyargs: $ty),*>(
                         $($argname: $argty),*
-                    )
-
-                    {
-                        $body
-                    } $rettype
+                    ) -> $rettype $(via $ret_conv_fn)?
                 }
             )*
 
             implement_iterators! {
+                'a,
                 |c: Cmd, this| c.iter(this),
-                RedisResult<Iter<'_, RV>>
+                RedisResult<Iter<'a, RV>>
             }
 
             /// Get a value from Redis and convert it to an `Option<isize>`.
@@ -327,31 +458,27 @@ macro_rules! implement_commands {
         pub trait AsyncTypedCommands : crate::aio::ConnectionLike + Send + Sized {
             $(
                 implement_command_async! {
-                    $lifetime
                     $(#[$attr])*
                     fn $name<$($tyargs: $ty),*>(
                         $($argname: $argty),*
-                    )
-
-                    {
-                        $body
-                    } $rettype
+                    ) -> $rettype $(via $ret_conv_fn)?
                 }
             )*
 
             implement_iterators! {
-                |c: Cmd, this| Box::pin(async move { c.iter_async(this).await }),
-                crate::types::RedisFuture<'_, crate::cmd::AsyncIter<'_, RV>>
+                'a,
+                |c: Cmd, this| async move { c.iter_async(this).await },
+                impl Future<Output = RedisResult<crate::cmd::AsyncIter<'a, RV>>>
             }
 
             /// Get a value from Redis and convert it to an `Option<isize>`.
-            fn get_int<$lifetime, K: ToSingleRedisArg + Send + Sync + $lifetime>(&$lifetime mut self, key: K) -> crate::types::RedisFuture<$lifetime, Option<isize>> {
-                Box::pin(async move { cmd("GET").arg(key).query_async(self).await })
+            fn get_int<K: ToSingleRedisArg + Send + Sync>(&mut self, key: K) -> impl Future<Output = RedisResult<Option<isize>>> + Send {
+                async move { cmd("GET").arg(key).query_async(self).await }
             }
 
             /// Get values from Redis and convert them to `Option<isize>`s.
-            fn mget_ints<$lifetime, K: ToRedisArgs + Send + Sync + $lifetime>(&$lifetime mut self, key: K) -> crate::types::RedisFuture<$lifetime, Vec<Option<isize>>> {
-                Box::pin(async move { cmd("MGET").arg(key).query_async(self).await })
+            fn mget_ints<K: ToRedisArgs + Send + Sync>(&mut self, key: K) -> impl Future<Output = RedisResult<Vec<Option<isize>>>> + Send {
+                async move { cmd("MGET").arg(key).query_async(self).await }
             }
         }
 
@@ -363,10 +490,10 @@ macro_rules! implement_commands {
                 $(#[$attr])*
                 #[inline]
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-                pub fn $name<$lifetime, $($tyargs: $ty),*>(
+                pub fn $name<$($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
-                ) -> &mut Self {
-                    self.add_command($body)
+                ) -> if_redisresult!($rettype, wrap_redisresult, (&mut Self)) {
+                    if_redisresult!($rettype, wrap_ok, (write_pipeline_command!(self, { $($body)* })))
                 }
             )*
         }
@@ -380,10 +507,10 @@ macro_rules! implement_commands {
                 $(#[$attr])*
                 #[inline]
                 #[allow(clippy::extra_unused_lifetimes, clippy::needless_lifetimes)]
-                pub fn $name<$lifetime, $($tyargs: $ty),*>(
+                pub fn $name<$($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
-                ) -> &mut Self {
-                    self.add_command($body)
+                ) -> if_redisresult!($rettype, wrap_redisresult, (&mut Self)) {
+                    if_redisresult!($rettype, wrap_ok, (write_pipeline_command!(self, { $($body)* })))
                 }
             )*
         }

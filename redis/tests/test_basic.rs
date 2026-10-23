@@ -12,13 +12,14 @@ mod basic {
     use rand::{RngExt, rng};
 
     use redis::{
-        Client, Connection, ConnectionInfo, ConnectionLike, ControlFlow, CopyOptions, ErrorKind,
-        ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, HashFieldExpirationOptions,
-        IncrexOptions,
+        Aggregate, Client, Connection, ConnectionInfo, ConnectionLike, ControlFlow, CopyOptions,
+        ErrorKind, ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck,
+        HashFieldExpirationOptions, IncrexOptions,
         IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply},
         MSetOptions, ProtocolVersion, PubSubCommands, PushInfo, PushKind, RedisConnectionInfo,
-        RedisResult, Role, ScanOptions, SetExpiry, SetOptions, SortedSetAddOptions, ToRedisArgs,
-        TypedCommands, UpdateCheck, Value, ValueComparison, ValueType, cmd,
+        RedisResult, Role, ScanOptions, SetExpiry, SetOptions, SortedSetAddOptions,
+        SortedSetOperationOptions, ToRedisArgs, TypedCommands, UpdateCheck, Value, ValueComparison,
+        ValueType, cmd,
     };
     use redis::{RedisError, ServerErrorKind};
     use redis::{calculate_value_digest, is_valid_16_bytes_hex_digest};
@@ -28,9 +29,9 @@ mod basic {
         EmbeddingInput, VAddOptions, VEmbOptions, VSimOptions, VectorAddInput, VectorQuantization,
         VectorSimilaritySearchInput,
     };
-    use redis_test::redis_value;
     use redis_test::server::redis_settings;
     use redis_test::utils::get_listener_on_free_port;
+    use redis_test::*;
 
     use assert_matches::assert_matches;
     #[cfg(feature = "vector-sets")]
@@ -86,7 +87,7 @@ mod basic {
 
     #[test]
     fn test_args() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         redis::cmd("SET")
@@ -107,7 +108,7 @@ mod basic {
 
     #[test]
     fn test_can_authenticate_with_username_and_password() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         let username = "foo";
@@ -138,7 +139,7 @@ mod basic {
 
     #[test]
     fn test_getset() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         redis::cmd("SET").arg("foo").arg(42).exec(&mut con).unwrap();
@@ -158,7 +159,7 @@ mod basic {
     //unit test for key_type function
     #[test]
     fn test_key_type() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         // The key does not have a value
@@ -214,7 +215,7 @@ mod basic {
     #[test]
     fn test_client_tracking_doesnt_block_execution() {
         //It checks if the library distinguish a push-type message from the others and continues its normal operation.
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
         let (k1, k2): (i32, i32) = redis::pipe()
             .cmd("CLIENT")
@@ -250,7 +251,7 @@ mod basic {
 
     #[test]
     fn test_incr() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         redis::cmd("SET").arg("foo").arg(42).exec(&mut con).unwrap();
@@ -573,7 +574,7 @@ mod basic {
 
     #[test]
     fn test_ping() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         let res: String = con.ping_message("foobar").unwrap();
@@ -584,7 +585,7 @@ mod basic {
 
     #[test]
     fn test_getdel() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         redis::cmd("SET").arg("foo").arg(42).exec(&mut con).unwrap();
@@ -599,7 +600,7 @@ mod basic {
 
     #[test]
     fn test_getex() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         redis::cmd("SET")
@@ -642,7 +643,7 @@ mod basic {
 
     #[test]
     fn test_info() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         let info: redis::InfoDict = redis::cmd("INFO").query(&mut con).unwrap();
@@ -655,7 +656,7 @@ mod basic {
 
     #[test]
     fn test_hash_ops() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         redis::cmd("HSET")
@@ -944,6 +945,10 @@ mod basic {
             redis::Commands::hget_ex(&mut con, HASH_KEY, &expired_fields, Expiry::PERSIST),
             Ok([Value::Nil])
         );
+        assert_eq!(
+            con.hget_ex(HASH_KEY, &expired_fields, Expiry::PERSIST),
+            Ok(vec![None])
+        );
 
         // Scenario 5
         // Retrieve multiple fields and set their expiration to 1 second
@@ -985,6 +990,10 @@ mod basic {
         assert_eq!(
             redis::Commands::hget_ex(&mut con, HASH_KEY, &expired_fields, Expiry::PERSIST),
             Ok(vec![Value::Nil; expired_fields.len()])
+        );
+        assert_eq!(
+            con.hget_ex(HASH_KEY, &expired_fields, Expiry::PERSIST),
+            Ok(vec![None; expired_fields.len()])
         );
     }
 
@@ -1387,7 +1396,7 @@ mod basic {
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_unlink() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         redis::cmd("SET").arg("foo").arg(42).exec(&mut con).unwrap();
@@ -1401,7 +1410,7 @@ mod basic {
 
     #[test]
     fn test_set_ops() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         assert_eq!(con.sadd("foo", &[1, 2, 3]), Ok(3));
@@ -1426,7 +1435,7 @@ mod basic {
 
     #[test]
     fn test_scan() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         assert_eq!(con.sadd("foo", &[1, 2, 3]), Ok(3));
@@ -1444,7 +1453,7 @@ mod basic {
 
     #[test]
     fn test_optionals() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         redis::cmd("SET").arg("foo").arg(1).exec(&mut con).unwrap();
@@ -1466,7 +1475,7 @@ mod basic {
 
     #[test]
     fn test_scanning() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
         let mut unseen = HashSet::new();
 
@@ -1496,7 +1505,7 @@ mod basic {
     fn test_checked_scanning_error() {
         const KEY_COUNT: u32 = 1000;
 
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         // Insert a bunch of keys with legit UTF-8 first
@@ -1547,7 +1556,7 @@ mod basic {
 
     #[test]
     fn test_filtered_scanning() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
         let mut unseen = HashSet::new();
 
@@ -1574,7 +1583,7 @@ mod basic {
 
     #[test]
     fn test_scan_with_options_works() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
         for i in 0..20usize {
             con.append(format!("test/{i}"), i).unwrap();
@@ -1593,12 +1602,12 @@ mod basic {
         let values: Vec<_> = values.collect();
         assert_eq!(values.len(), 41);
         // scan with type string
-        let opts = ScanOptions::default().with_type("string");
+        let opts = ScanOptions::default().with_type(ValueType::String);
         let values = con.scan_options::<String>(opts).unwrap();
         let values: Vec<_> = values.collect();
         assert_eq!(values.len(), 40);
         // scan with type hash
-        let opts = ScanOptions::default().with_type("hash");
+        let opts = ScanOptions::default().with_type(ValueType::Hash);
         let values = con.scan_options::<String>(opts).unwrap();
         let values: Vec<_> = values.collect();
         assert_eq!(values.len(), 1);
@@ -1606,7 +1615,7 @@ mod basic {
 
     #[test]
     fn test_pipeline() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         let ((k1, k2),): ((i32, i32),) = redis::pipe()
@@ -1629,7 +1638,7 @@ mod basic {
 
     #[test]
     fn test_pipeline_with_err() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         redis::cmd("SET")
@@ -1669,7 +1678,7 @@ mod basic {
 
     #[test]
     fn test_pipeline_returns_server_errors() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
         let mut pipe = redis::pipe();
         pipe.set("x", "x-value")
@@ -1688,7 +1697,7 @@ mod basic {
 
     #[test]
     fn test_empty_pipeline() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         redis::pipe().cmd("PING").ignore().exec(&mut con).unwrap();
@@ -1696,7 +1705,7 @@ mod basic {
 
     #[test]
     fn test_pipeline_transaction() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         let ((k1, k2),): ((i32, i32),) = redis::pipe()
@@ -1720,7 +1729,7 @@ mod basic {
 
     #[test]
     fn test_pipeline_transaction_with_errors() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         let _: () = con.set("x", 42).unwrap();
@@ -1757,7 +1766,7 @@ mod basic {
 
     #[test]
     fn test_pipeline_reuse_query() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         let mut pl = redis::pipe();
@@ -1795,7 +1804,7 @@ mod basic {
 
     #[test]
     fn test_pipeline_reuse_query_clear() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         let mut pl = redis::pipe();
@@ -1850,7 +1859,7 @@ mod basic {
 
     #[test]
     fn test_real_transaction() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         let key = "the_key";
@@ -1884,7 +1893,7 @@ mod basic {
 
     #[test]
     fn test_real_transaction_highlevel() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         let key = "the_key";
@@ -1908,7 +1917,7 @@ mod basic {
     #[test]
     fn test_pubsub() {
         use std::sync::{Arc, Barrier};
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         // Connection for subscriber api
@@ -1950,36 +1959,26 @@ mod basic {
         if ctx.protocol.supports_resp3() {
             // We expect all push messages to be here, since sync connection won't read in background
             // we can't receive push messages without requesting some command
-            let PushInfo { kind, data } = rx.try_recv().unwrap();
             assert_eq!(
-                (
-                    PushKind::Subscribe,
-                    vec![redis_value!("foo"), redis_value!(1)]
-                ),
-                (kind, data)
+                rx.try_recv().unwrap(),
+                PushInfo::new(PushKind::Subscribe).data(vec![redis_value!("foo"), redis_value!(1)])
             );
-            let PushInfo { kind, data } = rx.try_recv().unwrap();
             assert_eq!(
-                (
-                    PushKind::Message,
-                    vec![redis_value!("foo"), redis_value!("42")]
-                ),
-                (kind, data)
+                rx.try_recv().unwrap(),
+                PushInfo::new(PushKind::Message)
+                    .data(vec![redis_value!("foo"), redis_value!("42")])
             );
-            let PushInfo { kind, data } = rx.try_recv().unwrap();
             assert_eq!(
-                (
-                    PushKind::Message,
-                    vec![redis_value!("foo"), redis_value!("23")]
-                ),
-                (kind, data)
+                rx.try_recv().unwrap(),
+                PushInfo::new(PushKind::Message)
+                    .data(vec![redis_value!("foo"), redis_value!("23")])
             );
         }
     }
 
     #[test]
     fn test_pubsub_handles_timeout() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         // Connection for subscriber api
@@ -2003,7 +2002,7 @@ mod basic {
     #[test]
     fn test_pubsub_send_ping() {
         use std::sync::{Arc, Barrier};
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         // Connection for subscriber api
@@ -2068,7 +2067,7 @@ mod basic {
 
     #[test]
     fn pub_sub_subscription_to_multiple_channels() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut conn = ctx.connection();
         let mut pubsub_conn = conn.as_pubsub();
         pubsub_conn.subscribe(&["phonewave", "foo", "bar"]).unwrap();
@@ -2085,7 +2084,7 @@ mod basic {
 
     #[test]
     fn test_pubsub_unsubscribe() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         let (tx, rx) = std::sync::mpsc::channel();
@@ -2124,10 +2123,10 @@ mod basic {
             ];
             let mut received_values = vec![];
             for _ in &expected_values {
-                let PushInfo { kind, data } = rx.try_recv().unwrap();
+                let info = rx.try_recv().unwrap();
                 let channel_name: String =
-                    redis::from_redis_value_ref(data.first().unwrap()).unwrap();
-                received_values.push((kind, channel_name));
+                    redis::from_redis_value_ref(info.data.first().unwrap()).unwrap();
+                received_values.push((info.kind, channel_name));
             }
             for val in expected_values {
                 assert!(received_values.contains(&val));
@@ -2137,7 +2136,7 @@ mod basic {
 
     #[test]
     fn test_pubsub_subscribe_while_messages_are_sent() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut conn_external = ctx.connection();
         let mut conn_internal = ctx.connection();
         let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -2195,7 +2194,7 @@ mod basic {
 
     #[test]
     fn test_pubsub_unsubscribe_no_subs() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         {
@@ -2210,7 +2209,7 @@ mod basic {
 
     #[test]
     fn test_pubsub_unsubscribe_one_sub() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         {
@@ -2226,7 +2225,7 @@ mod basic {
 
     #[test]
     fn test_pubsub_unsubscribe_one_sub_one_psub() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         {
@@ -2243,7 +2242,7 @@ mod basic {
 
     #[test]
     fn scoped_pubsub() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         // Connection for subscriber api
@@ -2295,7 +2294,7 @@ mod basic {
 
     #[test]
     fn test_tuple_args() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         redis::cmd("HMSET")
@@ -2322,7 +2321,7 @@ mod basic {
 
     #[test]
     fn test_nice_api() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         assert_matches!(con.set("my_key", 42), Ok(_));
@@ -2345,7 +2344,7 @@ mod basic {
 
     #[test]
     fn test_auto_m_versions() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         assert_matches!(con.mset(&[("key1", 1), ("key2", 2)]), Ok(_));
@@ -2362,7 +2361,7 @@ mod basic {
 
     #[test]
     fn test_nice_hash_api() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         assert_eq!(
@@ -2425,7 +2424,7 @@ mod basic {
 
     #[test]
     fn test_nice_list_api() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         assert_eq!(con.rpush("my_list", &[1, 2, 3, 4]), Ok(4));
@@ -2460,7 +2459,7 @@ mod basic {
 
     #[test]
     fn test_tuple_decoding_regression() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         assert_matches!(con.del("my_zset"), Ok(_));
@@ -2479,7 +2478,7 @@ mod basic {
     #[test]
     fn test_tuple_decoding_from_iter() {
         const KEY: &str = "my_iter_tuple";
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         let map = HashMap::from([("one", 1), ("two", 2), ("three", 3)]);
@@ -2512,7 +2511,7 @@ mod basic {
 
     #[test]
     fn test_setbit_and_getbit_single_offset() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         assert_eq!(con.setbit("bitvec", 10, true), Ok(false));
@@ -2521,7 +2520,7 @@ mod basic {
 
     #[test]
     fn test_bit_operations() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         fn perform_bitwise_operation<F>(str1: &str, str2: &str, op: F) -> String
@@ -2629,7 +2628,7 @@ mod basic {
 
     #[test]
     fn test_redis_server_down() {
-        let mut ctx = TestContext::new();
+        let mut ctx = TestContext::default();
         let mut con = ctx.connection();
 
         let ping = redis::cmd("PING").query::<String>(&mut con);
@@ -2646,117 +2645,444 @@ mod basic {
     }
 
     #[test]
-    fn test_zinterstore_weights() {
-        let ctx = TestContext::new();
+    fn test_zinterstore_zunionstore() {
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
+        // Shared members (one, two) have different scores in each set so that
+        // SUM, MIN and MAX each produce distinct, obvious results.
         con.zadd_multiple("zset1", &[(1, "one"), (2, "two"), (4, "four")])
             .unwrap();
-        con.zadd_multiple("zset2", &[(1, "one"), (2, "two"), (3, "three")])
+        con.zadd_multiple("zset2", &[(5, "one"), (6, "two"), (3, "three")])
             .unwrap();
 
-        // zinterstore_weights
-        assert_eq!(
-            con.zinterstore_weights("out", &[("zset1", 2), ("zset2", 3)]),
-            Ok(2)
-        );
+        let sum = || SortedSetOperationOptions::default();
+        let min = || SortedSetOperationOptions::default().aggregate(Aggregate::Min);
+        let max = || SortedSetOperationOptions::default().aggregate(Aggregate::Max);
 
-        assert_eq!(
-            con.zrange_withscores("out", 0, -1),
-            Ok(vec![("one".to_string(), 5.0), ("two".to_string(), 10.0)])
-        );
-
-        // zinterstore_min_weights
-        assert_eq!(
-            con.zinterstore_min_weights("out", &[("zset1", 2), ("zset2", 3)]),
-            Ok(2)
-        );
-
+        // ZINTERSTORE (intersection = {one, two}).
+        // Without weights the aggregators combine the raw scores:
+        // SUM one = 1 + 5, two = 2 + 6; MIN/MAX keep the smaller/larger score.
+        assert_eq!(con.zinterstore("out", &["zset1", "zset2"], sum()), Ok(2));
         assert_eq!(
             con.zrange_withscores("out", 0, -1),
-            Ok(vec![("one".to_string(), 2.0), ("two".to_string(), 4.0),])
+            Ok(vec![("one".to_string(), 6.0), ("two".to_string(), 8.0)])
         );
-
-        // zinterstore_max_weights
-        assert_eq!(
-            con.zinterstore_max_weights("out", &[("zset1", 2), ("zset2", 3)]),
-            Ok(2)
-        );
-
+        assert_eq!(con.zinterstore("out", &["zset1", "zset2"], min()), Ok(2));
         assert_eq!(
             con.zrange_withscores("out", 0, -1),
-            Ok(vec![("one".to_string(), 3.0), ("two".to_string(), 6.0),])
+            Ok(vec![("one".to_string(), 1.0), ("two".to_string(), 2.0)])
         );
-    }
-
-    #[test]
-    fn test_zunionstore_weights() {
-        let ctx = TestContext::new();
-        let mut con = ctx.connection();
-
-        con.zadd_multiple("zset1", &[(1, "one"), (2, "two")])
-            .unwrap();
-        con.zadd_multiple("zset2", &[(1, "one"), (2, "two"), (3, "three")])
-            .unwrap();
-
-        // zunionstore_weights
+        assert_eq!(con.zinterstore("out", &["zset1", "zset2"], max()), Ok(2));
         assert_eq!(
-            con.zunionstore_weights("out", &[("zset1", 2), ("zset2", 3)]),
-            Ok(3)
+            con.zrange_withscores("out", 0, -1),
+            Ok(vec![("one".to_string(), 5.0), ("two".to_string(), 6.0)])
+        );
+        // Weights multiply each set's score before aggregating:
+        // one = (1 * 2), (5 * 3); two = (2 * 2), (6 * 3).
+        assert_eq!(
+            con.zinterstore_with_weights("out", &[("zset1", 2), ("zset2", 3)], sum()),
+            Ok(2)
+        );
+        assert_eq!(
+            con.zrange_withscores("out", 0, -1),
+            Ok(vec![("one".to_string(), 17.0), ("two".to_string(), 22.0)])
+        );
+        assert_eq!(
+            con.zinterstore_with_weights("out", &[("zset1", 2), ("zset2", 3)], min()),
+            Ok(2)
+        );
+        assert_eq!(
+            con.zrange_withscores("out", 0, -1),
+            Ok(vec![("one".to_string(), 2.0), ("two".to_string(), 4.0)])
+        );
+        assert_eq!(
+            con.zinterstore_with_weights("out", &[("zset1", 2), ("zset2", 3)], max()),
+            Ok(2)
+        );
+        assert_eq!(
+            con.zrange_withscores("out", 0, -1),
+            Ok(vec![("one".to_string(), 15.0), ("two".to_string(), 18.0)])
         );
 
+        // ZUNIONSTORE (union = {one, two, three, four}).
+        // three (only in zset2) and four (only in zset1) pass through unchanged.
+        assert_eq!(con.zunionstore("out", &["zset1", "zset2"], sum()), Ok(4));
         assert_eq!(
             con.zrange_withscores("out", 0, -1),
             Ok(vec![
-                ("one".to_string(), 5.0),
-                ("three".to_string(), 9.0),
-                ("two".to_string(), 10.0)
+                ("three".to_string(), 3.0),
+                ("four".to_string(), 4.0),
+                ("one".to_string(), 6.0),
+                ("two".to_string(), 8.0)
             ])
         );
-        // test converting to double
+        assert_eq!(con.zunionstore("out", &["zset1", "zset2"], min()), Ok(4));
         assert_eq!(
             con.zrange_withscores("out", 0, -1),
             Ok(vec![
-                ("one".to_string(), 5.0),
-                ("three".to_string(), 9.0),
-                ("two".to_string(), 10.0)
+                ("one".to_string(), 1.0),
+                ("two".to_string(), 2.0),
+                ("three".to_string(), 3.0),
+                ("four".to_string(), 4.0)
             ])
         );
-
-        // zunionstore_min_weights
+        assert_eq!(con.zunionstore("out", &["zset1", "zset2"], max()), Ok(4));
         assert_eq!(
-            con.zunionstore_min_weights("out", &[("zset1", 2), ("zset2", 3)]),
-            Ok(3)
+            con.zrange_withscores("out", 0, -1),
+            Ok(vec![
+                ("three".to_string(), 3.0),
+                ("four".to_string(), 4.0),
+                ("one".to_string(), 5.0),
+                ("two".to_string(), 6.0)
+            ])
         );
-
+        // Weights (zset1 * 2, zset2 * 3): three = 3 * 3 = 9, four = 4 * 2 = 8.
+        assert_eq!(
+            con.zunionstore_with_weights("out", &[("zset1", 2), ("zset2", 3)], sum()),
+            Ok(4)
+        );
+        assert_eq!(
+            con.zrange_withscores("out", 0, -1),
+            Ok(vec![
+                ("four".to_string(), 8.0),
+                ("three".to_string(), 9.0),
+                ("one".to_string(), 17.0),
+                ("two".to_string(), 22.0)
+            ])
+        );
+        assert_eq!(
+            con.zunionstore_with_weights("out", &[("zset1", 2), ("zset2", 3)], min()),
+            Ok(4)
+        );
         assert_eq!(
             con.zrange_withscores("out", 0, -1),
             Ok(vec![
                 ("one".to_string(), 2.0),
                 ("two".to_string(), 4.0),
+                ("four".to_string(), 8.0),
                 ("three".to_string(), 9.0)
             ])
         );
-
-        // zunionstore_max_weights
         assert_eq!(
-            con.zunionstore_max_weights("out", &[("zset1", 2), ("zset2", 3)]),
-            Ok(3)
+            con.zunionstore_with_weights("out", &[("zset1", 2), ("zset2", 3)], max()),
+            Ok(4)
         );
-
         assert_eq!(
             con.zrange_withscores("out", 0, -1),
             Ok(vec![
-                ("one".to_string(), 3.0),
-                ("two".to_string(), 6.0),
-                ("three".to_string(), 9.0)
+                ("four".to_string(), 8.0),
+                ("three".to_string(), 9.0),
+                ("one".to_string(), 15.0),
+                ("two".to_string(), 18.0)
             ])
         );
     }
 
     #[test]
+    fn test_zinterstore_zunionstore_count() {
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        let mut con = ctx.connection();
+
+        con.zadd_multiple("s1", &[(1, "foo"), (1, "bar")]).unwrap();
+        con.zadd_multiple("s2", &[(2, "foo"), (2, "bar")]).unwrap();
+        con.zadd_multiple("s3", &[(3, "foo")]).unwrap();
+
+        // With COUNT and no weights, the score is the number of input sets containing the element.
+        // For the intersection, only foo is present and it is in all 3 sets.
+        assert_eq!(
+            con.zinterstore(
+                "t1",
+                &["s1", "s2", "s3"],
+                SortedSetOperationOptions::default().aggregate(Aggregate::Count)
+            ),
+            Ok(1)
+        );
+        assert_eq!(
+            con.zrange_withscores("t1", 0, -1),
+            Ok(vec![("foo".to_string(), 3.0)])
+        );
+
+        // For the union, foo is in all 3 sets and bar in 2.
+        assert_eq!(
+            con.zunionstore(
+                "t1",
+                &["s1", "s2", "s3"],
+                SortedSetOperationOptions::default().aggregate(Aggregate::Count)
+            ),
+            Ok(2)
+        );
+        assert_eq!(
+            con.zrange_withscores("t1", 0, -1),
+            Ok(vec![("bar".to_string(), 2.0), ("foo".to_string(), 3.0)])
+        );
+
+        // With COUNT and weights, the score is the sum of the weights of the input sets
+        // containing the element, ignoring the original scores.
+        assert_eq!(
+            con.zinterstore_with_weights(
+                "t1",
+                &[("s1", 10), ("s2", 5), ("s3", 3)],
+                SortedSetOperationOptions::default().aggregate(Aggregate::Count)
+            ),
+            Ok(1)
+        );
+        assert_eq!(
+            con.zrange_withscores("t1", 0, -1),
+            Ok(vec![("foo".to_string(), 18.0)])
+        );
+
+        assert_eq!(
+            con.zunionstore_with_weights(
+                "t1",
+                &[("s1", 10), ("s2", 5), ("s3", 3)],
+                SortedSetOperationOptions::default().aggregate(Aggregate::Count)
+            ),
+            Ok(2)
+        );
+        assert_eq!(
+            con.zrange_withscores("t1", 0, -1),
+            Ok(vec![("bar".to_string(), 15.0), ("foo".to_string(), 18.0)])
+        );
+    }
+
+    #[test]
+    fn test_zinter_zunion() {
+        let ctx = TestContext::default();
+        let mut con = ctx.connection();
+
+        // Shared members (one, two) have different scores in each set so that
+        // SUM, MIN and MAX each produce distinct, obvious results.
+        con.zadd_multiple("zset1", &[(1, "one"), (2, "two"), (4, "four")])
+            .unwrap();
+        con.zadd_multiple("zset2", &[(5, "one"), (6, "two"), (3, "three")])
+            .unwrap();
+
+        let sum = || SortedSetOperationOptions::default();
+        let min = || SortedSetOperationOptions::default().aggregate(Aggregate::Min);
+        let max = || SortedSetOperationOptions::default().aggregate(Aggregate::Max);
+
+        // ZINTER (intersection = {one, two})
+        // The intersection is always {one, two} and one always scores below two so the order is stable across aggregators.
+        assert_eq!(
+            con.zinter(&["zset1", "zset2"], sum()),
+            Ok(vec!["one".to_string(), "two".to_string()])
+        );
+        assert_eq!(
+            con.zinter(&["zset1", "zset2"], min()),
+            Ok(vec!["one".to_string(), "two".to_string()])
+        );
+        assert_eq!(
+            con.zinter(&["zset1", "zset2"], max()),
+            Ok(vec!["one".to_string(), "two".to_string()])
+        );
+        assert_eq!(
+            con.zinter_with_weights(&[("zset1", 2), ("zset2", 3)], sum()),
+            Ok(vec!["one".to_string(), "two".to_string()])
+        );
+        assert_eq!(
+            con.zinter_with_weights(&[("zset1", 2), ("zset2", 3)], min()),
+            Ok(vec!["one".to_string(), "two".to_string()])
+        );
+        assert_eq!(
+            con.zinter_with_weights(&[("zset1", 2), ("zset2", 3)], max()),
+            Ok(vec!["one".to_string(), "two".to_string()])
+        );
+        // With scores:
+        assert_eq!(
+            con.zinter_withscores(&["zset1", "zset2"], sum()),
+            Ok(vec![("one".to_string(), 6.0), ("two".to_string(), 8.0)])
+        );
+        assert_eq!(
+            con.zinter_withscores(&["zset1", "zset2"], min()),
+            Ok(vec![("one".to_string(), 1.0), ("two".to_string(), 2.0)])
+        );
+        assert_eq!(
+            con.zinter_withscores(&["zset1", "zset2"], max()),
+            Ok(vec![("one".to_string(), 5.0), ("two".to_string(), 6.0)])
+        );
+        // Weights multiply each set's score before aggregating:
+        // one = (1 * 2) + (5 * 3)
+        // two = (2 * 2) + (6 * 3)
+        assert_eq!(
+            con.zinter_with_weights_withscores(&[("zset1", 2), ("zset2", 3)], sum()),
+            Ok(vec![("one".to_string(), 17.0), ("two".to_string(), 22.0)])
+        );
+        assert_eq!(
+            con.zinter_with_weights_withscores(&[("zset1", 2), ("zset2", 3)], min()),
+            Ok(vec![("one".to_string(), 2.0), ("two".to_string(), 4.0)])
+        );
+        assert_eq!(
+            con.zinter_with_weights_withscores(&[("zset1", 2), ("zset2", 3)], max()),
+            Ok(vec![("one".to_string(), 15.0), ("two".to_string(), 18.0)])
+        );
+
+        // ZUNION (union = {one, two, three, four})
+        // Members only (ordered by resulting score, ties broken lexically).
+        assert_eq!(
+            con.zunion(&["zset1", "zset2"], sum()),
+            Ok(vec![
+                "three".to_string(),
+                "four".to_string(),
+                "one".to_string(),
+                "two".to_string()
+            ])
+        );
+        assert_eq!(
+            con.zunion(&["zset1", "zset2"], min()),
+            Ok(vec![
+                "one".to_string(),
+                "two".to_string(),
+                "three".to_string(),
+                "four".to_string()
+            ])
+        );
+        assert_eq!(
+            con.zunion(&["zset1", "zset2"], max()),
+            Ok(vec![
+                "three".to_string(),
+                "four".to_string(),
+                "one".to_string(),
+                "two".to_string()
+            ])
+        );
+        assert_eq!(
+            con.zunion_with_weights(&[("zset1", 2), ("zset2", 3)], sum()),
+            Ok(vec![
+                "four".to_string(),
+                "three".to_string(),
+                "one".to_string(),
+                "two".to_string()
+            ])
+        );
+        assert_eq!(
+            con.zunion_with_weights(&[("zset1", 2), ("zset2", 3)], min()),
+            Ok(vec![
+                "one".to_string(),
+                "two".to_string(),
+                "four".to_string(),
+                "three".to_string()
+            ])
+        );
+        assert_eq!(
+            con.zunion_with_weights(&[("zset1", 2), ("zset2", 3)], max()),
+            Ok(vec![
+                "four".to_string(),
+                "three".to_string(),
+                "one".to_string(),
+                "two".to_string()
+            ])
+        );
+        // With scores:
+        assert_eq!(
+            con.zunion_withscores(&["zset1", "zset2"], sum()),
+            Ok(vec![
+                ("three".to_string(), 3.0),
+                ("four".to_string(), 4.0),
+                ("one".to_string(), 6.0),
+                ("two".to_string(), 8.0)
+            ])
+        );
+        assert_eq!(
+            con.zunion_withscores(&["zset1", "zset2"], min()),
+            Ok(vec![
+                ("one".to_string(), 1.0),
+                ("two".to_string(), 2.0),
+                ("three".to_string(), 3.0),
+                ("four".to_string(), 4.0)
+            ])
+        );
+        assert_eq!(
+            con.zunion_withscores(&["zset1", "zset2"], max()),
+            Ok(vec![
+                ("three".to_string(), 3.0),
+                ("four".to_string(), 4.0),
+                ("one".to_string(), 5.0),
+                ("two".to_string(), 6.0)
+            ])
+        );
+        assert_eq!(
+            con.zunion_with_weights_withscores(&[("zset1", 2), ("zset2", 3)], sum()),
+            Ok(vec![
+                ("four".to_string(), 8.0),
+                ("three".to_string(), 9.0),
+                ("one".to_string(), 17.0),
+                ("two".to_string(), 22.0)
+            ])
+        );
+        assert_eq!(
+            con.zunion_with_weights_withscores(&[("zset1", 2), ("zset2", 3)], min()),
+            Ok(vec![
+                ("one".to_string(), 2.0),
+                ("two".to_string(), 4.0),
+                ("four".to_string(), 8.0),
+                ("three".to_string(), 9.0)
+            ])
+        );
+        assert_eq!(
+            con.zunion_with_weights_withscores(&[("zset1", 2), ("zset2", 3)], max()),
+            Ok(vec![
+                ("four".to_string(), 8.0),
+                ("three".to_string(), 9.0),
+                ("one".to_string(), 15.0),
+                ("two".to_string(), 18.0)
+            ])
+        );
+    }
+
+    #[test]
+    fn test_zinter_zunion_count() {
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        let mut con = ctx.connection();
+
+        con.zadd_multiple("s1", &[(1, "foo"), (1, "bar")]).unwrap();
+        con.zadd_multiple("s2", &[(2, "foo"), (2, "bar")]).unwrap();
+        con.zadd_multiple("s3", &[(3, "foo")]).unwrap();
+
+        let count = || SortedSetOperationOptions::default().aggregate(Aggregate::Count);
+
+        // COUNT with no weights = number of input sets containing the element.
+        assert_eq!(
+            con.zinter(&["s1", "s2", "s3"], count()),
+            Ok(vec!["foo".to_string()])
+        );
+        assert_eq!(
+            con.zunion(&["s1", "s2", "s3"], count()),
+            Ok(vec!["bar".to_string(), "foo".to_string()])
+        );
+        // With scores.
+        assert_eq!(
+            con.zinter_withscores(&["s1", "s2", "s3"], count()),
+            Ok(vec![("foo".to_string(), 3.0)])
+        );
+        assert_eq!(
+            con.zunion_withscores(&["s1", "s2", "s3"], count()),
+            Ok(vec![("bar".to_string(), 2.0), ("foo".to_string(), 3.0)])
+        );
+
+        // COUNT with weights = sum of weights of the sets containing the element.
+        assert_eq!(
+            con.zinter_with_weights(&[("s1", 10), ("s2", 5), ("s3", 3)], count()),
+            Ok(vec!["foo".to_string()])
+        );
+        assert_eq!(
+            con.zunion_with_weights(&[("s1", 10), ("s2", 5), ("s3", 3)], count()),
+            Ok(vec!["bar".to_string(), "foo".to_string()])
+        );
+        // With scores.
+        assert_eq!(
+            con.zinter_with_weights_withscores(&[("s1", 10), ("s2", 5), ("s3", 3)], count()),
+            Ok(vec![("foo".to_string(), 18.0)])
+        );
+        assert_eq!(
+            con.zunion_with_weights_withscores(&[("s1", 10), ("s2", 5), ("s3", 3)], count()),
+            Ok(vec![("bar".to_string(), 15.0), ("foo".to_string(), 18.0)])
+        );
+    }
+
+    #[test]
     fn test_zrembylex() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         let setname = "myzset";
@@ -2788,7 +3114,7 @@ mod basic {
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_zrandmember() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         let setname = "myzrandset";
@@ -2836,7 +3162,7 @@ mod basic {
 
     #[test]
     fn test_sismember() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         let setname = "myset";
@@ -2854,7 +3180,7 @@ mod basic {
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_smismember() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         let setname = "myset";
@@ -2865,7 +3191,7 @@ mod basic {
 
     #[test]
     fn test_object_freq_command() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         // Enable an LFU `maxmemory-policy`. This is required for `OBJECT FREQ` to work.
@@ -2894,7 +3220,7 @@ mod basic {
 
     #[test]
     fn test_object_idletime_command() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         con.set("object_key_str", "object_value_str").unwrap();
@@ -2916,7 +3242,7 @@ mod basic {
 
     #[test]
     fn test_mget() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         con.set(1, "1").unwrap();
@@ -2945,8 +3271,41 @@ mod basic {
     }
 
     #[test]
+    fn test_hmget() {
+        let ctx = TestContext::default();
+        let mut con = ctx.connection();
+
+        con.hset("my_hash", "f1", "1").unwrap();
+        let data: Vec<String> = con
+            .hmget("my_hash", &["f1"])
+            .unwrap()
+            .into_iter()
+            .map(|s| s.unwrap())
+            .collect();
+        assert_eq!(data, vec!["1"]);
+
+        con.hset("my_hash", "f2", "2").unwrap();
+        let data: Vec<String> = con
+            .hmget("my_hash", &["f1", "f2"])
+            .unwrap()
+            .into_iter()
+            .map(|s| s.unwrap())
+            .collect();
+        assert_eq!(data, vec!["1", "2"]);
+
+        let data: Vec<Option<String>> = con.hmget("my_hash", &["f4"]).unwrap();
+        assert_eq!(data, vec![None]);
+
+        let data: Vec<Option<String>> = con.hmget("my_hash", &["f2", "f4"]).unwrap();
+        assert_eq!(data, vec![Some("2".to_string()), None]);
+
+        let data: Vec<Option<String>> = con.hmget("non_existing_hash", &["f1", "f2"]).unwrap();
+        assert_eq!(data, vec![None, None]);
+    }
+
+    #[test]
     fn test_variable_length_get() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         con.set(1, "1").unwrap();
@@ -2958,7 +3317,7 @@ mod basic {
 
     #[test]
     fn test_multi_generics() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         assert_eq!(con.sadd(b"set1", vec![5, 42]), Ok(2));
@@ -2969,7 +3328,7 @@ mod basic {
 
     #[test]
     fn test_set_options_with_get() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         let opts = SetOptions::default().get(true);
@@ -3677,7 +4036,7 @@ mod basic {
 
     #[test]
     fn test_copy() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         let opts = CopyOptions::default();
@@ -3740,7 +4099,7 @@ mod basic {
 
     #[test]
     fn test_timeout_leaves_usable_connection() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         con.set("key", "value").unwrap();
@@ -3837,7 +4196,7 @@ mod basic {
 
     #[test]
     fn test_blocking_sorted_set_api() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         assert_matches!(con.zadd("a", "1a", 1), Ok(_));
@@ -3872,7 +4231,7 @@ mod basic {
 
     #[test]
     fn test_sorted_set_add_options() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         // Scenario 1
@@ -3943,6 +4302,111 @@ mod basic {
 
         assert_eq!(con.zadd_options("6", "6a", 6, &options), Ok(12));
         assert_eq!(con.zscore("6", "6a"), Ok(Some(12.0)));
+    }
+
+    #[test]
+    fn test_sorted_set_range_withscores_returns_member_score_pairs() {
+        let ctx = TestContext::default();
+        let mut con = ctx.connection();
+
+        // CI runs this suite under RESP2 and RESP3 (`PROTOCOL=RESP3` selects RESP3), so the
+        // expected pairs have to hold for both reply shapes.
+
+        // Scores cover fractional, negative and infinite values, plus one member (plus5)
+        // outside the bounded score ranges used below. Every assertion returns at least
+        // one fractional and one negative score.
+        assert_eq!(
+            con.zadd_multiple(
+                "my_zset",
+                &[
+                    (1.0, "one"),
+                    (1.5, "onehalf"),
+                    (-0.5, "minushalf"),
+                    (-2.0, "minus2"),
+                    (5.0, "plus5"),
+                    (f64::INFINITY, "posinf"),
+                    (f64::NEG_INFINITY, "neginf")
+                ]
+            ),
+            Ok(7)
+        );
+
+        assert_eq!(
+            con.zrangebyscore_withscores("my_zset", "-inf", "+inf"),
+            Ok(vec![
+                ("neginf".to_string(), f64::NEG_INFINITY),
+                ("minus2".to_string(), -2.0),
+                ("minushalf".to_string(), -0.5),
+                ("one".to_string(), 1.0),
+                ("onehalf".to_string(), 1.5),
+                ("plus5".to_string(), 5.0),
+                ("posinf".to_string(), f64::INFINITY)
+            ])
+        );
+        assert_eq!(
+            con.zrangebyscore_withscores("my_zset", -3, 2),
+            Ok(vec![
+                ("minus2".to_string(), -2.0),
+                ("minushalf".to_string(), -0.5),
+                ("one".to_string(), 1.0),
+                ("onehalf".to_string(), 1.5)
+            ])
+        );
+        assert_eq!(
+            con.zrangebyscore_limit_withscores("my_zset", -3, 2, 1, 2),
+            Ok(vec![
+                ("minushalf".to_string(), -0.5),
+                ("one".to_string(), 1.0)
+            ])
+        );
+        assert_eq!(
+            con.zrevrange_withscores("my_zset", 0, -1),
+            Ok(vec![
+                ("posinf".to_string(), f64::INFINITY),
+                ("plus5".to_string(), 5.0),
+                ("onehalf".to_string(), 1.5),
+                ("one".to_string(), 1.0),
+                ("minushalf".to_string(), -0.5),
+                ("minus2".to_string(), -2.0),
+                ("neginf".to_string(), f64::NEG_INFINITY)
+            ])
+        );
+        assert_eq!(
+            con.zrevrangebyscore_withscores("my_zset", 2, -3),
+            Ok(vec![
+                ("onehalf".to_string(), 1.5),
+                ("one".to_string(), 1.0),
+                ("minushalf".to_string(), -0.5),
+                ("minus2".to_string(), -2.0)
+            ])
+        );
+        assert_eq!(
+            con.zrevrangebyscore_limit_withscores("my_zset", 2, -3, 1, 2),
+            Ok(vec![
+                ("one".to_string(), 1.0),
+                ("minushalf".to_string(), -0.5)
+            ])
+        );
+    }
+
+    #[test]
+    fn test_zmscore() {
+        let ctx = TestContext::default();
+        let mut con = ctx.connection();
+
+        let _: usize = con.zadd("my_zset", "m1", 1.5).unwrap();
+        let _: usize = con.zadd("my_zset", "m2", 2.5).unwrap();
+
+        let scores: Vec<Option<f64>> = con.zscore_multiple("my_zset", &["m1", "m2"]).unwrap();
+        assert_eq!(scores, vec![Some(1.5), Some(2.5)]);
+
+        let scores: Vec<Option<f64>> = con.zscore_multiple("my_zset", &["m1", "m3"]).unwrap();
+        assert_eq!(scores, vec![Some(1.5), None]);
+
+        let scores: Vec<Option<f64>> = con
+            .zscore_multiple("non_existing_zset", &["m1", "m2"])
+            .unwrap();
+        assert_eq!(scores, vec![None, None]);
     }
 
     #[test]
@@ -4575,7 +5039,7 @@ mod basic {
 
     #[test]
     fn test_push_manager() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);
         let connection_info = ctx.server.connection_info().set_redis_settings(redis);
 
@@ -4593,10 +5057,9 @@ mod basic {
         for _ in 0..10 {
             let _: RedisResult<()> = pipe.query(&mut con);
             con.get_int("key_1").unwrap();
-            let PushInfo { kind, data } = rx.try_recv().unwrap();
             assert_eq!(
-                (PushKind::Invalidate, vec![redis_value!(["key_1"])]),
-                (kind, data)
+                rx.try_recv().unwrap(),
+                PushInfo::new(PushKind::Invalidate).data(vec![redis_value!(["key_1"])])
             );
         }
         let (new_tx, new_rx) = std::sync::mpsc::channel();
@@ -4604,10 +5067,9 @@ mod basic {
         drop(rx);
         let _: RedisResult<()> = pipe.query(&mut con);
         con.get_int("key_1").unwrap();
-        let PushInfo { kind, data } = new_rx.try_recv().unwrap();
         assert_eq!(
-            (PushKind::Invalidate, vec![redis_value!(["key_1"])]),
-            (kind, data)
+            new_rx.try_recv().unwrap(),
+            PushInfo::new(PushKind::Invalidate).data(vec![redis_value!(["key_1"])])
         );
 
         {
@@ -4622,7 +5084,7 @@ mod basic {
 
     #[test]
     fn test_push_manager_disconnection() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);
         let connection_info = ctx.server.connection_info().set_redis_settings(redis);
         let client = redis::Client::open(connection_info).unwrap();
@@ -4645,7 +5107,7 @@ mod basic {
     #[test]
     fn test_raw_pubsub_with_push_manager() {
         // Tests PubSub usage with raw connection.
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         if !ctx.protocol.supports_resp3() {
             return;
         }
@@ -4673,8 +5135,8 @@ mod basic {
         // we don't assume any order on the received messages, so we first receive them and them check that they exist regardless of order
         let mut messages = vec![];
         for _ in 0..4 {
-            let PushInfo { kind, data } = rx.try_recv().unwrap();
-            messages.push((kind, data));
+            let info = rx.try_recv().unwrap();
+            messages.push((info.kind, info.data));
         }
         assert!(
             messages.contains(&(
@@ -4717,21 +5179,13 @@ mod basic {
         assert_eq!(con.publish("barvaz", 42), Ok(0));
 
         // We have received verification from Redis that it's unsubscribed to channel.
-        let PushInfo { kind, data } = rx.try_recv().unwrap();
         assert_eq!(
-            (
-                PushKind::Unsubscribe,
-                vec![redis_value!("foo"), redis_value!(1)]
-            ),
-            (kind, data)
+            rx.try_recv().unwrap(),
+            PushInfo::new(PushKind::Unsubscribe).data(vec![redis_value!("foo"), redis_value!(1)])
         );
-        let PushInfo { kind, data } = rx.try_recv().unwrap();
         assert_eq!(
-            (
-                PushKind::PUnsubscribe,
-                vec![redis_value!("bar*"), redis_value!(0)]
-            ),
-            (kind, data)
+            rx.try_recv().unwrap(),
+            PushInfo::new(PushKind::PUnsubscribe).data(vec![redis_value!("bar*"), redis_value!(0)])
         );
 
         // check that no additional message was sent.
@@ -4740,7 +5194,7 @@ mod basic {
 
     #[test]
     fn test_select_db() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let redis = redis_settings().set_db(5);
         let connection_info = ctx.server.connection_info().set_redis_settings(redis);
 
@@ -4755,7 +5209,7 @@ mod basic {
 
     #[test]
     fn test_client_getname() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
         redis::cmd("CLIENT")
             .arg("SETNAME")
@@ -4768,14 +5222,14 @@ mod basic {
 
     #[test]
     fn test_client_id() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
         let _num = con.client_id().unwrap();
     }
 
     #[test]
     fn test_client_setname() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
         assert_eq!(con.client_setname("connection-name"), Ok(()));
         let res: String = redis::cmd("CLIENT").arg("GETNAME").query(&mut con).unwrap();
@@ -4784,7 +5238,7 @@ mod basic {
 
     #[test]
     fn test_role_primary() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
         let ret = redis::cmd("ROLE").query::<Role>(&mut con).unwrap();
         assert_matches!(ret, Role::Primary { .. });
@@ -4792,7 +5246,7 @@ mod basic {
 
     #[test]
     fn test_connection_timeout_on_busy_server() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
         // we stop the server on another thread, in order to move forwardd while the server is stopped.
         let handle = thread::spawn(move || {
@@ -4819,7 +5273,7 @@ mod basic {
 
     #[test]
     fn fail_on_empty_command() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut connection = ctx.connection();
 
         let error: RedisError = redis::Pipeline::new()
@@ -4871,13 +5325,13 @@ mod basic {
 
 #[cfg(feature = "r2d2")]
 mod r2d2_pool {
-    use crate::support::*;
     use r2d2::ManageConnection;
     use redis::{ErrorKind, ServerErrorKind};
+    use redis_test::TestContext;
 
     #[test]
     fn is_valid_reports_the_error_returned_by_the_server() {
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let mut con = ctx.connection();
 
         // Revoke `PING` from the default user, so that the health check fails

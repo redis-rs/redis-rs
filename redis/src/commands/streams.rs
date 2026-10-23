@@ -174,6 +174,7 @@ impl ToRedisArgs for StreamTrimOptions {
 ///
 /// Supports idempotent message processing to prevent duplicate entries.
 /// See [Redis Streams Idempotency](https://redis.io/docs/latest/develop/data-types/streams/idempotency/)
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum StreamIdempotencyMode {
     /// Manual mode: Producer provides both producer ID (pid) and idempotent ID (iid)
@@ -709,6 +710,7 @@ impl ToRedisArgs for StreamReadOptions {
 ///
 /// [`xautoclaim_options`]: ../trait.Commands.html#method.xautoclaim_options
 ///
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamAutoClaimReply {
     /// The next stream id to use as the start argument for the next xautoclaim
@@ -728,6 +730,7 @@ pub struct StreamAutoClaimReply {
 /// [`xread`]: ../trait.Commands.html#method.xread
 /// [`xread_options`]: ../trait.Commands.html#method.xread_options
 ///
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamReadReply {
     /// Complex data structure containing a payload for each key in this array
@@ -745,6 +748,7 @@ pub struct StreamReadReply {
 /// [`xrevrange_count`]: ../trait.Commands.html#method.xrevrange_count
 /// [`xrevrange_all`]: ../trait.Commands.html#method.xrevrange_all
 ///
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamRangeReply {
     /// Complex data structure containing a payload for each ID in this array
@@ -757,6 +761,7 @@ pub struct StreamRangeReply {
 ///
 /// [`xclaim`]: ../trait.Commands.html#method.xclaim
 ///
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamClaimReply {
     /// Complex data structure containing a payload for each ID in this array
@@ -793,6 +798,7 @@ impl StreamPendingReply {
 /// Inner reply type when an [`xpending`] command has data.
 ///
 /// [`xpending`]: ../trait.Commands.html#method.xpending
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamPendingData {
     /// Limit on the number of messages to return per call.
@@ -816,6 +822,7 @@ pub struct StreamPendingData {
 /// [`xpending_count`]: ../trait.Commands.html#method.xpending_count
 /// [`xpending_consumer_count`]: ../trait.Commands.html#method.xpending_consumer_count
 ///
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamPendingCountReply {
     /// An array of structs containing information about
@@ -824,19 +831,42 @@ pub struct StreamPendingCountReply {
     pub ids: Vec<StreamPendingId>,
 }
 
-/// Reply type used with [`xinfo_stream`] command, containing
-/// general information about the stream stored at the specified key.
+/// Reply type used with [`xinfo_stream`] command
+///
+/// It contains general information about the stream stored at the specified key.
 ///
 /// The very first and last IDs in the stream are shown,
 /// in order to give some sense about what is the stream content.
 ///
-/// **Note:** For Redis 8.6+ idempotency tracking fields, use [`StreamInfoStreamReplyWithIdempotency`]
-/// via the [`xinfo_stream_with_idempotency`] command instead.
+/// Note that [`xinfo_stream`] only sets IDMP fields, if IDMP is configured for the stream
+/// (See [`xcfgset`]).
 ///
-/// [`xinfo_stream`]: ../trait.Commands.html#method.xinfo_stream
-/// [`xinfo_stream_with_idempotency`]: ../trait.Commands.html#method.xinfo_stream_with_idempotency
+/// [`xinfo_stream`]: ../trait.Commands.html#method.xinfo_stream_with_idempotency
+/// [`xcfgset`]: ../trait.Commands.html#method.xcfgset
 ///
+/// # Example
+/// ```no_run
+/// use redis::{Commands, streams::StreamInfoStreamReply};
+/// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+/// # let mut con = client.get_connection().unwrap();
+///
+/// let info: StreamInfoStreamReply = con.xinfo_stream("stream").unwrap();
+///
+/// // Access base stream info
+/// println!("Stream length: {}", info.length);
+/// println!("Last ID: {}", info.last_generated_id);
+///
+/// // Access idempotency tracking (Only if IDMP was configured for the stream)
+/// println!("Producers tracked: {}", info.pids_tracked);
+/// println!("Idempotent IDs tracked: {}", info.iids_tracked);
+/// println!("Duplicates prevented: {}", info.iids_duplicates);
+/// ```
+// Idempotency fields are optional. Wrapping them by `Option` would mean lots of manual, unnecessary
+// unpacking for callers, as they typically know whether streams are configured to produce relevant
+// IDMP values or not. Also, the `Option` would be inconsistent with other fields. Hence, the IDMP
+// values are not wrapped by `Option`.
 #[derive(Default, Debug, Clone)]
+#[non_exhaustive]
 pub struct StreamInfoStreamReply {
     /// The last generated ID that may not be the same as the last
     /// entry ID in case some entry was deleted.
@@ -852,41 +882,6 @@ pub struct StreamInfoStreamReply {
     pub first_entry: StreamId,
     /// The very last entry in the stream.
     pub last_entry: StreamId,
-}
-
-// TODO: Remove this type and extend StreamInfoStreamReply when creating the next major release.
-/// Reply type used with [`xinfo_stream_with_idempotency`] command (Redis 8.6+).
-///
-/// This type composes [`StreamInfoStreamReply`] with additional idempotency tracking fields
-/// introduced in Redis 8.6.
-///
-/// The base stream information is accessible via the `base` field, while idempotency
-/// fields are directly available as top-level fields.
-///
-/// [`xinfo_stream_with_idempotency`]: ../trait.Commands.html#method.xinfo_stream_with_idempotency
-///
-/// # Example
-/// ```no_run
-/// use redis::{Commands, streams::StreamInfoStreamReplyWithIdempotency};
-/// # let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-/// # let mut con = client.get_connection().unwrap();
-///
-/// let info: StreamInfoStreamReplyWithIdempotency = con.xinfo_stream_with_idempotency("stream").unwrap();
-///
-/// // Access base stream info
-/// println!("Stream length: {}", info.base.length);
-/// println!("Last ID: {}", info.base.last_generated_id);
-///
-/// // Access idempotency tracking (Redis 8.6+)
-/// println!("Producers tracked: {}", info.pids_tracked);
-/// println!("Idempotent IDs tracked: {}", info.iids_tracked);
-/// println!("Duplicates prevented: {}", info.iids_duplicates);
-/// ```
-#[derive(Default, Debug, Clone)]
-#[non_exhaustive]
-pub struct StreamInfoStreamReplyWithIdempotency {
-    /// Base stream information
-    pub base: StreamInfoStreamReply,
     /// The duration in seconds that idempotent IDs are retained in the stream's IDMP map
     pub idmp_duration: u32,
     /// The maximum number of idempotent IDs kept for each producer in the stream's IDMP map
@@ -906,6 +901,7 @@ pub struct StreamInfoStreamReplyWithIdempotency {
 ///
 /// [`xinfo_consumer`]: ../trait.Commands.html#method.xinfo_consumer
 ///
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamInfoConsumersReply {
     /// An array of every consumer in a specific consumer group.
@@ -919,6 +915,7 @@ pub struct StreamInfoConsumersReply {
 ///
 /// [`xinfo_groups`]: ../trait.Commands.html#method.xinfo_groups
 ///
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamInfoGroupsReply {
     /// All the consumer groups associated with the stream.
@@ -929,6 +926,7 @@ pub struct StreamInfoGroupsReply {
 ///
 /// [`xinfo_consumers`]: ../trait.Commands.html#method.xinfo_consumers
 ///
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamInfoConsumer {
     /// Name of the consumer group.
@@ -943,6 +941,7 @@ pub struct StreamInfoConsumer {
 ///
 /// [`xinfo_groups`]: ../trait.Commands.html#method.xinfo_groups
 ///
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamInfoGroup {
     /// The group name.
@@ -964,6 +963,7 @@ pub struct StreamInfoGroup {
 /// Represents a pending message parsed from [`xpending`] methods.
 ///
 /// [`xpending`]: ../trait.Commands.html#method.xpending
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamPendingId {
     /// The ID of the message.
@@ -980,6 +980,7 @@ pub struct StreamPendingId {
 }
 
 /// Represents a stream `key` and its `id`'s parsed from `xread` methods.
+#[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct StreamKey {
     /// The stream `key`.
@@ -990,6 +991,7 @@ pub struct StreamKey {
 
 /// Represents a stream `id` and its field/values as a `HashMap`
 /// Also contains optional PEL information if the message was fetched with XREADGROUP with a `claim` option
+#[non_exhaustive]
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct StreamId {
     /// The stream `id` (entry ID) of this particular message.
@@ -1344,41 +1346,6 @@ impl FromRedisValue for StreamInfoStreamReply {
         if let Some(v) = map.remove("last-entry") {
             reply.last_entry = StreamId::from_array_value(v)?;
         }
-        Ok(reply)
-    }
-}
-
-impl FromRedisValue for StreamInfoStreamReplyWithIdempotency {
-    fn from_redis_value(v: Value) -> Result<Self, ParsingError> {
-        let mut map: HashMap<String, Value> = from_redis_value(v)?;
-
-        // Parse base fields into the composed StreamInfoStreamReply
-        let mut base = StreamInfoStreamReply::default();
-        if let Some(v) = map.remove("last-generated-id") {
-            base.last_generated_id = from_redis_value(v)?;
-        }
-        if let Some(v) = map.remove("radix-tree-nodes") {
-            base.radix_tree_keys = from_redis_value(v)?;
-        }
-        if let Some(v) = map.remove("groups") {
-            base.groups = from_redis_value(v)?;
-        }
-        if let Some(v) = map.remove("length") {
-            base.length = from_redis_value(v)?;
-        }
-        if let Some(v) = map.remove("first-entry") {
-            base.first_entry = StreamId::from_array_value(v)?;
-        }
-        if let Some(v) = map.remove("last-entry") {
-            base.last_entry = StreamId::from_array_value(v)?;
-        }
-
-        // Parse idempotency fields
-        let mut reply = Self {
-            base,
-            ..Default::default()
-        };
-
         if let Some(v) = map.remove("idmp-duration") {
             reply.idmp_duration = from_redis_value(v)?;
         }

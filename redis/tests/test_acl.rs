@@ -1,7 +1,10 @@
 #![cfg(feature = "acl")]
 
 use redis::TypedCommands;
-use redis::acl::{AclInfo, Rule};
+use redis::acl::Rule;
+use redis_test::REDIS_CE_7_2;
+use redis_test::TestContext;
+use redis_test::run_test_if_version_supported;
 use std::collections::HashSet;
 
 mod support;
@@ -57,94 +60,22 @@ mod utils {
 
 #[test]
 fn test_acl_whoami() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
     assert_eq!(con.acl_whoami(), Ok("default".to_owned()));
 }
 
 #[test]
 fn test_acl_help() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
     let res = con.acl_help().expect("Got help manual");
     assert!(!res.is_empty());
 }
 
-//TODO: do we need this test?
-#[test]
-#[ignore]
-fn test_acl_getsetdel_users() {
-    let ctx = TestContext::new();
-    let mut con = ctx.connection();
-    assert_eq!(
-        con.acl_list(),
-        Ok(vec!["user default on nopass ~* +@all".to_owned()])
-    );
-    assert_eq!(con.acl_users(), Ok(vec!["default".to_owned()]));
-    // bob
-    assert_eq!(con.acl_setuser("bob"), Ok(()));
-    assert_eq!(
-        con.acl_users(),
-        Ok(vec!["bob".to_owned(), "default".to_owned()])
-    );
-
-    // ACL SETUSER bob on ~redis:* +set
-    assert_eq!(
-        con.acl_setuser_rules(
-            "bob",
-            &[
-                Rule::On,
-                Rule::AddHashedPass(
-                    "c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2".to_owned()
-                ),
-                Rule::Pattern("redis:*".to_owned()),
-                Rule::AddCommand("set".to_owned())
-            ],
-        ),
-        Ok(())
-    );
-    let acl_info = con.acl_getuser("bob").expect("Got user").unwrap();
-    assert_eq!(
-        acl_info,
-        AclInfo {
-            flags: vec![Rule::On],
-            passwords: vec![Rule::AddHashedPass(
-                "c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2".to_owned()
-            )],
-            commands: vec![
-                Rule::RemoveCategory("all".to_owned()),
-                Rule::AddCommand("set".to_owned())
-            ],
-            keys: vec![Rule::Pattern("redis:*".to_owned())],
-            channels: vec![],
-            selectors: vec![],
-        }
-    );
-    assert_eq!(
-        con.acl_list(),
-        Ok(vec![
-            "user bob on #c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2 ~redis:* -@all +set".to_owned(),
-            "user default on nopass ~* +@all".to_owned(),
-        ])
-    );
-
-    // ACL SETUSER eve
-    assert_eq!(con.acl_setuser("eve"), Ok(()));
-    assert_eq!(
-        con.acl_users(),
-        Ok(vec![
-            "bob".to_owned(),
-            "default".to_owned(),
-            "eve".to_owned()
-        ])
-    );
-    assert_eq!(con.acl_deluser(&["bob", "eve"]), Ok(2));
-    assert_eq!(con.acl_users(), Ok(vec!["default".to_owned()]));
-}
-
 #[test]
 fn test_acl_cat() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
     let res: HashSet<String> = con.acl_cat().expect("Got categories");
     let expects = vec![
@@ -185,7 +116,7 @@ fn test_acl_cat() {
 
 #[test]
 fn test_acl_genpass() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
     let pass: String = con.acl_genpass().expect("Got password");
     assert_eq!(pass.len(), 64);
@@ -196,7 +127,7 @@ fn test_acl_genpass() {
 
 #[test]
 fn test_acl_log() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
     let logs: Vec<String> = con.acl_log(1).expect("Got logs");
     assert_eq!(logs.len(), 0);
@@ -369,6 +300,7 @@ mod token_based_authentication_acl_tests {
         aio::ConnectionLike,
         auth::{BasicAuth, StreamingCredentialsProvider},
     };
+    use redis_test::TestContext;
     use std::{
         pin::Pin,
         sync::{Arc, Mutex, Once, RwLock},
@@ -673,7 +605,7 @@ mod token_based_authentication_acl_tests {
     #[async_test]
     async fn test_authentication_with_mock_streaming_credentials_provider() {
         init_logger();
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         // Set up a Redis user that expects a JWT token as password
         let mut admin_con = ctx.async_connection().await.unwrap();
         let expected_username = OID_CLAIM_VALUE;
@@ -759,7 +691,7 @@ mod token_based_authentication_acl_tests {
     #[async_test]
     async fn token_rotation_with_mock_streaming_credentials_provider() {
         init_logger();
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let users_cmd = redis::cmd("ACL").arg("USERS").clone();
         let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
 
@@ -819,7 +751,7 @@ mod token_based_authentication_acl_tests {
     #[async_test]
     async fn test_authentication_error_handling_with_mock_streaming_credentials_provider() {
         init_logger();
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
 
         // Create a user with the JWT token as password and full permissions for each token
@@ -878,7 +810,7 @@ mod token_based_authentication_acl_tests {
     #[async_test]
     async fn test_multiple_connections_from_one_client_sharing_a_single_credentials_provider() {
         init_logger();
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
         let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
 
         // Create a user with the JWT token as password and full permissions for each token
@@ -945,7 +877,7 @@ mod token_based_authentication_acl_tests {
     #[async_test]
     async fn test_multiple_clients_sharing_a_single_credentials_provider() {
         init_logger();
-        let ctx1 = TestContext::new();
+        let ctx1 = TestContext::default();
         let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
 
         // Create a user with the JWT token as password and full permissions for each token
@@ -1016,7 +948,7 @@ mod token_based_authentication_acl_tests {
     #[async_test]
     async fn test_server_rejects_after_user_invalidated() {
         init_logger();
-        let ctx = TestContext::new();
+        let ctx = TestContext::default();
 
         // Create a user with the JWT token as password and full permissions for each token
         println!("Setting up Redis users for re-authentication failure test...");

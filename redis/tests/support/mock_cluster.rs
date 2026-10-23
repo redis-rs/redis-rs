@@ -268,7 +268,7 @@ impl aio::ConnectionLike for MockConnection {
         Box::pin(future::ready(
             pipeline
                 .cmd_iter()
-                .map(|cmd| self.execute_cmd(cmd))
+                .map(|cmd| self.execute_cmd(&cmd.to_cmd()))
                 .collect(),
         ))
     }

@@ -6,6 +6,7 @@ use redis::Commands;
 use redis::schema;
 use redis::search::*;
 use redis_test::server::Module;
+use redis_test::{run_test_if_version_supported, skip_if_context_does_not_support};
 
 static TEXT_FIELD_NAME: &str = "title";
 static NUMERIC_FIELD_NAME: &str = "price";

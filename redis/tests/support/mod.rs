@@ -2,29 +2,33 @@
 
 #[cfg(feature = "aio")]
 use futures::Future;
-use redis::{
-    Commands, ConnectionAddr, ErrorKind, Pipeline, ProtocolVersion, RedisResult, ServerErrorKind,
-    Value,
-};
+#[allow(
+    unused_imports,
+    reason = "`RedisResult` is used in at least 4 unrelated conditions. So instead of modelling all of them in an unreadable condition, we accept if the import is unused"
+)]
+use redis::RedisResult;
+#[cfg(feature = "cache-aio")]
+use redis::caching::CacheConfig;
+#[cfg(feature = "tls-rustls")]
+use redis::{ClientTlsConfig, TlsCertificates};
+use redis::{Pipeline, Value};
 #[cfg(feature = "aio")]
 use redis::{aio, cmd};
-use redis_test::server::{Module, RedisServer, use_protocol};
-use redis_test::utils::{TlsFilePaths, get_random_available_port};
-#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
+#[cfg(feature = "tls-rustls")]
+use redis_test::utils::TlsFilePaths;
+#[cfg(feature = "tls-rustls")]
+pub use redis_test::utils::load_certs_from_file;
+#[allow(unused_imports)]
+pub use redis_test::version::*;
+#[allow(unused_imports)]
+pub use redis_test::{TestContext, TestContextBuilder};
+
+use std::io;
+#[cfg(feature = "tls-rustls")]
 use std::{
     fs::File,
     io::{BufReader, Read},
 };
-use std::{io, thread::sleep, time::Duration};
-
-#[cfg(feature = "cache-aio")]
-use redis::caching::CacheConfig;
-#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
-use redis::{ClientTlsConfig, TlsCertificates};
-
-#[macro_use]
-mod version;
-pub use version::*;
 
 pub fn current_thread_runtime() -> tokio::runtime::Runtime {
     let mut builder = tokio::runtime::Builder::new_current_thread();
@@ -129,8 +133,6 @@ pub use self::pubsub::*;
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
 mod mock_cluster;
 
-mod util;
-
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
 #[allow(unused_imports)]
 pub use self::cluster::*;
@@ -138,6 +140,8 @@ pub use self::cluster::*;
 #[cfg(any(feature = "cluster", feature = "cluster-async"))]
 #[allow(unused_imports)]
 pub use self::mock_cluster::*;
+
+mod util;
 
 #[cfg(all(feature = "cluster", feature = "search_unfinished"))]
 mod cluster_search;
@@ -153,228 +157,42 @@ mod sentinel;
 #[allow(unused_imports)]
 pub use self::sentinel::*;
 
-pub struct TestContext {
-    pub server: RedisServer,
-    pub client: redis::Client,
-    pub protocol: ProtocolVersion,
-}
-
-pub(crate) fn start_tls_crypto_provider() {
-    #[cfg(feature = "tls-rustls")]
-    if rustls::crypto::CryptoProvider::get_default().is_none() {
-        // we don't care about success, because failure means that the provider was set from another thread.
-        let _ = rustls::crypto::ring::default_provider().install_default();
-    }
-}
-
-impl TestContext {
-    pub fn new() -> Self {
-        Self::with_modules(&[])
-    }
-
-    #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
-    pub fn new_with_mtls() -> Self {
-        Self::with_modules_and_tls(&[], true, None)
-    }
-
-    #[cfg(feature = "tls-rustls")]
-    pub fn new_with_cert_auth(tls_files: TlsFilePaths) -> Self {
-        Self::new_with_cert_auth_field(tls_files, "CN")
-    }
-
-    #[cfg(feature = "tls-rustls")]
-    pub fn new_with_cert_auth_field(tls_files: TlsFilePaths, cert_field: &str) -> Self {
-        start_tls_crypto_provider();
-        let redis_port = get_random_available_port();
-        let addr = RedisServer::get_addr(redis_port);
-
-        // TLS certificate-based authentication requires TLS connection.
-        let addr = match addr {
-            ConnectionAddr::Tcp(host, port) => ConnectionAddr::TcpTls {
-                host,
-                port,
-                insecure: true,
-                tls_params: None,
-            },
-            ConnectionAddr::TcpTls { .. } => addr, // Already TLS
-            ConnectionAddr::Unix(_) => {
-                // Unix sockets don't support TLS - fall back to TCP+TLS
-                // Use the same default host that get_addr() would use for TCP
-                ConnectionAddr::TcpTls {
-                    host: redis_test::server::get_default_host(),
-                    port: redis_port,
-                    insecure: true,
-                    tls_params: None,
-                }
-            }
-            _ => {
-                panic!("Unsupported ConnectionAddr variant for cert-based authentication: {addr:?}")
-            }
-        };
-
-        Self::with_modules_addr_tls_and_cert_auth(
-            &[],
-            true,
-            addr,
-            Some(tls_files),
-            Some(cert_field),
-        )
-    }
-
-    pub fn with_tls(tls_files: TlsFilePaths, mtls_enabled: bool) -> Self {
-        Self::with_modules_and_tls(&[], mtls_enabled, Some(tls_files))
-    }
-
-    pub fn with_modules(modules: &[Module]) -> Self {
-        Self::with_modules_and_tls(modules, false, None)
-    }
-
-    pub fn new_with_addr(addr: ConnectionAddr) -> Self {
-        Self::with_modules_addr_and_tls(&[], false, addr, None)
-    }
-
-    fn with_modules_and_tls(
-        modules: &[Module],
-        mtls_enabled: bool,
-        tls_files: Option<TlsFilePaths>,
-    ) -> Self {
-        start_tls_crypto_provider();
-        let redis_port = get_random_available_port();
-        let addr = RedisServer::get_addr(redis_port);
-        Self::with_modules_addr_and_tls(modules, mtls_enabled, addr, tls_files)
-    }
-
-    fn with_modules_addr_and_tls(
-        modules: &[Module],
-        mtls_enabled: bool,
-        addr: ConnectionAddr,
-        tls_files: Option<TlsFilePaths>,
-    ) -> Self {
-        Self::with_modules_addr_tls_and_cert_auth(modules, mtls_enabled, addr, tls_files, None)
-    }
-
-    fn with_modules_addr_tls_and_cert_auth(
-        modules: &[Module],
-        mtls_enabled: bool,
-        addr: ConnectionAddr,
-        tls_files: Option<TlsFilePaths>,
-        cert_auth_field: Option<&str>,
-    ) -> Self {
-        let server = RedisServer::new_with_addr_tls_modules_and_spawner(
-            addr,
-            None,
-            tls_files,
-            mtls_enabled,
-            cert_auth_field,
-            modules,
-            |cmd| {
-                cmd.spawn()
-                    .unwrap_or_else(|err| panic!("Failed to run {cmd:?}: {err}"))
-            },
-        );
-
-        let client =
-            build_single_client(server.connection_info(), &server.tls_paths, mtls_enabled).unwrap();
-
-        let mut con;
-
-        let millisecond = Duration::from_millis(1);
-        let mut retries = 0;
-        loop {
-            match client.get_connection() {
-                Err(err) => {
-                    if err.is_connection_refusal() {
-                        sleep(millisecond);
-                        retries += 1;
-                        if retries > 100000 {
-                            panic!(
-                                "Tried to connect too many times, last error: {err}, logfile: {:?}",
-                                server.log_file_contents()
-                            );
-                        }
-                    } else {
-                        panic!(
-                            "Could not connect: {err}, logfile: {:?}",
-                            server.log_file_contents()
-                        );
-                    }
-                }
-                Ok(x) => {
-                    con = x;
-                    break;
-                }
-            }
-        }
-
-        // Redis may still be loading its dataset after accepting connections,
-        // especially with TLS where the handshake completes before Redis is fully ready.
-        // Retry flushdb if the BusyLoading error is returned to allow time for initialization.
-        let mut flush_retries = 0;
-        loop {
-            match con.flushdb::<()>() {
-                Ok(_) => break,
-                Err(err)
-                    if matches!(err.kind(), ErrorKind::Server(ServerErrorKind::BusyLoading)) =>
-                {
-                    sleep(millisecond);
-                    flush_retries += 1;
-                    if flush_retries > 10000 {
-                        panic!(
-                            "Redis is still loading after too many retries, last error: {err}, logfile: {:?}",
-                            server.log_file_contents()
-                        );
-                    }
-                }
-                Err(err) => {
-                    panic!(
-                        "Failed to flush database: {err}, logfile: {:?}",
-                        server.log_file_contents()
-                    );
-                }
-            }
-        }
-
-        Self {
-            server,
-            client,
-            protocol: use_protocol(),
-        }
-    }
-
-    pub fn connection(&self) -> redis::Connection {
-        self.client.get_connection().unwrap()
-    }
-
-    #[cfg(feature = "aio")]
-    pub async fn async_connection(&self) -> RedisResult<redis::aio::MultiplexedConnection> {
-        self.client.get_multiplexed_async_connection().await
-    }
-
-    #[cfg(feature = "aio")]
-    pub async fn async_pubsub(&self) -> RedisResult<redis::aio::PubSub> {
-        self.client.get_async_pubsub().await
-    }
-
-    pub fn stop_server(&mut self) {
-        self.server.stop();
-    }
-
+/// Extension of [`TestContext`] taylored to the flags available directly on `redis-rs`.
+pub trait TestContextExt {
     #[cfg(feature = "tokio-comp")]
-    pub async fn multiplexed_async_connection_tokio(
+    async fn multiplexed_async_connection_tokio(
+        &self,
+    ) -> RedisResult<redis::aio::MultiplexedConnection>;
+
+    #[cfg(all(feature = "aio", feature = "cache-aio"))]
+    fn async_connection_with_cache(
+        &self,
+    ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>>;
+
+    #[cfg(all(feature = "aio", feature = "cache-aio"))]
+    fn async_connection_with_cache_config(
+        &self,
+        cache_config: CacheConfig,
+    ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>>;
+}
+
+impl TestContextExt for TestContext {
+    #[cfg(feature = "tokio-comp")]
+    async fn multiplexed_async_connection_tokio(
         &self,
     ) -> RedisResult<redis::aio::MultiplexedConnection> {
         self.client.get_multiplexed_async_connection().await
     }
 
     #[cfg(all(feature = "aio", feature = "cache-aio"))]
-    pub fn async_connection_with_cache(
+    fn async_connection_with_cache(
         &self,
     ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {
         self.async_connection_with_cache_config(CacheConfig::default())
     }
 
     #[cfg(all(feature = "aio", feature = "cache-aio"))]
-    pub fn async_connection_with_cache_config(
+    fn async_connection_with_cache_config(
         &self,
         cache_config: CacheConfig,
     ) -> impl Future<Output = redis::RedisResult<redis::aio::MultiplexedConnection>> {
@@ -388,13 +206,6 @@ impl TestContext {
                 )
                 .await
         }
-    }
-}
-
-impl TestContextVersioning for TestContext {
-    fn get_available_components(&self) -> AvailableComponents {
-        let mut conn = self.connection();
-        AvailableComponents::from(&mut conn)
     }
 }
 
@@ -487,55 +298,6 @@ where
     }
 }
 
-#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
-pub fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> TlsCertificates {
-    let ca_file = File::open(&tls_file_paths.ca_crt).expect("Cannot open CA cert file");
-    let mut root_cert_vec = Vec::new();
-    BufReader::new(ca_file)
-        .read_to_end(&mut root_cert_vec)
-        .expect("Unable to read CA cert file");
-
-    let cert_file = File::open(&tls_file_paths.redis_crt).expect("Cannot open cert file");
-    let mut client_cert_vec = Vec::new();
-    BufReader::new(cert_file)
-        .read_to_end(&mut client_cert_vec)
-        .expect("Unable to read cert file");
-
-    let key_file = File::open(&tls_file_paths.redis_key).expect("Cannot open key file");
-    let mut client_key_vec = Vec::new();
-    BufReader::new(key_file)
-        .read_to_end(&mut client_key_vec)
-        .expect("Unable to read key file");
-
-    TlsCertificates {
-        client_tls: Some(ClientTlsConfig {
-            client_cert: client_cert_vec,
-            client_key: client_key_vec,
-        }),
-        root_cert: Some(root_cert_vec),
-    }
-}
-
-#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
-pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
-    connection_info: T,
-    tls_file_params: &Option<TlsFilePaths>,
-    mtls_enabled: bool,
-) -> RedisResult<redis::Client> {
-    if mtls_enabled && tls_file_params.is_some() {
-        redis::Client::build_with_tls(
-            connection_info,
-            load_certs_from_file(
-                tls_file_params
-                    .as_ref()
-                    .expect("Expected certificates when mTLS is enabled"),
-            ),
-        )
-    } else {
-        redis::Client::open(connection_info)
-    }
-}
-
 #[cfg(feature = "tls-rustls")]
 pub(crate) fn build_single_client_with_separate_client_cert<T: redis::IntoConnectionInfo>(
     connection_info: T,
@@ -563,25 +325,13 @@ pub(crate) fn build_single_client_with_separate_client_cert<T: redis::IntoConnec
         .read_to_end(&mut client_key_vec)
         .expect("Unable to read client key file");
 
+    let client_tls_config = ClientTlsConfig::new(client_cert_vec, client_key_vec);
     redis::Client::build_with_tls(
         connection_info,
-        TlsCertificates {
-            client_tls: Some(ClientTlsConfig {
-                client_cert: client_cert_vec,
-                client_key: client_key_vec,
-            }),
-            root_cert: Some(root_cert_vec),
-        },
+        TlsCertificates::new()
+            .client_tls_config(client_tls_config)
+            .root_cert(root_cert_vec),
     )
-}
-
-#[cfg(not(any(feature = "tls-rustls", feature = "tls-native-tls")))]
-pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
-    connection_info: T,
-    _tls_file_params: &Option<TlsFilePaths>,
-    _mtls_enabled: bool,
-) -> RedisResult<redis::Client> {
-    redis::Client::open(connection_info)
 }
 
 #[cfg(feature = "tls-rustls")]
@@ -607,7 +357,7 @@ pub(crate) mod mtls_test {
     }
 
     pub(crate) fn create_cluster_client_from_cluster(
-        cluster: &TestClusterContext,
+        cluster: &cluster::TestClusterContext,
         mtls_enabled: bool,
     ) -> Result<ClusterClient, RedisError> {
         let server = cluster

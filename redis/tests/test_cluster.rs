@@ -4,6 +4,10 @@ mod support;
 
 #[cfg(test)]
 mod cluster {
+    #[cfg(feature = "tls-rustls")]
+    use redis_test::cluster::ClusterType;
+    #[cfg(feature = "tls-rustls")]
+    use redis_test::utils::load_certs_from_file;
     use std::collections::HashMap;
     use std::sync::{
         Arc,
@@ -19,11 +23,9 @@ mod cluster {
         cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
         cmd, from_redis_value, parse_redis_value,
     };
-    use redis_test::{
-        cluster::{RedisCluster, RedisClusterConfiguration},
-        redis_value,
-        server::use_protocol,
-    };
+    use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
+    use redis_test::server::use_protocol;
+    use redis_test::{VALKEY_9_0, redis_value, run_test_if_version_supported};
 
     fn smoke_test_connection(mut con: ClusterConnection) {
         redis::cmd("SET")
@@ -55,11 +57,9 @@ mod cluster {
         run_test_if_version_supported!(VALKEY_9_0);
 
         let cluster = TestClusterContext::new_with_config_and_builder(
-            RedisClusterConfiguration {
-                cluster_databases: Some(16),
-                tls_insecure: false,
-                ..Default::default()
-            },
+            RedisClusterConfiguration::default()
+                .cluster_databases(16)
+                .insecure_tls(),
             |builder| builder.database_id(4),
         );
 
@@ -106,37 +106,31 @@ mod cluster {
     #[cfg(feature = "tls-rustls")]
     #[test]
     fn test_default_reject_invalid_hostnames() {
-        use redis_test::cluster::ClusterType;
-
         if ClusterType::get_intended() != ClusterType::TcpTls {
             // Only TLS causes invalid certificates to be rejected as desired.
             return;
         }
 
-        let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
-            tls_insecure: false,
-            certs_with_ip_alts: false,
-            ..Default::default()
-        });
+        let cluster = TestClusterContext::new_with_config(
+            RedisClusterConfiguration::default()
+                .insecure_tls()
+                .certs_without_ip_alts(),
+        );
         assert!(cluster.client.get_connection().is_err());
     }
 
     #[cfg(feature = "tls-rustls-insecure")]
     #[test]
     fn test_danger_accept_invalid_hostnames() {
-        use redis_test::cluster::ClusterType;
-
         if ClusterType::get_intended() != ClusterType::TcpTls {
             // No point testing this TLS-specific mode in non-TLS configurations.
             return;
         }
 
         let cluster = TestClusterContext::new_with_config_and_builder(
-            RedisClusterConfiguration {
-                tls_insecure: false,
-                certs_with_ip_alts: false,
-                ..Default::default()
-            },
+            RedisClusterConfiguration::default()
+                .insecure_tls()
+                .certs_without_ip_alts(),
             |builder| builder.danger_accept_invalid_hostnames(true),
         );
 
@@ -169,7 +163,7 @@ mod cluster {
     fn test_cluster_read_from_replicas() {
         let cluster = TestClusterContext::new_with_config_and_builder(
             RedisClusterConfiguration::single_replica_config(),
-            |builder| builder.read_routing_strategy(RandomReplicaStrategy),
+            |builder| builder.read_routing_strategy(RandomReplicaStrategy::new()),
         );
         let mut con = cluster.connection();
 
@@ -485,7 +479,7 @@ mod cluster {
             } = MockEnv::with_client_builder(
                 ClusterClient::builder(vec![&*format!("redis://{name}")])
                     .retries(0)
-                    .read_routing_strategy(RandomReplicaStrategy),
+                    .read_routing_strategy(RandomReplicaStrategy::new()),
                 name,
                 move |cmd: &[u8], _| {
                     if contains_slice(cmd, b"READONLY") {
@@ -715,7 +709,7 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |cmd: &[u8], port| {
                 respond_startup_with_replica(name, cmd)?;
@@ -738,7 +732,7 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |cmd: &[u8], port| {
                 respond_startup_with_replica(name, cmd)?;
@@ -894,7 +888,7 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(
@@ -1000,7 +994,7 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -1032,7 +1026,7 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -1068,7 +1062,7 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -1109,7 +1103,7 @@ mod cluster {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy),
+                .read_routing_strategy(RandomReplicaStrategy::new()),
             name,
             move |received_cmd: &[u8], _| {
                 respond_startup_with_replica_using_config(
@@ -1168,10 +1162,7 @@ mod cluster {
         // TODO - this should be a NoConnectionError, but ATM we get the errors from the failing
         assert_matches!(result, Err(_));
 
-        let _cluster = RedisCluster::new(RedisClusterConfiguration {
-            ports,
-            ..Default::default()
-        });
+        let _cluster = RedisCluster::new(RedisClusterConfiguration::default().ports(ports));
 
         let result = connection
             .route_command(&cmd, RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
@@ -1191,10 +1182,7 @@ mod cluster {
         drop(cluster);
 
         // recreate cluster
-        let _cluster = RedisCluster::new(RedisClusterConfiguration {
-            ports,
-            ..Default::default()
-        });
+        let _cluster = RedisCluster::new(RedisClusterConfiguration::default().ports(ports));
 
         let cmd = cmd("PING");
         // explicitly route to all primaries and request all succeeded
@@ -1345,12 +1333,12 @@ mod cluster {
 
         // Certs issued for "localhost" only (no IP SAN), so connecting via
         // 127.0.0.1 will fail TLS verification without node_address_map.
-        let cluster = TestClusterContext::new_with_config(RedisClusterConfiguration {
-            tls_insecure: false,
-            certs_with_ip_alts: false,
-            dns_hostname: Some("localhost".to_string()),
-            ..Default::default()
-        });
+        let cluster = TestClusterContext::new_with_config(
+            RedisClusterConfiguration::default()
+                .insecure_tls()
+                .certs_without_ip_alts()
+                .dns_hostname("localhost"),
+        );
 
         let err = match cluster.client.get_connection() {
             Ok(_) => panic!("connecting via IP address should fail TLS hostname verification"),

@@ -2,9 +2,9 @@
 
 //! Demonstrates basic operations and dumping/loading Bloom filters.
 
-use crate::support::{AvailableComponents, REDIS_BLOOM_ANY};
 use redis::bloom::{BloomFilterDumpChunk, BloomFilterDumpIterator};
 use redis::{Connection, RedisResult, TypedCommands};
+use redis_test::{AvailableComponents, REDIS_BLOOM_ANY};
 
 #[path = "../tests/support/mod.rs"]
 mod support;

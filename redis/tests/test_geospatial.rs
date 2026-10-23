@@ -4,9 +4,9 @@ use assert_approx_eq::assert_approx_eq;
 
 use redis::geo::{Coord, RadiusOptions, RadiusOrder, RadiusSearchResult, Unit};
 use redis::{RedisResult, TypedCommands};
+use redis_test::TestContext;
 
 mod support;
-use crate::support::*;
 
 const PALERMO: (&str, &str, &str) = ("13.361389", "38.115556", "Palermo");
 const CATANIA: (&str, &str, &str) = ("15.087269", "37.502669", "Catania");
@@ -14,7 +14,7 @@ const AGRIGENTO: (&str, &str, &str) = ("13.5833332", "37.316667", "Agrigento");
 
 #[test]
 fn test_geoadd_single_tuple() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", PALERMO), Ok(1));
@@ -22,7 +22,7 @@ fn test_geoadd_single_tuple() {
 
 #[test]
 fn test_geoadd_multiple_tuples() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
@@ -30,7 +30,7 @@ fn test_geoadd_multiple_tuples() {
 
 #[test]
 fn test_geodist_existing_members() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
@@ -44,7 +44,7 @@ fn test_geodist_existing_members() {
 
 #[test]
 fn test_geodist_support_option() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
@@ -64,26 +64,29 @@ fn test_geodist_support_option() {
 
 #[test]
 fn test_geohash() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
-    let result: RedisResult<Vec<String>> = con.geo_hash("my_gis", PALERMO.2);
-    assert_eq!(result, Ok(vec![String::from("sqc8b49rny0")]));
+    let result: RedisResult<Vec<Option<String>>> = con.geo_hash("my_gis", PALERMO.2);
+    assert_eq!(result, Ok(vec![Some(String::from("sqc8b49rny0"))]));
 
-    let result: RedisResult<Vec<String>> = con.geo_hash("my_gis", &[PALERMO.2, CATANIA.2]);
+    let result: RedisResult<Vec<Option<String>>> = con.geo_hash("my_gis", &[PALERMO.2, CATANIA.2]);
     assert_eq!(
         result,
         Ok(vec![
-            String::from("sqc8b49rny0"),
-            String::from("sqdtr74hyu0"),
+            Some(String::from("sqc8b49rny0")),
+            Some(String::from("sqdtr74hyu0")),
         ])
     );
+
+    let result: RedisResult<Vec<Option<String>>> = con.geo_hash("my_gis", "NonExisting");
+    assert_eq!(result, Ok(vec![None]));
 }
 
 #[test]
 fn test_geopos() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
@@ -107,7 +110,7 @@ fn test_geopos() {
 
 #[test]
 fn test_use_coord_struct() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     assert_eq!(
@@ -127,7 +130,7 @@ fn test_use_coord_struct() {
 
 #[test]
 fn test_georadius() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA]), Ok(2));
@@ -146,12 +149,16 @@ fn test_georadius() {
     assert_eq!(result[0].name.as_str(), "Catania");
     assert_eq!(result[0].coord, None);
     assert_eq!(result[0].dist, None);
+    assert_eq!(result[0].hash, None);
 
     assert_eq!(result[1].name.as_str(), "Palermo");
     assert_eq!(result[1].coord, None);
     assert_eq!(result[1].dist, None);
+    assert_eq!(result[1].hash, None);
 
     // Get data with multiple fields
+
+    // With distance
     let result = geo_radius(RadiusOptions::default().with_dist().order(RadiusOrder::Asc));
 
     assert_eq!(result.len(), 2);
@@ -159,11 +166,14 @@ fn test_georadius() {
     assert_eq!(result[0].name.as_str(), "Catania");
     assert_eq!(result[0].coord, None);
     assert_approx_eq!(result[0].dist.unwrap(), 56.4413, 0.001);
+    assert_eq!(result[0].hash, None);
 
     assert_eq!(result[1].name.as_str(), "Palermo");
     assert_eq!(result[1].coord, None);
     assert_approx_eq!(result[1].dist.unwrap(), 190.4424, 0.001);
+    assert_eq!(result[1].hash, None);
 
+    // With coordinates
     let result = geo_radius(
         RadiusOptions::default()
             .with_coord()
@@ -177,11 +187,27 @@ fn test_georadius() {
     assert_approx_eq!(result[0].coord.as_ref().unwrap().longitude, 13.361_389);
     assert_approx_eq!(result[0].coord.as_ref().unwrap().latitude, 38.115_556);
     assert_eq!(result[0].dist, None);
+    assert_eq!(result[0].hash, None);
+
+    // With hashes
+    let result = geo_radius(RadiusOptions::default().with_hash().order(RadiusOrder::Asc));
+
+    assert_eq!(result.len(), 2);
+
+    assert_eq!(result[0].name.as_str(), "Catania");
+    assert_eq!(result[0].coord, None);
+    assert_eq!(result[0].dist, None);
+    assert_eq!(result[0].hash, Some(3479447370796909));
+
+    assert_eq!(result[1].name.as_str(), "Palermo");
+    assert_eq!(result[1].coord, None);
+    assert_eq!(result[1].dist, None);
+    assert_eq!(result[1].hash, Some(3479099956230698));
 }
 
 #[test]
 fn test_georadius_by_member() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     assert_eq!(con.geo_add("my_gis", &[PALERMO, CATANIA, AGRIGENTO]), Ok(3));
@@ -194,4 +220,34 @@ fn test_georadius_by_member() {
     let names: Vec<_> = result.iter().map(|c| c.name.as_str()).collect();
 
     assert_eq!(names, vec!["Agrigento", "Palermo"]);
+
+    // Simple request, with all available data
+    let opts = RadiusOptions::default()
+        .with_dist()
+        .with_coord()
+        .with_hash()
+        .order(RadiusOrder::Asc);
+    let result = con
+        .geo_radius_by_member("my_gis", AGRIGENTO.2, 100.0, Unit::Kilometers, opts)
+        .unwrap();
+
+    assert_eq!(result[0].name.as_str(), "Agrigento");
+    assert_approx_eq!(
+        result[0].coord.as_ref().unwrap().longitude,
+        13.58333,
+        0.0001
+    );
+    assert_approx_eq!(result[0].coord.as_ref().unwrap().latitude, 37.31667, 0.0001);
+    assert_approx_eq!(result[0].dist.unwrap(), 0.0, 0.001);
+    assert_eq!(result[0].hash, Some(3479030013248308));
+
+    assert_eq!(result[1].name.as_str(), "Palermo");
+    assert_approx_eq!(
+        result[1].coord.as_ref().unwrap().longitude,
+        13.36139,
+        0.0001
+    );
+    assert_approx_eq!(result[1].coord.as_ref().unwrap().latitude, 38.11556, 0.0001);
+    assert_approx_eq!(result[1].dist.unwrap(), 90.9778, 0.001);
+    assert_eq!(result[1].hash, Some(3479099956230698));
 }

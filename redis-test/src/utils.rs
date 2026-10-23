@@ -1,11 +1,77 @@
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
+use redis::ClientTlsConfig;
+use redis::RedisResult;
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
+use redis::TlsCertificates;
+use socket2::{Domain, Socket, Type};
+use std::ffi::OsStr;
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
+use std::fs::File;
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
+use std::io::BufReader;
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
+use std::io::Read;
+use std::io::Write;
 use std::net::{SocketAddr, TcpListener};
 use std::path::PathBuf;
+use std::process::{Command, Output};
 use std::{fs, process};
-
-use socket2::{Domain, Socket, Type};
 use tempfile::TempDir;
 
+pub trait CommandMultiArgs {
+    /// Appends a new argument to the command
+    fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self;
+
+    /// Appends two new arguments to the command
+    ///
+    /// This method is purely convenience to get more readable argument setting as it allows to
+    /// re-write
+    ///
+    /// ```rust,no_run
+    /// # use redis_test::server::RedisServerCommand;
+    /// # use redis_test::utils::CommandMultiArgs;
+    /// # let mut redis_cmd = RedisServerCommand::new();
+    /// redis_cmd
+    ///     .arg("--foo")
+    ///     .arg("some-value-for-foo")
+    ///     .arg("--bar")
+    ///     .arg("some-value-for-bar")
+    ///     .arg("--baz")
+    ///     .arg("some-value-for-baz");
+    /// ```
+    ///
+    /// in a more readable fashion:
+    ///
+    /// ```rust,no_run
+    /// # use redis_test::server::RedisServerCommand;
+    /// # use redis_test::utils::CommandMultiArgs;
+    /// # let mut redis_cmd = RedisServerCommand::new();
+    /// redis_cmd
+    ///     .arg2("--foo", "some-value-for-foo")
+    ///     .arg2("--bar", "some-value-for-bar")
+    ///     .arg2("--baz", "some-value-for-baz");
+    /// ```
+    fn arg2<S1: AsRef<OsStr>, S2: AsRef<OsStr>>(&mut self, arg: S1, arg2: S2) -> &mut Self {
+        self.arg(arg).arg(arg2);
+        self
+    }
+
+    /// Appends three new arguments to the command
+    ///
+    /// This method is purely convenience to get more readable argument setting (cf. [`arg2`](Self::arg2)).
+    fn arg3<S1: AsRef<OsStr>, S2: AsRef<OsStr>, S3: AsRef<OsStr>>(
+        &mut self,
+        arg: S1,
+        arg2: S2,
+        arg3: S3,
+    ) -> &mut Self {
+        self.arg(arg).arg(arg2).arg(arg3);
+        self
+    }
+}
+
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct TlsFilePaths {
     pub redis_crt: PathBuf,
     pub redis_key: PathBuf,
@@ -14,19 +80,152 @@ pub struct TlsFilePaths {
 
 /// Client certificate and key paths for mTLS authentication
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct ClientCertPaths {
     pub client_crt: PathBuf,
     pub client_key: PathBuf,
 }
 
+pub struct OpensslCommand {
+    purpose: String,
+    cmd: Command,
+    stdin: Option<Vec<u8>>,
+}
+
+impl OpensslCommand {
+    pub fn new(purpose: &str) -> Self {
+        Self {
+            purpose: purpose.to_string(),
+            cmd: Command::new("openssl"),
+            stdin: None,
+        }
+    }
+
+    pub fn stdin(&mut self, stdin: Vec<u8>) -> &mut Self {
+        self.stdin = Some(stdin);
+        self
+    }
+
+    pub fn spawn(&mut self) -> Output {
+        // Spawn the child process
+        let mut child = self
+            .cmd
+            .stdin(process::Stdio::piped())
+            .stdout(process::Stdio::piped())
+            .stderr(process::Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|e| panic!("failed to spawn openssl ({}): {e}", self.purpose));
+
+        // Feed in stdin
+        if let Some(stdin_data) = self.stdin.take() {
+            let mut child_stdin = child
+                .stdin
+                .take()
+                .unwrap_or_else(|| panic!("failed to get openssl's stdin ({})", self.purpose));
+            let purpose = self.purpose.clone();
+            let _ = std::thread::spawn(move || {
+                child_stdin.write_all(&stdin_data).unwrap_or_else(|e| {
+                    panic!("failed to write to openssl's stdin ({purpose}): {e}")
+                });
+            });
+        }
+
+        // Wait until the program finishes
+        let output = child
+            .wait_with_output()
+            .unwrap_or_else(|e| panic!("failed to wait for openssl ({}): {e}", self.purpose));
+
+        // Check exit code
+        assert!(
+            output.status.success(),
+            "openssl returned {}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    }
+}
+
+impl CommandMultiArgs for OpensslCommand {
+    fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
+        self.cmd.arg(arg.as_ref());
+        self
+    }
+}
+
+/// Generate an RSA key
+///
+/// # Arguments:
+///
+/// * `file` - The key gets written to this file
+/// * `size` - Generate a key with this bit size
+/// * `purpose` - The name to use for this key in error messages
+/// * `env_name` - If there is an environment variable of this name that has a non-empty value, load
+///   the key from the file at this value instead of generating the key afresh.
+// The `env_name` could get inferred from `purpose`. But we don't infer it to allow grepping for the
+// full environment variable and landing at the callers.
+fn generate_key(file: &PathBuf, size: usize, purpose: &str, env_name: &str) {
+    if let Ok(env_value) = std::env::var(env_name)
+        && !env_value.is_empty()
+    {
+        // The environment signals to re-use an existing key instead of generating a new one.
+
+        // Read the key data
+        let key = fs::read_to_string(&env_value)
+            .unwrap_or_else(|e| panic!("failed to read {purpose} key from '{env_value}': {e}"));
+
+        // Write the key data to the expected place
+        fs::write(file, key)
+            .unwrap_or_else(|e| panic!("failed to write {purpose} key to '{file:?}': {e}"));
+
+        return;
+    }
+
+    // Call OpenSSL to generate the key
+    OpensslCommand::new(&format!("generate {purpose} key"))
+        .arg("genrsa")
+        .arg2("-out", file)
+        .arg(size.to_string())
+        .spawn();
+}
+
+/// Builds CA and server certs keys etc. for TLS connections with `CN` and `alt_names`
+///
+/// The server certificate will have a `CN` and `alt_name` `DNS.1` of `localhost.example.com`
+///
+/// # Caveat
+///
+/// This function creates new keys for each call. On entropy/resource-limited hosts, this quickly
+/// becomes time consuming. See the [TLS helpers section](crate#tls-helpers) on how to precompute
+/// keys once and then re-use them to speed up calls.
 pub fn build_keys_and_certs_for_tls(tempdir: &TempDir) -> TlsFilePaths {
     build_keys_and_certs_for_tls_ext(tempdir, true)
 }
 
+/// Builds CA and server certs keys etc. for TLS connections and optional `alt_names`/`CN`
+///
+/// If `with_ip_alts` is `true`, the server certificate will have a `CN` and `alt_name` `DNS.1` of
+/// localhost.example.com`. Otherwise, only `alt_names` `IP.1` of `127.0.0.1`.
+///
+/// # Caveat
+///
+/// This function creates new keys for each call. On entropy/resource-limited hosts, this quickly
+/// becomes time consuming. See the [TLS helpers section](crate#tls-helpers) on how to precompute
+/// keys once and then re-use them to speed up calls.
 pub fn build_keys_and_certs_for_tls_ext(tempdir: &TempDir, with_ip_alts: bool) -> TlsFilePaths {
     build_keys_and_certs_for_tls_with_hostname(tempdir, with_ip_alts, None)
 }
 
+/// Builds CA and server certs keys etc. for TLS connections and optional `alt_names` and `hostname`
+///
+/// The given `dns_hostname` is only respected if `with_ip_alts` is `true`.
+///
+/// # Caveat
+///
+/// This function creates new keys for each call. On entropy/resource-limited hosts, this quickly
+/// becomes time consuming. See the [TLS helpers section](crate#tls-helpers) on how to precompute
+/// keys once and then re-use them to speed up calls.
 pub fn build_keys_and_certs_for_tls_with_hostname(
     tempdir: &TempDir,
     with_ip_alts: bool,
@@ -41,51 +240,24 @@ pub fn build_keys_and_certs_for_tls_with_hostname(
     let redis_key = tempdir.path().join("redis.key");
     let ext_file = tempdir.path().join("openssl.cnf");
 
-    fn make_key<S: AsRef<std::ffi::OsStr>>(name: S, size: usize) {
-        process::Command::new("openssl")
-            .arg("genrsa")
-            .arg("-out")
-            .arg(name)
-            .arg(format!("{size}"))
-            .stdout(process::Stdio::piped())
-            .stderr(process::Stdio::piped())
-            .spawn()
-            .expect("failed to spawn openssl")
-            .wait()
-            .expect("failed to create key");
-    }
+    // Generate the key for the CA
+    generate_key(&ca_key, 4096, "CA", "REDISRS_TLS_KEY_CA");
 
-    // Build CA Key
-    make_key(&ca_key, 4096);
-
-    // Build redis key
-    make_key(&redis_key, 2048);
+    // Generate the key for the Redis server
+    generate_key(&redis_key, 2048, "server", "REDISRS_TLS_KEY_SERVER");
 
     // Build CA Cert
-    let status = process::Command::new("openssl")
+    OpensslCommand::new("self-certify CA")
         .arg("req")
         .arg("-x509")
         .arg("-new")
         .arg("-nodes")
         .arg("-sha256")
-        .arg("-key")
-        .arg(&ca_key)
-        .arg("-days")
-        .arg("3650")
-        .arg("-subj")
-        .arg("/O=Redis Test/CN=Certificate Authority")
-        .arg("-out")
-        .arg(&ca_crt)
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::piped())
-        .spawn()
-        .expect("failed to spawn openssl")
-        .wait()
-        .expect("failed to create CA cert");
-    assert!(
-        status.success(),
-        "`openssl req` failed to create CA cert: {status}"
-    );
+        .arg2("-key", &ca_key)
+        .arg2("-days", "3650")
+        .arg2("-subj", "/O=Redis Test/CN=Certificate Authority")
+        .arg2("-out", &ca_crt)
+        .spawn();
 
     let hostname = dns_hostname.unwrap_or("localhost.example.com");
 
@@ -122,57 +294,33 @@ pub fn build_keys_and_certs_for_tls_with_hostname(
     fs::write(&ext_file, ext).expect("failed to create x509v3 extensions file");
 
     // Read redis key
-    let mut key_cmd = process::Command::new("openssl")
+    let key_cmd = OpensslCommand::new("request server key certification")
         .arg("req")
         .arg("-new")
         .arg("-sha256")
-        .arg("-subj")
-        .arg("/O=Redis Test/CN=Generic-cert")
-        .arg("-key")
-        .arg(&redis_key)
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::piped())
-        .spawn()
-        .expect("failed to spawn openssl");
+        .arg2("-subj", "/O=Redis Test/CN=Generic-cert")
+        .arg2("-key", &redis_key)
+        .spawn();
 
     // build redis cert
-    let mut command2 = process::Command::new("openssl");
+    let mut command2 = OpensslCommand::new("sign server key certification request");
     command2
         .arg("x509")
         .arg("-req")
         .arg("-sha256")
-        .arg("-CA")
-        .arg(&ca_crt)
-        .arg("-CAkey")
-        .arg(&ca_key)
-        .arg("-CAserial")
-        .arg(&ca_serial)
+        .arg2("-CA", &ca_crt)
+        .arg2("-CAkey", &ca_key)
+        .arg2("-CAserial", &ca_serial)
         .arg("-CAcreateserial")
-        .arg("-days")
-        .arg("365")
-        .arg("-extfile")
-        .arg(&ext_file);
+        .arg2("-days", "365")
+        .arg2("-extfile", &ext_file);
     if !with_ip_alts {
-        command2.arg("-extensions").arg("v3_req");
+        command2.arg2("-extensions", "v3_req");
     }
-    let status2 = command2
-        .arg("-out")
-        .arg(&redis_crt)
-        .stdin(key_cmd.stdout.take().expect("should have stdout"))
-        .spawn()
-        .expect("failed to spawn openssl")
-        .wait()
-        .expect("failed to create redis cert");
-
-    let status = key_cmd.wait().expect("failed to create redis key");
-    assert!(
-        status.success(),
-        "`openssl req` failed to create request for Redis cert: {status}"
-    );
-    assert!(
-        status2.success(),
-        "`openssl x509` failed to create Redis cert: {status2}"
-    );
+    command2
+        .arg2("-out", &redis_crt)
+        .stdin(key_cmd.stdout)
+        .spawn();
 
     TlsFilePaths {
         redis_crt,
@@ -182,8 +330,15 @@ pub fn build_keys_and_certs_for_tls_with_hostname(
 }
 
 /// Build a client certificate with a custom common name (CN) field
+///
 /// Redis 8.6+ allows certificate-based authentication where the common name (CN)
 /// is mapped to an ACL username
+///
+/// # Caveat
+///
+/// This function creates new keys for each call. On entropy/resource-limited hosts, this quickly
+/// becomes time consuming. See the [TLS helpers section](crate#tls-helpers) on how to precompute
+/// keys once and then re-use them to speed up calls.
 pub fn build_client_cert_with_custom_cn(
     tempdir: &TempDir,
     common_name: &str,
@@ -195,21 +350,7 @@ pub fn build_client_cert_with_custom_cn(
     let ca_serial = tempdir.path().join("ca.txt");
 
     // Generate client private key
-    let status = process::Command::new("openssl")
-        .arg("genrsa")
-        .arg("-out")
-        .arg(&client_key)
-        .arg("2048")
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::piped())
-        .spawn()
-        .expect("failed to spawn openssl")
-        .wait()
-        .expect("failed to create client key");
-    assert!(
-        status.success(),
-        "`openssl genrsa` failed to create client key: {status}"
-    );
+    generate_key(&client_key, 2048, "client", "REDISRS_TLS_KEY_CLIENT");
 
     // Create a basic extensions file for X.509 v3 client certificate
     let client_ext_file = tempdir.path().join("client_ext.cnf");
@@ -221,52 +362,28 @@ pub fn build_client_cert_with_custom_cn(
         .expect("failed to create client extensions file");
 
     // Create certificate signing request with custom CN
-    let mut csr_cmd = process::Command::new("openssl")
+    let csr_cmd = OpensslCommand::new("request client key certification")
         .arg("req")
         .arg("-new")
         .arg("-sha256")
-        .arg("-subj")
-        .arg(format!("/O=Redis Test/CN={common_name}"))
-        .arg("-key")
-        .arg(&client_key)
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::piped())
-        .spawn()
-        .expect("failed to spawn openssl for CSR");
+        .arg2("-subj", format!("/O=Redis Test/CN={common_name}"))
+        .arg2("-key", &client_key)
+        .spawn();
 
     // Sign the certificate with CA (X.509 v3)
-    let cert_status = process::Command::new("openssl")
+    OpensslCommand::new("sign client key certification request")
         .arg("x509")
         .arg("-req")
         .arg("-sha256")
-        .arg("-CA")
-        .arg(ca_crt)
-        .arg("-CAkey")
-        .arg(ca_key)
-        .arg("-CAserial")
-        .arg(&ca_serial)
+        .arg2("-CA", ca_crt)
+        .arg2("-CAkey", ca_key)
+        .arg2("-CAserial", &ca_serial)
         .arg("-CAcreateserial")
-        .arg("-days")
-        .arg("365")
-        .arg("-extfile")
-        .arg(&client_ext_file)
-        .arg("-out")
-        .arg(&client_crt)
-        .stdin(csr_cmd.stdout.take().expect("should have stdout"))
-        .spawn()
-        .expect("failed to spawn openssl for certificate signing")
-        .wait()
-        .expect("failed to sign client certificate");
-
-    let csr_status = csr_cmd.wait().expect("failed to create CSR");
-    assert!(
-        csr_status.success(),
-        "`openssl req` failed to create CSR: {csr_status}"
-    );
-    assert!(
-        cert_status.success(),
-        "`openssl x509` failed to sign client certificate"
-    );
+        .arg2("-days", "365")
+        .arg2("-extfile", &client_ext_file)
+        .arg2("-out", &client_crt)
+        .stdin(csr_cmd.stdout)
+        .spawn();
 
     ClientCertPaths {
         client_crt,
@@ -297,4 +414,67 @@ pub fn get_random_available_port() -> u16 {
         }
     }
     panic!("Couldn't get a valid port");
+}
+
+pub fn start_tls_crypto_provider() {
+    #[cfg(feature = "tls-rustls")]
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        // we don't care about success, because failure means that the provider was set from another thread.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+}
+
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
+pub fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> TlsCertificates {
+    let ca_file = File::open(&tls_file_paths.ca_crt).expect("Cannot open CA cert file");
+    let mut root_cert_vec = Vec::new();
+    BufReader::new(ca_file)
+        .read_to_end(&mut root_cert_vec)
+        .expect("Unable to read CA cert file");
+
+    let cert_file = File::open(&tls_file_paths.redis_crt).expect("Cannot open cert file");
+    let mut client_cert_vec = Vec::new();
+    BufReader::new(cert_file)
+        .read_to_end(&mut client_cert_vec)
+        .expect("Unable to read cert file");
+
+    let key_file = File::open(&tls_file_paths.redis_key).expect("Cannot open key file");
+    let mut client_key_vec = Vec::new();
+    BufReader::new(key_file)
+        .read_to_end(&mut client_key_vec)
+        .expect("Unable to read key file");
+
+    let client_tls_config = ClientTlsConfig::new(client_cert_vec, client_key_vec);
+    TlsCertificates::new()
+        .client_tls_config(client_tls_config)
+        .root_cert(root_cert_vec)
+}
+
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
+pub fn build_single_client<T: redis::IntoConnectionInfo>(
+    connection_info: T,
+    tls_file_params: &Option<TlsFilePaths>,
+    mtls_enabled: bool,
+) -> RedisResult<redis::Client> {
+    if mtls_enabled && tls_file_params.is_some() {
+        redis::Client::build_with_tls(
+            connection_info,
+            load_certs_from_file(
+                tls_file_params
+                    .as_ref()
+                    .expect("Expected certificates when mTLS is enabled"),
+            ),
+        )
+    } else {
+        redis::Client::open(connection_info)
+    }
+}
+
+#[cfg(not(any(feature = "tls-rustls", feature = "tls-native-tls")))]
+pub fn build_single_client<T: redis::IntoConnectionInfo>(
+    connection_info: T,
+    _tls_file_params: &Option<TlsFilePaths>,
+    _mtls_enabled: bool,
+) -> RedisResult<redis::Client> {
+    redis::Client::open(connection_info)
 }

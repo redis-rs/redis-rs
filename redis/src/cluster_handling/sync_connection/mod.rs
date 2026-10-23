@@ -300,7 +300,7 @@ impl ClusterConfig {
     /// let messages = Arc::new(Mutex::new(Vec::new()));
     /// let config = ClusterConfig::new().set_push_sender(move |msg|{
     ///     let Ok(mut messages) = messages.lock() else {
-    ///         return Err(redis::aio::SendError);
+    ///         return Err("the push handler failed");
     ///     };
     ///     messages.push(msg);
     ///     Ok(())
@@ -423,7 +423,8 @@ where
     }
 
     pub(crate) fn execute_pipeline(&mut self, pipe: &ClusterPipeline) -> RedisResult<Vec<Value>> {
-        self.send_recv_and_retry_cmds(pipe.commands())
+        let cmds: Vec<Cmd> = pipe.cmd_iter().map(|cmd| cmd.to_cmd()).collect();
+        self.send_recv_and_retry_cmds(&cmds)
     }
 
     /// Returns the connection status.

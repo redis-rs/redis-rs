@@ -125,6 +125,7 @@ impl ToRedisArgs for Rule {
 /// This type collects key/value data returned by the [`ACL GETUSER`][1] command.
 ///
 /// [1]: https://redis.io/commands/acl-getuser
+#[non_exhaustive]
 #[derive(Debug, Default, Eq, PartialEq)]
 pub struct AclInfo {
     /// Describes flag rules for the user. Represented by [`Rule::On`][1],

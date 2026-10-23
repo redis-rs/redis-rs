@@ -793,7 +793,7 @@ impl ClusterClientBuilder {
     ///     .use_protocol(redis::ProtocolVersion::RESP3)
     ///     .push_sender(move |msg|{
     ///         let Ok(mut messages) = messages.lock() else {
-    ///             return Err(redis::aio::SendError);
+    ///             return Err("the push handler failed");
     ///         };
     ///         messages.push(msg);
     ///         Ok(())

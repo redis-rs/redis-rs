@@ -87,7 +87,7 @@ fn demo_group_reads(client: &redis::Client) {
                 let read_reply = read_group_records(&ca, *slowness).expect("group read");
 
                 // fake some expensive work
-                for StreamKey { key, ids } in read_reply.keys {
+                for StreamKey { key, ids, .. } in read_reply.keys {
                     for StreamId { id, .. } in &ids {
                         thread::sleep(Duration::from_millis(random_wait_millis(*slowness)));
                         println!(
@@ -217,7 +217,7 @@ fn read_records(client: &redis::Client) -> RedisResult<()> {
         .xread_options(STREAMS, &[starting_id, another_form, starting_id], &opts)
         .expect("read");
 
-    for StreamKey { key, ids } in srr.keys {
+    for StreamKey { key, ids, .. } in srr.keys {
         println!("Stream {key}");
         for StreamId { id, map, .. } in ids {
             println!("\tID {id}");
