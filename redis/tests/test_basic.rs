@@ -13,7 +13,7 @@ mod basic {
 
     use redis::{
         Aggregate, Client, Connection, ConnectionInfo, ConnectionLike, ControlFlow, CopyOptions,
-        ErrorKind, ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck,
+        ErrorKind, ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue,
         HashFieldExpirationOptions, IncrexOptions,
         IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply},
         MSetOptions, ProtocolVersion, PubSubCommands, PushInfo, PushKind, RedisConnectionInfo,
@@ -4387,6 +4387,59 @@ mod basic {
                 ("minushalf".to_string(), -0.5)
             ])
         );
+    }
+
+    #[test]
+    fn test_withscores_reply_shapes_decode_into_pairs() {
+        let flat = redis_value!(["one", "1.5", "two", "2.5"]);
+        let nested = redis_value!([["one", 1.5], ["two", 2.5]]);
+        let expected = vec![("one".to_string(), 1.5), ("two".to_string(), 2.5)];
+
+        assert_eq!(
+            Vec::<(String, f64)>::from_redis_value(flat),
+            Ok(expected.clone())
+        );
+        assert_eq!(Vec::<(String, f64)>::from_redis_value(nested), Ok(expected));
+    }
+
+    #[test]
+    fn test_zpop_returns_member_score_pairs() {
+        let ctx = TestContext::default();
+        let mut con = ctx.connection();
+
+        let items = [
+            (f64::NEG_INFINITY, "neginf"),
+            (-2.0, "neg"),
+            (-0.5, "negfrac"),
+            (1.0, "one"),
+            (1.5, "onehalf"),
+            (5.0, "five"),
+        ];
+        assert_eq!(con.zadd_multiple("zpop_min", &items), Ok(6));
+        assert_eq!(con.zadd_multiple("zpop_max", &items), Ok(6));
+
+        assert_eq!(
+            con.zpopmin("zpop_min", 4),
+            Ok(vec![
+                ("neginf".to_string(), f64::NEG_INFINITY),
+                ("neg".to_string(), -2.0),
+                ("negfrac".to_string(), -0.5),
+                ("one".to_string(), 1.0),
+            ])
+        );
+        assert_eq!(con.zcard("zpop_min"), Ok(2));
+
+        assert_eq!(
+            con.zpopmax("zpop_max", 3),
+            Ok(vec![
+                ("five".to_string(), 5.0),
+                ("onehalf".to_string(), 1.5),
+                ("one".to_string(), 1.0),
+            ])
+        );
+        assert_eq!(con.zcard("zpop_max"), Ok(3));
+
+        assert_eq!(con.zpopmin("zpop_missing", 3), Ok(vec![]));
     }
 
     #[test]

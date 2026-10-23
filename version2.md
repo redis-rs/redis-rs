@@ -547,10 +547,10 @@ For the `Fn(PushInfo) -> Result<(), T>` push sender, the closure's error type `T
 * If you implemented `AsyncPushSender`, you'll need to define a printable error types.
 * Push delivery failures are no longer silent: they are reported through the `SendError` value and logged as warnings. Expect these warnings when a push receiver is dropped while the connection is still active.
 
-### `(Async)TypedCommands` sorted-set range commands return `(member, score)` pairs (Breaking Change)
+### `(Async)TypedCommands` sorted-set range and pop commands return `(member, score)` pairs (Breaking Change)
 
 Following [issue #2483](https://github.com/redis-rs/redis-rs/issues/2483).
-The typed commands for the sorted-set range commands that return scores were inconsistent: `zrange_withscores` already returned `Vec<(String, f64)>` but the other commands declared an integer score type or a flat list of strings.
+The typed commands for the sorted-set commands that return scores were inconsistent: `zrange_withscores` already returned `Vec<(String, f64)>` but the other commands declared an integer score type or a flat list of strings.
 
 Their return types are now updated to:
 - `zrangebyscore_withscores`: `Vec<(String, f64)>` (was `Vec<(String, usize)>`)
@@ -558,10 +558,12 @@ Their return types are now updated to:
 - `zrevrange_withscores`: `Vec<(String, f64)>` (was `Vec<String>`)
 - `zrevrangebyscore_withscores`: `Vec<(String, f64)>` (was `Vec<String>`)
 - `zrevrangebyscore_limit_withscores`: `Vec<(String, f64)>` (was `Vec<String>`)
+- `zpopmin`: `Vec<(String, f64)>` (was `Vec<String>`)
+- `zpopmax`: `Vec<(String, f64)>` (was `Vec<String>`)
 
 **Migration:** Destructure each entry as a `(member, score)` pair. Code that relied on integer scores can cast them back with `score as usize`.
 
-If a different score type is needed, choose it explicitly through the untyped `Commands` trait (sync) or `AsyncCommands` trait (async).
+If you need a different shape or score type, use the untyped `Commands` trait (sync) or `AsyncCommands` trait (async) and pick the response type there.
 
 Note: the old flat `Vec<String>` does not parse the RESP3 reply, which is an array of `[member, score]` pairs, and the old `usize` score type fails on fractional or negative scores.
 

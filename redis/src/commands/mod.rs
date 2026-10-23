@@ -1200,7 +1200,7 @@ implement_commands! {
 
     /// Removes and returns up to count members with the highest scores in a sorted set
     /// [Redis Docs](https://redis.io/commands/ZPOPMAX)
-    fn zpopmax<K: ToSingleRedisArg>(key: K, count: isize) -> (Vec<String>) {
+    fn zpopmax<K: ToSingleRedisArg>(key: K, count: isize) -> (Vec<(String, f64)>) {
         ready_cmd!("ZPOPMAX", key, count).take()
     }
 
@@ -1213,7 +1213,7 @@ implement_commands! {
 
     /// Removes and returns up to count members with the lowest scores in a sorted set
     /// [Redis Docs](https://redis.io/commands/ZPOPMIN)
-    fn zpopmin<K: ToSingleRedisArg>(key: K, count: isize) -> (Vec<String>) {
+    fn zpopmin<K: ToSingleRedisArg>(key: K, count: isize) -> (Vec<(String, f64)>) {
         ready_cmd!("ZPOPMIN", key, count).take()
     }
 
