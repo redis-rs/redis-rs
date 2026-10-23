@@ -1,5 +1,6 @@
 use crate::{
-    Cmd, ErrorKind, Pipeline, RedisError, RedisResult, Value, caching::cache_manager::PrepCacheItem,
+    Cmd, ErrorKind, Pipeline, RedisError, RedisResult, Value,
+    caching::cache_manager::PrepCacheItem, cmd::Arg,
 };
 use std::{iter::zip, time::Instant};
 
@@ -50,7 +51,8 @@ impl CacheablePipeline<'_> {
 
 pub(crate) struct SingleCachedCommand<'a> {
     pub(crate) redis_key: &'a [u8],
-    pub(crate) cmd_key: Vec<u8>,
+    pub(crate) cmd_key: &'a [u8],
+    pub(crate) cmd_args: &'a [Arg<usize>],
     pub(crate) cmd: &'a Cmd,
     pub(crate) client_side_expire: Instant,
 }
@@ -58,6 +60,7 @@ pub(crate) struct SingleCachedCommand<'a> {
 pub(crate) struct MultipleCachedCommandPart<'a> {
     pub(crate) redis_key: &'a [u8],
     pub(crate) cmd_key: Vec<u8>,
+    pub(crate) cmd_args: Vec<Arg<usize>>,
 }
 
 /// Holds enough information to pack and resolve, both single (GET, HMGET) and multiple (MGET) commands.
@@ -88,7 +91,8 @@ impl CacheableCommand<'_> {
                     if !matches!(&reply, &Value::ServerError(_)) {
                         cache_manager.insert(
                             cached_command.redis_key,
-                            &cached_command.cmd_key,
+                            cached_command.cmd_key,
+                            cached_command.cmd_args,
                             reply.clone(),
                             cached_command.client_side_expire,
                             &pttl,
@@ -118,6 +122,7 @@ impl CacheableCommand<'_> {
                             cache_manager.insert(
                                 cached_command.redis_key,
                                 &cached_command.cmd_key,
+                                &cached_command.cmd_args,
                                 key_value.clone(),
                                 client_side_expire,
                                 &pttl_value,

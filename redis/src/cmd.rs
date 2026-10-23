@@ -79,7 +79,7 @@ impl Default for CommandCacheConfig {
 pub struct Cmd {
     pub(crate) data: Vec<u8>,
     // Arg::Simple contains the offset that marks the end of the argument
-    args: Vec<Arg<usize>>,
+    pub(crate) args: Vec<Arg<usize>>,
     cursor: Option<u64>,
     // If it's true command's response won't be read from socket. Useful for Pub/Sub.
     no_response: bool,
