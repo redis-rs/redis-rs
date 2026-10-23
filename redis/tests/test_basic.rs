@@ -4195,6 +4195,72 @@ mod basic {
     }
 
     #[test]
+    fn test_push_after_timeout_does_not_desync_replies() {
+        use std::io::Write;
+
+        fn fake_redis(listener: std::net::TcpListener) {
+            let mut stream = listener.incoming().next().unwrap().unwrap();
+
+            let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+
+            let mut pipeline = redis::pipe();
+            pipeline.cmd("HELLO").arg("3");
+            pipeline
+                .cmd("CLIENT")
+                .arg("SETINFO")
+                .arg("LIB-NAME")
+                .arg("redis-rs");
+            pipeline
+                .cmd("CLIENT")
+                .arg("SETINFO")
+                .arg("LIB-VER")
+                .arg(env!("CARGO_PKG_VERSION"));
+            let expected_length = pipeline.get_packed_pipeline().len();
+            let mut buf = vec![0; expected_length];
+            reader.read_exact(&mut buf).unwrap();
+            stream.write_all(b"+OK\r\n+OK\r\n+OK\r\n").unwrap();
+
+            loop {
+                let expected_length = cmd("GET").arg("key1").get_packed_command().len();
+                let mut buf = vec![0; expected_length];
+                reader.read_exact(&mut buf).unwrap();
+
+                if buf == cmd("GET").arg("key1").get_packed_command() {
+                    // reply after the client timed out, with a push message arriving first
+                    sleep(Duration::from_millis(100));
+                    stream
+                        .write_all(b">2\r\n$10\r\ninvalidate\r\n*1\r\n$4\r\nkey3\r\n")
+                        .unwrap();
+                    stream.write_all(b"$4\r\nkey1\r\n").unwrap();
+                } else if buf == cmd("GET").arg("key2").get_packed_command() {
+                    stream.write_all(b"$4\r\nkey2\r\n").unwrap();
+                    return;
+                } else {
+                    panic!("Invalid command {}", String::from_utf8(buf).unwrap());
+                }
+            }
+        }
+
+        let listener = get_listener_on_free_port();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || fake_redis(listener));
+
+        let client = redis::Client::open(format!("redis://127.0.0.1:{port}/?protocol=3")).unwrap();
+        let mut con = client.get_connection().unwrap();
+        con.set_read_timeout(Some(Duration::from_millis(10)))
+            .unwrap();
+
+        let res = con.get("key1");
+        assert!(res.unwrap_err().is_timeout());
+        assert!(con.is_open());
+
+        sleep(Duration::from_millis(200));
+
+        let value = con.get("key2").unwrap().unwrap();
+        assert_eq!(value, "key2");
+    }
+
+    #[test]
     fn test_blocking_sorted_set_api() {
         let ctx = TestContext::default();
         let mut con = ctx.connection();
