@@ -871,9 +871,12 @@ pub struct StreamInfoStreamReply {
     /// The last generated ID that may not be the same as the last
     /// entry ID in case some entry was deleted.
     pub last_generated_id: String,
-    /// Details about the radix tree representing the stream mostly
-    /// useful for optimization and debugging tasks.
+    /// The number of keys in the radix tree representing the stream,
+    /// mostly useful for optimization and debugging tasks.
     pub radix_tree_keys: usize,
+    /// The number of nodes in the radix tree representing the stream,
+    /// mostly useful for optimization and debugging tasks.
+    pub radix_tree_nodes: usize,
     /// The number of consumer groups associated with the stream.
     pub groups: usize,
     /// Number of elements of the stream.
@@ -1331,8 +1334,11 @@ impl FromRedisValue for StreamInfoStreamReply {
         if let Some(v) = map.remove("last-generated-id") {
             reply.last_generated_id = from_redis_value(v)?;
         }
-        if let Some(v) = map.remove("radix-tree-nodes") {
+        if let Some(v) = map.remove("radix-tree-keys") {
             reply.radix_tree_keys = from_redis_value(v)?;
+        }
+        if let Some(v) = map.remove("radix-tree-nodes") {
+            reply.radix_tree_nodes = from_redis_value(v)?;
         }
         if let Some(v) = map.remove("groups") {
             reply.groups = from_redis_value(v)?;
@@ -1767,6 +1773,29 @@ mod tests {
             assert!(ids.contains(&"1713465533411-0"));
             assert!(ids.contains(&"1713465536069-0"));
             assert_eq!(reply.deleted_ids.len(), 0);
+        }
+    }
+
+    mod stream_info_stream_reply {
+        use super::*;
+        use crate::Value;
+
+        #[test]
+        fn parses_radix_tree_fields() {
+            let value = Value::Array(vec![
+                Value::BulkString("length".into()),
+                Value::Int(1000),
+                Value::BulkString("radix-tree-keys".into()),
+                Value::Int(10),
+                Value::BulkString("radix-tree-nodes".into()),
+                Value::Int(26),
+            ]);
+
+            let reply: StreamInfoStreamReply = FromRedisValue::from_redis_value(value).unwrap();
+
+            assert_eq!(reply.length, 1000);
+            assert_eq!(reply.radix_tree_keys, 10);
+            assert_eq!(reply.radix_tree_nodes, 26);
         }
     }
 
