@@ -6,7 +6,7 @@ The basic design has held up well over the years. We've improved significant par
 
 This document highlights the breaking changes and new features in version 1.0.0. For a complete list of changes, see CHANGELOG.md. We appreciate feedback and bug reports. Please open an issue for anything you encounter during migration. in order to get the newest version, please specify in your Cargo.toml file 
 ```toml
-redis = "1.0.0"
+redis = "1"
 ```
 
 I'd like to thank everyone who contributed to the release of V1, with code contributions, testing and feedback! 
