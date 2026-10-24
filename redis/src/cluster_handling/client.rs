@@ -39,7 +39,7 @@ use crate::connection::TlsConnParams;
 #[cfg(feature = "cluster-async")]
 use crate::cluster_async;
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 use crate::tls::{TlsCertificates, retrieve_tls_certificates};
 
 /// Parameters specific to builder, so that
@@ -51,7 +51,7 @@ struct BuilderParams {
     username: Option<ArcStr>,
     read_routing_factory: Option<Arc<dyn ReadRoutingStrategyFactory>>,
     tls: Option<TlsMode>,
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
     certs: Option<TlsCertificates>,
     #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
     danger_accept_invalid_hostnames: bool,
@@ -87,7 +87,7 @@ impl std::fmt::Debug for BuilderParams {
             username,
             read_routing_factory,
             tls,
-            #[cfg(feature = "tls-rustls")]
+            #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
             certs,
             #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
             danger_accept_invalid_hostnames,
@@ -129,7 +129,7 @@ impl std::fmt::Debug for BuilderParams {
             .field("node_address_map", node_address_map)
             .field("read_routing_factory", &set_or_unset(read_routing_factory));
 
-        #[cfg(feature = "tls-rustls")]
+        #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
         str.field("certs", &redacted_if_set(certs));
 
         #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
@@ -314,10 +314,10 @@ impl std::fmt::Debug for ClusterParams {
 
 impl ClusterParams {
     fn from(value: BuilderParams) -> RedisResult<Self> {
-        #[cfg(not(feature = "tls-rustls"))]
+        #[cfg(not(any(feature = "tls-rustls", feature = "tls-native-tls")))]
         let tls_params: Option<TlsConnParams> = None;
 
-        #[cfg(feature = "tls-rustls")]
+        #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
         let tls_params = {
             let retrieved_tls_params = value.certs.as_ref().map(retrieve_tls_certificates);
 
@@ -447,8 +447,8 @@ impl ClusterClientBuilder {
     /// This does not create connections to the Redis Cluster, but only performs some basic checks
     /// on the initial nodes' URLs and passwords/usernames.
     ///
-    /// When the `tls-rustls` feature is enabled and TLS credentials are provided, they are set for
-    /// each cluster connection.
+    /// When a TLS feature (`tls-rustls` or `tls-native-tls`) is enabled and TLS credentials are
+    /// provided, they are set for each cluster connection.
     ///
     /// # Errors
     ///
@@ -632,7 +632,7 @@ impl ClusterClientBuilder {
     ///
     /// If `ClientTlsConfig` ( cert+key pair ) is not provided, then client-side authentication is not enabled.
     /// If `root_cert` is not provided, then system root certificates are used instead.
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
     pub fn certs(mut self, certificates: TlsCertificates) -> Self {
         if self.builder_params.tls.is_none() {
             self.builder_params.tls = Some(TlsMode::Secure);
