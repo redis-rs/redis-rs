@@ -1,4 +1,4 @@
-#![cfg(feature = "search_unfinished")]
+#![cfg(feature = "search")]
 
 mod support;
 use crate::support::*;

@@ -108,7 +108,7 @@
 //! * `uuid`: enables type conversion to UUID (optional)
 //! * `sentinel`: enables high-level interfaces for communication with Redis sentinels (optional)
 //! * `json`: enables high-level interfaces for communication with the JSON module (optional)
-//! * `search_unfinished`: enables high-level interfaces for communication with the Search module (optional) NOTE: Currently, this feature is incomplete and should be considered a work in progress.
+//! * `search`: enables high-level interfaces for communication with the Search module (optional) NOTE: Currently, this feature is incomplete and should be considered a work in progress.
 //! * `cache-aio`: enables **experimental** client side caching for MultiplexedConnection, ConnectionManager and async ClusterConnection (optional)
 //!
 //! ## Connection Parameters
@@ -786,8 +786,8 @@ pub use crate::commands::AsyncHotkeysCommands;
 #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
 pub use crate::commands::vector_sets;
 
-#[cfg(feature = "search_unfinished")]
-#[cfg_attr(docsrs, doc(cfg(feature = "search_unfinished")))]
+#[cfg(feature = "search")]
+#[cfg_attr(docsrs, doc(cfg(feature = "search")))]
 pub use crate::commands::search;
 
 #[cfg(feature = "geospatial")]

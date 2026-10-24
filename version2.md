@@ -576,3 +576,8 @@ let scores: Vec<(String, f64)> = con.zrangebyscore_withscores("z", 0, 10)?;
 // only for scores that are known to be whole and non-negative
 let ints: Vec<(String, usize)> = scores.into_iter().map(|(m, s)| (m, s as usize)).collect();
 ```
+
+### Rename the `search_unfinised` feature to `search` (Minor breaking change)
+
+The feature was renamed, since the first part of it (FT.CREATE support) is fully merged. There's more work on it, but the feature is ready to be used, and so is renamed.
+

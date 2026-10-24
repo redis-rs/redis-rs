@@ -1306,7 +1306,7 @@ mod tests_routing {
         );
     }
 
-    #[cfg(feature = "search_unfinished")]
+    #[cfg(feature = "search")]
     #[test]
     fn test_ft_create_command_builder_is_routed_as_a_keyless_command() {
         use crate::schema;
