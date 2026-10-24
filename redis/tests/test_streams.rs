@@ -200,6 +200,8 @@ fn test_xgroup_create() {
     assert_eq!(reply.last_entry.len(), 1);
     assert_eq!(reply.last_entry.get("hello"), Some("world2".to_string()));
     assert_eq!(&reply.last_generated_id, "1000-1");
+    assert_eq!(reply.radix_tree_keys, 1);
+    assert_eq!(reply.radix_tree_nodes, 2);
 
     // xgroup create (existing stream)
     let result = con.xgroup_create("k1", "g1", "$");
