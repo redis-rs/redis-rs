@@ -25,7 +25,7 @@ use tokio_rustls::{TlsConnector, client::TlsStream};
 #[cfg(all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")))]
 use tokio_native_tls::TlsStream;
 
-#[cfg(any(feature = "tokio-rustls-comp", feature = "tokio-native-tls-comp"))]
+#[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
 use crate::connection::TlsConnParams;
 
 #[cfg(unix)]
@@ -152,6 +152,24 @@ impl RedisRuntime for Tokio {
             )
             .await
             .map(|con| Self::TcpTls(Box::new(con)))?)
+    }
+
+    // TLS is enabled, but only for smol or for sync connections.
+    #[cfg(all(
+        any(feature = "tls-native-tls", feature = "tls-rustls"),
+        not(any(feature = "tokio-native-tls-comp", feature = "tokio-rustls-comp"))
+    ))]
+    async fn connect_tcp_tls(
+        _hostname: &str,
+        _socket_addr: SocketAddr,
+        _insecure: bool,
+        _tls_params: &Option<TlsConnParams>,
+        _tcp_settings: &crate::io::tcp::TcpSettings,
+    ) -> RedisResult<Self> {
+        fail!((
+            crate::errors::ErrorKind::InvalidClientConfig,
+            "Cannot connect to TCP with TLS on Tokio without the `tokio-native-tls-comp` or `tokio-rustls-comp` feature"
+        ));
     }
 
     #[cfg(unix)]
