@@ -266,7 +266,9 @@ impl CacheManager {
             );
         }
 
-        if crate::commands::is_cachable_cmd(command_name) {
+        if crate::commands::is_cachable_cmd(command_name)
+            && reads_single_key(command_name, cmd.args_iter().len())
+        {
             return self.handle_single_key_command(cmd, client_side_expire);
         }
 
@@ -328,9 +330,86 @@ fn is_multi_key(command_name: &[u8]) -> Option<(&'static str, &'static [u8])> {
     }
 }
 
+/// Replies to single-key commands are stored under their first argument and dropped when the
+/// server invalidates that key, so a command is cached only if that is the one key it reads.
+/// `arg_count` includes the command name.
+fn reads_single_key(command_name: &[u8], arg_count: usize) -> bool {
+    match command_name {
+        b"EXISTS" | b"SDIFF" | b"SINTER" | b"SUNION" => arg_count == 2,
+        // `LCS` reads two keys, and the others take the number of keys as their first argument.
+        b"LCS" | b"SINTERCARD" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZUNION" => false,
+        _ => true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Cmd;
+
+    /// Runs `cmd` through the cache, with `server_reply` as the server's reply.
+    fn query_with_cache(cache_manager: &CacheManager, cmd: &Cmd, server_reply: Value) -> Value {
+        match cache_manager.get_cached_cmd(CmdRef::from_cmd(cmd)) {
+            PrepCacheItem::Cached(value) => value,
+            PrepCacheItem::NotCached(cacheable_command) => cacheable_command
+                .resolve(cache_manager, [Value::Int(-1), server_reply].into_iter())
+                .unwrap(),
+            PrepCacheItem::NotCacheable => server_reply,
+        }
+    }
+
+    #[test]
+    fn test_commands_reading_several_keys_are_not_served_after_a_key_changes() {
+        let commands: [&[&str]; 10] = [
+            &["EXISTS", "key_1", "key_2"],
+            &["LCS", "key_1", "key_2"],
+            &["SDIFF", "key_1", "key_2"],
+            &["SINTER", "key_1", "key_2"],
+            &["SINTERCARD", "2", "key_1", "key_2"],
+            &["SUNION", "key_1", "key_2"],
+            &["ZDIFF", "2", "key_1", "key_2"],
+            &["ZINTER", "2", "key_1", "key_2"],
+            &["ZINTERCARD", "2", "key_1", "key_2"],
+            &["ZUNION", "2", "key_1", "key_2"],
+        ];
+
+        for args in commands {
+            let cmd = crate::cmd(args[0]).arg(&args[1..]).take();
+            let cache_manager = CacheManager::new(CacheConfig::new());
+            assert_eq!(
+                query_with_cache(&cache_manager, &cmd, Value::Int(1)),
+                Value::Int(1)
+            );
+
+            // The server reports that `key_2` changed.
+            cache_manager.handle_push_value(
+                &PushKind::Invalidate,
+                &[Value::Array(vec![Value::BulkString(b"key_2".to_vec())])],
+            );
+
+            assert_eq!(
+                query_with_cache(&cache_manager, &cmd, Value::Int(2)),
+                Value::Int(2),
+                "{}",
+                args[0]
+            );
+        }
+    }
+
+    #[test]
+    fn test_single_key_exists_is_cached() {
+        let cache_manager = CacheManager::new(CacheConfig::new());
+        let cmd = crate::cmd("EXISTS").arg("key_1").take();
+
+        assert_eq!(
+            query_with_cache(&cache_manager, &cmd, Value::Int(1)),
+            Value::Int(1)
+        );
+        assert_eq!(
+            query_with_cache(&cache_manager, &cmd, Value::Int(0)),
+            Value::Int(1)
+        );
+    }
 
     #[test]
     fn test_custom_command_ttl() {
