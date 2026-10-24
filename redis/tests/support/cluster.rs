@@ -19,7 +19,7 @@ use redis_test::server::{RedisServer, use_protocol};
 use redis_test::utils::{build_single_client, start_tls_crypto_provider};
 use redis_test::{AvailableComponents, TestContextVersioning};
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 use redis_test::utils::load_certs_from_file;
 
 pub struct TestClusterContext {
@@ -102,7 +102,7 @@ impl TestClusterContext {
     {
         start_tls_crypto_provider();
         let mtls_enabled = cluster_config.get_mtls_enabled();
-        #[cfg(feature = "tls-rustls")]
+        #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
         let require_secure_tls = cluster_config.get_require_secure_tls();
         let cluster = RedisCluster::new(cluster_config);
         let initial_nodes: Vec<ConnectionInfo> = cluster
@@ -112,7 +112,7 @@ impl TestClusterContext {
         let mut builder =
             redis::cluster::ClusterClientBuilder::new(initial_nodes.clone()).use_protocol(protocol);
 
-        #[cfg(feature = "tls-rustls")]
+        #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
         if (mtls_enabled || (cluster.tls_paths.is_some() && !require_secure_tls))
             && let Some(tls_file_paths) = &cluster.tls_paths
         {
@@ -141,7 +141,7 @@ impl TestClusterContext {
         let mut builder = redis::cluster::ClusterClientBuilder::new(self.nodes.clone())
             .use_protocol(self.protocol);
 
-        #[cfg(feature = "tls-rustls")]
+        #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
         if (self.mtls_enabled || self.cluster.tls_paths.is_some())
             && let Some(tls_file_paths) = &self.cluster.tls_paths
         {
