@@ -496,7 +496,7 @@ mod cluster_async {
         assert!(cluster.client.get_async_connection().await.is_err());
     }
 
-    #[cfg(feature = "tls-rustls-insecure")]
+    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
     #[async_test]
     async fn test_async_cluster_danger_accept_invalid_hostnames() {
         if ClusterType::get_intended() != ClusterType::TcpTls {

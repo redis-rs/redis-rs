@@ -119,7 +119,7 @@ mod cluster {
         assert!(cluster.client.get_connection().is_err());
     }
 
-    #[cfg(feature = "tls-rustls-insecure")]
+    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
     #[test]
     fn test_danger_accept_invalid_hostnames() {
         if ClusterType::get_intended() != ClusterType::TcpTls {

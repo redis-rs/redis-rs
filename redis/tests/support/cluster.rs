@@ -39,7 +39,7 @@ impl TestClusterContext {
         let cfg = RedisClusterConfiguration::default()
             .mtls_enabled()
             .insecure_tls();
-        #[cfg(feature = "tls-rustls")]
+        #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
         let cfg = cfg.cluster_type(redis_test::cluster::ClusterType::TcpTls);
 
         Self::new_with_config_and_builder(cfg, identity)
