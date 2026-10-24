@@ -2206,6 +2206,11 @@ macro_rules! from_redis_value_for_bignum_internal {
                 Ok(rv) => Ok(rv),
                 Err(_) => crate::errors::invalid_type_error!(v, "Could not convert from string."),
             },
+            // Parse the shortest representation of the double, so that 0.1 converts to 0.1
+            Value::Double(val) => match val.to_string().parse::<$t>() {
+                Ok(rv) => Ok(rv),
+                Err(_) => crate::errors::invalid_type_error!(v, "Could not convert from double."),
+            },
             _ => crate::errors::invalid_type_error!(v, "Response type not convertible to numeric."),
         }
     }};
