@@ -143,10 +143,10 @@ pub use self::mock_cluster::*;
 
 mod util;
 
-#[cfg(all(feature = "cluster", feature = "search_unfinished"))]
+#[cfg(all(feature = "cluster", feature = "search"))]
 mod cluster_search;
 
-#[cfg(all(feature = "cluster", feature = "search_unfinished"))]
+#[cfg(all(feature = "cluster", feature = "search"))]
 #[allow(unused_imports)]
 pub use self::cluster_search::*;
 

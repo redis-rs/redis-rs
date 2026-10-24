@@ -3,7 +3,7 @@
 use crate::cmd::{Cmd, Iter, cmd};
 use crate::connection::{Connection, ConnectionLike, Msg, RedisConnectionInfo};
 use crate::pipeline::Pipeline;
-#[cfg(feature = "search_unfinished")]
+#[cfg(feature = "search")]
 use crate::search::{CreateOptions, SearchSchema};
 use crate::types::{
     ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, IncrexResult,
@@ -44,8 +44,8 @@ pub mod acl;
 #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
 pub mod vector_sets;
 
-#[cfg(feature = "search_unfinished")]
-#[cfg_attr(docsrs, doc(cfg(feature = "search_unfinished")))]
+#[cfg(feature = "search")]
+#[cfg_attr(docsrs, doc(cfg(feature = "search")))]
 pub mod search;
 
 pub mod hotkeys;
@@ -2876,8 +2876,8 @@ implement_commands! {
     /// ```
     ///
     /// [Redis Docs](https://redis.io/commands/ft.create)
-    #[cfg(feature = "search_unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "search_unfinished")))]
+    #[cfg(feature = "search")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "search")))]
     fn ft_create<K: ToSingleRedisArg>(
         index_name: K,
         options: &CreateOptions,
