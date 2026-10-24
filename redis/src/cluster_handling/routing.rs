@@ -36,6 +36,14 @@ pub enum AggregateOp {
     // Max, omitted due to dead code warnings. ATM this value isn't constructed anywhere
 }
 
+/// Array aggregating operators for element-wise operations.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum ArrayAggregateOp {
+    /// Choose minimal value for each array element
+    Min,
+}
+
 /// Policy defining how to combine multiple responses into one.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
@@ -50,6 +58,8 @@ pub enum ResponsePolicy {
     AggregateLogical(LogicalAggregateOp),
     /// Aggregate success results according to a numeric operator. Return error on any failed request or on a response that isn't an integer.
     Aggregate(AggregateOp),
+    /// Aggregate array responses element-wise according to a numeric operator. Return error on any failed request or on a response that isn't an array of integers.
+    AggregateArray(ArrayAggregateOp),
     /// Aggregate array responses into a single array. Return error on any failed request or on a response that isn't an array.
     CombineArrays,
     /// Handling is not defined by the Redis standard. Will receive a special case
@@ -212,6 +222,57 @@ pub(crate) fn logical_aggregate(values: Vec<Value>, op: LogicalAggregateOp) -> R
             .collect(),
     ))
 }
+
+/// Aggregate array responses element-wise according to a numeric operator.
+pub(crate) fn aggregate_array(values: Vec<Value>, op: ArrayAggregateOp) -> RedisResult<Value> {
+    let initial_value = match op {
+        ArrayAggregateOp::Min => i64::MAX,
+    };
+    let results = values.into_iter().try_fold(Vec::new(), |acc, curr| {
+        let values = match curr {
+            Value::Array(values) => values,
+            _ => {
+                return RedisResult::Err(
+                    (
+                        ErrorKind::UnexpectedReturnType,
+                        "expected array of integers as response",
+                    )
+                        .into(),
+                );
+            }
+        };
+        let mut acc = if acc.is_empty() {
+            vec![initial_value; values.len()]
+        } else {
+            if values.len() != acc.len() {
+                return Err((
+                    ErrorKind::UnexpectedReturnType,
+                    "expected all shards to return the same number of results",
+                )
+                    .into());
+            }
+            acc
+        };
+        for (index, value) in values.into_iter().enumerate() {
+            let int = match value {
+                Value::Int(int) => int,
+                _ => {
+                    return Err((
+                        ErrorKind::UnexpectedReturnType,
+                        "expected array of integers as response",
+                    )
+                        .into());
+                }
+            };
+            acc[index] = match op {
+                ArrayAggregateOp::Min => min(acc[index], int),
+            };
+        }
+        Ok(acc)
+    })?;
+    Ok(Value::Array(results.into_iter().map(Value::Int).collect()))
+}
+
 /// Aggregate array responses into a single map.
 pub(crate) fn combine_map_results(values: Vec<Value>) -> RedisResult<Value> {
     let mut map: HashMap<Vec<u8>, i64> = HashMap::new();
@@ -569,17 +630,22 @@ impl ResponsePolicy {
         match cmd {
             b"SCRIPT EXISTS" => Some(Self::AggregateLogical(LogicalAggregateOp::And)),
 
-            b"DBSIZE" | b"DEL" | b"EXISTS" | b"SLOWLOG LEN" | b"TOUCH" | b"UNLINK"
-            | b"LATENCY RESET" | b"PUBSUB NUMPAT" => Some(Self::Aggregate(AggregateOp::Sum)),
+            b"CLIENT KILL" | b"DBSIZE" | b"DEL" | b"EXISTS" | b"SLOWLOG LEN" | b"TOUCH"
+            | b"UNLINK" | b"LATENCY RESET" | b"PUBSUB NUMPAT" => {
+                Some(Self::Aggregate(AggregateOp::Sum))
+            }
 
             b"WAIT" => Some(Self::Aggregate(AggregateOp::Min)),
 
-            b"ACL SETUSER" | b"ACL DELUSER" | b"ACL SAVE" | b"CLIENT SETNAME"
-            | b"CLIENT SETINFO" | b"CONFIG SET" | b"CONFIG RESETSTAT" | b"CONFIG REWRITE"
-            | b"FLUSHALL" | b"FLUSHDB" | b"FUNCTION DELETE" | b"FUNCTION FLUSH"
-            | b"FUNCTION LOAD" | b"FUNCTION RESTORE" | b"MEMORY PURGE" | b"MSET" | b"JSON.MSET"
-            | b"PING" | b"SCRIPT FLUSH" | b"SCRIPT LOAD" | b"SLOWLOG RESET" | b"UNWATCH"
-            | b"WATCH" => Some(Self::AllSucceeded),
+            b"WAITAOF" => Some(Self::AggregateArray(ArrayAggregateOp::Min)),
+
+            b"ACL SETUSER" | b"ACL DELUSER" | b"ACL SAVE" | b"AUTH" | b"CLIENT PAUSE"
+            | b"CLIENT REPLY" | b"CLIENT SETNAME" | b"CLIENT SETINFO" | b"CLIENT UNPAUSE"
+            | b"CONFIG SET" | b"CONFIG RESETSTAT" | b"CONFIG REWRITE" | b"FLUSHALL"
+            | b"FLUSHDB" | b"FUNCTION DELETE" | b"FUNCTION FLUSH" | b"FUNCTION LOAD"
+            | b"FUNCTION RESTORE" | b"MEMORY PURGE" | b"MSET" | b"JSON.MSET" | b"PING"
+            | b"SCRIPT FLUSH" | b"SCRIPT LOAD" | b"SELECT" | b"SLOWLOG RESET" | b"UNWATCH"
+            | b"WATCH" | b"RESET" | b"SAVE" => Some(Self::AllSucceeded),
 
             b"KEYS"
             | b"FT._ALIASLIST"
@@ -623,41 +689,44 @@ enum RouteBy {
     SecondArgAfterKeyCount,
     SecondArgSlot,
     StreamsIndex,
+    ThirdArg,
     ThirdArgAfterKeyCount,
     Undefined,
 }
 
 fn base_routing(cmd: &[u8]) -> RouteBy {
     match cmd {
-        b"ACL SETUSER"
-        | b"ACL DELUSER"
+        b"ACL DELUSER"
         | b"ACL SAVE"
-        | b"CLIENT SETNAME"
+        | b"ACL SETUSER"
+        | b"AUTH"
+        | b"CLIENT KILL"
         | b"CLIENT SETINFO"
-        | b"SLOWLOG GET"
-        | b"SLOWLOG LEN"
-        | b"SLOWLOG RESET"
-        | b"CONFIG SET"
+        | b"CLIENT SETNAME"
         | b"CONFIG RESETSTAT"
         | b"CONFIG REWRITE"
-        | b"SCRIPT FLUSH"
-        | b"SCRIPT LOAD"
-        | b"LATENCY RESET"
-        | b"LATENCY GRAPH"
-        | b"LATENCY HISTOGRAM"
-        | b"LATENCY HISTORY"
-        | b"LATENCY DOCTOR"
-        | b"LATENCY LATEST"
-        | b"PUBSUB NUMPAT"
+        | b"CONFIG SET"
+        | b"FUNCTION KILL"
+        | b"FUNCTION STATS"
         | b"PUBSUB CHANNELS"
+        | b"PUBSUB NUMPAT"
         | b"PUBSUB NUMSUB"
         | b"PUBSUB SHARDCHANNELS"
         | b"PUBSUB SHARDNUMSUB"
+        | b"RESET"
+        | b"SCRIPT FLUSH"
         | b"SCRIPT KILL"
-        | b"FUNCTION KILL"
-        | b"FUNCTION STATS" => RouteBy::AllNodes,
+        | b"SCRIPT LOAD"
+        | b"SELECT"
+        | b"SLOWLOG GET"
+        | b"SLOWLOG LEN"
+        | b"SLOWLOG RESET" => RouteBy::AllNodes,
 
-        b"DBSIZE"
+        b"BGREWRITEAOF"
+        | b"BGSAVE"
+        | b"CLIENT PAUSE"
+        | b"CLIENT UNPAUSE"
+        | b"DBSIZE"
         | b"DEBUG"
         | b"FLUSHALL"
         | b"FLUSHDB"
@@ -669,15 +738,22 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"FUNCTION RESTORE"
         | b"INFO"
         | b"KEYS"
+        | b"LATENCY DOCTOR"
+        | b"LATENCY GRAPH"
+        | b"LATENCY HISTOGRAM"
+        | b"LATENCY HISTORY"
+        | b"LATENCY LATEST"
+        | b"LATENCY RESET"
         | b"MEMORY DOCTOR"
         | b"MEMORY MALLOC-STATS"
         | b"MEMORY PURGE"
         | b"MEMORY STATS"
         | b"PING"
+        | b"RANDOMKEY"
+        | b"SAVE"
         | b"SCRIPT EXISTS"
         | b"UNWATCH"
         | b"WAIT"
-        | b"RANDOMKEY"
         | b"WAITAOF" => RouteBy::AllPrimaries,
 
         b"MGET" | b"DEL" | b"EXISTS" | b"UNLINK" | b"TOUCH" | b"WATCH" => {
@@ -710,6 +786,8 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"OBJECT REFCOUNT"
         | b"JSON.DEBUG" => RouteBy::SecondArg,
 
+        b"MIGRATE" => RouteBy::ThirdArg,
+
         b"LMPOP" | b"SINTERCARD" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZMPOP" | b"ZUNION" => {
             RouteBy::SecondArgAfterKeyCount
         }
@@ -726,18 +804,14 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"ACL LOG"
         | b"ACL USERS"
         | b"ACL WHOAMI"
-        | b"AUTH"
-        | b"BGSAVE"
         | b"CLIENT GETNAME"
         | b"CLIENT GETREDIR"
         | b"CLIENT ID"
         | b"CLIENT INFO"
-        | b"CLIENT KILL"
-        | b"CLIENT PAUSE"
+        | b"CLIENT LIST"
         | b"CLIENT REPLY"
         | b"CLIENT TRACKINGINFO"
         | b"CLIENT UNBLOCK"
-        | b"CLIENT UNPAUSE"
         | b"CLUSTER COUNT-FAILURE-REPORTS"
         | b"CLUSTER INFO"
         | b"CLUSTER KEYSLOT"
@@ -765,7 +839,6 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"MODULE UNLOAD"
         | b"READONLY"
         | b"READWRITE"
-        | b"SAVE"
         | b"SCRIPT SHOW"
         | b"TFCALL"
         | b"TFCALLASYNC"
@@ -820,6 +893,8 @@ impl RoutingInfo {
             }
 
             RouteBy::SecondArg => r.arg_idx(2).map(|key| Self::for_key(cmd, key)),
+
+            RouteBy::ThirdArg => r.arg_idx(3).map(|key| Self::for_key(cmd, key)),
 
             RouteBy::SecondArgAfterKeyCount => {
                 let key_count = r
@@ -1058,9 +1133,9 @@ fn get_hashtag(key: &[u8]) -> Option<&[u8]> {
 #[cfg(test)]
 mod tests_routing {
     use super::{
-        AggregateOp, LogicalAggregateOp, MultiSlotArgPattern, MultipleNodeRoutingInfo,
-        ResponsePolicy, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr,
-        command_for_multi_slot_indices,
+        AggregateOp, ArrayAggregateOp, LogicalAggregateOp, MultiSlotArgPattern,
+        MultipleNodeRoutingInfo, ResponsePolicy, Route, RoutingInfo, SingleNodeRoutingInfo,
+        SlotAddr, command_for_multi_slot_indices,
     };
     use crate::{Value, cmd, parser::parse_redis_value};
     use assert_matches::assert_matches;
@@ -1716,5 +1791,33 @@ mod tests_routing {
         let input = vec![Value::Int(5)];
         let result = super::combine_map_results(input);
         assert_matches!(result, Err(_));
+    }
+
+    #[test]
+    fn test_aggregate_array() {
+        let results = super::aggregate_array(
+            vec![
+                Value::Array(vec![Value::Int(3), Value::Int(5)]),
+                Value::Array(vec![Value::Int(1), Value::Int(7)]),
+            ],
+            ArrayAggregateOp::Min,
+        )
+        .unwrap();
+
+        assert_eq!(results, Value::Array(vec![Value::Int(1), Value::Int(5)]));
+    }
+
+    #[test]
+    fn test_aggregate_array_shards_with_mismatched_response_lengths() {
+        let results = super::aggregate_array(
+            vec![
+                Value::Array(vec![Value::Int(1)]),
+                Value::Array(vec![Value::Int(1), Value::Int(1)]),
+            ],
+            ArrayAggregateOp::Min,
+        );
+
+        let err = results.unwrap_err();
+        assert_eq!(err.kind(), crate::ErrorKind::UnexpectedReturnType);
     }
 }

@@ -545,3 +545,16 @@ The modules get picked only from the following environment variables:
 ### Rename the `search_unfinised` feature to `search` (Minor breaking change)
 
 The feature was renamed, since the first part of it (FT.CREATE support) is fully merged. There's more work on it, but the feature is ready to be used, and so is renamed.
+
+### Cluster command routing updated
+
+Cluster routing has been updated for commands that fan out or use a non-default key position:
+
+* `AUTH`, `CLIENT KILL`, `RESET`, and `SELECT` are now sent to **all nodes** instead of a single node. `CLIENT KILL` aggregates the number of killed connections across nodes.
+* `BGREWRITEAOF`, `BGSAVE`, `SAVE`, `CLIENT PAUSE`, `CLIENT UNPAUSE`, and `LATENCY RESET`/`DOCTOR`/`GRAPH`/`HISTOGRAM`/`HISTORY`/`LATEST` are now sent to **all primaries**. The `LATENCY` commands previously also queried replicas, while `BGREWRITEAOF`, `BGSAVE`, `SAVE`, `CLIENT PAUSE`, and `CLIENT UNPAUSE` previously went to one random node.
+* `CLIENT LIST` is now sent to a random node.
+* `MIGRATE` is now routed by the migrated key (argument 3) instead of the target host (argument 1).
+* `WAITAOF` responses are now aggregated element-wise with `MIN`, returning a single two-element array instead of a per-node map.
+* `XINFO HELP` is now treated as read-only, so it may be served by a replica when reading from replicas is enabled.
+
+**Migration:** Cluster clients that relied on these commands targeting a single node should expect requests to be sent to multiple nodes and, for `WAITAOF`, the aggregated reply shape described above. If you'd like to maintain the old behavior, you must use `route_command` with explicit routing behavior.
