@@ -1941,7 +1941,8 @@ impl Connection {
             self.try_send(&result);
 
             let Err(err) = &result else {
-                if self.messages_to_skip > 0 {
+                // Push messages aren't replies, so they must not stand in for a late response.
+                if self.messages_to_skip > 0 && !matches!(result, Ok(Value::Push { .. })) {
                     self.messages_to_skip -= 1;
                     continue;
                 }

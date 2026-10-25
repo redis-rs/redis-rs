@@ -3865,6 +3865,38 @@ mod basic {
     }
 
     #[test]
+    fn test_push_after_timeout_does_not_desync_replies() {
+        let ctx = TestContext::new();
+        let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);
+        let connection_info = ctx.server.connection_info().set_redis_settings(redis);
+        let client = redis::Client::open(connection_info).unwrap();
+        let mut con = client.get_connection().unwrap();
+        let mut other = ctx.connection();
+
+        let _: () = con.set("key2", "value2").unwrap();
+        cmd("CLIENT")
+            .arg("TRACKING")
+            .arg("ON")
+            .exec(&mut con)
+            .unwrap();
+        // track key3, so writing it sends an invalidation push to con
+        con.get("key3").unwrap();
+
+        con.set_read_timeout(Some(Duration::from_millis(10)))
+            .unwrap();
+        let res = con.blpop("list", 1.0);
+        assert!(res.unwrap_err().is_timeout());
+        assert!(con.is_open());
+
+        // the invalidation push reaches con before the late BLPOP reply
+        let _: () = other.set("key3", "value3").unwrap();
+        other.rpush("list", "value1").unwrap();
+
+        con.set_read_timeout(None).unwrap();
+        assert_eq!(con.get("key2").unwrap(), Some("value2".to_string()));
+    }
+
+    #[test]
     fn test_blocking_sorted_set_api() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
