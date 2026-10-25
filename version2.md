@@ -485,6 +485,16 @@ Their return types are now updated to:
 - `zscore_multiple`: `Vec<Option<f64>>` (was `Option<Vec<f64>>`)
 - `geo_hash`: `Vec<Option<String>>` (was `Vec<String>`)
 
+### `(Async)TypedCommands::blmpop` and `lmove` return types match their replies (Breaking Change)
+
+`BLMPOP` replies with the key and an array of the popped elements, like `LMPOP`, but `blmpop` was declared as `Option<[String; 2]>`, so every successful pop failed with a type conversion error. `LMOVE` replies with `nil` when the source list is empty, which `lmove`'s `String` couldn't hold.
+
+Their return types are now updated to:
+- `blmpop`: `Option<(String, Vec<String>)>` (was `Option<[String; 2]>`), the same as `lmpop`
+- `lmove`: `Option<String>` (was `String`), the same as `blmove` and `rpoplpush`
+
+**Migration:** Destructure `blmpop`'s result as `(key, elements)`, and handle `None` from `lmove` when the source list is empty.
+
 ### Out-of-range integer and double replies are rejected instead of wrapping (Breaking Change)
 
 `FromRedisValue` for the integer types converted `Value::Int` and `Value::Double` with `as`, which wraps around for integers and saturates for floats, turning `NaN` into zero. Both did so silently, so a reply outside the target type's range produced a wrong number rather than an error.

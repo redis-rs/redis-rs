@@ -13,8 +13,8 @@ mod basic {
 
     use redis::{
         Aggregate, Client, Connection, ConnectionInfo, ConnectionLike, ControlFlow, CopyOptions,
-        ErrorKind, ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue,
-        HashFieldExpirationOptions, IncrexOptions,
+        Direction, ErrorKind, ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck,
+        FromRedisValue, HashFieldExpirationOptions, IncrexOptions,
         IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply},
         MSetOptions, ProtocolVersion, PubSubCommands, PushInfo, PushKind, RedisConnectionInfo,
         RedisResult, Role, ScanOptions, SetExpiry, SetOptions, SortedSetAddOptions,
@@ -4440,6 +4440,44 @@ mod basic {
         assert_eq!(con.zcard("zpop_max"), Ok(3));
 
         assert_eq!(con.zpopmin("zpop_missing", 3), Ok(vec![]));
+    }
+
+    #[test]
+    fn test_typed_blmpop_and_lmove_replies() {
+        let ctx = run_test_if_version_supported!(REDIS_CE_7_0);
+        let mut con = ctx.connection();
+
+        assert_eq!(con.rpush("blmpop_list", &["a", "b", "c"]), Ok(3));
+        assert_eq!(
+            con.blmpop(0.0, 1, "blmpop_list", Direction::Left, 2),
+            Ok(Some((
+                "blmpop_list".to_string(),
+                vec!["a".to_string(), "b".to_string()]
+            )))
+        );
+        assert_eq!(
+            con.blmpop(0.01, 1, "blmpop_missing", Direction::Left, 1),
+            Ok(None)
+        );
+
+        assert_eq!(
+            con.lmove(
+                "blmpop_list",
+                "lmove_dst",
+                Direction::Left,
+                Direction::Right
+            ),
+            Ok(Some("c".to_string()))
+        );
+        assert_eq!(
+            con.lmove(
+                "blmpop_list",
+                "lmove_dst",
+                Direction::Left,
+                Direction::Right
+            ),
+            Ok(None)
+        );
     }
 
     #[test]
