@@ -584,6 +584,113 @@ async fn test_cache_different_commands(test_with_opt_in: bool) {
     assert_miss!(&con, 3);
 }
 
+#[async_test]
+async fn test_cache_keeps_argument_boundaries() {
+    let ctx = TestContext::default();
+    if !ctx.protocol.supports_resp3() {
+        return;
+    }
+
+    let mut con = ctx.async_connection_with_cache().await.unwrap();
+    let _: () = get_pipe(true)
+        .cmd("HSET")
+        .arg("hash")
+        .arg("a")
+        .arg("1")
+        .arg("b")
+        .arg("2")
+        .arg("ab")
+        .arg("3")
+        .ignore()
+        .cmd("SET")
+        .arg("str")
+        .arg("0123456789abcdefghijklmnopqrstuvwxyz")
+        .ignore()
+        .query_async(&mut con)
+        .await
+        .unwrap();
+
+    // `HMGET hash a b` and `HMGET hash ab` concatenate to the same bytes, but must not share a cache entry.
+    let val: Vec<Option<usize>> = redis::cmd("HMGET")
+        .arg("hash")
+        .arg("a")
+        .arg("b")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, vec![Some(1), Some(2)]);
+    assert_hit!(&con, 0);
+    assert_miss!(&con, 1);
+
+    let val: Vec<Option<usize>> = redis::cmd("HMGET")
+        .arg("hash")
+        .arg("ab")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, vec![Some(3)]);
+    assert_hit!(&con, 0);
+    assert_miss!(&con, 2);
+
+    // Same for `GETRANGE str 1 23` and `GETRANGE str 12 3`.
+    let val: String = redis::cmd("GETRANGE")
+        .arg("str")
+        .arg(1)
+        .arg(23)
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, "123456789abcdefghijklmn");
+    assert_hit!(&con, 0);
+    assert_miss!(&con, 3);
+
+    let val: String = redis::cmd("GETRANGE")
+        .arg("str")
+        .arg(12)
+        .arg(3)
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, "");
+    assert_hit!(&con, 0);
+    assert_miss!(&con, 4);
+
+    // Repeating each command is still served from its own entry.
+    let val: Vec<Option<usize>> = redis::cmd("HMGET")
+        .arg("hash")
+        .arg("a")
+        .arg("b")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, vec![Some(1), Some(2)]);
+    let val: Vec<Option<usize>> = redis::cmd("HMGET")
+        .arg("hash")
+        .arg("ab")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, vec![Some(3)]);
+    let val: String = redis::cmd("GETRANGE")
+        .arg("str")
+        .arg(1)
+        .arg(23)
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, "123456789abcdefghijklmn");
+    let val: String = redis::cmd("GETRANGE")
+        .arg("str")
+        .arg(12)
+        .arg(3)
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, "");
+    assert_hit!(&con, 4);
+    assert_miss!(&con, 4);
+}
+
 #[cfg(feature = "connection-manager")]
 #[async_test]
 async fn test_connection_manager_maintains_statistics_after_crashes(test_with_optin: bool) {

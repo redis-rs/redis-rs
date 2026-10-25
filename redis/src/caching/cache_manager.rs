@@ -361,8 +361,14 @@ mod tests {
         let redis_key = b"test_redis_key".as_slice();
         let redis_key_2 = b"test_redis_key_2".as_slice();
         let redis_key_3 = b"test_redis_key_3".as_slice();
-        let cmd_key = b"test_cmd_key".as_slice();
-        let cmd_args = CmdArgs::new(&[], 0);
+        let cmd = crate::cmd("HGET")
+            .arg("test_redis_key")
+            .arg("field")
+            .clone();
+        let cmd = CmdRef::from_cmd(&cmd);
+        let cmd_key = cmd.data();
+        let (offsets, base) = cmd.arg_offsets();
+        let cmd_args = CmdArgs::new(offsets, base);
 
         let cache_manager = CacheManager::new(CacheConfig::new());
         let secs_10 = Instant::now().add(Duration::from_secs(10));
@@ -496,8 +502,14 @@ mod tests {
         let redis_key = b"test_redis_key".as_slice();
         let redis_key_2 = b"test_redis_key_2".as_slice();
         let redis_key_3 = b"test_redis_key_3".as_slice();
-        let cmd_key = b"test_cmd_key".as_slice();
-        let cmd_args = CmdArgs::new(&[], 0);
+        let cmd = crate::cmd("HGET")
+            .arg("test_redis_key")
+            .arg("field")
+            .clone();
+        let cmd = CmdRef::from_cmd(&cmd);
+        let cmd_key = cmd.data();
+        let (offsets, base) = cmd.arg_offsets();
+        let cmd_args = CmdArgs::new(offsets, base);
 
         let shared_cache_manager = CacheManager::new(CacheConfig::new());
 
