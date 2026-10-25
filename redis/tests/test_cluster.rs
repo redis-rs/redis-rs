@@ -4,7 +4,7 @@ mod support;
 
 #[cfg(test)]
 mod cluster {
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
     use redis_test::cluster::ClusterType;
     #[cfg(feature = "tls-rustls")]
     use redis_test::utils::load_certs_from_file;
@@ -103,7 +103,7 @@ mod cluster {
         }
     }
 
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
     #[test]
     fn test_default_reject_invalid_hostnames() {
         if ClusterType::get_intended() != ClusterType::TcpTls {
@@ -119,7 +119,7 @@ mod cluster {
         assert!(cluster.client.get_connection().is_err());
     }
 
-    #[cfg(feature = "tls-rustls-insecure")]
+    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
     #[test]
     fn test_danger_accept_invalid_hostnames() {
         if ClusterType::get_intended() != ClusterType::TcpTls {
@@ -1214,7 +1214,7 @@ mod cluster {
         assert_eq!(error.to_string(), "empty command - Client");
     }
 
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
     mod mtls_test {
         use super::*;
         use crate::support::mtls_test::create_cluster_client_from_cluster;

@@ -16,7 +16,7 @@ use redis::{Pipeline, Value};
 use redis::{aio, cmd};
 #[cfg(feature = "tls-rustls")]
 use redis_test::utils::TlsFilePaths;
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 pub use redis_test::utils::load_certs_from_file;
 #[allow(unused_imports)]
 pub use redis_test::version::*;
@@ -334,7 +334,7 @@ pub(crate) fn build_single_client_with_separate_client_cert<T: redis::IntoConnec
     )
 }
 
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 pub(crate) mod mtls_test {
     use super::*;
     use redis::{ConnectionInfo, IntoConnectionInfo, RedisError, cluster::ClusterClient};

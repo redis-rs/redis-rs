@@ -4,7 +4,7 @@ mod support;
 
 #[cfg(test)]
 mod cluster_async {
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
     use redis_test::cluster::ClusterType;
     #[cfg(feature = "tls-rustls")]
     use redis_test::utils::load_certs_from_file;
@@ -479,7 +479,7 @@ mod cluster_async {
         assert_eq!(result, vec![Value::Okay, redis_value!(1)]);
     }
 
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
     #[async_test]
     async fn test_async_cluster_default_reject_invalid_hostnames() {
         if ClusterType::get_intended() != ClusterType::TcpTls {
@@ -496,7 +496,7 @@ mod cluster_async {
         assert!(cluster.client.get_async_connection().await.is_err());
     }
 
-    #[cfg(feature = "tls-rustls-insecure")]
+    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
     #[async_test]
     async fn test_async_cluster_danger_accept_invalid_hostnames() {
         if ClusterType::get_intended() != ClusterType::TcpTls {
@@ -3649,7 +3649,7 @@ mod cluster_async {
         }
     }
 
-    #[cfg(feature = "tls-rustls")]
+    #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
     mod mtls_test {
         use crate::support::mtls_test::create_cluster_client_from_cluster;
 
