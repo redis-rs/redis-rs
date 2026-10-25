@@ -844,8 +844,8 @@ implement_commands! {
     /// Pops `count` elements from the first non-empty list key from the list of
     /// provided key names; or blocks until one is available.
     /// [Redis Docs](https://redis.io/commands/BLMPOP)
-    fn blmpop<K: ToRedisArgs>(timeout: f64, numkeys: usize, key: K, dir: Direction, count: usize) -> (Option<(String, Vec<String>)>) {
-        ready_cmd!("BLMPOP", timeout, numkeys, key, dir, "COUNT", count).take()
+    fn blmpop<K: ToRedisArgs>(timeout: f64, keys: K, dir: Direction, count: usize) -> (Option<(String, Vec<String>)>) {
+        ready_cmd!("BLMPOP", timeout, keys.num_of_args(), keys, dir, "COUNT", count).take()
     }
 
     /// Remove and get the first element in a list, or block until one is available.
@@ -902,8 +902,8 @@ implement_commands! {
     /// Pops `count` elements from the first non-empty list key from the list of
     /// provided key names.
     /// [Redis Docs](https://redis.io/commands/LMPOP)
-    fn lmpop<K: ToRedisArgs>( numkeys: usize, key: K, dir: Direction, count: usize) -> (Option<(String, Vec<String>)>) {
-        ready_cmd!("LMPOP", numkeys, key, dir, "COUNT", count).take()
+    fn lmpop<K: ToRedisArgs>(keys: K, dir: Direction, count: usize) -> (Option<(String, Vec<String>)>) {
+        ready_cmd!("LMPOP", keys.num_of_args(), keys, dir, "COUNT", count).take()
     }
 
     /// Removes and returns the up to `count` first elements of the list stored at key.
