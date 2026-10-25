@@ -13,8 +13,8 @@ mod basic {
 
     use redis::{
         Aggregate, Client, Connection, ConnectionInfo, ConnectionLike, ControlFlow, CopyOptions,
-        ErrorKind, ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue,
-        HashFieldExpirationOptions, IncrexOptions,
+        Direction, ErrorKind, ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck,
+        FromRedisValue, HashFieldExpirationOptions, IncrexOptions,
         IntegerReplyOrNoOp::{ExistsButNotRelevant, IntegerReply},
         MSetOptions, ProtocolVersion, PubSubCommands, PushInfo, PushKind, RedisConnectionInfo,
         RedisResult, Role, ScanOptions, SetExpiry, SetOptions, SortedSetAddOptions,
@@ -4440,6 +4440,84 @@ mod basic {
         assert_eq!(con.zcard("zpop_max"), Ok(3));
 
         assert_eq!(con.zpopmin("zpop_missing", 3), Ok(vec![]));
+    }
+
+    #[test]
+    fn test_typed_blmpop_and_lmove_replies() {
+        let ctx = run_test_if_version_supported!(REDIS_CE_7_0);
+        let mut con = ctx.connection();
+
+        assert_eq!(con.rpush("blmpop_list", &["a", "b", "c"]), Ok(3));
+        assert_eq!(
+            con.blmpop(0.0, "blmpop_list", Direction::Left, 2),
+            Ok(Some((
+                "blmpop_list".to_string(),
+                vec!["a".to_string(), "b".to_string()]
+            )))
+        );
+        assert_eq!(
+            con.blmpop(0.01, "blmpop_missing", Direction::Left, 1),
+            Ok(None)
+        );
+
+        assert_eq!(
+            con.lmove(
+                "blmpop_list",
+                "lmove_dst",
+                Direction::Left,
+                Direction::Right
+            ),
+            Ok(Some("c".to_string()))
+        );
+        assert_eq!(
+            con.lmove(
+                "blmpop_list",
+                "lmove_dst",
+                Direction::Left,
+                Direction::Right
+            ),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn test_typed_lmpop_and_blmpop_with_several_keys() {
+        let ctx = run_test_if_version_supported!(REDIS_CE_7_0);
+        let mut con = ctx.connection();
+
+        assert_eq!(con.rpush("mpop_a", &["a1", "a2", "a3"]), Ok(3));
+        assert_eq!(con.rpush("mpop_b", &["b1", "b2"]), Ok(2));
+
+        // A missing key first: both pop from the first non-empty list and leave the other alone.
+        let keys = ["mpop_missing", "mpop_a", "mpop_b"];
+        assert_eq!(
+            con.lmpop(&keys, Direction::Left, 2),
+            Ok(Some((
+                "mpop_a".to_string(),
+                vec!["a1".to_string(), "a2".to_string()]
+            )))
+        );
+        assert_eq!(
+            con.blmpop(0.0, &keys, Direction::Right, 5),
+            Ok(Some(("mpop_a".to_string(), vec!["a3".to_string()])))
+        );
+        assert_eq!(
+            con.lrange("mpop_b", 0, -1),
+            Ok(vec!["b1".to_string(), "b2".to_string()])
+        );
+
+        // Once the first lists are empty, the next non-empty one is used.
+        assert_eq!(
+            con.lmpop(&keys, Direction::Right, 1),
+            Ok(Some(("mpop_b".to_string(), vec!["b2".to_string()])))
+        );
+        assert_eq!(
+            con.blmpop(0.0, &keys, Direction::Left, 1),
+            Ok(Some(("mpop_b".to_string(), vec!["b1".to_string()])))
+        );
+
+        assert_eq!(con.lmpop(&keys, Direction::Left, 1), Ok(None));
+        assert_eq!(con.blmpop(0.01, &keys, Direction::Left, 1), Ok(None));
     }
 
     #[test]
