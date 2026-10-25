@@ -135,6 +135,13 @@ impl<'a> CmdRef<'a> {
         self.cache
     }
 
+    /// Returns the end offset of each argument, along with where `data` starts in the buffer
+    /// those offsets index into.
+    #[cfg(feature = "cache-aio")]
+    pub(crate) fn arg_offsets(&self) -> (&'a [Arg<usize>], usize) {
+        (self.args, self.data_start)
+    }
+
     #[cfg(feature = "cache-aio")]
     pub(crate) fn encoded_len(&self) -> usize {
         args_len(self.args_iter(), self.cursor.unwrap_or(0))
