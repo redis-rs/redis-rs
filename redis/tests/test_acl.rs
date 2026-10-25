@@ -1,7 +1,7 @@
 #![cfg(feature = "acl")]
 
-use redis::TypedCommands;
 use redis::acl::Rule;
+use redis::{TypedCommands, Value};
 use redis_test::REDIS_CE_7_2;
 use redis_test::TestContext;
 use redis_test::run_test_if_version_supported;
@@ -129,9 +129,31 @@ fn test_acl_genpass() {
 fn test_acl_log() {
     let ctx = TestContext::default();
     let mut con = ctx.connection();
-    let logs: Vec<String> = con.acl_log(1).expect("Got logs");
+    let logs = con.acl_log(1).expect("Got logs");
     assert_eq!(logs.len(), 0);
+
+    // A failed AUTH is logged as an entry with its fields.
+    assert!(
+        redis::cmd("AUTH")
+            .arg("nosuchuser")
+            .arg("wrongpass")
+            .exec(&mut con)
+            .is_err()
+    );
+    let logs = con.acl_log(1).expect("Got logs");
+    assert_eq!(logs.len(), 1);
+    assert_eq!(
+        logs[0].get("reason"),
+        Some(&Value::BulkString(b"auth".to_vec()))
+    );
+    assert_eq!(
+        logs[0].get("username"),
+        Some(&Value::BulkString(b"nosuchuser".to_vec()))
+    );
+    assert_eq!(logs[0].get("count"), Some(&Value::Int(1)));
+
     assert_eq!(con.acl_log_reset(), Ok(()));
+    assert_eq!(con.acl_log(1).map(|logs| logs.len()), Ok(0));
 }
 
 #[test]

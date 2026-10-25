@@ -507,6 +507,14 @@ con.lmpop(&["list1", "list2"], Direction::Left, 10)?;
 con.blmpop(1.0, &["list1", "list2"], Direction::Left, 10)?;
 ```
 
+### `(Async)TypedCommands::acl_log` returns each entry as a map (Breaking Change)
+
+`ACL LOG` replies with one map of fields (`count`, `reason`, `username`, ...) per entry, but `acl_log` was declared as `Vec<String>`, so it failed with a type conversion error as soon as the log had an entry.
+
+It now returns `Vec<HashMap<String, Value>>` (was `Vec<String>`), one map per entry, like `vinfo`.
+
+**Migration:** Read the fields you need from each entry's map, e.g. `entry.get("reason")`.
+
 ### Out-of-range integer and double replies are rejected instead of wrapping (Breaking Change)
 
 `FromRedisValue` for the integer types converted `Value::Int` and `Value::Double` with `as`, which wraps around for integers and saturates for floats, turning `NaN` into zero. Both did so silently, so a reply outside the target type's range produced a wrong number rather than an error.

@@ -1806,11 +1806,11 @@ implement_commands! {
         ready_cmd!("ACL", "WHOAMI").take()
     }
 
-    /// Shows a list of recent ACL security events
+    /// Shows a list of recent ACL security events, each one as a map of its fields
     /// [Redis Docs](https://redis.io/commands/ACL)
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
-    fn acl_log<>(count: isize) -> (Vec<String>) {
+    fn acl_log<>(count: isize) -> (Vec<std::collections::HashMap<String, crate::Value>>) {
         ready_cmd!("ACL", "LOG", count).take()
 
     }
