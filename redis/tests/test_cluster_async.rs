@@ -33,7 +33,7 @@ mod cluster_async {
             MultipleNodeRoutingInfo, ResponsePolicy, Route, RoutingInfo, SingleNodeRoutingInfo,
             Slot, SlotAddr,
         },
-        cmd, from_redis_value, parse_redis_value, pipe,
+        cmd, from_redis_value, from_redis_value_ref, parse_redis_value, pipe,
     };
     use redis::{PushInfo, PushKind, cluster_async::ClusterConnection};
     use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
@@ -2156,7 +2156,8 @@ mod cluster_async {
 
     #[test]
     fn test_async_cluster_fan_out_and_return_map_of_results_for_special_response_policy() {
-        let name = "foo";
+        let name =
+            "test_async_cluster_fan_out_and_return_map_of_results_for_special_response_policy";
         let mut cmd = Cmd::new();
         cmd.arg("LATENCY").arg("LATEST");
         let MockEnv {
@@ -2167,7 +2168,8 @@ mod cluster_async {
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
                 .retries(0)
-                .read_routing_strategy(RandomReplicaStrategy::new()),
+                .read_routing_strategy(RandomReplicaStrategy::new())
+                .use_protocol(redis::ProtocolVersion::RESP3),
             name,
             move |received_cmd: &[u8], port| {
                 respond_startup_with_replica_using_config(name, received_cmd, None)?;
@@ -2175,20 +2177,40 @@ mod cluster_async {
             },
         );
 
-        // TODO once RESP3 is in, return this as a map
-        let mut result = runtime
-            .block_on(cmd.query_async::<Vec<(String, String)>>(&mut connection))
+        let result = runtime
+            .block_on(connection.route_command(
+                cmd,
+                RoutingInfo::MultiNode((
+                    MultipleNodeRoutingInfo::AllNodes,
+                    Some(ResponsePolicy::Special),
+                )),
+            ))
             .unwrap();
-        result.sort();
+        let Value::Map(mut map) = result else {
+            panic!("Expected a map, got: {result:?}");
+        };
+        map.sort_by_key(|pair| from_redis_value_ref::<String>(&pair.0).unwrap());
+
         assert_eq!(
-            result,
+            map,
             vec![
-                (format!("{name}:6379"), "latency: 6379".to_string()),
-                (format!("{name}:6380"), "latency: 6380".to_string()),
-                (format!("{name}:6381"), "latency: 6381".to_string()),
-                (format!("{name}:6382"), "latency: 6382".to_string())
+                (
+                    Value::BulkString(b"test_async_cluster_fan_out_and_return_map_of_results_for_special_response_policy:6379".to_vec()),
+                    Value::BulkString(b"latency: 6379".to_vec())
+                ),
+                (
+                    Value::BulkString(b"test_async_cluster_fan_out_and_return_map_of_results_for_special_response_policy:6380".to_vec()),
+                    Value::BulkString(b"latency: 6380".to_vec())
+                ),
+                (
+                    Value::BulkString(b"test_async_cluster_fan_out_and_return_map_of_results_for_special_response_policy:6381".to_vec()),
+                    Value::BulkString(b"latency: 6381".to_vec())
+                ),
+                (
+                    Value::BulkString(b"test_async_cluster_fan_out_and_return_map_of_results_for_special_response_policy:6382".to_vec()),
+                    Value::BulkString(b"latency: 6382".to_vec())
+                )
             ],
-            "{result:?}"
         );
     }
 

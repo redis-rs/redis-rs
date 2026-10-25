@@ -242,6 +242,7 @@ fn command_properties(cmd: &[u8]) -> Properties {
         | b"UNSUBSCRIBE"
         | b"XINFO CONSUMERS"
         | b"XINFO GROUPS"
+        | b"XINFO HELP"
         | b"XINFO STREAM"
         | b"XLEN"
         | b"XPENDING"
