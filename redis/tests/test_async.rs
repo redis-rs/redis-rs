@@ -348,6 +348,45 @@ mod basic_async {
     }
 
     #[async_test]
+    async fn test_async_typed_zpop_returns_member_score_pairs(
+        mut con: impl redis::AsyncTypedCommands,
+    ) {
+        let items = [
+            (f64::NEG_INFINITY, "neginf"),
+            (-2.0, "neg"),
+            (-0.5, "negfrac"),
+            (1.0, "one"),
+            (1.5, "onehalf"),
+            (5.0, "five"),
+        ];
+        assert_eq!(con.zadd_multiple("zpop_min", &items).await, Ok(6));
+        assert_eq!(con.zadd_multiple("zpop_max", &items).await, Ok(6));
+
+        assert_eq!(
+            con.zpopmin("zpop_min", 4).await,
+            Ok(vec![
+                ("neginf".to_string(), f64::NEG_INFINITY),
+                ("neg".to_string(), -2.0),
+                ("negfrac".to_string(), -0.5),
+                ("one".to_string(), 1.0),
+            ])
+        );
+        assert_eq!(con.zcard("zpop_min").await, Ok(2));
+
+        assert_eq!(
+            con.zpopmax("zpop_max", 3).await,
+            Ok(vec![
+                ("five".to_string(), 5.0),
+                ("onehalf".to_string(), 1.5),
+                ("one".to_string(), 1.0),
+            ])
+        );
+        assert_eq!(con.zcard("zpop_max").await, Ok(3));
+
+        assert_eq!(con.zpopmin("zpop_missing", 3).await, Ok(vec![]));
+    }
+
+    #[async_test]
     async fn test_dont_panic_on_closed_multiplexed_connection() {
         let ctx = TestContext::default();
         let client = ctx.client.clone();
