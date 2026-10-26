@@ -171,6 +171,14 @@ let _: Value = pipeline.query(&mut con)?; // Still with `?`, as running the pipe
 let key_type = con.json_type("key", ".path")?; // Still with `?`, as running the statement can still fail, but the type is now automatic
 ```
 
+### `(Async)TypedCommands::acl_log` returns each entry as a map (Breaking Change)
+
+`ACL LOG` replies with one map of fields (`count`, `reason`, `username`, ...) per entry, but `acl_log` was declared as `Vec<String>`, so it failed with a type conversion error as soon as the log had an entry.
+
+It now returns `Vec<HashMap<String, Value>>` (was `Vec<String>`), one map per entry, like `vinfo`.
+
+**Migration:** Read the fields you need from each entry's map, e.g. `entry.get("reason")`.
+
 ### Out-of-range integer and double replies are rejected instead of wrapping
 `FromRedisValue` for the integer types converted `Value::Int` and `Value::Double` with `as`, which wraps around for integers and saturates for floats, turning `NaN` into zero. Both did so silently, so a reply outside the target type's range produced a wrong number rather than an error.
 
@@ -209,6 +217,28 @@ Their return types are now updated to:
 - `zscore_multiple`: `Vec<Option<f64>>` (was `Option<Vec<f64>>`)
 - `geo_hash`: `Vec<Option<String>>` (was `Vec<String>`)
 
+### `blmpop` and `lmpop` derive `numkeys` from their keys, and the typed `blmpop` and `lmove` return types match their replies (Breaking Change)
+
+`blmpop` and `lmpop` no longer take a `numkeys` argument, in every command trait. Like `zmpop_min`/`zmpop_max` and `bzmpop_min`/`bzmpop_max`, they count the keys they are given.
+
+`BLMPOP` replies with the key and an array of the popped elements, like `LMPOP`, but the typed `blmpop` was declared as `Option<[String; 2]>`, so every successful pop failed with a type conversion error. `LMOVE` replies with `nil` when the source list is empty, which the typed `lmove`'s `String` couldn't hold.
+
+The `(Async)TypedCommands` return types are now updated to:
+- `blmpop`: `Option<(String, Vec<String>)>` (was `Option<[String; 2]>`), the same as `lmpop`
+- `lmove`: `Option<String>` (was `String`), the same as `blmove` and `rpoplpush`
+
+**Migration:** Drop the `numkeys` argument from `blmpop` and `lmpop` calls. Destructure `blmpop`'s result as `(key, elements)`, and handle `None` from `lmove` when the source list is empty.
+
+```rust
+// Before:
+con.lmpop(2, &["list1", "list2"], Direction::Left, 10)?;
+con.blmpop(1.0, 2, &["list1", "list2"], Direction::Left, 10)?;
+
+// After:
+con.lmpop(&["list1", "list2"], Direction::Left, 10)?;
+con.blmpop(1.0, &["list1", "list2"], Direction::Left, 10)?;
+```
+
 ### `(Async)TypedCommands` sorted-set range commands return `(member, score)` pairs
 Following [issue #2483](https://github.com/redis-rs/redis-rs/issues/2483).
 The typed commands for the sorted-set range commands that return scores were inconsistent: `zrange_withscores` already returned `Vec<(String, f64)>` but the other commands declared an integer score type or a flat list of strings.
@@ -219,10 +249,12 @@ Their return types are now updated to:
 - `zrevrange_withscores`: `Vec<(String, f64)>` (was `Vec<String>`)
 - `zrevrangebyscore_withscores`: `Vec<(String, f64)>` (was `Vec<String>`)
 - `zrevrangebyscore_limit_withscores`: `Vec<(String, f64)>` (was `Vec<String>`)
+- `zpopmin`: `Vec<(String, f64)>` (was `Vec<String>`)
+- `zpopmax`: `Vec<(String, f64)>` (was `Vec<String>`)
 
 **Migration:** Destructure each entry as a `(member, score)` pair. Code that relied on integer scores can cast them back with `score as usize`.
 
-If a different score type is needed, choose it explicitly through the untyped `Commands` trait (sync) or `AsyncCommands` trait (async).
+If you need a different shape or score type, use the untyped `Commands` trait (sync) or `AsyncCommands` trait (async) and pick the response type there.
 
 Note: the old flat `Vec<String>` does not parse the RESP3 reply, which is an array of `[member, score]` pairs, and the old `usize` score type fails on fractional or negative scores.
 
