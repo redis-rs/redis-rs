@@ -691,6 +691,36 @@ async fn test_cache_keeps_argument_boundaries() {
     assert_miss!(&con, 4);
 }
 
+#[async_test]
+async fn test_cache_ignores_reply_invalidated_while_in_flight(atomic: bool) {
+    let ctx = TestContext::default();
+    if !ctx.protocol.supports_resp3() {
+        return;
+    }
+
+    let mut con = ctx.async_connection_with_cache().await.unwrap();
+    let _: () = con.set("key_1", 1).await.unwrap();
+
+    // The invalidation caused by SET is received before the pipeline's reply is returned,
+    // so the value read by GET is already stale and must not be cached.
+    let (val,): (i32,) = get_pipe(atomic)
+        .cmd("GET")
+        .arg("key_1")
+        .cmd("SET")
+        .arg("key_1")
+        .arg(2)
+        .ignore()
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, 1);
+    sleep(Duration::from_millis(50).into()).await;
+
+    let val: i32 = con.get("key_1").await.unwrap();
+    assert_eq!(val, 2);
+    assert_hit!(&con, 0);
+}
+
 #[cfg(feature = "connection-manager")]
 #[async_test]
 async fn test_connection_manager_maintains_statistics_after_crashes(test_with_optin: bool) {

@@ -59,6 +59,7 @@ impl CacheManager {
             .get(redis_key, redis_cmd, redis_cmd_args, self.epoch)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn insert(
         &self,
         redis_key: &[u8],
@@ -67,6 +68,7 @@ impl CacheManager {
         value: Value,
         client_side_expire_time: Instant,
         server_side_ttl_value: &Value,
+        invalidation_count: usize,
     ) {
         let pttl: Result<i64, _> = FromRedisValue::from_redis_value_ref(server_side_ttl_value);
         let expire_time = match pttl {
@@ -77,8 +79,19 @@ impl CacheManager {
             }
             _ => client_side_expire_time,
         };
-        self.lru
-            .insert(redis_key, cmd_key, cmd_args, value, expire_time, self.epoch);
+        self.lru.insert(
+            redis_key,
+            cmd_key,
+            cmd_args,
+            value,
+            expire_time,
+            self.epoch,
+            invalidation_count,
+        );
+    }
+
+    pub(crate) fn invalidation_count(&self, redis_key: &[u8]) -> usize {
+        self.lru.invalidation_count(redis_key)
     }
 
     pub(crate) fn statistics(&self) -> CacheStatistics {
@@ -189,6 +202,7 @@ impl CacheManager {
                             redis_key,
                             cmd_key: key_test_buffer.clone(),
                             cmd_args: key_test_args.clone(),
+                            invalidation_count: self.invalidation_count(redis_key),
                         },
                     ));
                 }
@@ -258,6 +272,7 @@ impl CacheManager {
                 cmd_args,
                 cmd,
                 client_side_expire,
+                invalidation_count: self.invalidation_count(redis_key),
             },
         ))
     }
@@ -382,6 +397,7 @@ mod tests {
             Value::Int(1),
             secs_10,
             &Value::Int(5),
+            0,
         );
         cache_manager.insert(
             redis_key_2,
@@ -390,6 +406,7 @@ mod tests {
             Value::Int(2),
             ms_5,
             &Value::Int(500),
+            0,
         );
         cache_manager.insert(
             redis_key_3,
@@ -398,6 +415,7 @@ mod tests {
             Value::Int(3),
             ms_50,
             &Value::Int(500),
+            0,
         );
 
         assert_eq!(
@@ -456,6 +474,7 @@ mod tests {
             Value::Int(1),
             expire,
             &Value::Nil,
+            scc.invalidation_count,
         );
         assert!(matches!(
             cache_manager.get_cached_cmd(CmdRef::from_cmd(&first)),
@@ -488,6 +507,7 @@ mod tests {
             Value::Int(2),
             expire,
             &Value::Nil,
+            scc.invalidation_count,
         );
         let mget = crate::cmd("MGET").arg("key").clone();
         assert!(matches!(
@@ -527,6 +547,7 @@ mod tests {
                 Value::Int(1),
                 secs_10,
                 &Value::Int(5),
+                0,
             );
             cm2.insert(
                 redis_key_2,
@@ -535,6 +556,7 @@ mod tests {
                 Value::Int(2),
                 secs_10,
                 &Value::Int(5),
+                0,
             );
             cm3.insert(
                 redis_key_3,
@@ -543,6 +565,7 @@ mod tests {
                 Value::Int(3),
                 secs_10,
                 &Value::Int(5),
+                0,
             );
         };
 
