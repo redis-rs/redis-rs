@@ -6,8 +6,15 @@ use crate::server::RedisServerBuilder;
 use crate::utils::CommandMultiArgs;
 use crate::{
     server::{Module, RedisServer},
-    utils::{TlsFilePaths, build_keys_and_certs_for_tls_with_hostname, get_random_available_port},
+    utils::{
+        TlsFilePaths, build_keys_and_certs_for_tls_with_hostname, get_random_available_port,
+        get_random_available_port_with_offset,
+    },
 };
+
+/// In cluster mode, valkey-search listens for gRPC on the node port plus this offset.
+/// See <https://github.com/valkey-io/valkey-search/blob/1.2.1/docs/topics/search.md#cluster-mode>.
+const SEARCH_GRPC_PORT_OFFSET: u16 = 20294;
 
 /// Configuration for creating a Redis Cluster.
 pub struct RedisClusterConfiguration {
@@ -224,6 +231,20 @@ impl RedisCluster {
             ports.into_iter().map(Some).collect()
         };
         let mut chosen_ports = std::collections::HashSet::new();
+        // Reserve the search gRPC port too. RediSearch does not use it, but reserving it does no harm.
+        let loads_search = modules.iter().any(|m| matches!(m, Module::Search));
+        let search_cluster_args = env::var("REDISRS_MODULE_SEARCH_CLUSTER_ARGS")
+            .ok()
+            .filter(|args| loads_search && !args.is_empty());
+        // `RedisServerBuilder` cannot pass args to a module, so the refiner below loads Search instead.
+        let modules: Vec<Module> = if search_cluster_args.is_some() {
+            modules
+                .into_iter()
+                .filter(|m| !matches!(m, Module::Search))
+                .collect()
+        } else {
+            modules
+        };
 
         let mut folders = vec![];
         let mut addrs = vec![];
@@ -272,6 +293,9 @@ impl RedisCluster {
                         .arg2("--cluster-config-file", tempdir.path().join("nodes.conf"))
                         .arg2("--cluster-node-timeout", "5000")
                         .arg2("--aclfile", &acl_path);
+                    if let Some(args) = &search_cluster_args {
+                        cmd.load_module_with_args("REDISRS_MODULE_SEARCH_PATH", "Search", args);
+                    }
                     if let Some(num_databases) = cluster_databases {
                         cmd.arg2("--cluster-databases", num_databases.to_string());
                     }
@@ -317,6 +341,17 @@ impl RedisCluster {
                 for _ in 0..5 {
                     let port = match port_option {
                         Some(port) => port,
+                        None if loads_search => loop {
+                            let port =
+                                get_random_available_port_with_offset(SEARCH_GRPC_PORT_OFFSET);
+                            let grpc_port = port + SEARCH_GRPC_PORT_OFFSET;
+                            if chosen_ports.contains(&port) || chosen_ports.contains(&grpc_port) {
+                                continue;
+                            }
+                            chosen_ports.insert(port);
+                            chosen_ports.insert(grpc_port);
+                            break port;
+                        },
                         None => loop {
                             let port = get_random_available_port();
                             if chosen_ports.contains(&port) {

@@ -63,6 +63,7 @@ If automatic detection fails or you need finer control, use the following enviro
 | `REDISRS_MODULE_BLOOM_PATH` | Path to the `bloom` module |
 | `REDISRS_MODULE_JSON_PATH` | Path to the `json` module |
 | `REDISRS_MODULE_SEARCH_PATH` | Path to the `search` module |
+| `REDISRS_MODULE_SEARCH_CLUSTER_ARGS` | Args for the `search` module on cluster nodes |
 | `PROTOCOL` | (Only to be used when running `cargo` manually`) If `RESP3`, tests connect using `RESP3`, otherwise using `RESP2` |
 
 ### Speeding up TLS tests
