@@ -312,6 +312,18 @@ pub trait AsyncPushSender: Send + Sync + 'static {
     fn send(&self, info: PushInfo) -> Result<(), SendError>;
 }
 
+impl AsyncPushSender for futures_channel::mpsc::UnboundedSender<PushInfo> {
+    fn send(&self, info: PushInfo) -> Result<(), SendError> {
+        match self.unbounded_send(info) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(SendError::message(
+                "the receiving end of the channel was dropped",
+            )),
+        }
+    }
+}
+
+// TODO - move to behind a feature, to allow removing the tokio dependency.
 impl AsyncPushSender for ::tokio::sync::mpsc::UnboundedSender<PushInfo> {
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         match self.send(info) {
@@ -323,6 +335,7 @@ impl AsyncPushSender for ::tokio::sync::mpsc::UnboundedSender<PushInfo> {
     }
 }
 
+// TODO - move to behind a feature, to allow removing the tokio dependency.
 impl AsyncPushSender for ::tokio::sync::broadcast::Sender<PushInfo> {
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         match self.send(info) {
@@ -349,18 +362,6 @@ where
 impl AsyncPushSender for std::sync::mpsc::Sender<PushInfo> {
     fn send(&self, info: PushInfo) -> Result<(), SendError> {
         match self.send(info) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(SendError::message(
-                "the receiving end of the channel was dropped",
-            )),
-        }
-    }
-}
-
-#[cfg(feature = "cluster-async")]
-impl AsyncPushSender for futures_channel::mpsc::UnboundedSender<PushInfo> {
-    fn send(&self, info: PushInfo) -> Result<(), SendError> {
-        match self.unbounded_send(info) {
             Ok(_) => Ok(()),
             Err(_) => Err(SendError::message(
                 "the receiving end of the channel was dropped",
