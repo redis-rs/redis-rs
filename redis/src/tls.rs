@@ -329,20 +329,12 @@ impl Clone for ClientTlsParams {
 /// A successful read is cached forever; a failed read is not cached, so the
 /// next caller retries the load. Under concurrent calls, one caller attempts to
 /// parse the certs and all others wait for the result.
-#[cfg(all(
-    feature = "tls-rustls",
-    not(feature = "tls-native-tls"),
-    not(feature = "tls-rustls-webpki-roots")
-))]
+#[cfg(feature = "tls-rustls-native-roots")]
 pub(crate) struct NativeCertBundle {
     parsed: std::sync::Mutex<Option<RootCertStore>>,
 }
 
-#[cfg(all(
-    feature = "tls-rustls",
-    not(feature = "tls-native-tls"),
-    not(feature = "tls-rustls-webpki-roots")
-))]
+#[cfg(feature = "tls-rustls-native-roots")]
 impl NativeCertBundle {
     pub(crate) const fn new() -> Self {
         Self {
@@ -382,12 +374,7 @@ impl NativeCertBundle {
     }
 }
 
-#[cfg(all(
-    test,
-    feature = "tls-rustls",
-    not(feature = "tls-native-tls"),
-    not(feature = "tls-rustls-webpki-roots")
-))]
+#[cfg(all(test, feature = "tls-rustls-native-roots"))]
 mod tests {
     use super::*;
 
