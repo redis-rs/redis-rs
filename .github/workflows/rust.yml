@@ -242,11 +242,12 @@ jobs:
         if: startsWith(matrix.config.search-module-version, 'valkey-search:')
         run: |
           cp /tmp/valkey-search/.build-release/libsearch.so "$REDISRS_MODULE_SEARCH_PATH"
-          # valkey-search runs in cluster mode only with `--use-coordinator`.
-          echo "REDISRS_MODULE_SEARCH_CLUSTER_ARGS=--use-coordinator" >> "$GITHUB_ENV"
 
       - name: Run Search module tests
         if: matrix.config.search-module-version != ''
+        env:
+          # valkey-search runs in cluster mode only with `--use-coordinator`.
+          REDISRS_MODULE_SEARCH_CLUSTER_ARGS: ${{ startsWith(matrix.config.search-module-version, 'valkey-search:') && '--use-coordinator' || '' }}
         run: make test-module-search
 
       - name: Cache RedisJSON
