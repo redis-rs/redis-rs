@@ -34,14 +34,8 @@ use std::sync::Arc;
 
 use crate::PushInfo;
 
-#[cfg(all(
-    feature = "tls-rustls",
-    not(feature = "tls-native-tls"),
-    not(feature = "tls-rustls-webpki-roots")
-))]
-use crate::tls::NativeCertBundle;
 #[cfg(feature = "tls-rustls-native-roots")]
-use rustls_native_certs::load_native_certs;
+use crate::tls::NativeCertBundle;
 
 #[cfg(feature = "tls-rustls")]
 use crate::tls::ClientTlsParams;
@@ -1234,22 +1228,14 @@ impl ActualConnection {
 ///
 /// Call [`invalidate_cert_bundle()`] to clear the cache and reparse the bundle
 /// on the next call to [`NativeCertBundle::load()`].
-#[cfg(all(
-    feature = "tls-rustls",
-    not(feature = "tls-native-tls"),
-    not(feature = "tls-rustls-webpki-roots")
-))]
+#[cfg(feature = "tls-rustls-native-roots")]
 static NATIVE_CERTS: NativeCertBundle = NativeCertBundle::new();
 
 /// Invalidate the cached host CA certificate bundle, causing the opening of the
 /// next connection to reparse the bundle from disk.
 ///
 /// Use this function to "hot reload" a change to the underlying CA bundle.
-#[cfg(all(
-    feature = "tls-rustls",
-    not(feature = "tls-native-tls"),
-    not(feature = "tls-rustls-webpki-roots")
-))]
+#[cfg(feature = "tls-rustls-native-roots")]
 pub fn invalidate_cert_bundle() {
     NATIVE_CERTS.invalidate();
 }
