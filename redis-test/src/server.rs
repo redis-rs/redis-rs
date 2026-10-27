@@ -1,5 +1,5 @@
 use redis::{ConnectionAddr, IntoConnectionInfo, ProtocolVersion, RedisConnectionInfo};
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fmt::{Debug, Formatter};
 use std::io::Write;
 use std::path::Path;
@@ -591,6 +591,18 @@ impl RedisServerCommand {
     // _not_ abstracted away. This forces callers to pass the full environment variable name, which
     // makes sure that grepping for environment variable names leads to the relevant code.
     fn load_module(&mut self, path_env_var_name: &str, description: &str) {
+        self.load_module_with_args(path_env_var_name, description, "");
+    }
+
+    /// Loads a single module with the given module args
+    ///
+    /// See [`Self::load_module`] for `path_env_var_name`.
+    pub(crate) fn load_module_with_args(
+        &mut self,
+        path_env_var_name: &str,
+        description: &str,
+        args: &str,
+    ) {
         let path = env::var_os(path_env_var_name).unwrap_or_else(|| {
             panic!(
                 "Environment variable {path_env_var_name} is empty, but should hold the path to a {description} module"
@@ -600,7 +612,17 @@ impl RedisServerCommand {
         if !Path::new(&path).is_file() {
             panic!("Path for the {description} module doesn't exist or is not a file: {path:?}");
         }
-        self.arg2("--loadmodule", path);
+        if args.is_empty() {
+            self.arg2("--loadmodule", path);
+        } else {
+            // Pass the path and the args as one `--loadmodule` directive. Otherwise the server
+            // reads args that start with `--` as its own config options.
+            let mut directive = OsString::from("--loadmodule ");
+            directive.push(path);
+            directive.push(" ");
+            directive.push(args);
+            self.arg(directive);
+        }
     }
 
     /// Loads the given modules
