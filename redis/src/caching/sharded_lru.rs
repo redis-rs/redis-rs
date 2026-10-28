@@ -53,12 +53,14 @@ pub(crate) struct CacheItem {
     value_list: Vec<CacheCmdEntry>,
 }
 
-type LRUCacheShard = LruCache<RedisKey, CacheItem>;
+pub(crate) struct LRUCacheShard {
+    lru: LruCache<RedisKey, CacheItem>,
+    // Number of invalidations applied to this shard.
+    invalidations: usize,
+}
 
 pub(crate) struct ShardedLRU {
     shards: Vec<std::sync::Mutex<LRUCacheShard>>,
-    // Number of invalidations applied to each shard, only changed while holding the shard's lock.
-    invalidations: Vec<AtomicUsize>,
     pub(crate) statistics: Arc<Statistics>,
     last_epoch: AtomicUsize,
 }
@@ -79,41 +81,32 @@ impl ShardedLRU {
 
         let mut shards = Vec::with_capacity(shard_count);
         for _ in 0..shard_count {
-            let shard = LruCache::new(NonZeroUsize::new(shard_size).unwrap());
+            let shard = LRUCacheShard {
+                lru: LruCache::new(NonZeroUsize::new(shard_size).unwrap()),
+                invalidations: 0,
+            };
             shards.push(std::sync::Mutex::new(shard));
         }
         let statistics = Arc::new(Statistics::default());
         Self {
             shards,
-            invalidations: std::iter::repeat_with(|| AtomicUsize::new(0))
-                .take(shard_count)
-                .collect(),
             statistics,
             last_epoch: AtomicUsize::new(0),
         }
     }
 
-    fn shard_index(&self, key: &[u8]) -> usize {
-        let mut s = DefaultHasher::new();
-        s.write(key);
-        s.finish() as usize % self.shards.len()
-    }
-
     /// get_shard will get MutexGuard for a shard determined by key, if lock is poisoned it'll be recovered.
     pub(crate) fn get_shard(&self, key: &[u8]) -> std::sync::MutexGuard<'_, LRUCacheShard> {
-        self.lock_shard(self.shard_index(key))
-    }
-
-    fn lock_shard(&self, index: usize) -> std::sync::MutexGuard<'_, LRUCacheShard> {
-        self.shards[index]
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        let mut s = DefaultHasher::new();
+        s.write(key);
+        let lock = &self.shards[s.finish() as usize % self.shards.len()];
+        lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Returns the number of invalidations applied so far to the shard of `key`. It must be read
     /// before the command is sent and passed to `insert` along with the command's reply.
     pub(crate) fn invalidation_count(&self, key: &[u8]) -> usize {
-        self.invalidations[self.shard_index(key)].load(Ordering::Relaxed)
+        self.get_shard(key).invalidations
     }
 
     pub(crate) fn get<'a>(
@@ -123,7 +116,8 @@ impl ShardedLRU {
         redis_cmd_args: CmdArgs<'a>,
         epoch: usize,
     ) -> Option<Value> {
-        let mut lru_cache = self.get_shard(redis_key);
+        let mut shard = self.get_shard(redis_key);
+        let lru_cache = &mut shard.lru;
         if let Some(cache_item) = lru_cache.get_mut(redis_key) {
             // If one of following conditions are true, cache item is invalid and can't be trusted to use:
             // Epoch of client is not same, it means cache item is created by another redis connection.
@@ -145,7 +139,7 @@ impl ShardedLRU {
                 }
             }
         }
-        drop(lru_cache);
+        drop(shard);
         self.statistics.increase_miss(1);
         None
     }
@@ -161,13 +155,13 @@ impl ShardedLRU {
         epoch: usize,
         invalidation_count: usize,
     ) {
-        let shard_index = self.shard_index(redis_key);
-        let mut lru_cache = self.lock_shard(shard_index);
+        let mut shard = self.get_shard(redis_key);
         // The invalidation for a write made while the command was in flight can be received before
         // its reply is inserted, in which case the reply is already stale and must not be cached.
-        if self.invalidations[shard_index].load(Ordering::Relaxed) != invalidation_count {
+        if shard.invalidations != invalidation_count {
             return;
         }
+        let lru_cache = &mut shard.lru;
         if let Some(ch) = lru_cache.peek_mut(redis_key)
             && ch.epoch == epoch
         {
@@ -201,12 +195,11 @@ impl ShardedLRU {
     }
 
     pub(crate) fn invalidate(&self, cache_key: &Vec<u8>) {
-        let shard_index = self.shard_index(cache_key);
         // Use a separate binding for this to release the lock guard before calling increase_invalidate.
         let maybe_cache_holder = {
-            let mut lru_cache = self.lock_shard(shard_index);
-            self.invalidations[shard_index].fetch_add(1, Ordering::Relaxed);
-            lru_cache.pop(cache_key)
+            let mut shard = self.get_shard(cache_key);
+            shard.invalidations = shard.invalidations.wrapping_add(1);
+            shard.lru.pop(cache_key)
         };
         if let Some(cache_holder) = maybe_cache_holder {
             self.statistics
