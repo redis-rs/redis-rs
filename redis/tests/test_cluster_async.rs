@@ -3647,6 +3647,144 @@ mod cluster_async {
             // The connection isn't left with unattributed confirmations, so it still works.
             assert_connection_usable(&mut connection, channel).await;
         }
+
+        // A node sends `sunsubscribe` on its own to the clients subscribed to a shard channel when
+        // the channel's slot moves away from it. The push must not be taken as the reply of a
+        // command that's in flight on the subscribed connection.
+        #[async_test]
+        async fn test_pub_sub_sunsubscribe_from_slot_migration_is_not_a_reply() {
+            if !use_protocol().supports_resp3() {
+                return;
+            }
+
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let ctx = TestClusterContext::new_with_cluster_client_builder(|builder| {
+                builder.push_sender(tx.clone())
+            });
+            skip_if_context_does_not_support!(ctx, REDIS_CE_7_0);
+
+            // The slot is moved through a separate connection, so that the push arrives while a
+            // command of the subscribed connection is in flight, and not after a reply.
+            let (mut connection, mut admin) = join!(ctx.async_connection(), ctx.async_connection());
+            let channel = "{migrated-shard}channel";
+
+            async fn key_slot(conn: &mut ClusterConnection, key: &str) -> u16 {
+                cmd("CLUSTER")
+                    .arg("KEYSLOT")
+                    .arg(key)
+                    .query_async(conn)
+                    .await
+                    .unwrap()
+            }
+            let slot = key_slot(&mut admin, channel).await;
+            let nodes: String = cmd("CLUSTER")
+                .arg("NODES")
+                .query_async(&mut admin)
+                .await
+                .unwrap();
+            // (id, route, slot ranges) for every primary.
+            let primaries: Vec<(String, RoutingInfo, Vec<std::ops::RangeInclusive<u16>>)> = nodes
+                .lines()
+                .filter(|line| line.contains("master"))
+                .map(|line| {
+                    let fields: Vec<&str> = line.split(' ').collect();
+                    let (addr, _cport) = fields[1].split_once('@').unwrap();
+                    let (host, port) = addr.rsplit_once(':').unwrap();
+                    let ranges = fields[8..]
+                        .iter()
+                        .map(|range| {
+                            let (start, end) = range.split_once('-').unwrap_or((range, range));
+                            start.parse().unwrap()..=end.parse().unwrap()
+                        })
+                        .collect();
+                    let route = RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+                        host: host.to_string(),
+                        port: port.parse().unwrap(),
+                    });
+                    (fields[0].to_string(), route, ranges)
+                })
+                .collect();
+            let owns = |ranges: &[std::ops::RangeInclusive<u16>], slot: u16| {
+                ranges.iter().any(|range| range.contains(&slot))
+            };
+            let (source_id, source, source_ranges) =
+                primaries.iter().find(|node| owns(&node.2, slot)).unwrap();
+            let (target_id, target, _) =
+                primaries.iter().find(|node| !owns(&node.2, slot)).unwrap();
+
+            // A key in another slot of the source node, which the subscribed connection blocks on.
+            let mut list_key = String::new();
+            for i in 0.. {
+                list_key = format!("{{list-{i}}}");
+                let list_slot = key_slot(&mut admin, &list_key).await;
+                if list_slot != slot && owns(source_ranges, list_slot) {
+                    break;
+                }
+            }
+
+            connection.ssubscribe(channel).await.unwrap();
+            assert_push(
+                &mut rx,
+                PushKind::SSubscribe,
+                vec![redis_value!(channel), redis_value!(1)],
+            )
+            .await;
+
+            let setslot = |state: &str, node_id: &str| {
+                cmd("CLUSTER")
+                    .arg("SETSLOT")
+                    .arg(slot)
+                    .arg(state)
+                    .arg(node_id)
+                    .take()
+            };
+            let mut blocked_conn = connection.clone();
+            let blpop = cmd("BLPOP").arg(&list_key).arg(0).take();
+            let blocked = blpop.query_async::<Value>(&mut blocked_conn);
+            let migrate = async {
+                loop {
+                    let info: String = admin
+                        .route_command(cmd("INFO").arg("clients").take(), source.clone())
+                        .await
+                        .and_then(|value| redis::from_redis_value(value).map_err(Into::into))
+                        .unwrap();
+                    if info.contains("blocked_clients:1") {
+                        break;
+                    }
+                    sleep(Duration::from_millis(10).into()).await;
+                }
+
+                for (command, route) in [
+                    (setslot("IMPORTING", source_id), target),
+                    (setslot("MIGRATING", target_id), source),
+                    // The source node sends the push to the subscribed connection here.
+                    (setslot("NODE", target_id), source),
+                    (setslot("NODE", target_id), target),
+                ] {
+                    let result = admin.route_command(command, route.clone()).await.unwrap();
+                    assert_eq!(result, Value::Okay);
+                }
+
+                let _: () = admin.lpush(&list_key, "value").await.unwrap();
+            };
+            let (popped, ()) = join!(blocked, migrate);
+            assert_eq!(
+                popped.unwrap(),
+                Value::Array(vec![redis_value!(list_key.as_str()), redis_value!("value")])
+            );
+            let result = connection
+                .route_command(cmd("PING"), source.clone())
+                .await
+                .unwrap();
+            assert_eq!(result, Value::SimpleString("PONG".to_string()));
+
+            assert_push(
+                &mut rx,
+                PushKind::SUnsubscribe,
+                vec![redis_value!(channel), redis_value!(0)],
+            )
+            .await;
+        }
     }
 
     #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
