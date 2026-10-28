@@ -1159,3 +1159,70 @@ async fn test_that_a_pipeline_with_all_commands_cached_does_not_hang() {
     assert_hit!(&con, 1);
     assert_miss!(&con, 1);
 }
+
+#[async_test]
+async fn test_cache_invalidates_every_changed_key() {
+    let ctx = TestContext::default();
+    if !ctx.protocol.supports_resp3() {
+        return;
+    }
+
+    let mut con = ctx.async_connection_with_cache().await.unwrap();
+    let mut other_con = ctx.async_connection().await.unwrap();
+    let _: () = other_con
+        .mset(&[("key_1", 1), ("key_2", 2), ("key_3", 3)])
+        .await
+        .unwrap();
+
+    for key in ["key_1", "key_2", "key_3"] {
+        let _: Option<String> = con.get(key).await.unwrap();
+    }
+    assert_hit!(&con, 0);
+    assert_miss!(&con, 3);
+
+    let _: () = other_con.del(&["key_1", "key_2"]).await.unwrap();
+    sleep(Duration::from_millis(50).into()).await; // Give time for push messages to be received.
+    assert_invalidate!(&con, 2);
+
+    let val: Option<String> = con.get("key_1").await.unwrap();
+    assert_eq!(val, None);
+    let val: Option<String> = con.get("key_2").await.unwrap();
+    assert_eq!(val, None);
+    let val: Option<String> = con.get("key_3").await.unwrap();
+    assert_eq!(val, Some("3".to_string()));
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 5);
+}
+
+#[async_test]
+async fn test_cache_is_cleared_on_flush(flush_all: bool) {
+    let ctx = TestContext::default();
+    if !ctx.protocol.supports_resp3() {
+        return;
+    }
+
+    let mut con = ctx.async_connection_with_cache().await.unwrap();
+    let mut other_con = ctx.async_connection().await.unwrap();
+    let _: () = other_con.mset(&[("key_1", 1), ("key_2", 2)]).await.unwrap();
+
+    for key in ["key_1", "key_2", "key_1", "key_2"] {
+        let _: Option<String> = con.get(key).await.unwrap();
+    }
+    assert_hit!(&con, 2);
+    assert_miss!(&con, 2);
+
+    // The server reports FLUSHALL / FLUSHDB with a null invalidation instead of a list of keys.
+    let _: () = redis::cmd(if flush_all { "FLUSHALL" } else { "FLUSHDB" })
+        .query_async(&mut other_con)
+        .await
+        .unwrap();
+    sleep(Duration::from_millis(50).into()).await; // Give time for push message to be received.
+    assert_invalidate!(&con, 2);
+
+    let val: Option<String> = con.get("key_1").await.unwrap();
+    assert_eq!(val, None);
+    let val: Option<String> = con.get("key_2").await.unwrap();
+    assert_eq!(val, None);
+    assert_hit!(&con, 2);
+    assert_miss!(&con, 4);
+}
