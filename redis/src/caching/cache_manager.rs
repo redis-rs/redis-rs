@@ -509,7 +509,14 @@ mod tests {
         let redis_key = b"test_redis_key".as_slice();
         let redis_key_2 = b"test_redis_key_2".as_slice();
         let redis_key_3 = b"test_redis_key_3".as_slice();
-        let cmd_key = b"test_cmd_key".as_slice();
+        let cmd = crate::cmd("HGET")
+            .arg("test_redis_key")
+            .arg("field")
+            .clone();
+        let cmd = CmdRef::from_cmd(&cmd);
+        let cmd_key = cmd.data();
+        let (offsets, base) = cmd.arg_offsets();
+        let cmd_args = CmdArgs::new(offsets, base);
 
         let cache_manager = CacheManager::new(CacheConfig::new());
         let secs_10 = Instant::now().add(Duration::from_secs(10));
@@ -518,7 +525,14 @@ mod tests {
                 .into_iter()
                 .enumerate()
             {
-                cache_manager.insert(key, cmd_key, Value::Int(i as i64), secs_10, &Value::Int(-1));
+                cache_manager.insert(
+                    key,
+                    cmd_key,
+                    cmd_args,
+                    Value::Int(i as i64),
+                    secs_10,
+                    &Value::Int(-1),
+                );
             }
         };
 
@@ -531,16 +545,19 @@ mod tests {
                 Value::BulkString(redis_key_2.to_vec()),
             ])],
         );
-        assert_eq!(cache_manager.get(redis_key, cmd_key), None);
-        assert_eq!(cache_manager.get(redis_key_2, cmd_key), None);
-        assert_eq!(cache_manager.get(redis_key_3, cmd_key), Some(Value::Int(2)));
+        assert_eq!(cache_manager.get(redis_key, cmd_key, cmd_args), None);
+        assert_eq!(cache_manager.get(redis_key_2, cmd_key, cmd_args), None);
+        assert_eq!(
+            cache_manager.get(redis_key_3, cmd_key, cmd_args),
+            Some(Value::Int(2))
+        );
 
         do_inserts();
         // FLUSHALL / FLUSHDB are reported with a null instead of a list of keys.
         cache_manager.handle_push_value(&PushKind::Invalidate, &[Value::Nil]);
-        assert_eq!(cache_manager.get(redis_key, cmd_key), None);
-        assert_eq!(cache_manager.get(redis_key_2, cmd_key), None);
-        assert_eq!(cache_manager.get(redis_key_3, cmd_key), None);
+        assert_eq!(cache_manager.get(redis_key, cmd_key, cmd_args), None);
+        assert_eq!(cache_manager.get(redis_key_2, cmd_key, cmd_args), None);
+        assert_eq!(cache_manager.get(redis_key_3, cmd_key, cmd_args), None);
     }
 
     #[test]

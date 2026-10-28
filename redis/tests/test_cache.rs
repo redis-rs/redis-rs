@@ -1162,7 +1162,7 @@ async fn test_that_a_pipeline_with_all_commands_cached_does_not_hang() {
 
 #[async_test]
 async fn test_cache_invalidates_every_changed_key() {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     if !ctx.protocol.supports_resp3() {
         return;
     }
@@ -1196,7 +1196,7 @@ async fn test_cache_invalidates_every_changed_key() {
 
 #[async_test]
 async fn test_cache_is_cleared_on_flush(flush_all: bool) {
-    let ctx = TestContext::new();
+    let ctx = TestContext::default();
     if !ctx.protocol.supports_resp3() {
         return;
     }
