@@ -53,7 +53,11 @@ pub(crate) struct CacheItem {
     value_list: Vec<CacheCmdEntry>,
 }
 
-type LRUCacheShard = LruCache<RedisKey, CacheItem>;
+pub(crate) struct LRUCacheShard {
+    lru: LruCache<RedisKey, CacheItem>,
+    // Number of invalidations applied to this shard.
+    invalidations: usize,
+}
 
 pub(crate) struct ShardedLRU {
     shards: Vec<std::sync::Mutex<LRUCacheShard>>,
@@ -77,7 +81,10 @@ impl ShardedLRU {
 
         let mut shards = Vec::with_capacity(shard_count);
         for _ in 0..shard_count {
-            let shard = LruCache::new(NonZeroUsize::new(shard_size).unwrap());
+            let shard = LRUCacheShard {
+                lru: LruCache::new(NonZeroUsize::new(shard_size).unwrap()),
+                invalidations: 0,
+            };
             shards.push(std::sync::Mutex::new(shard));
         }
         let statistics = Arc::new(Statistics::default());
@@ -96,6 +103,12 @@ impl ShardedLRU {
         lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    /// Returns the number of invalidations applied so far to the shard of `key`. It must be read
+    /// before the command is sent and passed to `insert` along with the command's reply.
+    pub(crate) fn invalidation_count(&self, key: &[u8]) -> usize {
+        self.get_shard(key).invalidations
+    }
+
     pub(crate) fn get<'a>(
         &self,
         redis_key: &'a [u8],
@@ -103,7 +116,8 @@ impl ShardedLRU {
         redis_cmd_args: CmdArgs<'a>,
         epoch: usize,
     ) -> Option<Value> {
-        let mut lru_cache = self.get_shard(redis_key);
+        let mut shard = self.get_shard(redis_key);
+        let lru_cache = &mut shard.lru;
         if let Some(cache_item) = lru_cache.get_mut(redis_key) {
             // If one of following conditions are true, cache item is invalid and can't be trusted to use:
             // Epoch of client is not same, it means cache item is created by another redis connection.
@@ -125,11 +139,12 @@ impl ShardedLRU {
                 }
             }
         }
-        drop(lru_cache);
+        drop(shard);
         self.statistics.increase_miss(1);
         None
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn insert(
         &self,
         redis_key: &[u8],
@@ -138,8 +153,15 @@ impl ShardedLRU {
         value: Value,
         expire_time: Instant,
         epoch: usize,
+        invalidation_count: usize,
     ) {
-        let mut lru_cache = self.get_shard(redis_key);
+        let mut shard = self.get_shard(redis_key);
+        // The invalidation for a write made while the command was in flight can be received before
+        // its reply is inserted, in which case the reply is already stale and must not be cached.
+        if shard.invalidations != invalidation_count {
+            return;
+        }
+        let lru_cache = &mut shard.lru;
         if let Some(ch) = lru_cache.peek_mut(redis_key)
             && ch.epoch == epoch
         {
@@ -174,7 +196,11 @@ impl ShardedLRU {
 
     pub(crate) fn invalidate(&self, cache_key: &Vec<u8>) {
         // Use a separate binding for this to release the lock guard before calling increase_invalidate.
-        let maybe_cache_holder = self.get_shard(cache_key).pop(cache_key);
+        let maybe_cache_holder = {
+            let mut shard = self.get_shard(cache_key);
+            shard.invalidations = shard.invalidations.wrapping_add(1);
+            shard.lru.pop(cache_key)
+        };
         if let Some(cache_holder) = maybe_cache_holder {
             self.statistics
                 .increase_invalidate(cache_holder.value_list.len());
@@ -221,6 +247,7 @@ mod tests {
             Value::Boolean(true),
             Instant::now().add(Duration::from_secs(10)),
             0,
+            0,
         );
         assert_eq!(
             sharded_lru.get(REDIS_KEY, CMD_KEY, CMD_ARGS, 0),
@@ -238,6 +265,7 @@ mod tests {
             CMD_ARGS,
             Value::Boolean(false),
             Instant::now().add(Duration::from_millis(5)),
+            0,
             0,
         );
         assert_eq!(
@@ -264,6 +292,7 @@ mod tests {
             Value::Int(1),
             Instant::now().add(Duration::from_secs(10)),
             0,
+            0,
         );
         // Second insert must override expire of the redis key.
         sharded_lru.insert(
@@ -272,6 +301,7 @@ mod tests {
             CMD_ARGS,
             Value::Int(2),
             Instant::now().add(Duration::from_millis(5)),
+            0,
             0,
         );
 
@@ -308,6 +338,7 @@ mod tests {
             Value::Boolean(true),
             Instant::now().add(Duration::from_secs(10)),
             0,
+            0,
         );
         assert_eq!(
             sharded_lru.get(REDIS_KEY, CMD_KEY, CMD_ARGS, 0),
@@ -328,6 +359,44 @@ mod tests {
     }
 
     #[test]
+    fn test_insert_is_ignored_after_invalidation() {
+        let sharded_lru = ShardedLRU::new(NonZeroUsize::new(64).unwrap());
+
+        let invalidation_count = sharded_lru.invalidation_count(REDIS_KEY);
+        // The invalidation is received while the command is in flight, before its reply is inserted.
+        sharded_lru.invalidate(&REDIS_KEY.to_vec());
+        sharded_lru.insert(
+            REDIS_KEY,
+            CMD_KEY,
+            CMD_ARGS,
+            Value::Boolean(true),
+            Instant::now().add(Duration::from_secs(10)),
+            0,
+            invalidation_count,
+        );
+        assert_eq!(
+            sharded_lru.get(REDIS_KEY, CMD_KEY, CMD_ARGS, 0),
+            None,
+            "Reply must not be cached"
+        );
+
+        let invalidation_count = sharded_lru.invalidation_count(REDIS_KEY);
+        sharded_lru.insert(
+            REDIS_KEY,
+            CMD_KEY,
+            CMD_ARGS,
+            Value::Boolean(true),
+            Instant::now().add(Duration::from_secs(10)),
+            0,
+            invalidation_count,
+        );
+        assert_eq!(
+            sharded_lru.get(REDIS_KEY, CMD_KEY, CMD_ARGS, 0),
+            Some(Value::Boolean(true))
+        );
+    }
+
+    #[test]
     fn test_epoch_change() {
         let sharded_lru = ShardedLRU::new(NonZeroUsize::new(64).unwrap());
 
@@ -340,6 +409,7 @@ mod tests {
             Value::Boolean(true),
             Instant::now().add(Duration::from_secs(10)),
             0,
+            0,
         );
         sharded_lru.insert(
             another_key.as_bytes(),
@@ -347,6 +417,7 @@ mod tests {
             CMD_ARGS,
             Value::Boolean(true),
             Instant::now().add(Duration::from_secs(10)),
+            0,
             0,
         );
         assert_eq!(

@@ -56,12 +56,14 @@ pub(crate) struct SingleCachedCommand<'a> {
     pub(crate) cmd_args: CmdArgs<'a>,
     pub(crate) cmd: CmdRef<'a>,
     pub(crate) client_side_expire: Instant,
+    pub(crate) invalidation_count: usize,
 }
 
 pub(crate) struct MultipleCachedCommandPart<'a> {
     pub(crate) redis_key: &'a [u8],
     pub(crate) cmd_key: Vec<u8>,
     pub(crate) cmd_args: Vec<Arg<usize>>,
+    pub(crate) invalidation_count: usize,
 }
 
 /// Holds enough information to pack and resolve, both single (GET, HMGET) and multiple (MGET) commands.
@@ -97,6 +99,7 @@ impl CacheableCommand<'_> {
                             reply.clone(),
                             cached_command.client_side_expire,
                             &pttl,
+                            cached_command.invalidation_count,
                         );
                     }
 
@@ -127,6 +130,7 @@ impl CacheableCommand<'_> {
                                 key_value.clone(),
                                 client_side_expire,
                                 &pttl_value,
+                                cached_command.invalidation_count,
                             );
                         }
                         cached_response[key_index] = key_value;
