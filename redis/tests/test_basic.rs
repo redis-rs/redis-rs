@@ -2242,6 +2242,35 @@ mod basic {
     }
 
     #[test]
+    fn test_pubsub_unsubscribe_with_unread_messages() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+        let mut publish_con = ctx.connection();
+
+        // The published messages are never read, so they arrive ahead of the unsubscribe
+        // confirmations when the pubsub is dropped.
+        {
+            let mut pubsub = con.as_pubsub();
+            pubsub.subscribe("foo").unwrap();
+            assert_eq!(publish_con.publish("foo", "message"), Ok(1));
+        }
+
+        con.set("foo", "bar").unwrap();
+        let value = con.get("foo").unwrap().unwrap();
+        assert_eq!(&value[..], "bar");
+
+        {
+            let mut pubsub = con.as_pubsub();
+            pubsub.psubscribe("foo*").unwrap();
+            assert_eq!(publish_con.publish("foo", "pmessage"), Ok(1));
+        }
+
+        con.set("baz", "qux").unwrap();
+        let value = con.get("baz").unwrap().unwrap();
+        assert_eq!(&value[..], "qux");
+    }
+
+    #[test]
     fn scoped_pubsub() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
