@@ -1,3 +1,28 @@
+### 2.0.0-rc.2 (2026-10-30)
+
+#### Changes & Bug fixes
+
+* fix: return (member, score) pairs from (Async)TypedCommands zpopmin/zpopmax ([#2502](https://github.com/redis-rs/redis-rs/pull/2502) by @GBra-4-669)
+* Rename the search feature ([#2518](https://github.com/redis-rs/redis-rs/pull/2518) by @nihohit)
+* fix(types): convert RESP3 doubles to the big number types ([#2505](https://github.com/redis-rs/redis-rs/pull/2505) by @LindseyZ1205)
+* Fix build when TLS is enabled without the runtime's TLS feature ([#2516](https://github.com/redis-rs/redis-rs/pull/2516) by @wleeaf)
+* fix(streams): read radix_tree_keys from XINFO STREAM's radix-tree-keys ([#2515](https://github.com/redis-rs/redis-rs/pull/2515) by @LindseyZ1205)
+* Don't let push messages consume skipped replies after a read timeout ([#2517](https://github.com/redis-rs/redis-rs/pull/2517) by @varun3257)
+* fix: return the reply types from (Async)TypedCommands blmpop and lmove ([#2523](https://github.com/redis-rs/redis-rs/pull/2523) by @wleeaf)
+* Update the cluster routing table ([#2521](https://github.com/redis-rs/redis-rs/pull/2521) by @nihohit)
+* Support custom native-tls certificates in ClusterClientBuilder ([#2525](https://github.com/redis-rs/redis-rs/pull/2525) by @MohitKS5)
+* fix: return ACL LOG entries as maps from (Async)TypedCommands acl_log ([#2524](https://github.com/redis-rs/redis-rs/pull/2524) by @wleeaf)
+* Keep argument boundaries in client-side cache keys ([#2493](https://github.com/redis-rs/redis-rs/pull/2493) by @varun3257)
+* Remove the usage of tokio channels. ([#2529](https://github.com/redis-rs/redis-rs/pull/2529) by @nihohit)
+* Apply every key and flush invalidation to the client-side cache ([#2508](https://github.com/redis-rs/redis-rs/pull/2508) by @varun3257)
+* Don't cache replies invalidated while the command is in flight ([#2526](https://github.com/redis-rs/redis-rs/pull/2526) by @varun3257)
+* Skip pending pubsub messages when leaving RESP2 pubsub mode ([#2531](https://github.com/redis-rs/redis-rs/pull/2531) by @varun3257)
+
+#### CI & operational improvements
+
+* update version documentation ([#2520](https://github.com/redis-rs/redis-rs/pull/2520) by @nihohit)
+* Run the cluster `FT.CREATE` tests on valkey-search ([#2479](https://github.com/redis-rs/redis-rs/pull/2479) by @nkaradzhov)
+
 ### 2.0.0-rc.1 (2026-10-24)
 
 #### Changes & Bug fixes
