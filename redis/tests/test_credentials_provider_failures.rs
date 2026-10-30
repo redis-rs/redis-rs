@@ -69,9 +69,10 @@ mod credentials_provider_failures_tests {
     use test_macros::async_test;
 
     #[async_test]
-    async fn test_connection_fails_when_initial_credentials_request_returns_error() {
+    async fn test_connection_fails_when_initial_credentials_request_returns_error(
+        ctx: TestContext,
+    ) {
         init_logger();
-        let ctx = TestContext::default();
 
         let provider = ImmediatelyFailingCredentialsProvider;
         let config = redis::AsyncConnectionConfig::new().set_credentials_provider(provider);
@@ -91,9 +92,8 @@ mod credentials_provider_failures_tests {
     }
 
     #[async_test]
-    async fn test_connection_fails_when_credentials_stream_closes() {
+    async fn test_connection_fails_when_credentials_stream_closes(ctx: TestContext) {
         init_logger();
-        let ctx = TestContext::default();
 
         let provider = EmptyStreamCredentialsProvider;
         let config = redis::AsyncConnectionConfig::new().set_credentials_provider(provider);
@@ -116,17 +116,18 @@ mod credentials_provider_failures_tests {
     mod cluster {
         use super::*;
         use redis::cluster::ClusterClientBuilder;
+        use test_macros::async_cluster_test;
 
-        #[async_test]
-        async fn test_cluster_connection_fails_when_credentials_provider_returns_error() {
+        #[async_cluster_test]
+        async fn test_cluster_connection_fails_when_credentials_provider_returns_error(
+            ctx: TestClusterContext,
+        ) {
             init_logger();
-            let cluster = TestClusterContext::new_with_cluster_client_builder(
-                |builder: ClusterClientBuilder| {
-                    builder.set_credentials_provider(ImmediatelyFailingCredentialsProvider)
-                },
-            );
+            let ctx = ctx.with_cluster_client_builder(|builder: ClusterClientBuilder| {
+                builder.set_credentials_provider(ImmediatelyFailingCredentialsProvider)
+            });
 
-            let result = cluster.client.get_async_connection().await;
+            let result = ctx.client.get_async_connection().await;
 
             assert!(
                 result.is_err(),
@@ -137,16 +138,16 @@ mod credentials_provider_failures_tests {
             assert_eq!(err.kind(), ErrorKind::Io);
         }
 
-        #[async_test]
-        async fn test_cluster_connection_fails_when_credentials_stream_is_empty() {
+        #[async_cluster_test]
+        async fn test_cluster_connection_fails_when_credentials_stream_is_empty(
+            ctx: TestClusterContext,
+        ) {
             init_logger();
-            let cluster = TestClusterContext::new_with_cluster_client_builder(
-                |builder: ClusterClientBuilder| {
-                    builder.set_credentials_provider(EmptyStreamCredentialsProvider)
-                },
-            );
+            let ctx = ctx.with_cluster_client_builder(|builder: ClusterClientBuilder| {
+                builder.set_credentials_provider(EmptyStreamCredentialsProvider)
+            });
 
-            let result = cluster.client.get_async_connection().await;
+            let result = ctx.client.get_async_connection().await;
 
             assert!(
                 result.is_err(),

@@ -323,7 +323,7 @@ impl RedisSentinelCluster {
             replicas_per_master,
             sentinels,
             &[],
-            crate::server::ServerType::get_intended(),
+            crate::server::ServerType::Tcp,
         )
     }
 
@@ -353,7 +353,7 @@ impl RedisSentinelCluster {
             replicas_per_master,
             sentinels,
             modules,
-            crate::server::ServerType::get_intended(),
+            crate::server::ServerType::Tcp,
         )
     }
 
