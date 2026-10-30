@@ -319,3 +319,111 @@ impl Clone for ClientTlsParams {
         }
     }
 }
+
+/// A lazily-populated cache of the platform's native root certificates.
+///
+/// Reading the native trust store is expensive (it hits the filesystem, or the
+/// platform keychain) and it is read for every new TLS connection, including
+/// the connections made by health checks and topology refreshes.
+///
+/// A successful read is cached forever; a failed read is not cached, so the
+/// next caller retries the load. Under concurrent calls, one caller attempts to
+/// parse the certs and all others wait for the result.
+#[cfg(all(
+    feature = "tls-rustls",
+    not(feature = "tls-native-tls"),
+    not(feature = "tls-rustls-webpki-roots")
+))]
+pub(crate) struct NativeCertBundle {
+    parsed: std::sync::Mutex<Option<RootCertStore>>,
+}
+
+#[cfg(all(
+    feature = "tls-rustls",
+    not(feature = "tls-native-tls"),
+    not(feature = "tls-rustls-webpki-roots")
+))]
+impl NativeCertBundle {
+    pub(crate) const fn new() -> Self {
+        Self {
+            parsed: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Return the native root certificate store, loading it from the platform
+    /// trust store if it has not already been loaded successfully.
+    pub(crate) fn load(&self) -> RedisResult<RootCertStore> {
+        // The lock is held across the load so that concurrent callers wait for,
+        // and then share, a single read of the platform trust store.
+        let mut guard = self.parsed.lock().unwrap();
+
+        if let Some(store) = guard.as_ref() {
+            return Ok(store.clone());
+        }
+
+        let mut certificate_result = rustls_native_certs::load_native_certs();
+        if let Some(error) = certificate_result.errors.pop() {
+            // Not cached - the next caller retries the load.
+            return Err(error.into());
+        }
+
+        let mut store = RootCertStore::empty();
+        for cert in certificate_result.certs {
+            store.add(cert)?;
+        }
+
+        Ok(guard.insert(store).clone())
+    }
+
+    /// Purge the cached certs so that the next call to [`Self::load()`] causes
+    /// the bundle to be reparsed.
+    pub(crate) fn invalidate(&self) {
+        *self.parsed.lock().unwrap() = None;
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "tls-rustls",
+    not(feature = "tls-native-tls"),
+    not(feature = "tls-rustls-webpki-roots")
+))]
+mod tests {
+    use super::*;
+
+    /// The platform trust store is read at most once, and every caller observes
+    /// the same set of roots.
+    #[test]
+    fn test_native_cert_bundle_cache() {
+        let bundle = NativeCertBundle::new();
+
+        // Reads the platform trust store.
+        let first = bundle.load().expect("failed to load native certs");
+
+        assert!(!first.is_empty(), "no native certs found");
+
+        // Helper fn to capture the identity of the backing allocation of the
+        // cached store.
+        let cached_ptr = |bundle: &NativeCertBundle| {
+            bundle
+                .parsed
+                .lock()
+                .unwrap()
+                .as_ref()
+                .expect("successful load was not cached")
+                .roots
+                .as_ptr()
+        };
+
+        let first_ptr = cached_ptr(&bundle);
+        let second = bundle.load().expect("failed to load native certs");
+
+        // The cached store was neither reloaded nor mutated.
+        assert_eq!(first_ptr, cached_ptr(&bundle));
+        assert_eq!(first.roots, second.roots);
+
+        // Invalidate the cached bundle.
+        bundle.invalidate();
+        assert!(bundle.parsed.lock().unwrap().is_none());
+    }
+}
