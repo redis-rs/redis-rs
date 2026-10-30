@@ -107,9 +107,7 @@ pub(crate) enum SubscribeLikeCommand {
     Unsubscribe,
     PSubscribe,
     PUnsubscribe,
-    #[cfg(feature = "cluster-async")]
     SSubscribe,
-    #[cfg(feature = "cluster-async")]
     SUnsubscribe,
 }
 
@@ -121,11 +119,26 @@ impl SubscribeLikeCommand {
             Self::Unsubscribe => "UNSUBSCRIBE",
             Self::PSubscribe => "PSUBSCRIBE",
             Self::PUnsubscribe => "PUNSUBSCRIBE",
-            #[cfg(feature = "cluster-async")]
             Self::SSubscribe => "SSUBSCRIBE",
-            #[cfg(feature = "cluster-async")]
             Self::SUnsubscribe => "SUNSUBSCRIBE",
         }
+    }
+
+    /// The subscription command that `cmd` sends, if it sends one.
+    pub(crate) fn from_cmd(cmd: &Cmd) -> Option<Self> {
+        let Some(crate::cmd::Arg::Simple(name)) = cmd.args_iter().next() else {
+            return None;
+        };
+        [
+            Self::Subscribe,
+            Self::Unsubscribe,
+            Self::PSubscribe,
+            Self::PUnsubscribe,
+            Self::SSubscribe,
+            Self::SUnsubscribe,
+        ]
+        .into_iter()
+        .find(|command| name.eq_ignore_ascii_case(command.name().as_bytes()))
     }
 
     /// How many confirmations the server sends for this command when called with `args`.
@@ -136,13 +149,12 @@ impl SubscribeLikeCommand {
                 // subscriptions of that kind, so the count depends on the connection's state.
                 Self::Unsubscribe => ExpectedConfirmations::UnsubscribeAllChannels,
                 Self::PUnsubscribe => ExpectedConfirmations::UnsubscribeAllPatterns,
-                #[cfg(feature = "cluster-async")]
                 Self::SUnsubscribe => ExpectedConfirmations::UnsubscribeAllShardChannels,
                 // A SUBSCRIBE/PSUBSCRIBE/SSUBSCRIBE without arguments is rejected with a single
                 // error.
-                Self::Subscribe | Self::PSubscribe => ExpectedConfirmations::Count(1),
-                #[cfg(feature = "cluster-async")]
-                Self::SSubscribe => ExpectedConfirmations::Count(1),
+                Self::Subscribe | Self::PSubscribe | Self::SSubscribe => {
+                    ExpectedConfirmations::Count(1)
+                }
             }
         } else {
             ExpectedConfirmations::Count(args_count)
