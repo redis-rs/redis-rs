@@ -213,10 +213,11 @@ impl ShardedLRU {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let invalidated = lru_cache
+                .lru
                 .iter()
                 .map(|(_, cache_item)| cache_item.value_list.len())
                 .sum();
-            lru_cache.clear();
+            lru_cache.lru.clear();
             drop(lru_cache);
             self.statistics.increase_invalidate(invalidated);
         }

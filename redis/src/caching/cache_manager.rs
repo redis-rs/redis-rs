@@ -552,6 +552,7 @@ mod tests {
                     Value::Int(i as i64),
                     secs_10,
                     &Value::Int(-1),
+                    0,
                 );
             }
         };
