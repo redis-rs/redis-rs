@@ -11,7 +11,7 @@ use crate::{
     ToRedisArgs,
     aio::setup_connection,
     check_resp3,
-    cmd::{Arg, Cmd},
+    cmd::Cmd,
     errors::{ErrorKind, RedisError, closed_connection_error},
     parser::ValueCodec,
     types::{RedisFuture, RedisResult, Value},
@@ -79,7 +79,8 @@ enum RequestKind {
     Transaction,
     /// A subscription command: the server rejects it with a single error instead of with its
     /// confirmations, so waiting for confirmations that will never arrive would block the
-    /// request until it times out.
+    /// request until it times out. This is the only kind of request whose replies can be
+    /// subscription push messages.
     SubscribeLike,
 }
 
@@ -103,8 +104,8 @@ impl PipelineResponseExpectation {
         }
     }
 
-    /// An expectation for a pipeline that holds a single subscription command, which the server
-    /// confirms `expected` times (see [`ExpectedConfirmations`]).
+    /// An expectation for a single subscription command, which the server confirms `expected`
+    /// times (see [`ExpectedConfirmations`]).
     fn subscribe_like(skipped_response_count: usize, expected: ExpectedConfirmations) -> Self {
         Self {
             skipped_response_count,
@@ -131,8 +132,16 @@ impl ResponseAggregate {
 struct InFlight {
     output: Option<PipelineOutput>,
     response_aggregate: ResponseAggregate,
-    // Whether the request holds a subscription command, so subscription pushes may be its replies.
-    expects_subscription_pushes: bool,
+}
+
+impl InFlight {
+    fn is_subscribe_like(&self) -> bool {
+        matches!(
+            &self.response_aggregate,
+            ResponseAggregate::Pipeline { expectation, .. }
+                if matches!(expectation.kind, RequestKind::SubscribeLike)
+        )
+    }
 }
 
 // A single message sent through the pipeline
@@ -144,25 +153,6 @@ struct PipelineMessage {
     // If `Some`, the first value is the number of responses to skip,
     // the second is the number of responses to keep, and the third is whether the pipeline is a transaction.
     expectation: Option<PipelineResponseExpectation>,
-    // Whether the request holds a subscription command, so subscription pushes may be its replies.
-    expects_subscription_pushes: bool,
-}
-
-/// Whether `command_name` is a subscription command, which the server confirms with push messages.
-fn is_subscription_command(command_name: Option<Arg<&[u8]>>) -> bool {
-    let Some(Arg::Simple(name)) = command_name else {
-        return false;
-    };
-    [
-        b"SUBSCRIBE".as_slice(),
-        b"UNSUBSCRIBE",
-        b"PSUBSCRIBE",
-        b"PUNSUBSCRIBE",
-        b"SSUBSCRIBE",
-        b"SUNSUBSCRIBE",
-    ]
-    .iter()
-    .any(|command| name.eq_ignore_ascii_case(command))
 }
 
 /// Wrapper around a `Stream + Sink` where each item sent through the `Sink` results in one or more
@@ -323,7 +313,6 @@ where
                     ExpectedConfirmations::UnsubscribeAllPatterns => {
                         Some(SubscriptionKind::Pattern)
                     }
-                    #[cfg(feature = "cluster-async")]
                     ExpectedConfirmations::UnsubscribeAllShardChannels => {
                         Some(SubscriptionKind::ShardChannel)
                     }
@@ -349,15 +338,15 @@ where
             }
         }
 
-        // A subscription push can only be the reply of a request that holds a subscription
-        // command. Otherwise the server sent it on its own, e.g. the `sunsubscribe` a cluster node
-        // sends when a shard channel's slot moves away from it, and consuming it as the oldest
-        // request's reply would hand every following reply to the wrong request.
+        // A subscription push can only be the reply of a subscription request. Otherwise the
+        // server sent it on its own, e.g. the `sunsubscribe` a cluster node sends when a shard
+        // channel's slot moves away from it, and consuming it as the oldest request's reply would
+        // hand every following reply to the wrong request.
         if matches!(result, Ok(Value::Push { .. }))
             && !self_
                 .in_flight
                 .front()
-                .is_some_and(|entry| entry.expects_subscription_pushes)
+                .is_some_and(InFlight::is_subscribe_like)
         {
             return;
         }
@@ -426,9 +415,8 @@ where
                     // Resolved to `Count` when the first confirmation arrived, so this is only
                     // reached when the response isn't a confirmation.
                     ExpectedConfirmations::UnsubscribeAllChannels
-                    | ExpectedConfirmations::UnsubscribeAllPatterns => 1,
-                    #[cfg(feature = "cluster-async")]
-                    ExpectedConfirmations::UnsubscribeAllShardChannels => 1,
+                    | ExpectedConfirmations::UnsubscribeAllPatterns
+                    | ExpectedConfirmations::UnsubscribeAllShardChannels => 1,
                 };
                 if buffer.len() < expected {
                     // Need to gather more response values
@@ -502,7 +490,6 @@ where
             input,
             mut output,
             expectation,
-            expects_subscription_pushes,
         }: PipelineMessage,
     ) -> Result<(), Self::Error> {
         // If initially a receiver was created, but then dropped, there is nothing to receive our output we do not need to send the message as it is
@@ -527,7 +514,6 @@ where
                 let entry = InFlight {
                     output,
                     response_aggregate,
-                    expects_subscription_pushes,
                 };
 
                 self_.in_flight.push_back(entry);
@@ -619,7 +605,6 @@ impl Pipeline {
         // If `None`, this is a single request, not a pipeline of multiple requests.
         // If `Some`, the value inside defines how the response should look like
         expectation: Option<PipelineResponseExpectation>,
-        expects_subscription_pushes: bool,
         timeout: Option<Duration>,
         skip_response: bool,
     ) -> Result<Value, RedisError> {
@@ -634,7 +619,6 @@ impl Pipeline {
                     PipelineMessage {
                         input,
                         expectation,
-                        expects_subscription_pushes,
                         output: None,
                     },
                 )
@@ -651,7 +635,6 @@ impl Pipeline {
                 PipelineMessage {
                     input,
                     expectation,
-                    expects_subscription_pushes,
                     output: Some(sender),
                 },
             )
@@ -970,7 +953,6 @@ impl MultiplexedConnection {
                                 pipeline.len(),
                                 false,
                             )),
-                            false,
                             self.response_timeout,
                             cmd.is_no_response(),
                         )
@@ -981,15 +963,34 @@ impl MultiplexedConnection {
                 PrepCacheItem::NotCacheable => (),
             }
         }
-        self.pipeline
+        // A subscription command is sent as a subscription request that awaits all of its
+        // confirmations, like the ones sent by `send_subscribe_like_command`: confirmations are
+        // push messages, which are only taken as the replies of subscription requests.
+        let subscription_expectation = SubscribeLikeCommand::from_cmd(cmd).map(|command| {
+            let args_count = cmd.args_iter().len() - 1;
+            PipelineResponseExpectation::subscribe_like(
+                0,
+                command.expected_confirmations(args_count),
+            )
+        });
+        let is_subscription = subscription_expectation.is_some();
+        let value = self
+            .pipeline
             .send_recv(
                 cmd.get_packed_command(),
-                None,
-                is_subscription_command(cmd.args_iter().next()),
+                subscription_expectation,
                 self.response_timeout,
                 cmd.is_no_response(),
             )
-            .await
+            .await?;
+        match value {
+            // Only the first confirmation is returned, so that the reply has the same shape as
+            // any other single command's.
+            Value::Array(confirmations) if is_subscription => {
+                Ok(confirmations.into_iter().next().unwrap_or(Value::Nil))
+            }
+            value => Ok(value),
+        }
     }
 
     /// Sends multiple already encoded (packed) command into the TCP socket
@@ -1005,10 +1006,6 @@ impl MultiplexedConnection {
         // holds a single concurrency limit permit regardless of the number of confirmations that
         // it will be answered with.
         let subscription_confirmations = cmd.subscription_confirmations;
-        let expects_subscription_pushes = subscription_confirmations.is_some()
-            || cmd
-                .cmd_iter()
-                .any(|cmd| is_subscription_command(cmd.args_iter().next()));
         let permit_count = if subscription_confirmations.is_some() {
             1
         } else {
@@ -1051,7 +1048,6 @@ impl MultiplexedConnection {
                         expected_response_count,
                         cacheable_pipeline.transaction_mode,
                     )),
-                    expects_subscription_pushes,
                     self.response_timeout,
                     false,
                 )
@@ -1068,7 +1064,6 @@ impl MultiplexedConnection {
             .send_recv(
                 cmd.get_packed_pipeline(),
                 Some(expectation),
-                expects_subscription_pushes,
                 self.response_timeout,
                 false,
             )
@@ -1716,5 +1711,66 @@ mod tests {
 
         let push = push_rx.recv().await.unwrap();
         assert_eq!(push.kind, crate::PushKind::SUnsubscribe);
+    }
+
+    #[tokio::test]
+    async fn test_subscription_command_awaits_all_confirmations() {
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+        use tokio_util::codec::FramedRead;
+
+        let (client_half, server_half) = tokio::io::duplex(4096);
+        let (server_read, mut server_write) = tokio::io::split(server_half);
+
+        tokio::spawn(async move {
+            let mut reader = FramedRead::new(server_read, ValueCodec::default());
+            // HELLO
+            reader.next().await.unwrap().unwrap();
+            server_write.write_all(b"%0\r\n").await.unwrap();
+            // SUBSCRIBE a b, then GET k, which is in flight when the second confirmation arrives.
+            reader.next().await.unwrap().unwrap();
+            reader.next().await.unwrap().unwrap();
+            server_write
+                .write_all(b">3\r\n$9\r\nsubscribe\r\n$1\r\na\r\n:1\r\n")
+                .await
+                .unwrap();
+            server_write
+                .write_all(b">3\r\n$9\r\nsubscribe\r\n$1\r\nb\r\n:2\r\n")
+                .await
+                .unwrap();
+            server_write.write_all(b"$1\r\nv\r\n").await.unwrap();
+            while reader.next().await.is_some() {}
+        });
+
+        let conn_info = RedisConnectionInfo {
+            protocol: ProtocolVersion::RESP3,
+            ..mock_conn_info()
+        };
+        let (push_tx, _push_rx) = tokio::sync::mpsc::unbounded_channel();
+        let config = AsyncConnectionConfig::new()
+            .set_push_sender(push_tx)
+            .set_connection_timeout(None);
+
+        let (mut conn, driver) =
+            MultiplexedConnection::new_with_config(&conn_info, client_half, config)
+                .await
+                .unwrap();
+        tokio::spawn(driver);
+
+        let mut get_conn = conn.clone();
+        let subscribe = cmd("SUBSCRIBE").arg("a").arg("b").take();
+        let get = cmd("GET").arg("k").take();
+        let (subscribed, value) = futures_util::join!(
+            conn.send_packed_command(&subscribe),
+            get_conn.send_packed_command(&get)
+        );
+        assert_eq!(
+            subscribed.unwrap(),
+            Value::Push {
+                kind: crate::PushKind::Subscribe,
+                data: vec![Value::BulkString(b"a".to_vec()), Value::Int(1)],
+            }
+        );
+        assert_eq!(value.unwrap(), Value::BulkString(b"v".to_vec()));
     }
 }
