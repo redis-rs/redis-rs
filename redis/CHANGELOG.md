@@ -1,3 +1,12 @@
+### 1.8.1 (2026-10-30)
+
+#### Changes & Bug fixes
+
+* fix(streams): read radix_tree_keys from XINFO STREAM's radix-tree-keys ([#2522](https://github.com/redis-rs/redis-rs/pull/2522) by @LindseyZ1205)
+* Skip pending pubsub messages when leaving RESP2 pubsub mode ([#2535](https://github.com/redis-rs/redis-rs/pull/2535) by @varun3257)
+* Apply every key and flush invalidation to the client-side cache ([#2536](https://github.com/redis-rs/redis-rs/pull/2536) by @varun3257)
+* Don't let push messages consume skipped replies after a read timeout ([#2538](https://github.com/redis-rs/redis-rs/pull/2538) by @varun3257)
+
 ### 1.8.0 (2026-10-23)
 
 #### Changes & Bug fixes
