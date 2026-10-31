@@ -7,7 +7,7 @@ use crate::caching::{CacheManager, CacheStatistics, PrepCacheItem};
 use crate::pipeline::ExpectedConfirmations;
 use crate::subscription_tracker::{SubscriptionKind, SubscriptionTracker, subscription_change};
 use crate::{
-    AsyncConnectionConfig, ProtocolVersion, PushInfo, RedisConnectionInfo, ServerError,
+    AsyncConnectionConfig, ProtocolVersion, PushInfo, PushKind, RedisConnectionInfo, ServerError,
     ToRedisArgs,
     aio::setup_connection,
     check_resp3,
@@ -131,6 +131,16 @@ impl ResponseAggregate {
 struct InFlight {
     output: Option<PipelineOutput>,
     response_aggregate: ResponseAggregate,
+}
+
+impl InFlight {
+    fn is_subscribe_like(&self) -> bool {
+        matches!(
+            &self.response_aggregate,
+            ResponseAggregate::Pipeline { expectation, .. }
+                if matches!(expectation.kind, RequestKind::SubscribeLike)
+        )
+    }
 }
 
 // A single message sent through the pipeline
@@ -326,6 +336,26 @@ where
             if update_subscriptions {
                 self_.subscriptions.lock().unwrap().apply(change);
             }
+        }
+
+        // A cluster node sends `sunsubscribe` on its own when a shard channel's slot moves away
+        // from it, which is the only subscription push the server isn't asked for. Unless the
+        // oldest request is a subscription request, the push isn't its reply, and consuming it
+        // would hand every following reply to the wrong request. Raw `SUNSUBSCRIBE` commands
+        // aren't recognised as subscription requests yet, see
+        // <https://github.com/redis-rs/redis-rs/issues/2533>.
+        if matches!(
+            result,
+            Ok(Value::Push {
+                kind: PushKind::SUnsubscribe,
+                ..
+            })
+        ) && !self_
+            .in_flight
+            .front()
+            .is_some_and(InFlight::is_subscribe_like)
+        {
+            return;
         }
 
         let mut entry = match self_.in_flight.pop_front() {
@@ -1613,5 +1643,61 @@ mod tests {
         let err = c2.send_packed_command(&cmd("PING")).await.unwrap_err();
         assert!(err.is_io_error(), "expected IO error from timeout");
         cmd_received_rx.recv().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_unsolicited_subscription_push_is_not_a_reply() {
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+        use tokio_util::codec::FramedRead;
+
+        let (client_half, server_half) = tokio::io::duplex(4096);
+        let (server_read, mut server_write) = tokio::io::split(server_half);
+
+        tokio::spawn(async move {
+            let mut reader = FramedRead::new(server_read, ValueCodec::default());
+            // HELLO
+            reader.next().await.unwrap().unwrap();
+            server_write.write_all(b"%0\r\n").await.unwrap();
+            // A cluster node unsubscribes the client from a shard channel whose slot moved away
+            // while the first command is in flight.
+            reader.next().await.unwrap().unwrap();
+            server_write
+                .write_all(b">3\r\n$12\r\nsunsubscribe\r\n$7\r\nchannel\r\n:0\r\n$2\r\nv1\r\n")
+                .await
+                .unwrap();
+            reader.next().await.unwrap().unwrap();
+            server_write.write_all(b"$2\r\nv2\r\n").await.unwrap();
+            while reader.next().await.is_some() {}
+        });
+
+        let conn_info = RedisConnectionInfo {
+            protocol: ProtocolVersion::RESP3,
+            ..mock_conn_info()
+        };
+        let (push_tx, mut push_rx) = tokio::sync::mpsc::unbounded_channel();
+        let config = AsyncConnectionConfig::new()
+            .set_push_sender(push_tx)
+            .set_connection_timeout(None);
+
+        let (mut conn, driver) =
+            MultiplexedConnection::new_with_config(&conn_info, client_half, config)
+                .await
+                .unwrap();
+        tokio::spawn(driver);
+
+        let first = conn
+            .send_packed_command(cmd("GET").arg("k1"))
+            .await
+            .unwrap();
+        assert_eq!(first, Value::BulkString(b"v1".to_vec()));
+        let second = conn
+            .send_packed_command(cmd("GET").arg("k2"))
+            .await
+            .unwrap();
+        assert_eq!(second, Value::BulkString(b"v2".to_vec()));
+
+        let push = push_rx.recv().await.unwrap();
+        assert_eq!(push.kind, crate::PushKind::SUnsubscribe);
     }
 }
