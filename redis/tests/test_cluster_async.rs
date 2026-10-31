@@ -1280,6 +1280,61 @@ mod cluster_async {
     }
 
     #[test]
+    fn test_async_cluster_redirect_without_host() {
+        for redirect in ["ASK", "MOVED"] {
+            let name = "test_async_cluster_redirect_without_host";
+            let requests_to_origin = Arc::new(AtomicI32::new(0));
+            let asking = Arc::new(AtomicI32::new(0));
+            let MockEnv {
+                async_connection: mut connection,
+                handler: _handler,
+                runtime,
+                ..
+            } = MockEnv::with_client_builder(
+                ClusterClient::builder(vec![&*format!("redis://{name}")]),
+                name,
+                {
+                    let requests_to_origin = requests_to_origin.clone();
+                    let asking = asking.clone();
+                    move |cmd: &[u8], port| {
+                        respond_startup_two_nodes(name, cmd)?;
+                        match port {
+                            // With `cluster-preferred-endpoint-type unknown-endpoint`, the
+                            // redirect has no host, and the client keeps the host of this node.
+                            6379 => {
+                                requests_to_origin.fetch_add(1, Ordering::SeqCst);
+                                Err(parse_redis_value(
+                                    format!("-{redirect} 14000 :6380\r\n").as_bytes(),
+                                ))
+                            }
+                            6380 if contains_slice(cmd, b"ASKING") => {
+                                asking.fetch_add(1, Ordering::SeqCst);
+                                Err(Ok(Value::Okay))
+                            }
+                            6380 => Err(Ok(redis_value!("123"))),
+                            _ => panic!("Wrong node"),
+                        }
+                    }
+                },
+            );
+
+            let value = runtime.block_on(
+                cmd("GET")
+                    .arg("test")
+                    .query_async::<Option<i32>>(&mut connection),
+            );
+
+            assert_eq!(value, Ok(Some(123)), "{redirect}");
+            assert_eq!(requests_to_origin.load(Ordering::SeqCst), 1, "{redirect}");
+            assert_eq!(
+                asking.load(Ordering::SeqCst),
+                i32::from(redirect == "ASK"),
+                "{redirect}"
+            );
+        }
+    }
+
+    #[test]
     fn async_ask_redirect_propagates_asking_failure() {
         let name = "async_ask_redirect_propagates_asking_failure";
         let redirected_command_sent = Arc::new(AtomicBool::new(false));
