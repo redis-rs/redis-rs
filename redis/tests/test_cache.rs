@@ -893,6 +893,133 @@ async fn test_cache_async_cluster_mget() {
     assert_miss!(&con, 3);
 }
 
+#[async_test]
+async fn test_cache_evicts_multi_key_replies_when_any_of_their_keys_changes(test_with_optin: bool) {
+    let ctx = TestContext::default();
+    if !ctx.protocol.supports_resp3() {
+        return;
+    }
+
+    let cache_config = if test_with_optin {
+        CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn)
+    } else {
+        CacheConfig::default()
+    };
+    let mut con = ctx
+        .async_connection_with_cache_config(cache_config)
+        .await
+        .unwrap();
+    let _: () = get_pipe(true)
+        .cmd("SADD")
+        .arg("set_a")
+        .arg("1")
+        .arg("2")
+        .ignore()
+        .cmd("SADD")
+        .arg("set_b")
+        .arg("2")
+        .arg("3")
+        .ignore()
+        .cmd("ZADD")
+        .arg("zset_a")
+        .arg(1)
+        .arg("x")
+        .ignore()
+        .cmd("ZADD")
+        .arg("zset_b")
+        .arg(1)
+        .arg("x")
+        .arg(1)
+        .arg("y")
+        .ignore()
+        .query_async(&mut con)
+        .await
+        .unwrap();
+
+    // `SINTER set_a set_b` reads both keys, so a change to the second one must evict its reply.
+    let val: Vec<String> = get_cmd("SINTER", test_with_optin)
+        .arg("set_a")
+        .arg("set_b")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, vec!["2"]);
+    assert_hit!(&con, 0);
+    assert_miss!(&con, 1);
+
+    let val: Vec<String> = get_cmd("SINTER", test_with_optin)
+        .arg("set_a")
+        .arg("set_b")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, vec!["2"]);
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 1);
+
+    let _: () = redis::cmd("SADD")
+        .arg("set_b")
+        .arg("1")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    sleep(Duration::from_millis(50).into()).await; // Give time for the invalidation of set_b to be received.
+
+    let mut val: Vec<String> = get_cmd("SINTER", test_with_optin)
+        .arg("set_a")
+        .arg("set_b")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    val.sort();
+    assert_eq!(val, vec!["1", "2"]);
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 2);
+
+    // `ZINTER 2 zset_a zset_b` lists its keys after their count, which is not a key.
+    let val: Vec<String> = get_cmd("ZINTER", test_with_optin)
+        .arg(2)
+        .arg("zset_a")
+        .arg("zset_b")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, vec!["x"]);
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 3);
+
+    let val: Vec<String> = get_cmd("ZINTER", test_with_optin)
+        .arg(2)
+        .arg("zset_a")
+        .arg("zset_b")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, vec!["x"]);
+    assert_hit!(&con, 2);
+    assert_miss!(&con, 3);
+
+    let _: () = redis::cmd("ZADD")
+        .arg("zset_a")
+        .arg(1)
+        .arg("y")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    sleep(Duration::from_millis(50).into()).await; // Give time for the invalidation of zset_a to be received.
+
+    let val: Vec<String> = get_cmd("ZINTER", test_with_optin)
+        .arg(2)
+        .arg("zset_a")
+        .arg("zset_b")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, vec!["x", "y"]);
+    assert_hit!(&con, 2);
+    assert_miss!(&con, 4);
+}
+
 // Support function for testing pipelines
 fn get_pipe(atomic: bool) -> redis::Pipeline {
     if atomic {
