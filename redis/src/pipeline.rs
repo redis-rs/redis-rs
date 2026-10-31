@@ -57,6 +57,7 @@ pub(crate) enum ExpectedConfirmations {
     /// One confirmation per tracked pattern.
     UnsubscribeAllPatterns,
     /// One confirmation per tracked sharded channel.
+    #[cfg(feature = "cluster-async")]
     UnsubscribeAllShardChannels,
 }
 

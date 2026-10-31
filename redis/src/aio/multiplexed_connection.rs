@@ -7,7 +7,7 @@ use crate::caching::{CacheManager, CacheStatistics, PrepCacheItem};
 use crate::pipeline::ExpectedConfirmations;
 use crate::subscription_tracker::{SubscriptionKind, SubscriptionTracker, subscription_change};
 use crate::{
-    AsyncConnectionConfig, ProtocolVersion, PushInfo, RedisConnectionInfo, ServerError,
+    AsyncConnectionConfig, ProtocolVersion, PushInfo, PushKind, RedisConnectionInfo, ServerError,
     ToRedisArgs,
     aio::setup_connection,
     check_resp3,
@@ -79,8 +79,7 @@ enum RequestKind {
     Transaction,
     /// A subscription command: the server rejects it with a single error instead of with its
     /// confirmations, so waiting for confirmations that will never arrive would block the
-    /// request until it times out. This is the only kind of request whose replies can be
-    /// subscription push messages.
+    /// request until it times out.
     SubscribeLike,
 }
 
@@ -104,8 +103,8 @@ impl PipelineResponseExpectation {
         }
     }
 
-    /// An expectation for a single subscription command, which the server confirms `expected`
-    /// times (see [`ExpectedConfirmations`]).
+    /// An expectation for a pipeline that holds a single subscription command, which the server
+    /// confirms `expected` times (see [`ExpectedConfirmations`]).
     fn subscribe_like(skipped_response_count: usize, expected: ExpectedConfirmations) -> Self {
         Self {
             skipped_response_count,
@@ -313,6 +312,7 @@ where
                     ExpectedConfirmations::UnsubscribeAllPatterns => {
                         Some(SubscriptionKind::Pattern)
                     }
+                    #[cfg(feature = "cluster-async")]
                     ExpectedConfirmations::UnsubscribeAllShardChannels => {
                         Some(SubscriptionKind::ShardChannel)
                     }
@@ -338,15 +338,22 @@ where
             }
         }
 
-        // A subscription push can only be the reply of a subscription request. Otherwise the
-        // server sent it on its own, e.g. the `sunsubscribe` a cluster node sends when a shard
-        // channel's slot moves away from it, and consuming it as the oldest request's reply would
-        // hand every following reply to the wrong request.
-        if matches!(result, Ok(Value::Push { .. }))
-            && !self_
-                .in_flight
-                .front()
-                .is_some_and(InFlight::is_subscribe_like)
+        // A cluster node sends `sunsubscribe` on its own when a shard channel's slot moves away
+        // from it, which is the only subscription push the server isn't asked for. Unless the
+        // oldest request is a subscription request, the push isn't its reply, and consuming it
+        // would hand every following reply to the wrong request. Raw `SUNSUBSCRIBE` commands
+        // aren't recognised as subscription requests yet, see
+        // <https://github.com/redis-rs/redis-rs/issues/2533>.
+        if matches!(
+            result,
+            Ok(Value::Push {
+                kind: PushKind::SUnsubscribe,
+                ..
+            })
+        ) && !self_
+            .in_flight
+            .front()
+            .is_some_and(InFlight::is_subscribe_like)
         {
             return;
         }
@@ -415,8 +422,9 @@ where
                     // Resolved to `Count` when the first confirmation arrived, so this is only
                     // reached when the response isn't a confirmation.
                     ExpectedConfirmations::UnsubscribeAllChannels
-                    | ExpectedConfirmations::UnsubscribeAllPatterns
-                    | ExpectedConfirmations::UnsubscribeAllShardChannels => 1,
+                    | ExpectedConfirmations::UnsubscribeAllPatterns => 1,
+                    #[cfg(feature = "cluster-async")]
+                    ExpectedConfirmations::UnsubscribeAllShardChannels => 1,
                 };
                 if buffer.len() < expected {
                     // Need to gather more response values
@@ -963,34 +971,14 @@ impl MultiplexedConnection {
                 PrepCacheItem::NotCacheable => (),
             }
         }
-        // A subscription command is sent as a subscription request that awaits all of its
-        // confirmations, like the ones sent by `send_subscribe_like_command`: confirmations are
-        // push messages, which are only taken as the replies of subscription requests.
-        let subscription_expectation = SubscribeLikeCommand::from_cmd(cmd).map(|command| {
-            let args_count = cmd.args_iter().len() - 1;
-            PipelineResponseExpectation::subscribe_like(
-                0,
-                command.expected_confirmations(args_count),
-            )
-        });
-        let is_subscription = subscription_expectation.is_some();
-        let value = self
-            .pipeline
+        self.pipeline
             .send_recv(
                 cmd.get_packed_command(),
-                subscription_expectation,
+                None,
                 self.response_timeout,
                 cmd.is_no_response(),
             )
-            .await?;
-        match value {
-            // Only the first confirmation is returned, so that the reply has the same shape as
-            // any other single command's.
-            Value::Array(confirmations) if is_subscription => {
-                Ok(confirmations.into_iter().next().unwrap_or(Value::Nil))
-            }
-            value => Ok(value),
-        }
+            .await
     }
 
     /// Sends multiple already encoded (packed) command into the TCP socket
@@ -1711,66 +1699,5 @@ mod tests {
 
         let push = push_rx.recv().await.unwrap();
         assert_eq!(push.kind, crate::PushKind::SUnsubscribe);
-    }
-
-    #[tokio::test]
-    async fn test_subscription_command_awaits_all_confirmations() {
-        use futures_util::StreamExt;
-        use tokio::io::AsyncWriteExt;
-        use tokio_util::codec::FramedRead;
-
-        let (client_half, server_half) = tokio::io::duplex(4096);
-        let (server_read, mut server_write) = tokio::io::split(server_half);
-
-        tokio::spawn(async move {
-            let mut reader = FramedRead::new(server_read, ValueCodec::default());
-            // HELLO
-            reader.next().await.unwrap().unwrap();
-            server_write.write_all(b"%0\r\n").await.unwrap();
-            // SUBSCRIBE a b, then GET k, which is in flight when the second confirmation arrives.
-            reader.next().await.unwrap().unwrap();
-            reader.next().await.unwrap().unwrap();
-            server_write
-                .write_all(b">3\r\n$9\r\nsubscribe\r\n$1\r\na\r\n:1\r\n")
-                .await
-                .unwrap();
-            server_write
-                .write_all(b">3\r\n$9\r\nsubscribe\r\n$1\r\nb\r\n:2\r\n")
-                .await
-                .unwrap();
-            server_write.write_all(b"$1\r\nv\r\n").await.unwrap();
-            while reader.next().await.is_some() {}
-        });
-
-        let conn_info = RedisConnectionInfo {
-            protocol: ProtocolVersion::RESP3,
-            ..mock_conn_info()
-        };
-        let (push_tx, _push_rx) = tokio::sync::mpsc::unbounded_channel();
-        let config = AsyncConnectionConfig::new()
-            .set_push_sender(push_tx)
-            .set_connection_timeout(None);
-
-        let (mut conn, driver) =
-            MultiplexedConnection::new_with_config(&conn_info, client_half, config)
-                .await
-                .unwrap();
-        tokio::spawn(driver);
-
-        let mut get_conn = conn.clone();
-        let subscribe = cmd("SUBSCRIBE").arg("a").arg("b").take();
-        let get = cmd("GET").arg("k").take();
-        let (subscribed, value) = futures_util::join!(
-            conn.send_packed_command(&subscribe),
-            get_conn.send_packed_command(&get)
-        );
-        assert_eq!(
-            subscribed.unwrap(),
-            Value::Push {
-                kind: crate::PushKind::Subscribe,
-                data: vec![Value::BulkString(b"a".to_vec()), Value::Int(1)],
-            }
-        );
-        assert_eq!(value.unwrap(), Value::BulkString(b"v".to_vec()));
     }
 }

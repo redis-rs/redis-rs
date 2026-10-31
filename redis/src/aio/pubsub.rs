@@ -206,6 +206,7 @@ fn handle_confirmation(
                 ExpectedConfirmations::UnsubscribeAllPatterns => {
                     subscriptions.unsubscribe_all_target(SubscriptionKind::Pattern)
                 }
+                #[cfg(feature = "cluster-async")]
                 ExpectedConfirmations::UnsubscribeAllShardChannels => {
                     subscriptions.unsubscribe_all_target(SubscriptionKind::ShardChannel)
                 }
