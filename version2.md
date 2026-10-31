@@ -207,6 +207,14 @@ match ttl {
 }
 ```
 
+### `Role::Replica`'s `data_received` is an `i64`
+
+A replica replies to `ROLE` with `-1` as the amount of data received while its link to the primary is down, for example while the primary itself is down. `data_received` was a `u64`, so in version 1 this wrapped to 18446744073709551615, and with out-of-range integers now rejected, the reply would fail to parse into a `Role`.
+
+It's now an `i64` (was `u64`), like `ReplicaInfo::replication_offset`.
+
+**Migration:** Read `data_received` as an `i64`, and treat `-1` as the replica's link to the primary being down.
+
 ### `(Async)TypedCommands::hmget`, `hget_ex`, `zscore_multiple`, and `geo_hash` return optional values in lists
 Following [issue #2311](https://github.com/redis-rs/redis-rs/issues/2311), the same issue was addressed across Redis commands `HMGET`, `HGETEX`, `ZMSCORE`, and `GEOHASH`, which return `nil` elements for missing keys or missing fields/members.
 Previously, `TypedCommands` and `AsyncTypedCommands` defined these with non-optional inner element types (or an incorrect outer option in `zscore_multiple`), causing any missing field or member to fail with a type conversion error.

@@ -5437,6 +5437,24 @@ mod basic {
     }
 
     #[test]
+    fn test_role_replica_not_connected_to_primary() {
+        let ctx = TestContext::default();
+        let mut con = ctx.connection();
+        // Nothing listens on this port, so the replica never connects to the primary.
+        let primary_port = redis_test::utils::get_random_available_port();
+        redis::cmd("REPLICAOF")
+            .arg("127.0.0.1")
+            .arg(primary_port)
+            .exec(&mut con)
+            .unwrap();
+        let ret = redis::cmd("ROLE").query::<Role>(&mut con).unwrap();
+        assert_matches!(
+            ret,
+            Role::Replica { primary_port: port, data_received: -1, .. } if port == primary_port
+        );
+    }
+
+    #[test]
     fn test_connection_timeout_on_busy_server() {
         let ctx = TestContext::default();
         let mut con = ctx.connection();

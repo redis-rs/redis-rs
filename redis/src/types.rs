@@ -866,8 +866,9 @@ pub enum Role {
         primary_port: u16,
         /// The state of the replication from the point of view of the primary.
         replication_state: String,
-        /// The amount of data received from the replica so far in terms of primary replication offset.
-        data_received: u64,
+        /// The amount of data received from the replica so far in terms of primary replication offset,
+        /// or `-1` while the replica's link to the primary is down.
+        data_received: i64,
     },
     /// Represents a sentinel role.
     Sentinel {
