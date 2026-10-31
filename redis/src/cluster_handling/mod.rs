@@ -140,6 +140,20 @@ pub(crate) fn split_node_address(node: &str) -> RedisResult<(&str, u16)> {
         .ok_or_else(invalid_error)
 }
 
+/// Parses the address of a `MOVED` or `ASK` redirect sent by the node at `origin`.
+///
+/// A node whose endpoint is unknown (`cluster-preferred-endpoint-type unknown-endpoint`) sends
+/// the redirect without a host, as in `MOVED 3999 :6381`, and the client is expected to keep the
+/// host it sent the request to, with the port of the redirect.
+pub(crate) fn redirect_address(node: &str, origin: &NodeAddress) -> Option<NodeAddress> {
+    match node.rsplit_once(':') {
+        Some(("", port)) => u16::from_str(port)
+            .ok()
+            .map(|port| NodeAddress::new(origin.host.clone(), port)),
+        _ => NodeAddress::try_from(node).ok(),
+    }
+}
+
 pub(crate) fn get_connection_addr(
     host: String,
     port: u16,
@@ -225,6 +239,25 @@ mod tests {
                     "Invalid node string",
                 ))),
             );
+        }
+    }
+
+    #[test]
+    fn parse_redirect_address() {
+        let origin = NodeAddress::new("10.0.0.1", 6379);
+        let cases = vec![
+            ("10.0.0.2:6380", Some(NodeAddress::new("10.0.0.2", 6380))),
+            (
+                "dead::cafe:beef:6380",
+                Some(NodeAddress::new("dead::cafe:beef", 6380)),
+            ),
+            (":6380", Some(NodeAddress::new("10.0.0.1", 6380))),
+            (":", None),
+            ("10.0.0.2", None),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(redirect_address(input, &origin), expected, "{input}");
         }
     }
 

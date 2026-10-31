@@ -649,6 +649,56 @@ mod cluster {
     }
 
     #[test]
+    fn test_cluster_redirect_without_host() {
+        for redirect in ["ASK", "MOVED"] {
+            let name = "test_cluster_redirect_without_host";
+            let requests_to_origin = Arc::new(AtomicI32::new(0));
+            let asking = Arc::new(AtomicI32::new(0));
+            let MockEnv {
+                mut connection,
+                handler: _handler,
+                ..
+            } = MockEnv::with_client_builder(
+                ClusterClient::builder(vec![&*format!("redis://{name}")]),
+                name,
+                {
+                    let requests_to_origin = requests_to_origin.clone();
+                    let asking = asking.clone();
+                    move |cmd: &[u8], port| {
+                        respond_startup_two_nodes(name, cmd)?;
+                        match port {
+                            // With `cluster-preferred-endpoint-type unknown-endpoint`, the
+                            // redirect has no host, and the client keeps the host of this node.
+                            6379 => {
+                                requests_to_origin.fetch_add(1, Ordering::SeqCst);
+                                Err(parse_redis_value(
+                                    format!("-{redirect} 14000 :6380\r\n").as_bytes(),
+                                ))
+                            }
+                            6380 if contains_slice(cmd, b"ASKING") => {
+                                asking.fetch_add(1, Ordering::SeqCst);
+                                Err(Ok(Value::Okay))
+                            }
+                            6380 => Err(Ok(redis_value!("123"))),
+                            _ => panic!("Wrong node"),
+                        }
+                    }
+                },
+            );
+
+            let value = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
+
+            assert_eq!(value, Ok(Some(123)), "{redirect}");
+            assert_eq!(requests_to_origin.load(Ordering::SeqCst), 1, "{redirect}");
+            assert_eq!(
+                asking.load(Ordering::SeqCst),
+                i32::from(redirect == "ASK"),
+                "{redirect}"
+            );
+        }
+    }
+
+    #[test]
     fn test_cluster_ask_error_when_new_node_is_added() {
         let name = "ask_with_extra_nodes";
 
