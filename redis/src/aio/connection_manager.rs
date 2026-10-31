@@ -611,12 +611,8 @@ impl ConnectionManager {
             .sleep(|duration| async move { Runtime::locate().sleep(duration).await })
             .await?;
         if let Some(pipeline) = additional_commands {
-            // The subscription commands are sent one at a time, since their confirmations are
-            // only counted, and taken as their replies, when each is sent on its own.
-            for cmd in pipeline.cmd_iter() {
-                // TODO - should we ignore these failures?
-                let _ = cmd.to_cmd().exec_async(&mut conn).await;
-            }
+            // TODO - should we ignore these failures?
+            let _ = pipeline.exec_async(&mut conn).await;
         }
         Ok(conn)
     }
