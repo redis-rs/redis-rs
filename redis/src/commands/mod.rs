@@ -58,26 +58,48 @@ use conversions::{flattened_array, try_singleton_then_vec, try_vec_then_singleto
 
 #[cfg(any(feature = "cluster", feature = "cache-aio"))]
 enum Properties {
-    ReadOnlyCacheable,
+    // The key positions are only used by the client-side cache.
+    ReadOnlyCacheable(#[cfg_attr(not(feature = "cache-aio"), allow(dead_code))] KeyPositions),
     ReadOnly,
     Neither,
+}
+
+/// Which arguments of a cacheable command are the keys it reads.
+#[cfg(any(feature = "cluster", feature = "cache-aio"))]
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum KeyPositions {
+    /// The first argument, e.g. `GET key`.
+    First,
+    /// The first two arguments, e.g. `LCS key1 key2`.
+    FirstTwo,
+    /// Every argument, e.g. `SINTER key [key ...]`.
+    All,
+    /// Every argument but the last one, e.g. `JSON.MGET key [key ...] path`.
+    AllButLast,
+    /// The first argument is the number of keys, which follow it, e.g. `ZUNION 2 key1 key2`.
+    AfterKeyCount,
 }
 
 #[cfg(any(feature = "cluster", feature = "cache-aio"))]
 fn command_properties(cmd: &[u8]) -> Properties {
     match cmd {
         // ReadonlyCacheable: Commands that operate on concrete keys and return cacheable values
-        b"BITCOUNT" | b"BITFIELD_RO" | b"BITPOS" | b"DUMP" | b"EXISTS" | b"GEODIST"
-        | b"GEOHASH" | b"GEOPOS" | b"GET" | b"GETBIT" | b"GETRANGE" | b"HEXISTS" | b"HGET"
-        | b"HGETALL" | b"HKEYS" | b"HLEN" | b"HMGET" | b"HSTRLEN" | b"HVALS" | b"JSON.ARRINDEX"
-        | b"JSON.ARRLEN" | b"JSON.GET" | b"JSON.OBJLEN" | b"JSON.OBJKEYS" | b"JSON.MGET"
-        | b"JSON.RESP" | b"JSON.STRLEN" | b"JSON.TYPE" | b"LCS" | b"LINDEX" | b"LLEN" | b"LPOS"
-        | b"LRANGE" | b"MGET" | b"SCARD" | b"SDIFF" | b"SINTER" | b"SINTERCARD" | b"SISMEMBER"
-        | b"SMEMBERS" | b"SMISMEMBER" | b"STRLEN" | b"SUBSTR" | b"SUNION" | b"TYPE" | b"ZCARD"
-        | b"ZCOUNT" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZLEXCOUNT" | b"ZMSCORE"
-        | b"ZRANGE" | b"ZRANGEBYLEX" | b"ZRANGEBYSCORE" | b"ZRANK" | b"ZREVRANGE"
-        | b"ZREVRANGEBYLEX" | b"ZREVRANGEBYSCORE" | b"ZREVRANK" | b"ZSCORE" | b"ZUNION" => {
-            Properties::ReadOnlyCacheable
+        b"BITCOUNT" | b"BITFIELD_RO" | b"BITPOS" | b"DUMP" | b"GEODIST" | b"GEOHASH"
+        | b"GEOPOS" | b"GET" | b"GETBIT" | b"GETRANGE" | b"HEXISTS" | b"HGET" | b"HGETALL"
+        | b"HKEYS" | b"HLEN" | b"HMGET" | b"HSTRLEN" | b"HVALS" | b"JSON.ARRINDEX"
+        | b"JSON.ARRLEN" | b"JSON.GET" | b"JSON.OBJLEN" | b"JSON.OBJKEYS" | b"JSON.RESP"
+        | b"JSON.STRLEN" | b"JSON.TYPE" | b"LINDEX" | b"LLEN" | b"LPOS" | b"LRANGE" | b"SCARD"
+        | b"SISMEMBER" | b"SMEMBERS" | b"SMISMEMBER" | b"STRLEN" | b"SUBSTR" | b"TYPE"
+        | b"ZCARD" | b"ZCOUNT" | b"ZLEXCOUNT" | b"ZMSCORE" | b"ZRANGE" | b"ZRANGEBYLEX"
+        | b"ZRANGEBYSCORE" | b"ZRANK" | b"ZREVRANGE" | b"ZREVRANGEBYLEX" | b"ZREVRANGEBYSCORE"
+        | b"ZREVRANK" | b"ZSCORE" => Properties::ReadOnlyCacheable(KeyPositions::First),
+        b"LCS" => Properties::ReadOnlyCacheable(KeyPositions::FirstTwo),
+        b"EXISTS" | b"MGET" | b"SDIFF" | b"SINTER" | b"SUNION" => {
+            Properties::ReadOnlyCacheable(KeyPositions::All)
+        }
+        b"JSON.MGET" => Properties::ReadOnlyCacheable(KeyPositions::AllButLast),
+        b"SINTERCARD" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZUNION" => {
+            Properties::ReadOnlyCacheable(KeyPositions::AfterKeyCount)
         }
 
         b"ACL CAT"
@@ -259,13 +281,17 @@ fn command_properties(cmd: &[u8]) -> Properties {
 pub(crate) fn is_readonly_cmd(cmd: &[u8]) -> bool {
     matches!(
         command_properties(cmd),
-        Properties::ReadOnly | Properties::ReadOnlyCacheable
+        Properties::ReadOnly | Properties::ReadOnlyCacheable(_)
     )
 }
 
+/// Returns where the keys of `cmd` are if its reply can be cached, or `None` if it can't.
 #[cfg(feature = "cache-aio")]
-pub(crate) fn is_cachable_cmd(cmd: &[u8]) -> bool {
-    matches!(command_properties(cmd), Properties::ReadOnlyCacheable)
+pub(crate) fn cacheable_key_positions(cmd: &[u8]) -> Option<KeyPositions> {
+    match command_properties(cmd) {
+        Properties::ReadOnlyCacheable(key_positions) => Some(key_positions),
+        _ => None,
+    }
 }
 
 // Note - Brackets are needed around return types for purposes of macro branching.

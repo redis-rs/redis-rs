@@ -116,32 +116,70 @@ impl ShardedLRU {
         redis_cmd_args: CmdArgs<'a>,
         epoch: usize,
     ) -> Option<Value> {
+        self.get_from_all_keys(&[redis_key], redis_cmd, redis_cmd_args, epoch)
+    }
+
+    /// Returns the value of a command that reads every key in `redis_keys`. Its reply is stored
+    /// under each of them, so that it isn't served once any of them is invalidated, expires or is
+    /// evicted. Nor is it served when the keys hold different replies, which happens when a later
+    /// request could only store its reply under some of them.
+    pub(crate) fn get_from_all_keys(
+        &self,
+        redis_keys: &[&[u8]],
+        redis_cmd: &[u8],
+        redis_cmd_args: CmdArgs<'_>,
+        epoch: usize,
+    ) -> Option<Value> {
+        let value = redis_keys
+            .split_first()
+            .and_then(|(first_key, other_keys)| {
+                let value = self.find(first_key, redis_cmd, redis_cmd_args, epoch, Value::clone)?;
+                other_keys
+                    .iter()
+                    .all(|key| {
+                        self.find(key, redis_cmd, redis_cmd_args, epoch, |other| {
+                            other == &value
+                        }) == Some(true)
+                    })
+                    .then_some(value)
+            });
+        if value.is_some() {
+            self.statistics.increase_hit(1);
+        } else {
+            self.statistics.increase_miss(1);
+        }
+        value
+    }
+
+    /// Finds the value of `redis_cmd` under `redis_key` and passes it to `read`.
+    fn find<T>(
+        &self,
+        redis_key: &[u8],
+        redis_cmd: &[u8],
+        redis_cmd_args: CmdArgs<'_>,
+        epoch: usize,
+        read: impl FnOnce(&Value) -> T,
+    ) -> Option<T> {
         let mut shard = self.get_shard(redis_key);
         let lru_cache = &mut shard.lru;
-        if let Some(cache_item) = lru_cache.get_mut(redis_key) {
-            // If one of following conditions are true, cache item is invalid and can't be trusted to use:
-            // Epoch of client is not same, it means cache item is created by another redis connection.
-            // Expire time of key has been passed, value could be stale.
-            let cache_item_is_invalid =
-                cache_item.epoch != epoch || Instant::now() > cache_item.expire_time;
-            if cache_item_is_invalid {
-                self.statistics
-                    .increase_invalidate(cache_item.value_list.len());
-                self.statistics.increase_miss(1);
-                lru_cache.pop(redis_key);
-                return None;
-            }
-            // Found redis key in cache, but KEY,CMD combination also must be in the cache otherwise, it will be fetched from server.
-            for entry in &cache_item.value_list {
-                if entry.cmd == redis_cmd && redis_cmd_args.matches(&entry.cmd_args) {
-                    self.statistics.increase_hit(1);
-                    return Some(entry.value.clone());
-                }
-            }
+        let cache_item = lru_cache.get_mut(redis_key)?;
+        // If one of following conditions are true, cache item is invalid and can't be trusted to use:
+        // Epoch of client is not same, it means cache item is created by another redis connection.
+        // Expire time of key has been passed, value could be stale.
+        let cache_item_is_invalid =
+            cache_item.epoch != epoch || Instant::now() > cache_item.expire_time;
+        if cache_item_is_invalid {
+            self.statistics
+                .increase_invalidate(cache_item.value_list.len());
+            lru_cache.pop(redis_key);
+            return None;
         }
-        drop(shard);
-        self.statistics.increase_miss(1);
-        None
+        // Found redis key in cache, but KEY,CMD combination also must be in the cache otherwise, it will be fetched from server.
+        cache_item
+            .value_list
+            .iter()
+            .find(|entry| entry.cmd == redis_cmd && redis_cmd_args.matches(&entry.cmd_args))
+            .map(|entry| read(&entry.value))
     }
 
     #[allow(clippy::too_many_arguments)]

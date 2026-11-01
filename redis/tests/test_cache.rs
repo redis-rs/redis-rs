@@ -8,7 +8,9 @@ use redis::cluster_routing::*;
 use redis::{AsyncCommands, RedisError, caching::CacheConfig};
 #[cfg(feature = "json")]
 use redis_test::server::Module;
-use redis_test::{REDIS_CE_7_2, TestContext, TestContextBuilder, run_test_if_version_supported};
+use redis_test::{
+    REDIS_CE_7_0, REDIS_CE_7_2, TestContext, TestContextBuilder, run_test_if_version_supported,
+};
 #[cfg(feature = "json")]
 use serde_json::json;
 use std::collections::HashMap;
@@ -1255,4 +1257,105 @@ async fn test_cache_is_cleared_on_flush(flush_all: bool) {
     assert_eq!(val, None);
     assert_hit!(&con, 2);
     assert_miss!(&con, 4);
+}
+
+// A command that reads several keys must not be served from the cache after any of them changed,
+// including keys that follow a key count (`ZUNION 2 zset_1 zset_2`).
+#[async_test]
+async fn test_cache_evicts_reply_when_any_key_it_reads_changes(test_with_optin: bool) {
+    // LCS, SINTERCARD and ZINTERCARD were added in Redis 7.0.
+    let ctx = run_test_if_version_supported!(REDIS_CE_7_0);
+    if !ctx.protocol.supports_resp3() {
+        return;
+    }
+
+    let cache_config = if test_with_optin {
+        CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn)
+    } else {
+        CacheConfig::default()
+    };
+    let mut other_con = ctx.async_connection().await.unwrap();
+    // Each command, and a command that changes one of the keys it reads.
+    let cases: [(&[&str], &[&str]); 10] = [
+        (&["EXISTS", "str_1", "str_2"], &["DEL", "str_2"]),
+        (&["LCS", "str_1", "str_2"], &["SET", "str_2", "text"]),
+        (&["SDIFF", "set_1", "set_2"], &["SADD", "set_2", "a"]),
+        (&["SINTER", "set_1", "set_2"], &["SADD", "set_2", "a"]),
+        (&["SUNION", "set_1", "set_2"], &["SADD", "set_2", "d"]),
+        (
+            &["SINTERCARD", "2", "set_1", "set_2"],
+            &["SADD", "set_2", "a"],
+        ),
+        (
+            &["ZDIFF", "2", "zset_1", "zset_2"],
+            &["ZADD", "zset_2", "1", "a"],
+        ),
+        (
+            &["ZINTER", "2", "zset_1", "zset_2"],
+            &["ZADD", "zset_2", "1", "a"],
+        ),
+        (
+            &["ZINTERCARD", "2", "zset_1", "zset_2"],
+            &["ZADD", "zset_2", "1", "a"],
+        ),
+        (
+            &["ZUNION", "2", "zset_1", "zset_2", "WITHSCORES"],
+            &["ZADD", "zset_1", "10", "a"],
+        ),
+    ];
+
+    for (args, change) in cases {
+        let _: () = get_pipe(true)
+            .cmd("FLUSHDB")
+            .ignore()
+            .cmd("MSET")
+            .arg(&["str_1", "ohmytext", "str_2", "mynewtext"])
+            .ignore()
+            .cmd("SADD")
+            .arg(&["set_1", "a", "b"])
+            .ignore()
+            .cmd("SADD")
+            .arg(&["set_2", "b", "c"])
+            .ignore()
+            .cmd("ZADD")
+            .arg(&["zset_1", "1", "a", "2", "b"])
+            .ignore()
+            .cmd("ZADD")
+            .arg(&["zset_2", "3", "b", "4", "c"])
+            .ignore()
+            .query_async(&mut other_con)
+            .await
+            .unwrap();
+        let mut con = ctx
+            .async_connection_with_cache_config(cache_config)
+            .await
+            .unwrap();
+        let cmd = get_cmd(args[0], test_with_optin).arg(&args[1..]).take();
+        let uncached_cmd = redis::cmd(args[0]).arg(&args[1..]).take();
+
+        let reply: redis::Value = cmd.query_async(&mut con).await.unwrap();
+        let expected: redis::Value = uncached_cmd.query_async(&mut other_con).await.unwrap();
+        assert_eq!(reply, expected, "{args:?}");
+        let reply: redis::Value = cmd.query_async(&mut con).await.unwrap();
+        assert_eq!(reply, expected, "{args:?}");
+        assert_hit!(&con, 1);
+        assert_miss!(&con, 1);
+
+        let _: () = redis::cmd(change[0])
+            .arg(&change[1..])
+            .query_async(&mut other_con)
+            .await
+            .unwrap();
+        sleep(Duration::from_millis(50).into()).await; // Give time for push message to be received.
+
+        let reply: redis::Value = cmd.query_async(&mut con).await.unwrap();
+        let changed: redis::Value = uncached_cmd.query_async(&mut other_con).await.unwrap();
+        assert_ne!(
+            changed, expected,
+            "{change:?} must change the reply of {args:?}"
+        );
+        assert_eq!(reply, changed, "{args:?} after {change:?}");
+        assert_hit!(&con, 1);
+        assert_miss!(&con, 2);
+    }
 }

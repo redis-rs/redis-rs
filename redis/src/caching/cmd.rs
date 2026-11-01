@@ -50,13 +50,20 @@ impl CacheablePipeline<'_> {
     }
 }
 
-pub(crate) struct SingleCachedCommand<'a> {
+/// A key read by a command, with the number of invalidations of its shard before the command was sent.
+pub(crate) struct TrackedKey<'a> {
     pub(crate) redis_key: &'a [u8],
+    pub(crate) invalidation_count: usize,
+}
+
+pub(crate) struct SingleCachedCommand<'a> {
+    /// Every key the command reads. Its reply is stored under each of them, so that it is evicted
+    /// when any of them is invalidated.
+    pub(crate) keys: Vec<TrackedKey<'a>>,
     pub(crate) cmd_key: &'a [u8],
     pub(crate) cmd_args: CmdArgs<'a>,
     pub(crate) cmd: CmdRef<'a>,
     pub(crate) client_side_expire: Instant,
-    pub(crate) invalidation_count: usize,
 }
 
 pub(crate) struct MultipleCachedCommandPart<'a> {
@@ -90,26 +97,22 @@ impl CacheableCommand<'_> {
         }
         match self {
             CacheableCommand::Single(cached_command) => {
-                if let (Some(pttl), Some(reply)) = (replies.next(), replies.next()) {
+                let reply = get_next_reply(&mut replies)?;
+                for key in cached_command.keys {
+                    let pttl = get_next_reply(&mut replies)?;
                     if !matches!(&reply, &Value::ServerError(_)) {
                         cache_manager.insert(
-                            cached_command.redis_key,
+                            key.redis_key,
                             cached_command.cmd_key,
                             cached_command.cmd_args,
                             reply.clone(),
                             cached_command.client_side_expire,
                             &pttl,
-                            cached_command.invalidation_count,
+                            key.invalidation_count,
                         );
                     }
-
-                    Ok(reply)
-                } else {
-                    Err(RedisError::from((
-                        ErrorKind::UnexpectedReturnType,
-                        "Expected two Value from server",
-                    )))
                 }
+                Ok(reply)
             }
             CacheableCommand::Multiple {
                 command_name: _command_name,
@@ -155,8 +158,12 @@ impl CacheableCommand<'_> {
 
         match self {
             CacheableCommand::Single(scc) => {
-                pipeline.add_command(Cmd::pttl(scc.redis_key));
+                // The command goes first, since in opt-in mode `CLIENT CACHING YES` only makes the
+                // server track the keys read by the next command, and this one reads all of them.
                 pipeline.add_command_ref(scc.cmd);
+                for key in &scc.keys {
+                    pipeline.add_command(Cmd::pttl(key.redis_key));
+                }
             }
             CacheableCommand::Multiple {
                 command_name,
