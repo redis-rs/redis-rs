@@ -2,13 +2,11 @@
 
 use redis::streams::*;
 use redis::{Connection, ToRedisArgs, TypedCommands};
-use redis_test::{
-    REDIS_CE_7_0, REDIS_CE_8_2, REDIS_CE_8_4, REDIS_CE_8_6, REDIS_CE_8_8, TestContext,
-    TestContextVersioning, run_test_if_version_supported,
-};
+use test_macros::single_server_test;
 
 #[macro_use]
 mod support;
+use crate::support::*;
 
 use assert_matches::assert_matches;
 use std::collections::BTreeMap;
@@ -96,8 +94,8 @@ fn test_cmd_options() {
     assert_args!(&opts, "BLOCK", "100", "COUNT", "200");
 }
 
-#[test]
-fn test_assorted_1() {
+#[single_server_test]
+fn test_assorted_1(ctx: TestContext) {
     // Tests the following commands....
     // xadd
     // xadd_map (skip this for now)
@@ -105,7 +103,6 @@ fn test_assorted_1() {
     // xread
     // xlen
 
-    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     xadd(&mut con);
@@ -166,15 +163,14 @@ fn test_assorted_1() {
     assert_eq!(result, Ok(10));
 }
 
-#[test]
-fn test_xgroup_create() {
+#[single_server_test]
+fn test_xgroup_create(ctx: TestContext) {
     // Tests the following commands....
     // xadd
     // xinfo_stream
     // xgroup_create
     // xinfo_groups
 
-    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     xadd(&mut con);
@@ -216,12 +212,11 @@ fn test_xgroup_create() {
     assert_eq!(&reply.groups[0].name, &"g1");
 }
 
-#[test]
-fn test_xgroup_createconsumer() {
+#[single_server_test]
+fn test_xgroup_createconsumer(ctx: TestContext) {
     // Tests the following command....
     // xgroup_createconsumer
 
-    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     xadd(&mut con);
@@ -272,8 +267,8 @@ fn test_xgroup_createconsumer() {
     assert_eq!(&reply.consumers[0].name, &"c1");
 }
 
-#[test]
-fn test_assorted_2() {
+#[single_server_test]
+fn test_assorted_2(ctx: TestContext) {
     // Tests the following commands....
     // xadd
     // xinfo_stream
@@ -286,7 +281,6 @@ fn test_assorted_2() {
     // xpending_count
     // xpending_consumer_count
 
-    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     xadd(&mut con);
@@ -423,9 +417,8 @@ fn assert_stream_pending_data(data: StreamPendingData) {
     assert_eq!(data.consumers[0].name, "c99");
 }
 
-#[test]
-fn test_xadd_maxlen_map() {
-    let ctx = TestContext::default();
+#[single_server_test]
+fn test_xadd_maxlen_map(ctx: TestContext) {
     let mut con = ctx.connection();
 
     for i in 0..10 {
@@ -444,9 +437,8 @@ fn test_xadd_maxlen_map() {
     assert_eq!(reply.ids[2].get("idx"), Some("9".to_string()));
 }
 
-#[test]
-fn test_xadd_options() {
-    let ctx = TestContext::default();
+#[single_server_test]
+fn test_xadd_options(ctx: TestContext) {
     let mut con = ctx.connection();
 
     // NoMKStream will return a nil when the stream does not exist
@@ -519,10 +511,10 @@ fn test_xadd_options() {
     assert_eq!(info.last_entry.id, "3-1");
 }
 
-#[test]
-fn test_xread_options_deleted_pel_entry() {
+#[single_server_test]
+fn test_xread_options_deleted_pel_entry(ctx: TestContext) {
     // Test xread_options behaviour with deleted entry
-    let ctx = TestContext::default();
+
     let mut con = ctx.connection();
     let result = con.xgroup_create_mkstream("k1", "g1", "$");
     assert_matches!(result, Ok(_));
@@ -575,11 +567,11 @@ fn create_group_add_and_read(con: &mut Connection) -> StreamReadReply {
     reply
 }
 
-#[test]
-fn test_xautoclaim() {
+#[single_server_test]
+fn test_xautoclaim(ctx: TestContext) {
     // Tests the following command....
     // xautoclaim_options
-    let ctx = TestContext::default();
+
     let mut con = ctx.connection();
 
     // xautoclaim test basic idea:
@@ -640,12 +632,12 @@ fn test_xautoclaim() {
     assert!(reply.claimed[1].map.is_empty());
 }
 
-#[test]
-fn test_xclaim() {
+#[single_server_test]
+fn test_xclaim(ctx: TestContext) {
     // Tests the following commands....
     // xclaim
     // xclaim_options
-    let ctx = TestContext::default();
+
     let mut con = ctx.connection();
 
     // xclaim test basic idea:
@@ -728,9 +720,8 @@ fn test_xclaim() {
     assert_eq!(claimed.len(), 10);
 }
 
-#[test]
-fn test_xclaim_last_id() {
-    let ctx = TestContext::default();
+#[single_server_test]
+fn test_xclaim_last_id(ctx: TestContext) {
     let mut con = ctx.connection();
 
     let result = con.xgroup_create_mkstream("k1", "g1", "$");
@@ -803,10 +794,10 @@ fn test_xclaim_last_id() {
     assert_eq!(info.groups[0].last_delivered_id, claim_late_id.id.clone());
 }
 
-#[test]
-fn test_xreadgroup_with_claim_option() {
+#[single_server_test]
+fn test_xreadgroup_with_claim_option(ctx: TestContext) {
     // `XREADGROUP` option `CLAIM` is only supported in Redis 8.4+ (but not Valkey<=9.1)
-    let ctx = run_test_if_version_supported!(REDIS_CE_8_4);
+    skip_if_context_does_not_support!(ctx, REDIS_CE_8_4);
     let mut con = ctx.connection();
 
     let stream_name = "test_stream";
@@ -903,10 +894,10 @@ fn test_xreadgroup_with_claim_option() {
     assert_eq!(consumer1_count + consumer2_count, 10);
 }
 
-#[test]
-fn test_xreadgroup_claim_with_idle_and_incoming_messages() {
+#[single_server_test]
+fn test_xreadgroup_claim_with_idle_and_incoming_messages(ctx: TestContext) {
     // `XREADGROUP` option `CLAIM` is only supported in Redis 8.4+ (but not Valkey<=9.1)
-    let ctx = run_test_if_version_supported!(REDIS_CE_8_4);
+    skip_if_context_does_not_support!(ctx, REDIS_CE_8_4);
     let mut con = ctx.connection();
 
     let stream_name = "test_stream_claim_with_idle_and_incoming_messages";
@@ -967,12 +958,12 @@ fn test_xreadgroup_claim_with_idle_and_incoming_messages() {
     //  - delivered_count > 0
     assert_eq!(idle_pending_ids[0], claim_reply.keys[0].ids[0].id);
     assert_eq!(idle_pending_ids[1], claim_reply.keys[0].ids[1].id);
-    for stream_id in claim_reply.keys[0].ids.iter().take(2) {
+    for stream_id in &claim_reply.keys[0].ids[..2] {
         assert!(stream_id.milliseconds_elapsed_from_delivery.unwrap() > 0);
         assert!(stream_id.delivered_count.unwrap() > 0);
     }
     // Verify that the remaining 8 messages are new, incoming messages (not previously delivered)
-    for stream_id in claim_reply.keys[0].ids.iter().take(10).skip(2) {
+    for stream_id in &claim_reply.keys[0].ids[2..10] {
         assert_eq!(stream_id.milliseconds_elapsed_from_delivery.unwrap(), 0);
         assert_eq!(stream_id.delivered_count.unwrap(), 0);
         // These messages should NOT be in the idle pending list
@@ -1017,22 +1008,22 @@ fn test_xreadgroup_claim_with_idle_and_incoming_messages() {
     assert_eq!(claim_all_reply.keys[0].ids.len(), 22);
 
     // Verify that the first 10 are the idle pending messages
-    for stream_id in claim_all_reply.keys[0].ids.iter().take(10) {
+    for stream_id in &claim_all_reply.keys[0].ids[..10] {
         assert!(stream_id.milliseconds_elapsed_from_delivery.unwrap() > 0);
         assert!(stream_id.delivered_count.unwrap() > 0);
     }
 
     // Verify that the rest are new, incoming messages
-    for stream_id in claim_all_reply.keys[0].ids.iter().take(22).skip(10) {
+    for stream_id in &claim_all_reply.keys[0].ids[10..22] {
         assert_eq!(stream_id.milliseconds_elapsed_from_delivery.unwrap(), 0);
         assert_eq!(stream_id.delivered_count.unwrap(), 0);
     }
 }
 
-#[test]
-fn test_xreadgroup_claim_multiple_streams() {
+#[single_server_test]
+fn test_xreadgroup_claim_multiple_streams(ctx: TestContext) {
     // `XREADGROUP` option `CLAIM` is only supported in Redis 8.4+ (but not Valkey<=9.1)
-    let ctx = run_test_if_version_supported!(REDIS_CE_8_4);
+    skip_if_context_does_not_support!(ctx, REDIS_CE_8_4);
     let mut con = ctx.connection();
 
     let stream1 = "test_stream_claim_multi_1";
@@ -1103,11 +1094,8 @@ fn test_xreadgroup_claim_multiple_streams() {
     assert_eq!(consumer2_pending.ids.len(), 5);
 }
 
-#[test]
-fn test_xdel() {
-    // Tests the following commands....
-    // xdel
-    let ctx = TestContext::default();
+#[single_server_test]
+fn test_xdel(ctx: TestContext) {
     let mut con = ctx.connection();
 
     // add some keys
@@ -1123,10 +1111,10 @@ fn test_xdel() {
     assert_eq!(result, Ok(2));
 }
 
-#[test]
-fn test_xadd_options_deletion_policy_keepref() {
+#[single_server_test]
+fn test_xadd_options_deletion_policy_keepref(ctx: TestContext) {
     // `XADD` mode `KEEPREF` is only supported in Redis 8.2+ (but not Valkey<=9.1)
-    let ctx = run_test_if_version_supported!(REDIS_CE_8_2);
+    skip_if_context_does_not_support!(ctx, REDIS_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
 
@@ -1209,10 +1197,10 @@ fn test_xadd_options_deletion_policy_keepref() {
     );
 }
 
-#[test]
-fn test_xadd_options_deletion_policy_delref() {
+#[single_server_test]
+fn test_xadd_options_deletion_policy_delref(ctx: TestContext) {
     // `XADD` mode `DELREF` is only supported in Redis 8.2+ (but not Valkey<=9.1)
-    let ctx = run_test_if_version_supported!(REDIS_CE_8_2);
+    skip_if_context_does_not_support!(ctx, REDIS_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
 
@@ -1295,10 +1283,10 @@ fn test_xadd_options_deletion_policy_delref() {
     );
 }
 
-#[test]
-fn test_xadd_options_deletion_policy_acked() {
+#[single_server_test]
+fn test_xadd_options_deletion_policy_acked(ctx: TestContext) {
     // `XADD` mode `ACKED` is only supported in Redis 8.2+ (but not Valkey<=9.1)
-    let ctx = run_test_if_version_supported!(REDIS_CE_8_2);
+    skip_if_context_does_not_support!(ctx, REDIS_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
 
@@ -1384,10 +1372,10 @@ fn test_xadd_options_deletion_policy_acked() {
     );
 }
 
-#[test]
-fn test_xtrim_options_deletion_policy_keepref() {
+#[single_server_test]
+fn test_xtrim_options_deletion_policy_keepref(ctx: TestContext) {
     // `XTRIM` mode `KEEPREF` is only supported in Redis 8.2+ (but not Valkey<=9.1)
-    let ctx = run_test_if_version_supported!(REDIS_CE_8_2);
+    skip_if_context_does_not_support!(ctx, REDIS_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
 
@@ -1456,10 +1444,10 @@ fn test_xtrim_options_deletion_policy_keepref() {
     );
 }
 
-#[test]
-fn test_xtrim_options_deletion_policy_delref() {
+#[single_server_test]
+fn test_xtrim_options_deletion_policy_delref(ctx: TestContext) {
     // `XTRIM` mode `DELREF` is only supported in Redis 8.2+ (but not Valkey<=9.1)
-    let ctx = run_test_if_version_supported!(REDIS_CE_8_2);
+    skip_if_context_does_not_support!(ctx, REDIS_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
 
@@ -1528,10 +1516,10 @@ fn test_xtrim_options_deletion_policy_delref() {
     );
 }
 
-#[test]
-fn test_xtrim_options_deletion_policy_acked() {
+#[single_server_test]
+fn test_xtrim_options_deletion_policy_acked(ctx: TestContext) {
     // `XTRIM` mode `ACKED` is only supported in Redis 8.2+ (but not Valkey<=9.1)
-    let ctx = run_test_if_version_supported!(REDIS_CE_8_2);
+    skip_if_context_does_not_support!(ctx, REDIS_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
 
@@ -1600,10 +1588,10 @@ fn test_xtrim_options_deletion_policy_acked() {
     );
 }
 
-#[test]
-fn test_xdel_ex() {
+#[single_server_test]
+fn test_xdel_ex(ctx: TestContext) {
     // `XDELEX` is only supported in Redis 8.2+ (but not Valkey<=9.1)
-    let ctx = run_test_if_version_supported!(REDIS_CE_8_2);
+    skip_if_context_does_not_support!(ctx, REDIS_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
 
@@ -1801,10 +1789,10 @@ fn test_xdel_ex() {
     assert_matches!(result, Err(e) if e.to_string().contains("Invalid stream ID"));
 }
 
-#[test]
-fn test_xack_del() {
+#[single_server_test]
+fn test_xack_del(ctx: TestContext) {
     // `XACKDEL` is only supported in Redis 8.2+ (but not Valkey<=9.1)
-    let ctx = run_test_if_version_supported!(REDIS_CE_8_2);
+    skip_if_context_does_not_support!(ctx, REDIS_CE_8_2);
     let mut con = ctx.connection();
     let _: () = con.flushdb().unwrap();
 
@@ -2100,11 +2088,11 @@ fn test_xack_del() {
     assert_matches!(result, Err(e) if e.to_string().contains("Invalid stream ID"));
 }
 
-#[test]
-fn test_xtrim() {
+#[single_server_test]
+fn test_xtrim(ctx: TestContext) {
     // Tests the following commands....
     // xtrim
-    let ctx = TestContext::default();
+
     let mut con = ctx.connection();
 
     // add some keys
@@ -2119,11 +2107,11 @@ fn test_xtrim() {
     assert_eq!(result, Ok(40));
 }
 
-#[test]
-fn test_xtrim_options() {
+#[single_server_test]
+fn test_xtrim_options(ctx: TestContext) {
     // Tests the following commands....
     // xtrim_options
-    let ctx = TestContext::default();
+
     let mut con = ctx.connection();
 
     // add some keys
@@ -2165,14 +2153,13 @@ fn test_xtrim_options() {
     assert_eq!(result, Ok(50));
 }
 
-#[test]
-fn test_xgroup() {
+#[single_server_test]
+fn test_xgroup(ctx: TestContext) {
     // Tests the following commands....
     // xgroup_create_mkstream
     // xgroup_destroy
     // xgroup_delconsumer
 
-    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // test xgroup create w/ mkstream @ 0
@@ -2209,14 +2196,13 @@ fn test_xgroup() {
     assert_eq!(result, Ok(true));
 }
 
-#[test]
-fn test_xrange() {
+#[single_server_test]
+fn test_xrange(ctx: TestContext) {
     // Tests the following commands....
     // xrange (-/+ variations)
     // xrange_all
     // xrange_count
 
-    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     xadd(&mut con);
@@ -2235,14 +2221,13 @@ fn test_xrange() {
     assert_eq!(reply.ids.len(), 1);
 }
 
-#[test]
-fn test_xrevrange() {
+#[single_server_test]
+fn test_xrevrange(ctx: TestContext) {
     // Tests the following commands....
     // xrevrange (+/- variations)
     // xrevrange_all
     // xrevrange_count
 
-    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     xadd(&mut con);
@@ -2261,8 +2246,8 @@ fn test_xrevrange() {
     assert_eq!(reply.ids.len(), 1);
 }
 
-#[test]
-fn test_xautoclaim_invalid_pel_entries_claiming_full_entries() {
+#[single_server_test]
+fn test_xautoclaim_invalid_pel_entries_claiming_full_entries(ctx: TestContext) {
     // The Redis PEL can include stale entries that have been deleted from the stream,
     // due to either data corruption or client error.
     // Redis v6 behaves differently from Redis v7 when encountering these invalid entries.
@@ -2270,7 +2255,6 @@ fn test_xautoclaim_invalid_pel_entries_claiming_full_entries() {
     // See https://github.com/redis-rs/redis-rs/issues/1798
     // Note that this issue also applies to xclaim.
 
-    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // xautoclaim-invalid basic idea:
@@ -2313,8 +2297,8 @@ fn test_xautoclaim_invalid_pel_entries_claiming_full_entries() {
     }
 }
 
-#[test]
-fn test_xautoclaim_invalid_pel_entries_claiming_just_ids() {
+#[single_server_test]
+fn test_xautoclaim_invalid_pel_entries_claiming_just_ids(ctx: TestContext) {
     // The Redis PEL can include stale entries that have been deleted from the stream,
     // due to either data corruption or client error.
     // Redis v6 behaves differently from Redis v7 when encountering these invalid entries.
@@ -2322,7 +2306,6 @@ fn test_xautoclaim_invalid_pel_entries_claiming_just_ids() {
     // See https://github.com/redis-rs/redis-rs/issues/1798
     // Note that this issue also applies to xclaim.
 
-    let ctx = TestContext::default();
     let mut con = ctx.connection();
 
     // xautoclaim-invalid basic idea:
@@ -2342,7 +2325,7 @@ fn test_xautoclaim_invalid_pel_entries_claiming_just_ids() {
     let _ = con.xdel("k1", &[claim.id.clone(), claim_1.id.clone()]);
     sleep(Duration::from_millis(5));
 
-    let mut reply = con
+    let reply = con
         .xautoclaim_options(
             "k1",
             "g1",
@@ -2363,12 +2346,15 @@ fn test_xautoclaim_invalid_pel_entries_claiming_just_ids() {
             vec![claim.id.clone(), claim_1.id.clone()]
         );
     } else {
-        // On Redis <7, the deleted entries appear claimed when passing JUSTID
-        // So we check that they are present and skip over them
-        assert_eq!(reply.claimed[0].id, claim.id);
-        assert_eq!(reply.claimed[1].id, claim_1.id);
-        reply.claimed = reply.claimed.into_iter().skip(2).collect();
-
+        // on redis 6, the deleted entries appear when passing JUSTID
+        let mut stream_id = StreamId::default();
+        stream_id.id = claim.id.clone();
+        stream_id.map = Default::default();
+        claimed_entries.insert(0, stream_id);
+        let mut stream_id = StreamId::default();
+        stream_id.id = claim_1.id.clone();
+        stream_id.map = Default::default();
+        claimed_entries.insert(1, stream_id);
         assert_eq!(reply.claimed, claimed_entries);
         assert_eq!(reply.deleted_ids.len(), 0);
     }
@@ -2390,11 +2376,11 @@ mod idempotency_tests {
 
     const FIELD_VALUES: [(&str, &str); 2] = [("field1", "value1"), ("field2", "value2")];
 
-    #[test]
-    fn test_xadd_idempotency_manual_mode() {
+    #[single_server_test]
+    fn test_xadd_idempotency_manual_mode(ctx: TestContext) {
         // Test IDMP (manual mode) - prevents messages with the same PID and IID from being added to the stream.
         // Stream idempotency is only supported in Redis 8.6+ (but not Valkey<=9.1)
-        let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_6);
         let mut con = ctx.connection();
 
         const STREAM_NAME: &str = "test_idmp_stream";
@@ -2472,11 +2458,11 @@ mod idempotency_tests {
         assert_eq!(info.iids_duplicates, 2);
     }
 
-    #[test]
-    fn test_xadd_idempotency_automatic_mode() {
+    #[single_server_test]
+    fn test_xadd_idempotency_automatic_mode(ctx: TestContext) {
         // Test IDMPAUTO (automatic mode) - prevents messages with the same PID and content from being added to the stream.
         // Stream idempotency is only supported in Redis 8.6+ (but not Valkey<=9.1)
-        let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_6);
         let mut con = ctx.connection();
 
         const STREAM_NAME: &str = "test_idmpauto_stream";
@@ -2542,11 +2528,11 @@ mod idempotency_tests {
         assert_eq!(info.iids_duplicates, 1);
     }
 
-    #[test]
-    fn test_xadd_idempotency_with_other_options() {
+    #[single_server_test]
+    fn test_xadd_idempotency_with_other_options(ctx: TestContext) {
         // Test that idempotency works correctly with other XADD options
         // Stream idempotency is only supported in Redis 8.6+ (but not Valkey<=9.1)
-        let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_6);
         let mut con = ctx.connection();
 
         const STREAM_NAME: &str = "test_idmp_combined_options_stream";
@@ -2695,10 +2681,10 @@ mod idempotency_tests {
         assert_eq!(info.iids_duplicates, 1);
     }
 
-    #[test]
-    fn test_xcfgset() {
+    #[single_server_test]
+    fn test_xcfgset(ctx: TestContext) {
         // `XCFGSET` is only supported in Redis 8.6+ (but not Valkey<=9.1)
-        let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_6);
         let mut con = ctx.connection();
 
         const STREAM_NAME: &str = "test_xcfgset_stream";
@@ -2785,10 +2771,10 @@ mod idempotency_tests {
         assert_eq!(info.idmp_maxsize, IDMP_CUSTOM_MAXSIZE);
     }
 
-    #[test]
-    fn test_xcfgset_with_idempotent_messages() {
+    #[single_server_test]
+    fn test_xcfgset_with_idempotent_messages(ctx: TestContext) {
         // `XCFGSET` is only supported in Redis 8.6+ (but not Valkey<=9.1)
-        let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_6);
         let mut con = ctx.connection();
 
         const STREAM_NAME: &str = "test_xcfgset_with_idempotent_messages_stream";
@@ -2891,10 +2877,10 @@ mod idempotency_tests {
         );
     }
 
-    #[test]
-    fn test_xcfgset_idempotency_behavior() {
+    #[single_server_test]
+    fn test_xcfgset_idempotency_behavior(ctx: TestContext) {
         // `XCFGSET` is only supported in Redis 8.6+ (but not Valkey<=9.1)
-        let ctx = run_test_if_version_supported!(REDIS_CE_8_6);
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_6);
         let mut con = ctx.connection();
 
         const STREAM_NAME: &str = "test_xcfgset_behavior_stream";
@@ -3034,7 +3020,6 @@ mod idempotency_tests {
 
 mod xnack_tests {
     use super::*;
-    use rstest::rstest;
 
     const GROUP: &str = "xnack_group";
     const CONSUMER: &str = "xnack_consumer1";
@@ -3075,9 +3060,9 @@ mod xnack_tests {
             .times_delivered
     }
 
-    #[test]
-    fn test_xnack_basic_returns_count_of_nacked_messages() {
-        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+    #[single_server_test]
+    fn test_xnack_basic_returns_count_of_nacked_messages(ctx: TestContext) {
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_8);
         let mut con = ctx.connection();
 
         let stream = "test_xnack_basic";
@@ -3094,31 +3079,37 @@ mod xnack_tests {
         assert_eq!(nacked, 3);
     }
 
-    #[rstest]
-    #[case(StreamNackMode::Silent)]
-    #[case(StreamNackMode::Fail)]
-    #[case(StreamNackMode::Fatal)]
-    fn test_xnack_marks_message_as_unowned(#[case] mode: StreamNackMode) {
-        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
-        let mut con = ctx.connection();
+    #[single_server_test]
+    fn test_xnack_marks_message_as_unowned(ctx: TestContext) {
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_8);
+        for (i, mode) in [
+            StreamNackMode::Silent,
+            StreamNackMode::Fail,
+            StreamNackMode::Fatal,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut con = ctx.connection();
 
-        let stream = "test_xnack_unowned";
-        let ids = xnack_setup_pending(&mut con, stream, GROUP, CONSUMER, 3);
+            let stream = format!("test_xnack_unowned_{i}");
+            let ids = xnack_setup_pending(&mut con, &stream, GROUP, CONSUMER, 3);
 
-        con.xnack(stream, GROUP, &ids, &StreamNackOptions::new(mode))
-            .unwrap();
+            con.xnack(&stream, GROUP, &ids, &StreamNackOptions::new(mode))
+                .unwrap();
 
-        // After NACK the messages remain in the PEL but are unowned, so their last consumer should be an empty string.
-        let reply = con.xpending_count(stream, GROUP, "-", "+", 3).unwrap();
-        assert_eq!(reply.ids.len(), 3);
-        for entry in &reply.ids {
-            assert_eq!(entry.consumer, "");
+            // After NACK the messages remain in the PEL but are unowned, so their last consumer should be an empty string.
+            let reply = con.xpending_count(&stream, GROUP, "-", "+", 3).unwrap();
+            assert_eq!(reply.ids.len(), 3);
+            for entry in &reply.ids {
+                assert_eq!(entry.consumer, "");
+            }
         }
     }
 
-    #[test]
-    fn test_xnack_silent_decrements_delivery_counter() {
-        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+    #[single_server_test]
+    fn test_xnack_silent_decrements_delivery_counter(ctx: TestContext) {
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_8);
         let mut con = ctx.connection();
 
         let stream = "test_xnack_silent_counter";
@@ -3153,9 +3144,9 @@ mod xnack_tests {
         assert_eq!(pel_times_delivered(&mut con, stream, GROUP, id), 1);
     }
 
-    #[test]
-    fn test_xnack_fail_keeps_delivery_counter() {
-        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+    #[single_server_test]
+    fn test_xnack_fail_keeps_delivery_counter(ctx: TestContext) {
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_8);
         let mut con = ctx.connection();
 
         let stream = "test_xnack_fail_counter";
@@ -3193,9 +3184,9 @@ mod xnack_tests {
         assert_ne!(delivery_counter_after_redelivery, i64::MAX as usize);
     }
 
-    #[test]
-    fn test_xnack_fatal_marks_delivery_counter_as_sentinel() {
-        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+    #[single_server_test]
+    fn test_xnack_fatal_marks_delivery_counter_as_sentinel(ctx: TestContext) {
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_8);
         let mut con = ctx.connection();
 
         let stream = "test_xnack_fatal_counter";
@@ -3229,9 +3220,9 @@ mod xnack_tests {
         assert_eq!(pel_times_delivered(&mut con, stream, GROUP, id), sentinel);
     }
 
-    #[test]
-    fn test_xnack_prioritized_at_pel_head_when_claiming() {
-        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+    #[single_server_test]
+    fn test_xnack_prioritized_at_pel_head_when_claiming(ctx: TestContext) {
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_8);
         let mut con = ctx.connection();
 
         let stream = "test_xnack_priority";
@@ -3272,10 +3263,10 @@ mod xnack_tests {
         );
     }
 
-    #[test]
-    fn test_xnack_ignores_unknown_ids_and_returns_zero() {
+    #[single_server_test]
+    fn test_xnack_ignores_unknown_ids_and_returns_zero(ctx: TestContext) {
         use StreamNackMode::*;
-        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_8);
         let mut con = ctx.connection();
 
         let stream = "test_xnack_on_an_unknown_id";
@@ -3294,10 +3285,10 @@ mod xnack_tests {
         );
     }
 
-    #[test]
-    fn test_xnack_only_affects_known_ids() {
+    #[single_server_test]
+    fn test_xnack_only_affects_known_ids(ctx: TestContext) {
         use StreamNackMode::*;
-        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_8);
         let mut con = ctx.connection();
 
         let stream = "test_xnack_only_affects_known_ids";
@@ -3312,9 +3303,9 @@ mod xnack_tests {
         );
     }
 
-    #[test]
-    fn test_xnack_nonexistent_stream_errors() {
-        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+    #[single_server_test]
+    fn test_xnack_nonexistent_stream_errors(ctx: TestContext) {
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_8);
         let mut con = ctx.connection();
 
         let result = con.xnack(
@@ -3330,9 +3321,9 @@ mod xnack_tests {
         );
     }
 
-    #[test]
-    fn test_xnack_nonexistent_group_errors() {
-        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+    #[single_server_test]
+    fn test_xnack_nonexistent_group_errors(ctx: TestContext) {
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_8);
         let mut con = ctx.connection();
 
         let stream = "test_xnack_nogroup";
@@ -3349,10 +3340,10 @@ mod xnack_tests {
         );
     }
 
-    #[test]
-    fn test_xnack_idempotent_double_nack() {
+    #[single_server_test]
+    fn test_xnack_idempotent_double_nack(ctx: TestContext) {
         use StreamNackMode::*;
-        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_8);
         let mut con = ctx.connection();
 
         let stream = "test_xnack_double";
@@ -3378,10 +3369,10 @@ mod xnack_tests {
         assert_eq!(second, 1);
     }
 
-    #[test]
-    fn test_xnack_fifo_ordering_among_multiple_nacked_messages() {
+    #[single_server_test]
+    fn test_xnack_fifo_ordering_among_multiple_nacked_messages(ctx: TestContext) {
         use StreamNackMode::*;
-        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_8);
         let mut con = ctx.connection();
 
         /*
@@ -3433,10 +3424,10 @@ mod xnack_tests {
         );
     }
 
-    #[test]
-    fn test_xnack_three_tier_delivery_order() {
+    #[single_server_test]
+    fn test_xnack_three_tier_delivery_order(ctx: TestContext) {
         use StreamNackMode::*;
-        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        skip_if_context_does_not_support!(ctx, REDIS_CE_8_8);
         let mut con = ctx.connection();
 
         // Tier 1: a delivered and NACKed entry.
