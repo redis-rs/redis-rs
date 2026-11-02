@@ -189,6 +189,45 @@ fn test_acl_dryrun() {
         "User VIRGINIA has no permissions to run the 'get' command"
     );
 }
+
+#[test]
+fn test_acl_selector_rule_with_whitespace_stays_one_rule() {
+    // Selectors and the DRYRUN messages checked here need 7.2.
+    let ctx = run_test_if_version_supported!(REDIS_CE_7_2);
+    let mut con = ctx.connection();
+
+    // Read as several rules, this pattern would allow every command on every key.
+    let pattern = "x +@all ~*";
+    con.acl_setuser_rules(
+        "selector_user",
+        &[
+            Rule::On,
+            Rule::NoCommands,
+            Rule::Selector(vec![
+                Rule::AddCommand("GET".to_string()),
+                Rule::Pattern(pattern.to_string()),
+            ]),
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(
+        con.acl_dryrun(b"selector_user", String::from("GET"), pattern)
+            .unwrap(),
+        "OK"
+    );
+    assert_eq!(
+        con.acl_dryrun(b"selector_user", String::from("GET"), "foo")
+            .unwrap(),
+        "User selector_user has no permissions to access the 'foo' key"
+    );
+    assert_eq!(
+        con.acl_dryrun(b"selector_user", String::from("SET"), &["foo", "bar"])
+            .unwrap(),
+        "User selector_user has no permissions to run the 'set' command"
+    );
+}
+
 #[test]
 fn test_acl_info() {
     let ctx = run_test_if_version_supported!(REDIS_CE_7_2);
