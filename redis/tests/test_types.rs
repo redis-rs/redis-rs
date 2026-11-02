@@ -294,6 +294,15 @@ mod types {
                 },
             ),
             (
+                redis_value!(["slave", "127.0.0.1", 9000, "connect", (-1)]),
+                Role::Replica {
+                    primary_ip: "127.0.0.1".to_string(),
+                    primary_port: 9000,
+                    replication_state: "connect".to_string(),
+                    data_received: -1,
+                },
+            ),
+            (
                 redis_value!([
                     "sentinel",
                     [
