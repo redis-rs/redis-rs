@@ -353,10 +353,8 @@ mod aio_support {
     use tokio::io::AsyncRead;
     use tokio_util::codec::{Decoder, Encoder};
 
-    /// A large frame must not permanently set the memory floor of a long-lived
-    /// connection. Keep ordinary frames' allocation for reuse.
-    pub(crate) const DEFAULT_CODEC_BUFFER_TRIM_THRESHOLD: NonZeroUsize =
-        NonZeroUsize::new(64 * 1024).unwrap();
+    /// Buffer trimming is opt-in; retain allocations for reuse unless configured.
+    pub(crate) const DEFAULT_CODEC_BUFFER_TRIM_THRESHOLD: Option<NonZeroUsize> = None;
     pub(crate) const REPLACEMENT_CODEC_BUFFER: usize = 8 * 1024;
 
     /// Decodes Redis replies out of an async byte stream.
@@ -372,7 +370,7 @@ mod aio_support {
 
     impl Default for ValueCodec {
         fn default() -> Self {
-            Self::with_trim_threshold(Some(DEFAULT_CODEC_BUFFER_TRIM_THRESHOLD))
+            Self::with_trim_threshold(DEFAULT_CODEC_BUFFER_TRIM_THRESHOLD)
         }
     }
 
@@ -539,7 +537,7 @@ mod tests {
         use bytes::BytesMut;
         use tokio_util::codec::Decoder;
 
-        let mut codec = ValueCodec::default();
+        let mut codec = ValueCodec::with_trim_threshold(std::num::NonZeroUsize::new(64 * 1024));
         let payload = vec![b'x'; 512 * 1024];
         let mut bytes = BytesMut::from(format!("${}\r\n", payload.len()).as_bytes());
         bytes.extend_from_slice(&payload[..payload.len() / 2]);
@@ -569,7 +567,7 @@ mod tests {
         use bytes::BytesMut;
         use tokio_util::codec::Encoder;
 
-        let mut codec = ValueCodec::default();
+        let mut codec = ValueCodec::with_trim_threshold(std::num::NonZeroUsize::new(64 * 1024));
         let mut bytes = BytesMut::new();
         codec.encode(vec![b'x'; 512 * 1024], &mut bytes).unwrap();
         bytes.clear(); // a completed transport flush
@@ -589,14 +587,15 @@ mod tests {
         use bytes::BytesMut;
         use tokio_util::codec::Encoder;
 
-        let mut codec = ValueCodec::with_trim_threshold(None);
-        let mut bytes = BytesMut::with_capacity(128 * 1024);
-        codec.encode(vec![b'x'; 100 * 1024], &mut bytes).unwrap();
-        bytes.clear();
-        codec.encode(b"PING".to_vec(), &mut bytes).unwrap();
+        for mut codec in [ValueCodec::default(), ValueCodec::with_trim_threshold(None)] {
+            let mut bytes = BytesMut::with_capacity(128 * 1024);
+            codec.encode(vec![b'x'; 100 * 1024], &mut bytes).unwrap();
+            bytes.clear();
+            codec.encode(b"PING".to_vec(), &mut bytes).unwrap();
 
-        assert_eq!(bytes.capacity(), 128 * 1024);
-        assert_eq!(&bytes[..], b"PING");
+            assert_eq!(bytes.capacity(), 128 * 1024);
+            assert_eq!(&bytes[..], b"PING");
+        }
     }
 
     #[cfg(feature = "aio")]
@@ -605,20 +604,21 @@ mod tests {
         use bytes::BytesMut;
         use tokio_util::codec::Decoder;
 
-        let mut codec = ValueCodec::with_trim_threshold(None);
-        let payload = vec![b'x'; 100 * 1024];
-        let mut bytes = BytesMut::with_capacity(128 * 1024);
-        bytes.extend_from_slice(format!("${}\r\n", payload.len()).as_bytes());
-        bytes.extend_from_slice(&payload);
-        bytes.extend_from_slice(b"\r\n");
-        let allocation_start = bytes.as_ptr();
-        let consumed = bytes.len();
-        assert_eq!(
-            codec.decode(&mut bytes).unwrap(),
-            Some(Value::BulkString(payload))
-        );
-        assert!(bytes.is_empty());
-        assert_eq!(bytes.as_ptr(), allocation_start.wrapping_add(consumed));
+        for mut codec in [ValueCodec::default(), ValueCodec::with_trim_threshold(None)] {
+            let payload = vec![b'x'; 100 * 1024];
+            let mut bytes = BytesMut::with_capacity(128 * 1024);
+            bytes.extend_from_slice(format!("${}\r\n", payload.len()).as_bytes());
+            bytes.extend_from_slice(&payload);
+            bytes.extend_from_slice(b"\r\n");
+            let allocation_start = bytes.as_ptr();
+            let consumed = bytes.len();
+            assert_eq!(
+                codec.decode(&mut bytes).unwrap(),
+                Some(Value::BulkString(payload))
+            );
+            assert!(bytes.is_empty());
+            assert_eq!(bytes.as_ptr(), allocation_start.wrapping_add(consumed));
+        }
     }
 
     #[cfg(feature = "aio")]
@@ -670,7 +670,7 @@ mod tests {
         use bytes::BytesMut;
         use tokio_util::codec::Decoder;
 
-        let mut codec = ValueCodec::default();
+        let mut codec = ValueCodec::with_trim_threshold(std::num::NonZeroUsize::new(64 * 1024));
         let mut bytes = BytesMut::with_capacity(REPLACEMENT_CODEC_BUFFER);
         let payload = vec![b'x'; 128 * 1024];
         let header = format!("${}\r\n", payload.len());
@@ -698,7 +698,7 @@ mod tests {
         use bytes::BytesMut;
         use tokio_util::codec::Encoder;
 
-        let mut codec = ValueCodec::default();
+        let mut codec = ValueCodec::with_trim_threshold(std::num::NonZeroUsize::new(64 * 1024));
         let mut bytes = BytesMut::with_capacity(REPLACEMENT_CODEC_BUFFER);
 
         for _ in 0..3 {

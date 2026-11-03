@@ -112,6 +112,8 @@ impl std::fmt::Debug for BuilderParams {
             #[cfg(feature = "cluster-async")]
             connection_concurrency_limit,
             #[cfg(feature = "cluster-async")]
+            codec_buffer_trim_threshold,
+            #[cfg(feature = "cluster-async")]
             write_backpressure_boundary,
             node_address_map,
             #[cfg(feature = "cluster-async")]
@@ -146,6 +148,7 @@ impl std::fmt::Debug for BuilderParams {
         #[cfg(feature = "cluster-async")]
         str.field("overall_response_timeout", overall_response_timeout)
             .field("connection_concurrency_limit", connection_concurrency_limit)
+            .field("codec_buffer_trim_threshold", codec_buffer_trim_threshold)
             .field("write_backpressure_boundary", write_backpressure_boundary)
             .field("max_connection_attempts", max_connection_attempts)
             .field("async_push_sender", &set_or_unset(async_push_sender))
@@ -278,6 +281,8 @@ impl std::fmt::Debug for ClusterParams {
             #[cfg(feature = "cluster-async")]
             connection_concurrency_limit,
             #[cfg(feature = "cluster-async")]
+            codec_buffer_trim_threshold,
+            #[cfg(feature = "cluster-async")]
             write_backpressure_boundary,
             node_address_map,
             #[cfg(feature = "cluster-async")]
@@ -301,6 +306,7 @@ impl std::fmt::Debug for ClusterParams {
         #[cfg(feature = "cluster-async")]
         str.field("overall_response_timeout", overall_response_timeout)
             .field("connection_concurrency_limit", connection_concurrency_limit)
+            .field("codec_buffer_trim_threshold", codec_buffer_trim_threshold)
             .field("write_backpressure_boundary", write_backpressure_boundary)
             .field("max_connection_attempts", max_connection_attempts)
             .field("async_push_sender", &set_or_unset(async_push_sender))
@@ -1387,6 +1393,11 @@ mod tests {
     #[cfg(feature = "cluster-async")]
     #[test]
     fn codec_buffer_trim_threshold_reaches_cluster_params() {
+        let client = ClusterClient::builder(["redis://127.0.0.1:6379"])
+            .build()
+            .unwrap();
+        assert_eq!(client.cluster_params.codec_buffer_trim_threshold, None);
+
         let client = ClusterClient::builder(["redis://127.0.0.1:6379"])
             .codec_buffer_trim_threshold(None)
             .build()

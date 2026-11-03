@@ -913,13 +913,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_lazy_connection_manager_wires_codec_buffer_trim_threshold() {
-        let client = Client::open("redis://127.0.0.1/").unwrap();
-        let config = ConnectionManagerConfig::new().set_codec_buffer_trim_threshold(None);
-        let manager = ConnectionManager::new_lazy_with_config(client, config).unwrap();
-        assert_eq!(
-            manager.0.connection_config.codec_buffer_trim_threshold,
-            None
-        );
+        for config in [
+            ConnectionManagerConfig::new(),
+            ConnectionManagerConfig::new().set_codec_buffer_trim_threshold(None),
+        ] {
+            let client = Client::open("redis://127.0.0.1/").unwrap();
+            let manager = ConnectionManager::new_lazy_with_config(client, config).unwrap();
+            assert_eq!(
+                manager.0.connection_config.codec_buffer_trim_threshold,
+                None
+            );
+        }
 
         let client = Client::open("redis://127.0.0.1/").unwrap();
         let config = ConnectionManagerConfig::new()

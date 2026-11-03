@@ -1204,8 +1204,9 @@ mod tests {
 
         let (client, mut server) = tokio::io::duplex(1024 * 1024);
         let mut pipeline = PipelineSink::new(
-            ValueCodec::default().framed(client),
+            ValueCodec::with_trim_threshold(std::num::NonZeroUsize::new(64 * 1024)).framed(client),
             None,
+            Default::default(),
             #[cfg(feature = "cache-aio")]
             None,
         );
@@ -1236,34 +1237,37 @@ mod tests {
         use futures_util::SinkExt;
         use tokio::io::AsyncReadExt;
 
-        let (client, mut server) = tokio::io::duplex(1024 * 1024);
-        let mut pipeline = PipelineSink::new(
-            ValueCodec::with_trim_threshold(None).framed(client),
-            None,
-            #[cfg(feature = "cache-aio")]
-            None,
-        );
-        let large = vec![b'x'; 512 * 1024];
-        pipeline
-            .feed(PipelineMessage {
-                input: large.clone(),
-                output: None,
-                expectation: None,
-            })
-            .await
-            .unwrap();
-        let write_buffer = pipeline.sink_stream.write_buffer();
-        let allocation_start = write_buffer.as_ptr();
-        let written = write_buffer.len();
-        pipeline.flush().await.unwrap();
-        assert!(pipeline.sink_stream.write_buffer().is_empty());
-        assert_eq!(
-            pipeline.sink_stream.write_buffer().as_ptr(),
-            allocation_start.wrapping_add(written)
-        );
-        let mut received = vec![0; large.len()];
-        server.read_exact(&mut received).await.unwrap();
-        assert_eq!(received, large);
+        for codec in [ValueCodec::default(), ValueCodec::with_trim_threshold(None)] {
+            let (client, mut server) = tokio::io::duplex(1024 * 1024);
+            let mut pipeline = PipelineSink::new(
+                codec.framed(client),
+                None,
+                Default::default(),
+                #[cfg(feature = "cache-aio")]
+                None,
+            );
+            let large = vec![b'x'; 512 * 1024];
+            pipeline
+                .feed(PipelineMessage {
+                    input: large.clone(),
+                    output: None,
+                    expectation: None,
+                })
+                .await
+                .unwrap();
+            let write_buffer = pipeline.sink_stream.write_buffer();
+            let allocation_start = write_buffer.as_ptr();
+            let written = write_buffer.len();
+            pipeline.flush().await.unwrap();
+            assert!(pipeline.sink_stream.write_buffer().is_empty());
+            assert_eq!(
+                pipeline.sink_stream.write_buffer().as_ptr(),
+                allocation_start.wrapping_add(written)
+            );
+            let mut received = vec![0; large.len()];
+            server.read_exact(&mut received).await.unwrap();
+            assert_eq!(received, large);
+        }
     }
 
     #[tokio::test]
@@ -1272,7 +1276,8 @@ mod tests {
         use tokio::io::AsyncReadExt;
 
         let (client, mut server) = tokio::io::duplex(1024 * 1024);
-        let mut framed = ValueCodec::default().framed(client);
+        let mut framed =
+            ValueCodec::with_trim_threshold(std::num::NonZeroUsize::new(64 * 1024)).framed(client);
         let large = vec![b'x'; 512 * 1024];
         framed.send(large.clone()).await.unwrap();
         assert!(framed.write_buffer().is_empty());
