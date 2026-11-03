@@ -10,6 +10,7 @@ use std::pin::Pin;
 use std::time::Duration;
 use std::{fmt, io::Write};
 
+use crate::known_commands::KnownCommand;
 use crate::pipeline::Pipeline;
 use crate::types::{FromRedisValue, RedisResult, RedisWrite, ToRedisArgs, from_redis_value};
 use crate::{ParsingError, connection::ConnectionLike};
@@ -24,6 +25,149 @@ pub enum Arg<D> {
     Cursor,
 }
 
+/// Iterator over a command's arguments, including the command name.
+///
+/// For commands created from a [`KnownCommand`], the name is not stored in the command's
+/// buffers. It is synthesized here so callers still observe the same argument list and wire
+/// representation as commands whose name was written as a regular argument.
+#[derive(Clone)]
+pub(crate) struct ArgIter<'a> {
+    known_command: Option<KnownCommand>,
+    command_part: u8,
+    data: &'a [u8],
+    args: &'a [Arg<usize>],
+    data_start: usize,
+    prev: usize,
+    arg_index: usize,
+}
+
+impl<'a> ArgIter<'a> {
+    pub(crate) fn new(
+        known_command: Option<KnownCommand>,
+        data: &'a [u8],
+        args: &'a [Arg<usize>],
+        data_start: usize,
+    ) -> Self {
+        Self {
+            known_command,
+            command_part: 0,
+            data,
+            args,
+            data_start,
+            prev: data_start,
+            arg_index: 0,
+        }
+    }
+
+    fn remaining_command_args(&self) -> usize {
+        self.known_command.map_or(0, |command| {
+            command
+                .name_arg_count()
+                .saturating_sub(usize::from(self.command_part))
+        })
+    }
+
+    fn next_command_arg(&mut self) -> Option<Arg<&'a [u8]>> {
+        let command = self.known_command?;
+        match self.command_part {
+            0 => {
+                self.command_part = 1;
+                Some(Arg::Simple(command.name_parts().0))
+            }
+            1 => {
+                self.command_part = 2;
+                command.name_parts().1.map(Arg::Simple)
+            }
+            _ => None,
+        }
+    }
+}
+
+impl<'a> Iterator for ArgIter<'a> {
+    type Item = Arg<&'a [u8]>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(arg) = self.next_command_arg() {
+            return Some(arg);
+        }
+
+        let arg = self.args.get(self.arg_index)?;
+        self.arg_index += 1;
+        match *arg {
+            Arg::Simple(end) => {
+                let arg =
+                    Arg::Simple(&self.data[self.prev - self.data_start..end - self.data_start]);
+                self.prev = end;
+                Some(arg)
+            }
+            Arg::Cursor => Some(Arg::Cursor),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.len();
+        (len, Some(len))
+    }
+}
+
+impl ExactSizeIterator for ArgIter<'_> {
+    fn len(&self) -> usize {
+        self.remaining_command_args() + self.args.len() - self.arg_index
+    }
+}
+
+/// Returns the argument at `idx`, counting the command name, without walking the preceding
+/// arguments.
+///
+/// The arguments are described as in [`ArgIter::new`]. Returns `None` for a cursor.
+fn arg_at<'a>(
+    known_command: Option<KnownCommand>,
+    data: &'a [u8],
+    args: &[Arg<usize>],
+    data_start: usize,
+    idx: usize,
+) -> Option<&'a [u8]> {
+    let mut idx = idx;
+    if let Some(command) = known_command {
+        match (idx, command.name_parts()) {
+            (0, (primary, _)) => return Some(primary),
+            (1, (_, Some(sub))) => return Some(sub),
+            _ => idx -= command.name_arg_count(),
+        }
+    }
+    let Arg::Simple(end) = *args.get(idx)? else {
+        return None;
+    };
+    // A cursor has no offset of its own, so an argument starts where the closest preceding
+    // simple argument ends. A command has at most one cursor, so this stays constant time.
+    let start = args[..idx]
+        .iter()
+        .rev()
+        .find_map(|arg| match *arg {
+            Arg::Simple(end) => Some(end),
+            Arg::Cursor => None,
+        })
+        .unwrap_or(data_start);
+    Some(&data[start - data_start..end - data_start])
+}
+
+/// Returns the known command, and how many of the stored arguments hold its name: none if the
+/// name is stored as a [`KnownCommand`], otherwise one or two.
+#[cfg(any(feature = "cluster", feature = "cache-aio"))]
+fn parse_command(
+    known_command: Option<KnownCommand>,
+    data: &[u8],
+    args: &[Arg<usize>],
+    data_start: usize,
+) -> Option<(KnownCommand, usize)> {
+    if let Some(command) = known_command {
+        return Some((command, 0));
+    }
+    let first = arg_at(None, data, args, data_start, 0)?;
+    let second = arg_at(None, data, args, data_start, 1);
+    KnownCommand::parse(first, second)
+}
+
 /// A lightweight, borrowed view of a single command.
 ///
 /// `CmdRef` is the item type yielded by [`Pipeline::cmd_iter`](crate::Pipeline::cmd_iter).
@@ -35,12 +179,14 @@ pub enum Arg<D> {
 /// the underlying storage can evolve without breaking callers.
 #[derive(Clone, Copy, Debug)]
 pub struct CmdRef<'a> {
-    // The contiguous argument bytes belonging to this command.
+    // The contiguous argument bytes belonging to this command. When `known_command` is set,
+    // the command's name isn't stored here.
     data: &'a [u8],
     // This command's args. `Arg::Simple` offsets are absolute into the buffer that `data` is a
     // slice of; `data_start` records where `data` begins within it.
     args: &'a [Arg<usize>],
     data_start: usize,
+    known_command: Option<KnownCommand>,
     cursor: Option<u64>,
     no_response: bool,
     ignored: bool,
@@ -54,6 +200,7 @@ impl<'a> CmdRef<'a> {
         data: &'a [u8],
         args: &'a [Arg<usize>],
         data_start: usize,
+        known_command: Option<KnownCommand>,
         cursor: Option<u64>,
         no_response: bool,
         ignored: bool,
@@ -63,6 +210,7 @@ impl<'a> CmdRef<'a> {
             data,
             args,
             data_start,
+            known_command,
             cursor,
             no_response,
             ignored,
@@ -72,12 +220,13 @@ impl<'a> CmdRef<'a> {
     }
 
     /// Creates a view borrowing from a standalone [`Cmd`].
-    #[cfg(feature = "cache-aio")]
+    #[cfg(any(feature = "cache-aio", all(feature = "cluster", test)))]
     pub(crate) fn from_cmd(cmd: &'a Cmd) -> Self {
         CmdRef {
             data: &cmd.data,
             args: &cmd.args,
             data_start: 0,
+            known_command: cmd.known_command,
             cursor: cmd.cursor,
             no_response: cmd.no_response,
             ignored: false,
@@ -88,36 +237,36 @@ impl<'a> CmdRef<'a> {
 
     /// Returns an iterator over the arguments in this command (including the command name itself).
     pub fn args_iter(&self) -> impl Clone + ExactSizeIterator<Item = Arg<&'a [u8]>> + use<'a> {
-        let data = self.data;
-        let base = self.data_start;
-        let args = self.args;
-        let mut prev = 0;
-        args.iter().map(move |arg| match *arg {
-            Arg::Simple(end) => {
-                let arg = Arg::Simple(&data[prev..end - base]);
-                prev = end - base;
-                arg
-            }
-            Arg::Cursor => Arg::Cursor,
-        })
+        ArgIter::new(self.known_command, self.data, self.args, self.data_start)
     }
 
     /// Returns a reference to the data for the argument at `idx`.
     pub fn arg_idx(&self, idx: usize) -> Option<&'a [u8]> {
-        match self.args_iter().nth(idx)? {
-            Arg::Simple(bytes) => Some(bytes),
-            Arg::Cursor => None,
-        }
-    }
-
-    /// Returns this command's contiguous argument bytes.
-    pub fn data(&self) -> &'a [u8] {
-        self.data
+        arg_at(
+            self.known_command,
+            self.data,
+            self.args,
+            self.data_start,
+            idx,
+        )
     }
 
     /// Returns the command's cursor value, if it is in scan mode.
     pub fn cursor(&self) -> Option<u64> {
         self.cursor
+    }
+
+    /// Returns the known command represented by this command, if any.
+    #[cfg(any(feature = "cluster", feature = "cache-aio"))]
+    pub(crate) fn command(&self) -> Option<KnownCommand> {
+        parse_command(self.known_command, self.data, self.args, self.data_start)
+            .map(|(command, _)| command)
+    }
+
+    /// Returns the stored known command, without falling back to parsing the arguments.
+    #[cfg(feature = "cache-aio")]
+    pub(crate) fn known_command(&self) -> Option<KnownCommand> {
+        self.known_command
     }
 
     /// Check whether the command's result will be waited for.
@@ -135,11 +284,25 @@ impl<'a> CmdRef<'a> {
         self.cache
     }
 
-    /// Returns the end offset of each argument, along with where `data` starts in the buffer
-    /// those offsets index into.
+    /// Returns the command's actual arguments without its name, along with the offset base for
+    /// the returned argument slice.
+    ///
+    /// The cache keys commands by their name (as a [`KnownCommand`]) plus their actual arguments,
+    /// so it does not matter whether the name was stored in the buffers or synthesized from a
+    /// known command.
     #[cfg(feature = "cache-aio")]
-    pub(crate) fn arg_offsets(&self) -> (&'a [Arg<usize>], usize) {
-        (self.args, self.data_start)
+    pub(crate) fn cache_key_parts(&self) -> (&'a [u8], &'a [Arg<usize>], usize) {
+        let name_args = parse_command(self.known_command, self.data, self.args, self.data_start)
+            .map_or(0, |(_, name_args)| name_args);
+        let name_bytes = (0..name_args)
+            .filter_map(|idx| arg_at(None, self.data, self.args, self.data_start, idx))
+            .map(<[u8]>::len)
+            .sum::<usize>();
+        (
+            &self.data[name_bytes..],
+            &self.args[name_args..],
+            self.data_start + name_bytes,
+        )
     }
 
     #[cfg(feature = "cache-aio")]
@@ -150,7 +313,7 @@ impl<'a> CmdRef<'a> {
     /// Returns the packed command as a byte vector.
     pub fn get_packed_command(&self) -> Vec<u8> {
         let mut cmd = Vec::new();
-        if self.args.is_empty() {
+        if self.args.is_empty() && self.known_command.is_none() {
             return cmd;
         }
         self.write_packed_command(&mut cmd);
@@ -173,6 +336,7 @@ impl<'a> CmdRef<'a> {
                 Arg::Cursor => cmd.args.push(Arg::Cursor),
             }
         }
+        cmd.known_command = self.known_command;
         cmd.cursor = self.cursor;
         cmd.no_response = self.no_response;
         #[cfg(feature = "cache-aio")]
@@ -239,6 +403,7 @@ pub struct Cmd {
     pub(crate) data: Vec<u8>,
     // Arg::Simple contains the offset that marks the end of the argument
     args: Vec<Arg<usize>>,
+    known_command: Option<KnownCommand>,
     cursor: Option<u64>,
     // If it's true command's response won't be read from socket. Useful for Pub/Sub.
     no_response: bool,
@@ -251,6 +416,7 @@ impl std::fmt::Debug for Cmd {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut debug_struct = f.debug_struct("Cmd");
         debug_struct
+            .field("known_command", &self.known_command)
             .field("data", &String::from_utf8_lossy(&self.data).as_ref())
             .field("args", &self.args)
             .field("cursor", &self.cursor)
@@ -646,6 +812,7 @@ impl Cmd {
         Self {
             data: vec![],
             args: vec![],
+            known_command: None,
             cursor: None,
             no_response: false,
             skip_concurrency_limit: false,
@@ -659,6 +826,26 @@ impl Cmd {
         Self {
             data: Vec::with_capacity(size_of_data),
             args: Vec::with_capacity(arg_count),
+            known_command: None,
+            cursor: None,
+            no_response: false,
+            skip_concurrency_limit: false,
+            #[cfg(feature = "cache-aio")]
+            cache: None,
+        }
+    }
+
+    /// Creates a command whose name is stored as a [`KnownCommand`] rather than copied into the
+    /// argument buffers.
+    pub(crate) fn with_known_command(
+        command: KnownCommand,
+        arg_count: usize,
+        size_of_data: usize,
+    ) -> Self {
+        Self {
+            data: Vec::with_capacity(size_of_data),
+            args: Vec::with_capacity(arg_count),
+            known_command: Some(command),
             cursor: None,
             no_response: false,
             skip_concurrency_limit: false,
@@ -695,6 +882,7 @@ impl Cmd {
     pub fn clear(&mut self) {
         self.data.clear();
         self.args.clear();
+        self.known_command = None;
         self.cursor = None;
         self.no_response = false;
         self.skip_concurrency_limit = false;
@@ -915,43 +1103,26 @@ impl Cmd {
         self.query_async::<()>(con).await
     }
 
+    /// Returns the known command represented by this command, if any.
+    #[cfg(feature = "cluster")]
+    pub(crate) fn command(&self) -> Option<KnownCommand> {
+        parse_command(self.known_command, &self.data, &self.args, 0).map(|(command, _)| command)
+    }
+
+    /// Returns the stored known command, without falling back to parsing the arguments.
+    pub(crate) fn known_command(&self) -> Option<KnownCommand> {
+        self.known_command
+    }
+
     /// Returns an iterator over the arguments in this command (including the command name itself)
     pub fn args_iter(&self) -> impl Clone + ExactSizeIterator<Item = Arg<&[u8]>> {
-        let mut prev = 0;
-        self.args.iter().map(move |arg| match *arg {
-            Arg::Simple(i) => {
-                let arg = Arg::Simple(&self.data[prev..i]);
-                prev = i;
-                arg
-            }
-
-            Arg::Cursor => Arg::Cursor,
-        })
+        ArgIter::new(self.known_command, &self.data, &self.args, 0)
     }
 
     // Get a reference to the argument at `idx`
     #[cfg(feature = "cluster")]
     pub(crate) fn arg_idx(&self, idx: usize) -> Option<&[u8]> {
-        if idx >= self.args.len() {
-            return None;
-        }
-
-        let start = if idx == 0 {
-            0
-        } else {
-            match self.args[idx - 1] {
-                Arg::Simple(n) => n,
-                _ => 0,
-            }
-        };
-        let end = match self.args[idx] {
-            Arg::Simple(n) => n,
-            _ => 0,
-        };
-        if start == 0 && end == 0 {
-            return None;
-        }
-        Some(&self.data[start..end])
+        arg_at(self.known_command, &self.data, &self.args, 0, idx)
     }
 
     /// Client won't read and wait for results. Currently only used for Pub/Sub commands in RESP3.
@@ -985,7 +1156,7 @@ impl Cmd {
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.args.is_empty()
+        self.args.is_empty() && self.known_command.is_none()
     }
 }
 
@@ -1104,6 +1275,57 @@ mod tests {
             .chain(std::iter::once(Arg::Cursor))
             .collect();
         assert_eq!(cmd.args_iter().collect::<Vec<_>>(), args_vec);
+    }
+
+    #[test]
+    #[cfg(feature = "cluster")]
+    fn known_command_arg_idx_includes_command_name() {
+        let cmd = Cmd::get("key");
+        assert_eq!(cmd.arg_idx(0), Some(b"GET".as_slice()));
+        assert_eq!(cmd.arg_idx(1), Some(b"key".as_slice()));
+
+        let cmd = Cmd::client_getname();
+        assert_eq!(cmd.arg_idx(0), Some(b"CLIENT".as_slice()));
+        assert_eq!(cmd.arg_idx(1), Some(b"GETNAME".as_slice()));
+    }
+
+    #[test]
+    fn known_command_storage_preserves_reported_args() {
+        let cases = [
+            (Cmd::get("key"), cmd("GET").arg("key").clone()),
+            (
+                Cmd::set("key", "value"),
+                cmd("SET").arg("key").arg("value").clone(),
+            ),
+            (
+                Cmd::object_encoding("key"),
+                cmd("OBJECT").arg("ENCODING").arg("key").clone(),
+            ),
+            (Cmd::client_getname(), cmd("CLIENT").arg("GETNAME").clone()),
+            (
+                Cmd::bit_and("dst", &["a", "b"]),
+                cmd("BITOP").arg("AND").arg("dst").arg(&["a", "b"]).clone(),
+            ),
+        ];
+
+        for (known, manual) in cases {
+            assert_eq!(
+                known.args_iter().len(),
+                manual.args_iter().len(),
+                "argument count changed for {known:?}"
+            );
+            assert_eq!(
+                cmd_len(&known),
+                cmd_len(&manual),
+                "argument length changed for {known:?}"
+            );
+            assert_eq!(
+                known.args_iter().collect::<Vec<_>>(),
+                manual.args_iter().collect::<Vec<_>>(),
+                "arguments changed for {known:?}"
+            );
+            assert_eq!(known.get_packed_command(), manual.get_packed_command());
+        }
     }
 
     #[test]
