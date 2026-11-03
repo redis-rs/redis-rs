@@ -11,6 +11,8 @@ use crate::{
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
 #[non_exhaustive]
 pub enum ErrorKind {
+    /// The response frame exceeded the configured maximum byte size.
+    ResponseTooLarge,
     /// The parser failed to parse the server response.
     Parse,
     /// The authentication with the server failed.
@@ -242,6 +244,11 @@ pub enum RetryMethod {
 
 /// Indicates a general failure in the library.
 impl RedisError {
+    /// Reports whether a configured response-frame byte limit caused this error.
+    pub fn is_response_too_large(&self) -> bool {
+        self.kind() == ErrorKind::ResponseTooLarge
+    }
+
     /// Returns the kind of the error.
     pub fn kind(&self) -> ErrorKind {
         match &self.repr {
@@ -283,6 +290,7 @@ impl RedisError {
     /// Returns the name of the error category for display purposes.
     pub fn category(&self) -> &str {
         match self.kind() {
+            ErrorKind::ResponseTooLarge => "response frame too large",
             ErrorKind::Server(ServerErrorKind::ResponseError) => "response error",
             ErrorKind::AuthenticationFailed => "authentication failed",
             ErrorKind::UnexpectedReturnType => "type error",
@@ -443,6 +451,7 @@ impl RedisError {
             ErrorKind::RESP3NotSupported => RetryMethod::NoRetry,
 
             ErrorKind::Parse => RetryMethod::Reconnect,
+            ErrorKind::ResponseTooLarge => RetryMethod::Reconnect,
             ErrorKind::AuthenticationFailed => RetryMethod::Reconnect,
             ErrorKind::ClusterConnectionNotFound => RetryMethod::ReconnectFromInitialConnections,
 

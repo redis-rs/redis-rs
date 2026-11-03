@@ -9,7 +9,10 @@ use crate::io::AsyncDNSResolver;
 #[cfg(feature = "aio")]
 use crate::types::set_or_unset;
 use crate::{
-    connection::{Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo, connect},
+    connection::{
+        Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo, connect,
+        connect_with_max_response_bytes,
+    },
     types::{RedisResult, Value},
 };
 #[cfg(feature = "aio")]
@@ -65,6 +68,24 @@ impl Client {
     /// errors.
     pub fn get_connection(&self) -> RedisResult<Connection> {
         connect(&self.connection_info, None)
+    }
+
+    /// Opens a synchronous connection with additional response parsing limits.
+    pub fn get_connection_with_config(&self, config: &ConnectionConfig) -> RedisResult<Connection> {
+        connect_with_max_response_bytes(&self.connection_info, None, config.max_response_bytes)
+    }
+
+    /// Opens a synchronous connection with a timeout and response parsing limits.
+    pub fn get_connection_with_timeout_and_config(
+        &self,
+        timeout: Duration,
+        config: &ConnectionConfig,
+    ) -> RedisResult<Connection> {
+        connect_with_max_response_bytes(
+            &self.connection_info,
+            Some(timeout),
+            config.max_response_bytes,
+        )
     }
 
     /// Instructs the client to actually connect to redis with specified
@@ -166,6 +187,29 @@ impl Client {
     }
 }
 
+/// Options that limit response parsing on a synchronous connection.
+#[derive(Clone, Debug, Default)]
+pub struct ConnectionConfig {
+    /// Maximum encoded size accepted for one RESP response frame.
+    pub(crate) max_response_bytes: Option<usize>,
+}
+
+impl ConnectionConfig {
+    /// Creates a configuration with default response parsing behavior.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the maximum encoded size accepted for one RESP response frame.
+    ///
+    /// A frame exceeding this limit returns [`crate::ErrorKind::ResponseTooLarge`].
+    /// `None` disables this limit.
+    pub fn set_max_response_bytes(mut self, max_response_bytes: Option<usize>) -> Self {
+        self.max_response_bytes = max_response_bytes;
+        self
+    }
+}
+
 #[cfg(feature = "cache-aio")]
 #[derive(Clone)]
 pub(crate) enum Cache {
@@ -198,6 +242,8 @@ pub struct AsyncConnectionConfig {
     /// A tracker of the connection's confirmed subscriptions, shared with the connection.
     pub(crate) subscription_tracker:
         Option<std::sync::Arc<std::sync::Mutex<crate::subscription_tracker::SubscriptionTracker>>>,
+    /// Maximum encoded size accepted for one RESP response frame.
+    pub(crate) max_response_bytes: Option<usize>,
     /// Optional credentials provider for dynamic authentication (e.g., token-based authentication)
     #[cfg(feature = "token-based-authentication")]
     pub(crate) credentials_provider: Option<std::sync::Arc<dyn StreamingCredentialsProvider>>,
@@ -217,6 +263,7 @@ impl std::fmt::Debug for AsyncConnectionConfig {
             concurrency_limit,
             write_backpressure_boundary,
             subscription_tracker,
+            max_response_bytes,
             #[cfg(feature = "token-based-authentication")]
             credentials_provider,
         } = self;
@@ -227,6 +274,7 @@ impl std::fmt::Debug for AsyncConnectionConfig {
             .field("pipeline_buffer_size", pipeline_buffer_size)
             .field("concurrency_limit", concurrency_limit)
             .field("write_backpressure_boundary", write_backpressure_boundary)
+            .field("max_response_bytes", max_response_bytes)
             .field("push_sender", &set_or_unset(push_sender))
             .field("subscription_tracker", &set_or_unset(subscription_tracker))
             .field("dns_resolver", &set_or_unset(dns_resolver));
@@ -255,6 +303,7 @@ impl Default for AsyncConnectionConfig {
             concurrency_limit: None,
             write_backpressure_boundary: None,
             subscription_tracker: None,
+            max_response_bytes: None,
             #[cfg(feature = "token-based-authentication")]
             credentials_provider: None,
         }
@@ -266,6 +315,15 @@ impl AsyncConnectionConfig {
     /// Creates a new instance of the config with all parameters set to default values.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Sets the maximum encoded size accepted for one RESP response frame.
+    ///
+    /// A frame exceeding this limit returns [`crate::ErrorKind::ResponseTooLarge`].
+    /// `None` disables this limit.
+    pub fn set_max_response_bytes(mut self, max_response_bytes: Option<usize>) -> Self {
+        self.max_response_bytes = max_response_bytes;
+        self
     }
 
     /// Each connection attempt to the server will time out after `connection_timeout`.
