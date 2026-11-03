@@ -146,11 +146,11 @@ pub(crate) fn split_node_address(node: &str) -> RedisResult<(&str, u16)> {
 /// the redirect without a host, as in `MOVED 3999 :6381`, and the client is expected to keep the
 /// host it sent the request to, with the port of the redirect.
 pub(crate) fn redirect_address(node: &str, origin: &NodeAddress) -> Option<NodeAddress> {
-    match node.rsplit_once(':') {
-        Some(("", port)) => u16::from_str(port)
-            .ok()
-            .map(|port| NodeAddress::new(origin.host.clone(), port)),
-        _ => NodeAddress::try_from(node).ok(),
+    let (host, port) = node.rsplit_once(':')?;
+    let port = u16::from_str(port).ok()?;
+    match host {
+        "" => Some(NodeAddress::new(origin.host.clone(), port)),
+        host => Some(NodeAddress::new(host, port)),
     }
 }
 
