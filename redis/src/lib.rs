@@ -668,6 +668,7 @@ compile_error!(
 #[cfg(feature = "aio")]
 pub use crate::client::AsyncConnectionConfig;
 pub use crate::client::Client;
+pub use crate::client::ConnectionConfig;
 #[cfg(feature = "cache-aio")]
 pub use crate::cmd::CommandCacheConfig;
 pub use crate::cmd::{Arg, Cmd, Iter, cmd, pack_command, pipe};

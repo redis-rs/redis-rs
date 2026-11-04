@@ -2576,3 +2576,139 @@ mod basic_async {
         }
     }
 }
+
+mod response_limits {
+    use super::support::*;
+    use redis::{
+        AsyncCommands, AsyncConnectionConfig, ErrorKind, ProtocolVersion, PushKind, Value, cmd,
+        pipe,
+    };
+    use redis_test::TestContext;
+    use test_macros::async_test;
+
+    const LIMIT: usize = 1024;
+
+    #[async_test]
+    async fn response_limit_regular_response() {
+        let ctx = TestContext::default();
+        let mut writer = ctx.async_connection().await.unwrap();
+        writer
+            .set::<_, _, ()>("large", vec![b'x'; LIMIT * 4])
+            .await
+            .unwrap();
+        let config = AsyncConnectionConfig::new().set_max_response_bytes(Some(LIMIT));
+        let mut connection = ctx
+            .client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await
+            .unwrap();
+        let error = cmd("GET")
+            .arg("large")
+            .query_async::<Value>(&mut connection)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::ResponseTooLarge);
+        let pong: String = cmd("PING").query_async(&mut connection).await.unwrap();
+        assert_eq!(pong, "PONG");
+    }
+
+    #[async_test]
+    async fn response_limit_pipeline() {
+        let ctx = TestContext::default();
+        let mut writer = ctx.async_connection().await.unwrap();
+        writer
+            .set::<_, _, ()>("large", vec![b'x'; LIMIT * 4])
+            .await
+            .unwrap();
+        let config = AsyncConnectionConfig::new().set_max_response_bytes(Some(LIMIT));
+        let mut connection = ctx
+            .client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await
+            .unwrap();
+        let error = pipe()
+            .cmd("GET")
+            .arg("large")
+            .cmd("PING")
+            .query_async::<Vec<Value>>(&mut connection)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::ResponseTooLarge);
+        let pong: String = cmd("PING").query_async(&mut connection).await.unwrap();
+        assert_eq!(pong, "PONG");
+    }
+
+    #[async_test]
+    async fn response_limit_subscription_confirmation() {
+        let ctx = redis_test::TestContextBuilder::new()
+            .protocol(ProtocolVersion::RESP3)
+            .build();
+        let config = AsyncConnectionConfig::new().set_max_response_bytes(Some(LIMIT));
+        let mut connection = ctx
+            .client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await
+            .unwrap();
+        let error = connection
+            .subscribe("x".repeat(LIMIT * 4))
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::ResponseTooLarge);
+    }
+
+    #[async_test]
+    async fn response_limit_marker_is_a_normal_server_error() {
+        let ctx = TestContext::default();
+        for limit in [None, Some(LIMIT)] {
+            let config = AsyncConnectionConfig::new().set_max_response_bytes(limit);
+            let mut connection = ctx
+                .client
+                .get_multiplexed_async_connection_with_config(&config)
+                .await
+                .unwrap();
+            let error = cmd("EVAL")
+                .arg("return redis.error_reply('REDIS_RS_INTERNAL_RESPONSE_TOO_LARGE message')")
+                .arg(0)
+                .query_async::<Value>(&mut connection)
+                .await
+                .unwrap_err();
+            assert!(!error.is_response_too_large());
+            assert_eq!(error.code(), Some("REDIS_RS_INTERNAL_RESPONSE_TOO_LARGE"));
+        }
+    }
+
+    #[async_test]
+    async fn response_limit_pubsub() {
+        let ctx = redis_test::TestContextBuilder::new()
+            .protocol(ProtocolVersion::RESP3)
+            .build();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let config = AsyncConnectionConfig::new()
+            .set_max_response_bytes(Some(LIMIT))
+            .set_push_sender(tx);
+        let mut connection = ctx
+            .client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await
+            .unwrap();
+        connection.subscribe("limits").await.unwrap();
+        assert_eq!(rx.recv().await.unwrap().kind, PushKind::Subscribe);
+        let mut writer = ctx.async_connection().await.unwrap();
+        writer
+            .publish::<_, _, ()>("limits", vec![b'x'; LIMIT * 4])
+            .await
+            .unwrap();
+        writer.publish::<_, _, ()>("limits", "small").await.unwrap();
+        let message = rx.recv().await.unwrap();
+        assert_eq!(message.kind, PushKind::Message);
+        assert_eq!(
+            message.data,
+            vec![
+                Value::BulkString(b"limits".to_vec()),
+                Value::BulkString(b"small".to_vec())
+            ]
+        );
+        let pong: String = cmd("PING").query_async(&mut connection).await.unwrap();
+        assert_eq!(pong, "PONG");
+    }
+}

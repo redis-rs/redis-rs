@@ -12,7 +12,7 @@ use crate::{
     aio::setup_connection,
     check_resp3,
     cmd::Cmd,
-    errors::{ErrorKind, RedisError, closed_connection_error},
+    errors::{ErrorKind, RedisError, Repr, closed_connection_error},
     parser::ValueCodec,
     types::{RedisFuture, RedisResult, Value},
 };
@@ -69,6 +69,7 @@ struct PipelineResponseExpectation {
     // How the request's responses are handled, beyond skipping and buffering them.
     kind: RequestKind,
     seen_responses: usize,
+    received_responses: usize,
 }
 
 /// The kinds of requests that await a specific number of responses.
@@ -102,6 +103,7 @@ impl PipelineResponseExpectation {
                 RequestKind::Pipeline
             },
             seen_responses: 0,
+            received_responses: 0,
         }
     }
 
@@ -113,6 +115,7 @@ impl PipelineResponseExpectation {
             expected,
             kind: RequestKind::SubscribeLike,
             seen_responses: 0,
+            received_responses: 0,
         }
     }
 }
@@ -253,6 +256,9 @@ where
     fn send_result(self: Pin<&mut Self>, result: RedisResult<Value>) {
         let self_ = self.project();
         let result = match result {
+            Ok(Value::ServerError(error)) if matches!(error.0, Repr::ResponseTooLarge) => Err(
+                RedisError::from((ErrorKind::ResponseTooLarge, "response frame too large")),
+            ),
             // If this push message isn't a reply, we'll pass it as-is to the push manager and stop iterating
             Ok(Value::Push { kind, data }) if !kind.has_reply() => {
                 #[cfg(feature = "cache-aio")]
@@ -378,6 +384,8 @@ where
                     return;
                 }
 
+                expectation.received_responses += 1;
+
                 match result {
                     Ok(item) => {
                         buffer.push(item);
@@ -398,7 +406,7 @@ where
                     #[cfg(feature = "cluster-async")]
                     ExpectedConfirmations::UnsubscribeAllShardChannels => 1,
                 };
-                if buffer.len() < expected {
+                if expectation.received_responses < expected {
                     // Need to gather more response values
                     self_.in_flight.push_front(entry);
                     return;
@@ -745,7 +753,8 @@ impl MultiplexedConnection {
     where
         C: Unpin + AsyncRead + AsyncWrite + Send + 'static,
     {
-        let mut codec = ValueCodec::default().framed(stream);
+        let mut codec =
+            ValueCodec::with_max_response_bytes(config.max_response_bytes).framed(stream);
         if let Some(boundary) = config.write_backpressure_boundary {
             codec.set_backpressure_boundary(boundary);
         }
