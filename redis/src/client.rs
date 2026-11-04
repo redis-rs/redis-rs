@@ -203,7 +203,12 @@ impl ConnectionConfig {
     /// Sets the maximum encoded size accepted for one RESP response frame.
     ///
     /// A frame exceeding this limit returns [`crate::ErrorKind::ResponseTooLarge`].
-    /// `None` disables this limit.
+    /// `None` (the default) disables this limit. The size includes RESP headers
+    /// and delimiters, and applies to each frame rather than the whole pipeline.
+    /// Oversized frames are drained so later responses remain aligned. If a
+    /// frame cannot be drained safely, the connection is terminated. Oversized
+    /// subscription confirmations also terminate the connection.
+    /// Oversized unsolicited RESP3 push frames are dropped without delivery.
     pub fn set_max_response_bytes(mut self, max_response_bytes: Option<usize>) -> Self {
         self.max_response_bytes = max_response_bytes;
         self
@@ -320,7 +325,12 @@ impl AsyncConnectionConfig {
     /// Sets the maximum encoded size accepted for one RESP response frame.
     ///
     /// A frame exceeding this limit returns [`crate::ErrorKind::ResponseTooLarge`].
-    /// `None` disables this limit.
+    /// `None` (the default) disables this limit. The size includes RESP headers
+    /// and delimiters, and applies to each frame rather than the whole pipeline.
+    /// Oversized frames are drained so later responses remain aligned. If a
+    /// frame cannot be drained safely, the connection is terminated. Oversized
+    /// subscription confirmations also terminate the connection.
+    /// Oversized unsolicited RESP3 push frames are dropped without delivery.
     pub fn set_max_response_bytes(mut self, max_response_bytes: Option<usize>) -> Self {
         self.max_response_bytes = max_response_bytes;
         self

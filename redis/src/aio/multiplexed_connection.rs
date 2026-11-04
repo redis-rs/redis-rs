@@ -12,8 +12,8 @@ use crate::{
     aio::setup_connection,
     check_resp3,
     cmd::Cmd,
-    errors::{ErrorKind, RedisError, closed_connection_error},
-    parser::{RESPONSE_TOO_LARGE_MARKER, ValueCodec},
+    errors::{ErrorKind, RedisError, Repr, closed_connection_error},
+    parser::ValueCodec,
     types::{RedisFuture, RedisResult, Value},
 };
 use ::tokio::{
@@ -256,7 +256,7 @@ where
     fn send_result(self: Pin<&mut Self>, result: RedisResult<Value>) {
         let self_ = self.project();
         let result = match result {
-            Ok(Value::ServerError(error)) if error.code() == RESPONSE_TOO_LARGE_MARKER => Err(
+            Ok(Value::ServerError(error)) if matches!(error.0, Repr::ResponseTooLarge) => Err(
                 RedisError::from((ErrorKind::ResponseTooLarge, "response frame too large")),
             ),
             // If this push message isn't a reply, we'll pass it as-is to the push manager and stop iterating

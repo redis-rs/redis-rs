@@ -25,8 +25,8 @@ use combine::{
 
 const MAX_RECURSE_DEPTH: usize = 100;
 /// Identifies a discarded oversized frame to the async response dispatcher.
-#[cfg(feature = "aio")]
-pub(crate) const RESPONSE_TOO_LARGE_MARKER: &str = "REDIS_RS_INTERNAL_RESPONSE_TOO_LARGE";
+#[cfg(all(feature = "aio", test))]
+const RESPONSE_TOO_LARGE_MARKER: &str = "REDIS_RS_INTERNAL_RESPONSE_TOO_LARGE";
 
 fn err_parser(line: &str) -> ServerError {
     let mut pieces = line.splitn(2, ' ');
@@ -406,15 +406,19 @@ mod aio_support {
                         return Ok(None);
                     }
                     if frame_marker == Some(b'>') {
+                        // A dropped subscription acknowledgement cannot safely
+                        // satisfy the request's expected confirmations.
+                        if self.preflight.completed_push_has_reply() != Some(false) {
+                            return Err(response_too_large());
+                        }
                         if bytes.is_empty() {
                             return Ok(None);
                         }
                         continue;
                     }
-                    return Ok(Some(Value::ServerError(ServerError(Repr::Extension {
-                        code: arcstr::ArcStr::from(RESPONSE_TOO_LARGE_MARKER),
-                        detail: None,
-                    }))));
+                    return Ok(Some(Value::ServerError(ServerError(
+                        Repr::ResponseTooLarge,
+                    ))));
                 }
                 let (opt, removed_len) = {
                     let buffer = &bytes[..];
@@ -504,6 +508,7 @@ struct FramePreflight {
     marker: Option<u8>,
     frame_marker: Option<u8>,
     completed_marker: Option<u8>,
+    push_prefix: Vec<u8>,
     exceeded: bool,
     bulk_remaining: usize,
     aggregate_remaining: Vec<usize>,
@@ -513,6 +518,13 @@ struct FramePreflight {
 
 impl FramePreflight {
     fn scan(&mut self, bytes: &[u8], limit: usize) -> Result<(usize, bool, bool, Option<u8>), ()> {
+        if self.frame_bytes == 0 {
+            self.push_prefix.clear();
+        }
+        // Only the first push element is needed to distinguish unsolicited
+        // messages from subscription acknowledgements. Keep a bounded prefix.
+        let prefix_len = (64 - self.push_prefix.len()).min(bytes.len());
+        self.push_prefix.extend_from_slice(&bytes[..prefix_len]);
         let mut cursor = 0;
         let mut frame_complete = false;
         self.completed_marker = None;
@@ -543,7 +555,19 @@ impl FramePreflight {
                 self.scanned_bytes += 1;
             }
             if let Some(marker) = self.marker {
-                self.line.push(byte);
+                // Only length/count headers need buffering. Scalar lines can be
+                // discarded incrementally, even after exceeding the frame limit.
+                if matches!(
+                    marker,
+                    b'$' | b'!' | b'=' | b'*' | b'%' | b'~' | b'|' | b'>'
+                ) {
+                    // A signed i64 plus CRLF fits in 22 bytes. Longer headers
+                    // cannot be framed reliably, so terminate the connection.
+                    if self.line.len() >= 22 {
+                        return Err(());
+                    }
+                    self.line.push(byte);
+                }
                 if byte == b'\n' {
                     let declaration =
                         std::str::from_utf8(&self.line[..self.line.len().saturating_sub(2)])
@@ -607,6 +631,27 @@ impl FramePreflight {
             self.exceeded = false;
         }
         Ok((cursor, frame_complete, exceeded, completed_marker))
+    }
+
+    fn completed_push_has_reply(&self) -> Option<bool> {
+        if self.completed_marker != Some(b'>') {
+            return None;
+        }
+        let header_end = self.push_prefix.iter().position(|byte| *byte == b'\n')? + 1;
+        let kind = match parse_redis_value(&self.push_prefix[header_end..]).ok()? {
+            Value::BulkString(bytes) => String::from_utf8(bytes).ok()?,
+            Value::SimpleString(kind) => kind,
+            _ => return None,
+        };
+        Some(matches!(
+            kind.as_str(),
+            "subscribe"
+                | "psubscribe"
+                | "ssubscribe"
+                | "unsubscribe"
+                | "punsubscribe"
+                | "sunsubscribe"
+        ))
     }
 
     fn account_bytes(&mut self, count: usize, limit: usize) -> Result<(), ()> {
@@ -745,6 +790,7 @@ pub struct Parser {
     max_response_bytes: Option<usize>,
     pending_bytes: VecDeque<u8>,
     last_response_was_dropped: bool,
+    preflight: FramePreflight,
 }
 
 impl Default for Parser {
@@ -768,6 +814,7 @@ impl Parser {
             max_response_bytes: None,
             pending_bytes: VecDeque::new(),
             last_response_was_dropped: false,
+            preflight: FramePreflight::default(),
         }
     }
 
@@ -777,30 +824,40 @@ impl Parser {
     pub fn parse_value<T: Read>(&mut self, mut reader: T) -> RedisResult<Value> {
         self.last_response_was_dropped = false;
         if let Some(limit) = self.max_response_bytes {
-            let exceeded = std::rc::Rc::new(std::cell::Cell::new(false));
-            let dropped = std::rc::Rc::new(std::cell::Cell::new(false));
-            let mut limited_reader = ResponseLimitReader::new(
-                &mut reader,
-                limit,
-                &mut self.pending_bytes,
-                exceeded.clone(),
-                dropped.clone(),
-            );
-            let mut decoder = &mut self.decoder;
-            let result = combine::decode!(decoder, limited_reader, value(None), |input, _| {
-                combine::stream::easy::Stream::from(input)
-            });
-            if exceeded.get() {
-                self.last_response_was_dropped = dropped.get();
-                if dropped.get() {
-                    self.decoder = Decoder::new();
+            loop {
+                let exceeded = std::rc::Rc::new(std::cell::Cell::new(false));
+                let dropped = std::rc::Rc::new(std::cell::Cell::new(false));
+                let mut limited_reader = ResponseLimitReader::new(
+                    &mut reader,
+                    limit,
+                    &mut self.pending_bytes,
+                    exceeded.clone(),
+                    dropped.clone(),
+                );
+                limited_reader.preflight = std::mem::take(&mut self.preflight);
+                let mut decoder = &mut self.decoder;
+                let result = combine::decode!(decoder, limited_reader, value(None), |input, _| {
+                    combine::stream::easy::Stream::from(input)
+                });
+                let result = match result {
+                    Err(err) => Err(to_redis_err!(err, decoder)),
+                    Ok(value) => Ok(value),
+                };
+                self.preflight = std::mem::take(&mut limited_reader.preflight);
+                if exceeded.get() {
+                    if dropped.get() && self.preflight.completed_push_has_reply() == Some(false) {
+                        self.decoder = Decoder::new();
+                        continue;
+                    }
+                    self.last_response_was_dropped =
+                        dropped.get() && self.preflight.completed_marker != Some(b'>');
+                    if dropped.get() {
+                        self.decoder = Decoder::new();
+                    }
+                    return Err(response_too_large());
                 }
-                return Err(response_too_large());
+                return result;
             }
-            return match result {
-                Err(err) => Err(to_redis_err!(err, decoder)),
-                Ok(result) => Ok(result),
-            };
         }
 
         let mut decoder = &mut self.decoder;
@@ -819,6 +876,9 @@ impl Parser {
     }
 
     /// Sets the maximum encoded size accepted for one RESP response frame.
+    ///
+    /// `None` (the default) disables the limit. This includes RESP headers and
+    /// delimiters. Oversized frames return [`crate::ErrorKind::ResponseTooLarge`].
     pub fn set_max_response_bytes(mut self, max_response_bytes: Option<usize>) -> Self {
         self.max_response_bytes = max_response_bytes;
         self
@@ -862,6 +922,98 @@ mod response_limit_tests {
             self.multi_byte_calls += usize::from(buf.len() > 1);
             self.inner.read(buf)
         }
+    }
+
+    #[test]
+    fn preflight_bounds_chunked_simple_line_storage() {
+        let mut preflight = FramePreflight::default();
+        preflight.scan(b"+", 32).unwrap();
+        for _ in 0..128 {
+            let (_, complete, _, _) = preflight.scan(&[b'x'; 1024], 32).unwrap();
+            assert!(!complete);
+            assert!(preflight.line.len() <= 32);
+        }
+        assert!(preflight.scan(b"\r\n", 32).unwrap().2);
+        assert!(!preflight.scan(b"+OK\r\n", 32).unwrap().2);
+    }
+
+    #[test]
+    fn parser_drains_oversized_simple_line_and_reads_next_frame() {
+        let mut frame = vec![b'+'];
+        frame.extend(vec![b'x'; 65536]);
+        frame.extend_from_slice(b"\r\n+OK\r\n");
+        let mut reader = std::io::Cursor::new(frame);
+        let mut parser = Parser::new().set_max_response_bytes(Some(32));
+        assert!(
+            parser
+                .parse_value(&mut reader)
+                .unwrap_err()
+                .is_response_too_large()
+        );
+        assert!(parser.last_response_was_dropped());
+        assert_eq!(parser.parse_value(&mut reader).unwrap(), Value::Okay);
+    }
+
+    #[test]
+    fn parser_rejects_unbounded_length_header() {
+        let mut reader = std::io::Cursor::new(b"$000000000000000000000000000001\r\nx\r\n");
+        let mut parser = Parser::new().set_max_response_bytes(Some(32));
+        assert!(
+            parser
+                .parse_value(&mut reader)
+                .unwrap_err()
+                .is_response_too_large()
+        );
+        assert!(!parser.last_response_was_dropped());
+    }
+
+    #[test]
+    fn default_parser_accepts_large_response() {
+        let frame = format!("+{}\r\n", "x".repeat(65536));
+        let value = Parser::new()
+            .parse_value(std::io::Cursor::new(frame))
+            .unwrap();
+        assert_eq!(value, Value::SimpleString("x".repeat(65536)));
+    }
+
+    #[test]
+    fn parser_skips_oversized_unsolicited_push() {
+        let mut frame = b">3\r\n$7\r\nmessage\r\n$1\r\nc\r\n$2048\r\n".to_vec();
+        frame.extend(vec![b'x'; 2048]);
+        frame.extend_from_slice(b"\r\n+PONG\r\n");
+        let mut parser = Parser::new().set_max_response_bytes(Some(1024));
+        assert_eq!(
+            parser.parse_value(std::io::Cursor::new(frame)).unwrap(),
+            Value::SimpleString("PONG".into())
+        );
+    }
+
+    #[test]
+    fn parser_preserves_preflight_after_timeout() {
+        struct InterruptedBulk {
+            step: usize,
+        }
+        impl Read for InterruptedBulk {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                self.step += 1;
+                let bytes: &[u8] = match self.step {
+                    1 => b"$8\r\na",
+                    2 => return Err(io::ErrorKind::TimedOut.into()),
+                    3 => b"b\ncdefg\r\n+OK\r\n",
+                    _ => return Ok(0),
+                };
+                buf[..bytes.len()].copy_from_slice(bytes);
+                Ok(bytes.len())
+            }
+        }
+        let mut reader = InterruptedBulk { step: 0 };
+        let mut parser = Parser::new().set_max_response_bytes(Some(32));
+        assert!(parser.parse_value(&mut reader).unwrap_err().is_timeout());
+        assert_eq!(
+            parser.parse_value(&mut reader).unwrap(),
+            Value::BulkString(b"ab\ncdefg".to_vec())
+        );
+        assert_eq!(parser.parse_value(&mut reader).unwrap(), Value::Okay);
     }
 
     #[test]

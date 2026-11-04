@@ -87,6 +87,9 @@ pub struct ServerError(pub(crate) Repr);
 
 #[derive(PartialEq, Debug, Clone)]
 pub(crate) enum Repr {
+    // An internal codec event, distinguishable from every wire server error.
+    #[cfg(feature = "aio")]
+    ResponseTooLarge,
     Extension {
         code: ArcStr,
         detail: Option<ArcStr>,
@@ -101,6 +104,8 @@ impl ServerError {
     /// Returns the kind of error. If `None`, try `crate::Self::code` to get the error code.
     pub fn kind(&self) -> Option<ServerErrorKind> {
         match &self.0 {
+            #[cfg(feature = "aio")]
+            Repr::ResponseTooLarge => None,
             Repr::Extension { .. } => None,
             Repr::Known { kind, .. } => Some(*kind),
         }
@@ -109,6 +114,8 @@ impl ServerError {
     /// The error code returned from the server
     pub fn code(&self) -> &str {
         match &self.0 {
+            #[cfg(feature = "aio")]
+            Repr::ResponseTooLarge => "REDIS_RS_INTERNAL_RESPONSE_TOO_LARGE",
             Repr::Extension { code, .. } => code,
             Repr::Known { kind, .. } => kind.code(),
         }
@@ -117,6 +124,8 @@ impl ServerError {
     /// Additional details about the error, if exist
     pub fn details(&self) -> Option<&str> {
         match &self.0 {
+            #[cfg(feature = "aio")]
+            Repr::ResponseTooLarge => None,
             Repr::Extension { detail, .. } => detail.as_ref().map(|str| str.as_str()),
             Repr::Known { detail, .. } => detail.as_ref().map(|str| str.as_str()),
         }
@@ -136,6 +145,8 @@ impl ServerError {
 impl fmt::Display for ServerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 {
+            #[cfg(feature = "aio")]
+            Repr::ResponseTooLarge => f.write_str("response frame too large"),
             Repr::Extension { code, detail } => {
                 fmt::Debug::fmt(&code, f)?;
                 if let Some(detail) = detail {
