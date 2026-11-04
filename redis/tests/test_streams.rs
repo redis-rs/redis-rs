@@ -3014,10 +3014,22 @@ mod idempotency_tests {
         assert_eq!(info.iids_tracked, 1);
         assert_eq!(info.iids_duplicates, 1);
 
-        // Wait for the idempotency duration to expire.
-        std::thread::sleep(std::time::Duration::from_secs(
-            (IDMP_SHORT_DURATION as u64) + 1,
-        ));
+        // Wait for the idempotency duration to expire. The server doesn't check expiry on
+        // lookup; expired IIDs are only removed by a cron job that runs roughly once per
+        // second, so after the duration passes, poll until the cron has evicted the IID.
+        sleep(Duration::from_secs(IDMP_SHORT_DURATION as u64));
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let info = con.xinfo_stream_with_idempotency(STREAM_NAME).unwrap();
+            if info.iids_tracked == 0 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Expired IID was not evicted in time"
+            );
+            sleep(Duration::from_millis(100));
+        }
 
         // After expiry, the same message should NOT be detected as duplicate.
         let id3: Option<String> = con
