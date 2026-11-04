@@ -80,7 +80,7 @@ use super::{
 };
 use crate::IntoConnectionInfo;
 pub use crate::TlsMode; // Pub for backwards compatibility
-use crate::cluster_handling::{get_connection_info, slot_cmd};
+use crate::cluster_handling::{get_connection_info, redirect_address, slot_cmd};
 use crate::cluster_routing::{
     MultipleNodeRoutingInfo, ResponsePolicy, Routable, SingleNodeRoutingInfo, Slot, SlotAddr,
 };
@@ -922,7 +922,7 @@ where
                     match err.retry_method() {
                         RetryMethod::AskRedirect => {
                             redirected = err.redirect_node().and_then(|(node, _slot)| {
-                                NodeAddress::try_from(node).ok().map(Redirect::Ask)
+                                redirect_address(node, &addr).map(Redirect::Ask)
                             });
                         }
                         RetryMethod::MovedRedirect => {
@@ -930,7 +930,7 @@ where
                             self.refresh_slots()?;
                             // Request again.
                             redirected = err.redirect_node().and_then(|(node, _slot)| {
-                                NodeAddress::try_from(node).ok().map(Redirect::Moved)
+                                redirect_address(node, &addr).map(Redirect::Moved)
                             });
                         }
                         RetryMethod::WaitAndRetry => {
