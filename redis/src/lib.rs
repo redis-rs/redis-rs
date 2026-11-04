@@ -870,6 +870,9 @@ mod parser;
 mod script;
 mod types;
 
+#[cfg(feature = "tls-rustls-native-roots")]
+pub use connection::invalidate_cert_bundle;
+
 macro_rules! check_resp3 {
     ($protocol: expr) => {
         if !$protocol.supports_resp3() {
