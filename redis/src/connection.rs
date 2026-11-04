@@ -1953,12 +1953,10 @@ impl Connection {
                 return result;
             };
             let Some(io_error) = err.as_io_error() else {
-                // Any other error is a parse error. The parser still holds the bytes and the
-                // partial state of the reply that failed, so reading on would return values
-                // built from them as the replies to later commands. Drop the connection, as
-                // the async connection does.
-                self.parser = Parser::new();
-                self.close_connection();
+                if self.messages_to_skip > 0 {
+                    self.messages_to_skip -= 1;
+                    continue;
+                }
                 return result;
             };
             // shutdown connection on protocol error
