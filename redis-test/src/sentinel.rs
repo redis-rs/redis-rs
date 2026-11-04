@@ -207,6 +207,45 @@ fn spawn_sentinel_server(
         })
 }
 
+/// How often (in ms) the test sentinels poll `INFO` from the instances they monitor.
+///
+/// Sentinels discover replicas only through the master's `INFO` reply, which they poll
+/// every 10 seconds by default. If a sentinel's first poll happens before all replicas
+/// have connected to the master, it doesn't know about the missing replicas until the
+/// next poll, so tests could start with an incomplete view of the replicas.
+const SENTINEL_INFO_PERIOD_MS: u64 = 500;
+
+/// Lowers each sentinel's `INFO` polling period to [`SENTINEL_INFO_PERIOD_MS`].
+///
+/// `SENTINEL DEBUG` is only available from Redis 7.0, so on older servers this logs the
+/// error and keeps the default period.
+fn reduce_sentinel_info_period(sentinels: &[RedisServer]) {
+    for sentinel in sentinels {
+        let mut conn = connect_with_retries(sentinel)
+            .unwrap_or_else(|| panic!("failed to connect to sentinel {}", sentinel.addr));
+        let result: RedisResult<()> = redis::cmd("SENTINEL")
+            .arg("DEBUG")
+            .arg("info-period")
+            .arg(SENTINEL_INFO_PERIOD_MS)
+            .query(&mut conn);
+        if let Err(err) = result {
+            println!("failed to reduce sentinel INFO period, keeping the default: {err:?}");
+        }
+    }
+}
+
+/// Connects to `server`, retrying for up to 5s while the process is still starting.
+fn connect_with_retries(server: &RedisServer) -> Option<redis::Connection> {
+    let client = Client::open(server.connection_info()).unwrap();
+    for _ in 0..200 {
+        if let Ok(conn) = client.get_connection() {
+            return Some(conn);
+        }
+        sleep(Duration::from_millis(25));
+    }
+    None
+}
+
 #[non_exhaustive]
 pub struct SentinelError;
 
@@ -311,6 +350,68 @@ fn wait_for_replicas_to_sync(cluster: &RedisSentinelCluster, masters: u16) {
             if r.is_err() {
                 cluster.log_sentinel_state_via_cli(&format!("master{cluster_index}"));
                 panic!("failed waiting for replica to be ready and in sync");
+            }
+        }
+    }
+}
+
+/// Waits until every sentinel reports all `replicas_per_master` replicas of every master,
+/// none of them flagged as down or disconnected.
+///
+/// Replicas being in sync with their master isn't enough: sentinels learn about replicas
+/// only from the master's periodic `INFO` reply, so a test could otherwise start while a
+/// sentinel knows only some of the replicas.
+fn wait_for_sentinels_to_discover_replicas(
+    cluster: &RedisSentinelCluster,
+    masters: u16,
+    replicas_per_master: u16,
+) {
+    // Covers at least one full default `INFO` period (10s), for servers where
+    // `reduce_sentinel_info_period` has no effect.
+    const TIMEOUT: Duration = Duration::from_secs(15);
+
+    for sentinel in &cluster.sentinel_servers {
+        let mut conn = connect_with_retries(sentinel)
+            .unwrap_or_else(|| panic!("failed to connect to sentinel {}", sentinel.addr));
+
+        for master_index in 0..masters {
+            let master_name = format!("master{master_index}");
+            let start = std::time::Instant::now();
+            loop {
+                let result: RedisResult<Vec<std::collections::HashMap<String, String>>> =
+                    redis::cmd("SENTINEL")
+                        .arg("REPLICAS")
+                        .arg(&master_name)
+                        .query(&mut conn);
+                let healthy_replicas = match &result {
+                    Ok(replicas) => replicas
+                        .iter()
+                        .filter(|replica| {
+                            replica.get("flags").is_some_and(|flags| {
+                                !flags.contains("s_down")
+                                    && !flags.contains("o_down")
+                                    && !flags.contains("disconnected")
+                            })
+                        })
+                        .count(),
+                    Err(_) => 0,
+                };
+                if healthy_replicas == replicas_per_master as usize {
+                    break;
+                }
+                // Extra replicas never go away, so fail fast. This usually means another
+                // test's master took this cluster's master port, so both tests' replicas
+                // replicate from the same master.
+                if healthy_replicas > replicas_per_master as usize || start.elapsed() > TIMEOUT {
+                    cluster.log_sentinel_state_via_cli(&master_name);
+                    panic!(
+                        "sentinel {} didn't discover exactly {replicas_per_master} healthy \
+                         replicas of {master_name} (found {healthy_replicas}), last reply: \
+                         {result:?}",
+                        sentinel.addr
+                    );
+                }
+                sleep(Duration::from_millis(25));
             }
         }
     }
@@ -442,6 +543,8 @@ impl RedisSentinelCluster {
             folders.push(tempdir);
         }
 
+        reduce_sentinel_info_period(&sentinel_servers);
+
         let cluster = Self {
             servers,
             sentinel_servers,
@@ -450,6 +553,7 @@ impl RedisSentinelCluster {
 
         // Wait for replicas to sync so that the sentinels discover them on the first try
         wait_for_replicas_to_sync(&cluster, masters);
+        wait_for_sentinels_to_discover_replicas(&cluster, masters, replicas_per_master);
 
         cluster
     }
