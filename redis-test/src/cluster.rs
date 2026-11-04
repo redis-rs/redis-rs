@@ -6,10 +6,7 @@ use crate::server::RedisServerBuilder;
 use crate::utils::CommandMultiArgs;
 use crate::{
     server::{Module, RedisServer},
-    utils::{
-        TlsFilePaths, build_keys_and_certs_for_tls_with_hostname, get_random_available_port,
-        get_random_available_port_with_offset,
-    },
+    utils::{TlsFilePaths, build_keys_and_certs_for_tls_with_hostname, get_available_cluster_port},
 };
 
 /// In cluster mode, valkey-search listens for gRPC on the node port plus this offset.
@@ -316,7 +313,12 @@ impl RedisCluster {
                 let max_attempts = 200;
                 let mut cur_attempts = 0;
                 loop {
-                    if cur_attempts == max_attempts {
+                    if !server.is_alive() {
+                        // E.g. it lost the port to another process. Whatever listens
+                        // there now is not our node.
+                        let process_info = server.stop_with_info();
+                        break Err(format!("redis server exited\n{process_info}"));
+                    } else if cur_attempts == max_attempts {
                         let process_info = server.stop_with_info();
                         break Err(format!(
                             "redis server creation failed: Address {} closed.\n{process_info}",
@@ -342,8 +344,7 @@ impl RedisCluster {
                     let port = match port_option {
                         Some(port) => port,
                         None if loads_search => loop {
-                            let port =
-                                get_random_available_port_with_offset(SEARCH_GRPC_PORT_OFFSET);
+                            let port = get_available_cluster_port(&[SEARCH_GRPC_PORT_OFFSET]);
                             let grpc_port = port + SEARCH_GRPC_PORT_OFFSET;
                             if chosen_ports.contains(&port) || chosen_ports.contains(&grpc_port) {
                                 continue;
@@ -353,7 +354,7 @@ impl RedisCluster {
                             break port;
                         },
                         None => loop {
-                            let port = get_random_available_port();
+                            let port = get_available_cluster_port(&[]);
                             if chosen_ports.contains(&port) {
                                 continue;
                             }
