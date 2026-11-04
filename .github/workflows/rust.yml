@@ -181,6 +181,7 @@ jobs:
         if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:') && steps.cache-valkey-bloom.outputs.cache-hit != 'true'
         env:
           VALKEY_BLOOM: ${{matrix.config.bloom-module-version}}
+          RUSTFLAGS: -Dwarnings
         shell: bash
         run: |
           # Fetch and unpack valkey-bloom's code
@@ -192,7 +193,7 @@ jobs:
 
           # Build it
           cd "valkey-bloom"
-          RUSTFLAGS="-D warnings" cargo build --all --all-targets  --release
+          cargo build --all --all-targets  --release
 
       - name: Copy Valkey Bloom into place
         if: startsWith(matrix.config.bloom-module-version, 'valkey-bloom:')
@@ -373,7 +374,7 @@ jobs:
       - name: webassembly build
         run: cargo build --target wasm32-unknown-unknown -p redis
         env:
-          RUSTDOCFLAGS: -Dwarnings
+          RUSTFLAGS: -Dwarnings
 
       - name: wasm32-wasip2 tokio-comp build
         run: |
@@ -383,7 +384,7 @@ jobs:
             --no-default-features \
             --features tokio-comp
         env:
-          RUSTFLAGS: --cfg tokio_unstable
+          RUSTFLAGS: --cfg tokio_unstable -Dwarnings
 
       - name: Check semver
         uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9

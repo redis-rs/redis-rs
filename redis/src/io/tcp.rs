@@ -1,5 +1,6 @@
 use std::{io, net::TcpStream};
 
+#[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
 
 #[cfg(not(target_family = "wasm"))]
@@ -11,6 +12,7 @@ pub struct TcpSettings {
     nodelay: bool,
     #[cfg(not(target_family = "wasm"))]
     keepalive: Option<socket2::TcpKeepalive>,
+    #[cfg(not(target_family = "wasm"))]
     linger_time: Option<Duration>,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     user_timeout: Option<Duration>,
@@ -68,6 +70,7 @@ impl TcpSettings {
     /// reordered packets. This option may not do anything depending on your operating
     /// system and its configuration; please consult your friendly neighborhood netadmin.
     /// For more information, see the socket(7) man page.
+    #[cfg(not(target_family = "wasm"))]
     pub fn set_linger_time(self, linger: Duration) -> Self {
         Self {
             linger_time: Some(linger),
@@ -97,6 +100,7 @@ impl Default for TcpSettings {
             nodelay: true,
             #[cfg(not(target_family = "wasm"))]
             keepalive: None,
+            #[cfg(not(target_family = "wasm"))]
             linger_time: None,
             #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
             user_timeout: None,
