@@ -408,16 +408,38 @@ impl RedisError {
     ///
     /// This returns `(addr, slot_id)`.
     pub fn redirect_node(&self) -> Option<(&str, u16)> {
+        if let Some(redirect) = self.transaction_moved_redirect() {
+            return Some(redirect);
+        }
         if !matches!(
             self.kind(),
             ErrorKind::Server(ServerErrorKind::Ask) | ErrorKind::Server(ServerErrorKind::Moved),
         ) {
             return None;
         }
-        let mut iter = self.detail()?.split_ascii_whitespace();
-        let slot_id: u16 = iter.next()?.parse().ok()?;
-        let addr = iter.next()?;
-        Some((addr, slot_id))
+        parse_redirect(self.detail()?)
+    }
+
+    /// The redirect of a transaction whose commands were all rejected with `MOVED` to the same node.
+    ///
+    /// The server runs nothing from such a transaction, so it can be resent to that node as a whole.
+    fn transaction_moved_redirect(&self) -> Option<(&str, u16)> {
+        let ErrorRepr::TransactionAborted(errs) = &self.repr else {
+            return None;
+        };
+        let mut redirect = None;
+        for (_, err) in errs.iter() {
+            if err.kind() != Some(ServerErrorKind::Moved) {
+                return None;
+            }
+            let (addr, slot) = parse_redirect(err.details()?)?;
+            match redirect {
+                None => redirect = Some((addr, slot)),
+                Some((first_addr, _)) if first_addr != addr => return None,
+                Some(_) => {}
+            }
+        }
+        redirect
     }
 
     /// Specifies what method (if any) should be used to retry this request.
@@ -427,6 +449,9 @@ impl RedisError {
     /// This isn't precise, and internally the library uses multiple other considerations rather
     /// than just the error kind on when to retry.
     pub fn retry_method(&self) -> RetryMethod {
+        if self.transaction_moved_redirect().is_some() {
+            return RetryMethod::MovedRedirect;
+        }
         match self.kind() {
             ErrorKind::Server(server_error) => server_error.retry_method(),
 
@@ -494,6 +519,14 @@ impl RedisError {
             repr: ErrorRepr::General(ErrorKind::Client, "empty command", None),
         }
     }
+}
+
+/// Parses the `<slot> <addr>` detail of an `ASK` or `MOVED` error.
+fn parse_redirect(detail: &str) -> Option<(&str, u16)> {
+    let mut iter = detail.split_ascii_whitespace();
+    let slot_id: u16 = iter.next()?.parse().ok()?;
+    let addr = iter.next()?;
+    Some((addr, slot_id))
 }
 
 /// Creates a new Redis error with the `Extension` kind.
@@ -577,7 +610,8 @@ impl TryFrom<RedisError> for ServerError {
 
 #[cfg(test)]
 mod tests {
-    use crate::parse_redis_value;
+    use super::RedisError;
+    use crate::{RetryMethod, Value, parse_redis_value};
 
     #[test]
     fn test_redirect_node() {
@@ -588,5 +622,34 @@ mod tests {
         let node = err.redirect_node();
 
         assert_eq!(node, Some(("foobar:6380", 123)));
+    }
+
+    #[test]
+    fn test_aborted_transaction_redirect() {
+        let aborted = |replies: &[&[u8]]| {
+            let errs = replies
+                .iter()
+                .enumerate()
+                .map(|(index, reply)| match parse_redis_value(reply).unwrap() {
+                    Value::ServerError(err) => (index, err),
+                    value => panic!("not an error: {value:?}"),
+                })
+                .collect();
+            RedisError::make_aborted_transaction(errs)
+        };
+
+        let err = aborted(&[b"-MOVED 123 foo:6380\r\n", b"-MOVED 123 foo:6380\r\n"]);
+        assert!(matches!(err.retry_method(), RetryMethod::MovedRedirect));
+        assert_eq!(err.redirect_node(), Some(("foo:6380", 123)));
+
+        // Anything but MOVED to a single node keeps the transaction error final.
+        for err in [
+            aborted(&[b"-MOVED 123 foo:6380\r\n", b"-ERR wrong arguments\r\n"]),
+            aborted(&[b"-MOVED 123 foo:6380\r\n", b"-MOVED 456 bar:6380\r\n"]),
+            aborted(&[b"-ASK 123 foo:6380\r\n"]),
+        ] {
+            assert!(matches!(err.retry_method(), RetryMethod::NoRetry));
+            assert_eq!(err.redirect_node(), None);
+        }
     }
 }

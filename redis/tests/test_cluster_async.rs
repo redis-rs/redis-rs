@@ -479,6 +479,24 @@ mod cluster_async {
         assert_eq!(result, vec![Value::Okay, redis_value!(1)]);
     }
 
+    #[async_test]
+    async fn test_async_cluster_transaction_follows_moved_slot() {
+        let cluster = TestClusterContext::new();
+        let mut connection = cluster.async_connection().await;
+        cluster.move_key_slot("foo");
+
+        // The old owner rejects every queued command with MOVED, aborting the transaction.
+        let result: Vec<Value> = redis::pipe()
+            .atomic()
+            .set("foo", b"bar")
+            .expire("foo", 10)
+            .query_async(&mut connection)
+            .await
+            .unwrap();
+
+        assert_eq!(result, vec![Value::Okay, redis_value!(1)]);
+    }
+
     #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
     #[async_test]
     async fn test_async_cluster_default_reject_invalid_hostnames() {

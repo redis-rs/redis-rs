@@ -53,6 +53,25 @@ mod cluster {
     }
 
     #[test]
+    fn test_cluster_transaction_follows_moved_slot() {
+        let cluster = TestClusterContext::new();
+        let mut con = cluster.connection();
+        cluster.move_key_slot("foo");
+
+        // The sync cluster connection only takes transactions as packed MULTI…EXEC.
+        let packed_transaction = redis::pipe()
+            .atomic()
+            .set("foo", b"bar")
+            .expire("foo", 10)
+            .get_packed_pipeline();
+
+        // The old owner rejects every queued command with MOVED, aborting the transaction.
+        let result = con.req_packed_commands(&packed_transaction, 3, 1).unwrap();
+
+        assert_eq!(result, vec![Value::Array(vec![Value::Okay, Value::Int(1)])]);
+    }
+
+    #[test]
     fn test_cluster_numbered_database() {
         run_test_if_version_supported!(VALKEY_9_0);
 

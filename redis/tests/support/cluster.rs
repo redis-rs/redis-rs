@@ -10,6 +10,7 @@ use redis::ConnectionInfo;
 use redis::ErrorKind;
 use redis::ProtocolVersion;
 use redis::RedisResult;
+use redis::Value;
 #[cfg(feature = "cluster-async")]
 use redis::aio::ConnectionLike;
 #[cfg(feature = "cluster-async")]
@@ -253,6 +254,45 @@ impl TestClusterContext {
                 }
             })
             .collect()
+    }
+
+    /// Reassigns the empty slot of `key` to another primary, leaving cluster clients with a stale slot map.
+    pub fn move_key_slot(&self, key: &str) {
+        let mut primaries: Vec<Connection> = self
+            .cluster
+            .iter_servers()
+            .map(|server| self.build_single_client_connection(server).unwrap())
+            .filter_map(|mut con| {
+                let role: Vec<Value> = redis::cmd("ROLE").query(&mut con).unwrap();
+                (role.first() == Some(&Value::BulkString(b"master".to_vec()))).then_some(con)
+            })
+            .collect();
+        // Only the slot owner accepts the key; the other primaries reply with MOVED.
+        let owner = primaries
+            .iter_mut()
+            .position(|con| redis::cmd("EXISTS").arg(key).query::<i64>(con).is_ok())
+            .unwrap();
+        let mut old_owner = primaries.swap_remove(owner);
+        let mut new_owner = primaries.pop().unwrap();
+
+        let slot: u16 = redis::cmd("CLUSTER")
+            .arg("KEYSLOT")
+            .arg(key)
+            .query(&mut old_owner)
+            .unwrap();
+        let new_owner_id: String = redis::cmd("CLUSTER")
+            .arg("MYID")
+            .query(&mut new_owner)
+            .unwrap();
+        for con in [&mut new_owner, &mut old_owner] {
+            redis::cmd("CLUSTER")
+                .arg("SETSLOT")
+                .arg(slot)
+                .arg("NODE")
+                .arg(&new_owner_id)
+                .exec(con)
+                .unwrap();
+        }
     }
 }
 
