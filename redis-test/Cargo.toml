@@ -12,7 +12,7 @@ rust-version = "1.88"
 bench = false
 
 [dependencies]
-redis = { package = "qubit-redis", version = "2.0.0-rc.1", path = "../redis", default-features = false }
+redis = { package = "qubit-redis", version = "2.0.0-rc.2", path = "../redis", default-features = false }
 bytes = { version = "1", optional = true }
 futures = { version = "0.3", optional = true }
 tempfile = "3.27.0"

@@ -25,7 +25,7 @@ runs:
 
     - name: Build all features
       shell: bash
-      run: RUSTFLAGS="-D warnings" cargo build --locked -p redis --all-features
+      run: RUSTFLAGS="-D warnings" cargo build --locked -p qubit-redis --all-features
 
     - name: Lint
       shell: bash
@@ -37,5 +37,5 @@ runs:
         # Remove dev-dependencies so they do not enable features accidentally
         # https://github.com/rust-lang/cargo/issues/4664
         sed -i '/dev-dependencies/,/dev-dependencies/d' Cargo.toml
-        cargo check -p redis --no-default-features --features tokio-comp
-        cargo check -p redis --no-default-features --features smol-comp
+        cargo check -p qubit-redis --no-default-features --features tokio-comp
+        cargo check -p qubit-redis --no-default-features --features smol-comp

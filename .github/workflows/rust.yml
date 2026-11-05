@@ -368,14 +368,14 @@ jobs:
           RUSTDOCFLAGS: -Dwarnings
 
       - name: webassembly build
-        run: cargo build --target wasm32-unknown-unknown -p redis
+        run: cargo build --target wasm32-unknown-unknown -p qubit-redis
         env:
           RUSTDOCFLAGS: -Dwarnings
 
       - name: wasm32-wasip2 tokio-comp build
         run: |
           rustup target add wasm32-wasip2
-          cargo build -p redis \
+          cargo build -p qubit-redis \
             --target wasm32-wasip2 \
             --no-default-features \
             --features tokio-comp
@@ -385,7 +385,7 @@ jobs:
       - name: Check semver
         uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
         with:
-          package: redis
+          package: qubit-redis
 
   benchmark:
     needs: lint
@@ -413,10 +413,10 @@ jobs:
       - name: Benchmark
         run: |
           cargo install critcmp
-          cargo bench -p redis --all-features -- --measurement-time 15 --save-baseline changes
+          cargo bench -p qubit-redis --all-features -- --measurement-time 15 --save-baseline changes
           git fetch
           git checkout ${{ github.base_ref }}
-          cargo bench -p redis --all-features -- --measurement-time 15 --save-baseline base
+          cargo bench -p qubit-redis --all-features -- --measurement-time 15 --save-baseline base
           critcmp base changes
 
       # We check out again, because we switched branches in the last step.

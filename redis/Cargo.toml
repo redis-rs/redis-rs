@@ -1,6 +1,6 @@
 [package]
 name = "qubit-redis"
-version = "2.0.0-rc.1"
+version = "2.0.0-rc.2"
 keywords = ["redis", "valkey", "cluster", "sentinel", "pubsub"]
 description = "Qubit-maintained Redis driver fork with bounded RESP response parsing."
 repository = "https://github.com/qubit-ltd/redis-rs"
