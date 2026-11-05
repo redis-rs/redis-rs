@@ -200,7 +200,12 @@ impl Runtime {
     pub(crate) fn driver_timer(self) -> DriverTimer {
         match self {
             #[cfg(feature = "tokio-comp")]
-            Self::Tokio => DriverTimer::Tokio(None),
+            // The driver may later be polled outside of the runtime it was created in, so the timer
+            // remembers the runtime to register with.
+            Self::Tokio => DriverTimer::Tokio {
+                handle: tokio::runtime::Handle::try_current().ok(),
+                sleep: None,
+            },
             #[cfg(feature = "smol-comp")]
             Self::Smol => DriverTimer::Smol(None),
         }
@@ -211,7 +216,10 @@ impl Runtime {
 /// registering one runtime timer per request.
 pub(crate) enum DriverTimer {
     #[cfg(feature = "tokio-comp")]
-    Tokio(Option<std::pin::Pin<Box<tokio::time::Sleep>>>),
+    Tokio {
+        handle: Option<tokio::runtime::Handle>,
+        sleep: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
+    },
     #[cfg(feature = "smol-comp")]
     Smol(Option<async_io::Timer>),
 }
@@ -221,11 +229,14 @@ impl DriverTimer {
     pub(crate) fn arm(&mut self, deadline: std::time::Instant) {
         match self {
             #[cfg(feature = "tokio-comp")]
-            Self::Tokio(sleep) => {
+            Self::Tokio { handle, sleep } => {
                 let deadline = tokio::time::Instant::from_std(deadline);
                 match sleep {
                     Some(sleep) => sleep.as_mut().reset(deadline),
-                    None => *sleep = Some(Box::pin(tokio::time::sleep_until(deadline))),
+                    None => {
+                        let _guard = handle.as_ref().map(|handle| handle.enter());
+                        *sleep = Some(Box::pin(tokio::time::sleep_until(deadline)));
+                    }
                 }
             }
             #[cfg(feature = "smol-comp")]
@@ -241,7 +252,9 @@ impl DriverTimer {
         use std::task::Poll;
         match self {
             #[cfg(feature = "tokio-comp")]
-            Self::Tokio(Some(sleep)) => sleep.as_mut().poll(cx),
+            Self::Tokio {
+                sleep: Some(sleep), ..
+            } => sleep.as_mut().poll(cx),
             #[cfg(feature = "smol-comp")]
             Self::Smol(Some(timer)) => std::pin::Pin::new(timer).poll(cx).map(|_| ()),
             #[allow(unreachable_patterns)]

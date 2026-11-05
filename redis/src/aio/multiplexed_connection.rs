@@ -18,6 +18,7 @@ use crate::{
     types::{RedisFuture, RedisResult, Value},
 };
 use ::tokio::io::{AsyncRead, AsyncWrite};
+use async_lock::{Semaphore, SemaphoreGuardArc};
 use futures_channel::{mpsc, oneshot};
 use std::time::Instant;
 #[cfg(feature = "token-based-authentication")]
@@ -148,6 +149,9 @@ struct PipelineMessage {
     expectation: Option<PipelineResponseExpectation>,
     // When the caller stops waiting for the response; enforced by the driver.
     deadline: Option<Instant>,
+    // For a request that expects no response: a place in the backlog of requests not yet
+    // written, released once this one is written.
+    slot: Option<SemaphoreGuardArc>,
 }
 
 // A request the driver has accepted but could not yet write, because the transport was not ready.
@@ -156,7 +160,23 @@ struct Staged {
     output: Option<PipelineOutput>,
     expectation: Option<PipelineResponseExpectation>,
     deadline: Option<Instant>,
+    _slot: Option<SemaphoreGuardArc>,
 }
+
+impl Staged {
+    // Whether the request still has to be written: its caller is waiting for the response, or it
+    // expects none. Expired and cancelled requests are never written.
+    fn is_live(&self) -> bool {
+        match &self.output {
+            Some(output) => !output.is_canceled(),
+            None => self.deadline.is_none(),
+        }
+    }
+}
+
+// `staged` is cleared of requests whose callers are gone whenever it has doubled since the last
+// time, but not below this length.
+const MIN_PRUNE_STAGED_AT: usize = 64;
 
 /// Wrapper around a `Stream + Sink` where each item sent through the `Sink` results in one or more
 /// items being output by the `Stream` (the number is specified at time of sending). With the
@@ -165,6 +185,10 @@ struct Staged {
 #[derive(Clone)]
 struct Pipeline {
     sender: mpsc::Sender<PipelineMessage>,
+    // Bounds the requests without a response that were sent to the driver but not yet written.
+    // A caller that waits for its response sends one request at a time per handle anyway, as the
+    // request channel's guaranteed slot per sender allowed before.
+    backlog: Arc<Semaphore>,
 }
 
 impl Debug for Pipeline {
@@ -183,9 +207,12 @@ pin_project! {
         timer: DriverTimer,
         armed_deadline: Option<Instant>,
         // Accepted requests waiting for the transport to become writable. The driver always drains
-        // its request channel, so callers never wait on the channel for long and need no timer of
-        // their own; staged requests are expired by the driver's timer like in-flight ones.
+        // its request channel, so a request never waits there unseen by the driver's timer, and
+        // staged requests expire like in-flight ones. Callers waiting for a response have one
+        // request each; requests without a response are bounded by the pipeline's backlog.
         staged: VecDeque<Staged>,
+        // Length at which `staged` is next cleared of requests whose callers are gone.
+        prune_staged_at: usize,
         // Whether the transport was ready the last time it was polled, with nothing staged.
         transport_ready: bool,
         runtime: Runtime,
@@ -209,9 +236,12 @@ pin_project! {
         timer: DriverTimer,
         armed_deadline: Option<Instant>,
         // Accepted requests waiting for the transport to become writable. The driver always drains
-        // its request channel, so callers never wait on the channel for long and need no timer of
-        // their own; staged requests are expired by the driver's timer like in-flight ones.
+        // its request channel, so a request never waits there unseen by the driver's timer, and
+        // staged requests expire like in-flight ones. Callers waiting for a response have one
+        // request each; requests without a response are bounded by the pipeline's backlog.
         staged: VecDeque<Staged>,
+        // Length at which `staged` is next cleared of requests whose callers are gone.
+        prune_staged_at: usize,
         // Whether the transport was ready the last time it was polled, with nothing staged.
         transport_ready: bool,
         runtime: Runtime,
@@ -256,6 +286,7 @@ where
             timer: Runtime::locate().driver_timer(),
             armed_deadline: None,
             staged: VecDeque::new(),
+            prune_staged_at: MIN_PRUNE_STAGED_AT,
             transport_ready: false,
             runtime: Runtime::locate(),
             push_sender,
@@ -503,13 +534,7 @@ where
                 }
             }
             // A staged request whose caller is gone is never written.
-            this.staged.retain(|staged| {
-                staged
-                    .output
-                    .as_ref()
-                    .is_some_and(|output| !output.is_canceled())
-                    || (staged.output.is_none() && staged.deadline.is_none())
-            });
+            this.staged.retain(Staged::is_live);
             *this.armed_deadline = next;
             if let Some(next) = next {
                 this.timer.arm(next);
@@ -649,6 +674,7 @@ where
             output,
             expectation,
             deadline,
+            slot,
         }: PipelineMessage,
     ) -> Result<(), Self::Error> {
         // If initially a receiver was created, but then dropped, there is nothing to receive our output we do not need to send the message as it is
@@ -664,11 +690,19 @@ where
             *self.as_mut().project().transport_ready = false;
             self.write_request(input, output, expectation, deadline)
         } else {
-            self.project().staged.push_back(Staged {
+            let this = self.project();
+            // Callers that cancel and retry while the transport is stalled must not grow the queue
+            // without bound, so requests whose callers are gone are dropped from time to time.
+            if this.staged.len() >= *this.prune_staged_at {
+                this.staged.retain(Staged::is_live);
+                *this.prune_staged_at = (this.staged.len() * 2).max(MIN_PRUNE_STAGED_AT);
+            }
+            this.staged.push_back(Staged {
                 input,
                 output,
                 expectation,
                 deadline,
+                _slot: slot,
             });
             Ok(())
         }
@@ -748,7 +782,8 @@ impl Pipeline {
             cache_manager,
         );
         let f = receiver.map(Ok).forward(sink).map(|_| ());
-        (Self { sender }, f)
+        let backlog = Arc::new(Semaphore::new(buffer_size.max(1)));
+        (Self { sender, backlog }, f)
     }
 
     async fn send_recv(
@@ -770,11 +805,35 @@ impl Pipeline {
             let (sender, receiver) = oneshot::channel();
             (Some(sender), Some(receiver))
         };
+        // A timeout too large to represent as an instant means no timeout, as it did with a timer
+        // per request.
+        let deadline = timeout.and_then(|timeout| Runtime::locate().now().checked_add(timeout));
+        // A request without a response returns as soon as it is sent, so the backlog holds such
+        // callers back while the transport is stalled. Only then do they need a timer of their own.
+        let slot = if skip_response {
+            Some(match self.backlog.try_acquire_arc() {
+                Some(slot) => slot,
+                None => {
+                    let acquire = self.backlog.acquire_arc();
+                    match deadline {
+                        Some(deadline) => {
+                            let runtime = Runtime::locate();
+                            let remaining = deadline.saturating_duration_since(runtime.now());
+                            runtime.timeout(remaining, acquire).await?
+                        }
+                        None => acquire.await,
+                    }
+                }
+            })
+        } else {
+            None
+        };
         let message = PipelineMessage {
             input,
             expectation,
             output,
-            deadline: timeout.map(|timeout| Runtime::locate().now() + timeout),
+            deadline,
+            slot,
         };
 
         // The driver always drains its request channel and enforces the deadline itself, so the
@@ -1356,6 +1415,19 @@ mod tests {
         }
     }
 
+    /// Connects over `stream` with `config` and spawns the driver.
+    async fn connect_with(
+        stream: tokio::io::DuplexStream,
+        config: AsyncConnectionConfig,
+    ) -> MultiplexedConnection {
+        let (conn, driver) =
+            MultiplexedConnection::new_with_config(&mock_conn_info(), stream, config)
+                .await
+                .unwrap();
+        tokio::spawn(driver);
+        conn
+    }
+
     async fn create_mock_connection(
         concurrency_limit: usize,
     ) -> (
@@ -1736,11 +1808,7 @@ mod tests {
         let config = AsyncConnectionConfig::new()
             .set_response_timeout(Some(Duration::from_millis(100)))
             .set_connection_timeout(None);
-        let (conn, driver) =
-            MultiplexedConnection::new_with_config(&mock_conn_info(), client_half, config)
-                .await
-                .unwrap();
-        tokio::spawn(driver);
+        let conn = connect_with(client_half, config).await;
 
         let started = std::time::Instant::now();
         let mut requests = Vec::new();
@@ -1767,6 +1835,166 @@ mod tests {
             "timeouts took {:?}",
             started.elapsed()
         );
+    }
+
+    /// While the server stops reading, callers must be held back once `pipeline_buffer_size`
+    /// requests are waiting, even for requests that expect no response, and a held-back caller
+    /// still times out.
+    #[tokio::test]
+    async fn test_backpressure_while_writes_are_stalled() {
+        tokio::time::pause();
+        let (client_half, server_half) = tokio::io::duplex(1024);
+        let _server = server_half;
+
+        let config = AsyncConnectionConfig::new()
+            .set_response_timeout(Some(Duration::from_millis(100)))
+            .set_connection_timeout(None)
+            .set_pipeline_buffer_size(4);
+        let mut conn = connect_with(client_half, config).await;
+
+        let mut accepted = 0;
+        let err = loop {
+            let mut command = cmd("SET");
+            command
+                .arg("key")
+                .arg(vec![b'x'; 4096])
+                .set_no_response(true);
+            match conn.send_packed_command(&command).await {
+                Ok(_) => accepted += 1,
+                Err(err) => break err,
+            }
+            assert!(
+                accepted < 100,
+                "no backpressure: {accepted} requests accepted"
+            );
+        };
+        assert!(err.is_timeout(), "expected a timeout, got {err:?}");
+        assert!(accepted <= 10, "{accepted} requests accepted");
+    }
+
+    /// Requests that time out before they could be written are never sent to the server.
+    #[tokio::test]
+    async fn test_expired_requests_are_not_sent() {
+        use futures_util::StreamExt;
+        use tokio_util::codec::FramedRead;
+
+        tokio::time::pause();
+        let (client_half, server_half) = tokio::io::duplex(1024);
+        let config = AsyncConnectionConfig::new()
+            .set_response_timeout(Some(Duration::from_millis(100)))
+            .set_connection_timeout(None);
+        let conn = connect_with(client_half, config).await;
+
+        let requests: Vec<_> = std::iter::repeat_with(|| {
+            let mut conn = conn.clone();
+            tokio::spawn(async move {
+                let mut command = cmd("SET");
+                command.arg("key").arg(vec![b'x'; 4096]);
+                conn.send_packed_command(&command).await
+            })
+        })
+        .take(50)
+        .collect();
+        for request in requests {
+            assert!(request.await.unwrap().unwrap_err().is_timeout());
+        }
+
+        // The server starts reading only now. A request that was already written when it timed out
+        // still arrives, as before; the others must not.
+        let mut reader = FramedRead::new(server_half, ValueCodec::default());
+        let mut received = 0;
+        while let Ok(Some(Ok(_))) =
+            tokio::time::timeout(Duration::from_secs(1), reader.next()).await
+        {
+            received += 1;
+        }
+        assert!(received <= 3, "{received} expired requests were sent");
+    }
+
+    /// Callers on one handle that cancel and retry while the transport is stalled must not grow the
+    /// driver's queue without bound, and requests whose callers still wait must be kept.
+    #[tokio::test]
+    async fn test_cancelled_staged_requests_are_dropped() {
+        let (client_half, _server_half) = tokio::io::duplex(1024);
+        let mut sink = Box::pin(PipelineSink::new(
+            ValueCodec::default().framed(client_half),
+            None,
+            Default::default(),
+            #[cfg(feature = "cache-aio")]
+            None,
+        ));
+        let mut waiting = Vec::new();
+        for i in 0..10_000 {
+            let (output, receiver) = oneshot::channel();
+            sink.as_mut()
+                .start_send(PipelineMessage {
+                    input: b"*1\r\n$4\r\nPING\r\n".to_vec(),
+                    output: Some(output),
+                    expectation: None,
+                    deadline: None,
+                    slot: None,
+                })
+                .unwrap();
+            // Every tenth caller keeps waiting; the others give up.
+            if i % 10 == 0 {
+                waiting.push(receiver);
+            }
+        }
+        let live = sink.staged.iter().filter(|staged| staged.is_live()).count();
+        assert_eq!(live, waiting.len());
+        assert!(
+            sink.staged.len() <= 2 * waiting.len() + MIN_PRUNE_STAGED_AT,
+            "{} requests staged",
+            sink.staged.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_response_timeout_of_duration_max_means_no_timeout() {
+        let (client_half, server_half) = tokio::io::duplex(1024);
+        spawn_echo_server(server_half);
+        let config = AsyncConnectionConfig::new()
+            .set_response_timeout(Some(Duration::MAX))
+            .set_connection_timeout(None);
+        let mut conn = connect_with(client_half, config).await;
+        let reply = conn.send_packed_command(cmd("ECHO").arg("0:0")).await;
+        assert_eq!(reply.unwrap(), Value::BulkString(b"0:0".to_vec()));
+    }
+
+    /// A connection created in a tokio runtime keeps enforcing timeouts when its driver is polled
+    /// outside of that runtime.
+    #[test]
+    fn test_driver_polled_outside_the_runtime() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let conn_info = mock_conn_info();
+        let (mut conn, driver) = runtime.block_on(async {
+            let (client_half, server_half) = tokio::io::duplex(1024);
+            spawn_echo_server(server_half);
+            let config = AsyncConnectionConfig::new()
+                .set_response_timeout(Some(Duration::from_millis(100)))
+                .set_connection_timeout(None);
+            MultiplexedConnection::new_with_config(&conn_info, client_half, config)
+                .await
+                .unwrap()
+        });
+        let driver = std::thread::spawn(move || futures::executor::block_on(driver));
+
+        let mut answered = cmd("ECHO");
+        answered.arg("0:0");
+        let mut delayed = cmd("ECHO");
+        delayed.arg("1:500");
+        let reply = runtime.block_on(conn.send_packed_command(&answered));
+        assert_eq!(reply.unwrap(), Value::BulkString(b"0:0".to_vec()));
+        let err = runtime
+            .block_on(conn.send_packed_command(&delayed))
+            .unwrap_err();
+        assert!(err.is_timeout(), "expected a timeout, got {err:?}");
+
+        drop(conn);
+        driver.join().unwrap();
     }
 
     /// One request of a timeout schedule, in milliseconds since the start of the test.
@@ -1854,11 +2082,7 @@ mod tests {
         let (client_half, server_half) = tokio::io::duplex(64 * 1024);
         spawn_echo_server(server_half);
         let config = AsyncConnectionConfig::new().set_connection_timeout(None);
-        let (conn, driver) =
-            MultiplexedConnection::new_with_config(&mock_conn_info(), client_half, config)
-                .await
-                .unwrap();
-        tokio::spawn(driver);
+        let conn = connect_with(client_half, config).await;
 
         let start = tokio::time::Instant::now();
         let requests = schedule.iter().enumerate().map(|(id, request)| {
