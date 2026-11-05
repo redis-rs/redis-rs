@@ -1,3 +1,4 @@
+use super::runtime::{DriverTimer, Elapsed};
 use super::{
     AsyncPushSender, ConnectionLike, Runtime, SharedHandleContainer, SubscribeLikeCommand,
     TaskHandle, send_push, send_subscribe_like_command,
@@ -18,6 +19,7 @@ use crate::{
 };
 use ::tokio::io::{AsyncRead, AsyncWrite};
 use futures_channel::{mpsc, oneshot};
+use std::time::Instant;
 #[cfg(feature = "token-based-authentication")]
 use {
     arcstr::ArcStr,
@@ -131,6 +133,8 @@ impl ResponseAggregate {
 struct InFlight {
     output: Option<PipelineOutput>,
     response_aggregate: ResponseAggregate,
+    // When the caller stops waiting for the response. Enforced by the driver's single timer.
+    deadline: Option<Instant>,
 }
 
 // A single message sent through the pipeline
@@ -142,6 +146,16 @@ struct PipelineMessage {
     // If `Some`, the first value is the number of responses to skip,
     // the second is the number of responses to keep, and the third is whether the pipeline is a transaction.
     expectation: Option<PipelineResponseExpectation>,
+    // When the caller stops waiting for the response; enforced by the driver.
+    deadline: Option<Instant>,
+}
+
+// A request the driver has accepted but could not yet write, because the transport was not ready.
+struct Staged {
+    input: Vec<u8>,
+    output: Option<PipelineOutput>,
+    expectation: Option<PipelineResponseExpectation>,
+    deadline: Option<Instant>,
 }
 
 /// Wrapper around a `Stream + Sink` where each item sent through the `Sink` results in one or more
@@ -166,6 +180,15 @@ pin_project! {
         sink_stream: T,
         in_flight: VecDeque<InFlight>,
         error: Option<RedisError>,
+        timer: DriverTimer,
+        armed_deadline: Option<Instant>,
+        // Accepted requests waiting for the transport to become writable. The driver always drains
+        // its request channel, so callers never wait on the channel for long and need no timer of
+        // their own; staged requests are expired by the driver's timer like in-flight ones.
+        staged: VecDeque<Staged>,
+        // Whether the transport was ready the last time it was polled, with nothing staged.
+        transport_ready: bool,
+        runtime: Runtime,
         push_sender: Option<Arc<dyn AsyncPushSender>>,
         cache_manager: Option<CacheManager>,
         // The subscriptions the connection has confirmed so far, used to determine how many
@@ -183,6 +206,15 @@ pin_project! {
         sink_stream: T,
         in_flight: VecDeque<InFlight>,
         error: Option<RedisError>,
+        timer: DriverTimer,
+        armed_deadline: Option<Instant>,
+        // Accepted requests waiting for the transport to become writable. The driver always drains
+        // its request channel, so callers never wait on the channel for long and need no timer of
+        // their own; staged requests are expired by the driver's timer like in-flight ones.
+        staged: VecDeque<Staged>,
+        // Whether the transport was ready the last time it was polled, with nothing staged.
+        transport_ready: bool,
+        runtime: Runtime,
         push_sender: Option<Arc<dyn AsyncPushSender>>,
         // The subscriptions the connection has confirmed so far, used to determine how many
         // confirmations a zero-argument un/psubscribe will be answered with. Shared, by
@@ -221,6 +253,11 @@ where
             sink_stream,
             in_flight: VecDeque::new(),
             error: None,
+            timer: Runtime::locate().driver_timer(),
+            armed_deadline: None,
+            staged: VecDeque::new(),
+            transport_ready: false,
+            runtime: Runtime::locate(),
             push_sender,
             #[cfg(feature = "cache-aio")]
             cache_manager,
@@ -424,10 +461,152 @@ where
         }
     }
 
+    // Fails in-flight requests whose deadline has passed. A single timer is armed for the earliest
+    // known deadline; when it fires, all in-flight requests are checked and the timer is re-armed for
+    // the earliest remaining one. Requests that complete normally never touch the timer, so the
+    // per-request cost is storing one `Instant`.
+    fn poll_deadlines(self: Pin<&mut Self>, cx: &mut task::Context) {
+        let this = self.project();
+        while this.armed_deadline.is_some() {
+            if this.timer.poll_elapsed(cx).is_pending() {
+                return;
+            }
+            let now = this.runtime.now();
+            let mut next: Option<Instant> = None;
+            for entry in this.in_flight.iter_mut() {
+                let Some(deadline) = entry.deadline else {
+                    continue;
+                };
+                if entry.output.is_none() {
+                    continue;
+                }
+                if deadline <= now {
+                    if let Some(output) = entry.output.take() {
+                        _ = output.send(Err(Elapsed::new().into()));
+                    }
+                } else {
+                    next = Some(next.map_or(deadline, |n| n.min(deadline)));
+                }
+            }
+            for staged in this.staged.iter_mut() {
+                let Some(deadline) = staged.deadline else {
+                    continue;
+                };
+                if deadline <= now {
+                    if let Some(output) = staged.output.take() {
+                        _ = output.send(Err(Elapsed::new().into()));
+                    }
+                } else if staged.output.is_some() {
+                    next = Some(next.map_or(deadline, |n| n.min(deadline)));
+                }
+            }
+            // A staged request whose caller is gone is never written.
+            this.staged.retain(|staged| {
+                staged
+                    .output
+                    .as_ref()
+                    .is_some_and(|output| !output.is_canceled())
+                    || (staged.output.is_none() && staged.deadline.is_none())
+            });
+            *this.armed_deadline = next;
+            if let Some(next) = next {
+                this.timer.arm(next);
+            }
+        }
+    }
+
     fn send_disconnect_if_needed(self: Pin<&mut Self>, err: &RedisError) {
         if err.is_unrecoverable_error() {
             let self_ = self.project();
             send_disconnect(self_.push_sender);
+        }
+    }
+}
+
+impl<T> PipelineSink<T>
+where
+    T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
+{
+    fn arm_if_earlier(self: Pin<&mut Self>, deadline: Option<Instant>) {
+        let this = self.project();
+        if let Some(deadline) = deadline
+            && this.armed_deadline.is_none_or(|armed| deadline < armed)
+        {
+            *this.armed_deadline = Some(deadline);
+            this.timer.arm(deadline);
+        }
+    }
+
+    // Writes a request to the transport, which must have been polled ready.
+    fn write_request(
+        mut self: Pin<&mut Self>,
+        input: Vec<u8>,
+        mut output: Option<PipelineOutput>,
+        expectation: Option<PipelineResponseExpectation>,
+        deadline: Option<Instant>,
+    ) -> Result<(), ()> {
+        let self_ = self.as_mut().project();
+        if let Some(err) = self_.error.take() {
+            if let Some(output) = output.take() {
+                _ = output.send(Err(err));
+            }
+            return Err(());
+        }
+        match self_.sink_stream.start_send(input) {
+            Ok(()) => {
+                self_.in_flight.push_back(InFlight {
+                    output,
+                    response_aggregate: ResponseAggregate::new(expectation),
+                    deadline,
+                });
+                Ok(())
+            }
+            Err(err) => {
+                if let Some(output) = output.take() {
+                    _ = output.send(Err(err));
+                }
+                Err(())
+            }
+        }
+    }
+
+    // Moves staged requests to the transport while it is ready. `Ready(Ok)` means nothing is staged
+    // and the transport is ready for another request.
+    fn poll_write_staged(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Result<(), ()>> {
+        loop {
+            *self.as_mut().project().transport_ready = false;
+            match ready!(self.as_mut().project().sink_stream.poll_ready(cx)) {
+                Ok(()) => {}
+                Err(err) => {
+                    self.as_mut().send_disconnect_if_needed(&err);
+                    *self.as_mut().project().error = Some(err);
+                    *self.as_mut().project().transport_ready = true;
+                    return Poll::Ready(Ok(()));
+                }
+            }
+            let Some(staged) = self.as_mut().project().staged.pop_front() else {
+                *self.as_mut().project().transport_ready = true;
+                return Poll::Ready(Ok(()));
+            };
+            if staged
+                .output
+                .as_ref()
+                .is_some_and(|output| output.is_canceled())
+            {
+                continue;
+            }
+            if self
+                .as_mut()
+                .write_request(
+                    staged.input,
+                    staged.output,
+                    staged.expectation,
+                    staged.deadline,
+                )
+                .is_err()
+            {
+                return Poll::Ready(Err(()));
+            }
         }
     }
 }
@@ -438,7 +617,8 @@ where
 {
     type Error = ();
 
-    // Retrieve incoming messages and write them to the sink
+    // The driver is always ready to accept a request: if the transport is not writable, the
+    // request is staged and expires like an in-flight request.
     fn poll_ready(
         mut self: Pin<&mut Self>,
         cx: &mut task::Context,
@@ -452,13 +632,11 @@ where
         if matches!(self.as_mut().poll_read(cx), Poll::Ready(Err(()))) {
             return Poll::Ready(Err(()));
         }
-        match ready!(self.as_mut().project().sink_stream.poll_ready(cx)) {
-            Ok(()) => Ok(()).into(),
-            Err(err) => {
-                self.as_mut().send_disconnect_if_needed(&err);
-                *self.project().error = Some(err);
-                Ok(()).into()
-            }
+        self.as_mut().poll_deadlines(cx);
+        match self.as_mut().poll_write_staged(cx) {
+            Poll::Ready(Err(())) => Poll::Ready(Err(())),
+            // Ready, or the transport is stalled and the next request will be staged.
+            Poll::Ready(Ok(())) | Poll::Pending => Poll::Ready(Ok(())),
         }
     }
 
@@ -466,8 +644,9 @@ where
         mut self: Pin<&mut Self>,
         PipelineMessage {
             input,
-            mut output,
+            output,
             expectation,
+            deadline,
         }: PipelineMessage,
     ) -> Result<(), Self::Error> {
         // If initially a receiver was created, but then dropped, there is nothing to receive our output we do not need to send the message as it is
@@ -476,33 +655,20 @@ where
         if output.as_ref().is_some_and(|output| output.is_canceled()) {
             return Ok(());
         }
+        let deadline = deadline.filter(|_| output.is_some());
+        self.as_mut().arm_if_earlier(deadline);
 
-        let self_ = self.as_mut().project();
-
-        if let Some(err) = self_.error.take() {
-            if let Some(output) = output.take() {
-                _ = output.send(Err(err));
-            }
-            return Err(());
-        }
-
-        match self_.sink_stream.start_send(input) {
-            Ok(()) => {
-                let response_aggregate = ResponseAggregate::new(expectation);
-                let entry = InFlight {
-                    output,
-                    response_aggregate,
-                };
-
-                self_.in_flight.push_back(entry);
-                Ok(())
-            }
-            Err(err) => {
-                if let Some(output) = output.take() {
-                    _ = output.send(Err(err));
-                }
-                Err(())
-            }
+        if self.transport_ready && self.staged.is_empty() {
+            *self.as_mut().project().transport_ready = false;
+            self.write_request(input, output, expectation, deadline)
+        } else {
+            self.project().staged.push_back(Staged {
+                input,
+                output,
+                expectation,
+                deadline,
+            });
+            Ok(())
         }
     }
 
@@ -517,6 +683,12 @@ where
         // if either reads or writes become available.
         // See https://github.com/redis-rs/redis-rs/issues/1955.
         if matches!(self.as_mut().poll_read(cx), Poll::Ready(Err(()))) {
+            return Poll::Ready(Err(()));
+        }
+        self.as_mut().poll_deadlines(cx);
+        ready!(self.as_mut().poll_write_staged(cx))?;
+        if let Some(err) = self.as_mut().project().error.take() {
+            self.send_result(Err(err));
             return Poll::Ready(Err(()));
         }
         self.as_mut()
@@ -535,7 +707,7 @@ where
     ) -> Poll<Result<(), Self::Error>> {
         // No new requests will come in after the first call to `close` but we need to complete any
         // in progress requests before closing
-        if !self.in_flight.is_empty() {
+        if !self.in_flight.is_empty() || !self.staged.is_empty() {
             ready!(self.as_mut().poll_flush(cx))?;
         }
         let this = self.as_mut().project();
@@ -590,51 +762,35 @@ impl Pipeline {
             return Err(RedisError::make_empty_command());
         }
 
-        let request = async {
-            if skip_response {
-                SinkExt::send(
-                    &mut self.sender,
-                    PipelineMessage {
-                        input,
-                        expectation,
-                        output: None,
-                    },
-                )
-                .await
-                .map_err(|_| None)?;
-
-                return Ok(Value::Nil);
-            }
-
+        let (output, receiver) = if skip_response {
+            (None, None)
+        } else {
             let (sender, receiver) = oneshot::channel();
+            (Some(sender), Some(receiver))
+        };
+        let message = PipelineMessage {
+            input,
+            expectation,
+            output,
+            deadline: timeout.map(|timeout| Runtime::locate().now() + timeout),
+        };
 
-            SinkExt::send(
-                &mut self.sender,
-                PipelineMessage {
-                    input,
-                    expectation,
-                    output: Some(sender),
-                },
-            )
+        // The driver always drains its request channel and enforces the deadline itself, so the
+        // caller registers no timer.
+        let sent = SinkExt::send(&mut self.sender, message)
             .await
-            .map_err(|_| None)?;
-
-            receiver
+            .map_err(|_| None);
+        let result: Result<Value, Option<RedisError>> = match (sent, receiver) {
+            (Err(err), _) => Err(err),
+            (Ok(()), None) => Ok(Value::Nil),
+            (Ok(()), Some(receiver)) => receiver
                 .await
                 // The `sender` was dropped which likely means that the stream part
                 // failed for one reason or another
                 .map_err(|_| None)
-                .and_then(|res| res.map_err(Some))
+                .and_then(|res| res.map_err(Some)),
         };
-
-        match timeout {
-            Some(timeout) => match Runtime::locate().timeout(timeout, request).await {
-                Ok(res) => res,
-                Err(elapsed) => Err(Some(elapsed.into())),
-            },
-            None => request.await,
-        }
-        .map_err(|err| err.unwrap_or_else(closed_connection_error))
+        result.map_err(|err| err.unwrap_or_else(closed_connection_error))
     }
 }
 
@@ -1567,6 +1723,49 @@ mod tests {
         }
     }
 
+    /// Requests must time out within their response timeout even while the transport is stalled
+    /// (the server stopped reading, so writes block and requests pile up in front of the socket).
+    #[tokio::test]
+    async fn test_requests_time_out_while_writes_are_stalled() {
+        let (client_half, server_half) = tokio::io::duplex(1024);
+        // Keep the server half alive but never read from it.
+        let _server = server_half;
+
+        let config = AsyncConnectionConfig::new()
+            .set_response_timeout(Some(Duration::from_millis(100)))
+            .set_connection_timeout(None);
+        let (conn, driver) =
+            MultiplexedConnection::new_with_config(&mock_conn_info(), client_half, config)
+                .await
+                .unwrap();
+        tokio::spawn(driver);
+
+        let started = std::time::Instant::now();
+        let mut requests = Vec::new();
+        for _ in 0..200 {
+            let mut conn = conn.clone();
+            requests.push(tokio::spawn(async move {
+                let mut command = cmd("SET");
+                command.arg("key").arg(vec![b'x'; 4096]);
+                conn.send_packed_command(&command).await
+            }));
+        }
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(5),
+            futures_util::future::join_all(requests),
+        )
+        .await
+        .expect("requests did not time out while the transport was stalled");
+        for result in outcome {
+            let err = result.unwrap().unwrap_err();
+            assert!(err.is_timeout(), "expected a timeout, got {err:?}");
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "timeouts took {:?}",
+            started.elapsed()
+        );
+    }
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_permit_released_on_response_timeout() {
         use futures_util::StreamExt;
