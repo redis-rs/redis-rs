@@ -80,7 +80,10 @@ enum ErrorRepr {
     Parsing(ParsingError),
     Server(ServerError),
     Pipeline(Arc<[(usize, ServerError)]>),
-    TransactionAborted(Arc<[(usize, ServerError)]>),
+    TransactionAborted {
+        kind: ServerErrorKind,
+        errs: Arc<[(usize, ServerError)]>,
+    },
 }
 
 impl PartialEq for RedisError {
@@ -199,7 +202,7 @@ impl fmt::Display for RedisError {
                 }
                 f.write_str("]")
             }
-            ErrorRepr::TransactionAborted(items) => {
+            ErrorRepr::TransactionAborted { errs: items, .. } => {
                 f.write_str("Transaction aborted: [")?;
 
                 let mut first = true;
@@ -255,7 +258,7 @@ impl RedisError {
                 .first()
                 .and_then(|item| item.1.kind().map(|kind| kind.into()))
                 .unwrap_or(ErrorKind::Extension),
-            ErrorRepr::TransactionAborted(..) => ErrorKind::Server(ServerErrorKind::ExecAbort),
+            ErrorRepr::TransactionAborted { kind, .. } => ErrorKind::Server(*kind),
         }
     }
 
@@ -265,6 +268,10 @@ impl RedisError {
             ErrorRepr::General(_, _, detail) => detail.as_ref().map(|detail| detail.as_str()),
             ErrorRepr::Parsing(err) => Some(&err.description),
             ErrorRepr::Server(err) => err.details(),
+            ErrorRepr::TransactionAborted {
+                kind: ServerErrorKind::Moved,
+                errs,
+            } => errs.first()?.1.details(),
             _ => None,
         }
     }
@@ -408,35 +415,16 @@ impl RedisError {
     ///
     /// This returns `(addr, slot_id)`.
     pub fn redirect_node(&self) -> Option<(&str, u16)> {
-        if let Some(redirect) = self.transaction_moved_redirect() {
-            return Some(redirect);
-        }
         if !matches!(
             self.kind(),
             ErrorKind::Server(ServerErrorKind::Ask) | ErrorKind::Server(ServerErrorKind::Moved),
         ) {
             return None;
         }
-        parse_redirect(self.detail()?)
-    }
-
-    fn transaction_moved_redirect(&self) -> Option<(&str, u16)> {
-        let ErrorRepr::TransactionAborted(errs) = &self.repr else {
-            return None;
-        };
-        let mut redirect = None;
-        for (_, err) in errs.iter() {
-            if err.kind() != Some(ServerErrorKind::Moved) {
-                return None;
-            }
-            let (addr, slot) = parse_redirect(err.details()?)?;
-            match redirect {
-                None => redirect = Some((addr, slot)),
-                Some((first_addr, _)) if first_addr != addr => return None,
-                Some(_) => {}
-            }
-        }
-        redirect
+        let mut iter = self.detail()?.split_ascii_whitespace();
+        let slot_id: u16 = iter.next()?.parse().ok()?;
+        let addr = iter.next()?;
+        Some((addr, slot_id))
     }
 
     /// Specifies what method (if any) should be used to retry this request.
@@ -446,9 +434,6 @@ impl RedisError {
     /// This isn't precise, and internally the library uses multiple other considerations rather
     /// than just the error kind on when to retry.
     pub fn retry_method(&self) -> RetryMethod {
-        if self.transaction_moved_redirect().is_some() {
-            return RetryMethod::MovedRedirect;
-        }
         match self.kind() {
             ErrorKind::Server(server_error) => server_error.retry_method(),
 
@@ -493,7 +478,7 @@ impl RedisError {
     pub fn into_server_errors(self) -> Option<Arc<[(usize, ServerError)]>> {
         match self.repr {
             ErrorRepr::Pipeline(items) => Some(items),
-            ErrorRepr::TransactionAborted(errs) => Some(errs),
+            ErrorRepr::TransactionAborted { errs, .. } => Some(errs),
             ErrorRepr::Server(err) => Some(Arc::from([(0, err)])),
             _ => None,
         }
@@ -506,8 +491,28 @@ impl RedisError {
     }
 
     pub(crate) fn make_aborted_transaction(errs: Vec<(usize, ServerError)>) -> Self {
+        fn moved_to(err: &ServerError) -> Option<&str> {
+            if err.kind() != Some(ServerErrorKind::Moved) {
+                return None;
+            }
+            let mut detail = err.details()?.split_ascii_whitespace();
+            detail.next()?.parse::<u16>().ok()?;
+            detail.next()
+        }
+        let all_moved_to_one_node = errs
+            .first()
+            .and_then(|(_, err)| moved_to(err))
+            .is_some_and(|addr| errs.iter().all(|(_, err)| moved_to(err) == Some(addr)));
+        let kind = if all_moved_to_one_node {
+            ServerErrorKind::Moved
+        } else {
+            ServerErrorKind::ExecAbort
+        };
         Self {
-            repr: ErrorRepr::TransactionAborted(Arc::from(errs)),
+            repr: ErrorRepr::TransactionAborted {
+                kind,
+                errs: Arc::from(errs),
+            },
         }
     }
 
@@ -516,13 +521,6 @@ impl RedisError {
             repr: ErrorRepr::General(ErrorKind::Client, "empty command", None),
         }
     }
-}
-
-fn parse_redirect(detail: &str) -> Option<(&str, u16)> {
-    let mut iter = detail.split_ascii_whitespace();
-    let slot_id: u16 = iter.next()?.parse().ok()?;
-    let addr = iter.next()?;
-    Some((addr, slot_id))
 }
 
 /// Creates a new Redis error with the `Extension` kind.
@@ -606,7 +604,7 @@ impl TryFrom<RedisError> for ServerError {
 
 #[cfg(test)]
 mod tests {
-    use super::RedisError;
+    use super::{ErrorKind, RedisError, ServerErrorKind};
     use crate::{RetryMethod, Value, parse_redis_value};
 
     #[test]
@@ -635,6 +633,7 @@ mod tests {
         };
 
         let err = aborted(&[b"-MOVED 123 foo:6380\r\n", b"-MOVED 123 foo:6380\r\n"]);
+        assert_eq!(err.kind(), ErrorKind::Server(ServerErrorKind::Moved));
         assert!(matches!(err.retry_method(), RetryMethod::MovedRedirect));
         assert_eq!(err.redirect_node(), Some(("foo:6380", 123)));
 
@@ -643,6 +642,7 @@ mod tests {
             aborted(&[b"-MOVED 123 foo:6380\r\n", b"-MOVED 456 bar:6380\r\n"]),
             aborted(&[b"-ASK 123 foo:6380\r\n"]),
         ] {
+            assert_eq!(err.kind(), ErrorKind::Server(ServerErrorKind::ExecAbort));
             assert!(matches!(err.retry_method(), RetryMethod::NoRetry));
             assert_eq!(err.redirect_node(), None);
         }
