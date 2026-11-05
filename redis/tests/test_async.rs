@@ -789,6 +789,44 @@ mod basic_async {
     }
 
     #[async_test]
+    async fn test_response_timeouts_of_concurrent_requests_on_one_connection() {
+        let ctx = TestContext::default();
+        let connection = ctx.async_connection().await.unwrap();
+
+        // The server answers in order, so every request below waits for the blocking one.
+        let mut blocking = connection.clone();
+        blocking.set_response_timeout(Duration::from_millis(100));
+        let mut patient = connection.clone();
+        patient.set_response_timeout(Duration::from_secs(5));
+        let mut impatient = connection.clone();
+        impatient.set_response_timeout(Duration::from_millis(50));
+
+        let mut blpop = cmd("BLPOP");
+        blpop.arg("timeouts_list").arg(0.5);
+        let mut echo_patient = cmd("ECHO");
+        echo_patient.arg("patient");
+        let mut echo_impatient = cmd("ECHO");
+        echo_impatient.arg("impatient");
+        let (blocked, patient_reply, impatient_reply) = futures::join!(
+            blpop.query_async::<Value>(&mut blocking),
+            echo_patient.query_async::<String>(&mut patient),
+            echo_impatient.query_async::<String>(&mut impatient),
+        );
+        assert!(blocked.unwrap_err().is_timeout());
+        assert_eq!(patient_reply.unwrap(), "patient");
+        assert!(impatient_reply.unwrap_err().is_timeout());
+
+        // The late replies of the expired requests were discarded.
+        let mut connection = connection;
+        let reply: String = cmd("ECHO")
+            .arg("after")
+            .query_async(&mut connection)
+            .await
+            .unwrap();
+        assert_eq!(reply, "after");
+    }
+
+    #[async_test]
     #[cfg(feature = "script")]
     async fn test_script(mut con: impl ConnectionLike) {
         // Note this test runs both scripts twice to test when they have already been loaded

@@ -467,11 +467,13 @@ where
     // per-request cost is storing one `Instant`.
     fn poll_deadlines(self: Pin<&mut Self>, cx: &mut task::Context) {
         let this = self.project();
-        while this.armed_deadline.is_some() {
+        while let Some(fired) = *this.armed_deadline {
             if this.timer.poll_elapsed(cx).is_pending() {
                 return;
             }
-            let now = this.runtime.now();
+            // Everything due by the deadline the timer fired for has expired, even if the clock
+            // reads slightly earlier. This guarantees progress on every firing.
+            let now = this.runtime.now().max(fired);
             let mut next: Option<Instant> = None;
             for entry in this.in_flight.iter_mut() {
                 let Some(deadline) = entry.deadline else {
@@ -1765,6 +1767,210 @@ mod tests {
             "timeouts took {:?}",
             started.elapsed()
         );
+    }
+
+    /// One request of a timeout schedule, in milliseconds since the start of the test.
+    #[derive(Clone, Copy, Debug)]
+    struct Scheduled {
+        send_at: u64,
+        timeout: u64,
+        /// How long after receiving the request the mock server wants to reply. Replies are still
+        /// sent in order, so a reply may also wait for the one before it.
+        delay: u64,
+    }
+
+    impl Scheduled {
+        fn new(send_at: u64, timeout: u64, delay: u64) -> Self {
+            Self {
+                send_at,
+                timeout,
+                delay,
+            }
+        }
+    }
+
+    /// Reply times of a schedule sorted by `send_at`, as the mock server sends them.
+    fn reply_times(schedule: &[Scheduled]) -> Vec<u64> {
+        let mut previous = 0;
+        schedule
+            .iter()
+            .map(|request| {
+                previous = previous.max(request.send_at + request.delay);
+                previous
+            })
+            .collect()
+    }
+
+    /// Answers `ECHO <id>:<delay>` with `<id>:<delay>`, `delay` ms after the request arrived but
+    /// never before the previous reply, like a server that answers in order.
+    fn spawn_echo_server(server_half: tokio::io::DuplexStream) {
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+        use tokio_util::codec::FramedRead;
+
+        let (read, mut write) = tokio::io::split(server_half);
+        let (received_tx, mut received_rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let mut reader = FramedRead::new(read, ValueCodec::default());
+            while let Some(Ok(request)) = reader.next().await {
+                if received_tx
+                    .send((tokio::time::Instant::now(), request))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        tokio::spawn(async move {
+            while let Some((received, request)) = received_rx.recv().await {
+                let Value::Array(args) = request else {
+                    panic!("unexpected request {request:?}");
+                };
+                let Some(Value::BulkString(payload)) = args.get(1) else {
+                    panic!("unexpected request {args:?}");
+                };
+                let delay: u64 = std::str::from_utf8(payload)
+                    .unwrap()
+                    .split_once(':')
+                    .unwrap()
+                    .1
+                    .parse()
+                    .unwrap();
+                tokio::time::sleep_until(received + Duration::from_millis(delay)).await;
+                let mut reply = format!("${}\r\n", payload.len()).into_bytes();
+                reply.extend_from_slice(payload);
+                reply.extend_from_slice(b"\r\n");
+                if write.write_all(&reply).await.is_err() {
+                    break;
+                }
+            }
+        });
+    }
+
+    /// Sends every request of `schedule` on one connection, from a clone with the request's own
+    /// response timeout, and returns whether each one timed out. Panics if a request receives
+    /// another request's reply. Requires paused time.
+    async fn run_schedule(schedule: &[Scheduled]) -> Vec<bool> {
+        let (client_half, server_half) = tokio::io::duplex(64 * 1024);
+        spawn_echo_server(server_half);
+        let config = AsyncConnectionConfig::new().set_connection_timeout(None);
+        let (conn, driver) =
+            MultiplexedConnection::new_with_config(&mock_conn_info(), client_half, config)
+                .await
+                .unwrap();
+        tokio::spawn(driver);
+
+        let start = tokio::time::Instant::now();
+        let requests = schedule.iter().enumerate().map(|(id, request)| {
+            let mut conn = conn.clone();
+            conn.set_response_timeout(Duration::from_millis(request.timeout));
+            let request = *request;
+            tokio::spawn(async move {
+                tokio::time::sleep_until(start + Duration::from_millis(request.send_at)).await;
+                let payload = format!("{id}:{}", request.delay);
+                match conn.send_packed_command(cmd("ECHO").arg(&payload)).await {
+                    Ok(reply) => {
+                        assert_eq!(
+                            reply,
+                            Value::BulkString(payload.into_bytes()),
+                            "request {id} received another request's reply"
+                        );
+                        false
+                    }
+                    Err(err) => {
+                        assert!(err.is_timeout(), "request {id}: unexpected error {err:?}");
+                        true
+                    }
+                }
+            })
+        });
+        let requests: Vec<_> = requests.collect();
+        let mut timed_out = Vec::new();
+        for request in requests {
+            timed_out.push(request.await.unwrap());
+        }
+        timed_out
+    }
+
+    /// Overlapping requests with different start times and timeouts on one connection, where some
+    /// but not all time out. The replies of expired requests must be discarded, not matched to
+    /// later requests.
+    #[tokio::test]
+    async fn test_mixed_timeouts_on_one_connection() {
+        tokio::time::pause();
+        let schedule = [
+            // The server holds this reply for 200 ms, which delays all later replies.
+            Scheduled::new(0, 100, 200), // reply at 200, deadline 100: times out
+            Scheduled::new(1, 300, 0),   // reply at 200, deadline 301
+            Scheduled::new(50, 50, 0),   // reply at 200, deadline 100: times out
+            Scheduled::new(60, 120, 0),  // reply at 200, deadline 180: times out
+            Scheduled::new(150, 500, 0), // reply at 200, deadline 650
+            Scheduled::new(250, 100, 10), // reply at 260, deadline 350
+        ];
+        assert_eq!(
+            run_schedule(&schedule).await,
+            [true, false, true, true, false, false]
+        );
+    }
+
+    /// Many requests sharing one deadline all time out when it passes, and the connection keeps
+    /// working afterwards.
+    #[tokio::test]
+    async fn test_many_requests_with_the_same_deadline() {
+        tokio::time::pause();
+        let mut schedule = vec![Scheduled::new(0, 100, 500); 1000];
+        // Its reply comes after the 1000 late ones, which must all be discarded.
+        schedule.push(Scheduled::new(200, 1000, 0));
+
+        let start = tokio::time::Instant::now();
+        let timed_out = run_schedule(&schedule).await;
+        assert!(timed_out[..1000].iter().all(|&t| t));
+        assert!(!timed_out[1000]);
+        assert!(start.elapsed() < Duration::from_millis(520));
+    }
+
+    /// Random schedules of overlapping requests: each request times out exactly when its reply
+    /// arrives after its send time plus its timeout, which is what a separate timer per request
+    /// does.
+    #[tokio::test]
+    async fn test_random_timeout_schedules_match_per_request_timers() {
+        tokio::time::pause();
+        use rand::{RngExt, SeedableRng, rngs::StdRng};
+
+        let (mut expired, mut answered) = (0, 0);
+        for seed in 0..100 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let mut send_at = 0;
+            let mut schedule = Vec::new();
+            for _ in 0..40 {
+                send_at += rng.random_range(1..=20);
+                schedule.push(Scheduled::new(
+                    send_at,
+                    rng.random_range(1..=200),
+                    rng.random_range(0..150),
+                ));
+            }
+            // Keep every reply at least 3 ms away from its deadline: the timer wheel has 1 ms
+            // resolution, and an exact tie is not defined for either implementation.
+            let replies = reply_times(&schedule);
+            for (request, reply) in schedule.iter_mut().zip(&replies) {
+                if (request.send_at + request.timeout).abs_diff(*reply) < 3 {
+                    request.timeout += 5;
+                }
+            }
+            let expected: Vec<bool> = schedule
+                .iter()
+                .zip(&replies)
+                .map(|(request, reply)| *reply > request.send_at + request.timeout)
+                .collect();
+
+            let timed_out = run_schedule(&schedule).await;
+            assert_eq!(timed_out, expected, "seed {seed}: {schedule:?}");
+            expired += expected.iter().filter(|&&t| t).count();
+            answered += expected.iter().filter(|&&t| !t).count();
+        }
+        // Both outcomes must be well represented for the test to mean anything.
+        assert!(expired > 1000 && answered > 1000, "{expired} / {answered}");
     }
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_permit_released_on_response_timeout() {
