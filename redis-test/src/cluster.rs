@@ -4,7 +4,7 @@ use tempfile::TempDir;
 
 use crate::{
     server::{Module, RedisServer},
-    utils::{TlsFilePaths, build_keys_and_certs_for_tls_with_hostname, get_random_available_port},
+    utils::{TlsFilePaths, build_keys_and_certs_for_tls_with_hostname, get_available_cluster_port},
 };
 
 /// Configuration for creating a Redis Cluster.
@@ -223,8 +223,7 @@ impl RedisCluster {
         };
 
         let verify_server = |server: &mut RedisServer| {
-            let process = &mut server.process;
-            match process.try_wait() {
+            match server.process.try_wait() {
                 Ok(Some(status)) => {
                     let log_file_contents = server.log_file_contents();
                     let err = format!(
@@ -237,6 +236,20 @@ impl RedisCluster {
                     let max_attempts = 200;
                     let mut cur_attempts = 0;
                     loop {
+                        match server.process.try_wait() {
+                            Ok(Some(status)) => {
+                                // E.g. it lost the port to another process. Whatever
+                                // listens there now is not our node.
+                                let log_file_contents = server.log_file_contents();
+                                break Err(format!(
+                                    "redis server exited with status {status:?}.\nlog file: {log_file_contents:?}"
+                                ));
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                panic!("Unexpected error in redis server creation {e}");
+                            }
+                        }
                         if cur_attempts == max_attempts {
                             let log_file_contents = server.log_file_contents();
                             break Err(format!(
@@ -264,7 +277,7 @@ impl RedisCluster {
                     let port = match port_option {
                         Some(port) => port,
                         None => loop {
-                            let port = get_random_available_port();
+                            let port = get_available_cluster_port(&[]);
                             if chosen_ports.contains(&port) {
                                 continue;
                             }
