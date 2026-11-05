@@ -14,7 +14,7 @@ path = "src/reproduce.rs"
 
 [dependencies]
 afl = "0.18"
-redis = { path = "../../redis" }
+redis = { package = "qubit-redis", path = "../../redis" }
 
 [lints]
 workspace = true

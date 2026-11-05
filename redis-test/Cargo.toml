@@ -3,7 +3,7 @@ name = "redis-test"
 version = "2.0.0-rc.1"
 edition = "2024"
 description = "Testing helpers for the `redis` crate"
-repository = "https://github.com/redis-rs/redis-rs"
+repository = "https://github.com/qubit-ltd/redis-rs"
 documentation = "https://docs.rs/redis-test"
 license = "BSD-3-Clause"
 rust-version = "1.88"
@@ -12,7 +12,7 @@ rust-version = "1.88"
 bench = false
 
 [dependencies]
-redis = { version = "2.0.0-rc.1", path = "../redis", default-features = false }
+redis = { package = "qubit-redis", version = "2.0.0-rc.1", path = "../redis", default-features = false }
 bytes = { version = "1", optional = true }
 futures = { version = "0.3", optional = true }
 tempfile = "3.27.0"

@@ -1,10 +1,10 @@
 [package]
-name = "redis"
+name = "qubit-redis"
 version = "2.0.0-rc.1"
 keywords = ["redis", "valkey", "cluster", "sentinel", "pubsub"]
-description = "Redis driver for Rust."
-repository = "https://github.com/redis-rs/redis-rs"
-documentation = "https://docs.rs/redis"
+description = "Qubit-maintained Redis driver fork with bounded RESP response parsing."
+repository = "https://github.com/qubit-ltd/redis-rs"
+documentation = "https://docs.rs/qubit-redis"
 license = "BSD-3-Clause"
 edition = "2024"
 rust-version = "1.88"
@@ -15,6 +15,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [lib]
+name = "redis"
 bench = false
 
 [dependencies]
