@@ -485,7 +485,6 @@ mod cluster_async {
         let mut connection = cluster.async_connection().await;
         cluster.move_key_slot("foo");
 
-        // The old owner rejects every queued command with MOVED, aborting the transaction.
         let result: Vec<Value> = redis::pipe()
             .atomic()
             .set("foo", b"bar")

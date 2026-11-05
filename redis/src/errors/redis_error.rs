@@ -420,9 +420,6 @@ impl RedisError {
         parse_redirect(self.detail()?)
     }
 
-    /// The redirect of a transaction whose commands were all rejected with `MOVED` to the same node.
-    ///
-    /// The server runs nothing from such a transaction, so it can be resent to that node as a whole.
     fn transaction_moved_redirect(&self) -> Option<(&str, u16)> {
         let ErrorRepr::TransactionAborted(errs) = &self.repr else {
             return None;
@@ -521,7 +518,6 @@ impl RedisError {
     }
 }
 
-/// Parses the `<slot> <addr>` detail of an `ASK` or `MOVED` error.
 fn parse_redirect(detail: &str) -> Option<(&str, u16)> {
     let mut iter = detail.split_ascii_whitespace();
     let slot_id: u16 = iter.next()?.parse().ok()?;
@@ -642,7 +638,6 @@ mod tests {
         assert!(matches!(err.retry_method(), RetryMethod::MovedRedirect));
         assert_eq!(err.redirect_node(), Some(("foo:6380", 123)));
 
-        // Anything but MOVED to a single node keeps the transaction error final.
         for err in [
             aborted(&[b"-MOVED 123 foo:6380\r\n", b"-ERR wrong arguments\r\n"]),
             aborted(&[b"-MOVED 123 foo:6380\r\n", b"-MOVED 456 bar:6380\r\n"]),
