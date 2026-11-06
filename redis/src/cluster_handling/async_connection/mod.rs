@@ -314,12 +314,13 @@ where
         route: SingleNodeRoutingInfo,
     ) -> RedisResult<Vec<Value>> {
         let (sender, receiver) = oneshot::channel();
+        let pipeline = Arc::new(pipeline);
 
         let request = async {
             self.sender
                 .send(Message {
                     cmd: CmdArg::Pipeline {
-                        pipeline: Arc::new(pipeline),
+                        pipeline: pipeline.clone(),
                         offset,
                         count,
                         route: route.into(),
@@ -337,10 +338,28 @@ where
                 })
         };
 
-        match self.state.overall_response_timeout {
+        let mut values = match self.state.overall_response_timeout {
             Some(duration) => self.state.runtime.timeout(duration, request).await?,
             None => request.await,
+        }?;
+
+        // If the node rejected only some of the commands, for example with ASK while their slot
+        // is being migrated, the others have run. Send the rejected ones again on their own, as
+        // the sync connection does, so that they're redirected without running the others twice.
+        if !pipeline.is_transaction() {
+            for (value, cmd) in values.iter_mut().zip(pipeline.cmd_iter().skip(offset)) {
+                if !value.is_error_that_requires_action() {
+                    continue;
+                }
+                let routing = RoutingInfo::for_routable(&cmd)
+                    .unwrap_or(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random));
+                *value = self
+                    .route_command(cmd.to_cmd(), routing)
+                    .await
+                    .or_else(|err| err.try_into().map(Value::ServerError))?;
+            }
         }
+        Ok(values)
     }
 
     /// Subscribes to a new channel(s).
