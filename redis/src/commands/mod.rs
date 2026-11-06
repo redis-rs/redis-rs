@@ -74,10 +74,10 @@ pub(crate) enum KeyPositions {
     FirstTwo,
     /// Every argument, e.g. `SINTER key [key ...]`.
     All,
-    /// Every argument but the last one, e.g. `JSON.MGET key [key ...] path`.
-    AllButLast,
     /// The first argument is the number of keys, which follow it, e.g. `ZUNION 2 key1 key2`.
     AfterKeyCount,
+    /// The reply holds one value per key, and each value is cached on its own, e.g. `MGET key1 key2`.
+    PerKey,
 }
 
 #[cfg(any(feature = "cluster", feature = "cache-aio"))]
@@ -94,10 +94,10 @@ fn command_properties(cmd: &[u8]) -> Properties {
         | b"ZRANGEBYSCORE" | b"ZRANK" | b"ZREVRANGE" | b"ZREVRANGEBYLEX" | b"ZREVRANGEBYSCORE"
         | b"ZREVRANK" | b"ZSCORE" => Properties::ReadOnlyCacheable(KeyPositions::First),
         b"LCS" => Properties::ReadOnlyCacheable(KeyPositions::FirstTwo),
-        b"EXISTS" | b"MGET" | b"SDIFF" | b"SINTER" | b"SUNION" => {
+        b"EXISTS" | b"SDIFF" | b"SINTER" | b"SUNION" => {
             Properties::ReadOnlyCacheable(KeyPositions::All)
         }
-        b"JSON.MGET" => Properties::ReadOnlyCacheable(KeyPositions::AllButLast),
+        b"MGET" | b"JSON.MGET" => Properties::ReadOnlyCacheable(KeyPositions::PerKey),
         b"SINTERCARD" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZUNION" => {
             Properties::ReadOnlyCacheable(KeyPositions::AfterKeyCount)
         }

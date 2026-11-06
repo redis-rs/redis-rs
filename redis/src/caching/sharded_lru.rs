@@ -1,6 +1,7 @@
 use crate::Value;
 use crate::caching::statistics::Statistics;
-use crate::cmd::Arg;
+use crate::cmd::{Arg, CmdRef};
+use crate::commands::KeyPositions;
 use lru::LruCache;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
@@ -40,6 +41,55 @@ impl<'a> CmdArgs<'a> {
     }
 }
 
+/// The keys that a command combines into one reply, sorted and without duplicates.
+///
+/// This can only be used to tell when a cached reply goes stale, such as which replies an
+/// invalidated key affects. It must not be used to find a cached reply, because it loses the order
+/// of the keys and some commands depend on it: `SDIFF a b` and `SDIFF b a` have different replies.
+/// Replies are found by the whole command.
+pub(crate) struct InvalidationKeys(Vec<RedisKey>);
+
+impl InvalidationKeys {
+    /// Returns the keys of `cmd`, or `None` if it doesn't combine keys or they aren't at
+    /// `key_positions`.
+    pub(crate) fn new(cmd: CmdRef<'_>, key_positions: KeyPositions) -> Option<Self> {
+        let mut args = cmd.args_iter().skip(1); // Skip the command name
+        let key_count = match key_positions {
+            // `GET key` has one key, and `MGET key1 key2` caches the value of each key on its own.
+            KeyPositions::First | KeyPositions::PerKey => return None,
+            KeyPositions::FirstTwo => 2,
+            KeyPositions::All => args.len(),
+            KeyPositions::AfterKeyCount => match args.next()? {
+                Arg::Simple(key_count) => std::str::from_utf8(key_count).ok()?.parse().ok()?,
+                Arg::Cursor => return None,
+            },
+        };
+        if key_count == 0 || key_count > args.len() {
+            return None;
+        }
+        let mut keys = args
+            .take(key_count)
+            .map(|arg| match arg {
+                Arg::Simple(key) => Some(key.to_vec()),
+                Arg::Cursor => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        keys.sort_unstable();
+        keys.dedup();
+        Some(Self(keys))
+    }
+
+    pub(crate) fn contains(&self, key: &[u8]) -> bool {
+        self.0
+            .binary_search_by(|candidate| candidate.as_slice().cmp(key))
+            .is_ok()
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &[u8]> {
+        self.0.iter().map(Vec::as_slice)
+    }
+}
+
 pub(crate) struct CacheCmdEntry {
     cmd: RedisCmd,
     cmd_args: RedisCmdArgs,
@@ -59,8 +109,45 @@ pub(crate) struct LRUCacheShard {
     invalidations: usize,
 }
 
+/// The cached reply of a command that combines several keys, e.g. `SINTER key1 key2`.
+struct CombinedReply {
+    keys: InvalidationKeys,
+    // In an `Arc`, so that a hit can copy the reply after releasing the lock.
+    value: Arc<Value>,
+    expire_time: Instant,
+    epoch: usize,
+}
+
+/// The replies of commands that combine several keys. Each one is stored once, with its own expiry,
+/// so it takes one slot no matter how many keys it reads, and it doesn't affect the entries of those
+/// keys in the shards.
+struct CombinedReplies {
+    // By packed command, which keeps the order of the keys and the boundaries of the arguments.
+    lru: LruCache<Vec<u8>, CombinedReply>,
+    // Number of invalidations of any key applied to these replies.
+    invalidations: usize,
+}
+
+impl CombinedReplies {
+    /// Evicts the replies that read `key`, and returns how many there were.
+    fn invalidate(&mut self, key: &[u8]) -> usize {
+        self.invalidations = self.invalidations.wrapping_add(1);
+        let stale: Vec<_> = self
+            .lru
+            .iter()
+            .filter(|(_, reply)| reply.keys.contains(key))
+            .map(|(packed_cmd, _)| packed_cmd.clone())
+            .collect();
+        for packed_cmd in &stale {
+            self.lru.pop(packed_cmd);
+        }
+        stale.len()
+    }
+}
+
 pub(crate) struct ShardedLRU {
     shards: Vec<std::sync::Mutex<LRUCacheShard>>,
+    combined_replies: std::sync::Mutex<CombinedReplies>,
     pub(crate) statistics: Arc<Statistics>,
     last_epoch: AtomicUsize,
 }
@@ -87,9 +174,14 @@ impl ShardedLRU {
             };
             shards.push(std::sync::Mutex::new(shard));
         }
+        let combined_replies = std::sync::Mutex::new(CombinedReplies {
+            lru: LruCache::new(NonZeroUsize::new(shard_size).unwrap()),
+            invalidations: 0,
+        });
         let statistics = Arc::new(Statistics::default());
         Self {
             shards,
+            combined_replies,
             statistics,
             last_epoch: AtomicUsize::new(0),
         }
@@ -116,70 +208,32 @@ impl ShardedLRU {
         redis_cmd_args: CmdArgs<'a>,
         epoch: usize,
     ) -> Option<Value> {
-        self.get_from_all_keys(&[redis_key], redis_cmd, redis_cmd_args, epoch)
-    }
-
-    /// Returns the value of a command that reads every key in `redis_keys`. Its reply is stored
-    /// under each of them, so that it isn't served once any of them is invalidated, expires or is
-    /// evicted. Nor is it served when the keys hold different replies, which happens when a later
-    /// request could only store its reply under some of them.
-    pub(crate) fn get_from_all_keys(
-        &self,
-        redis_keys: &[&[u8]],
-        redis_cmd: &[u8],
-        redis_cmd_args: CmdArgs<'_>,
-        epoch: usize,
-    ) -> Option<Value> {
-        let value = redis_keys
-            .split_first()
-            .and_then(|(first_key, other_keys)| {
-                let value = self.find(first_key, redis_cmd, redis_cmd_args, epoch, Value::clone)?;
-                other_keys
-                    .iter()
-                    .all(|key| {
-                        self.find(key, redis_cmd, redis_cmd_args, epoch, |other| {
-                            other == &value
-                        }) == Some(true)
-                    })
-                    .then_some(value)
-            });
-        if value.is_some() {
-            self.statistics.increase_hit(1);
-        } else {
-            self.statistics.increase_miss(1);
-        }
-        value
-    }
-
-    /// Finds the value of `redis_cmd` under `redis_key` and passes it to `read`.
-    fn find<T>(
-        &self,
-        redis_key: &[u8],
-        redis_cmd: &[u8],
-        redis_cmd_args: CmdArgs<'_>,
-        epoch: usize,
-        read: impl FnOnce(&Value) -> T,
-    ) -> Option<T> {
         let mut shard = self.get_shard(redis_key);
         let lru_cache = &mut shard.lru;
-        let cache_item = lru_cache.get_mut(redis_key)?;
-        // If one of following conditions are true, cache item is invalid and can't be trusted to use:
-        // Epoch of client is not same, it means cache item is created by another redis connection.
-        // Expire time of key has been passed, value could be stale.
-        let cache_item_is_invalid =
-            cache_item.epoch != epoch || Instant::now() > cache_item.expire_time;
-        if cache_item_is_invalid {
-            self.statistics
-                .increase_invalidate(cache_item.value_list.len());
-            lru_cache.pop(redis_key);
-            return None;
+        if let Some(cache_item) = lru_cache.get_mut(redis_key) {
+            // If one of following conditions are true, cache item is invalid and can't be trusted to use:
+            // Epoch of client is not same, it means cache item is created by another redis connection.
+            // Expire time of key has been passed, value could be stale.
+            let cache_item_is_invalid =
+                cache_item.epoch != epoch || Instant::now() > cache_item.expire_time;
+            if cache_item_is_invalid {
+                self.statistics
+                    .increase_invalidate(cache_item.value_list.len());
+                self.statistics.increase_miss(1);
+                lru_cache.pop(redis_key);
+                return None;
+            }
+            // Found redis key in cache, but KEY,CMD combination also must be in the cache otherwise, it will be fetched from server.
+            for entry in &cache_item.value_list {
+                if entry.cmd == redis_cmd && redis_cmd_args.matches(&entry.cmd_args) {
+                    self.statistics.increase_hit(1);
+                    return Some(entry.value.clone());
+                }
+            }
         }
-        // Found redis key in cache, but KEY,CMD combination also must be in the cache otherwise, it will be fetched from server.
-        cache_item
-            .value_list
-            .iter()
-            .find(|entry| entry.cmd == redis_cmd && redis_cmd_args.matches(&entry.cmd_args))
-            .map(|entry| read(&entry.value))
+        drop(shard);
+        self.statistics.increase_miss(1);
+        None
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -232,6 +286,71 @@ impl ShardedLRU {
         );
     }
 
+    /// Same as `get_shard`, for the replies of commands that combine several keys.
+    fn get_combined_replies(&self) -> std::sync::MutexGuard<'_, CombinedReplies> {
+        self.combined_replies
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Returns the number of invalidations applied so far to the replies of commands that combine
+    /// several keys. It must be read before the command is sent and passed to `insert_combined`
+    /// along with the command's reply.
+    pub(crate) fn combined_invalidation_count(&self) -> usize {
+        self.get_combined_replies().invalidations
+    }
+
+    pub(crate) fn get_combined(&self, packed_cmd: &[u8], epoch: usize) -> Option<Value> {
+        let value = {
+            let mut replies = self.get_combined_replies();
+            match replies.lru.get(packed_cmd) {
+                Some(reply) if reply.epoch == epoch && Instant::now() <= reply.expire_time => {
+                    Some(Arc::clone(&reply.value))
+                }
+                Some(_) => {
+                    replies.lru.pop(packed_cmd);
+                    self.statistics.increase_invalidate(1);
+                    None
+                }
+                None => None,
+            }
+        };
+        if value.is_some() {
+            self.statistics.increase_hit(1);
+        } else {
+            self.statistics.increase_miss(1);
+        }
+        value.map(|value| Value::clone(&value))
+    }
+
+    pub(crate) fn insert_combined(
+        &self,
+        packed_cmd: Vec<u8>,
+        keys: InvalidationKeys,
+        value: Value,
+        expire_time: Instant,
+        epoch: usize,
+        invalidation_count: usize,
+    ) {
+        let value = Arc::new(value);
+        let mut replies = self.get_combined_replies();
+        // Like in `insert`, the reply may already be stale if an invalidation was received while
+        // the command was in flight. It may also be for a key the command doesn't read, which only
+        // means that the reply isn't cached this time.
+        if replies.invalidations != invalidation_count {
+            return;
+        }
+        replies.lru.push(
+            packed_cmd,
+            CombinedReply {
+                keys,
+                value,
+                expire_time,
+                epoch,
+            },
+        );
+    }
+
     pub(crate) fn invalidate(&self, cache_key: &Vec<u8>) {
         // Use a separate binding for this to release the lock guard before calling increase_invalidate.
         let maybe_cache_holder = {
@@ -243,6 +362,8 @@ impl ShardedLRU {
             self.statistics
                 .increase_invalidate(cache_holder.value_list.len());
         }
+        let invalidated = self.get_combined_replies().invalidate(cache_key);
+        self.statistics.increase_invalidate(invalidated);
     }
 
     pub(crate) fn invalidate_all(&self) {
@@ -250,6 +371,7 @@ impl ShardedLRU {
             let mut lru_cache = shard
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
+            lru_cache.invalidations = lru_cache.invalidations.wrapping_add(1);
             let invalidated = lru_cache
                 .lru
                 .iter()
@@ -259,6 +381,12 @@ impl ShardedLRU {
             drop(lru_cache);
             self.statistics.increase_invalidate(invalidated);
         }
+        let mut replies = self.get_combined_replies();
+        replies.invalidations = replies.invalidations.wrapping_add(1);
+        let invalidated = replies.lru.len();
+        replies.lru.clear();
+        drop(replies);
+        self.statistics.increase_invalidate(invalidated);
     }
 
     pub(crate) fn increase_epoch(&self) -> usize {
