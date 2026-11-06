@@ -4,7 +4,8 @@ use crate::{
 };
 use std::{iter::zip, time::Instant};
 
-use super::sharded_lru::CmdArgs;
+use super::cache_manager::min_expire_time;
+use super::sharded_lru::{CmdArgs, InvalidationKeys};
 use super::{CacheManager, CacheMode, CachingResult, PrepCacheItem};
 
 /// Holds enough information to resolve Cached Pipeline requests.
@@ -59,6 +60,15 @@ pub(crate) struct SingleCachedCommand<'a> {
     pub(crate) invalidation_count: usize,
 }
 
+/// A command that combines several keys into one reply, e.g. `SINTER key1 key2`.
+pub(crate) struct CombinedCachedCommand<'a> {
+    pub(crate) packed_cmd: Vec<u8>,
+    pub(crate) keys: InvalidationKeys,
+    pub(crate) cmd: CmdRef<'a>,
+    pub(crate) client_side_expire: Instant,
+    pub(crate) invalidation_count: usize,
+}
+
 pub(crate) struct MultipleCachedCommandPart<'a> {
     pub(crate) redis_key: &'a [u8],
     pub(crate) cmd_key: Vec<u8>,
@@ -66,9 +76,10 @@ pub(crate) struct MultipleCachedCommandPart<'a> {
     pub(crate) invalidation_count: usize,
 }
 
-/// Holds enough information to pack and resolve, both single (GET, HMGET) and multiple (MGET) commands.
+/// Holds enough information to pack and resolve single (GET, HMGET), combined (SINTER) and multiple (MGET) commands.
 pub(crate) enum CacheableCommand<'a> {
     Single(SingleCachedCommand<'a>),
+    Combined(CombinedCachedCommand<'a>),
     Multiple {
         command_name: &'a str,
         commands: Vec<(usize, MultipleCachedCommandPart<'a>)>,
@@ -110,6 +121,25 @@ impl CacheableCommand<'_> {
                         "Expected two Value from server",
                     )))
                 }
+            }
+            CacheableCommand::Combined(cached_command) => {
+                let reply = get_next_reply(&mut replies)?;
+                // The reply is valid until the first of its keys expires.
+                let mut expire_time = cached_command.client_side_expire;
+                for _ in cached_command.keys.iter() {
+                    let pttl = get_next_reply(&mut replies)?;
+                    expire_time = min_expire_time(expire_time, &pttl);
+                }
+                if !matches!(&reply, &Value::ServerError(_)) {
+                    cache_manager.insert_combined(
+                        cached_command.packed_cmd,
+                        cached_command.keys,
+                        reply.clone(),
+                        expire_time,
+                        cached_command.invalidation_count,
+                    );
+                }
+                Ok(reply)
             }
             CacheableCommand::Multiple {
                 command_name: _command_name,
@@ -157,6 +187,14 @@ impl CacheableCommand<'_> {
             CacheableCommand::Single(scc) => {
                 pipeline.add_command(Cmd::pttl(scc.redis_key));
                 pipeline.add_command_ref(scc.cmd);
+            }
+            CacheableCommand::Combined(ccc) => {
+                // The command goes first, since in opt-in mode `CLIENT CACHING YES` only makes the
+                // server track the keys read by the next command, and this one reads all of them.
+                pipeline.add_command_ref(ccc.cmd);
+                for key in ccc.keys.iter() {
+                    pipeline.add_command(Cmd::pttl(key));
+                }
             }
             CacheableCommand::Multiple {
                 command_name,

@@ -8,6 +8,9 @@
 //! Commands are cached in memory by their redis key and command pairs, when a redis key is removed all related command pairs are also removed.
 //! TTL is for key and not per command, when TTL of redis key gets updated, all command pairs of that redis key will use the new one.
 //!
+//! The exception is commands that combine several keys into one reply, like `SINTER`. Such a reply is cached once for the whole command,
+//! with its own TTL, and is removed when any of its keys is invalidated, expires on the server or is flushed.
+//!
 //! For more information please read <https://redis.io/docs/manual/client-side-caching/>
 //!
 //! **Note:** ClusterConnection usage with Redis instances using 6.x version might give stale duration when resharding happens,

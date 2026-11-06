@@ -39,6 +39,9 @@ impl CacheConfig {
     }
 
     /// Sets maximum key count for the cache.
+    ///
+    /// Replies of commands that combine several keys, like `SINTER`, don't count towards it. They
+    /// take one entry per command, up to 1/32 of this size (or this size, if it's smaller than 32).
     pub fn set_size(mut self, size: NonZeroUsize) -> Self {
         self.size = size;
         self
