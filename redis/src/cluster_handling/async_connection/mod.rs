@@ -676,8 +676,10 @@ where
             .and_then(|res| res.map(extract_result))
         };
 
+        // A node that replied with an error failed its part of the request, like a node that
+        // couldn't be reached. Only the `Special` policy passes the nodes' errors on as values.
         let get_receiver = |(_, receiver): (_, oneshot::Receiver<RedisResult<Response>>)| async {
-            convert_result(receiver.await)
+            convert_result(receiver.await).and_then(Value::extract_error)
         };
 
         match response_policy {
@@ -704,7 +706,7 @@ where
             Some(ResponsePolicy::FirstSucceededNonEmptyOrAllEmpty) => {
                 // We want to see each response as it arrives, and:
                 //  • If we see `Value::Nil`, increment a counter.
-                //  • If we see `Value::ServerError`, remember it as `last_err`.
+                //  • If we see an error, remember it as `last_err`.
                 //  • If we see `other_value`, return it immediately.
                 //
                 // Once the stream is exhausted:
@@ -720,9 +722,6 @@ where
                 for val in resolved {
                     match val {
                         Ok(Value::Nil) => nil_counter += 1,
-                        Ok(Value::ServerError(err)) => {
-                            last_err = Some(err.into());
-                        }
                         Ok(val) => return Ok(val),
                         Err(err) => {
                             last_err = Some(err);
@@ -1920,6 +1919,7 @@ mod tests {
     use crate::{
         cluster_handling::{
             read_routing::ReadCandidates,
+            routing::AggregateOp,
             slot_map::{SlotMap, SlotRange},
         },
         pipe,
@@ -2065,5 +2065,68 @@ mod tests {
             pipelines[&replica1].get_packed_pipeline(),
             expected.get_packed_pipeline()
         );
+    }
+
+    /// Aggregates the replies of a request sent to all primaries, received in the given order.
+    fn aggregate(replies: &[&str], response_policy: ResponsePolicy) -> RedisResult<Value> {
+        let receivers = replies
+            .iter()
+            .enumerate()
+            .map(|(index, reply)| {
+                let (sender, receiver) = oneshot::channel();
+                let _ =
+                    sender.send(crate::parse_redis_value(reply.as_bytes()).map(Response::Single));
+                (addr(&format!("node{index}:6379")), receiver)
+            })
+            .collect();
+        Core::<MultiplexedConnection>::aggregate_results(
+            receivers,
+            &MultipleNodeRoutingInfo::AllMasters,
+            Some(response_policy),
+        )
+        .now_or_never()
+        .unwrap()
+    }
+
+    #[test]
+    fn all_succeeded_fails_if_a_node_replies_with_an_error() {
+        let result = aggregate(
+            &[
+                "-OOM command not allowed when used memory > 'maxmemory'.\r\n",
+                "+OK\r\n",
+            ],
+            ResponsePolicy::AllSucceeded,
+        );
+        assert_eq!(result.unwrap_err().code(), Some("OOM"));
+    }
+
+    #[test]
+    fn one_succeeded_skips_the_nodes_that_reply_with_an_error() {
+        let result = aggregate(
+            &["-NOTBUSY No scripts in execution right now.\r\n", "+OK\r\n"],
+            ResponsePolicy::OneSucceeded,
+        );
+        assert_eq!(result.unwrap(), Value::Okay);
+
+        let result = aggregate(
+            &[
+                "-NOTBUSY No scripts in execution right now.\r\n",
+                "-NOTBUSY No scripts in execution right now.\r\n",
+            ],
+            ResponsePolicy::OneSucceeded,
+        );
+        assert_eq!(result.unwrap_err().code(), Some("NOTBUSY"));
+    }
+
+    #[test]
+    fn aggregate_fails_with_the_error_a_node_replies_with() {
+        let result = aggregate(
+            &[
+                ":1\r\n",
+                "-NOPERM this user has no permissions to run the 'dbsize' command\r\n",
+            ],
+            ResponsePolicy::Aggregate(AggregateOp::Sum),
+        );
+        assert_eq!(result.unwrap_err().code(), Some("NOPERM"));
     }
 }

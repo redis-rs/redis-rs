@@ -702,7 +702,10 @@ where
                 let (_, indices) = routes.get(index).unwrap();
                 let cmd =
                     crate::cluster_routing::command_for_multi_slot_indices(&input, indices.iter());
-                connection.req_command(&cmd).map(|res| (addr, res))
+                connection
+                    .req_command(&cmd)
+                    .and_then(Value::extract_error)
+                    .map(|res| (addr, res))
             })
             .collect()
     }

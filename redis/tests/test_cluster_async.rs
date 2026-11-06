@@ -2122,6 +2122,47 @@ mod cluster_async {
     }
 
     #[test]
+    fn test_async_cluster_fan_out_and_return_one_succeeded_ignoring_error_replies() {
+        let name = "test_async_cluster_fan_out_and_return_one_succeeded_ignoring_error_replies";
+        let mut cmd = Cmd::new();
+        cmd.arg("SCRIPT").arg("KILL");
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .retries(0)
+                .read_routing_strategy(RandomReplicaStrategy::new()),
+            name,
+            move |received_cmd: &[u8], port| {
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                if port == 6381 {
+                    Err(Ok(Value::Okay))
+                } else {
+                    Err(parse_redis_value(
+                        b"-NOTBUSY No scripts in execution right now.\r\n",
+                    ))
+                }
+            },
+        );
+        // Only 6381 runs a script, and like a busy server, it replies after the other nodes.
+        add_mock_delay(name, |_, port| {
+            if port == 6381 {
+                Duration::from_millis(100)
+            } else {
+                Duration::ZERO
+            }
+        });
+
+        let result = runtime
+            .block_on(cmd.query_async::<Value>(&mut connection))
+            .unwrap();
+        assert_eq!(result, Value::Okay);
+    }
+
+    #[test]
     fn test_async_cluster_fan_out_and_return_all_succeeded_response() {
         let name = "test_async_cluster_fan_out_and_return_all_succeeded_response";
         let cmd = cmd("FLUSHALL");
@@ -2178,6 +2219,41 @@ mod cluster_async {
             .block_on(cmd.query_async::<Value>(&mut connection))
             .unwrap_err();
         assert_eq!(result.kind(), ServerErrorKind::NotBusy.into());
+    }
+
+    #[test]
+    fn test_async_cluster_split_multi_shard_command_and_fail_if_a_shard_replies_with_an_error() {
+        let name = "test_async_cluster_split_multi_shard_command_and_fail_if_a_shard_replies_with_an_error";
+        let mut cmd = cmd("MSET");
+        // foo is on 6381, and bar is on 6379.
+        cmd.arg("foo").arg("1").arg("bar").arg("2");
+        // The shard that gets its part of the command first is out of memory, so its reply isn't
+        // the last one.
+        let out_of_memory = Arc::new(AtomicBool::new(true));
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
+            name,
+            move |received_cmd: &[u8], _port| {
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                if out_of_memory.swap(false, Ordering::Relaxed) {
+                    Err(parse_redis_value(
+                        b"-OOM command not allowed when used memory > 'maxmemory'.\r\n",
+                    ))
+                } else {
+                    Err(Ok(Value::Okay))
+                }
+            },
+        );
+
+        let result = runtime
+            .block_on(cmd.query_async::<Value>(&mut connection))
+            .unwrap_err();
+        assert_eq!(result.code(), Some("OOM"));
     }
 
     #[test]
