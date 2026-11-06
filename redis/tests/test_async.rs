@@ -791,7 +791,7 @@ mod basic_async {
     #[async_test]
     async fn test_response_timeouts_of_concurrent_requests_on_one_connection() {
         let ctx = TestContext::default();
-        let connection = ctx.async_connection().await.unwrap();
+        let mut connection = ctx.async_connection().await.unwrap();
 
         // The server answers in order, so every request below waits for the blocking one.
         let mut blocking = connection.clone();
@@ -817,7 +817,6 @@ mod basic_async {
         assert!(impatient_reply.unwrap_err().is_timeout());
 
         // The late replies of the expired requests were discarded.
-        let mut connection = connection;
         let reply: String = cmd("ECHO")
             .arg("after")
             .query_async(&mut connection)

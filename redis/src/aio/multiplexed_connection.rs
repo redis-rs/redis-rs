@@ -1,7 +1,8 @@
-use super::runtime::{DriverTimer, Elapsed};
+#[cfg(feature = "token-based-authentication")]
+use super::Runtime;
 use super::{
-    AsyncPushSender, ConnectionLike, Runtime, SharedHandleContainer, SubscribeLikeCommand,
-    TaskHandle, send_push, send_subscribe_like_command,
+    AsyncPushSender, ConnectionLike, SharedHandleContainer, SubscribeLikeCommand, TaskHandle,
+    send_push, send_subscribe_like_command,
 };
 #[cfg(feature = "cache-aio")]
 use crate::caching::{CacheManager, CacheStatistics, PrepCacheItem};
@@ -18,7 +19,6 @@ use crate::{
     types::{RedisFuture, RedisResult, Value},
 };
 use ::tokio::io::{AsyncRead, AsyncWrite};
-use async_lock::{Semaphore, SemaphoreGuardArc};
 use futures_channel::{mpsc, oneshot};
 use std::time::Instant;
 #[cfg(feature = "token-based-authentication")]
@@ -42,6 +42,10 @@ use std::sync::{Arc, Mutex};
 use std::task::{self, Poll};
 use std::time::Duration;
 use tokio_util::codec::Decoder;
+
+mod pending;
+
+use pending::{Backlog, BacklogSlot, Pending, Staged};
 
 // Senders which the result of a single request are sent through
 type PipelineOutput = oneshot::Sender<RedisResult<Value>>;
@@ -134,7 +138,7 @@ impl ResponseAggregate {
 struct InFlight {
     output: Option<PipelineOutput>,
     response_aggregate: ResponseAggregate,
-    // When the caller stops waiting for the response. Enforced by the driver's single timer.
+    // When the request times out.
     deadline: Option<Instant>,
 }
 
@@ -147,36 +151,11 @@ struct PipelineMessage {
     // If `Some`, the first value is the number of responses to skip,
     // the second is the number of responses to keep, and the third is whether the pipeline is a transaction.
     expectation: Option<PipelineResponseExpectation>,
-    // When the caller stops waiting for the response; enforced by the driver.
+    // When the request times out.
     deadline: Option<Instant>,
-    // For a request that expects no response: a place in the backlog of requests not yet
-    // written, released once this one is written.
-    slot: Option<SemaphoreGuardArc>,
+    // Held until written, for requests without a response.
+    slot: Option<BacklogSlot>,
 }
-
-// A request the driver has accepted but could not yet write, because the transport was not ready.
-struct Staged {
-    input: Vec<u8>,
-    output: Option<PipelineOutput>,
-    expectation: Option<PipelineResponseExpectation>,
-    deadline: Option<Instant>,
-    _slot: Option<SemaphoreGuardArc>,
-}
-
-impl Staged {
-    // Whether the request still has to be written: its caller is waiting for the response, or it
-    // expects none. Expired and cancelled requests are never written.
-    fn is_live(&self) -> bool {
-        match &self.output {
-            Some(output) => !output.is_canceled(),
-            None => self.deadline.is_none(),
-        }
-    }
-}
-
-// `staged` is cleared of requests whose callers are gone whenever it has doubled since the last
-// time, but not below this length.
-const MIN_PRUNE_STAGED_AT: usize = 64;
 
 /// Wrapper around a `Stream + Sink` where each item sent through the `Sink` results in one or more
 /// items being output by the `Stream` (the number is specified at time of sending). With the
@@ -185,10 +164,7 @@ const MIN_PRUNE_STAGED_AT: usize = 64;
 #[derive(Clone)]
 struct Pipeline {
     sender: mpsc::Sender<PipelineMessage>,
-    // Bounds the requests without a response that were sent to the driver but not yet written.
-    // A caller that waits for its response sends one request at a time per handle anyway, as the
-    // request channel's guaranteed slot per sender allowed before.
-    backlog: Arc<Semaphore>,
+    backlog: Backlog,
 }
 
 impl Debug for Pipeline {
@@ -204,18 +180,10 @@ pin_project! {
         sink_stream: T,
         in_flight: VecDeque<InFlight>,
         error: Option<RedisError>,
-        timer: DriverTimer,
-        armed_deadline: Option<Instant>,
-        // Accepted requests waiting for the transport to become writable. The driver always drains
-        // its request channel, so a request never waits there unseen by the driver's timer, and
-        // staged requests expire like in-flight ones. Callers waiting for a response have one
-        // request each; requests without a response are bounded by the pipeline's backlog.
-        staged: VecDeque<Staged>,
-        // Length at which `staged` is next cleared of requests whose callers are gone.
-        prune_staged_at: usize,
+        // Deadlines, and requests not written yet.
+        pending: Pending,
         // Whether the transport was ready the last time it was polled, with nothing staged.
         transport_ready: bool,
-        runtime: Runtime,
         push_sender: Option<Arc<dyn AsyncPushSender>>,
         cache_manager: Option<CacheManager>,
         // The subscriptions the connection has confirmed so far, used to determine how many
@@ -233,18 +201,10 @@ pin_project! {
         sink_stream: T,
         in_flight: VecDeque<InFlight>,
         error: Option<RedisError>,
-        timer: DriverTimer,
-        armed_deadline: Option<Instant>,
-        // Accepted requests waiting for the transport to become writable. The driver always drains
-        // its request channel, so a request never waits there unseen by the driver's timer, and
-        // staged requests expire like in-flight ones. Callers waiting for a response have one
-        // request each; requests without a response are bounded by the pipeline's backlog.
-        staged: VecDeque<Staged>,
-        // Length at which `staged` is next cleared of requests whose callers are gone.
-        prune_staged_at: usize,
+        // Deadlines, and requests not written yet.
+        pending: Pending,
         // Whether the transport was ready the last time it was polled, with nothing staged.
         transport_ready: bool,
-        runtime: Runtime,
         push_sender: Option<Arc<dyn AsyncPushSender>>,
         // The subscriptions the connection has confirmed so far, used to determine how many
         // confirmations a zero-argument un/psubscribe will be answered with. Shared, by
@@ -283,12 +243,8 @@ where
             sink_stream,
             in_flight: VecDeque::new(),
             error: None,
-            timer: Runtime::locate().driver_timer(),
-            armed_deadline: None,
-            staged: VecDeque::new(),
-            prune_staged_at: MIN_PRUNE_STAGED_AT,
+            pending: Pending::new(),
             transport_ready: false,
-            runtime: Runtime::locate(),
             push_sender,
             #[cfg(feature = "cache-aio")]
             cache_manager,
@@ -492,54 +448,9 @@ where
         }
     }
 
-    // Fails in-flight requests whose deadline has passed. A single timer is armed for the earliest
-    // known deadline; when it fires, all in-flight requests are checked and the timer is re-armed for
-    // the earliest remaining one. Requests that complete normally never touch the timer, so the
-    // per-request cost is storing one `Instant`.
     fn poll_deadlines(self: Pin<&mut Self>, cx: &mut task::Context) {
         let this = self.project();
-        while let Some(fired) = *this.armed_deadline {
-            if this.timer.poll_elapsed(cx).is_pending() {
-                return;
-            }
-            // Everything due by the deadline the timer fired for has expired, even if the clock
-            // reads slightly earlier. This guarantees progress on every firing.
-            let now = this.runtime.now().max(fired);
-            let mut next: Option<Instant> = None;
-            for entry in this.in_flight.iter_mut() {
-                let Some(deadline) = entry.deadline else {
-                    continue;
-                };
-                if entry.output.is_none() {
-                    continue;
-                }
-                if deadline <= now {
-                    if let Some(output) = entry.output.take() {
-                        _ = output.send(Err(Elapsed::new().into()));
-                    }
-                } else {
-                    next = Some(next.map_or(deadline, |n| n.min(deadline)));
-                }
-            }
-            for staged in this.staged.iter_mut() {
-                let Some(deadline) = staged.deadline else {
-                    continue;
-                };
-                if deadline <= now {
-                    if let Some(output) = staged.output.take() {
-                        _ = output.send(Err(Elapsed::new().into()));
-                    }
-                } else if staged.output.is_some() {
-                    next = Some(next.map_or(deadline, |n| n.min(deadline)));
-                }
-            }
-            // A staged request whose caller is gone is never written.
-            this.staged.retain(Staged::is_live);
-            *this.armed_deadline = next;
-            if let Some(next) = next {
-                this.timer.arm(next);
-            }
-        }
+        this.pending.poll_expired(cx, this.in_flight);
     }
 
     fn send_disconnect_if_needed(self: Pin<&mut Self>, err: &RedisError) {
@@ -554,16 +465,6 @@ impl<T> PipelineSink<T>
 where
     T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
 {
-    fn arm_if_earlier(self: Pin<&mut Self>, deadline: Option<Instant>) {
-        let this = self.project();
-        if let Some(deadline) = deadline
-            && this.armed_deadline.is_none_or(|armed| deadline < armed)
-        {
-            *this.armed_deadline = Some(deadline);
-            this.timer.arm(deadline);
-        }
-    }
-
     // Writes a request to the transport, which must have been polled ready.
     fn write_request(
         mut self: Pin<&mut Self>,
@@ -611,17 +512,10 @@ where
                     return Poll::Ready(Ok(()));
                 }
             }
-            let Some(staged) = self.as_mut().project().staged.pop_front() else {
+            let Some(staged) = self.as_mut().project().pending.next_staged() else {
                 *self.as_mut().project().transport_ready = true;
                 return Poll::Ready(Ok(()));
             };
-            if staged
-                .output
-                .as_ref()
-                .is_some_and(|output| output.is_canceled())
-            {
-                continue;
-            }
             if self
                 .as_mut()
                 .write_request(
@@ -644,8 +538,7 @@ where
 {
     type Error = ();
 
-    // The driver is always ready to accept a request: if the transport is not writable, the
-    // request is staged and expires like an in-flight request.
+    // Always ready: requests are staged while the transport isn't writable.
     fn poll_ready(
         mut self: Pin<&mut Self>,
         cx: &mut task::Context,
@@ -684,20 +577,13 @@ where
             return Ok(());
         }
         let deadline = deadline.filter(|_| output.is_some());
-        self.as_mut().arm_if_earlier(deadline);
+        self.as_mut().project().pending.track(deadline);
 
-        if self.transport_ready && self.staged.is_empty() {
+        if self.transport_ready && !self.pending.has_staged() {
             *self.as_mut().project().transport_ready = false;
             self.write_request(input, output, expectation, deadline)
         } else {
-            let this = self.project();
-            // Callers that cancel and retry while the transport is stalled must not grow the queue
-            // without bound, so requests whose callers are gone are dropped from time to time.
-            if this.staged.len() >= *this.prune_staged_at {
-                this.staged.retain(Staged::is_live);
-                *this.prune_staged_at = (this.staged.len() * 2).max(MIN_PRUNE_STAGED_AT);
-            }
-            this.staged.push_back(Staged {
+            self.project().pending.stage(Staged {
                 input,
                 output,
                 expectation,
@@ -743,7 +629,7 @@ where
     ) -> Poll<Result<(), Self::Error>> {
         // No new requests will come in after the first call to `close` but we need to complete any
         // in progress requests before closing
-        if !self.in_flight.is_empty() || !self.staged.is_empty() {
+        if !self.in_flight.is_empty() || self.pending.has_staged() {
             ready!(self.as_mut().poll_flush(cx))?;
         }
         let this = self.as_mut().project();
@@ -782,8 +668,13 @@ impl Pipeline {
             cache_manager,
         );
         let f = receiver.map(Ok).forward(sink).map(|_| ());
-        let backlog = Arc::new(Semaphore::new(buffer_size.max(1)));
-        (Self { sender, backlog }, f)
+        (
+            Self {
+                sender,
+                backlog: Backlog::new(buffer_size),
+            },
+            f,
+        )
     }
 
     async fn send_recv(
@@ -805,29 +696,8 @@ impl Pipeline {
             let (sender, receiver) = oneshot::channel();
             (Some(sender), Some(receiver))
         };
-        // A timeout too large to represent as an instant means no timeout, as it did with a timer
-        // per request.
-        let deadline = timeout.and_then(|timeout| Runtime::locate().now().checked_add(timeout));
-        // A request without a response returns as soon as it is sent, so the backlog holds such
-        // callers back while the transport is stalled. Only then do they need a timer of their own.
-        let slot = if skip_response {
-            Some(match self.backlog.try_acquire_arc() {
-                Some(slot) => slot,
-                None => {
-                    let acquire = self.backlog.acquire_arc();
-                    match deadline {
-                        Some(deadline) => {
-                            let runtime = Runtime::locate();
-                            let remaining = deadline.saturating_duration_since(runtime.now());
-                            runtime.timeout(remaining, acquire).await?
-                        }
-                        None => acquire.await,
-                    }
-                }
-            })
-        } else {
-            None
-        };
+        let deadline = pending::deadline_after(timeout);
+        let slot = self.backlog.admit(!skip_response, deadline).await?;
         let message = PipelineMessage {
             input,
             expectation,
@@ -836,8 +706,7 @@ impl Pipeline {
             slot,
         };
 
-        // The driver always drains its request channel and enforces the deadline itself, so the
-        // caller registers no timer.
+        // The driver enforces the deadline, so no timer is needed here.
         let sent = SinkExt::send(&mut self.sender, message)
             .await
             .map_err(|_| None);
@@ -1797,8 +1666,7 @@ mod tests {
         }
     }
 
-    /// Requests must time out within their response timeout even while the transport is stalled
-    /// (the server stopped reading, so writes block and requests pile up in front of the socket).
+    /// Requests time out even when the server stops reading and writes block.
     #[tokio::test]
     async fn test_requests_time_out_while_writes_are_stalled() {
         let (client_half, server_half) = tokio::io::duplex(1024);
@@ -1837,9 +1705,8 @@ mod tests {
         );
     }
 
-    /// While the server stops reading, callers must be held back once `pipeline_buffer_size`
-    /// requests are waiting, even for requests that expect no response, and a held-back caller
-    /// still times out.
+    /// When the server stops reading, callers are held back once `pipeline_buffer_size` requests
+    /// are waiting, also for requests without a response. A held-back caller still times out.
     #[tokio::test]
     async fn test_backpressure_while_writes_are_stalled() {
         tokio::time::pause();
@@ -1909,44 +1776,6 @@ mod tests {
             received += 1;
         }
         assert!(received <= 3, "{received} expired requests were sent");
-    }
-
-    /// Callers on one handle that cancel and retry while the transport is stalled must not grow the
-    /// driver's queue without bound, and requests whose callers still wait must be kept.
-    #[tokio::test]
-    async fn test_cancelled_staged_requests_are_dropped() {
-        let (client_half, _server_half) = tokio::io::duplex(1024);
-        let mut sink = Box::pin(PipelineSink::new(
-            ValueCodec::default().framed(client_half),
-            None,
-            Default::default(),
-            #[cfg(feature = "cache-aio")]
-            None,
-        ));
-        let mut waiting = Vec::new();
-        for i in 0..10_000 {
-            let (output, receiver) = oneshot::channel();
-            sink.as_mut()
-                .start_send(PipelineMessage {
-                    input: b"*1\r\n$4\r\nPING\r\n".to_vec(),
-                    output: Some(output),
-                    expectation: None,
-                    deadline: None,
-                    slot: None,
-                })
-                .unwrap();
-            // Every tenth caller keeps waiting; the others give up.
-            if i % 10 == 0 {
-                waiting.push(receiver);
-            }
-        }
-        let live = sink.staged.iter().filter(|staged| staged.is_live()).count();
-        assert_eq!(live, waiting.len());
-        assert!(
-            sink.staged.len() <= 2 * waiting.len() + MIN_PRUNE_STAGED_AT,
-            "{} requests staged",
-            sink.staged.len()
-        );
     }
 
     #[tokio::test]
@@ -2153,9 +1982,8 @@ mod tests {
         assert!(start.elapsed() < Duration::from_millis(520));
     }
 
-    /// Random schedules of overlapping requests: each request times out exactly when its reply
-    /// arrives after its send time plus its timeout, which is what a separate timer per request
-    /// does.
+    /// Random schedules: a request times out iff its reply arrives after send time + timeout,
+    /// same as with a timer per request.
     #[tokio::test]
     async fn test_random_timeout_schedules_match_per_request_timers() {
         tokio::time::pause();

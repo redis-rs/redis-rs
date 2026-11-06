@@ -184,8 +184,7 @@ impl Runtime {
 }
 
 impl Runtime {
-    /// The runtime's notion of "now", as a `std` instant. Uses the runtime clock so that paused or
-    /// mocked time is respected.
+    /// Current time from the runtime's clock, so paused time is respected.
     #[inline]
     pub(crate) fn now(self) -> std::time::Instant {
         match self {
