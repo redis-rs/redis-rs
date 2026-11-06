@@ -74,6 +74,8 @@ struct BuilderParams {
     #[cfg(feature = "cluster-async")]
     connection_concurrency_limit: Option<usize>,
     #[cfg(feature = "cluster-async")]
+    codec_buffer_trim_threshold: Option<Option<NonZeroUsize>>,
+    #[cfg(feature = "cluster-async")]
     write_backpressure_boundary: Option<usize>,
     node_address_map: Option<HashMap<NodeAddress, NodeAddress>>,
     #[cfg(feature = "cluster-async")]
@@ -110,6 +112,8 @@ impl std::fmt::Debug for BuilderParams {
             #[cfg(feature = "cluster-async")]
             connection_concurrency_limit,
             #[cfg(feature = "cluster-async")]
+            codec_buffer_trim_threshold,
+            #[cfg(feature = "cluster-async")]
             write_backpressure_boundary,
             node_address_map,
             #[cfg(feature = "cluster-async")]
@@ -144,6 +148,7 @@ impl std::fmt::Debug for BuilderParams {
         #[cfg(feature = "cluster-async")]
         str.field("overall_response_timeout", overall_response_timeout)
             .field("connection_concurrency_limit", connection_concurrency_limit)
+            .field("codec_buffer_trim_threshold", codec_buffer_trim_threshold)
             .field("write_backpressure_boundary", write_backpressure_boundary)
             .field("max_connection_attempts", max_connection_attempts)
             .field("async_push_sender", &set_or_unset(async_push_sender))
@@ -241,6 +246,8 @@ pub(crate) struct ClusterParams {
     #[cfg(feature = "cluster-async")]
     pub(crate) connection_concurrency_limit: Option<usize>,
     #[cfg(feature = "cluster-async")]
+    pub(crate) codec_buffer_trim_threshold: Option<Option<NonZeroUsize>>,
+    #[cfg(feature = "cluster-async")]
     pub(crate) write_backpressure_boundary: Option<usize>,
     pub(crate) node_address_map: Option<HashMap<NodeAddress, NodeAddress>>,
     #[cfg(feature = "cluster-async")]
@@ -274,6 +281,8 @@ impl std::fmt::Debug for ClusterParams {
             #[cfg(feature = "cluster-async")]
             connection_concurrency_limit,
             #[cfg(feature = "cluster-async")]
+            codec_buffer_trim_threshold,
+            #[cfg(feature = "cluster-async")]
             write_backpressure_boundary,
             node_address_map,
             #[cfg(feature = "cluster-async")]
@@ -297,6 +306,7 @@ impl std::fmt::Debug for ClusterParams {
         #[cfg(feature = "cluster-async")]
         str.field("overall_response_timeout", overall_response_timeout)
             .field("connection_concurrency_limit", connection_concurrency_limit)
+            .field("codec_buffer_trim_threshold", codec_buffer_trim_threshold)
             .field("write_backpressure_boundary", write_backpressure_boundary)
             .field("max_connection_attempts", max_connection_attempts)
             .field("async_push_sender", &set_or_unset(async_push_sender))
@@ -380,6 +390,8 @@ impl ClusterParams {
             },
             #[cfg(feature = "cluster-async")]
             connection_concurrency_limit: value.connection_concurrency_limit,
+            #[cfg(feature = "cluster-async")]
+            codec_buffer_trim_threshold: value.codec_buffer_trim_threshold,
             #[cfg(feature = "cluster-async")]
             write_backpressure_boundary: value.write_backpressure_boundary,
             node_address_map: value.node_address_map,
@@ -863,6 +875,15 @@ impl ClusterClientBuilder {
     #[cfg(feature = "cluster-async")]
     pub fn connection_concurrency_limit(mut self, limit: usize) -> Self {
         self.builder_params.connection_concurrency_limit = Some(limit);
+        self
+    }
+
+    /// Sets the codec buffer trim threshold in bytes for every async cluster node connection.
+    ///
+    /// See [`crate::AsyncConnectionConfig::set_codec_buffer_trim_threshold`] for details.
+    #[cfg(feature = "cluster-async")]
+    pub fn codec_buffer_trim_threshold(mut self, threshold: Option<NonZeroUsize>) -> Self {
+        self.builder_params.codec_buffer_trim_threshold = Some(threshold);
         self
     }
 
@@ -1366,6 +1387,33 @@ mod tests {
         assert_eq!(
             client.cluster_params.write_backpressure_boundary,
             Some(16 * 1024 * 1024)
+        );
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test]
+    fn codec_buffer_trim_threshold_reaches_cluster_params() {
+        let client = ClusterClient::builder(["redis://127.0.0.1:6379"])
+            .build()
+            .unwrap();
+        assert_eq!(client.cluster_params.codec_buffer_trim_threshold, None);
+
+        let client = ClusterClient::builder(["redis://127.0.0.1:6379"])
+            .codec_buffer_trim_threshold(None)
+            .build()
+            .unwrap();
+        assert_eq!(
+            client.cluster_params.codec_buffer_trim_threshold,
+            Some(None)
+        );
+
+        let client = ClusterClient::builder(["redis://127.0.0.1:6379"])
+            .codec_buffer_trim_threshold(std::num::NonZeroUsize::new(128 * 1024))
+            .build()
+            .unwrap();
+        assert_eq!(
+            client.cluster_params.codec_buffer_trim_threshold,
+            Some(std::num::NonZeroUsize::new(128 * 1024))
         );
     }
 
