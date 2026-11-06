@@ -104,21 +104,52 @@ impl ToRedisArgs for Rule {
             ResetKeys => out.write_arg(b"resetkeys"),
             Channel(pat) => out.write_arg_fmt(format_args!("&{pat}")),
             ResetChannels => out.write_arg(b"resetchannels"),
-            Selector(sel) => out.write_arg_fmt(format_args!(
-                "({})",
-                sel.iter()
-                    .flat_map(|r| r
-                        .to_redis_args()
-                        .into_iter()
-                        .map(|x| String::from_utf8_lossy(&x).to_string()))
-                    .collect::<Vec<String>>()
-                    .join(" ")
-            )),
+            Selector(sel) => {
+                let mut arg = b"(".to_vec();
+                for (i, rule) in sel.iter().flat_map(Self::to_redis_args).enumerate() {
+                    if i > 0 {
+                        arg.push(b' ');
+                    }
+                    push_selector_rule(&mut arg, &rule);
+                }
+                arg.push(b')');
+                out.write_arg(&arg);
+            }
             Reset => out.write_arg(b"reset"),
 
             Other(rule) => out.write_arg(rule.as_bytes()),
         }
     }
+}
+
+/// Appends one rule of a selector to the selector's argument.
+///
+/// The server splits the text between the parentheses into rules with `sdssplitargs`, the
+/// splitter used for `redis-cli` lines and the ACL file, so a rule containing whitespace or a
+/// quote would be read as several rules. Such a rule is written as a double-quoted string with
+/// the escapes that splitter decodes, the form `sdscatrepr` produces, so that it stays one rule
+/// with exactly the bytes given.
+fn push_selector_rule(arg: &mut Vec<u8>, rule: &[u8]) {
+    let is_plain = |byte: u8| byte.is_ascii_graphic() && byte != b'"' && byte != b'\'';
+    if !rule.is_empty() && rule.iter().all(|&byte| is_plain(byte)) {
+        arg.extend_from_slice(rule);
+        return;
+    }
+    arg.push(b'"');
+    for &byte in rule {
+        match byte {
+            b'\\' => arg.extend_from_slice(b"\\\\"),
+            b'"' => arg.extend_from_slice(b"\\\""),
+            b'\n' => arg.extend_from_slice(b"\\n"),
+            b'\r' => arg.extend_from_slice(b"\\r"),
+            b'\t' => arg.extend_from_slice(b"\\t"),
+            0x07 => arg.extend_from_slice(b"\\a"),
+            0x08 => arg.extend_from_slice(b"\\b"),
+            byte if byte.is_ascii_graphic() || byte == b' ' => arg.push(byte),
+            byte => arg.extend_from_slice(format!("\\x{byte:02x}").as_bytes()),
+        }
+    }
+    arg.push(b'"');
 }
 
 /// An info dictionary type storing Redis ACL information as multiple `Rule`.
@@ -436,6 +467,31 @@ mod tests {
             ]),
             b"(+SET ~key2)"
         );
+    }
+
+    #[test]
+    fn test_selector_rule_stays_one_rule() {
+        use self::Rule::*;
+
+        // The server splits the selector on whitespace and quotes, so a rule containing
+        // either is quoted with the escapes `sdssplitargs` decodes.
+        assert_args!(
+            Selector(vec![
+                AddCommand("get".to_string()),
+                Pattern("x +@all ~*".to_string())
+            ]),
+            b"(+get \"~x +@all ~*\")"
+        );
+        assert_args!(
+            Selector(vec![Pattern("a\"b'c\\d\ne\tf".to_string())]),
+            b"(\"~a\\\"b'c\\\\d\\ne\\tf\")"
+        );
+        assert_args!(
+            Selector(vec![Pattern("\u{7}\u{8}\u{1}é".to_string())]),
+            b"(\"~\\a\\b\\x01\\xc3\\xa9\")"
+        );
+        assert_args!(Selector(vec![Other(String::new())]), b"(\"\")");
+        assert_args!(Selector(vec![]), b"()");
     }
 
     #[test]
