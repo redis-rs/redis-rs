@@ -1,6 +1,8 @@
+#[cfg(feature = "token-based-authentication")]
+use super::Runtime;
 use super::{
-    AsyncPushSender, ConnectionLike, Runtime, SharedHandleContainer, SubscribeLikeCommand,
-    TaskHandle, send_push, send_subscribe_like_command,
+    AsyncPushSender, ConnectionLike, SharedHandleContainer, SubscribeLikeCommand, TaskHandle,
+    send_push, send_subscribe_like_command,
 };
 #[cfg(feature = "cache-aio")]
 use crate::caching::{CacheManager, CacheStatistics, PrepCacheItem};
@@ -18,6 +20,7 @@ use crate::{
 };
 use ::tokio::io::{AsyncRead, AsyncWrite};
 use futures_channel::{mpsc, oneshot};
+use std::time::Instant;
 #[cfg(feature = "token-based-authentication")]
 use {
     arcstr::ArcStr,
@@ -39,6 +42,10 @@ use std::sync::{Arc, Mutex};
 use std::task::{self, Poll};
 use std::time::Duration;
 use tokio_util::codec::Decoder;
+
+mod pending;
+
+use pending::{Backlog, BacklogSlot, Pending, Staged};
 
 // Senders which the result of a single request are sent through
 type PipelineOutput = oneshot::Sender<RedisResult<Value>>;
@@ -131,6 +138,8 @@ impl ResponseAggregate {
 struct InFlight {
     output: Option<PipelineOutput>,
     response_aggregate: ResponseAggregate,
+    // When the request times out.
+    deadline: Option<Instant>,
 }
 
 impl InFlight {
@@ -152,6 +161,10 @@ struct PipelineMessage {
     // If `Some`, the first value is the number of responses to skip,
     // the second is the number of responses to keep, and the third is whether the pipeline is a transaction.
     expectation: Option<PipelineResponseExpectation>,
+    // When the request times out.
+    deadline: Option<Instant>,
+    // Held until written, for requests without a response.
+    slot: Option<BacklogSlot>,
 }
 
 /// Wrapper around a `Stream + Sink` where each item sent through the `Sink` results in one or more
@@ -161,6 +174,7 @@ struct PipelineMessage {
 #[derive(Clone)]
 struct Pipeline {
     sender: mpsc::Sender<PipelineMessage>,
+    backlog: Backlog,
 }
 
 impl Debug for Pipeline {
@@ -176,6 +190,10 @@ pin_project! {
         sink_stream: T,
         in_flight: VecDeque<InFlight>,
         error: Option<RedisError>,
+        // Deadlines, and requests not written yet.
+        pending: Pending,
+        // Whether the transport was ready the last time it was polled, with nothing staged.
+        transport_ready: bool,
         push_sender: Option<Arc<dyn AsyncPushSender>>,
         cache_manager: Option<CacheManager>,
         // The subscriptions the connection has confirmed so far, used to determine how many
@@ -193,6 +211,10 @@ pin_project! {
         sink_stream: T,
         in_flight: VecDeque<InFlight>,
         error: Option<RedisError>,
+        // Deadlines, and requests not written yet.
+        pending: Pending,
+        // Whether the transport was ready the last time it was polled, with nothing staged.
+        transport_ready: bool,
         push_sender: Option<Arc<dyn AsyncPushSender>>,
         // The subscriptions the connection has confirmed so far, used to determine how many
         // confirmations a zero-argument un/psubscribe will be answered with. Shared, by
@@ -231,6 +253,8 @@ where
             sink_stream,
             in_flight: VecDeque::new(),
             error: None,
+            pending: Pending::new(),
+            transport_ready: false,
             push_sender,
             #[cfg(feature = "cache-aio")]
             cache_manager,
@@ -454,10 +478,86 @@ where
         }
     }
 
+    fn poll_deadlines(self: Pin<&mut Self>, cx: &mut task::Context) {
+        let this = self.project();
+        this.pending.poll_expired(cx, this.in_flight);
+    }
+
     fn send_disconnect_if_needed(self: Pin<&mut Self>, err: &RedisError) {
         if err.is_unrecoverable_error() {
             let self_ = self.project();
             send_disconnect(self_.push_sender);
+        }
+    }
+}
+
+impl<T> PipelineSink<T>
+where
+    T: Sink<Vec<u8>, Error = RedisError> + Stream<Item = RedisResult<Value>> + 'static,
+{
+    // Writes a request to the transport, which must have been polled ready.
+    fn write_request(
+        mut self: Pin<&mut Self>,
+        input: Vec<u8>,
+        mut output: Option<PipelineOutput>,
+        expectation: Option<PipelineResponseExpectation>,
+        deadline: Option<Instant>,
+    ) -> Result<(), ()> {
+        let self_ = self.as_mut().project();
+        if let Some(err) = self_.error.take() {
+            if let Some(output) = output.take() {
+                _ = output.send(Err(err));
+            }
+            return Err(());
+        }
+        match self_.sink_stream.start_send(input) {
+            Ok(()) => {
+                self_.in_flight.push_back(InFlight {
+                    output,
+                    response_aggregate: ResponseAggregate::new(expectation),
+                    deadline,
+                });
+                Ok(())
+            }
+            Err(err) => {
+                if let Some(output) = output.take() {
+                    _ = output.send(Err(err));
+                }
+                Err(())
+            }
+        }
+    }
+
+    // Moves staged requests to the transport while it is ready. `Ready(Ok)` means nothing is staged
+    // and the transport is ready for another request.
+    fn poll_write_staged(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Result<(), ()>> {
+        loop {
+            *self.as_mut().project().transport_ready = false;
+            match ready!(self.as_mut().project().sink_stream.poll_ready(cx)) {
+                Ok(()) => {}
+                Err(err) => {
+                    self.as_mut().send_disconnect_if_needed(&err);
+                    *self.as_mut().project().error = Some(err);
+                    *self.as_mut().project().transport_ready = true;
+                    return Poll::Ready(Ok(()));
+                }
+            }
+            let Some(staged) = self.as_mut().project().pending.next_staged() else {
+                *self.as_mut().project().transport_ready = true;
+                return Poll::Ready(Ok(()));
+            };
+            if self
+                .as_mut()
+                .write_request(
+                    staged.input,
+                    staged.output,
+                    staged.expectation,
+                    staged.deadline,
+                )
+                .is_err()
+            {
+                return Poll::Ready(Err(()));
+            }
         }
     }
 }
@@ -468,7 +568,7 @@ where
 {
     type Error = ();
 
-    // Retrieve incoming messages and write them to the sink
+    // Always ready: requests are staged while the transport isn't writable.
     fn poll_ready(
         mut self: Pin<&mut Self>,
         cx: &mut task::Context,
@@ -482,13 +582,11 @@ where
         if matches!(self.as_mut().poll_read(cx), Poll::Ready(Err(()))) {
             return Poll::Ready(Err(()));
         }
-        match ready!(self.as_mut().project().sink_stream.poll_ready(cx)) {
-            Ok(()) => Ok(()).into(),
-            Err(err) => {
-                self.as_mut().send_disconnect_if_needed(&err);
-                *self.project().error = Some(err);
-                Ok(()).into()
-            }
+        self.as_mut().poll_deadlines(cx);
+        match self.as_mut().poll_write_staged(cx) {
+            Poll::Ready(Err(())) => Poll::Ready(Err(())),
+            // Ready, or the transport is stalled and the next request will be staged.
+            Poll::Ready(Ok(())) | Poll::Pending => Poll::Ready(Ok(())),
         }
     }
 
@@ -496,8 +594,10 @@ where
         mut self: Pin<&mut Self>,
         PipelineMessage {
             input,
-            mut output,
+            output,
             expectation,
+            deadline,
+            slot,
         }: PipelineMessage,
     ) -> Result<(), Self::Error> {
         // If initially a receiver was created, but then dropped, there is nothing to receive our output we do not need to send the message as it is
@@ -506,33 +606,21 @@ where
         if output.as_ref().is_some_and(|output| output.is_canceled()) {
             return Ok(());
         }
+        let deadline = deadline.filter(|_| output.is_some());
+        self.as_mut().project().pending.track(deadline);
 
-        let self_ = self.as_mut().project();
-
-        if let Some(err) = self_.error.take() {
-            if let Some(output) = output.take() {
-                _ = output.send(Err(err));
-            }
-            return Err(());
-        }
-
-        match self_.sink_stream.start_send(input) {
-            Ok(()) => {
-                let response_aggregate = ResponseAggregate::new(expectation);
-                let entry = InFlight {
-                    output,
-                    response_aggregate,
-                };
-
-                self_.in_flight.push_back(entry);
-                Ok(())
-            }
-            Err(err) => {
-                if let Some(output) = output.take() {
-                    _ = output.send(Err(err));
-                }
-                Err(())
-            }
+        if self.transport_ready && !self.pending.has_staged() {
+            *self.as_mut().project().transport_ready = false;
+            self.write_request(input, output, expectation, deadline)
+        } else {
+            self.project().pending.stage(Staged {
+                input,
+                output,
+                expectation,
+                deadline,
+                _slot: slot,
+            });
+            Ok(())
         }
     }
 
@@ -547,6 +635,12 @@ where
         // if either reads or writes become available.
         // See https://github.com/redis-rs/redis-rs/issues/1955.
         if matches!(self.as_mut().poll_read(cx), Poll::Ready(Err(()))) {
+            return Poll::Ready(Err(()));
+        }
+        self.as_mut().poll_deadlines(cx);
+        ready!(self.as_mut().poll_write_staged(cx))?;
+        if let Some(err) = self.as_mut().project().error.take() {
+            self.send_result(Err(err));
             return Poll::Ready(Err(()));
         }
         self.as_mut()
@@ -565,7 +659,7 @@ where
     ) -> Poll<Result<(), Self::Error>> {
         // No new requests will come in after the first call to `close` but we need to complete any
         // in progress requests before closing
-        if !self.in_flight.is_empty() {
+        if !self.in_flight.is_empty() || self.pending.has_staged() {
             ready!(self.as_mut().poll_flush(cx))?;
         }
         let this = self.as_mut().project();
@@ -604,7 +698,13 @@ impl Pipeline {
             cache_manager,
         );
         let f = receiver.map(Ok).forward(sink).map(|_| ());
-        (Self { sender }, f)
+        (
+            Self {
+                sender,
+                backlog: Backlog::new(buffer_size),
+            },
+            f,
+        )
     }
 
     async fn send_recv(
@@ -620,51 +720,37 @@ impl Pipeline {
             return Err(RedisError::make_empty_command());
         }
 
-        let request = async {
-            if skip_response {
-                SinkExt::send(
-                    &mut self.sender,
-                    PipelineMessage {
-                        input,
-                        expectation,
-                        output: None,
-                    },
-                )
-                .await
-                .map_err(|_| None)?;
-
-                return Ok(Value::Nil);
-            }
-
+        let (output, receiver) = if skip_response {
+            (None, None)
+        } else {
             let (sender, receiver) = oneshot::channel();
+            (Some(sender), Some(receiver))
+        };
+        let deadline = pending::deadline_after(timeout);
+        let slot = self.backlog.admit(!skip_response, deadline).await?;
+        let message = PipelineMessage {
+            input,
+            expectation,
+            output,
+            deadline,
+            slot,
+        };
 
-            SinkExt::send(
-                &mut self.sender,
-                PipelineMessage {
-                    input,
-                    expectation,
-                    output: Some(sender),
-                },
-            )
+        // The driver enforces the deadline, so no timer is needed here.
+        let sent = SinkExt::send(&mut self.sender, message)
             .await
-            .map_err(|_| None)?;
-
-            receiver
+            .map_err(|_| None);
+        let result: Result<Value, Option<RedisError>> = match (sent, receiver) {
+            (Err(err), _) => Err(err),
+            (Ok(()), None) => Ok(Value::Nil),
+            (Ok(()), Some(receiver)) => receiver
                 .await
                 // The `sender` was dropped which likely means that the stream part
                 // failed for one reason or another
                 .map_err(|_| None)
-                .and_then(|res| res.map_err(Some))
+                .and_then(|res| res.map_err(Some)),
         };
-
-        match timeout {
-            Some(timeout) => match Runtime::locate().timeout(timeout, request).await {
-                Ok(res) => res,
-                Err(elapsed) => Err(Some(elapsed.into())),
-            },
-            None => request.await,
-        }
-        .map_err(|err| err.unwrap_or_else(closed_connection_error))
+        result.map_err(|err| err.unwrap_or_else(closed_connection_error))
     }
 }
 
@@ -1228,6 +1314,19 @@ mod tests {
         }
     }
 
+    /// Connects over `stream` with `config` and spawns the driver.
+    async fn connect_with(
+        stream: tokio::io::DuplexStream,
+        config: AsyncConnectionConfig,
+    ) -> MultiplexedConnection {
+        let (conn, driver) =
+            MultiplexedConnection::new_with_config(&mock_conn_info(), stream, config)
+                .await
+                .unwrap();
+        tokio::spawn(driver);
+        conn
+    }
+
     async fn create_mock_connection(
         concurrency_limit: usize,
     ) -> (
@@ -1597,6 +1696,364 @@ mod tests {
         }
     }
 
+    /// Requests time out even when the server stops reading and writes block.
+    #[tokio::test]
+    async fn test_requests_time_out_while_writes_are_stalled() {
+        let (client_half, server_half) = tokio::io::duplex(1024);
+        // Keep the server half alive but never read from it.
+        let _server = server_half;
+
+        let config = AsyncConnectionConfig::new()
+            .set_response_timeout(Some(Duration::from_millis(100)))
+            .set_connection_timeout(None);
+        let conn = connect_with(client_half, config).await;
+
+        let started = std::time::Instant::now();
+        let mut requests = Vec::new();
+        for _ in 0..200 {
+            let mut conn = conn.clone();
+            requests.push(tokio::spawn(async move {
+                let mut command = cmd("SET");
+                command.arg("key").arg(vec![b'x'; 4096]);
+                conn.send_packed_command(&command).await
+            }));
+        }
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(5),
+            futures_util::future::join_all(requests),
+        )
+        .await
+        .expect("requests did not time out while the transport was stalled");
+        for result in outcome {
+            let err = result.unwrap().unwrap_err();
+            assert!(err.is_timeout(), "expected a timeout, got {err:?}");
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "timeouts took {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// When the server stops reading, callers are held back once `pipeline_buffer_size` requests
+    /// are waiting, also for requests without a response. A held-back caller still times out.
+    #[tokio::test]
+    async fn test_backpressure_while_writes_are_stalled() {
+        tokio::time::pause();
+        let (client_half, server_half) = tokio::io::duplex(1024);
+        let _server = server_half;
+
+        let config = AsyncConnectionConfig::new()
+            .set_response_timeout(Some(Duration::from_millis(100)))
+            .set_connection_timeout(None)
+            .set_pipeline_buffer_size(4);
+        let mut conn = connect_with(client_half, config).await;
+
+        let mut accepted = 0;
+        let err = loop {
+            let mut command = cmd("SET");
+            command
+                .arg("key")
+                .arg(vec![b'x'; 4096])
+                .set_no_response(true);
+            match conn.send_packed_command(&command).await {
+                Ok(_) => accepted += 1,
+                Err(err) => break err,
+            }
+            assert!(
+                accepted < 100,
+                "no backpressure: {accepted} requests accepted"
+            );
+        };
+        assert!(err.is_timeout(), "expected a timeout, got {err:?}");
+        assert!(accepted <= 10, "{accepted} requests accepted");
+    }
+
+    /// Requests that time out before they could be written are never sent to the server.
+    #[tokio::test]
+    async fn test_expired_requests_are_not_sent() {
+        use futures_util::StreamExt;
+        use tokio_util::codec::FramedRead;
+
+        tokio::time::pause();
+        let (client_half, server_half) = tokio::io::duplex(1024);
+        let config = AsyncConnectionConfig::new()
+            .set_response_timeout(Some(Duration::from_millis(100)))
+            .set_connection_timeout(None);
+        let conn = connect_with(client_half, config).await;
+
+        let requests: Vec<_> = std::iter::repeat_with(|| {
+            let mut conn = conn.clone();
+            tokio::spawn(async move {
+                let mut command = cmd("SET");
+                command.arg("key").arg(vec![b'x'; 4096]);
+                conn.send_packed_command(&command).await
+            })
+        })
+        .take(50)
+        .collect();
+        for request in requests {
+            assert!(request.await.unwrap().unwrap_err().is_timeout());
+        }
+
+        // The server starts reading only now. A request that was already written when it timed out
+        // still arrives, as before; the others must not.
+        let mut reader = FramedRead::new(server_half, ValueCodec::default());
+        let mut received = 0;
+        while let Ok(Some(Ok(_))) =
+            tokio::time::timeout(Duration::from_secs(1), reader.next()).await
+        {
+            received += 1;
+        }
+        assert!(received <= 3, "{received} expired requests were sent");
+    }
+
+    #[tokio::test]
+    async fn test_response_timeout_of_duration_max_means_no_timeout() {
+        let (client_half, server_half) = tokio::io::duplex(1024);
+        spawn_echo_server(server_half);
+        let config = AsyncConnectionConfig::new()
+            .set_response_timeout(Some(Duration::MAX))
+            .set_connection_timeout(None);
+        let mut conn = connect_with(client_half, config).await;
+        let reply = conn.send_packed_command(cmd("ECHO").arg("0:0")).await;
+        assert_eq!(reply.unwrap(), Value::BulkString(b"0:0".to_vec()));
+    }
+
+    /// A connection created in a tokio runtime keeps enforcing timeouts when its driver is polled
+    /// outside of that runtime.
+    #[test]
+    fn test_driver_polled_outside_the_runtime() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let conn_info = mock_conn_info();
+        let (mut conn, driver) = runtime.block_on(async {
+            let (client_half, server_half) = tokio::io::duplex(1024);
+            spawn_echo_server(server_half);
+            let config = AsyncConnectionConfig::new()
+                .set_response_timeout(Some(Duration::from_millis(100)))
+                .set_connection_timeout(None);
+            MultiplexedConnection::new_with_config(&conn_info, client_half, config)
+                .await
+                .unwrap()
+        });
+        let driver = std::thread::spawn(move || futures::executor::block_on(driver));
+
+        let mut answered = cmd("ECHO");
+        answered.arg("0:0");
+        let mut delayed = cmd("ECHO");
+        delayed.arg("1:500");
+        let reply = runtime.block_on(conn.send_packed_command(&answered));
+        assert_eq!(reply.unwrap(), Value::BulkString(b"0:0".to_vec()));
+        let err = runtime
+            .block_on(conn.send_packed_command(&delayed))
+            .unwrap_err();
+        assert!(err.is_timeout(), "expected a timeout, got {err:?}");
+
+        drop(conn);
+        driver.join().unwrap();
+    }
+
+    /// One request of a timeout schedule, in milliseconds since the start of the test.
+    #[derive(Clone, Copy, Debug)]
+    struct Scheduled {
+        send_at: u64,
+        timeout: u64,
+        /// How long after receiving the request the mock server wants to reply. Replies are still
+        /// sent in order, so a reply may also wait for the one before it.
+        delay: u64,
+    }
+
+    impl Scheduled {
+        fn new(send_at: u64, timeout: u64, delay: u64) -> Self {
+            Self {
+                send_at,
+                timeout,
+                delay,
+            }
+        }
+    }
+
+    /// Reply times of a schedule sorted by `send_at`, as the mock server sends them.
+    fn reply_times(schedule: &[Scheduled]) -> Vec<u64> {
+        let mut previous = 0;
+        schedule
+            .iter()
+            .map(|request| {
+                previous = previous.max(request.send_at + request.delay);
+                previous
+            })
+            .collect()
+    }
+
+    /// Answers `ECHO <id>:<delay>` with `<id>:<delay>`, `delay` ms after the request arrived but
+    /// never before the previous reply, like a server that answers in order.
+    fn spawn_echo_server(server_half: tokio::io::DuplexStream) {
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+        use tokio_util::codec::FramedRead;
+
+        let (read, mut write) = tokio::io::split(server_half);
+        let (received_tx, mut received_rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let mut reader = FramedRead::new(read, ValueCodec::default());
+            while let Some(Ok(request)) = reader.next().await {
+                if received_tx
+                    .send((tokio::time::Instant::now(), request))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        tokio::spawn(async move {
+            while let Some((received, request)) = received_rx.recv().await {
+                let Value::Array(args) = request else {
+                    panic!("unexpected request {request:?}");
+                };
+                let Some(Value::BulkString(payload)) = args.get(1) else {
+                    panic!("unexpected request {args:?}");
+                };
+                let delay: u64 = std::str::from_utf8(payload)
+                    .unwrap()
+                    .split_once(':')
+                    .unwrap()
+                    .1
+                    .parse()
+                    .unwrap();
+                tokio::time::sleep_until(received + Duration::from_millis(delay)).await;
+                let mut reply = format!("${}\r\n", payload.len()).into_bytes();
+                reply.extend_from_slice(payload);
+                reply.extend_from_slice(b"\r\n");
+                if write.write_all(&reply).await.is_err() {
+                    break;
+                }
+            }
+        });
+    }
+
+    /// Sends every request of `schedule` on one connection, from a clone with the request's own
+    /// response timeout, and returns whether each one timed out. Panics if a request receives
+    /// another request's reply. Requires paused time.
+    async fn run_schedule(schedule: &[Scheduled]) -> Vec<bool> {
+        let (client_half, server_half) = tokio::io::duplex(64 * 1024);
+        spawn_echo_server(server_half);
+        let config = AsyncConnectionConfig::new().set_connection_timeout(None);
+        let conn = connect_with(client_half, config).await;
+
+        let start = tokio::time::Instant::now();
+        let requests = schedule.iter().enumerate().map(|(id, request)| {
+            let mut conn = conn.clone();
+            conn.set_response_timeout(Duration::from_millis(request.timeout));
+            let request = *request;
+            tokio::spawn(async move {
+                tokio::time::sleep_until(start + Duration::from_millis(request.send_at)).await;
+                let payload = format!("{id}:{}", request.delay);
+                match conn.send_packed_command(cmd("ECHO").arg(&payload)).await {
+                    Ok(reply) => {
+                        assert_eq!(
+                            reply,
+                            Value::BulkString(payload.into_bytes()),
+                            "request {id} received another request's reply"
+                        );
+                        false
+                    }
+                    Err(err) => {
+                        assert!(err.is_timeout(), "request {id}: unexpected error {err:?}");
+                        true
+                    }
+                }
+            })
+        });
+        let requests: Vec<_> = requests.collect();
+        let mut timed_out = Vec::new();
+        for request in requests {
+            timed_out.push(request.await.unwrap());
+        }
+        timed_out
+    }
+
+    /// Overlapping requests with different start times and timeouts on one connection, where some
+    /// but not all time out. The replies of expired requests must be discarded, not matched to
+    /// later requests.
+    #[tokio::test]
+    async fn test_mixed_timeouts_on_one_connection() {
+        tokio::time::pause();
+        let schedule = [
+            // The server holds this reply for 200 ms, which delays all later replies.
+            Scheduled::new(0, 100, 200), // reply at 200, deadline 100: times out
+            Scheduled::new(1, 300, 0),   // reply at 200, deadline 301
+            Scheduled::new(50, 50, 0),   // reply at 200, deadline 100: times out
+            Scheduled::new(60, 120, 0),  // reply at 200, deadline 180: times out
+            Scheduled::new(150, 500, 0), // reply at 200, deadline 650
+            Scheduled::new(250, 100, 10), // reply at 260, deadline 350
+        ];
+        assert_eq!(
+            run_schedule(&schedule).await,
+            [true, false, true, true, false, false]
+        );
+    }
+
+    /// Many requests sharing one deadline all time out when it passes, and the connection keeps
+    /// working afterwards.
+    #[tokio::test]
+    async fn test_many_requests_with_the_same_deadline() {
+        tokio::time::pause();
+        let mut schedule = vec![Scheduled::new(0, 100, 500); 1000];
+        // Its reply comes after the 1000 late ones, which must all be discarded.
+        schedule.push(Scheduled::new(200, 1000, 0));
+
+        let start = tokio::time::Instant::now();
+        let timed_out = run_schedule(&schedule).await;
+        assert!(timed_out[..1000].iter().all(|&t| t));
+        assert!(!timed_out[1000]);
+        assert!(start.elapsed() < Duration::from_millis(520));
+    }
+
+    /// Random schedules: a request times out iff its reply arrives after send time + timeout,
+    /// same as with a timer per request.
+    #[tokio::test]
+    async fn test_random_timeout_schedules_match_per_request_timers() {
+        tokio::time::pause();
+        use rand::{RngExt, SeedableRng, rngs::StdRng};
+
+        let (mut expired, mut answered) = (0, 0);
+        for seed in 0..100 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let mut send_at = 0;
+            let mut schedule = Vec::new();
+            for _ in 0..40 {
+                send_at += rng.random_range(1..=20);
+                schedule.push(Scheduled::new(
+                    send_at,
+                    rng.random_range(1..=200),
+                    rng.random_range(0..150),
+                ));
+            }
+            // Keep every reply at least 3 ms away from its deadline: the timer wheel has 1 ms
+            // resolution, and an exact tie is not defined for either implementation.
+            let replies = reply_times(&schedule);
+            for (request, reply) in schedule.iter_mut().zip(&replies) {
+                if (request.send_at + request.timeout).abs_diff(*reply) < 3 {
+                    request.timeout += 5;
+                }
+            }
+            let expected: Vec<bool> = schedule
+                .iter()
+                .zip(&replies)
+                .map(|(request, reply)| *reply > request.send_at + request.timeout)
+                .collect();
+
+            let timed_out = run_schedule(&schedule).await;
+            assert_eq!(timed_out, expected, "seed {seed}: {schedule:?}");
+            expired += expected.iter().filter(|&&t| t).count();
+            answered += expected.iter().filter(|&&t| !t).count();
+        }
+        // Both outcomes must be well represented for the test to mean anything.
+        assert!(expired > 1000 && answered > 1000, "{expired} / {answered}");
+    }
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_permit_released_on_response_timeout() {
         use futures_util::StreamExt;

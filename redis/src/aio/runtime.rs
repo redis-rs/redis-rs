@@ -183,8 +183,93 @@ impl Runtime {
     }
 }
 
+impl Runtime {
+    /// Current time from the runtime's clock, so paused time is respected.
+    #[inline]
+    pub(crate) fn now(self) -> std::time::Instant {
+        match self {
+            #[cfg(feature = "tokio-comp")]
+            Self::Tokio => tokio::time::Instant::now().into_std(),
+            #[cfg(feature = "smol-comp")]
+            Self::Smol => std::time::Instant::now(),
+        }
+    }
+
+    /// A single re-armable timer, owned by a connection driver.
+    pub(crate) fn driver_timer(self) -> DriverTimer {
+        match self {
+            #[cfg(feature = "tokio-comp")]
+            // The driver may later be polled outside of the runtime it was created in, so the timer
+            // remembers the runtime to register with.
+            Self::Tokio => DriverTimer::Tokio {
+                handle: tokio::runtime::Handle::try_current().ok(),
+                sleep: None,
+            },
+            #[cfg(feature = "smol-comp")]
+            Self::Smol => DriverTimer::Smol(None),
+        }
+    }
+}
+
+/// A re-armable timer used by connection drivers to enforce request deadlines without
+/// registering one runtime timer per request.
+pub(crate) enum DriverTimer {
+    #[cfg(feature = "tokio-comp")]
+    Tokio {
+        handle: Option<tokio::runtime::Handle>,
+        sleep: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
+    },
+    #[cfg(feature = "smol-comp")]
+    Smol(Option<async_io::Timer>),
+}
+
+impl DriverTimer {
+    /// Arms (or re-arms) the timer to fire at `deadline`.
+    pub(crate) fn arm(&mut self, deadline: std::time::Instant) {
+        match self {
+            #[cfg(feature = "tokio-comp")]
+            Self::Tokio { handle, sleep } => {
+                let deadline = tokio::time::Instant::from_std(deadline);
+                match sleep {
+                    Some(sleep) => sleep.as_mut().reset(deadline),
+                    None => {
+                        let _guard = handle.as_ref().map(|handle| handle.enter());
+                        *sleep = Some(Box::pin(tokio::time::sleep_until(deadline)));
+                    }
+                }
+            }
+            #[cfg(feature = "smol-comp")]
+            Self::Smol(timer) => match timer {
+                Some(timer) => timer.set_at(deadline),
+                None => *timer = Some(async_io::Timer::at(deadline)),
+            },
+        }
+    }
+
+    /// Polls the timer. Returns `Ready` once the armed deadline has passed.
+    pub(crate) fn poll_elapsed(&mut self, cx: &mut std::task::Context<'_>) -> std::task::Poll<()> {
+        use std::task::Poll;
+        match self {
+            #[cfg(feature = "tokio-comp")]
+            Self::Tokio {
+                sleep: Some(sleep), ..
+            } => sleep.as_mut().poll(cx),
+            #[cfg(feature = "smol-comp")]
+            Self::Smol(Some(timer)) => std::pin::Pin::new(timer).poll(cx).map(|_| ()),
+            #[allow(unreachable_patterns)]
+            _ => Poll::Pending,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Elapsed(());
+
+impl Elapsed {
+    pub(crate) fn new() -> Self {
+        Self(())
+    }
+}
 
 impl From<Elapsed> for RedisError {
     fn from(_: Elapsed) -> Self {
