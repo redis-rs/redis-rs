@@ -157,6 +157,10 @@ mod hotkeys {
         con.hotkeys_start(metric.options()).unwrap();
         setup_test_keys_and_make_hot_keys(&mut con);
 
+        // The server reports the duration in whole milliseconds, and the commands above can finish
+        // in less than one, so make sure that a non-zero duration has elapsed.
+        sleep(Duration::from_millis(5));
+
         let result = con.hotkeys_get().unwrap().unwrap();
 
         assert!(result.tracking_active);
@@ -728,6 +732,10 @@ mod async_hotkeys {
 
                 con.hotkeys_start(metric.options()).await.unwrap();
                 setup_test_keys_and_make_hot_keys(&mut con).await;
+
+                // The server reports the duration in whole milliseconds, and the commands above can
+                // finish in less than one, so make sure that a non-zero duration has elapsed.
+                futures_time::task::sleep(Duration::from_millis(5).into()).await;
 
                 let result = con.hotkeys_get().await.unwrap().unwrap();
                 assert!(result.tracking_active);
