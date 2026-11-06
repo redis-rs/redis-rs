@@ -1063,6 +1063,39 @@ mod cluster {
     }
 
     #[test]
+    fn test_cluster_split_multi_shard_command_and_fail_if_a_shard_replies_with_an_error() {
+        let name =
+            "test_cluster_split_multi_shard_command_and_fail_if_a_shard_replies_with_an_error";
+        let mut cmd = cmd("MSET");
+        // foo is on 6381, and bar is on 6379.
+        cmd.arg("foo").arg("1").arg("bar").arg("2");
+        // The shard that gets its part of the command first is out of memory, so its reply isn't
+        // the last one.
+        let out_of_memory = Arc::new(atomic::AtomicBool::new(true));
+        let MockEnv {
+            mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
+            name,
+            move |received_cmd: &[u8], _port| {
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                if out_of_memory.swap(false, Ordering::Relaxed) {
+                    Err(parse_redis_value(
+                        b"-OOM command not allowed when used memory > 'maxmemory'.\r\n",
+                    ))
+                } else {
+                    Err(Ok(Value::Okay))
+                }
+            },
+        );
+
+        let result = cmd.query::<Value>(&mut connection).unwrap_err();
+        assert_eq!(result.code(), Some("OOM"));
+    }
+
+    #[test]
     fn test_cluster_route_correctly_on_packed_transaction_with_single_node_requests() {
         let name = "test_cluster_route_correctly_on_packed_transaction_with_single_node_requests";
         let mut pipeline = redis::pipe();
