@@ -8,7 +8,6 @@ use crate::{
     AsyncConnectionConfig, Client, Cmd, Pipeline, PushInfo, PushKind, ToRedisArgs,
     aio::{ConnectionLike, MultiplexedConnection, Runtime},
     check_resp3,
-    client::{DEFAULT_CONNECTION_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT},
     errors::RedisError,
     subscription_tracker::SubscriptionTracker,
     types::{RedisResult, Value},
@@ -36,76 +35,29 @@ pub struct ConnectionManagerConfig {
     max_delay: Option<Duration>,
     /// number_of_retries times, with an exponentially increasing delay
     number_of_retries: usize,
-    /// The new connection will time out operations after `response_timeout` has passed.
-    response_timeout: Option<Duration>,
-    /// Each connection attempt to the server will time out after `connection_timeout`.
-    connection_timeout: Option<Duration>,
-    /// sender channel for push values
-    push_sender: Option<Arc<dyn AsyncPushSender>>,
     /// if true, the manager should resubscribe automatically to all pubsub channels after reconnect.
     resubscribe_automatically: bool,
-    #[cfg(feature = "cache-aio")]
-    pub(crate) cache_config: Option<crate::caching::CacheConfig>,
-    pipeline_buffer_size: Option<usize>,
-    concurrency_limit: Option<usize>,
-    /// Flush threshold for the outbound write buffer; see [`AsyncConnectionConfig::set_write_backpressure_boundary`].
-    write_backpressure_boundary: Option<usize>,
-    /// Optional credentials provider for dynamic authentication (e.g., token-based authentication)
-    #[cfg(feature = "token-based-authentication")]
-    credentials_provider: Option<std::sync::Arc<dyn crate::auth::StreamingCredentialsProvider>>,
+    /// Configuration passed to each connection created by the manager.
+    connection_config: AsyncConnectionConfig,
 }
 
 impl std::fmt::Debug for ConnectionManagerConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        let &Self {
+        let Self {
             exponent_base,
             min_delay,
             number_of_retries,
             max_delay,
-            response_timeout,
-            connection_timeout,
-            push_sender,
+            connection_config,
             resubscribe_automatically,
-            #[cfg(feature = "cache-aio")]
-            cache_config,
-            pipeline_buffer_size,
-            concurrency_limit,
-            write_backpressure_boundary,
-            #[cfg(feature = "token-based-authentication")]
-            credentials_provider,
         } = &self;
         let mut str = f.debug_struct("ConnectionManagerConfig");
         str.field("exponent_base", &exponent_base)
             .field("min_delay", &min_delay)
             .field("max_delay", &max_delay)
             .field("number_of_retries", &number_of_retries)
-            .field("response_timeout", &response_timeout)
-            .field("connection_timeout", &connection_timeout)
             .field("resubscribe_automatically", &resubscribe_automatically)
-            .field("pipeline_buffer_size", &pipeline_buffer_size)
-            .field("concurrency_limit", &concurrency_limit)
-            .field("write_backpressure_boundary", &write_backpressure_boundary)
-            .field(
-                "push_sender",
-                if push_sender.is_some() {
-                    &"set"
-                } else {
-                    &"not set"
-                },
-            );
-
-        #[cfg(feature = "cache-aio")]
-        str.field("cache_config", &cache_config);
-
-        #[cfg(feature = "token-based-authentication")]
-        str.field(
-            "credentials_provider",
-            if credentials_provider.is_some() {
-                &"set"
-            } else {
-                &"not set"
-            },
-        );
+            .field("async_connection_config", &connection_config);
 
         str.finish()
     }
@@ -145,14 +97,14 @@ impl ConnectionManagerConfig {
     ///
     /// If `None`, responses do not time out.
     pub fn response_timeout(&self) -> Option<Duration> {
-        self.response_timeout
+        self.connection_config.response_timeout
     }
 
     /// Returns the timeout applied to establishing a new connection.
     ///
     /// If `None`, connection attempts to do not time out.
     pub fn connection_timeout(&self) -> Option<Duration> {
-        self.connection_timeout
+        self.connection_config.connection_timeout
     }
 
     /// Returns `true` if automatic resubscription is enabled after reconnecting.
@@ -163,7 +115,10 @@ impl ConnectionManagerConfig {
     /// Returns the current cache configuration, if caching is enabled.
     #[cfg(feature = "cache-aio")]
     pub fn cache_config(&self) -> Option<&crate::caching::CacheConfig> {
-        self.cache_config.as_ref()
+        match &self.connection_config.cache {
+            Some(crate::client::Cache::Config(cache_config)) => Some(cache_config),
+            _ => None,
+        }
     }
 
     /// Set the minimal delay for reconnect attempts.
@@ -195,7 +150,7 @@ impl ConnectionManagerConfig {
     ///
     /// Set `None` if you don't want requests to time out.
     pub fn set_response_timeout(mut self, duration: Option<Duration>) -> Self {
-        self.response_timeout = duration;
+        self.connection_config = self.connection_config.set_response_timeout(duration);
         self
     }
 
@@ -203,7 +158,7 @@ impl ConnectionManagerConfig {
     ///
     /// Set `None` if you don't want the connection attempt to time out.
     pub fn set_connection_timeout(mut self, duration: Option<Duration>) -> Self {
-        self.connection_timeout = duration;
+        self.connection_config = self.connection_config.set_connection_timeout(duration);
         self
     }
 
@@ -233,7 +188,7 @@ impl ConnectionManagerConfig {
     /// });
     /// ```
     pub fn set_push_sender(mut self, sender: impl AsyncPushSender) -> Self {
-        self.push_sender = Some(Arc::new(sender));
+        self.connection_config = self.connection_config.set_push_sender(sender);
         self
     }
 
@@ -245,11 +200,9 @@ impl ConnectionManagerConfig {
 
     /// Set the cache behavior.
     #[cfg(feature = "cache-aio")]
-    pub fn set_cache_config(self, cache_config: crate::caching::CacheConfig) -> Self {
-        Self {
-            cache_config: Some(cache_config),
-            ..self
-        }
+    pub fn set_cache_config(mut self, cache_config: crate::caching::CacheConfig) -> Self {
+        self.connection_config = self.connection_config.set_cache_config(cache_config);
+        self
     }
 
     /// Sets the buffer size for the internal pipeline channel.
@@ -267,7 +220,7 @@ impl ConnectionManagerConfig {
     /// scenarios (e.g., web servers handling many simultaneous requests) where
     /// buffer contention may increase overall latency and cause upstream timeouts.
     pub fn set_pipeline_buffer_size(mut self, size: usize) -> Self {
-        self.pipeline_buffer_size = Some(size);
+        self.connection_config = self.connection_config.set_pipeline_buffer_size(size);
         self
     }
 
@@ -275,7 +228,7 @@ impl ConnectionManagerConfig {
     ///
     /// See [`AsyncConnectionConfig::set_concurrency_limit`] for full semantics.
     pub fn set_concurrency_limit(mut self, limit: usize) -> Self {
-        self.concurrency_limit = Some(limit);
+        self.connection_config = self.connection_config.set_concurrency_limit(limit);
         self
     }
 
@@ -284,7 +237,9 @@ impl ConnectionManagerConfig {
     /// See [`AsyncConnectionConfig::set_write_backpressure_boundary`] for full semantics.
     /// When left unset, the connection keeps `tokio_util`'s default boundary.
     pub fn set_write_backpressure_boundary(mut self, boundary: usize) -> Self {
-        self.write_backpressure_boundary = Some(boundary);
+        self.connection_config = self
+            .connection_config
+            .set_write_backpressure_boundary(boundary);
         self
     }
 
@@ -314,7 +269,7 @@ impl ConnectionManagerConfig {
     where
         P: crate::auth::StreamingCredentialsProvider + 'static,
     {
-        self.credentials_provider = Some(std::sync::Arc::new(provider));
+        self.connection_config = self.connection_config.set_credentials_provider(provider);
         self
     }
 }
@@ -326,17 +281,8 @@ impl Default for ConnectionManagerConfig {
             min_delay: Self::DEFAULT_CONNECTION_RETRY_MIN_DELAY,
             max_delay: None,
             number_of_retries: Self::DEFAULT_NUMBER_OF_CONNECTION_RETRIES,
-            response_timeout: DEFAULT_RESPONSE_TIMEOUT,
-            connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
-            push_sender: None,
             resubscribe_automatically: false,
-            #[cfg(feature = "cache-aio")]
-            cache_config: None,
-            pipeline_buffer_size: None,
-            concurrency_limit: None,
-            write_backpressure_boundary: None,
-            #[cfg(feature = "token-based-authentication")]
-            credentials_provider: None,
+            connection_config: AsyncConnectionConfig::default(),
         }
     }
 }
@@ -474,39 +420,38 @@ impl ConnectionManager {
     ) -> RedisResult<Self> {
         let runtime = Runtime::locate();
 
-        if config.resubscribe_automatically && config.push_sender.is_none() {
+        let ConnectionManagerConfig {
+            exponent_base,
+            min_delay,
+            max_delay,
+            number_of_retries,
+            mut connection_config,
+            resubscribe_automatically,
+        } = config;
+
+        if resubscribe_automatically && connection_config.push_sender.is_none() {
             return Err((crate::ErrorKind::Client, "Cannot set resubscribe_automatically without setting a push sender to receive messages.").into());
         }
 
         let mut retry_strategy = ExponentialBuilder::default()
-            .with_factor(config.exponent_base)
-            .with_min_delay(config.min_delay)
-            .with_max_times(config.number_of_retries)
+            .with_factor(exponent_base)
+            .with_min_delay(min_delay)
+            .with_max_times(number_of_retries)
             .with_jitter();
-        if let Some(max_delay) = config.max_delay {
+        if let Some(max_delay) = max_delay {
             retry_strategy = retry_strategy.with_max_delay(max_delay);
         }
 
-        let mut connection_config = AsyncConnectionConfig::new()
-            .set_connection_timeout(config.connection_timeout)
-            .set_response_timeout(config.response_timeout);
-        connection_config.pipeline_buffer_size = config.pipeline_buffer_size;
-        connection_config.concurrency_limit = config.concurrency_limit;
-        connection_config.write_backpressure_boundary = config.write_backpressure_boundary;
-
         #[cfg(feature = "cache-aio")]
-        let cache_manager = config
-            .cache_config
-            .as_ref()
-            .map(|cache_config| CacheManager::new(*cache_config));
+        let cache_manager = match &connection_config.cache {
+            Some(crate::client::Cache::Config(cache_config)) => {
+                Some(CacheManager::new(*cache_config))
+            }
+            _ => None,
+        };
         #[cfg(feature = "cache-aio")]
         if let Some(cache_manager) = cache_manager.as_ref() {
             connection_config = connection_config.set_cache_manager(cache_manager.clone());
-        }
-
-        #[cfg(feature = "token-based-authentication")]
-        if let Some(credentials_provider) = config.credentials_provider {
-            connection_config.credentials_provider = Some(credentials_provider);
         }
 
         let (oneshot_sender, oneshot_receiver) = oneshot::channel();
@@ -515,7 +460,7 @@ impl ConnectionManager {
         );
 
         let mut components_for_reconnection_on_push = None;
-        if let Some(push_sender) = config.push_sender.clone() {
+        if let Some(push_sender) = connection_config.push_sender.clone() {
             check_resp3!(
                 client.connection_info.redis.protocol,
                 "Can only pass push sender to a connection using RESP3"
@@ -534,8 +479,7 @@ impl ConnectionManager {
                 connection_config.set_push_sender_internal(Arc::new(internal_sender));
         }
 
-        let subscription_tracker = config
-            .resubscribe_automatically
+        let subscription_tracker = resubscribe_automatically
             .then(|| Arc::new(std::sync::Mutex::new(SubscriptionTracker::default())));
         // Share the tracker with the connection so it records the confirmations it reads, and the
         // manager can rebuild the subscription pipeline from the same state on reconnect without
@@ -837,38 +781,41 @@ mod tests {
     #[test]
     fn test_connection_manager_config_pipeline_buffer_size_default() {
         let config = ConnectionManagerConfig::new();
-        assert_eq!(config.pipeline_buffer_size, None);
+        assert_eq!(config.connection_config.pipeline_buffer_size, None);
     }
 
     #[test]
     fn test_connection_manager_config_pipeline_buffer_size_custom() {
         let config = ConnectionManagerConfig::new().set_pipeline_buffer_size(100);
-        assert_eq!(config.pipeline_buffer_size, Some(100));
+        assert_eq!(config.connection_config.pipeline_buffer_size, Some(100));
     }
 
     #[test]
     fn test_connection_manager_config_concurrency_limit_default() {
         let config = ConnectionManagerConfig::new();
-        assert_eq!(config.concurrency_limit, None);
+        assert_eq!(config.connection_config.concurrency_limit, None);
     }
 
     #[test]
     fn test_connection_manager_config_concurrency_limit_custom() {
         let config = ConnectionManagerConfig::new().set_concurrency_limit(128);
-        assert_eq!(config.concurrency_limit, Some(128));
+        assert_eq!(config.connection_config.concurrency_limit, Some(128));
     }
 
     #[test]
     fn test_connection_manager_config_write_backpressure_boundary_default() {
         let config = ConnectionManagerConfig::new();
-        assert_eq!(config.write_backpressure_boundary, None);
+        assert_eq!(config.connection_config.write_backpressure_boundary, None);
     }
 
     #[test]
     fn test_connection_manager_config_write_backpressure_boundary_custom() {
         let config =
             ConnectionManagerConfig::new().set_write_backpressure_boundary(16 * 1024 * 1024);
-        assert_eq!(config.write_backpressure_boundary, Some(16 * 1024 * 1024));
+        assert_eq!(
+            config.connection_config.write_backpressure_boundary,
+            Some(16 * 1024 * 1024)
+        );
     }
 
     #[tokio::test]
