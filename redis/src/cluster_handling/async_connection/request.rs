@@ -184,10 +184,18 @@ pub(crate) fn choose_response<C>(
                 Response::Single(value) if value.is_error_that_requires_action() => {
                     Some(value.clone().extract_error().unwrap_err())
                 }
-                Response::Multiple(values) => values
-                    .iter()
-                    .position(|value| value.is_error_that_requires_action())
-                    .map(|position| values[position].clone().extract_error().unwrap_err()),
+                // The commands that weren't rejected have run, so the whole pipeline is only sent
+                // again if every command was rejected. Otherwise the rejected commands are sent
+                // again one by one, see `ClusterConnection::route_pipeline`.
+                Response::Multiple(values)
+                    if values
+                        .iter()
+                        .all(|value| value.is_error_that_requires_action()) =>
+                {
+                    values
+                        .first()
+                        .map(|value| value.clone().extract_error().unwrap_err())
+                }
                 _ => None,
             } {
                 error
@@ -456,6 +464,41 @@ mod tests {
         assert_eq!(receiver.try_recv(), Ok(Err(to_err(&err_string))));
         assert!(retry.is_none());
         assert_eq!(next, PollFlushAction::RebuildSlots);
+    }
+
+    #[test]
+    fn should_not_retry_a_pipeline_whose_other_commands_ran() {
+        let (request, mut receiver) = request_and_receiver(0);
+        let ask = parse_redis_value(format!("-ASK 123 {ADDRESS}\r\n").as_bytes()).unwrap();
+        let values = vec![crate::Value::Int(1), ask];
+        let result = (
+            OperationTarget::Node { address: ADDRESS },
+            Ok(Response::Multiple(values.clone())),
+        );
+        let (retry, next) = choose_response(result, request, &RetryParams::default());
+
+        assert_eq!(receiver.try_recv(), Ok(Ok(Response::Multiple(values))));
+        assert!(retry.is_none());
+        assert_eq!(next, PollFlushAction::None);
+    }
+
+    #[test]
+    fn should_retry_a_pipeline_whose_commands_were_all_redirected() {
+        let (request, mut receiver) = request_and_receiver(0);
+        let moved = parse_redis_value(format!("-MOVED 123 {ADDRESS}\r\n").as_bytes()).unwrap();
+        let result = (
+            OperationTarget::Node { address: ADDRESS },
+            Ok(Response::Multiple(vec![moved.clone(), moved])),
+        );
+        let (retry, next) = choose_response(result, request, &RetryParams::default());
+
+        if let Some(super::Retry::Immediately { request, .. }) = retry {
+            assert_eq!(get_redirect(&request), Some(Redirect::Moved(ADDRESS)));
+        } else {
+            panic!("Expected retry");
+        }
+        assert_eq!(next, PollFlushAction::RebuildSlots);
+        assert_matches!(receiver.try_recv(), Err(_));
     }
 
     #[test]
