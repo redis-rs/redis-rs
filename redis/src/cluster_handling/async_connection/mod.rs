@@ -1282,7 +1282,21 @@ enum RecoverFuture {
 
 enum ConnectionState {
     PollComplete,
-    Recover(RecoverFuture),
+    Recover {
+        future: RecoverFuture,
+        /// The action requested by the requests that completed while the recovery was running.
+        /// It is applied once the recovery completes.
+        deferred_action: PollFlushAction,
+    },
+}
+
+impl ConnectionState {
+    fn recover(future: RecoverFuture) -> Self {
+        Self::Recover {
+            future,
+            deferred_action: PollFlushAction::None,
+        }
+    }
 }
 
 impl fmt::Debug for ConnectionState {
@@ -1292,7 +1306,7 @@ impl fmt::Debug for ConnectionState {
             "{}",
             match self {
                 Self::PollComplete => "PollComplete",
-                Self::Recover(_) => "Recover",
+                Self::Recover { .. } => "Recover",
             }
         )
     }
@@ -1342,7 +1356,7 @@ where
             refresh_error: None,
             state: ConnectionState::PollComplete,
         };
-        inner.state = ConnectionState::Recover(RecoverFuture::ReconnectInitial(Box::pin(
+        inner.state = ConnectionState::recover(RecoverFuture::ReconnectInitial(Box::pin(
             inner.reconnect_to_initial_nodes(),
         )));
         inner
@@ -1446,10 +1460,10 @@ where
     }
 
     async fn wait_for_initial_connection(&mut self) -> RedisResult<()> {
-        if let ConnectionState::Recover(fut) =
+        if let ConnectionState::Recover { future, .. } =
             std::mem::replace(&mut self.state, ConnectionState::PollComplete)
         {
-            match fut {
+            match future {
                 RecoverFuture::RecoverSlots(fut) | RecoverFuture::ReconnectInitial(fut) => {
                     fut.await?;
                 }
@@ -1458,40 +1472,44 @@ where
         Ok(())
     }
 
-    fn poll_recover(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), RedisError>> {
-        let recover_future = match &mut self.state {
-            ConnectionState::PollComplete => return Poll::Ready(Ok(())),
-            ConnectionState::Recover(future) => future,
+    /// Polls the recovery future, if there is one. Once it completes, returns the action that was
+    /// deferred while it was running.
+    fn poll_recover(
+        &mut self,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<PollFlushAction, RedisError>> {
+        let ConnectionState::Recover {
+            future: recover_future,
+            deferred_action,
+        } = &mut self.state
+        else {
+            return Poll::Ready(Ok(PollFlushAction::None));
         };
-        let res = match recover_future {
+        match recover_future {
             RecoverFuture::RecoverSlots(future) => match ready!(future.as_mut().poll(cx)) {
                 Ok(_) => {
                     info!("async cluster client recovery: slot refresh complete");
-                    self.state = ConnectionState::PollComplete;
-                    Ok(())
                 }
                 Err(err) => {
                     error!("async cluster client recovery: slot refresh failed: `{err}`");
                     *future = Box::pin(self.inner.clone().refresh_slots());
-                    Err(err)
+                    return Poll::Ready(Err(err));
                 }
             },
-            RecoverFuture::ReconnectInitial(future) => {
-                match ready!(future.as_mut().poll(cx)) {
-                    Ok(()) => {
-                        info!("async cluster client recovery: reconnect to initial nodes complete");
-                    }
-                    Err(err) => {
-                        error!(
-                            "async cluster client recovery: reconnect to initial nodes failed: `{err}`"
-                        );
-                    }
+            RecoverFuture::ReconnectInitial(future) => match ready!(future.as_mut().poll(cx)) {
+                Ok(()) => {
+                    info!("async cluster client recovery: reconnect to initial nodes complete");
                 }
-                self.state = ConnectionState::PollComplete;
-                Ok(())
-            }
-        };
-        Poll::Ready(res)
+                Err(err) => {
+                    error!(
+                        "async cluster client recovery: reconnect to initial nodes failed: `{err}`"
+                    );
+                }
+            },
+        }
+        let deferred_action = std::mem::take(deferred_action);
+        self.state = ConnectionState::PollComplete;
+        Poll::Ready(Ok(deferred_action))
     }
 
     fn handle_retries(&mut self, request_handling: Option<Retry<C>>) {
@@ -1666,8 +1684,9 @@ where
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Default)]
 enum PollFlushAction {
+    #[default]
     None,
     RebuildSlots,
     Reconnect(HashSet<NodeAddress>),
@@ -1722,25 +1741,54 @@ where
             self.send_refresh_error();
 
             // If we have a recovery future, poll it until completion first.
-            if let Err(err) = ready!(self.as_mut().poll_recover(cx)) {
-                self.refresh_error = Some(err);
+            let deferred_action = match self.as_mut().poll_recover(cx) {
+                Poll::Ready(Ok(deferred_action)) => deferred_action,
+                Poll::Ready(Err(err)) => {
+                    self.refresh_error = Some(err);
 
-                // Give other tasks a chance to progress before we try to recover
-                // again. Since the future may not have registered a wake up we do so
-                // now so the task is not forgotten
-                cx.waker().wake_by_ref();
-                return Poll::Pending;
-            }
-            // Reconnect futures can be polled only if when the recovery future is not running.
-            // Otherwise you may end up in a deadlock.
-            // See https://github.com/redis-rs/redis-rs/issues/2418.
+                    // Give other tasks a chance to progress before we try to recover
+                    // again. Since the future may not have registered a wake up we do so
+                    // now so the task is not forgotten
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+                Poll::Pending => {
+                    // The recovery future waits for the connection lock, which an in-flight
+                    // request may hold while it is suspended: since tokio 1.54, a lock future
+                    // acquires the lock before it checks the task's cooperative budget, and
+                    // returns `Pending` while holding the lock when the budget is exhausted.
+                    // Such a request must keep being polled to release the lock, or the recovery
+                    // never completes. The reconnect futures take the lock as well, so the same
+                    // goes for them. See <https://github.com/redis-rs/redis-rs/issues/2418> for
+                    // the same deadlock with the lock handed over to queued requests.
+                    //
+                    // The action the completed requests ask for is deferred until the recovery
+                    // completes, and new requests aren't dispatched before that either.
+                    self.poll_reconnects(cx);
+                    if let Poll::Ready(action) = self.poll_in_flight(cx)
+                        && let ConnectionState::Recover {
+                            deferred_action, ..
+                        } = &mut self.state
+                    {
+                        *deferred_action = std::mem::take(deferred_action).change_state(action);
+                    }
+                    return Poll::Pending;
+                }
+            };
             self.poll_reconnects(cx);
 
-            match ready!(self.poll_complete(cx)) {
+            let action = match self.poll_complete(cx) {
+                Poll::Ready(action) => deferred_action.change_state(action),
+                Poll::Pending if matches!(deferred_action, PollFlushAction::None) => {
+                    return Poll::Pending;
+                }
+                Poll::Pending => deferred_action,
+            };
+            match action {
                 PollFlushAction::None => return Poll::Ready(Ok(())),
                 PollFlushAction::RebuildSlots => {
                     warn!("async cluster client recovery: beginning slot refresh");
-                    self.state = ConnectionState::Recover(RecoverFuture::RecoverSlots(Box::pin(
+                    self.state = ConnectionState::recover(RecoverFuture::RecoverSlots(Box::pin(
                         self.inner.clone().refresh_slots(),
                     )));
                 }
@@ -1749,7 +1797,7 @@ where
                 }
                 PollFlushAction::ReconnectFromInitialConnections => {
                     warn!("async cluster client recovery: beginning reconnect to initial nodes");
-                    self.state = ConnectionState::Recover(RecoverFuture::ReconnectInitial(
+                    self.state = ConnectionState::recover(RecoverFuture::ReconnectInitial(
                         Box::pin(self.reconnect_to_initial_nodes()),
                     ));
                 }
