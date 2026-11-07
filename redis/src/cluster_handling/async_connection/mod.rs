@@ -1159,6 +1159,8 @@ struct ClusterConnInner<C> {
     reconnect_futures: stream::FuturesUnordered<BoxFuture<'static, NodeAddress>>,
     pending_requests_rx: mpsc::UnboundedReceiver<PendingRequest<C>>,
     refresh_error: Option<RedisError>,
+    /// The action requested by the requests that completed while a recovery future was running.
+    recovery_action: PollFlushAction,
 }
 
 // Keep trying to repair `addr` until it is re-connected, or the node
@@ -1340,6 +1342,7 @@ where
             reconnect_futures: Default::default(),
             pending_requests_rx,
             refresh_error: None,
+            recovery_action: PollFlushAction::None,
             state: ConnectionState::PollComplete,
         };
         inner.state = ConnectionState::Recover(RecoverFuture::ReconnectInitial(Box::pin(
@@ -1551,7 +1554,8 @@ where
     }
 
     fn poll_in_flight(&mut self, cx: &mut task::Context<'_>) -> Poll<PollFlushAction> {
-        let mut poll_flush_action = PollFlushAction::None;
+        let mut poll_flush_action =
+            std::mem::replace(&mut self.recovery_action, PollFlushAction::None);
 
         loop {
             let (request_handling, next) =
@@ -1575,6 +1579,23 @@ where
     fn poll_complete(&mut self, cx: &mut task::Context<'_>) -> Poll<PollFlushAction> {
         self.dispatch_pending();
         self.poll_in_flight(cx)
+    }
+
+    /// Polls the reconnects and the in-flight requests while a recovery future is pending.
+    ///
+    /// The recovery waits for the connection lock, which a suspended request may hold: since tokio
+    /// 1.54, a lock future can return `Pending` after acquiring the lock when the task's
+    /// cooperative budget is exhausted. The request must be polled to release it, or the recovery
+    /// never completes. See https://github.com/redis-rs/redis-rs/issues/2418 for the same
+    /// deadlock with requests queued for the lock.
+    ///
+    /// New requests aren't dispatched until the recovery completes, and neither is the action the
+    /// completed requests ask for.
+    fn poll_while_recovering(&mut self, cx: &mut task::Context<'_>) {
+        self.poll_reconnects(cx);
+        if let Poll::Ready(action) = self.poll_in_flight(cx) {
+            self.recovery_action = action;
+        }
     }
 
     fn send_refresh_error(&mut self) {
@@ -1722,18 +1743,22 @@ where
             self.send_refresh_error();
 
             // If we have a recovery future, poll it until completion first.
-            if let Err(err) = ready!(self.as_mut().poll_recover(cx)) {
-                self.refresh_error = Some(err);
+            match self.as_mut().poll_recover(cx) {
+                Poll::Ready(Ok(())) => {}
+                Poll::Ready(Err(err)) => {
+                    self.refresh_error = Some(err);
 
-                // Give other tasks a chance to progress before we try to recover
-                // again. Since the future may not have registered a wake up we do so
-                // now so the task is not forgotten
-                cx.waker().wake_by_ref();
-                return Poll::Pending;
+                    // Give other tasks a chance to progress before we try to recover
+                    // again. Since the future may not have registered a wake up we do so
+                    // now so the task is not forgotten
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+                Poll::Pending => {
+                    self.poll_while_recovering(cx);
+                    return Poll::Pending;
+                }
             }
-            // Reconnect futures can be polled only if when the recovery future is not running.
-            // Otherwise you may end up in a deadlock.
-            // See https://github.com/redis-rs/redis-rs/issues/2418.
             self.poll_reconnects(cx);
 
             match ready!(self.poll_complete(cx)) {
