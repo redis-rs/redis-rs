@@ -169,27 +169,26 @@ macro_rules! implement_command_sync {
 }
 
 macro_rules! ready_cmd {
-    ($name:expr $(, $arg:expr)*) => {{
-        let name = $name;
-        let args_count = 1usize;
-        let args_size = name.len();
+    ($command:expr $(, $arg:expr)*) => {{
+        let command = $command;
+        let args_count = 0usize;
+        let args_size = 0usize;
         $(
             let (next_args_count, next_args_size) = $arg.num_of_args_and_size();
             let args_count = args_count + next_args_count;
             let args_size = args_size + next_args_size;
         )*
-        let mut cmd = Cmd::with_capacity(args_count, args_size);
-        cmd.arg(name);
+        let mut cmd = Cmd::with_known_command(command, args_count, args_size);
         $(cmd.arg($arg);)*
         cmd
     }};
 }
 
 macro_rules! write_pipeline_command {
-    ($self:expr, { ready_cmd!($name:expr $(, $arg:expr)*).take() }) => {{
-        let name = $name;
-        let args_count = 1usize;
-        let args_size = name.len();
+    ($self:expr, { ready_cmd!($command:expr $(, $arg:expr)*).take() }) => {{
+        let command = $command;
+        let args_count = 0usize;
+        let args_size = 0usize;
         $(
             let (next_args_count, next_args_size) = $arg.num_of_args_and_size();
             let args_count = args_count + next_args_count;
@@ -197,8 +196,7 @@ macro_rules! write_pipeline_command {
         )*
         $self.reserve_for_args(args_count)
           .reserve_for_data(args_size);
-        $self.start_command();
-        $crate::types::RedisWrite::write_arg($self, name.as_bytes());
+        $self.start_command_with_known_command(command);
         $($self.arg($arg);)*
         $self
     }};
@@ -213,7 +211,7 @@ macro_rules! implement_iterators {
         /// Incrementally iterate the keys space.
         #[inline]
         fn scan<$lifetime, RV: FromRedisValue + $lifetime>(&$lifetime mut self) -> $ret {
-            let mut c = cmd("SCAN");
+            let mut c = Cmd::with_known_command(KnownCommand::Scan, 0, 0);
             c.cursor_arg(0);
             $iter(c, self)
         }
@@ -221,7 +219,7 @@ macro_rules! implement_iterators {
         /// Incrementally iterate the keys space with options.
         #[inline]
         fn scan_options<$lifetime, RV: FromRedisValue + $lifetime>(&$lifetime mut self, opts: ScanOptions) -> $ret {
-            let mut c = cmd("SCAN");
+            let mut c = Cmd::with_known_command(KnownCommand::Scan, 0, 0);
             c.cursor_arg(0).arg(opts);
             $iter(c, self)
         }
@@ -229,7 +227,7 @@ macro_rules! implement_iterators {
         /// Incrementally iterate the keys space for keys matching a pattern.
         #[inline]
         fn scan_match<$lifetime, P: ToSingleRedisArg, RV: FromRedisValue + $lifetime>(&$lifetime mut self, pattern: P) -> $ret {
-            let mut c = cmd("SCAN");
+            let mut c = Cmd::with_known_command(KnownCommand::Scan, 0, 0);
             c.cursor_arg(0).arg("MATCH").arg(pattern);
             $iter(c, self)
         }
@@ -237,7 +235,7 @@ macro_rules! implement_iterators {
         /// Incrementally iterate hash fields and associated values.
         #[inline]
         fn hscan<$lifetime, K: ToSingleRedisArg, RV: FromRedisValue + $lifetime>(&$lifetime mut self, key: K) -> $ret {
-            let mut c = cmd("HSCAN");
+            let mut c = Cmd::with_known_command(KnownCommand::Hscan, 0, 0);
             c.arg(key).cursor_arg(0);
             $iter(c, self)
         }
@@ -250,7 +248,7 @@ macro_rules! implement_iterators {
             key: K,
             pattern: P,
         ) -> $ret {
-            let mut c = cmd("HSCAN");
+            let mut c = Cmd::with_known_command(KnownCommand::Hscan, 0, 0);
             c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
             $iter(c, self)
         }
@@ -258,7 +256,7 @@ macro_rules! implement_iterators {
         /// Incrementally iterate set elements.
         #[inline]
         fn sscan<$lifetime, K: ToSingleRedisArg, RV: FromRedisValue + $lifetime>(&$lifetime mut self, key: K) -> $ret {
-            let mut c = cmd("SSCAN");
+            let mut c = Cmd::with_known_command(KnownCommand::Sscan, 0, 0);
             c.arg(key).cursor_arg(0);
             $iter(c, self)
         }
@@ -270,7 +268,7 @@ macro_rules! implement_iterators {
             key: K,
             pattern: P,
         ) -> $ret {
-            let mut c = cmd("SSCAN");
+            let mut c = Cmd::with_known_command(KnownCommand::Sscan, 0, 0);
             c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
             $iter(c, self)
         }
@@ -278,7 +276,7 @@ macro_rules! implement_iterators {
         /// Incrementally iterate sorted set elements.
         #[inline]
         fn zscan<$lifetime, K: ToSingleRedisArg, RV: FromRedisValue + $lifetime>(&$lifetime mut self, key: K) -> $ret {
-            let mut c = cmd("ZSCAN");
+            let mut c = Cmd::with_known_command(KnownCommand::Zscan, 0, 0);
             c.arg(key).cursor_arg(0);
             $iter(c, self)
         }
@@ -290,7 +288,7 @@ macro_rules! implement_iterators {
             key: K,
             pattern: P,
         ) -> $ret {
-            let mut c = cmd("ZSCAN");
+            let mut c = Cmd::with_known_command(KnownCommand::Zscan, 0, 0);
             c.arg(key).cursor_arg(0).arg("MATCH").arg(pattern);
             $iter(c, self)
         }
@@ -443,12 +441,12 @@ macro_rules! implement_commands {
 
             /// Get a value from Redis and convert it to an `Option<isize>`.
             fn get_int<K: ToSingleRedisArg>(&mut self, key: K) -> RedisResult<Option<isize>> {
-                cmd("GET").arg(key).query(self)
+                Cmd::with_known_command(KnownCommand::Get, 0, 0).arg(key).query(self)
             }
 
             /// Get values from Redis and convert them to `Option<isize>`s.
             fn mget_ints<K: ToRedisArgs>(&mut self, key: K) -> RedisResult<Vec<Option<isize>>> {
-                cmd("MGET").arg(key).query(self)
+                Cmd::with_known_command(KnownCommand::Mget, 0, 0).arg(key).query(self)
             }
         }
 
@@ -473,12 +471,12 @@ macro_rules! implement_commands {
 
             /// Get a value from Redis and convert it to an `Option<isize>`.
             fn get_int<K: ToSingleRedisArg + Send + Sync>(&mut self, key: K) -> impl Future<Output = RedisResult<Option<isize>>> + Send {
-                async move { cmd("GET").arg(key).query_async(self).await }
+                async move { Cmd::with_known_command(KnownCommand::Get, 0, 0).arg(key).query_async(self).await }
             }
 
             /// Get values from Redis and convert them to `Option<isize>`s.
             fn mget_ints<K: ToRedisArgs + Send + Sync>(&mut self, key: K) -> impl Future<Output = RedisResult<Vec<Option<isize>>>> + Send {
-                async move { cmd("MGET").arg(key).query_async(self).await }
+                async move { Cmd::with_known_command(KnownCommand::Mget, 0, 0).arg(key).query_async(self).await }
             }
         }
 

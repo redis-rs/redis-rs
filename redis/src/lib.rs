@@ -866,6 +866,7 @@ mod connection;
 mod errors;
 /// Module for defining I/O behavior.
 pub mod io;
+mod known_commands;
 mod parser;
 mod script;
 mod types;
