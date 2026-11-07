@@ -1723,6 +1723,55 @@ mod cluster_async {
         assert_eq!(recorded, vec![6380, 6383, 6381, 6384, 6380, 6383]);
     }
 
+    // A slot refresh takes the connection lock for writing, and waits for every request that holds
+    // it for reading. A request may hold the lock while it is suspended: since tokio 1.54, a lock
+    // future acquires the lock before it checks the task's cooperative budget, and returns
+    // `Pending` while holding the lock when the budget is exhausted. The requests must keep being
+    // polled while the refresh runs, or neither side ever completes. The budget is exhausted by
+    // dispatching many requests in one poll, and every one of them triggers a refresh with a MOVED.
+    #[test]
+    fn test_async_cluster_refresh_completes_while_requests_hold_the_connection_lock() {
+        let name = "test_async_cluster_refresh_completes_while_requests_hold_the_connection_lock";
+        let MockEnv {
+            async_connection: connection,
+            handler: _handler,
+            runtime,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(3),
+            name,
+            move |cmd: &[u8], port| {
+                respond_startup_two_nodes(name, cmd)?;
+                if port == 6379 {
+                    Err(parse_redis_value(
+                        format!("-MOVED 123 {name}:6380\r\n").as_bytes(),
+                    ))
+                } else {
+                    Err(Ok(Value::Okay))
+                }
+            },
+        );
+
+        let results = runtime.block_on(async move {
+            let requests = (0..300).map(|i| {
+                let mut connection = connection.clone();
+                async move {
+                    cmd("GET")
+                        .arg(format!("key{i}"))
+                        .query_async::<Value>(&mut connection)
+                        .await
+                }
+            });
+            tokio::time::timeout(Duration::from_secs(10), future::join_all(requests)).await
+        });
+
+        let results = results.expect("the requests never completed");
+        assert_eq!(results.len(), 300);
+        for result in results {
+            assert_eq!(result, Ok(Value::Okay));
+        }
+    }
+
     fn test_async_cluster_fan_out(
         name: &'static str,
         command: &'static str,
