@@ -1512,6 +1512,87 @@ mod cluster_async {
         }
     }
 
+    // A retry that is moved back to the pending queue without requesting any recovery action must
+    // wake the connection task, even if nothing else is in flight.
+    #[test]
+    fn test_async_cluster_retry_completes_when_no_other_request_is_in_flight() {
+        let name = "test_async_cluster_retry_completes_when_no_other_request_is_in_flight";
+        let attempts = AtomicU32::new(0);
+        let MockEnv {
+            async_connection: mut connection,
+            handler: _handler,
+            runtime,
+            ..
+        } = MockEnv::new(name, move |cmd: &[u8], _| {
+            respond_startup(name, cmd)?;
+            if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                Err(Err(
+                    std::io::Error::from(std::io::ErrorKind::Interrupted).into()
+                ))
+            } else {
+                Err(Ok(Value::Okay))
+            }
+        });
+
+        let result = runtime.block_on(async move {
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                cmd("GET").arg("test").query_async::<Value>(&mut connection),
+            )
+            .await
+        });
+        assert_eq!(result.unwrap(), Ok(Value::Okay));
+    }
+
+    // The sub-requests of a fan-out are queued while the in-flight requests are being polled, so
+    // they must wake the connection task instead of waiting for an unrelated request to finish.
+    #[test]
+    fn test_async_cluster_fan_out_completes_beside_a_slow_request() {
+        let name = "test_async_cluster_fan_out_completes_beside_a_slow_request";
+        let MockEnv {
+            async_connection: connection,
+            handler: _handler,
+            runtime,
+            ..
+        } = MockEnv::new(name, move |cmd: &[u8], _| {
+            respond_startup(name, cmd)?;
+            Err(Ok(Value::Okay))
+        });
+        add_mock_delay(name, |cmd, _| {
+            if contains_slice(cmd, b"BLPOP") {
+                Duration::from_secs(3600)
+            } else {
+                Duration::ZERO
+            }
+        });
+
+        let result = runtime.block_on(async move {
+            let mut slow_connection = connection.clone();
+            let mut fan_out_connection = connection;
+            let _slow_request = tokio::spawn(async move {
+                cmd("BLPOP")
+                    .arg("test")
+                    .arg(0)
+                    .query_async::<Value>(&mut slow_connection)
+                    .await
+            });
+            tokio::time::sleep(Duration::from_millis(1)).await;
+
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                fan_out_connection.route_command(
+                    cmd("FLUSHALL"),
+                    RoutingInfo::MultiNode((
+                        MultipleNodeRoutingInfo::AllNodes,
+                        Some(ResponsePolicy::AllSucceeded),
+                    )),
+                ),
+            )
+            .await
+        });
+        assert_eq!(result.unwrap(), Ok(Value::Okay));
+    }
+
     #[test]
     fn test_async_cluster_reset_routing_if_redirect_fails() {
         let name = "test_async_cluster_reset_routing_if_redirect_fails";
