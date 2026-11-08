@@ -679,31 +679,40 @@ where
         // A node that replied with an error failed its part of the request, like a node that
         // couldn't be reached. Only the `Special` policy passes the nodes' errors on as values.
         let get_receiver = |(_, receiver): (_, oneshot::Receiver<RedisResult<Response>>)| async {
-            convert_result(receiver.await).and_then(Value::extract_error)
+            match convert_result(receiver.await)? {
+                Value::ServerError(err) => Err(err.into()),
+                value => Ok(value),
+            }
         };
 
-        match response_policy {
-            Some(ResponsePolicy::AllSucceeded) => {
-                future::try_join_all(receivers.into_iter().map(get_receiver))
-                    .await
-                    .and_then(|mut results| {
-                        results.pop().ok_or_else(|| {
-                            (
-                                ErrorKind::ClusterConnectionNotFound,
-                                "No results received for multi-node operation",
-                            )
-                                .into()
-                        })
+        // Waits for every node, even after one of them failed, so that the other nodes' parts of
+        // the request aren't dropped while they wait to be retried, and returns the first error
+        // in the nodes' order.
+        let get_all_results = |receivers: Vec<_>| {
+            future::join_all(receivers.into_iter().map(get_receiver))
+                .map(|results| results.into_iter().collect::<RedisResult<Vec<_>>>())
+        };
+
+        match response_policy.unwrap_or(ResponsePolicy::Special) {
+            ResponsePolicy::AllSucceeded => {
+                get_all_results(receivers).await.and_then(|mut results| {
+                    results.pop().ok_or_else(|| {
+                        (
+                            ErrorKind::ClusterConnectionNotFound,
+                            "No results received for multi-node operation",
+                        )
+                            .into()
                     })
+                })
             }
-            Some(ResponsePolicy::OneSucceeded) => future::select_ok(
+            ResponsePolicy::OneSucceeded => future::select_ok(
                 receivers
                     .into_iter()
                     .map(|tuple| Box::pin(get_receiver(tuple))),
             )
             .await
             .map(|(result, _)| result),
-            Some(ResponsePolicy::FirstSucceededNonEmptyOrAllEmpty) => {
+            ResponsePolicy::FirstSucceededNonEmptyOrAllEmpty => {
                 // We want to see each response as it arrives, and:
                 //  • If we see `Value::Nil`, increment a counter.
                 //  • If we see an error, remember it as `last_err`.
@@ -741,23 +750,17 @@ where
                     }))
                 }
             }
-            Some(ResponsePolicy::Aggregate(op)) => {
-                future::try_join_all(receivers.into_iter().map(get_receiver))
-                    .await
-                    .and_then(|results| crate::cluster_routing::aggregate(results, op))
-            }
-            Some(ResponsePolicy::AggregateLogical(op)) => {
-                future::try_join_all(receivers.into_iter().map(get_receiver))
-                    .await
-                    .and_then(|results| crate::cluster_routing::logical_aggregate(results, op))
-            }
-            Some(ResponsePolicy::AggregateArray(op)) => {
-                future::try_join_all(receivers.into_iter().map(get_receiver))
-                    .await
-                    .and_then(|results| crate::cluster_routing::aggregate_array(results, op))
-            }
-            Some(ResponsePolicy::CombineArrays) => {
-                future::try_join_all(receivers.into_iter().map(get_receiver))
+            ResponsePolicy::Aggregate(op) => get_all_results(receivers)
+                .await
+                .and_then(|results| crate::cluster_routing::aggregate(results, op)),
+            ResponsePolicy::AggregateLogical(op) => get_all_results(receivers)
+                .await
+                .and_then(|results| crate::cluster_routing::logical_aggregate(results, op)),
+            ResponsePolicy::AggregateArray(op) => get_all_results(receivers)
+                .await
+                .and_then(|results| crate::cluster_routing::aggregate_array(results, op)),
+            ResponsePolicy::CombineArrays => {
+                get_all_results(receivers)
                     .await
                     .and_then(|results| match routing {
                         MultipleNodeRoutingInfo::MultiSlot((vec, pattern)) => {
@@ -768,12 +771,11 @@ where
                         _ => crate::cluster_routing::combine_array_results(results),
                     })
             }
-            Some(ResponsePolicy::CombineMaps) => {
-                let resolved =
-                    future::try_join_all(receivers.into_iter().map(get_receiver)).await?;
+            ResponsePolicy::CombineMaps => {
+                let resolved = get_all_results(receivers).await?;
                 crate::cluster_routing::combine_map_results(resolved)
             }
-            Some(ResponsePolicy::Special) | None => {
+            ResponsePolicy::Special => {
                 // This is our assumption - if there's no coherent way to aggregate the responses, we just map each response to the sender, and pass it to the user.
                 let results =
                     future::join_all(receivers.into_iter().map(|(addr, receiver)| async move {
@@ -2128,5 +2130,46 @@ mod tests {
             ResponsePolicy::Aggregate(AggregateOp::Sum),
         );
         assert_eq!(result.unwrap_err().code(), Some("NOPERM"));
+    }
+
+    #[test]
+    fn all_succeeded_passes_on_an_error_inside_a_reply() {
+        // Like the reply to a script that returns a table with an error in it.
+        let reply = "*2\r\n:1\r\n-ERR from the script\r\n";
+        let result = aggregate(&[reply, reply], ResponsePolicy::AllSucceeded);
+        assert_eq!(
+            result.unwrap(),
+            crate::parse_redis_value(reply.as_bytes()).unwrap()
+        );
+    }
+
+    #[test]
+    fn all_succeeded_waits_for_every_node_and_returns_the_first_nodes_error() {
+        let reply = |reply: &str| crate::parse_redis_value(reply.as_bytes()).map(Response::Single);
+        let (first_sender, first_receiver) = oneshot::channel();
+        let (second_sender, second_receiver) = oneshot::channel();
+        let routing = MultipleNodeRoutingInfo::AllMasters;
+        let mut result = Box::pin(Core::<MultiplexedConnection>::aggregate_results(
+            vec![
+                (addr("node0:6379"), first_receiver),
+                (addr("node1:6379"), second_receiver),
+            ],
+            &routing,
+            Some(ResponsePolicy::AllSucceeded),
+        ));
+
+        let _ = second_sender.send(reply("-NOPERM this user has no permissions\r\n"));
+        // The first node's part of the request might be waiting to be retried, so it must not be
+        // dropped.
+        assert!((&mut result).now_or_never().is_none());
+        assert!(!first_sender.is_closed());
+
+        let _ = first_sender.send(reply(
+            "-OOM command not allowed when used memory > 'maxmemory'.\r\n",
+        ));
+        assert_eq!(
+            result.now_or_never().unwrap().unwrap_err().code(),
+            Some("OOM")
+        );
     }
 }

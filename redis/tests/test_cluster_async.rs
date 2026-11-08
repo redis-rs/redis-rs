@@ -30,8 +30,8 @@ mod cluster_async {
         cluster_async::Connect,
         cluster_read_routing::{RandomReplicaStrategy, RoundRobinReplicaStrategy},
         cluster_routing::{
-            MultipleNodeRoutingInfo, ResponsePolicy, Route, RoutingInfo, SingleNodeRoutingInfo,
-            Slot, SlotAddr,
+            MultiSlotArgPattern, MultipleNodeRoutingInfo, ResponsePolicy, Route, RoutingInfo,
+            SingleNodeRoutingInfo, Slot, SlotAddr,
         },
         cmd, from_redis_value, from_redis_value_ref, parse_redis_value, pipe,
     };
@@ -2254,6 +2254,108 @@ mod cluster_async {
             .block_on(cmd.query_async::<Value>(&mut connection))
             .unwrap_err();
         assert_eq!(result.code(), Some("OOM"));
+    }
+
+    #[test]
+    fn test_async_cluster_split_multi_shard_command_and_retry_the_other_shards_if_one_replies_with_an_error()
+     {
+        let name = "test_async_cluster_split_multi_shard_command_and_retry_the_other_shards_if_one_replies_with_an_error";
+        let mut cmd = cmd("MSET");
+        // foo is on 6381, and bar is on 6379.
+        cmd.arg("foo").arg("1").arg("bar").arg("2");
+        let bar_attempts = Arc::new(AtomicU32::new(0));
+        let bar_attempts_clone = bar_attempts.clone();
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .retries(1)
+                .min_retry_wait(50)
+                .max_retry_wait(100),
+            name,
+            move |received_cmd: &[u8], port| {
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                if port == 6381 {
+                    Err(parse_redis_value(
+                        b"-OOM command not allowed when used memory > 'maxmemory'.\r\n",
+                    ))
+                } else if bar_attempts_clone.fetch_add(1, Ordering::Relaxed) == 0 {
+                    Err(parse_redis_value(
+                        b"-TRYAGAIN Multiple keys request during rehashing of slot\r\n",
+                    ))
+                } else {
+                    Err(Ok(Value::Okay))
+                }
+            },
+        );
+
+        let result = runtime
+            .block_on(cmd.query_async::<Value>(&mut connection))
+            .unwrap_err();
+        assert_eq!(result.code(), Some("OOM"));
+        // bar's part of the command was retried, although foo's part had already failed.
+        assert_eq!(bar_attempts.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn test_async_cluster_route_multi_slot_command_without_response_policy_and_return_each_reply() {
+        let name = "test_async_cluster_route_multi_slot_command_without_response_policy_and_return_each_reply";
+        let mut cmd = cmd("MSET");
+        cmd.arg("foo").arg("1").arg("bar").arg("2");
+        let routing = RoutingInfo::MultiNode((
+            MultipleNodeRoutingInfo::MultiSlot((
+                vec![
+                    // foo's slot, on 6381
+                    (Route::new(12182, SlotAddr::Master), vec![0, 1]),
+                    // bar's slot, on 6379
+                    (Route::new(5061, SlotAddr::Master), vec![2, 3]),
+                ],
+                MultiSlotArgPattern::KeyValuePairs,
+            )),
+            None,
+        ));
+        let MockEnv {
+            runtime,
+            async_connection: mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
+            name,
+            move |received_cmd: &[u8], port| {
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                if port == 6381 {
+                    Err(parse_redis_value(
+                        b"-OOM command not allowed when used memory > 'maxmemory'.\r\n",
+                    ))
+                } else {
+                    Err(Ok(Value::Okay))
+                }
+            },
+        );
+
+        let result = runtime
+            .block_on(connection.route_command(cmd, routing))
+            .unwrap();
+        assert_eq!(
+            result,
+            Value::Map(vec![
+                (
+                    Value::BulkString(format!("{name}:6381").into_bytes()),
+                    parse_redis_value(
+                        b"-OOM command not allowed when used memory > 'maxmemory'.\r\n"
+                    )
+                    .unwrap()
+                ),
+                (
+                    Value::BulkString(format!("{name}:6379").into_bytes()),
+                    Value::Okay
+                ),
+            ])
+        );
     }
 
     #[test]

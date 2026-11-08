@@ -20,7 +20,10 @@ mod cluster {
         Commands, ConnectionLike, ErrorKind, RedisError, ServerErrorKind, Value,
         cluster::{ClusterClient, ClusterConnection, cluster_pipe},
         cluster_read_routing::{RandomReplicaStrategy, RoundRobinReplicaStrategy},
-        cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
+        cluster_routing::{
+            MultiSlotArgPattern, MultipleNodeRoutingInfo, Route, RoutingInfo,
+            SingleNodeRoutingInfo, SlotAddr,
+        },
         cmd, from_redis_value, parse_redis_value,
     };
     use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
@@ -1093,6 +1096,62 @@ mod cluster {
 
         let result = cmd.query::<Value>(&mut connection).unwrap_err();
         assert_eq!(result.code(), Some("OOM"));
+    }
+
+    #[test]
+    fn test_cluster_route_multi_slot_command_without_response_policy_and_return_each_reply() {
+        let name =
+            "test_cluster_route_multi_slot_command_without_response_policy_and_return_each_reply";
+        let mut cmd = cmd("MSET");
+        cmd.arg("foo").arg("1").arg("bar").arg("2");
+        let routing = RoutingInfo::MultiNode((
+            MultipleNodeRoutingInfo::MultiSlot((
+                vec![
+                    // foo's slot, on 6381
+                    (Route::new(12182, SlotAddr::Master), vec![0, 1]),
+                    // bar's slot, on 6379
+                    (Route::new(5061, SlotAddr::Master), vec![2, 3]),
+                ],
+                MultiSlotArgPattern::KeyValuePairs,
+            )),
+            None,
+        ));
+        let MockEnv {
+            mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(0),
+            name,
+            move |received_cmd: &[u8], port| {
+                respond_startup_with_replica_using_config(name, received_cmd, None)?;
+                if port == 6381 {
+                    Err(parse_redis_value(
+                        b"-OOM command not allowed when used memory > 'maxmemory'.\r\n",
+                    ))
+                } else {
+                    Err(Ok(Value::Okay))
+                }
+            },
+        );
+
+        let result = connection.route_command(&cmd, routing).unwrap();
+        assert_eq!(
+            result,
+            Value::Map(vec![
+                (
+                    Value::BulkString(format!("{name}:6381").into_bytes()),
+                    parse_redis_value(
+                        b"-OOM command not allowed when used memory > 'maxmemory'.\r\n"
+                    )
+                    .unwrap()
+                ),
+                (
+                    Value::BulkString(format!("{name}:6379").into_bytes()),
+                    Value::Okay
+                ),
+            ])
+        );
     }
 
     #[test]
