@@ -54,6 +54,18 @@ pub(super) enum InternalSingleNodeRouting<C> {
     },
 }
 
+impl<C> InternalSingleNodeRouting<C> {
+    pub(super) fn is_ask_redirect(&self) -> bool {
+        matches!(
+            self,
+            Self::Redirect {
+                redirect: Redirect::Ask(_),
+                ..
+            }
+        )
+    }
+}
+
 impl<C> std::fmt::Debug for InternalSingleNodeRouting<C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
