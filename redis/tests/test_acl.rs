@@ -191,13 +191,34 @@ fn test_acl_dryrun() {
 }
 
 #[test]
-fn test_acl_selector_rule_with_whitespace_stays_one_rule() {
+fn test_acl_selector_rule_stays_one_rule() {
     // Selectors and the DRYRUN messages checked here need 7.2.
     let ctx = run_test_if_version_supported!(REDIS_CE_7_2);
     let mut con = ctx.connection();
 
-    // Read as several rules, this pattern would allow every command on every key.
-    let pattern = "x +@all ~*";
+    // Read as several rules, this pattern would allow every command on every key. Kept as one
+    // rule it is refused, since the server doesn't accept whitespace in a key pattern, and the
+    // user is not created.
+    let res = con.acl_setuser_rules(
+        "selector_user",
+        &[
+            Rule::On,
+            Rule::NoCommands,
+            Rule::Selector(vec![
+                Rule::AddCommand("GET".to_string()),
+                Rule::Pattern("x +@all ~*".to_string()),
+            ]),
+        ],
+    );
+    assert!(res.is_err());
+    assert!(
+        !con.acl_users()
+            .unwrap()
+            .contains(&"selector_user".to_string())
+    );
+
+    // A quote doesn't split the selector either; the pattern reaches the server as written.
+    let pattern = "a\"b";
     con.acl_setuser_rules(
         "selector_user",
         &[
