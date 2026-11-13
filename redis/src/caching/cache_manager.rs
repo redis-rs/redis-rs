@@ -2,6 +2,7 @@ use super::cmd::{CacheableCommand, CacheablePipeline, MultipleCachedCommandPart}
 use super::sharded_lru::*;
 use super::{CacheConfig, CacheMode, CacheStatistics};
 use crate::cmd::{Arg, CmdRef};
+use crate::commands::KeyPositions;
 use crate::{FromRedisValue, Pipeline, PushKind, Value};
 use std::cmp::min;
 use std::ops::Add;
@@ -65,6 +66,7 @@ impl CacheManager {
         redis_key: &[u8],
         cmd_key: &[u8],
         cmd_args: CmdArgs<'_>,
+        other_keys: Vec<Vec<u8>>,
         value: Value,
         client_side_expire_time: Instant,
         server_side_ttl_value: &Value,
@@ -83,6 +85,7 @@ impl CacheManager {
             redis_key,
             cmd_key,
             cmd_args,
+            other_keys,
             value,
             expire_time,
             self.epoch,
@@ -90,8 +93,8 @@ impl CacheManager {
         );
     }
 
-    pub(crate) fn invalidation_count(&self, redis_key: &[u8]) -> usize {
-        self.lru.invalidation_count(redis_key)
+    pub(crate) fn invalidation_count<'a>(&self, keys: impl IntoIterator<Item = &'a [u8]>) -> usize {
+        self.lru.invalidation_count(keys)
     }
 
     pub(crate) fn statistics(&self) -> CacheStatistics {
@@ -210,7 +213,7 @@ impl CacheManager {
                             redis_key,
                             cmd_key: key_test_buffer.clone(),
                             cmd_args: key_test_args.clone(),
-                            invalidation_count: self.invalidation_count(redis_key),
+                            invalidation_count: self.invalidation_count([*redis_key]),
                         },
                     ));
                 }
@@ -256,9 +259,12 @@ impl CacheManager {
     fn handle_single_key_command<'a>(
         &self,
         cmd: CmdRef<'a>,
+        key_positions: KeyPositions,
         client_side_expire: Instant,
     ) -> PrepCacheItem<'a> {
-        let redis_key = match cmd.arg_idx(1) {
+        // The reply is cached under the first key the command reads.
+        let mut keys = command_keys(cmd, key_positions);
+        let redis_key = match keys.next() {
             Some(key) => key,
             None => return PrepCacheItem::NotCacheable,
         };
@@ -279,8 +285,9 @@ impl CacheManager {
                 cmd_key,
                 cmd_args,
                 cmd,
+                key_positions,
                 client_side_expire,
-                invalidation_count: self.invalidation_count(redis_key),
+                invalidation_count: self.invalidation_count(std::iter::once(redis_key).chain(keys)),
             },
         ))
     }
@@ -311,8 +318,8 @@ impl CacheManager {
             );
         }
 
-        if crate::commands::is_cachable_cmd(command_name) {
-            return self.handle_single_key_command(cmd, client_side_expire);
+        if let Some(key_positions) = crate::commands::cacheable_key_positions(command_name) {
+            return self.handle_single_key_command(cmd, key_positions, client_side_expire);
         }
 
         PrepCacheItem::NotCacheable
@@ -373,6 +380,35 @@ fn is_multi_key(command_name: &[u8]) -> Option<(&'static str, &'static [u8])> {
     }
 }
 
+/// Returns the keys that `cmd` reads.
+///
+/// This assumes that the command's name is a single argument, which isn't true of every command
+/// (e.g. `CLIENT INFO`), but is of every cacheable one.
+pub(crate) fn command_keys(
+    cmd: CmdRef<'_>,
+    key_positions: KeyPositions,
+) -> impl Iterator<Item = &[u8]> {
+    let mut args = cmd
+        .args_iter()
+        .skip(1) // Skip the command name
+        .map_while(|arg| match arg {
+            Arg::Simple(arg) => Some(arg),
+            Arg::Cursor => None,
+        });
+    let key_count = match key_positions {
+        KeyPositions::First => 1,
+        KeyPositions::FirstTwo => 2,
+        KeyPositions::All => usize::MAX,
+        KeyPositions::AfterKeyCount => args
+            .next()
+            .and_then(|key_count| std::str::from_utf8(key_count).ok()?.parse().ok())
+            .unwrap_or(0),
+        // Handled by `handle_multi_key_command`.
+        KeyPositions::PerKey => 0,
+    };
+    args.take(key_count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,6 +438,7 @@ mod tests {
             redis_key,
             cmd_key,
             cmd_args,
+            Vec::new(),
             Value::Int(1),
             secs_10,
             &Value::Int(5),
@@ -411,6 +448,7 @@ mod tests {
             redis_key_2,
             cmd_key,
             cmd_args,
+            Vec::new(),
             Value::Int(2),
             ms_5,
             &Value::Int(500),
@@ -420,6 +458,7 @@ mod tests {
             redis_key_3,
             cmd_key,
             cmd_args,
+            Vec::new(),
             Value::Int(3),
             ms_50,
             &Value::Int(500),
@@ -479,6 +518,7 @@ mod tests {
             scc.redis_key,
             scc.cmd_key,
             scc.cmd_args,
+            Vec::new(),
             Value::Int(1),
             expire,
             &Value::Nil,
@@ -512,6 +552,7 @@ mod tests {
             scc.redis_key,
             scc.cmd_key,
             scc.cmd_args,
+            Vec::new(),
             Value::Int(2),
             expire,
             &Value::Nil,
@@ -522,6 +563,68 @@ mod tests {
             cache_manager.get_cached_cmd(CmdRef::from_cmd(&mget)),
             PrepCacheItem::Cached(Value::Array(values)) if values == vec![Value::Int(2)]
         ));
+    }
+
+    #[rstest]
+    #[case::exists(&["EXISTS", "a", "b"])]
+    #[case::lcs(&["LCS", "a", "b"])]
+    #[case::sinter(&["SINTER", "a", "b"])]
+    #[case::zunion(&["ZUNION", "2", "a", "b", "WITHSCORES"])]
+    fn test_invalidating_any_key_evicts_reply(
+        #[case] args: &[&str],
+        #[values("a", "b")] invalidated_key: &str,
+    ) {
+        let cache_manager = CacheManager::new(CacheConfig::new());
+        let cmd = crate::cmd(args[0]).arg(&args[1..]).clone();
+
+        let PrepCacheItem::NotCached(cacheable_command) =
+            cache_manager.get_cached_cmd(CmdRef::from_cmd(&cmd))
+        else {
+            panic!("{args:?} must be cacheable and not cached yet");
+        };
+        // The command's reply, then the PTTL of its first key.
+        let replies = [Value::Int(1), Value::Int(-1)];
+        let reply = cacheable_command.resolve(&cache_manager, replies.into_iter());
+        assert_eq!(reply.unwrap(), Value::Int(1));
+        assert!(matches!(
+            cache_manager.get_cached_cmd(CmdRef::from_cmd(&cmd)),
+            PrepCacheItem::Cached(Value::Int(1))
+        ));
+
+        let invalidated_keys = vec![Value::BulkString(invalidated_key.as_bytes().to_vec())];
+        cache_manager.handle_push_value(&PushKind::Invalidate, &[Value::Array(invalidated_keys)]);
+        assert!(
+            matches!(
+                cache_manager.get_cached_cmd(CmdRef::from_cmd(&cmd)),
+                PrepCacheItem::NotCached(_)
+            ),
+            "{args:?} must not be served from the cache after {invalidated_key} changed"
+        );
+    }
+
+    #[test]
+    fn test_opt_in_command_follows_client_caching() {
+        // `CLIENT CACHING YES` only makes the server track the keys read by the next command.
+        let cache_manager = CacheManager::new(CacheConfig::new().set_mode(CacheMode::OptIn));
+        let mut pipeline = crate::pipe();
+        pipeline
+            .cmd("SINTER")
+            .arg("a")
+            .arg("b")
+            .set_cache_config(crate::CommandCacheConfig::new().set_enable_cache(true));
+
+        let (_, packed_pipeline, _) = cache_manager.get_cached_pipeline(&pipeline);
+        let commands: Vec<_> = packed_pipeline
+            .cmd_iter()
+            .map(|cmd| {
+                let args = cmd.args_iter().map(|arg| match arg {
+                    Arg::Simple(arg) => String::from_utf8_lossy(arg).into_owned(),
+                    Arg::Cursor => unreachable!(),
+                });
+                args.collect::<Vec<_>>().join(" ")
+            })
+            .collect();
+        assert_eq!(commands, ["CLIENT CACHING YES", "SINTER a b", "PTTL a"]);
     }
 
     #[test]
@@ -549,6 +652,7 @@ mod tests {
                     key,
                     cmd_key,
                     cmd_args,
+                    Vec::new(),
                     Value::Int(i as i64),
                     secs_10,
                     &Value::Int(-1),
@@ -609,6 +713,7 @@ mod tests {
                 redis_key,
                 cmd_key,
                 cmd_args,
+                Vec::new(),
                 Value::Int(1),
                 secs_10,
                 &Value::Int(5),
@@ -618,6 +723,7 @@ mod tests {
                 redis_key_2,
                 cmd_key,
                 cmd_args,
+                Vec::new(),
                 Value::Int(2),
                 secs_10,
                 &Value::Int(5),
@@ -627,6 +733,7 @@ mod tests {
                 redis_key_3,
                 cmd_key,
                 cmd_args,
+                Vec::new(),
                 Value::Int(3),
                 secs_10,
                 &Value::Int(5),

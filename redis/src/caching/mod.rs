@@ -6,6 +6,7 @@
 //! instead they will be removed by LRU algorithm, by redis server invalidating the key, or when their time to live (TTL) is expired and the key is requested again.
 //!
 //! Commands are cached in memory by their redis key and command pairs, when a redis key is removed all related command pairs are also removed.
+//! A command that reads several keys, like `SINTER`, is cached under its first key, and is also removed when any of its other keys is removed.
 //! TTL is for key and not per command, when TTL of redis key gets updated, all command pairs of that redis key will use the new one.
 //!
 //! For more information please read <https://redis.io/docs/manual/client-side-caching/>
