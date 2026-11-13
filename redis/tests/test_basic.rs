@@ -3897,6 +3897,34 @@ mod basic {
     }
 
     #[test]
+    fn test_unparsable_reply_closes_connection() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        let _: () = con.set("key1", "value1").unwrap();
+        let _: () = con.set("key2", "value2").unwrap();
+
+        // The status reply cuts the 'é' in half, so it isn't valid UTF-8 and the array fails
+        // to parse after key1's value was read.
+        let err = cmd("EVAL")
+            .arg("return {redis.call('GET', KEYS[1]), redis.status_reply(ARGV[1]:sub(1, 2))}")
+            .arg(1)
+            .arg("key1")
+            .arg("aé")
+            .query::<Value>(&mut con)
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Parse);
+
+        // These used to be answered with values built from the reply that failed, including
+        // key1's value.
+        for _ in 0..2 {
+            assert_matches!(cmd("GET").arg("key2").query::<Value>(&mut con), Err(_));
+        }
+        assert_matches!(con.recv_response(), Err(_));
+        assert!(!con.is_open());
+    }
+
+    #[test]
     fn test_blocking_sorted_set_api() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();
