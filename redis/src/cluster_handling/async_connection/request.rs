@@ -9,12 +9,16 @@ use std::{
 
 use crate::errors::RetryMethod;
 use crate::{
-    Cmd, RedisResult, cluster_async::OperationTarget, cluster_handling::NodeAddress,
-    cluster_handling::client::RetryParams, cluster_handling::redirect_address,
-    cluster_routing::Redirect,
+    Cmd, ErrorKind, RedisError, RedisResult, Value, cluster_async::OperationTarget,
+    cluster_handling::NodeAddress, cluster_handling::client::RetryParams,
+    cluster_handling::redirect_address, cluster_routing::Redirect,
 };
 
-use futures_util::{future::BoxFuture, ready};
+use futures_util::{
+    FutureExt,
+    future::{self, BoxFuture},
+    ready,
+};
 use log::{trace, warn};
 use pin_project_lite::pin_project;
 use tokio::sync::oneshot;
@@ -49,6 +53,13 @@ pub(super) enum Retry<C> {
     AfterSleep {
         request: PendingRequest<C>,
         sleep_duration: Duration,
+    },
+    /// Some of the commands of the pipeline `request` were rejected, and are sent again on their
+    /// own by `retries`. `reply` is the pipeline's reply once they're done.
+    Join {
+        request: PendingRequest<C>,
+        retries: Vec<Self>,
+        reply: BoxFuture<'static, RedisResult<Response>>,
     },
 }
 
@@ -120,6 +131,10 @@ pin_project! {
             #[pin]
             sleep: BoxFuture<'static, ()>,
         },
+        Join {
+            #[pin]
+            reply: BoxFuture<'static, RedisResult<Response>>,
+        },
     }
 }
 
@@ -162,7 +177,7 @@ pin_project! {
     }
 }
 
-pub(crate) fn choose_response<C>(
+pub(crate) fn choose_response<C: Clone>(
     result: OperationResult,
     mut request: PendingRequest<C>,
     retry_params: &RetryParams,
@@ -178,6 +193,18 @@ pub(crate) fn choose_response<C>(
     }
 
     let (target, result) = result;
+    if let (OperationTarget::Node { address }, Ok(Response::Multiple(values))) = (&target, &result)
+        && let CmdArg::Pipeline { pipeline, .. } = &request.cmd
+        && !pipeline.is_transaction()
+        && values.iter().any(Value::is_error_that_requires_action)
+        && !values.iter().all(Value::is_error_that_requires_action)
+    {
+        let Ok(Response::Multiple(values)) = result else {
+            unreachable!()
+        };
+        return retry_rejected_commands(address, values, request, retry_params);
+    }
+
     let err = match result {
         Ok(item) => {
             if let Some(error) = match &item {
@@ -306,7 +333,94 @@ pub(crate) fn choose_response<C>(
     }
 }
 
-impl<C> Future for Request<C> {
+/// Some of a pipeline's commands were rejected with an error that requires an action, such as
+/// ASK while their slot is being migrated, and the others have run, so the pipeline can't be sent
+/// again. Instead, each rejected command is handled like a command that was sent on its own and
+/// rejected with the same error, with the retries that the pipeline has left, and the pipeline's
+/// reply is completed once they're all done.
+fn retry_rejected_commands<C: Clone>(
+    address: &NodeAddress,
+    mut values: Vec<Value>,
+    request: PendingRequest<C>,
+    retry_params: &RetryParams,
+) -> (Option<Retry<C>>, PollFlushAction) {
+    let CmdArg::Pipeline {
+        pipeline,
+        offset,
+        route,
+        ..
+    } = &request.cmd
+    else {
+        unreachable!("only a pipeline's commands are retried on their own")
+    };
+
+    let mut retries = Vec::new();
+    let mut receivers = Vec::new();
+    let mut poll_flush_action = PollFlushAction::None;
+    for (index, cmd) in pipeline.cmd_iter().skip(*offset).enumerate() {
+        let Some(value) = values.get_mut(index) else {
+            break;
+        };
+        if !value.is_error_that_requires_action() {
+            continue;
+        }
+        let (sender, receiver) = oneshot::channel();
+        let command = PendingRequest {
+            retry: request.retry,
+            sender: ResultExpectation::External(sender),
+            cmd: CmdArg::Cmd {
+                cmd: Arc::new(cmd.to_cmd()),
+                routing: InternalRoutingInfo::SingleNode(route.clone()),
+            },
+        };
+        let rejection = (
+            OperationTarget::Node {
+                address: address.clone(),
+            },
+            Ok(Response::Single(std::mem::replace(value, Value::Nil))),
+        );
+        let (retry, next) = choose_response(rejection, command, retry_params);
+        retries.extend(retry);
+        poll_flush_action = poll_flush_action.change_state(next);
+        receivers.push((index, receiver));
+    }
+
+    let reply = async move {
+        // Wait for every command, so that a failed one doesn't drop the others while they wait to
+        // be retried, and fail with the first error in the pipeline's order.
+        let results = future::join_all(receivers.into_iter().map(|(index, receiver)| {
+            receiver.map(move |result| {
+                let result = result.unwrap_or_else(|_| {
+                    Err(RedisError::from((
+                        ErrorKind::Client,
+                        "request wasn't handled due to internal failure",
+                    )))
+                });
+                (index, result)
+            })
+        }))
+        .await;
+        for (index, result) in results {
+            match result? {
+                Response::Single(value) => values[index] = value,
+                Response::Multiple(_) => unreachable!("a command has a single reply"),
+            }
+        }
+        Ok(Response::Multiple(values))
+    }
+    .boxed();
+
+    (
+        Some(Retry::Join {
+            request,
+            retries,
+            reply,
+        }),
+        poll_flush_action,
+    )
+}
+
+impl<C: Clone> Future for Request<C> {
     type Output = (Option<Retry<C>>, PollFlushAction);
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
@@ -327,6 +441,13 @@ impl<C> Future for Request<C> {
                     PollFlushAction::None,
                 )
                     .into();
+            }
+            RequestStateProj::Join { reply } => {
+                // The rejected commands were retried on their own, so the reply is final.
+                let reply = ready!(reply.poll(cx));
+                // can unwrap, because we tested for `is_none`` earlier in the function
+                this.request.take().unwrap().sender.send(reply);
+                return Poll::Ready((None, PollFlushAction::None));
             }
         };
         let result = ready!(future.poll(cx));
@@ -456,6 +577,189 @@ mod tests {
         assert_eq!(receiver.try_recv(), Ok(Err(to_err(&err_string))));
         assert!(retry.is_none());
         assert_eq!(next, PollFlushAction::RebuildSlots);
+    }
+
+    fn pipeline_request_and_receiver(
+        retry: u32,
+        pipeline: crate::Pipeline,
+    ) -> (
+        PendingRequest<usize>,
+        oneshot::Receiver<RedisResult<Response>>,
+    ) {
+        let (sender, receiver) = oneshot::channel();
+        let count = pipeline.len();
+        (
+            PendingRequest::<usize> {
+                retry,
+                sender: ResultExpectation::External(sender),
+                cmd: CmdArg::Pipeline {
+                    pipeline: Arc::new(pipeline),
+                    offset: 0,
+                    count,
+                    route: InternalSingleNodeRouting::ByAddress(ADDRESS),
+                },
+            },
+            receiver,
+        )
+    }
+
+    fn packed_command<C>(request: &PendingRequest<C>) -> Vec<u8> {
+        match &request.cmd {
+            CmdArg::Cmd { cmd, .. } => cmd.get_packed_command(),
+            _ => panic!("Expected a command"),
+        }
+    }
+
+    const TARGET: NodeAddress = NodeAddress::from_parts(arcstr::literal!("target"), 6380);
+
+    #[test]
+    fn should_retry_only_the_rejected_commands_of_a_pipeline() {
+        let mut pipeline = crate::pipe();
+        pipeline.incr("a", 1).get("b").get("c").get("d");
+        let (request, mut receiver) = pipeline_request_and_receiver(0, pipeline);
+        let values = vec![
+            crate::Value::Int(1),
+            parse_redis_value(format!("-ASK 123 {TARGET}\r\n").as_bytes()).unwrap(),
+            parse_redis_value(format!("-MOVED 123 {TARGET}\r\n").as_bytes()).unwrap(),
+            parse_redis_value(b"-TRYAGAIN Multiple keys request during rehashing of slot\r\n")
+                .unwrap(),
+        ];
+        let result = (
+            OperationTarget::Node { address: ADDRESS },
+            Ok(Response::Multiple(values)),
+        );
+        let (retry, next) = choose_response(result, request, &RetryParams::default());
+
+        // Each rejected command gets the action that its error requires.
+        assert_eq!(next, PollFlushAction::RebuildSlots);
+        let Some(Retry::Join {
+            retries, mut reply, ..
+        }) = retry
+        else {
+            panic!("Expected the rejected commands to be retried on their own");
+        };
+        let mut retries = retries.into_iter();
+        let Some(Retry::Immediately { request: ask }) = retries.next() else {
+            panic!("Expected the ASK command to be retried immediately");
+        };
+        let Some(Retry::Immediately { request: moved }) = retries.next() else {
+            panic!("Expected the MOVED command to be retried immediately");
+        };
+        let Some(Retry::AfterSleep {
+            request: try_again, ..
+        }) = retries.next()
+        else {
+            panic!("Expected the TRYAGAIN command to be retried after a sleep");
+        };
+        assert!(retries.next().is_none());
+        assert_eq!(
+            packed_command(&ask),
+            crate::cmd("GET").arg("b").get_packed_command()
+        );
+        assert_eq!(get_redirect(&ask), Some(Redirect::Ask(TARGET)));
+        assert_eq!(
+            packed_command(&moved),
+            crate::cmd("GET").arg("c").get_packed_command()
+        );
+        assert_eq!(get_redirect(&moved), Some(Redirect::Moved(TARGET)));
+        assert_eq!(
+            packed_command(&try_again),
+            crate::cmd("GET").arg("d").get_packed_command()
+        );
+        assert_eq!(get_redirect(&try_again), None);
+        assert_eq!((ask.retry, moved.retry, try_again.retry), (1, 1, 1));
+
+        // The pipeline's reply waits for every retried command.
+        ask.sender
+            .send(Ok(Response::Single(crate::Value::SimpleString("b".into()))));
+        try_again
+            .sender
+            .send(Ok(Response::Single(crate::Value::SimpleString("d".into()))));
+        assert!((&mut reply).now_or_never().is_none());
+        moved
+            .sender
+            .send(Ok(Response::Single(crate::Value::SimpleString("c".into()))));
+        assert_eq!(
+            reply.now_or_never().unwrap(),
+            Ok(Response::Multiple(vec![
+                crate::Value::Int(1),
+                crate::Value::SimpleString("b".into()),
+                crate::Value::SimpleString("c".into()),
+                crate::Value::SimpleString("d".into()),
+            ]))
+        );
+        assert_matches!(receiver.try_recv(), Err(_));
+    }
+
+    #[test]
+    fn should_retry_the_rejected_commands_of_a_pipeline_with_its_remaining_retries() {
+        let retry_params = RetryParams::default();
+        let mut pipeline = crate::pipe();
+        pipeline.incr("a", 1).get("b");
+        let (request, _receiver) =
+            pipeline_request_and_receiver(retry_params.number_of_retries, pipeline);
+        let values = vec![
+            crate::Value::Int(1),
+            parse_redis_value(format!("-ASK 123 {TARGET}\r\n").as_bytes()).unwrap(),
+        ];
+        let result = (
+            OperationTarget::Node { address: ADDRESS },
+            Ok(Response::Multiple(values)),
+        );
+        let (retry, _) = choose_response(result, request, &retry_params);
+
+        // The pipeline has no retries left, so the rejected command fails with its error.
+        let Some(Retry::Join { retries, reply, .. }) = retry else {
+            panic!("Expected the rejected command to be handled on its own");
+        };
+        assert!(retries.is_empty());
+        assert_eq!(
+            reply.now_or_never().unwrap().unwrap_err().code(),
+            Some("ASK")
+        );
+    }
+
+    #[test]
+    fn should_retry_a_pipeline_whose_commands_were_all_redirected() {
+        let mut pipeline = crate::pipe();
+        pipeline.get("a").get("b");
+        let (request, mut receiver) = pipeline_request_and_receiver(0, pipeline);
+        let moved = parse_redis_value(format!("-MOVED 123 {TARGET}\r\n").as_bytes()).unwrap();
+        let result = (
+            OperationTarget::Node { address: ADDRESS },
+            Ok(Response::Multiple(vec![moved.clone(), moved])),
+        );
+        let (retry, next) = choose_response(result, request, &RetryParams::default());
+
+        // No command has run, so the whole pipeline is sent again.
+        let Some(Retry::Immediately { request }) = retry else {
+            panic!("Expected the pipeline to be retried");
+        };
+        assert!(matches!(request.cmd, CmdArg::Pipeline { .. }));
+        assert_eq!(get_redirect(&request), Some(Redirect::Moved(TARGET)));
+        assert_eq!(next, PollFlushAction::RebuildSlots);
+        assert_matches!(receiver.try_recv(), Err(_));
+    }
+
+    #[test]
+    fn should_retry_a_transaction_as_a_whole() {
+        let mut pipeline = crate::pipe();
+        pipeline.atomic().incr("a", 1).get("b");
+        let (request, _receiver) = pipeline_request_and_receiver(0, pipeline);
+        let values = vec![
+            crate::Value::Int(1),
+            parse_redis_value(format!("-MOVED 123 {TARGET}\r\n").as_bytes()).unwrap(),
+        ];
+        let result = (
+            OperationTarget::Node { address: ADDRESS },
+            Ok(Response::Multiple(values)),
+        );
+        let (retry, _) = choose_response(result, request, &RetryParams::default());
+
+        let Some(Retry::Immediately { request }) = retry else {
+            panic!("Expected the transaction to be retried");
+        };
+        assert!(matches!(request.cmd, CmdArg::Pipeline { .. }));
     }
 
     #[test]

@@ -810,7 +810,35 @@ where
             }
         };
 
+        let asking = route.is_ask_redirect();
         match self.get_connection(route).await {
+            // ASKING only applies to the command right after it on the connection, so it's sent in
+            // the same write as the command, so that no other request on the connection, such as
+            // another command that was redirected with ASK, can come between them.
+            Ok((addr, mut conn)) if asking => {
+                let mut pipeline = crate::pipe();
+                pipeline
+                    .add_command(asking_cmd())
+                    .add_command(cmd.as_ref().clone());
+                match conn.req_packed_commands(&pipeline, 0, 2).await {
+                    Ok(mut values) if values.len() == 2 => {
+                        let reply = values.pop().unwrap();
+                        match values.pop().unwrap().extract_error() {
+                            Ok(_) => (addr.into(), Ok(Response::Single(reply))),
+                            Err(err) => (OperationTarget::NotFound, Err(err)),
+                        }
+                    }
+                    Ok(_) => (
+                        addr.into(),
+                        Err((
+                            ErrorKind::Client,
+                            "Expected a reply to ASKING and to the command",
+                        )
+                            .into()),
+                    ),
+                    Err(err) => (addr.into(), Err(err)),
+                }
+            }
             Ok((addr, mut conn)) => (
                 addr.into(),
                 conn.req_packed_command(&cmd).await.map(Response::Single),
@@ -826,13 +854,24 @@ where
         count: usize,
         route: InternalSingleNodeRouting<C>,
     ) -> OperationResult {
+        let asking = route.is_ask_redirect();
         match self.get_connection(route).await {
-            Ok((addr, mut conn)) => (
-                OperationTarget::Node { address: addr },
-                conn.req_packed_commands(&pipeline, offset, count)
-                    .await
-                    .map(Response::Multiple),
-            ),
+            Ok((addr, mut conn)) => {
+                if asking
+                    && let Err(err) = conn
+                        .req_packed_command(&asking_cmd())
+                        .await
+                        .and_then(|value| value.extract_error())
+                {
+                    return (OperationTarget::NotFound, Err(err));
+                }
+                (
+                    OperationTarget::Node { address: addr },
+                    conn.req_packed_commands(&pipeline, offset, count)
+                        .await
+                        .map(Response::Multiple),
+                )
+            }
             Err(err) => (OperationTarget::NotFound, Err(err)),
         }
     }
@@ -932,25 +971,18 @@ where
         Err((ErrorKind::ClusterConnectionNotFound, "No connections found").into())
     }
 
+    /// Returns the connection to the node of `redirect`. For ASK, the caller sends ASKING.
     async fn get_redirected_connection(&self, redirect: Redirect) -> RedisResult<(NodeAddress, C)> {
-        let asking = matches!(redirect, Redirect::Ask(_));
         let addr = match redirect {
             Redirect::Moved(addr) | Redirect::Ask(addr) => addr,
         };
         let read_guard = self.conn_lock.read().await;
         let conn = read_guard.0.get(&addr).and_then(ConnState::connected);
         drop(read_guard);
-        let mut conn = match conn {
+        let conn = match conn {
             Some(conn) => conn,
             None => self.connect_check_and_add(&addr).await?,
         };
-        if asking {
-            let mut asking_cmd = crate::cmd::cmd("ASKING");
-            asking_cmd.skip_concurrency_limit = true;
-            conn.req_packed_command(&asking_cmd)
-                .await
-                .and_then(|value| value.extract_error())?;
-        }
 
         Ok((addr, conn))
     }
@@ -1246,6 +1278,12 @@ where
     addr
 }
 
+fn asking_cmd() -> Cmd {
+    let mut asking_cmd = cmd("ASKING");
+    asking_cmd.skip_concurrency_limit = true;
+    asking_cmd
+}
+
 fn boxed_sleep(duration: Duration) -> BoxFuture<'static, ()> {
     Box::pin(Runtime::locate_and_sleep(duration))
 }
@@ -1522,6 +1560,20 @@ where
                     future,
                 }));
             }
+            Some(Retry::Join {
+                request,
+                retries,
+                reply,
+            }) => {
+                for retry in retries {
+                    self.handle_retries(Some(retry));
+                }
+                self.in_flight_requests.push(Box::pin(Request {
+                    retry_params: self.inner.cluster_params.retry_params.clone(),
+                    request: Some(request),
+                    future: RequestState::Join { reply },
+                }));
+            }
             None => {}
         }
     }
@@ -1581,6 +1633,11 @@ where
         let mut inflight_requests = Vec::new();
         for mut request in Pin::new(&mut self.in_flight_requests).iter_pin_mut() {
             let mut request = request.as_mut();
+            // A pipeline that waits for its rejected commands isn't sent again, because its other
+            // commands have run. The rejected commands are in flight on their own.
+            if matches!(request.future, RequestState::Join { .. }) {
+                continue;
+            }
             let Some(pending_request) = request.request.take() else {
                 continue;
             };
