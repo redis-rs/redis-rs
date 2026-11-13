@@ -70,15 +70,10 @@ impl CacheManager {
         server_side_ttl_value: &Value,
         invalidation_count: usize,
     ) {
-        let pttl: Result<i64, _> = FromRedisValue::from_redis_value_ref(server_side_ttl_value);
-        let expire_time = match pttl {
-            Ok(pttl) if pttl > 0 => {
-                let server_side_expire_time =
-                    Instant::now().add(Duration::from_millis(pttl as u64));
-                min(server_side_expire_time, client_side_expire_time)
-            }
-            _ => client_side_expire_time,
-        };
+        let expire_time = expire_time(
+            client_side_expire_time,
+            std::iter::once(server_side_ttl_value),
+        );
         self.lru.insert(
             redis_key,
             cmd_key,
@@ -87,6 +82,43 @@ impl CacheManager {
             expire_time,
             self.epoch,
             invalidation_count,
+        );
+    }
+
+    /// Returns the cached reply of a command that reads several keys, see
+    /// [`ShardedLRU::get_multi`].
+    pub(crate) fn get_multi<'a>(
+        &self,
+        keys: &[&'a [u8]],
+        redis_cmd: &'a [u8],
+        redis_cmd_args: CmdArgs<'a>,
+    ) -> Option<Value> {
+        self.lru
+            .get_multi(keys, redis_cmd, redis_cmd_args, self.epoch)
+    }
+
+    /// Caches the reply of a command that reads several keys, see [`ShardedLRU::insert_multi`].
+    /// `server_side_ttl_values` holds the `PTTL` reply of each key, in the order of `keys`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn insert_multi(
+        &self,
+        keys: &[&[u8]],
+        cmd_key: &[u8],
+        cmd_args: CmdArgs<'_>,
+        value: Value,
+        client_side_expire_time: Instant,
+        server_side_ttl_values: &[Value],
+        invalidation_counts: &[usize],
+    ) {
+        let expire_time = expire_time(client_side_expire_time, server_side_ttl_values.iter());
+        self.lru.insert_multi(
+            keys,
+            cmd_key,
+            cmd_args,
+            value,
+            expire_time,
+            self.epoch,
+            invalidation_counts,
         );
     }
 
@@ -253,13 +285,17 @@ impl CacheManager {
         })
     }
 
+    /// Handles a command whose reply is cached as a whole, under the first key it reads. When
+    /// the command reads several keys (`SINTER a b`, `ZINTER 2 a b`), the other keys get a
+    /// dependent entry so that an invalidation of any of them evicts the reply.
     fn handle_single_key_command<'a>(
         &self,
         cmd: CmdRef<'a>,
+        layout: KeyLayout,
         client_side_expire: Instant,
     ) -> PrepCacheItem<'a> {
-        let redis_key = match cmd.arg_idx(1) {
-            Some(key) => key,
+        let (redis_key, dependent_keys) = match cacheable_keys(cmd, layout) {
+            Some((key, dependent_keys)) => (key, dependent_keys),
             None => return PrepCacheItem::NotCacheable,
         };
 
@@ -269,13 +305,25 @@ impl CacheManager {
         let (offsets, base) = cmd.arg_offsets();
         let cmd_args = CmdArgs::new(offsets, base);
 
-        if let Some(value) = self.get(redis_key, cmd_key, cmd_args) {
+        let cached = if dependent_keys.is_empty() {
+            self.get(redis_key, cmd_key, cmd_args)
+        } else {
+            let keys: Vec<&[u8]> = std::iter::once(redis_key)
+                .chain(dependent_keys.iter().copied())
+                .collect();
+            self.get_multi(&keys, cmd_key, cmd_args)
+        };
+        if let Some(value) = cached {
             return PrepCacheItem::Cached(value);
         }
 
         PrepCacheItem::NotCached(CacheableCommand::Single(
             crate::caching::cmd::SingleCachedCommand {
                 redis_key,
+                dependent_keys: dependent_keys
+                    .into_iter()
+                    .map(|key| (key, self.invalidation_count(key)))
+                    .collect(),
                 cmd_key,
                 cmd_args,
                 cmd,
@@ -312,7 +360,11 @@ impl CacheManager {
         }
 
         if crate::commands::is_cachable_cmd(command_name) {
-            return self.handle_single_key_command(cmd, client_side_expire);
+            return self.handle_single_key_command(
+                cmd,
+                key_layout(command_name),
+                client_side_expire,
+            );
         }
 
         PrepCacheItem::NotCacheable
@@ -360,6 +412,82 @@ impl CacheManager {
         };
         (cp, packed_pipeline, pipeline_response_counts)
     }
+}
+
+/// The time a reply expires on the client: its client-side TTL, cut short by the server-side
+/// TTL of any of the keys it reads.
+fn expire_time<'a>(
+    client_side_expire_time: Instant,
+    server_side_ttl_values: impl Iterator<Item = &'a Value>,
+) -> Instant {
+    server_side_ttl_values.fold(
+        client_side_expire_time,
+        |expire_time, server_side_ttl_value| {
+            let pttl: Result<i64, _> = FromRedisValue::from_redis_value_ref(server_side_ttl_value);
+            match pttl {
+                Ok(pttl) if pttl > 0 => {
+                    let server_side_expire_time =
+                        Instant::now().add(Duration::from_millis(pttl as u64));
+                    min(server_side_expire_time, expire_time)
+                }
+                _ => expire_time,
+            }
+        },
+    )
+}
+
+/// Where a cacheable command keeps the keys it reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KeyLayout {
+    /// The first argument is the only key (`GET key`, `HGET key field`).
+    FirstArg,
+    /// Every argument is a key (`EXISTS key [key ...]`, `SINTER key [key ...]`).
+    AllArgs,
+    /// The first two arguments are keys (`LCS key1 key2 [LEN] ...`).
+    FirstTwoArgs,
+    /// The first argument is the number of keys that follow it
+    /// (`ZINTER numkeys key [key ...] [WEIGHTS ...]`).
+    NumKeys,
+}
+
+fn key_layout(command_name: &[u8]) -> KeyLayout {
+    match command_name {
+        b"EXISTS" | b"SDIFF" | b"SINTER" | b"SUNION" => KeyLayout::AllArgs,
+        b"LCS" => KeyLayout::FirstTwoArgs,
+        b"SINTERCARD" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZUNION" => KeyLayout::NumKeys,
+        _ => KeyLayout::FirstArg,
+    }
+}
+
+/// Returns the first key a cacheable command reads and, in argument order and without repeats,
+/// the other keys it reads. `None` when the command doesn't name the keys its layout requires;
+/// the server rejects such a command anyway.
+fn cacheable_keys(cmd: CmdRef<'_>, layout: KeyLayout) -> Option<(&[u8], Vec<&[u8]>)> {
+    let key_count = match layout {
+        KeyLayout::FirstArg => 1,
+        KeyLayout::FirstTwoArgs => 2,
+        KeyLayout::AllArgs => cmd.args_iter().len().checked_sub(1)?,
+        KeyLayout::NumKeys => std::str::from_utf8(cmd.arg_idx(1)?)
+            .ok()?
+            .parse::<usize>()
+            .ok()?,
+    };
+    if key_count == 0 {
+        return None;
+    }
+    let first_key_idx = match layout {
+        KeyLayout::NumKeys => 2,
+        _ => 1,
+    };
+    let redis_key = cmd.arg_idx(first_key_idx)?;
+    let mut dependent_keys = Vec::new();
+    for idx in first_key_idx + 1..first_key_idx + key_count {
+        let key = cmd.arg_idx(idx)?;
+        if key != redis_key && !dependent_keys.contains(&key) {
+            dependent_keys.push(key);
+        }
+    }
+    Some((redis_key, dependent_keys))
 }
 
 /// Checks if the given command is cacheable and supports multiple keys.
@@ -522,6 +650,125 @@ mod tests {
             cache_manager.get_cached_cmd(CmdRef::from_cmd(&mget)),
             PrepCacheItem::Cached(Value::Array(values)) if values == vec![Value::Int(2)]
         ));
+    }
+
+    /// Runs `cmd` through the cache the way a connection does: packs it, feeds the resolver the
+    /// server's replies (`-1` for each `PTTL`, then `reply`) and returns the resolved reply.
+    fn cache_reply(cache_manager: &CacheManager, cmd: &Cmd, reply: Value) -> Value {
+        let PrepCacheItem::NotCached(cacheable) =
+            cache_manager.get_cached_cmd(CmdRef::from_cmd(cmd))
+        else {
+            panic!("the command must be cacheable and not cached yet");
+        };
+        let mut pipeline = Pipeline::new();
+        cacheable.pack_command(cache_manager, &mut pipeline);
+        let replies =
+            std::iter::repeat_n(Value::Int(-1), pipeline.len() - 1).chain(std::iter::once(reply));
+        cacheable.resolve(cache_manager, replies).unwrap()
+    }
+
+    fn invalidate(cache_manager: &CacheManager, key: &str) {
+        cache_manager.handle_push_value(
+            &PushKind::Invalidate,
+            &[Value::Array(vec![Value::BulkString(
+                key.as_bytes().to_vec(),
+            )])],
+        );
+    }
+
+    #[rstest]
+    #[case::exists(crate::cmd("EXISTS").arg("a").arg("b").clone(), "b")]
+    #[case::sdiff(crate::cmd("SDIFF").arg("a").arg("b").arg("c").clone(), "c")]
+    #[case::sinter(crate::cmd("SINTER").arg("a").arg("b").clone(), "b")]
+    #[case::sunion(crate::cmd("SUNION").arg("a").arg("b").clone(), "b")]
+    #[case::lcs(crate::cmd("LCS").arg("a").arg("b").arg("LEN").clone(), "b")]
+    #[case::sintercard(crate::cmd("SINTERCARD").arg(2).arg("a").arg("b").clone(), "b")]
+    #[case::zdiff(crate::cmd("ZDIFF").arg(2).arg("a").arg("b").clone(), "b")]
+    #[case::zinter(crate::cmd("ZINTER").arg(2).arg("a").arg("b").arg("WITHSCORES").clone(), "b")]
+    #[case::zinter_first_key(crate::cmd("ZINTER").arg(2).arg("a").arg("b").clone(), "a")]
+    #[case::zintercard(crate::cmd("ZINTERCARD").arg(2).arg("a").arg("b").clone(), "b")]
+    #[case::zunion(crate::cmd("ZUNION").arg(3).arg("a").arg("b").arg("c").clone(), "c")]
+    fn test_multi_key_commands_are_evicted_when_any_of_their_keys_changes(
+        #[case] cmd: Cmd,
+        #[case] invalidated_key: &str,
+    ) {
+        let cache_manager = CacheManager::new(CacheConfig::new());
+        assert_eq!(
+            cache_reply(&cache_manager, &cmd, Value::Int(1)),
+            Value::Int(1)
+        );
+        assert!(matches!(
+            cache_manager.get_cached_cmd(CmdRef::from_cmd(&cmd)),
+            PrepCacheItem::Cached(Value::Int(1))
+        ));
+
+        invalidate(&cache_manager, invalidated_key);
+        assert!(
+            matches!(
+                cache_manager.get_cached_cmd(CmdRef::from_cmd(&cmd)),
+                PrepCacheItem::NotCached(_)
+            ),
+            "the reply must be evicted when `{invalidated_key}` changes"
+        );
+    }
+
+    #[rstest]
+    #[case::key_count(crate::cmd("ZINTER").arg(2).arg("a").arg("b").clone(), "2")]
+    #[case::option(crate::cmd("ZINTER").arg(2).arg("a").arg("b").arg("WITHSCORES").clone(), "WITHSCORES")]
+    #[case::other_key(crate::cmd("SINTER").arg("a").arg("b").clone(), "c")]
+    fn test_multi_key_commands_are_kept_when_an_argument_that_is_not_a_key_changes(
+        #[case] cmd: Cmd,
+        #[case] invalidated_key: &str,
+    ) {
+        let cache_manager = CacheManager::new(CacheConfig::new());
+        assert_eq!(
+            cache_reply(&cache_manager, &cmd, Value::Int(1)),
+            Value::Int(1)
+        );
+
+        invalidate(&cache_manager, invalidated_key);
+        assert!(matches!(
+            cache_manager.get_cached_cmd(CmdRef::from_cmd(&cmd)),
+            PrepCacheItem::Cached(Value::Int(1))
+        ));
+    }
+
+    #[test]
+    fn test_multi_key_commands_probe_the_ttl_of_every_key() {
+        let cache_manager = CacheManager::new(CacheConfig::new());
+        let packed_commands = |cmd: &Cmd| {
+            let PrepCacheItem::NotCached(cacheable) =
+                cache_manager.get_cached_cmd(CmdRef::from_cmd(cmd))
+            else {
+                panic!("the command must be cacheable and not cached yet");
+            };
+            let mut pipeline = Pipeline::new();
+            cacheable.pack_command(&cache_manager, &mut pipeline);
+            pipeline
+                .cmd_iter()
+                .map(|cmd| cmd.get_packed_command())
+                .collect::<Vec<_>>()
+        };
+
+        let zinter = crate::cmd("ZINTER").arg(2).arg("a").arg("b").clone();
+        assert_eq!(
+            packed_commands(&zinter),
+            vec![
+                Cmd::pttl("a").get_packed_command(),
+                Cmd::pttl("b").get_packed_command(),
+                zinter.get_packed_command(),
+            ]
+        );
+
+        // A key that is read twice is probed once.
+        let sinter = crate::cmd("SINTER").arg("a").arg("a").clone();
+        assert_eq!(
+            packed_commands(&sinter),
+            vec![
+                Cmd::pttl("a").get_packed_command(),
+                sinter.get_packed_command(),
+            ]
+        );
     }
 
     #[test]
