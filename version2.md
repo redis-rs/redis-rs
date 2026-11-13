@@ -179,6 +179,14 @@ It now returns `Vec<HashMap<String, Value>>` (was `Vec<String>`), one map per en
 
 **Migration:** Read the fields you need from each entry's map, e.g. `entry.get("reason")`.
 
+### Each rule inside `acl::Rule::Selector` reaches the server as one rule
+
+`Rule::Selector` joined its inner rules with spaces, and the server splits the selector's text on whitespace and quotes, so a rule containing either was read as several rules. `Selector(vec![AddCommand("get".into()), Pattern("x +@all ~*".into())])` was sent as `(+get ~x +@all ~*)`, giving the user every command on every key, and a pattern containing a double quote left the server unable to split the text, so `ACL SETUSER` stored an empty selector.
+
+An inner rule containing whitespace, a quote or a byte outside printable ASCII is now sent quoted and escaped, so the server reads it as exactly one rule. A key or channel pattern containing whitespace is therefore refused with a syntax error, as it is outside a selector, and a pattern containing a quote is stored as written. Rules made of plain characters are sent as before, `Rule::Other` is still sent as written, and empty rules are left out.
+
+**Migration:** Give each rule its own `Rule` instead of putting several space-separated rules in one, e.g. `Pattern("a ~b")` becomes `Pattern("a")` and `Pattern("b")`, or pass the raw text in a `Rule::Other`.
+
 ### Out-of-range integer and double replies are rejected instead of wrapping
 `FromRedisValue` for the integer types converted `Value::Int` and `Value::Double` with `as`, which wraps around for integers and saturates for floats, turning `NaN` into zero. Both did so silently, so a reply outside the target type's range produced a wrong number rather than an error.
 
