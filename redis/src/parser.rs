@@ -484,7 +484,7 @@ pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
 mod tests {
     use super::*;
     use crate::errors::ErrorKind;
-    use assert_matches::assert_matches;
+    use std::assert_matches;
 
     #[cfg(feature = "aio")]
     #[test]

@@ -7,7 +7,7 @@ repository = "https://github.com/redis-rs/redis-rs"
 documentation = "https://docs.rs/redis"
 license = "BSD-3-Clause"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.96"
 readme = "../README.md"
 
 [package.metadata.docs.rs]
@@ -37,7 +37,6 @@ combine = { version = "4.6.8", default-features = false, features = ["std"] }
 
 # Only needed for AIO
 bytes = { version = "1", optional = true }
-cfg-if = { version = "1", optional = true }
 futures-util = { version = "0.3.31", default-features = false, features = [
   "std",
   "sink",
@@ -180,7 +179,6 @@ aio = [
   "dep:async-lock",
   "tokio-util/codec",
   "combine/tokio",
-  "dep:cfg-if",
   "redis-test/aio",
   "dep:futures-channel",
 ]
@@ -202,7 +200,6 @@ rstest = "0.26"
 rand = "0.10"
 rustls = { version = "0.23", features = ["ring"] }
 test-macros = { path = "../test-macros" }
-assert_matches = "1.5.0"
 env_logger = "0.11.10"
 futures-channel = "0.3.31"
 

@@ -6,7 +6,7 @@ description = "Testing helpers for the `redis` crate"
 repository = "https://github.com/redis-rs/redis-rs"
 documentation = "https://docs.rs/redis-test"
 license = "BSD-3-Clause"
-rust-version = "1.88"
+rust-version = "1.96"
 
 [lib]
 bench = false

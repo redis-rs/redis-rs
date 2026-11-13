@@ -10,7 +10,7 @@ use redis_test::{
 #[macro_use]
 mod support;
 
-use assert_matches::assert_matches;
+use std::assert_matches;
 use std::collections::BTreeMap;
 use std::slice;
 use std::str;
@@ -181,11 +181,9 @@ fn test_xgroup_create() {
 
     // no key exists... this call breaks the connection pipe for some reason
     let reply = con.xinfo_stream("k10");
-    assert!(
-        matches!(&reply, Err(e) if e.kind() == redis::ServerErrorKind::ResponseError.into()
+    assert_matches!(&reply, Err(e) if e.kind() == redis::ServerErrorKind::ResponseError.into()
             && e.code() == Some("ERR")
-            && e.detail() == Some("no such key"))
-    );
+            && e.detail() == Some("no such key"));
 
     // redo the connection because the above error
     con = ctx.connection();
@@ -459,11 +457,9 @@ fn test_xadd_options() {
     assert_eq!(result, Ok(None));
 
     let result = con.xinfo_stream("k1");
-    assert!(
-        matches!(&result, Err(e) if e.kind() == redis::ServerErrorKind::ResponseError.into()
+    assert_matches!(&result, Err(e) if e.kind() == redis::ServerErrorKind::ResponseError.into()
             && e.code() == Some("ERR")
-            && e.detail() == Some("no such key"))
-    );
+            && e.detail() == Some("no such key"));
 
     fn setup_stream(con: &mut Connection) {
         let _ = con.del("k1");

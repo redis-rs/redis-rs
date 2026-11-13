@@ -339,7 +339,7 @@ impl<C> Future for Request<C> {
 
 #[cfg(test)]
 mod tests {
-    use assert_matches::assert_matches;
+    use std::assert_matches;
     use std::sync::Arc;
 
     use tokio::sync::oneshot;

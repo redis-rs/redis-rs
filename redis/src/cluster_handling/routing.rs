@@ -1137,8 +1137,8 @@ mod tests_routing {
         SlotAddr, command_for_multi_slot_indices,
     };
     use crate::{Value, cmd, parser::parse_redis_value};
-    use assert_matches::assert_matches;
     use core::panic;
+    use std::assert_matches;
 
     #[test]
     fn test_routing_info_mixed_capatalization() {
@@ -1456,13 +1456,10 @@ mod tests_routing {
         expected.insert(Route(5061, SlotAddr::Master), vec![1, 3]);
         expected.insert(Route(12182, SlotAddr::Master), vec![0]);
 
-        assert!(
-            matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot((vec, args_pattern)), Some(ResponsePolicy::Aggregate(AggregateOp::Sum))))) if {
+        assert_matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot((vec, args_pattern)), Some(ResponsePolicy::Aggregate(AggregateOp::Sum))))) if {
                 let routes = vec.clone().into_iter().collect();
                 expected == routes && args_pattern == MultiSlotArgPattern::KeysOnly
-            }),
-            "expected={expected:?}\nrouting={routing:?}"
-        );
+            }, "expected={expected:?}\nrouting={routing:?}");
 
         let mut cmd = crate::cmd("MGET");
         cmd.arg("foo").arg("bar").arg("baz").arg("{bar}vaz");
@@ -1472,13 +1469,10 @@ mod tests_routing {
         expected.insert(Route(5061, SlotAddr::ReplicaOptional), vec![1, 3]);
         expected.insert(Route(12182, SlotAddr::ReplicaOptional), vec![0]);
 
-        assert!(
-            matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot((vec, args_pattern)), Some(ResponsePolicy::CombineArrays)))) if {
+        assert_matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot((vec, args_pattern)), Some(ResponsePolicy::CombineArrays)))) if {
                 let routes = vec.clone().into_iter().collect();
                 expected == routes && args_pattern == MultiSlotArgPattern::KeysOnly
-            }),
-            "expected={expected:?}\nrouting={routing:?}"
-        );
+            }, "expected={expected:?}\nrouting={routing:?}");
     }
 
     #[test]
@@ -1495,13 +1489,10 @@ mod tests_routing {
         expected.insert(Route(1044, SlotAddr::Master), vec![2, 3]);
         expected.insert(Route(12182, SlotAddr::Master), vec![0, 1, 4, 5]);
 
-        assert!(
-            matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot((vec, args_pattern)), Some(ResponsePolicy::AllSucceeded)))) if {
+        assert_matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot((vec, args_pattern)), Some(ResponsePolicy::AllSucceeded)))) if {
                 let routes = vec.clone().into_iter().collect();
                 expected == routes && args_pattern == MultiSlotArgPattern::KeyValuePairs
-            }),
-            "expected={expected:?}\nrouting={routing:?}"
-        );
+            }, "expected={expected:?}\nrouting={routing:?}");
     }
 
     #[test]
@@ -1518,13 +1509,10 @@ mod tests_routing {
         expected.insert(Route(5061, SlotAddr::ReplicaOptional), vec![1, 3, 4]);
         expected.insert(Route(12182, SlotAddr::ReplicaOptional), vec![0, 4]);
 
-        assert!(
-            matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot((vec, args_pattern)), Some(ResponsePolicy::CombineArrays)))) if {
+        assert_matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot((vec, args_pattern)), Some(ResponsePolicy::CombineArrays)))) if {
                 let routes = vec.clone().into_iter().collect();
                 expected == routes && args_pattern == MultiSlotArgPattern::KeysAndLastArg
-            }),
-            "expected={expected:?}\nrouting={routing:?}"
-        );
+            }, "expected={expected:?}\nrouting={routing:?}");
     }
 
     #[test]
@@ -1544,13 +1532,10 @@ mod tests_routing {
         expected.insert(Route(1044, SlotAddr::Master), vec![3, 4, 5]);
         expected.insert(Route(12182, SlotAddr::Master), vec![0, 1, 2, 6, 7, 8]);
 
-        assert!(
-            matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot((vec, args_pattern)), Some(ResponsePolicy::AllSucceeded)))) if {
+        assert_matches!(routing.clone(), Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot((vec, args_pattern)), Some(ResponsePolicy::AllSucceeded)))) if {
                 let routes = vec.clone().into_iter().collect();
                 expected == routes && args_pattern == MultiSlotArgPattern::KeyWithTwoArgTriples
-            }),
-            "expected={expected:?}\nrouting={routing:?}"
-        );
+            }, "expected={expected:?}\nrouting={routing:?}");
     }
 
     #[test]
@@ -1590,13 +1575,11 @@ mod tests_routing {
         cmd.arg("foo").arg("{foo}bar").arg("{foo}baz");
         let routing = RoutingInfo::for_routable(&cmd);
 
-        assert!(
-            matches!(
-                routing,
-                Some(RoutingInfo::SingleNode(
-                    SingleNodeRoutingInfo::SpecificNode(Route(12182, SlotAddr::Master))
-                ))
-            ),
+        assert_matches!(
+            routing,
+            Some(RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::SpecificNode(Route(12182, SlotAddr::Master))
+            )),
             "{routing:?}"
         );
     }

@@ -106,34 +106,21 @@ pub fn prefer_tokio() -> Result<(), RedisError> {
 
 impl Runtime {
     pub(crate) fn locate() -> Self {
-        #[cfg(all(feature = "smol-comp", feature = "tokio-comp"))]
-        if let Some(runtime) = CHOSEN_RUNTIME.get() {
-            return *runtime;
-        }
-
-        #[cfg(all(feature = "tokio-comp", not(feature = "smol-comp")))]
-        {
-            Runtime::Tokio
-        }
-
-        #[cfg(all(not(feature = "tokio-comp"), feature = "smol-comp",))]
-        {
-            Runtime::Smol
-        }
-
-        cfg_if::cfg_if! {
-            if #[cfg(all(feature = "tokio-comp", feature = "smol-comp"))] {
-                if ::tokio::runtime::Handle::try_current().is_ok() {
+        cfg_select! {
+            all(feature = "tokio-comp", feature = "smol-comp") => {
+                if let Some(runtime) = CHOSEN_RUNTIME.get() {
+                    *runtime
+                } else if ::tokio::runtime::Handle::try_current().is_ok() {
                     Self::Tokio
                 } else {
                     Self::Smol
                 }
             }
-        }
-
-        #[cfg(all(not(feature = "tokio-comp"), not(feature = "smol-comp")))]
-        {
-            compile_error!("tokio-comp or smol-comp features required for aio feature")
+            feature = "tokio-comp" => Self::Tokio,
+            feature = "smol-comp" => Self::Smol,
+            _ => {
+                compile_error!("tokio-comp or smol-comp features required for aio feature")
+            }
         }
     }
 

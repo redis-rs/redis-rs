@@ -15,7 +15,6 @@ mod cluster {
     };
 
     use crate::support::*;
-    use assert_matches::assert_matches;
     use redis::{
         Commands, ConnectionLike, ErrorKind, RedisError, ServerErrorKind, Value,
         cluster::{ClusterClient, ClusterConnection, cluster_pipe},
@@ -26,6 +25,7 @@ mod cluster {
     use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
     use redis_test::server::use_protocol;
     use redis_test::{VALKEY_9_0, redis_value, run_test_if_version_supported};
+    use std::assert_matches;
 
     fn smoke_test_connection(mut con: ClusterConnection) {
         redis::cmd("SET")
@@ -552,10 +552,7 @@ mod cluster {
 
         let result = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
 
-        assert!(
-            matches!(&result, Err(err) if err.kind() == ServerErrorKind::TryAgain.into()),
-            "{result:?}",
-        );
+        assert_matches!(&result, Err(err) if err.kind() == ServerErrorKind::TryAgain.into(), "{result:?}");
         assert_eq!(requests.load(atomic::Ordering::SeqCst), 3);
     }
 
@@ -910,10 +907,7 @@ mod cluster {
 
         let result = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
 
-        assert!(
-            matches!(&result, Err(err) if err.kind() == ServerErrorKind::ResponseError.into()),
-            "{result:?}",
-        );
+        assert_matches!(&result, Err(err) if err.kind() == ServerErrorKind::ResponseError.into(), "{result:?}");
         assert_eq!(completed.load(Ordering::SeqCst), 1);
     }
 

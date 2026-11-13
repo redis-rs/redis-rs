@@ -33,9 +33,9 @@ mod basic {
     use redis_test::utils::get_listener_on_free_port;
     use redis_test::*;
 
-    use assert_matches::assert_matches;
     #[cfg(feature = "vector-sets")]
     use serde_json::json;
+    use std::assert_matches;
     use std::collections::{BTreeMap, BTreeSet};
     use std::collections::{HashMap, HashSet};
     use std::io::Read;
@@ -5012,8 +5012,9 @@ mod basic {
 
             for (i, layer) in layers.iter().enumerate() {
                 println!("Layer {i}: {layer:?}");
-                assert!(
-                    matches!(layer, Value::Array(_)),
+                assert_matches!(
+                    layer,
+                    Value::Array(_),
                     "[VLINKS] Expected an array result representing the links in layer {i}, got {layer:?}"
                 );
             }
@@ -5041,8 +5042,9 @@ mod basic {
                     .zip(layers_without_scores.iter())
                     .enumerate()
                 {
-                    assert!(
-                        matches!(layer_with_scores, Value::Array(_) | Value::Map(_)),
+                    assert_matches!(
+                        layer_with_scores,
+                        Value::Array(_) | Value::Map(_),
                         "[VLINKS WITH SCORES] Expected an array or map result representing the links in layer {i} along with their scores, got {layer_with_scores:?}"
                     );
 

@@ -21,7 +21,6 @@ mod cluster_async {
     use futures::prelude::*;
     use futures_time::{future::FutureExt, task::sleep};
 
-    use assert_matches::assert_matches;
     use redis::{
         AsyncCommands, Cmd, ErrorKind, InfoDict, IntoConnectionInfo, RedisError, RedisFuture,
         RedisResult, Script, ServerErrorKind, Value,
@@ -43,6 +42,7 @@ mod cluster_async {
         REDIS_CE_7_0, TestContextVersioning, VALKEY_9_0, redis_value,
         run_test_if_version_supported, skip_if_context_does_not_support,
     };
+    use std::assert_matches;
 
     use test_macros::async_test;
     use tokio::{join, sync::mpsc::UnboundedReceiver};
@@ -1023,10 +1023,7 @@ mod cluster_async {
                 .query_async::<Option<i32>>(&mut connection),
         );
 
-        assert!(
-            matches!(&result, Err(err) if err.kind() == ServerErrorKind::TryAgain.into()),
-            "{result:?}",
-        );
+        assert_matches!(&result, Err(err) if err.kind() == ServerErrorKind::TryAgain.into(), "{result:?}");
         assert_eq!(requests.load(atomic::Ordering::SeqCst), 3);
     }
 
@@ -1502,7 +1499,7 @@ mod cluster_async {
                         })
                     })
                     .collect();
-                tokio::time::timeout(Duration::from_secs(600), futures::future::join_all(tasks))
+                tokio::time::timeout(Duration::from_mins(10), futures::future::join_all(tasks))
                     .await
             });
             assert!(
@@ -1560,7 +1557,7 @@ mod cluster_async {
         });
         add_mock_delay(name, |cmd, _| {
             if contains_slice(cmd, b"BLPOP") {
-                Duration::from_secs(3600)
+                Duration::from_hours(1)
             } else {
                 Duration::ZERO
             }

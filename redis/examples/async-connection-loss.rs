@@ -25,7 +25,7 @@ async fn run_multi<C: ConnectionLike + Clone>(mut con: C) -> RedisResult<()> {
     let mut interval = interval(Duration::from_millis(100));
     loop {
         // finish after two minutes
-        if Instant::now().checked_duration_since(start).unwrap() > Duration::from_secs(120) {
+        if Instant::now().checked_duration_since(start).unwrap() > Duration::from_mins(2) {
             return Ok(());
         }
         interval.tick().await;

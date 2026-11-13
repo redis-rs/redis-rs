@@ -848,6 +848,6 @@ mod tests {
         let client = Client::open("redis://127.0.0.1/?protocol=resp3").unwrap();
         let config = ConnectionManagerConfig::new().set_automatic_resubscription(); // This requires a push sender
         let result = ConnectionManager::new_lazy_with_config(client, config);
-        assert_matches::assert_matches!(result, Err(err) if err.kind() == crate::ErrorKind::Client);
+        std::assert_matches!(result, Err(err) if err.kind() == crate::ErrorKind::Client);
     }
 }

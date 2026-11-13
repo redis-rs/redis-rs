@@ -5,13 +5,13 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::support::*;
-use assert_matches::assert_matches;
 use redis::sentinel::SentinelClientBuilder;
 use redis::{
     Client, Connection, ConnectionAddr, ConnectionInfo, ErrorKind, RedisError, Role,
     sentinel::{Sentinel, SentinelClient, SentinelNodeConnectionInfo},
 };
 use redis_test::server::use_protocol;
+use std::assert_matches;
 
 fn log_connection_error(
     context: &TestSentinelContext,
@@ -142,11 +142,9 @@ fn test_get_replica_clients_invalid_master_name() {
         .get_replica_clients("invalid_master_name", Some(&node_conn_info))
         .unwrap_err();
     // sometimes we get unexplained connection refused errors.
-    assert!(
-        matches!(
-            err.kind(),
-            ErrorKind::Server(redis::ServerErrorKind::ResponseError) | ErrorKind::Io
-        ),
+    assert_matches!(
+        err.kind(),
+        ErrorKind::Server(redis::ServerErrorKind::ResponseError) | ErrorKind::Io,
         "{err}"
     );
 }
@@ -1568,11 +1566,9 @@ pub mod async_tests {
             .await
             .unwrap_err();
         // sometimes we get unexplained connection refused errors.
-        assert!(
-            matches!(
-                err.kind(),
-                ErrorKind::Server(redis::ServerErrorKind::ResponseError) | ErrorKind::Io
-            ),
+        assert_matches!(
+            err.kind(),
+            ErrorKind::Server(redis::ServerErrorKind::ResponseError) | ErrorKind::Io,
             "{err}"
         );
     }
@@ -1754,8 +1750,9 @@ pub mod bb8_pool_tests {
 
         // since max_size is 5 and we haven't freed any connection this try should fail
         let try_conn = pool.get().await;
-        assert!(
-            matches!(&try_conn, Err(bb8::RunError::TimedOut)),
+        assert_matches!(
+            &try_conn,
+            Err(bb8::RunError::TimedOut),
             "expected the pool to time out, got {try_conn:?}"
         );
 

@@ -7,7 +7,7 @@ Be sure to also read the [contribution docs](CONTRIBUTING.md) and [coding conven
 
 To develop, you need:
 
-* Rust >= 1.88 (and to build docs also the `nightly` toolchain because of rust-lang/rust#43781)
+* Rust >= 1.96 (and to build docs also the `nightly` toolchain because of rust-lang/rust#43781)
 * Make (to run `make` commands)
 * git (to fetch/upload code)
 * nextest (to run tests)

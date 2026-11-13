@@ -1157,8 +1157,7 @@ impl RedisWrite for Vec<Vec<u8>> {
     }
 
     fn writer_for_next_arg(&mut self) -> impl io::Write + '_ {
-        self.push(Vec::new());
-        self.last_mut().unwrap()
+        self.push_mut(Vec::new())
     }
 
     fn reserve_space_for_args(&mut self, additional: impl IntoIterator<Item = usize>) {
@@ -1171,8 +1170,7 @@ impl RedisWrite for Vec<Vec<u8>> {
 
     #[cfg(feature = "bytes")]
     fn bufmut_for_next_arg(&mut self, capacity: usize) -> impl bytes::BufMut + '_ {
-        self.push(Vec::with_capacity(capacity));
-        self.last_mut().unwrap()
+        self.push_mut(Vec::with_capacity(capacity))
     }
 }
 
