@@ -9,6 +9,12 @@
 //!
 //! Note that pubsub & push sending functionality is not currently provided by this module.
 //!
+//! # Requests sent to multiple nodes
+//! Some requests are split between nodes by their keys, like `MSET` or `DEL`, or sent to several
+//! nodes, like `FLUSHALL`, and their replies are combined according to the request's
+//! [`ResponsePolicy`](crate::cluster_routing::ResponsePolicy). An error from such a request might
+//! still mean that the request succeeded on some of the nodes.
+//!
 //! # Example
 //! ```rust,no_run
 //! use redis::TypedCommands;
@@ -841,7 +847,6 @@ where
             }
             ResponsePolicy::Special => {
                 // This is our assumption - if there's no coherent way to aggregate the responses, we just map each response to the sender, and pass it to the user.
-                // TODO - once Value::Error is merged, we can use join_all and report separate errors and also pass successes.
                 let results = results
                     .into_iter()
                     .map(|result| {

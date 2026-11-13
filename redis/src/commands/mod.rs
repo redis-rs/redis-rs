@@ -303,6 +303,7 @@ implement_commands! {
     }
 
     /// Sets multiple keys to their values.
+    /// This request might be split between nodes in cluster mode, and an error might still mean that the request succeeded on some nodes.
     /// [Redis Docs](https://redis.io/commands/MSET)
     fn mset<K: ToRedisArgs, V: ToRedisArgs>(items: &[(K, V)]) -> (()) {
         ready_cmd!("MSET", items).take()
@@ -360,6 +361,7 @@ implement_commands! {
 
     /// Delete one or more keys.
     /// Returns the number of keys deleted.
+    /// This request might be split between nodes in cluster mode, and an error might still mean that the request succeeded on some nodes.
     /// [Redis Docs](https://redis.io/commands/DEL)
     fn del<K: ToRedisArgs>(key: K) -> (usize) {
         ready_cmd!("DEL", key).take()
@@ -496,6 +498,7 @@ implement_commands! {
 
     /// Unlink one or more keys. This is a non-blocking version of `DEL`.
     /// Returns number of keys unlinked.
+    /// This request might be split between nodes in cluster mode, and an error might still mean that the request succeeded on some nodes.
     /// [Redis Docs](https://redis.io/commands/UNLINK)
     fn unlink<K: ToRedisArgs>(key: K) -> (usize) {
         ready_cmd!("UNLINK", key).take()
@@ -2966,6 +2969,7 @@ assert_eq!(invok_2_res, 5);
     /// ```text
     /// FLUSHALL
     /// ```
+    /// This request is sent to all the primaries in cluster mode, and an error might still mean that the request succeeded on some nodes.
     /// [Redis Docs](https://redis.io/commands/FLUSHALL)
     fn flushall<>() -> () {
         ready_cmd!("FLUSHALL").take()
@@ -2976,6 +2980,7 @@ assert_eq!(invok_2_res, 5);
     /// ```text
     /// FLUSHALL [ASYNC|SYNC]
     /// ```
+    /// This request is sent to all the primaries in cluster mode, and an error might still mean that the request succeeded on some nodes.
     /// [Redis Docs](https://redis.io/commands/FLUSHALL)
     fn flushall_options<>(options: &FlushAllOptions) -> () {
         ready_cmd!("FLUSHALL", options).take()
@@ -2991,6 +2996,7 @@ assert_eq!(invok_2_res, 5);
     /// ```text
     /// FLUSHDB
     /// ```
+    /// This request is sent to all the primaries in cluster mode, and an error might still mean that the request succeeded on some nodes.
     /// [Redis Docs](https://redis.io/commands/FLUSHDB)
     fn flushdb<>() -> () {
         ready_cmd!("FLUSHDB").take()
@@ -3001,6 +3007,7 @@ assert_eq!(invok_2_res, 5);
     /// ```text
     /// FLUSHDB [ASYNC|SYNC]
     /// ```
+    /// This request is sent to all the primaries in cluster mode, and an error might still mean that the request succeeded on some nodes.
     /// [Redis Docs](https://redis.io/commands/FLUSHDB)
     fn flushdb_options<>(options: &FlushDbOptions) -> () {
         ready_cmd!("FLUSHDB", options).take()
@@ -3244,6 +3251,8 @@ assert_eq!(invok_2_res, 5);
     /// ```text
     /// JSON.MSET <key1> <path1> <value1> <key2> <path2> <value2> ...
     /// ```
+    ///
+    /// This request might be split between nodes in cluster mode, and an error might still mean that the request succeeded on some nodes.
     ///
     /// [Redis Docs](https://redis.io/commands/JSON.MSET)
     #[cfg(feature = "json")]

@@ -10,6 +10,12 @@
 //! By default, [`ClusterConnection`] makes use of [`MultiplexedConnection`] and maintains a pool
 //! of connections to each node in the cluster.
 //!
+//! # Requests sent to multiple nodes
+//! Some requests are split between nodes by their keys, like `MSET` or `DEL`, or sent to several
+//! nodes, like `FLUSHALL`, and their replies are combined according to the request's
+//! [`ResponsePolicy`](crate::cluster_routing::ResponsePolicy). An error from such a request might
+//! still mean that the request succeeded on some of the nodes.
+//!
 //! # Example
 //! ```rust,no_run
 //! use redis::cluster::ClusterClient;
@@ -605,8 +611,10 @@ where
             };
             let slot_map = &read_guard.1;
 
-            // TODO - these filter_map calls mean that we ignore nodes that are missing. Should we report an error in such cases?
-            // since some of the operators drop other requests, mapping to errors here might mean that no request is sent.
+            // TODO - these filter_map calls mean that we ignore nodes that are missing, so the request might
+            // succeed although it wasn't sent to some of them, while the sync connection fails it. Now that
+            // the policies wait for every node, mapping a missing node to an error here wouldn't keep the
+            // requests to the other nodes from being sent.
             match routing {
                 MultipleNodeRoutingInfo::AllNodes => slot_map
                     .addresses_for_all_nodes()

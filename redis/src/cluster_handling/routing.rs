@@ -45,6 +45,10 @@ pub enum ArrayAggregateOp {
 }
 
 /// Policy defining how to combine multiple responses into one.
+///
+/// Except with [`ResponsePolicy::Special`], a node that replies with an error fails its part of
+/// the request, like a node that couldn't be reached. An error from a request that was sent to
+/// several nodes might still mean that the request succeeded on some of them.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum ResponsePolicy {
@@ -52,7 +56,7 @@ pub enum ResponsePolicy {
     OneSucceeded,
     /// Returns the first succeeded non-empty result; if all results are empty, returns `Nil`; otherwise, returns the last received error.
     FirstSucceededNonEmptyOrAllEmpty,
-    /// Waits for all requests to succeed, and the returns one of the successes. Returns the error on the first received error.
+    /// Waits for all the requests, and returns one of the successes if they all succeeded, or one of the errors otherwise.
     AllSucceeded,
     /// Aggregate success results according to a logical bitwise operator. Return error on any failed request or on a response that doesn't conform to 0 or 1.
     AggregateLogical(LogicalAggregateOp),
@@ -62,7 +66,7 @@ pub enum ResponsePolicy {
     AggregateArray(ArrayAggregateOp),
     /// Aggregate array responses into a single array. Return error on any failed request or on a response that isn't an array.
     CombineArrays,
-    /// Handling is not defined by the Redis standard. Will receive a special case
+    /// Handling is not defined by the Redis standard. Returns a map from each node's address to its reply.
     Special,
     /// Combines multiple map responses into a single map.
     CombineMaps,
@@ -74,7 +78,7 @@ pub enum ResponsePolicy {
 pub enum RoutingInfo {
     /// Route to single node
     SingleNode(SingleNodeRoutingInfo),
-    /// Route to multiple nodes
+    /// Route to multiple nodes. Without a response policy, the replies are combined as with [`ResponsePolicy::Special`].
     MultiNode((MultipleNodeRoutingInfo, Option<ResponsePolicy>)),
 }
 
