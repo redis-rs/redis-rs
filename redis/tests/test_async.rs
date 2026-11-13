@@ -4,7 +4,6 @@ mod support;
 mod basic_async {
     use std::{collections::HashMap, time::Duration};
 
-    use super::*;
     use crate::support::*;
     use futures::{StreamExt, prelude::*};
     use futures_time::{future::FutureExt, task::sleep};
