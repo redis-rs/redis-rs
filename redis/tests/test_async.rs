@@ -6,7 +6,6 @@ mod basic_async {
 
     use super::*;
     use crate::support::*;
-    use assert_matches::assert_matches;
     use futures::{StreamExt, prelude::*};
     use futures_time::{future::FutureExt, task::sleep};
     use redis::{
@@ -21,6 +20,7 @@ mod basic_async {
     #[cfg(feature = "json")]
     use redis_test::server::Module;
     use redis_test::server::{redis_settings, use_protocol};
+    use std::assert_matches;
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},

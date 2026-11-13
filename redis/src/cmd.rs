@@ -189,7 +189,7 @@ impl<'a> CmdRef<'a> {
 /// use std::time::Duration;
 /// use redis::{CommandCacheConfig, Cmd};
 ///
-/// let ttl = Duration::from_secs(120); // 2 minutes TTL
+/// let ttl = Duration::from_mins(2);
 /// let config = CommandCacheConfig::new()
 ///     .set_enable_cache(true)
 ///     .set_client_side_ttl(ttl);

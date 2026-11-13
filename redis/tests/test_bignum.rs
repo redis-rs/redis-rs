@@ -3,9 +3,9 @@
     feature = "bigdecimal",
     feature = "num-bigint"
 ))]
-use assert_matches::assert_matches;
 use redis::{FromRedisValue, ToRedisArgs, Value};
 use redis_test::redis_value;
+use std::assert_matches;
 use std::str::FromStr;
 
 fn test<T>(content: &str)

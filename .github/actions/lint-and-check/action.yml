@@ -16,7 +16,7 @@ runs:
       with:
         # Skip target/ caching only for nightly, whose compiler changes daily
         # and therefore produces a new cache key every day. Stable, beta, and
-        # 1.88.0 still cache target/ as before.
+        # 1.96.0 still cache target/ as before.
         cache-targets: ${{ inputs.rust-toolchain != 'nightly' }}
 
     - name: Build default

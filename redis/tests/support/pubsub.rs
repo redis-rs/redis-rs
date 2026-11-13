@@ -5,12 +5,12 @@
 use std::future::Future;
 use std::time::Duration;
 
-use assert_matches::assert_matches;
 use futures::future::join3;
 use futures_time::future::FutureExt;
 use redis::aio::{ConnectionLike, PubSubSink};
 use redis::{AsyncCommands, FromRedisValue, PushInfo, PushKind, RedisResult, Value, cmd};
 use redis_test::redis_value;
+use std::assert_matches;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 /// The timeout for pushes that may be delivered asynchronously, so that they aren't guaranteed to

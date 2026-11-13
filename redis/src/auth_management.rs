@@ -174,7 +174,7 @@ mod auth_management_tests {
         let config = TokenRefreshConfig::default(); // Default refresh ratio is 0.8
 
         let received_at = SystemTime::now();
-        let expires_at = received_at + Duration::from_secs(3600); // 1 hour
+        let expires_at = received_at + Duration::from_hours(1);
 
         let threshold = credentials_management_utils::calculate_refresh_threshold(
             received_at,

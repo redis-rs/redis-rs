@@ -8,9 +8,9 @@ mod types {
         sync::Arc,
     };
 
-    use assert_matches::assert_matches;
     use redis::{ErrorKind, FromRedisValue, RedisError, ToRedisArgs, Value};
     use redis_test::redis_value;
+    use std::assert_matches;
 
     #[test]
     fn test_is_io_error() {

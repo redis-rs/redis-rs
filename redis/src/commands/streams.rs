@@ -1605,6 +1605,7 @@ impl FromRedisValue for XAckDelStatusCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     fn assert_command_eq(object: impl ToRedisArgs, expected: &[u8]) {
         let mut out: Vec<Vec<u8>> = Vec::new();
@@ -1687,9 +1688,7 @@ mod tests {
             assert_eq!(reply.next_stream_id.as_str(), "1713465536578-0");
             assert_eq!(reply.claimed.len(), 2);
             assert_eq!(reply.claimed[0].id.as_str(), "1713465533411-0");
-            assert!(
-                matches!(reply.claimed[0].map.get("name"), Some(Value::BulkString(v)) if v == "test".as_bytes())
-            );
+            assert_matches!(reply.claimed[0].map.get("name"), Some(Value::BulkString(v)) if v == "test".as_bytes());
             assert_eq!(reply.claimed[1].id.as_str(), "1713465536069-0");
             assert_eq!(reply.deleted_ids.len(), 1);
             assert!(reply.deleted_ids.contains(&"123456789-0".to_string()));

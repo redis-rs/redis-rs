@@ -734,7 +734,7 @@ impl ConnectionLike for Client {
 #[cfg(test)]
 mod test {
     use super::*;
-    use assert_matches::assert_matches;
+    use std::assert_matches;
 
     #[test]
     fn regression_293_parse_ipv6_with_interface() {
