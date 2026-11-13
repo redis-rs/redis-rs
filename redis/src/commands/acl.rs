@@ -62,6 +62,11 @@ pub enum Rule {
     ResetChannels,
     /// Selector entries (returned by Redis under `(selectors)`).
     /// Only supported in Redis 7.2 and later
+    ///
+    /// Each inner rule reaches the server as exactly one rule: one that contains whitespace or a
+    /// quote is sent quoted, so for example a `Pattern` with a space in it is refused by the
+    /// server rather than read as several rules. [`Rule::Other`] is sent as written, so it can
+    /// still hold several space-separated rules.
     Selector(Vec<Self>),
 
     /// Performs the following actions: `resetpass`, `resetkeys`, `off`, `-@all`.
@@ -105,13 +110,21 @@ impl ToRedisArgs for Rule {
             Channel(pat) => out.write_arg_fmt(format_args!("&{pat}")),
             ResetChannels => out.write_arg(b"resetchannels"),
             Selector(sel) => {
+                let rules: Vec<Vec<u8>> = sel
+                    .iter()
+                    .flat_map(|rule| match rule {
+                        // Raw rule text may hold several rules, so it goes in as written.
+                        Other(raw) => vec![raw.as_bytes().to_vec()],
+                        rule => rule
+                            .to_redis_args()
+                            .iter()
+                            .map(|arg| quote_selector_rule(arg))
+                            .collect(),
+                    })
+                    .filter(|rule| !rule.is_empty())
+                    .collect();
                 let mut arg = b"(".to_vec();
-                for (i, rule) in sel.iter().flat_map(Self::to_redis_args).enumerate() {
-                    if i > 0 {
-                        arg.push(b' ');
-                    }
-                    push_selector_rule(&mut arg, &rule);
-                }
+                arg.extend(rules.join(&b' '));
                 arg.push(b')');
                 out.write_arg(&arg);
             }
@@ -122,34 +135,21 @@ impl ToRedisArgs for Rule {
     }
 }
 
-/// Appends one rule of a selector to the selector's argument.
+/// Quotes one rule of a selector so the server reads it as a single rule.
 ///
 /// The server splits the text between the parentheses into rules with `sdssplitargs`, the
 /// splitter used for `redis-cli` lines and the ACL file, so a rule containing whitespace or a
 /// quote would be read as several rules. Such a rule is written as a double-quoted string with
-/// the escapes that splitter decodes, the form `sdscatrepr` produces, so that it stays one rule
-/// with exactly the bytes given.
-fn push_selector_rule(arg: &mut Vec<u8>, rule: &[u8]) {
-    let is_plain = |byte: u8| byte.is_ascii_graphic() && byte != b'"' && byte != b'\'';
-    if !rule.is_empty() && rule.iter().all(|&byte| is_plain(byte)) {
-        arg.extend_from_slice(rule);
-        return;
+/// its bytes ASCII-escaped, which that splitter decodes back to exactly the bytes given.
+fn quote_selector_rule(rule: &[u8]) -> Vec<u8> {
+    let is_plain = |byte: &u8| byte.is_ascii_graphic() && *byte != b'"' && *byte != b'\'';
+    if rule.iter().all(is_plain) {
+        return rule.to_vec();
     }
-    arg.push(b'"');
-    for &byte in rule {
-        match byte {
-            b'\\' => arg.extend_from_slice(b"\\\\"),
-            b'"' => arg.extend_from_slice(b"\\\""),
-            b'\n' => arg.extend_from_slice(b"\\n"),
-            b'\r' => arg.extend_from_slice(b"\\r"),
-            b'\t' => arg.extend_from_slice(b"\\t"),
-            0x07 => arg.extend_from_slice(b"\\a"),
-            0x08 => arg.extend_from_slice(b"\\b"),
-            byte if byte.is_ascii_graphic() || byte == b' ' => arg.push(byte),
-            byte => arg.extend_from_slice(format!("\\x{byte:02x}").as_bytes()),
-        }
-    }
-    arg.push(b'"');
+    let mut quoted = b"\"".to_vec();
+    quoted.extend(rule.escape_ascii());
+    quoted.push(b'"');
+    quoted
 }
 
 /// An info dictionary type storing Redis ACL information as multiple `Rule`.
@@ -474,7 +474,7 @@ mod tests {
         use self::Rule::*;
 
         // The server splits the selector on whitespace and quotes, so a rule containing
-        // either is quoted with the escapes `sdssplitargs` decodes.
+        // either is quoted and ASCII-escaped, which `sdssplitargs` decodes.
         assert_args!(
             Selector(vec![
                 AddCommand("get".to_string()),
@@ -484,13 +484,27 @@ mod tests {
         );
         assert_args!(
             Selector(vec![Pattern("a\"b'c\\d\ne\tf".to_string())]),
-            b"(\"~a\\\"b'c\\\\d\\ne\\tf\")"
+            b"(\"~a\\\"b\\'c\\\\d\\ne\\tf\")"
         );
         assert_args!(
             Selector(vec![Pattern("\u{7}\u{8}\u{1}é".to_string())]),
-            b"(\"~\\a\\b\\x01\\xc3\\xa9\")"
+            b"(\"~\\x07\\x08\\x01\\xc3\\xa9\")"
         );
-        assert_args!(Selector(vec![Other(String::new())]), b"(\"\")");
+
+        // Raw rule text goes in as written, and empty rules are left out.
+        assert_args!(
+            Selector(vec![Other("+get ~foo".to_string())]),
+            b"(+get ~foo)"
+        );
+        assert_args!(Selector(vec![Other(String::new())]), b"()");
+        assert_args!(
+            Selector(vec![
+                AddCommand("get".to_string()),
+                Other(String::new()),
+                Pattern("foo".to_string())
+            ]),
+            b"(+get ~foo)"
+        );
         assert_args!(Selector(vec![]), b"()");
     }
 

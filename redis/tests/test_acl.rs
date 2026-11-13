@@ -199,18 +199,24 @@ fn test_acl_selector_rule_stays_one_rule() {
     // Read as several rules, this pattern would allow every command on every key. Kept as one
     // rule it is refused, since the server doesn't accept whitespace in a key pattern, and the
     // user is not created.
-    let res = con.acl_setuser_rules(
-        "selector_user",
-        &[
-            Rule::On,
-            Rule::NoCommands,
-            Rule::Selector(vec![
-                Rule::AddCommand("GET".to_string()),
-                Rule::Pattern("x +@all ~*".to_string()),
-            ]),
-        ],
+    let err = con
+        .acl_setuser_rules(
+            "selector_user",
+            &[
+                Rule::On,
+                Rule::NoCommands,
+                Rule::Selector(vec![
+                    Rule::AddCommand("GET".to_string()),
+                    Rule::Pattern("x +@all ~*".to_string()),
+                ]),
+            ],
+        )
+        .unwrap_err();
+    assert_eq!(err.code(), Some("ERR"));
+    assert_eq!(
+        err.detail(),
+        Some("Error in ACL SETUSER modifier '(+GET \"~x +@all ~*\")': Syntax error")
     );
-    assert!(res.is_err());
     assert!(
         !con.acl_users()
             .unwrap()
