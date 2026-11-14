@@ -13,12 +13,16 @@
 //! **Note:** ClusterConnection usage with Redis instances using 6.x version might give stale duration when resharding happens,
 //! therefore it's recommended to use version 7.x and above.
 
+mod bench_harness;
 mod cache_manager;
 pub(crate) mod cmd;
 mod config;
 pub(crate) mod sharded_lru;
 mod statistics;
 
+// Harness-only: lets the cache microbenchmarks drive the cache without a server.
+#[doc(hidden)]
+pub use bench_harness::CacheBenchHarness;
 pub(crate) use cache_manager::{CacheManager, CachingResult, PrepCacheItem};
 pub use config::{CacheConfig, CacheMode};
 pub use statistics::CacheStatistics;

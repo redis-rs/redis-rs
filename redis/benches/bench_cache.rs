@@ -11,9 +11,11 @@ use rand::{
     RngExt,
     distr::{Bernoulli, Distribution},
 };
+use redis::aio::MultiplexedConnection;
 use redis::caching::CacheConfig;
 use redis_test::server::use_protocol;
 use std::env;
+use std::time::{Duration, Instant};
 fn generate_commands(key: String, total_command: u32, total_read: u32) -> Vec<Cmd> {
     let mut cmds = vec![];
     let mut rng = rand::rng();
@@ -36,21 +38,29 @@ fn generate_commands(key: String, total_command: u32, total_read: u32) -> Vec<Cm
     cmds
 }
 
-async fn benchmark_executer(
-    is_cache_enabled: bool,
-    read_ratio: f32,
-    per_key_command: u32,
-    key_count: u32,
-) {
-    let ctx = TestContext::default();
-    let con = if is_cache_enabled {
+/// Empties the server and opens a new connection, so that every iteration starts from an empty
+/// database and, when caching, an empty client-side cache.
+async fn prepare_iteration(ctx: &TestContext, is_cache_enabled: bool) -> MultiplexedConnection {
+    let mut admin = ctx.multiplexed_async_connection_tokio().await.unwrap();
+    let _: () = redis::cmd("FLUSHALL")
+        .query_async(&mut admin)
+        .await
+        .unwrap();
+    if is_cache_enabled {
         ctx.async_connection_with_cache_config(CacheConfig::new())
             .await
             .unwrap()
     } else {
         ctx.multiplexed_async_connection_tokio().await.unwrap()
-    };
+    }
+}
 
+async fn benchmark_executer(
+    con: MultiplexedConnection,
+    read_ratio: f32,
+    per_key_command: u32,
+    key_count: u32,
+) {
     let mut rng = rand::rng();
     let mut handles = Vec::new();
     for _ in 0..key_count {
@@ -73,6 +83,7 @@ async fn benchmark_executer(
 
 fn prepare_benchmark(
     bencher: &mut Bencher,
+    ctx: &TestContext,
     thread_num: usize,
     is_cache_enabled: bool,
     read_ratio: f32,
@@ -84,13 +95,21 @@ fn prepare_benchmark(
         .enable_all()
         .build()
         .unwrap();
-    bencher.iter(|| {
-        runtime.block_on(benchmark_executer(
-            is_cache_enabled,
-            read_ratio,
-            per_key_command,
-            key_count,
-        ));
+    // Only the workload is timed, not emptying the server and connecting.
+    bencher.iter_custom(|iters| {
+        let mut elapsed = Duration::ZERO;
+        for _ in 0..iters {
+            let con = runtime.block_on(prepare_iteration(ctx, is_cache_enabled));
+            let start = Instant::now();
+            runtime.block_on(benchmark_executer(
+                con,
+                read_ratio,
+                per_key_command,
+                key_count,
+            ));
+            elapsed += start.elapsed();
+        }
+        elapsed
     });
 }
 
@@ -98,6 +117,8 @@ fn bench_cache(c: &mut Criterion) {
     if !use_protocol().supports_resp3() {
         return;
     }
+    // A single server for all benchmarks, emptied before every iteration.
+    let ctx = TestContext::default();
     let is_cache_enabled = env::var("ENABLE_CLIENT_SIDE_CACHE").unwrap_or_default() == "true";
     let test_cases: Vec<(f32, u32, u32)> = vec![
         (0.99, 100, 10_000),
@@ -119,6 +140,7 @@ fn bench_cache(c: &mut Criterion) {
             group.bench_function(format!("thread-{thread_num}"), |bencher| {
                 prepare_benchmark(
                     bencher,
+                    &ctx,
                     thread_num,
                     is_cache_enabled,
                     read_ratio,
