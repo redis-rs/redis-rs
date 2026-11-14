@@ -212,6 +212,52 @@ fn test_get_replica_clients_with_one_replica_down() {
 }
 
 #[test]
+fn test_get_replica_clients_with_the_master_down() {
+    let number_of_replicas = 3;
+    let master_name = "master0";
+
+    let mut context = TestSentinelContext::new(2, number_of_replicas, 3);
+    let node_conn_info = context.sentinel_node_connection_info();
+    let replicas_with_the_master_up = context
+        .sentinel_mut()
+        .get_replica_clients(master_name, Some(&node_conn_info))
+        .unwrap()
+        .len();
+
+    // master0 is the first server, followed by its replicas. A replica that has lost its
+    // link to the master replies to `ROLE` with -1 as the amount of data received.
+    context.cluster.servers[0].stop();
+    for replica in &context.cluster.servers[1..=number_of_replicas as usize] {
+        let mut conn = Client::open(replica.connection_info())
+            .unwrap()
+            .get_connection()
+            .unwrap();
+        let mut attempts = 0;
+        loop {
+            let info: String = redis::cmd("INFO")
+                .arg("REPLICATION")
+                .query(&mut conn)
+                .unwrap();
+            if parse_replication_info(&info).get("master_link_status") == Some(&"down") {
+                break;
+            }
+            attempts += 1;
+            assert!(
+                attempts < 100,
+                "the replica's link to the master is still up"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    let replicas = context
+        .sentinel_mut()
+        .get_replica_clients(master_name, Some(&node_conn_info))
+        .unwrap();
+    assert_eq!(replicas.len(), replicas_with_the_master_up);
+}
+
+#[test]
 fn test_sentinel_role_no_permission() {
     let number_of_replicas = 3;
     let master_name = "master1";
