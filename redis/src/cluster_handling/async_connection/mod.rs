@@ -752,6 +752,11 @@ where
                     .await
                     .and_then(|results| crate::cluster_routing::logical_aggregate(results, op))
             }
+            Some(ResponsePolicy::AggregateArray(op)) => {
+                future::try_join_all(receivers.into_iter().map(get_receiver))
+                    .await
+                    .and_then(|results| crate::cluster_routing::aggregate_array(results, op))
+            }
             Some(ResponsePolicy::CombineArrays) => {
                 future::try_join_all(receivers.into_iter().map(get_receiver))
                     .await
