@@ -710,9 +710,8 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"OBJECT REFCOUNT"
         | b"JSON.DEBUG" => RouteBy::SecondArg,
 
-        b"LMPOP" | b"SINTERCARD" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZMPOP" | b"ZUNION" => {
-            RouteBy::SecondArgAfterKeyCount
-        }
+        b"LMPOP" | b"MSETEX" | b"SINTERCARD" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZMPOP"
+        | b"ZUNION" => RouteBy::SecondArgAfterKeyCount,
 
         b"XREAD" | b"XREADGROUP" => RouteBy::StreamsIndex,
 
@@ -1305,6 +1304,35 @@ mod tests_routing {
         assert_eq!(
             RoutingInfo::for_routable(&cmd),
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+        );
+    }
+
+    #[test]
+    fn test_msetex_is_routed_by_its_first_key() {
+        // MSETEX starts with the number of keys, so it must not be routed by its first argument.
+        let expected = Some(RoutingInfo::SingleNode(
+            SingleNodeRoutingInfo::SpecificNode(Route::with_key(b"{user}:1", SlotAddr::Master)),
+        ));
+
+        assert_eq!(
+            RoutingInfo::for_routable(
+                cmd("MSETEX")
+                    .arg(2)
+                    .arg("{user}:1")
+                    .arg("a")
+                    .arg("{user}:2")
+                    .arg("b")
+                    .arg("EX")
+                    .arg(60)
+            ),
+            expected
+        );
+        assert_eq!(
+            RoutingInfo::for_routable(&crate::Cmd::mset_ex(
+                &[("{user}:1", "a"), ("{user}:2", "b")],
+                crate::MSetOptions::default().with_expiration(crate::SetExpiry::EX(60)),
+            )),
+            expected
         );
     }
 
