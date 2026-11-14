@@ -10,7 +10,8 @@ use std::{
 use crate::errors::RetryMethod;
 use crate::{
     Cmd, RedisResult, cluster_async::OperationTarget, cluster_handling::NodeAddress,
-    cluster_handling::client::RetryParams, cluster_routing::Redirect,
+    cluster_handling::client::RetryParams, cluster_handling::redirect_address,
+    cluster_routing::Redirect,
 };
 
 use futures_util::{future::BoxFuture, ready};
@@ -249,11 +250,11 @@ pub(crate) fn choose_response<C>(
             (retry, PollFlushAction::RebuildSlots)
         }
 
-        (_, RetryMethod::AskRedirect) => {
+        (OperationTarget::Node { address }, RetryMethod::AskRedirect) => {
             let retry = retry_or_send!(|mut request: PendingRequest<C>| {
                 request.cmd.set_redirect(
                     err.redirect_node().and_then(|(node, _slot)| {
-                        NodeAddress::try_from(node).ok().map(Redirect::Ask)
+                        redirect_address(node, &address).map(Redirect::Ask)
                     }),
                 );
                 Retry::Immediately { request }
@@ -261,12 +262,12 @@ pub(crate) fn choose_response<C>(
             (retry, PollFlushAction::None)
         }
 
-        (_, RetryMethod::MovedRedirect) => {
+        (OperationTarget::Node { address }, RetryMethod::MovedRedirect) => {
             let retry = retry_or_send!(|mut request: PendingRequest<C>| {
                 request
                     .cmd
                     .set_redirect(err.redirect_node().and_then(|(node, _slot)| {
-                        NodeAddress::try_from(node).ok().map(Redirect::Moved)
+                        redirect_address(node, &address).map(Redirect::Moved)
                     }));
                 Retry::Immediately { request }
             });
