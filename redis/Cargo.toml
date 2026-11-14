@@ -279,6 +279,12 @@ name = "bench_cache"
 harness = false
 required-features = ["tokio-comp", "cache-aio"]
 
+# Client-side cache microbenchmarks. No server required.
+[[bench]]
+name = "bench_cache_manager"
+harness = false
+required-features = ["cache-aio"]
+
 [[example]]
 name = "async-multiplexed"
 required-features = ["tokio-comp"]

@@ -1,0 +1,78 @@
+# Runs the full client-side cache benchmarks, against a real server, when a PR has the
+# `bench-cache` label, and compares them with the PR's base. These are too slow and noisy to run on
+# every PR; the server-less `bench_cache_manager` microbenchmarks run on every PR as part of the
+# `benchmark` job in rust.yml.
+name: Cache benchmarks
+
+on:
+  pull_request:
+    types: [labeled, synchronize, reopened]
+
+permissions:
+  contents: read
+
+# Only runs that will benchmark share a group, so that adding an unrelated label to the PR doesn't
+# cancel a benchmark in progress, while pushing to a labeled PR does.
+concurrency:
+  group: "${{ github.workflow }}-${{ (contains(github.event.pull_request.labels.*.name, 'bench-cache') && (github.event.action != 'labeled' || github.event.label.name == 'bench-cache')) && github.event.pull_request.number || github.run_id }}"
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bench-cache:
+    # Keep in sync with the concurrency group above.
+    if: >-
+      contains(github.event.pull_request.labels.*.name, 'bench-cache') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'bench-cache')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      # `bench_cache` only runs on RESP3, and only enables the cache when asked to.
+      PROTOCOL: RESP3
+      ENABLE_CLIENT_SIDE_CACHE: "true"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The merge commit and its first parent, which is the base it was merged onto.
+          fetch-depth: 2
+
+      - name: Install DB
+        uses: ./.github/actions/install-db
+        with:
+          db-org: "redis"
+          db-name: "redis"
+          db-version: 8.0.2
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Install critcmp
+        run: cargo install critcmp --locked
+
+      - name: Benchmark PR
+        run: cargo bench -p redis --features tokio-comp,cache-aio --bench bench_cache --bench bench_cache_manager -- --save-baseline changes
+
+      - name: Benchmark base
+        run: |
+          git checkout HEAD^1
+          benches="--bench bench_cache"
+          # The microbenchmarks may not exist on the base yet.
+          if [ -f redis/benches/bench_cache_manager.rs ]; then
+            benches="$benches --bench bench_cache_manager"
+          fi
+          cargo bench -p redis --features tokio-comp,cache-aio $benches -- --save-baseline base
+
+      - name: Compare
+        run: |
+          {
+            echo '## Cache benchmarks: base vs. PR'
+            echo '```'
+            critcmp base changes
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
