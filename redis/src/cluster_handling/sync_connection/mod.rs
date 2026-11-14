@@ -1015,9 +1015,18 @@ where
         let mut connections = self.connections.borrow_mut();
 
         let node_cmds = self.map_cmds_to_nodes(cmds)?;
-        for nc in &node_cmds {
-            self.get_connection_by_addr(&mut connections, &nc.addr)?
-                .send_packed_command(&nc.pipe)?;
+        for (idx, nc) in node_cmds.iter().enumerate() {
+            let result = self
+                .get_connection_by_addr(&mut connections, &nc.addr)
+                .and_then(|conn| conn.send_packed_command(&nc.pipe));
+            if let Err(err) = result {
+                // The replies to the commands already written won't be read, so drop these
+                // connections. Otherwise the next commands sent on them would get those replies.
+                for nc in &node_cmds[..=idx] {
+                    connections.remove(&nc.addr);
+                }
+                return Err(err);
+            }
         }
         Ok(node_cmds)
     }
