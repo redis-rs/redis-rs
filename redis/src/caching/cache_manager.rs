@@ -53,6 +53,7 @@ impl CacheManager {
         self.lru.get(redis_key, redis_cmd, self.epoch)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn insert(
         &self,
         redis_key: &[u8],
@@ -60,6 +61,7 @@ impl CacheManager {
         value: Value,
         client_side_expire_time: Instant,
         server_side_ttl_value: &Value,
+        invalidation_count: usize,
     ) {
         let pttl: Result<i64, _> = FromRedisValue::from_redis_value_ref(server_side_ttl_value);
         let expire_time = match pttl {
@@ -70,8 +72,18 @@ impl CacheManager {
             }
             _ => client_side_expire_time,
         };
-        self.lru
-            .insert(redis_key, cmd_key, value, expire_time, self.epoch);
+        self.lru.insert(
+            redis_key,
+            cmd_key,
+            value,
+            expire_time,
+            self.epoch,
+            invalidation_count,
+        );
+    }
+
+    pub(crate) fn invalidation_count(&self, redis_key: &[u8]) -> usize {
+        self.lru.invalidation_count(redis_key)
     }
 
     pub(crate) fn statistics(&self) -> CacheStatistics {
@@ -180,6 +192,7 @@ impl CacheManager {
                         MultipleCachedCommandPart {
                             redis_key,
                             cmd_key: key_test_buffer.clone(),
+                            invalidation_count: self.invalidation_count(redis_key),
                         },
                     ));
                 }
@@ -244,6 +257,7 @@ impl CacheManager {
                 cmd_key,
                 cmd,
                 client_side_expire,
+                invalidation_count: self.invalidation_count(redis_key),
             },
         ))
     }
@@ -352,9 +366,30 @@ mod tests {
         let ms_5 = Instant::now().add(Duration::from_millis(5));
         let ms_50 = Instant::now().add(Duration::from_millis(50));
 
-        cache_manager.insert(redis_key, cmd_key, Value::Int(1), secs_10, &Value::Int(5));
-        cache_manager.insert(redis_key_2, cmd_key, Value::Int(2), ms_5, &Value::Int(500));
-        cache_manager.insert(redis_key_3, cmd_key, Value::Int(3), ms_50, &Value::Int(500));
+        cache_manager.insert(
+            redis_key,
+            cmd_key,
+            Value::Int(1),
+            secs_10,
+            &Value::Int(5),
+            0,
+        );
+        cache_manager.insert(
+            redis_key_2,
+            cmd_key,
+            Value::Int(2),
+            ms_5,
+            &Value::Int(500),
+            0,
+        );
+        cache_manager.insert(
+            redis_key_3,
+            cmd_key,
+            Value::Int(3),
+            ms_50,
+            &Value::Int(500),
+            0,
+        );
 
         assert_eq!(cache_manager.get(redis_key, cmd_key), Some(Value::Int(1)));
         assert_eq!(cache_manager.get(redis_key_2, cmd_key), Some(Value::Int(2)));
@@ -396,7 +431,14 @@ mod tests {
                 .into_iter()
                 .enumerate()
             {
-                cache_manager.insert(key, cmd_key, Value::Int(i as i64), secs_10, &Value::Int(-1));
+                cache_manager.insert(
+                    key,
+                    cmd_key,
+                    Value::Int(i as i64),
+                    secs_10,
+                    &Value::Int(-1),
+                    0,
+                );
             }
         };
 
@@ -438,9 +480,30 @@ mod tests {
         let secs_10 = Instant::now().add(Duration::from_secs(10));
 
         let do_inserts = |cm1: &CacheManager, cm2: &CacheManager, cm3: &CacheManager| {
-            cm1.insert(redis_key, cmd_key, Value::Int(1), secs_10, &Value::Int(5));
-            cm2.insert(redis_key_2, cmd_key, Value::Int(2), secs_10, &Value::Int(5));
-            cm3.insert(redis_key_3, cmd_key, Value::Int(3), secs_10, &Value::Int(5));
+            cm1.insert(
+                redis_key,
+                cmd_key,
+                Value::Int(1),
+                secs_10,
+                &Value::Int(5),
+                0,
+            );
+            cm2.insert(
+                redis_key_2,
+                cmd_key,
+                Value::Int(2),
+                secs_10,
+                &Value::Int(5),
+                0,
+            );
+            cm3.insert(
+                redis_key_3,
+                cmd_key,
+                Value::Int(3),
+                secs_10,
+                &Value::Int(5),
+                0,
+            );
         };
 
         let do_hit_gets = |cm1: &CacheManager, cm2: &CacheManager, cm3: &CacheManager| {
