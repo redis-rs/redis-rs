@@ -60,32 +60,35 @@ impl CacheManager {
             .get(redis_key, redis_cmd, redis_cmd_args, self.epoch)
     }
 
+    /// Caches the reply of a command under `redis_key`. `other_keys` are the other keys the command
+    /// reads, if any, each with its PTTL reply.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn insert(
         &self,
         redis_key: &[u8],
         cmd_key: &[u8],
         cmd_args: CmdArgs<'_>,
-        other_keys: Vec<Vec<u8>>,
+        other_keys: &[(&[u8], Value)],
         value: Value,
         client_side_expire_time: Instant,
         server_side_ttl_value: &Value,
         invalidation_count: usize,
     ) {
-        let pttl: Result<i64, _> = FromRedisValue::from_redis_value_ref(server_side_ttl_value);
-        let expire_time = match pttl {
-            Ok(pttl) if pttl > 0 => {
-                let server_side_expire_time =
-                    Instant::now().add(Duration::from_millis(pttl as u64));
-                min(server_side_expire_time, client_side_expire_time)
-            }
-            _ => client_side_expire_time,
+        let expire_time = match server_side_expire_time(server_side_ttl_value) {
+            Some(server_side_expire_time) => min(server_side_expire_time, client_side_expire_time),
+            None => client_side_expire_time,
         };
+        // The reply is stale once any of the keys it reads expires.
+        let other_keys_expire_time = other_keys
+            .iter()
+            .filter_map(|(_, pttl)| server_side_expire_time(pttl))
+            .min();
         self.lru.insert(
             redis_key,
             cmd_key,
             cmd_args,
-            other_keys,
+            other_keys.iter().map(|(key, _)| key.to_vec()).collect(),
+            other_keys_expire_time,
             value,
             expire_time,
             self.epoch,
@@ -279,15 +282,22 @@ impl CacheManager {
             return PrepCacheItem::Cached(value);
         }
 
+        // The other keys the command reads, each once, e.g. `b` for `SINTER a b a b`.
+        let mut other_keys: Vec<&[u8]> = keys.filter(|key| *key != redis_key).collect();
+        other_keys.sort_unstable();
+        other_keys.dedup();
+        let invalidation_count =
+            self.invalidation_count(std::iter::once(redis_key).chain(other_keys.iter().copied()));
+
         PrepCacheItem::NotCached(CacheableCommand::Single(
             crate::caching::cmd::SingleCachedCommand {
                 redis_key,
+                other_keys,
                 cmd_key,
                 cmd_args,
                 cmd,
-                key_positions,
                 client_side_expire,
-                invalidation_count: self.invalidation_count(std::iter::once(redis_key).chain(keys)),
+                invalidation_count,
             },
         ))
     }
@@ -380,14 +390,17 @@ fn is_multi_key(command_name: &[u8]) -> Option<(&'static str, &'static [u8])> {
     }
 }
 
+/// Returns when a key expires on the server, given its PTTL reply, if it has a TTL.
+fn server_side_expire_time(pttl: &Value) -> Option<Instant> {
+    let pttl: i64 = FromRedisValue::from_redis_value_ref(pttl).ok()?;
+    (pttl > 0).then(|| Instant::now().add(Duration::from_millis(pttl as u64)))
+}
+
 /// Returns the keys that `cmd` reads.
 ///
 /// This assumes that the command's name is a single argument, which isn't true of every command
 /// (e.g. `CLIENT INFO`), but is of every cacheable one.
-pub(crate) fn command_keys(
-    cmd: CmdRef<'_>,
-    key_positions: KeyPositions,
-) -> impl Iterator<Item = &[u8]> {
+fn command_keys(cmd: CmdRef<'_>, key_positions: KeyPositions) -> impl Iterator<Item = &[u8]> {
     let mut args = cmd
         .args_iter()
         .skip(1) // Skip the command name
@@ -438,7 +451,7 @@ mod tests {
             redis_key,
             cmd_key,
             cmd_args,
-            Vec::new(),
+            &[],
             Value::Int(1),
             secs_10,
             &Value::Int(5),
@@ -448,7 +461,7 @@ mod tests {
             redis_key_2,
             cmd_key,
             cmd_args,
-            Vec::new(),
+            &[],
             Value::Int(2),
             ms_5,
             &Value::Int(500),
@@ -458,7 +471,7 @@ mod tests {
             redis_key_3,
             cmd_key,
             cmd_args,
-            Vec::new(),
+            &[],
             Value::Int(3),
             ms_50,
             &Value::Int(500),
@@ -518,7 +531,7 @@ mod tests {
             scc.redis_key,
             scc.cmd_key,
             scc.cmd_args,
-            Vec::new(),
+            &[],
             Value::Int(1),
             expire,
             &Value::Nil,
@@ -552,7 +565,7 @@ mod tests {
             scc.redis_key,
             scc.cmd_key,
             scc.cmd_args,
-            Vec::new(),
+            &[],
             Value::Int(2),
             expire,
             &Value::Nil,
@@ -582,8 +595,8 @@ mod tests {
         else {
             panic!("{args:?} must be cacheable and not cached yet");
         };
-        // The command's reply, then the PTTL of its first key.
-        let replies = [Value::Int(1), Value::Int(-1)];
+        // The command's reply, then the PTTL of each key.
+        let replies = [Value::Int(1), Value::Int(-1), Value::Int(-1)];
         let reply = cacheable_command.resolve(&cache_manager, replies.into_iter());
         assert_eq!(reply.unwrap(), Value::Int(1));
         assert!(matches!(
@@ -602,6 +615,56 @@ mod tests {
         );
     }
 
+    #[rstest]
+    #[case::exists(&["EXISTS", "a", "b"])]
+    #[case::lcs(&["LCS", "a", "b"])]
+    #[case::sinter(&["SINTER", "a", "b"])]
+    #[case::zunion(&["ZUNION", "2", "a", "b", "WITHSCORES"])]
+    fn test_reply_expires_with_any_key_it_reads(
+        #[case] args: &[&str],
+        #[values("a", "b")] expiring_key: &str,
+    ) {
+        let cache_manager = CacheManager::new(CacheConfig::new());
+        let cmd = crate::cmd(args[0]).arg(&args[1..]).clone();
+
+        let PrepCacheItem::NotCached(cacheable_command) =
+            cache_manager.get_cached_cmd(CmdRef::from_cmd(&cmd))
+        else {
+            panic!("{args:?} must be cacheable and not cached yet");
+        };
+        // The command's reply, then the PTTL of `a` and of `b`. Only one of them has a TTL.
+        let pttls = ["a", "b"].map(|key| Value::Int(if key == expiring_key { 50 } else { -1 }));
+        let replies = std::iter::once(Value::Int(1)).chain(pttls);
+        cacheable_command.resolve(&cache_manager, replies).unwrap();
+        assert!(matches!(
+            cache_manager.get_cached_cmd(CmdRef::from_cmd(&cmd)),
+            PrepCacheItem::Cached(Value::Int(1))
+        ));
+
+        std::thread::sleep(Duration::from_millis(60));
+        assert!(
+            matches!(
+                cache_manager.get_cached_cmd(CmdRef::from_cmd(&cmd)),
+                PrepCacheItem::NotCached(_)
+            ),
+            "{args:?} must not be served from the cache after {expiring_key} expired"
+        );
+    }
+
+    fn packed_commands(cache_manager: &CacheManager, pipeline: &Pipeline) -> Vec<String> {
+        let (_, packed_pipeline, _) = cache_manager.get_cached_pipeline(pipeline);
+        packed_pipeline
+            .cmd_iter()
+            .map(|cmd| {
+                let args = cmd.args_iter().map(|arg| match arg {
+                    Arg::Simple(arg) => String::from_utf8_lossy(arg).into_owned(),
+                    Arg::Cursor => unreachable!(),
+                });
+                args.collect::<Vec<_>>().join(" ")
+            })
+            .collect()
+    }
+
     #[test]
     fn test_opt_in_command_follows_client_caching() {
         // `CLIENT CACHING YES` only makes the server track the keys read by the next command.
@@ -613,18 +676,22 @@ mod tests {
             .arg("b")
             .set_cache_config(crate::CommandCacheConfig::new().set_enable_cache(true));
 
-        let (_, packed_pipeline, _) = cache_manager.get_cached_pipeline(&pipeline);
-        let commands: Vec<_> = packed_pipeline
-            .cmd_iter()
-            .map(|cmd| {
-                let args = cmd.args_iter().map(|arg| match arg {
-                    Arg::Simple(arg) => String::from_utf8_lossy(arg).into_owned(),
-                    Arg::Cursor => unreachable!(),
-                });
-                args.collect::<Vec<_>>().join(" ")
-            })
-            .collect();
-        assert_eq!(commands, ["CLIENT CACHING YES", "SINTER a b", "PTTL a"]);
+        assert_eq!(
+            packed_commands(&cache_manager, &pipeline),
+            ["CLIENT CACHING YES", "SINTER a b", "PTTL a", "PTTL b"]
+        );
+    }
+
+    #[test]
+    fn test_ttl_of_each_key_is_requested_once() {
+        let cache_manager = CacheManager::new(CacheConfig::new());
+        let mut pipeline = crate::pipe();
+        pipeline.cmd("SINTER").arg(&["b", "a", "b", "c", "a"]);
+
+        assert_eq!(
+            packed_commands(&cache_manager, &pipeline),
+            ["SINTER b a b c a", "PTTL b", "PTTL a", "PTTL c"]
+        );
     }
 
     #[test]
@@ -652,7 +719,7 @@ mod tests {
                     key,
                     cmd_key,
                     cmd_args,
-                    Vec::new(),
+                    &[],
                     Value::Int(i as i64),
                     secs_10,
                     &Value::Int(-1),
@@ -713,7 +780,7 @@ mod tests {
                 redis_key,
                 cmd_key,
                 cmd_args,
-                Vec::new(),
+                &[],
                 Value::Int(1),
                 secs_10,
                 &Value::Int(5),
@@ -723,7 +790,7 @@ mod tests {
                 redis_key_2,
                 cmd_key,
                 cmd_args,
-                Vec::new(),
+                &[],
                 Value::Int(2),
                 secs_10,
                 &Value::Int(5),
@@ -733,7 +800,7 @@ mod tests {
                 redis_key_3,
                 cmd_key,
                 cmd_args,
-                Vec::new(),
+                &[],
                 Value::Int(3),
                 secs_10,
                 &Value::Int(5),

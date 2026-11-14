@@ -4,10 +4,8 @@ use crate::{
 };
 use std::{iter::zip, time::Instant};
 
-use super::cache_manager::command_keys;
 use super::sharded_lru::CmdArgs;
 use super::{CacheManager, CacheMode, CachingResult, PrepCacheItem};
-use crate::commands::KeyPositions;
 
 /// Holds enough information to resolve Cached Pipeline requests.
 pub(crate) struct CacheablePipeline<'a> {
@@ -54,22 +52,13 @@ impl CacheablePipeline<'_> {
 
 pub(crate) struct SingleCachedCommand<'a> {
     pub(crate) redis_key: &'a [u8],
+    /// The keys the command reads besides `redis_key`, each once, e.g. `b` for `SINTER a b`.
+    pub(crate) other_keys: Vec<&'a [u8]>,
     pub(crate) cmd_key: &'a [u8],
     pub(crate) cmd_args: CmdArgs<'a>,
     pub(crate) cmd: CmdRef<'a>,
-    pub(crate) key_positions: KeyPositions,
     pub(crate) client_side_expire: Instant,
     pub(crate) invalidation_count: usize,
-}
-
-impl SingleCachedCommand<'_> {
-    /// The keys the command reads besides `redis_key`, e.g. `b` for `SINTER a b`.
-    fn other_keys(&self) -> Vec<Vec<u8>> {
-        command_keys(self.cmd, self.key_positions)
-            .filter(|key| *key != self.redis_key)
-            .map(<[u8]>::to_vec)
-            .collect()
-    }
 }
 
 pub(crate) struct MultipleCachedCommandPart<'a> {
@@ -104,12 +93,18 @@ impl CacheableCommand<'_> {
         match self {
             CacheableCommand::Single(cached_command) => {
                 if let (Some(reply), Some(pttl)) = (replies.next(), replies.next()) {
+                    // Followed by the PTTL of each of the other keys.
+                    let other_keys = cached_command
+                        .other_keys
+                        .iter()
+                        .map(|key| Ok((*key, get_next_reply(&mut replies)?)))
+                        .collect::<RedisResult<Vec<_>>>()?;
                     if !matches!(&reply, &Value::ServerError(_)) {
                         cache_manager.insert(
                             cached_command.redis_key,
                             cached_command.cmd_key,
                             cached_command.cmd_args,
-                            cached_command.other_keys(),
+                            &other_keys,
                             reply.clone(),
                             cached_command.client_side_expire,
                             &pttl,
@@ -141,7 +136,7 @@ impl CacheableCommand<'_> {
                                 cached_command.redis_key,
                                 &cached_command.cmd_key,
                                 CmdArgs::new(&cached_command.cmd_args, 0),
-                                Vec::new(),
+                                &[],
                                 key_value.clone(),
                                 client_side_expire,
                                 &pttl_value,
@@ -174,6 +169,9 @@ impl CacheableCommand<'_> {
                 // server track the keys read by the next command.
                 pipeline.add_command_ref(scc.cmd);
                 pipeline.add_command(Cmd::pttl(scc.redis_key));
+                for key in &scc.other_keys {
+                    pipeline.add_command(Cmd::pttl(*key));
+                }
             }
             CacheableCommand::Multiple {
                 command_name,

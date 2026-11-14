@@ -48,6 +48,9 @@ pub(crate) struct CacheCmdEntry {
     // The other keys read by a command that reads several keys, e.g. `b` for `SINTER a b` cached
     // under `a`. Each of them lists this entry by `id` in the `dependents` of its shard.
     other_keys: Vec<RedisKey>,
+    // When the first of `other_keys` expires on the server, if any of them has a TTL. The TTL of
+    // the key the entry is cached under is kept by its `CacheItem`.
+    other_keys_expire_time: Option<Instant>,
     id: usize,
 }
 
@@ -185,6 +188,13 @@ impl ShardedLRU {
             // Found redis key in cache, but KEY,CMD combination also must be in the cache otherwise, it will be fetched from server.
             for entry in &cache_item.value_list {
                 if entry.cmd == redis_cmd && redis_cmd_args.matches(&entry.cmd_args) {
+                    // The reply is stale once one of the other keys it reads has expired.
+                    if entry
+                        .other_keys_expire_time
+                        .is_some_and(|expire_time| Instant::now() > expire_time)
+                    {
+                        break;
+                    }
                     self.statistics.increase_hit(1);
                     return Some(entry.value.clone());
                 }
@@ -196,7 +206,8 @@ impl ShardedLRU {
     }
 
     /// Caches the reply of a command under `redis_key`. `other_keys` are the other keys the command
-    /// reads, if any: invalidating one of them evicts the entry too.
+    /// reads, if any: invalidating one of them evicts the entry too, and the entry isn't served
+    /// after `other_keys_expire_time`.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn insert(
         &self,
@@ -204,6 +215,7 @@ impl ShardedLRU {
         cmd_key: &[u8],
         cmd_args: CmdArgs<'_>,
         other_keys: Vec<RedisKey>,
+        other_keys_expire_time: Option<Instant>,
         value: Value,
         expire_time: Instant,
         epoch: usize,
@@ -242,6 +254,7 @@ impl ShardedLRU {
                 .find(|entry| entry.cmd == cmd_key && cmd_args.matches(&entry.cmd_args))
             {
                 entry.value = value;
+                entry.other_keys_expire_time = other_keys_expire_time;
                 replaced = Some((
                     std::mem::replace(&mut entry.other_keys, other_keys),
                     std::mem::replace(&mut entry.id, id),
@@ -252,6 +265,7 @@ impl ShardedLRU {
                     cmd_args: cmd_args.relative().collect(),
                     value,
                     other_keys,
+                    other_keys_expire_time,
                     id,
                 });
             }
@@ -270,6 +284,7 @@ impl ShardedLRU {
                     cmd_args: cmd_args.relative().collect(),
                     value,
                     other_keys,
+                    other_keys_expire_time,
                     id,
                 }],
                 epoch,
@@ -367,6 +382,7 @@ mod tests {
             CMD_KEY_2,
             CMD_ARGS,
             vec![OTHER_KEY.to_vec()],
+            None,
             Value::Int(2),
             expire_time,
             0,
@@ -383,6 +399,7 @@ mod tests {
             CMD_KEY,
             CMD_ARGS,
             Vec::new(),
+            None,
             Value::Boolean(true),
             Instant::now().add(Duration::from_secs(10)),
             0,
@@ -403,6 +420,7 @@ mod tests {
             CMD_KEY,
             CMD_ARGS,
             Vec::new(),
+            None,
             Value::Boolean(false),
             Instant::now().add(Duration::from_millis(5)),
             0,
@@ -430,6 +448,7 @@ mod tests {
             CMD_KEY,
             CMD_ARGS,
             Vec::new(),
+            None,
             Value::Int(1),
             Instant::now().add(Duration::from_secs(10)),
             0,
@@ -441,6 +460,7 @@ mod tests {
             CMD_KEY_2,
             CMD_ARGS,
             Vec::new(),
+            None,
             Value::Int(2),
             Instant::now().add(Duration::from_millis(5)),
             0,
@@ -478,6 +498,7 @@ mod tests {
             CMD_KEY,
             CMD_ARGS,
             Vec::new(),
+            None,
             Value::Boolean(true),
             Instant::now().add(Duration::from_secs(10)),
             0,
@@ -513,6 +534,7 @@ mod tests {
             CMD_KEY,
             CMD_ARGS,
             Vec::new(),
+            None,
             Value::Boolean(true),
             Instant::now().add(Duration::from_secs(10)),
             0,
@@ -530,6 +552,7 @@ mod tests {
             CMD_KEY,
             CMD_ARGS,
             Vec::new(),
+            None,
             Value::Boolean(true),
             Instant::now().add(Duration::from_secs(10)),
             0,
@@ -552,6 +575,7 @@ mod tests {
             CMD_KEY,
             CMD_ARGS,
             Vec::new(),
+            None,
             Value::Boolean(true),
             Instant::now().add(Duration::from_secs(10)),
             0,
@@ -562,6 +586,7 @@ mod tests {
             CMD_KEY,
             CMD_ARGS,
             Vec::new(),
+            None,
             Value::Boolean(true),
             Instant::now().add(Duration::from_secs(10)),
             0,
@@ -590,6 +615,52 @@ mod tests {
     }
 
     #[test]
+    fn test_expiry_of_other_key() {
+        let sharded_lru = ShardedLRU::new(NonZeroUsize::new(64).unwrap());
+        let expire_time = Instant::now().add(Duration::from_secs(10));
+
+        sharded_lru.insert(
+            REDIS_KEY,
+            CMD_KEY_2,
+            CMD_ARGS,
+            vec![OTHER_KEY.to_vec()],
+            Some(Instant::now().add(Duration::from_millis(50))),
+            Value::Int(2),
+            expire_time,
+            0,
+            0,
+        );
+        // Caching another command under REDIS_KEY only renews the expire time of REDIS_KEY.
+        sharded_lru.insert(
+            REDIS_KEY,
+            CMD_KEY,
+            CMD_ARGS,
+            Vec::new(),
+            None,
+            Value::Int(1),
+            expire_time,
+            0,
+            0,
+        );
+        assert_eq!(
+            sharded_lru.get(REDIS_KEY, CMD_KEY_2, CMD_ARGS, 0),
+            Some(Value::Int(2))
+        );
+
+        std::thread::sleep(Duration::from_millis(60));
+        assert_eq!(
+            sharded_lru.get(REDIS_KEY, CMD_KEY_2, CMD_ARGS, 0),
+            None,
+            "Command reading the expired key must expire"
+        );
+        assert_eq!(
+            sharded_lru.get(REDIS_KEY, CMD_KEY, CMD_ARGS, 0),
+            Some(Value::Int(1)),
+            "Command not reading the expired key must stay"
+        );
+    }
+
+    #[test]
     fn test_invalidating_other_key() {
         let sharded_lru = ShardedLRU::new(NonZeroUsize::new(64).unwrap());
         let expire_time = Instant::now().add(Duration::from_secs(10));
@@ -599,6 +670,7 @@ mod tests {
             CMD_KEY,
             CMD_ARGS,
             Vec::new(),
+            None,
             Value::Int(1),
             expire_time,
             0,
@@ -636,6 +708,7 @@ mod tests {
             CMD_KEY_2,
             CMD_ARGS,
             vec![OTHER_KEY.to_vec()],
+            None,
             Value::Int(2),
             expire_time,
             0,
@@ -656,6 +729,7 @@ mod tests {
             CMD_KEY,
             CMD_ARGS,
             Vec::new(),
+            None,
             Value::Int(1),
             expire_time,
             0,
@@ -683,6 +757,7 @@ mod tests {
             CMD_KEY,
             CMD_ARGS,
             Vec::new(),
+            None,
             Value::Int(1),
             expire_time,
             0,

@@ -1359,3 +1359,60 @@ async fn test_cache_evicts_reply_when_any_key_it_reads_changes(test_with_optin: 
         assert_miss!(&con, 2);
     }
 }
+
+// A command that reads several keys must not be served from the cache after any of them expired,
+// not only after its first key expired.
+#[async_test]
+async fn test_cache_reply_expires_with_any_key_it_reads(test_with_optin: bool) {
+    let ctx = TestContext::default();
+    if !ctx.protocol.supports_resp3() {
+        return;
+    }
+
+    let cache_config = if test_with_optin {
+        CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn)
+    } else {
+        CacheConfig::default()
+    };
+    let mut con = ctx
+        .async_connection_with_cache_config(cache_config)
+        .await
+        .unwrap();
+    let mut other_con = ctx.async_connection().await.unwrap();
+    // Without active expiry, the server only deletes an expired key, and sends its invalidation,
+    // once the key is accessed. So only the key's TTL can expire the cached reply.
+    let _: () = redis::cmd("DEBUG")
+        .arg(&["SET-ACTIVE-EXPIRE", "0"])
+        .query_async(&mut other_con)
+        .await
+        .unwrap();
+    let _: () = get_pipe(true)
+        .cmd("SADD")
+        .arg(&["set_1", "a", "b"])
+        .ignore()
+        .cmd("SADD")
+        .arg(&["set_2", "b", "c"])
+        .ignore()
+        .cmd("PEXPIRE")
+        .arg(&["set_2", "500"])
+        .ignore()
+        .query_async(&mut other_con)
+        .await
+        .unwrap();
+
+    let cmd = get_cmd("SINTER", test_with_optin)
+        .arg(&["set_1", "set_2"])
+        .take();
+    for _ in 0..2 {
+        let reply: Vec<String> = cmd.query_async(&mut con).await.unwrap();
+        assert_eq!(reply, ["b"]);
+    }
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 1);
+
+    sleep(Duration::from_millis(600).into()).await;
+    let reply: Vec<String> = cmd.query_async(&mut con).await.unwrap();
+    assert_eq!(reply, Vec::<String>::new());
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 2);
+}
