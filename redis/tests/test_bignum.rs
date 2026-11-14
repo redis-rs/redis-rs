@@ -30,6 +30,9 @@ where
     let v = T::from_redis_value_ref(&redis_value!(42));
     assert_eq!(v.unwrap(), T::from(42u32));
 
+    let v = T::from_redis_value_ref(&Value::Double(42.0));
+    assert_eq!(v.unwrap(), T::from(42u32));
+
     let v = T::from_redis_value_ref(&Value::Okay);
     assert_matches!(v, Err(_));
 
@@ -41,22 +44,52 @@ where
 #[cfg(feature = "rust_decimal")]
 fn test_rust_decimal() {
     test::<rust_decimal::Decimal>("-79228162514264.337593543950335");
+
+    let v = rust_decimal::Decimal::from_redis_value_ref(&Value::Double(0.1));
+    assert_eq!(v, Ok(rust_decimal::Decimal::from_str("0.1").unwrap()));
 }
 
 #[test]
 #[cfg(feature = "bigdecimal")]
 fn test_bigdecimal() {
     test::<bigdecimal::BigDecimal>("-14272476927059598810582859.69449495136382746623");
+
+    let v = bigdecimal::BigDecimal::from_redis_value_ref(&Value::Double(0.1));
+    assert_eq!(v, Ok(bigdecimal::BigDecimal::from_str("0.1").unwrap()));
 }
 
 #[test]
 #[cfg(feature = "num-bigint")]
 fn test_bigint() {
     test::<num_bigint::BigInt>("-1427247692705959881058285969449495136382746623");
+
+    let v = num_bigint::BigInt::from_redis_value_ref(&Value::Double(-1e20));
+    assert_eq!(
+        v,
+        Ok(num_bigint::BigInt::from_str("-100000000000000000000").unwrap())
+    );
+
+    let v = num_bigint::BigInt::from_redis_value_ref(&Value::Double(1.5));
+    assert_eq!(
+        v.unwrap_err().to_string(),
+        "Incompatible type - \"Could not convert from double.\" (value was double(1.5))"
+    );
 }
 
 #[test]
 #[cfg(feature = "num-bigint")]
 fn test_biguint() {
     test::<num_bigint::BigUint>("1427247692705959881058285969449495136382746623");
+
+    let v = num_bigint::BigUint::from_redis_value_ref(&Value::Double(1e20));
+    assert_eq!(
+        v,
+        Ok(num_bigint::BigUint::from_str("100000000000000000000").unwrap())
+    );
+
+    let v = num_bigint::BigUint::from_redis_value_ref(&Value::Double(1.5));
+    assert_eq!(
+        v.unwrap_err().to_string(),
+        "Incompatible type - \"Could not convert from double.\" (value was double(1.5))"
+    );
 }
