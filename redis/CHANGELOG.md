@@ -1,3 +1,23 @@
+### 1.8.2 (2026-11-14)
+
+#### Changes & Bug fixes
+
+* close the sync connection when a reply fails to parse ([#2578](https://github.com/redis-rs/redis-rs/pull/2578) by @nihohit)
+* fix(cluster-async): wake the connection task when requests are queued (#2557) ([#2579](https://github.com/redis-rs/redis-rs/pull/2579) by @nihohit)
+* Don't cache replies invalidated while the command is in flight ([#2581](https://github.com/redis-rs/redis-rs/pull/2581) by @nihohit)
+* fix: reject out-of-range integer and double replies instead of wrapping them (#2332) ([#2582](https://github.com/redis-rs/redis-rs/pull/2582) by @nihohit)
+* Don't take unsolicited subscription pushes as command replies (#2530) ([#2583](https://github.com/redis-rs/redis-rs/pull/2583) by @nihohit)
+* fix(cluster): follow MOVED and ASK redirects without a host (#2542) ([#2584](https://github.com/redis-rs/redis-rs/pull/2584) by @nihohit)
+* fix(cluster): route MSETEX by its first key (#2560) ([#2585](https://github.com/redis-rs/redis-rs/pull/2585) by @nihohit)
+* Update the cluster routing table (#2521) ([#2586](https://github.com/redis-rs/redis-rs/pull/2586) by @nihohit)
+* fix(types): parse ROLE from a replica whose primary link is down (#2541) ([#2587](https://github.com/redis-rs/redis-rs/pull/2587) by @nihohit)
+* Fix build when TLS is enabled without the runtime's TLS feature (#2516) ([#2588](https://github.com/redis-rs/redis-rs/pull/2588) by @nihohit)
+* fix(types): convert RESP3 doubles to the big number types (#2505) ([#2589](https://github.com/redis-rs/redis-rs/pull/2589) by @nihohit)
+
+#### CI & operational improvements
+
+* Backport the test stability fixes ([#2571](https://github.com/redis-rs/redis-rs/pull/2571) by @nihohit)
+
 ### 1.8.1 (2026-10-30)
 
 #### Changes & Bug fixes
