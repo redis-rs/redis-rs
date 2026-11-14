@@ -47,6 +47,8 @@ impl PrimaryConnections {
         let mut primaries = Self { connections };
         if ctx.supports(VALKEY_SEARCH_ANY) {
             primaries.wait_for_cluster_slots();
+            primaries.wait_for_cluster_bus_links(ctx.cluster.iter_servers().count());
+            primaries.wait_for_search_coordinator();
         } else {
             primaries.wait_for_search_shard_connections();
         }
@@ -96,6 +98,91 @@ impl PrimaryConnections {
                 );
             }
             std::thread::sleep(POLL_INTERVAL);
+        }
+    }
+
+    /// Wait until every primary's cluster bus links to all `node_count - 1` other nodes are up.
+    /// valkey-search announces a new index with a single cluster bus message, and a message sent
+    /// while a link is still down is lost; the next announcement comes 15-45s later. `CLUSTER SLOTS`
+    /// can converge through gossip before every pair of nodes is directly linked.
+    fn wait_for_cluster_bus_links(&mut self, node_count: usize) {
+        const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+        const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
+        let deadline = std::time::Instant::now() + TIMEOUT;
+        for (addr, connection) in &mut self.connections {
+            loop {
+                let nodes: String = redis::cmd("CLUSTER")
+                    .arg("NODES")
+                    .query(connection)
+                    .unwrap();
+                // Each line: <id> <addr> <flags> <primary> <ping> <pong> <epoch> <link-state> <slots>...
+                let peers: Vec<Vec<&str>> = nodes
+                    .lines()
+                    .map(|line| line.split_whitespace().collect::<Vec<_>>())
+                    .filter(|fields| fields.len() >= 8 && !fields[2].contains("myself"))
+                    .collect();
+                let ready = peers.len() == node_count - 1
+                    && peers.iter().all(|fields| {
+                        fields[7] == "connected"
+                            && !fields[2].split(',').any(|flag| {
+                                matches!(flag, "handshake" | "fail" | "fail?" | "noaddr")
+                            })
+                    });
+                if ready {
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    panic!(
+                        "cluster bus links never came up on {addr:?} within {TIMEOUT:?}; CLUSTER NODES:\n{nodes}",
+                    );
+                }
+                std::thread::sleep(POLL_INTERVAL);
+            }
+        }
+    }
+
+    /// Wait until valkey-search's coordinator on every primary can reach all its peers.
+    /// `FT.CREATE` creates the index locally, announces it over the cluster bus, and then waits
+    /// up to 5s (valkey-search's `ft-info-timeout-ms`) for every primary to fetch it over gRPC.
+    /// If a peer can't fetch it in time, for example because its gRPC connection is still being
+    /// set up, the command fails with "Unable to contact all cluster members". valkey-search has
+    /// no readiness check, so probe with a throwaway `FT.CREATE` from each primary until one succeeds.
+    fn wait_for_search_coordinator(&mut self) {
+        // Keep this well under nextest's slow-timeout, which kills the test after 21s.
+        const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+        const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+        let deadline = std::time::Instant::now() + TIMEOUT;
+        let mut attempt = 0u32;
+        for (addr, connection) in &mut self.connections {
+            loop {
+                // A failed attempt still leaves the index on this primary, so use a fresh name
+                // per attempt to avoid "already exists".
+                attempt += 1;
+                let index_name = format!("__redis_rs_coordinator_probe_{attempt}");
+                let result: redis::RedisResult<String> = redis::cmd("FT.CREATE")
+                    .arg(&index_name)
+                    .arg("SCHEMA")
+                    .arg("probe_field")
+                    .arg("NUMERIC")
+                    .query(connection);
+                match result {
+                    Ok(_) => {
+                        let _: redis::RedisResult<String> = redis::cmd("FT.DROPINDEX")
+                            .arg(&index_name)
+                            .query(connection);
+                        break;
+                    }
+                    Err(err) if std::time::Instant::now() < deadline => {
+                        eprintln!("search coordinator on {addr:?} not ready yet: {err}");
+                        std::thread::sleep(POLL_INTERVAL);
+                    }
+                    Err(err) => panic!(
+                        "search coordinator on {addr:?} never became ready within {TIMEOUT:?}: {err}",
+                    ),
+                }
+            }
         }
     }
 
