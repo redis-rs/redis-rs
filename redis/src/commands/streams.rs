@@ -1691,7 +1691,7 @@ mod tests {
             assert_matches!(reply.claimed[0].map.get("name"), Some(Value::BulkString(v)) if v == "test".as_bytes());
             assert_eq!(reply.claimed[1].id.as_str(), "1713465536069-0");
             assert_eq!(reply.deleted_ids.len(), 1);
-            assert!(reply.deleted_ids.contains(&"123456789-0".to_string()));
+            assert!(reply.deleted_ids.iter().any(|i| i == "123456789-0"));
         }
 
         #[test]
@@ -1750,7 +1750,7 @@ mod tests {
             assert!(ids.contains(&"1713465533411-0"));
             assert!(ids.contains(&"1713465536069-0"));
             assert_eq!(reply.deleted_ids.len(), 1);
-            assert!(reply.deleted_ids.contains(&"123456789-0".to_string()));
+            assert!(reply.deleted_ids.iter().any(|i| i == "123456789-0"));
         }
 
         #[test]

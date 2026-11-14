@@ -1,3 +1,25 @@
+### 2.0.0-rc.3 (2026-11-14)
+
+#### Changes & Bug fixes
+
+* fix(types): parse ROLE from a replica whose primary link is down ([#2541](https://github.com/redis-rs/redis-rs/pull/2541) by @LindseyZ1205)
+* Close the sync connection when a reply fails to parse ([#2562](https://github.com/redis-rs/redis-rs/pull/2562) by @varun3257)
+* fix(cluster): route MSETEX by its first key ([#2560](https://github.com/redis-rs/redis-rs/pull/2560) by @LindseyZ1205)
+* fix(cluster): follow MOVED and ASK redirects without a host ([#2542](https://github.com/redis-rs/redis-rs/pull/2542) by @LindseyZ1205)
+* perf: cache parsed native certs across connections ([#2495](https://github.com/redis-rs/redis-rs/pull/2495) by @domodwyer)
+* Don't take unsolicited subscription pushes as command replies ([#2530](https://github.com/redis-rs/redis-rs/pull/2530) by @varun3257)
+* ConnectionManager: move repeated fields into AsyncConnectionConfig ([#2572](https://github.com/redis-rs/redis-rs/pull/2572) by @nihohit)
+* fix(cluster-async): wake the connection task when requests are queued ([#2557](https://github.com/redis-rs/redis-rs/pull/2557) by @alek6kun)
+* Update MSRV to 1.96 ([#2577](https://github.com/redis-rs/redis-rs/pull/2577) by @nihohit)
+
+#### CI & operational improvements
+
+* Check for warnings in WASM CI ([#2564](https://github.com/redis-rs/redis-rs/pull/2564) by @nihohit)
+* Fix flakey idempotency test ([#2565](https://github.com/redis-rs/redis-rs/pull/2565) by @nihohit)
+* Fix sentinel discovery test flakiness ([#2566](https://github.com/redis-rs/redis-rs/pull/2566) by @nihohit)
+* Reduce slot collision flakiness ([#2567](https://github.com/redis-rs/redis-rs/pull/2567) by @nihohit)
+* Stabilize hotkeys test ([#2573](https://github.com/redis-rs/redis-rs/pull/2573) by @nihohit)
+
 ### 2.0.0-rc.2 (2026-10-30)
 
 #### Changes & Bug fixes
