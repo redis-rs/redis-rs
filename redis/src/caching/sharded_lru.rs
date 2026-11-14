@@ -61,8 +61,8 @@ pub(crate) struct CacheItem {
 pub(crate) struct LRUCacheShard {
     lru: LruCache<RedisKey, CacheItem>,
     // Reverse index of the entries that read a key of this shard but are cached under another key,
-    // as (key they're cached under, entry id).
-    dependents: HashMap<RedisKey, Vec<(RedisKey, usize)>>,
+    // as the key each entry is cached under, by entry id.
+    dependents: HashMap<RedisKey, HashMap<usize, RedisKey>>,
 }
 
 pub(crate) struct ShardedLRU {
@@ -142,7 +142,7 @@ impl ShardedLRU {
         for key in other_keys {
             let mut shard = self.get_shard(key);
             if let Some(dependents) = shard.dependents.get_mut(key) {
-                dependents.retain(|(_, dependent_id)| *dependent_id != id);
+                dependents.remove(&id);
                 if dependents.is_empty() {
                     shard.dependents.remove(key);
                 }
@@ -219,7 +219,7 @@ impl ShardedLRU {
         for key in &other_keys {
             let mut shard = self.get_shard(key);
             let dependents = shard.dependents.entry(key.clone()).or_default();
-            dependents.push((redis_key.to_vec(), id));
+            dependents.insert(id, redis_key.to_vec());
         }
         let mut shard = self.get_shard(redis_key);
         // The invalidation for a write made while the command was in flight can be received before
@@ -297,7 +297,7 @@ impl ShardedLRU {
             self.unindex_item(&cache_holder);
         }
         // Evict the entries cached under other keys that read this key.
-        for (redis_key, id) in dependents.into_iter().flatten() {
+        for (id, redis_key) in dependents.into_iter().flatten() {
             let entry = {
                 let mut shard = self.get_shard(&redis_key);
                 let Some(cache_item) = shard.lru.peek_mut(&redis_key) else {
@@ -355,7 +355,7 @@ mod tests {
         fn dependents_count(&self) -> usize {
             let shards = self.shards.iter().map(|shard| shard.lock().unwrap());
             shards
-                .map(|shard| shard.dependents.values().map(Vec::len).sum::<usize>())
+                .map(|shard| shard.dependents.values().map(HashMap::len).sum::<usize>())
                 .sum()
         }
     }
