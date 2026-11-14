@@ -230,6 +230,178 @@ mod types {
         }
     }
 
+    /// A reply carries the same number whether the server encodes it as a
+    /// number or as a string, so both encodings have to convert to the same
+    /// result for every integer type.
+    mod numeric_and_string_replies_agree {
+        use quickcheck::quickcheck;
+        use redis::{FromRedisValue, Value};
+
+        fn string_value(s: String) -> Value {
+            Value::BulkString(s.into_bytes())
+        }
+
+        macro_rules! agree_on_int {
+            ($name:ident, $t:ty) => {
+                quickcheck! {
+                    fn $name(val: i64) -> bool {
+                        let from_int = <$t>::from_redis_value(Value::Int(val));
+                        let from_string =
+                            <$t>::from_redis_value(string_value(val.to_string()));
+                        match (from_int, from_string) {
+                            (Ok(a), Ok(b)) => a == b,
+                            (Err(_), Err(_)) => true,
+                            _ => false,
+                        }
+                    }
+                }
+            };
+        }
+
+        agree_on_int!(u8_agrees, u8);
+        agree_on_int!(i8_agrees, i8);
+        agree_on_int!(u16_agrees, u16);
+        agree_on_int!(i16_agrees, i16);
+        agree_on_int!(u32_agrees, u32);
+        agree_on_int!(i32_agrees, i32);
+        agree_on_int!(u64_agrees, u64);
+        agree_on_int!(i64_agrees, i64);
+        agree_on_int!(u128_agrees, u128);
+        agree_on_int!(i128_agrees, i128);
+        agree_on_int!(usize_agrees, usize);
+        agree_on_int!(isize_agrees, isize);
+
+        macro_rules! agree_on_double {
+            ($name:ident, $t:ty) => {
+                quickcheck! {
+                    fn $name(val: f64) -> bool {
+                        let from_double = <$t>::from_redis_value(Value::Double(val));
+                        // Negative zero is zero, but it writes as "-0" and
+                        // `str::parse` refuses a sign on an unsigned type, so
+                        // compare against the spelling of the value itself.
+                        let val = if val == 0.0 { 0.0 } else { val };
+                        // A whole number is written exactly by `{:.0}`, which is
+                        // what a server sending it as a string would write. Every
+                        // other double is spelled the way it prints, and none of
+                        // those spellings parse as an integer.
+                        let spelled = if val.is_finite() && val.fract() == 0.0 {
+                            format!("{val:.0}")
+                        } else {
+                            format!("{val}")
+                        };
+                        let from_string = <$t>::from_redis_value(string_value(spelled));
+                        match (from_double, from_string) {
+                            (Ok(a), Ok(b)) => a == b,
+                            (Err(_), Err(_)) => true,
+                            _ => false,
+                        }
+                    }
+                }
+            };
+        }
+
+        agree_on_double!(u8_agrees_on_double, u8);
+        agree_on_double!(i8_agrees_on_double, i8);
+        agree_on_double!(u32_agrees_on_double, u32);
+        agree_on_double!(i32_agrees_on_double, i32);
+        agree_on_double!(u64_agrees_on_double, u64);
+        agree_on_double!(i64_agrees_on_double, i64);
+        agree_on_double!(u128_agrees_on_double, u128);
+        agree_on_double!(i128_agrees_on_double, i128);
+    }
+
+    #[test]
+    fn test_out_of_range_integer_reply_is_an_error() {
+        for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+            // `TTL` replies with `:-1` when the key has no expiry and with `:-2`
+            // when it does not exist. Neither fits in an unsigned type, and used
+            // to wrap around to `u64::MAX` / `u64::MAX - 1` instead of erroring.
+            let bad: Result<u64, _> = parse_mode.parse_redis_value(Value::Int(-1));
+            assert_matches!(bad, Err(_));
+            let bad: Result<usize, _> = parse_mode.parse_redis_value(Value::Int(-2));
+            assert_matches!(bad, Err(_));
+            let bad: Result<u32, _> = parse_mode.parse_redis_value(Value::Int(-1));
+            assert_matches!(bad, Err(_));
+
+            // Too large for the narrower types.
+            let bad: Result<u8, _> = parse_mode.parse_redis_value(Value::Int(300));
+            assert_matches!(bad, Err(_));
+            let bad: Result<i8, _> = parse_mode.parse_redis_value(Value::Int(128));
+            assert_matches!(bad, Err(_));
+            let bad: Result<i32, _> = parse_mode.parse_redis_value(Value::Int(i64::MAX));
+            assert_matches!(bad, Err(_));
+
+            // An integer reply and the equivalent string reply must agree: the
+            // same command can reply with either depending on the protocol
+            // version in use.
+            let bad: Result<u8, _> =
+                parse_mode.parse_redis_value(Value::BulkString(b"300".to_vec()));
+            assert_matches!(bad, Err(_));
+
+            // Values that do fit still convert, including the exact boundaries.
+            assert_eq!(parse_mode.parse_redis_value(Value::Int(-1)), Ok(-1i64));
+            assert_eq!(parse_mode.parse_redis_value(Value::Int(255)), Ok(255u8));
+            assert_eq!(parse_mode.parse_redis_value(Value::Int(-128)), Ok(-128i8));
+            assert_eq!(parse_mode.parse_redis_value(Value::Int(127)), Ok(127i8));
+            assert_eq!(
+                parse_mode.parse_redis_value(Value::Int(i64::MAX)),
+                Ok(i64::MAX)
+            );
+            assert_eq!(
+                parse_mode.parse_redis_value(Value::Int(i64::MIN)),
+                Ok(i64::MIN as i128)
+            );
+        }
+    }
+
+    #[test]
+    fn test_out_of_range_double_reply_is_an_error() {
+        for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
+            // RESP3 replies with a double where RESP2 replies with a bulk
+            // string, e.g. for `ZSCORE`. A score that does not fit used to
+            // saturate to `i64::MAX` (and NaN used to become `0`) rather than
+            // producing the error the string reply produces.
+            let bad: Result<i64, _> = parse_mode.parse_redis_value(Value::Double(3e40));
+            assert_matches!(bad, Err(_));
+            let bad: Result<u64, _> = parse_mode.parse_redis_value(Value::Double(-5.0));
+            assert_matches!(bad, Err(_));
+            let bad: Result<i64, _> = parse_mode.parse_redis_value(Value::Double(f64::NAN));
+            assert_matches!(bad, Err(_));
+            let bad: Result<i64, _> = parse_mode.parse_redis_value(Value::Double(f64::INFINITY));
+            assert_matches!(bad, Err(_));
+            let bad: Result<i64, _> =
+                parse_mode.parse_redis_value(Value::Double(f64::NEG_INFINITY));
+            assert_matches!(bad, Err(_));
+
+            // `i64::MAX as f64` rounds up to 2^63, which is out of range.
+            let bad: Result<i64, _> =
+                parse_mode.parse_redis_value(Value::Double(9223372036854775808.0));
+            assert_matches!(bad, Err(_));
+
+            // A fractional double is not an integer, the same way "1.9" is not
+            // one for `str::parse`.
+            let bad: Result<i64, _> = parse_mode.parse_redis_value(Value::Double(1.9));
+            assert_matches!(bad, Err(_));
+            let bad: Result<i64, _> = parse_mode.parse_redis_value(Value::Double(-1.9));
+            assert_matches!(bad, Err(_));
+
+            // Doubles that are whole numbers in range convert as before.
+            assert_eq!(parse_mode.parse_redis_value(Value::Double(1.0)), Ok(1i64));
+            assert_eq!(parse_mode.parse_redis_value(Value::Double(-1.0)), Ok(-1i64));
+            assert_eq!(
+                parse_mode.parse_redis_value(Value::Double(255.0)),
+                Ok(255u8)
+            );
+            assert_eq!(parse_mode.parse_redis_value(Value::Double(0.0)), Ok(0u64));
+
+            // Floating point targets are unaffected.
+            assert_eq!(
+                parse_mode.parse_redis_value(Value::Double(f64::INFINITY)),
+                Ok(f64::INFINITY)
+            );
+        }
+    }
+
     #[test]
     fn test_parse_boxed() {
         for parse_mode in [RedisParseMode::Owned, RedisParseMode::Ref] {
