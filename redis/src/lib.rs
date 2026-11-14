@@ -686,7 +686,8 @@ pub use crate::connection::{
     RedisConnectionInfo, TlsMode, parse_redis_url, transaction,
 };
 pub use crate::parser::{Parser, parse_redis_value};
-// Harness-only: lets the codec-level bench drive `ValueCodec` directly.
+// Harness-only: lets the codec benches and the AFL codec target drive
+// `ValueCodec` directly.
 #[cfg(feature = "aio")]
 #[doc(hidden)]
 pub use crate::parser::ValueCodec;

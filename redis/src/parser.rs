@@ -618,6 +618,8 @@ mod aio_support {
         // Progress through an incomplete reply that the fast path will decode
         // once it has fully arrived.
         pub(super) scan: Scan,
+        // Never use the fast path. See `combine_only`.
+        combine_only: bool,
     }
 
     /// The outcome of scanning a buffer for the end of a reply.
@@ -755,8 +757,18 @@ mod aio_support {
     }
 
     impl ValueCodec {
+        /// A codec that decodes everything with `combine`, as the reference
+        /// for differential fuzzing of the fast path.
+        #[doc(hidden)]
+        pub fn combine_only() -> Self {
+            Self {
+                combine_only: true,
+                ..Self::default()
+            }
+        }
+
         fn decode_stream(&mut self, bytes: &mut BytesMut, eof: bool) -> RedisResult<Option<Value>> {
-            if !self.partial {
+            if !self.partial && !self.combine_only {
                 // `Framed` calls `decode` again after draining the buffer. Don't
                 // hand an empty buffer to `combine`, which would set `partial`
                 // and push the next reply off the fast path.
@@ -1279,7 +1291,11 @@ mod tests {
         use bytes::BytesMut;
         use tokio_util::codec::Decoder;
 
-        let mut codec = ValueCodec::default();
+        let mut codec = if combine_only {
+            ValueCodec::combine_only()
+        } else {
+            ValueCodec::default()
+        };
         let mut buf = BytesMut::new();
         let mut got = Vec::new();
         let mut rest = wire;
@@ -1292,9 +1308,6 @@ mod tests {
                 rest = &rest[n..];
             }
             loop {
-                if combine_only {
-                    codec.partial = true;
-                }
                 let result = if eof {
                     codec.decode_eof(&mut buf)
                 } else {
