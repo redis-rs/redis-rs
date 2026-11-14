@@ -43,7 +43,7 @@ async fn connect_tcp(
     std_socket.try_into()
 }
 
-#[cfg(any(feature = "smol-rustls-comp", feature = "smol-native-tls-comp"))]
+#[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
 use crate::connection::TlsConnParams;
 
 pin_project_lite::pin_project! {
@@ -217,6 +217,24 @@ impl RedisRuntime for Smol {
             )
             .await
             .map(|con| Self::TcpTls(SmolWrapped::new(Box::new(con))))?)
+    }
+
+    // TLS is enabled, but only for Tokio or for sync connections.
+    #[cfg(all(
+        any(feature = "tls-native-tls", feature = "tls-rustls"),
+        not(any(feature = "smol-native-tls-comp", feature = "smol-rustls-comp"))
+    ))]
+    async fn connect_tcp_tls(
+        _hostname: &str,
+        _socket_addr: SocketAddr,
+        _insecure: bool,
+        _tls_params: &Option<TlsConnParams>,
+        _tcp_settings: &crate::io::tcp::TcpSettings,
+    ) -> RedisResult<Self> {
+        fail!((
+            crate::errors::ErrorKind::InvalidClientConfig,
+            "Cannot connect to TCP with TLS on smol without the `smol-native-tls-comp` or `smol-rustls-comp` feature"
+        ));
     }
 
     #[cfg(unix)]

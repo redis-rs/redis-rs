@@ -39,3 +39,6 @@ runs:
         sed -i '/dev-dependencies/,/dev-dependencies/d' Cargo.toml
         cargo check -p redis --no-default-features --features tokio-comp
         cargo check -p redis --no-default-features --features smol-comp
+        # A runtime without TLS support, next to TLS enabled for the other runtime
+        cargo check -p redis --no-default-features --features tokio-comp,smol-rustls-comp,tls-rustls-webpki-roots
+        cargo check -p redis --no-default-features --features smol-comp,tokio-rustls-comp,tls-rustls-webpki-roots
