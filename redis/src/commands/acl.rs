@@ -67,6 +67,10 @@ pub enum Rule {
     /// quote is sent quoted, so for example a `Pattern` with a space in it is refused by the
     /// server rather than read as several rules. [`Rule::Other`] is sent as written, so it can
     /// still hold several space-separated rules.
+    ///
+    /// The server writes selectors to the ACL file without quoting them, so a selector with a
+    /// quote in one of its rules doesn't survive `ACL SAVE` followed by `ACL LOAD` or a restart:
+    /// the server either empties the selector or refuses to load the file.
     Selector(Vec<Self>),
 
     /// Performs the following actions: `resetpass`, `resetkeys`, `off`, `-@all`.
@@ -114,17 +118,24 @@ impl ToRedisArgs for Rule {
                     .iter()
                     .flat_map(|rule| match rule {
                         // Raw rule text may hold several rules, so it goes in as written.
-                        Other(raw) => vec![raw.as_bytes().to_vec()],
+                        Other(raw) => vec![raw.clone().into_bytes()],
                         rule => rule
                             .to_redis_args()
                             .iter()
                             .map(|arg| quote_selector_rule(arg))
                             .collect(),
                     })
-                    .filter(|rule| !rule.is_empty())
                     .collect();
-                let mut arg = b"(".to_vec();
-                arg.extend(rules.join(&b' '));
+                let separators = rules.len().saturating_sub(1);
+                let len = rules.iter().map(Vec::len).sum::<usize>() + separators + 2;
+                let mut arg = Vec::with_capacity(len);
+                arg.push(b'(');
+                for (i, rule) in rules.iter().enumerate() {
+                    if i > 0 {
+                        arg.push(b' ');
+                    }
+                    arg.extend_from_slice(rule);
+                }
                 arg.push(b')');
                 out.write_arg(&arg);
             }
@@ -491,7 +502,7 @@ mod tests {
             b"(\"~\\x07\\x08\\x01\\xc3\\xa9\")"
         );
 
-        // Raw rule text goes in as written, and empty rules are left out.
+        // Raw rule text goes in as written, even when empty.
         assert_args!(
             Selector(vec![Other("+get ~foo".to_string())]),
             b"(+get ~foo)"
@@ -503,7 +514,7 @@ mod tests {
                 Other(String::new()),
                 Pattern("foo".to_string())
             ]),
-            b"(+get ~foo)"
+            b"(+get  ~foo)"
         );
         assert_args!(Selector(vec![]), b"()");
     }

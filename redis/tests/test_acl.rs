@@ -223,8 +223,9 @@ fn test_acl_selector_rule_stays_one_rule() {
             .contains(&"selector_user".to_string())
     );
 
-    // A quote doesn't split the selector either; the pattern reaches the server as written.
-    let pattern = "a\"b";
+    // A rule with a byte outside printable ASCII is sent quoted and escaped, and the server
+    // decodes it back to the pattern given.
+    let pattern = "café";
     con.acl_setuser_rules(
         "selector_user",
         &[

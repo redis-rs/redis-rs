@@ -183,7 +183,9 @@ It now returns `Vec<HashMap<String, Value>>` (was `Vec<String>`), one map per en
 
 `Rule::Selector` joined its inner rules with spaces, and the server splits the selector's text on whitespace and quotes, so a rule containing either was read as several rules. `Selector(vec![AddCommand("get".into()), Pattern("x +@all ~*".into())])` was sent as `(+get ~x +@all ~*)`, giving the user every command on every key, and a pattern containing a double quote left the server unable to split the text, so `ACL SETUSER` stored an empty selector.
 
-An inner rule containing whitespace, a quote or a byte outside printable ASCII is now sent quoted and escaped, so the server reads it as exactly one rule. A key or channel pattern containing whitespace is therefore refused with a syntax error, as it is outside a selector, and a pattern containing a quote is stored as written. Rules made of plain characters are sent as before, `Rule::Other` is still sent as written, and empty rules are left out.
+An inner rule containing whitespace, a quote or a byte outside printable ASCII is now sent quoted and escaped, so the server reads it as exactly one rule. A key or channel pattern containing whitespace is therefore refused with a syntax error, as it is outside a selector. Rules made of plain characters are sent as before, and `Rule::Other` is still sent as written.
+
+A pattern containing a quote is now accepted inside a selector, but the server writes selectors to the ACL file without quoting them, so such a selector doesn't survive `ACL SAVE` followed by `ACL LOAD` or a restart: the server either empties the selector or refuses to load the file, which stops it from starting. Avoid quotes in rules inside a selector.
 
 **Migration:** Give each rule its own `Rule` instead of putting several space-separated rules in one, e.g. `Pattern("a ~b")` becomes `Pattern("a")` and `Pattern("b")`, or pass the raw text in a `Rule::Other`.
 
