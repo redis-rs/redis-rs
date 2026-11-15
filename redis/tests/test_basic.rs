@@ -4256,6 +4256,40 @@ mod basic {
     }
 
     #[test]
+    fn test_rejected_resp3_subscription_does_not_desync_replies() {
+        let ctx = TestContext::default();
+        let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);
+        let connection_info = ctx.server.connection_info().set_redis_settings(redis);
+        let client = redis::Client::open(connection_info).unwrap();
+        let mut con = client.get_connection().unwrap();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        con.set_push_sender(tx);
+
+        let _: () = con.set("key1", "value1").unwrap();
+        let _: () = con.set("key2", "value2").unwrap();
+
+        // Only allow the user to access the `allowed` channel, so that subscribing to any other
+        // channel is rejected with a NOPERM error instead of being confirmed.
+        cmd("ACL")
+            .arg("SETUSER")
+            .arg("default")
+            .arg("resetchannels")
+            .arg("&allowed")
+            .exec(&mut con)
+            .unwrap();
+
+        con.subscribe_resp3("allowed").unwrap();
+        let err = con.subscribe_resp3("denied").unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Server(ServerErrorKind::NoPerm));
+        let err = con.psubscribe_resp3("denied*").unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Server(ServerErrorKind::NoPerm));
+
+        // The errors used to be left unread, and taken as the replies to these commands.
+        assert_eq!(con.get("key1").unwrap(), Some("value1".to_string()));
+        assert_eq!(con.get("key2").unwrap(), Some("value2".to_string()));
+    }
+
+    #[test]
     fn test_unparsable_reply_closes_connection() {
         let ctx = TestContext::default();
         let mut con = ctx.connection();
