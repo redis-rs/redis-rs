@@ -1551,6 +1551,18 @@ impl SentinelClientBuilder {
 
     /// Creates a new `SentinelClient` from the parameters
     pub fn build(mut self) -> RedisResult<SentinelClient> {
+        // Without a TLS mode the Redis nodes are reached over plain TCP, so the certificates
+        // would be ignored.
+        #[cfg(feature = "tls-rustls")]
+        if self.client_to_redis_params.tls_mode.is_none()
+            && self.client_to_redis_params.certificates.is_some()
+        {
+            return Err(RedisError::from((
+                ErrorKind::InvalidClientConfig,
+                "Certificates cannot be set for the Redis nodes without a TLS mode.",
+            )));
+        }
+
         let mut client_to_redis_connection_info = RedisConnectionInfo::default();
 
         if let Some(db) = self.client_to_redis_params.db {
