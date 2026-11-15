@@ -2,6 +2,7 @@ use super::cmd::{CacheableCommand, CacheablePipeline, MultipleCachedCommandPart}
 use super::sharded_lru::*;
 use super::{CacheConfig, CacheMode, CacheStatistics};
 use crate::cmd::{Arg, CmdRef};
+use crate::commands::KeyPositions;
 use crate::{FromRedisValue, Pipeline, PushKind, Value};
 use std::cmp::min;
 use std::ops::Add;
@@ -291,10 +292,10 @@ impl CacheManager {
     fn handle_single_key_command<'a>(
         &self,
         cmd: CmdRef<'a>,
-        layout: KeyLayout,
+        key_positions: KeyPositions,
         client_side_expire: Instant,
     ) -> PrepCacheItem<'a> {
-        let (redis_key, dependent_keys) = match cacheable_keys(cmd, layout) {
+        let (redis_key, dependent_keys) = match cacheable_keys(cmd, key_positions) {
             Some((key, dependent_keys)) => (key, dependent_keys),
             None => return PrepCacheItem::NotCacheable,
         };
@@ -359,12 +360,8 @@ impl CacheManager {
             );
         }
 
-        if crate::commands::is_cachable_cmd(command_name) {
-            return self.handle_single_key_command(
-                cmd,
-                key_layout(command_name),
-                client_side_expire,
-            );
+        if let Some(key_positions) = crate::commands::cacheable_key_positions(command_name) {
+            return self.handle_single_key_command(cmd, key_positions, client_side_expire);
         }
 
         PrepCacheItem::NotCacheable
@@ -436,47 +433,32 @@ fn expire_time<'a>(
     )
 }
 
-/// Where a cacheable command keeps the keys it reads.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum KeyLayout {
-    /// The first argument is the only key (`GET key`, `HGET key field`).
-    FirstArg,
-    /// Every argument is a key (`EXISTS key [key ...]`, `SINTER key [key ...]`).
-    AllArgs,
-    /// The first two arguments are keys (`LCS key1 key2 [LEN] ...`).
-    FirstTwoArgs,
-    /// The first argument is the number of keys that follow it
-    /// (`ZINTER numkeys key [key ...] [WEIGHTS ...]`).
-    NumKeys,
-}
-
-fn key_layout(command_name: &[u8]) -> KeyLayout {
-    match command_name {
-        b"EXISTS" | b"SDIFF" | b"SINTER" | b"SUNION" => KeyLayout::AllArgs,
-        b"LCS" => KeyLayout::FirstTwoArgs,
-        b"SINTERCARD" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZUNION" => KeyLayout::NumKeys,
-        _ => KeyLayout::FirstArg,
-    }
-}
-
 /// Returns the first key a cacheable command reads and, in argument order and without repeats,
-/// the other keys it reads. `None` when the command doesn't name the keys its layout requires;
-/// the server rejects such a command anyway.
-fn cacheable_keys(cmd: CmdRef<'_>, layout: KeyLayout) -> Option<(&[u8], Vec<&[u8]>)> {
-    let key_count = match layout {
-        KeyLayout::FirstArg => 1,
-        KeyLayout::FirstTwoArgs => 2,
-        KeyLayout::AllArgs => cmd.args_iter().len().checked_sub(1)?,
-        KeyLayout::NumKeys => std::str::from_utf8(cmd.arg_idx(1)?)
+/// the other keys it reads. `None` when the command doesn't name the keys `key_positions`
+/// requires; the server rejects such a command anyway.
+///
+/// The keys only decide which cache items hold the reply and its dependent entries. The reply
+/// itself is still found by the whole command, so `SDIFF a b` and `SDIFF b a` don't share it.
+///
+/// This assumes that the command's name is a single argument, which isn't true of every command
+/// (e.g. `CLIENT INFO`), but is of every cacheable one.
+fn cacheable_keys(cmd: CmdRef<'_>, key_positions: KeyPositions) -> Option<(&[u8], Vec<&[u8]>)> {
+    let key_count = match key_positions {
+        KeyPositions::First => 1,
+        KeyPositions::FirstTwo => 2,
+        KeyPositions::All => cmd.args_iter().len().checked_sub(1)?,
+        KeyPositions::AfterKeyCount => std::str::from_utf8(cmd.arg_idx(1)?)
             .ok()?
             .parse::<usize>()
             .ok()?,
+        // Handled by `handle_multi_key_command`.
+        KeyPositions::PerKey => return None,
     };
     if key_count == 0 {
         return None;
     }
-    let first_key_idx = match layout {
-        KeyLayout::NumKeys => 2,
+    let first_key_idx = match key_positions {
+        KeyPositions::AfterKeyCount => 2,
         _ => 1,
     };
     let redis_key = cmd.arg_idx(first_key_idx)?;
@@ -768,6 +750,122 @@ mod tests {
                 Cmd::pttl("a").get_packed_command(),
                 sinter.get_packed_command(),
             ]
+        );
+    }
+
+    #[rstest]
+    #[case::exists(&["EXISTS", "a", "b"])]
+    #[case::lcs(&["LCS", "a", "b"])]
+    #[case::sinter(&["SINTER", "a", "b"])]
+    #[case::zunion(&["ZUNION", "2", "a", "b", "WITHSCORES"])]
+    fn test_invalidating_any_key_evicts_reply(
+        #[case] args: &[&str],
+        #[values("a", "b")] invalidated_key: &str,
+    ) {
+        let cache_manager = CacheManager::new(CacheConfig::new());
+        let cmd = crate::cmd(args[0]).arg(&args[1..]).clone();
+
+        let PrepCacheItem::NotCached(cacheable_command) =
+            cache_manager.get_cached_cmd(CmdRef::from_cmd(&cmd))
+        else {
+            panic!("{args:?} must be cacheable and not cached yet");
+        };
+        // The PTTL of each key, then the command's reply.
+        let replies = [Value::Int(-1), Value::Int(-1), Value::Int(1)];
+        let reply = cacheable_command.resolve(&cache_manager, replies.into_iter());
+        assert_eq!(reply.unwrap(), Value::Int(1));
+        assert!(matches!(
+            cache_manager.get_cached_cmd(CmdRef::from_cmd(&cmd)),
+            PrepCacheItem::Cached(Value::Int(1))
+        ));
+
+        let invalidated_keys = vec![Value::BulkString(invalidated_key.as_bytes().to_vec())];
+        cache_manager.handle_push_value(&PushKind::Invalidate, &[Value::Array(invalidated_keys)]);
+        assert!(
+            matches!(
+                cache_manager.get_cached_cmd(CmdRef::from_cmd(&cmd)),
+                PrepCacheItem::NotCached(_)
+            ),
+            "{args:?} must not be served from the cache after {invalidated_key} changed"
+        );
+    }
+
+    #[rstest]
+    #[case::exists(&["EXISTS", "a", "b"])]
+    #[case::lcs(&["LCS", "a", "b"])]
+    #[case::sinter(&["SINTER", "a", "b"])]
+    #[case::zunion(&["ZUNION", "2", "a", "b", "WITHSCORES"])]
+    fn test_reply_expires_with_any_key_it_reads(
+        #[case] args: &[&str],
+        #[values("a", "b")] expiring_key: &str,
+    ) {
+        let cache_manager = CacheManager::new(CacheConfig::new());
+        let cmd = crate::cmd(args[0]).arg(&args[1..]).clone();
+
+        let PrepCacheItem::NotCached(cacheable_command) =
+            cache_manager.get_cached_cmd(CmdRef::from_cmd(&cmd))
+        else {
+            panic!("{args:?} must be cacheable and not cached yet");
+        };
+        // The PTTL of `a` and of `b`, then the command's reply. Only one of the keys has a TTL.
+        let pttls = ["a", "b"].map(|key| Value::Int(if key == expiring_key { 50 } else { -1 }));
+        let replies = pttls.into_iter().chain(std::iter::once(Value::Int(1)));
+        cacheable_command.resolve(&cache_manager, replies).unwrap();
+        assert!(matches!(
+            cache_manager.get_cached_cmd(CmdRef::from_cmd(&cmd)),
+            PrepCacheItem::Cached(Value::Int(1))
+        ));
+
+        std::thread::sleep(Duration::from_millis(60));
+        assert!(
+            matches!(
+                cache_manager.get_cached_cmd(CmdRef::from_cmd(&cmd)),
+                PrepCacheItem::NotCached(_)
+            ),
+            "{args:?} must not be served from the cache after {expiring_key} expired"
+        );
+    }
+
+    fn packed_commands(cache_manager: &CacheManager, pipeline: &Pipeline) -> Vec<String> {
+        let (_, packed_pipeline, _) = cache_manager.get_cached_pipeline(pipeline);
+        packed_pipeline
+            .cmd_iter()
+            .map(|cmd| {
+                let args = cmd.args_iter().map(|arg| match arg {
+                    Arg::Simple(arg) => String::from_utf8_lossy(arg).into_owned(),
+                    Arg::Cursor => unreachable!(),
+                });
+                args.collect::<Vec<_>>().join(" ")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_opt_in_command_follows_client_caching() {
+        // `CLIENT CACHING YES` only makes the server track the keys read by the next command.
+        let cache_manager = CacheManager::new(CacheConfig::new().set_mode(CacheMode::OptIn));
+        let mut pipeline = crate::pipe();
+        pipeline
+            .cmd("SINTER")
+            .arg("a")
+            .arg("b")
+            .set_cache_config(crate::CommandCacheConfig::new().set_enable_cache(true));
+
+        assert_eq!(
+            packed_commands(&cache_manager, &pipeline),
+            ["PTTL a", "PTTL b", "CLIENT CACHING YES", "SINTER a b"]
+        );
+    }
+
+    #[test]
+    fn test_ttl_of_each_key_is_requested_once() {
+        let cache_manager = CacheManager::new(CacheConfig::new());
+        let mut pipeline = crate::pipe();
+        pipeline.cmd("SINTER").arg(&["b", "a", "b", "c", "a"]);
+
+        assert_eq!(
+            packed_commands(&cache_manager, &pipeline),
+            ["PTTL b", "PTTL a", "PTTL c", "SINTER b a b c a"]
         );
     }
 

@@ -48,6 +48,9 @@ pub(crate) struct CacheCmdEntry {
     /// each of the other keys, so that the reply stops being served once any of them is
     /// invalidated.
     value: Option<Value>,
+    /// The `insert_multi` call that wrote the entry, 0 for an entry written by `insert`. A reply
+    /// is only served together with dependent entries that were written by the same call.
+    insert_id: usize,
 }
 
 /// CacheItem keeps information about a key's expiry time and cached response for each key, command pair.
@@ -77,6 +80,8 @@ pub(crate) struct ShardedLRU {
     shards: Vec<std::sync::Mutex<LRUCacheShard>>,
     pub(crate) statistics: Arc<Statistics>,
     last_epoch: AtomicUsize,
+    // Ids of `insert_multi` calls start at 1, entries written by `insert` use 0.
+    next_insert_id: AtomicUsize,
 }
 
 impl ShardedLRU {
@@ -106,6 +111,7 @@ impl ShardedLRU {
             shards,
             statistics,
             last_epoch: AtomicUsize::new(0),
+            next_insert_id: AtomicUsize::new(1),
         }
     }
 
@@ -132,14 +138,15 @@ impl ShardedLRU {
     ) -> Option<Value> {
         let value = self
             .find(redis_key, redis_cmd, redis_cmd_args, epoch)
-            .flatten();
+            .and_then(|(value, _)| value);
         self.count_lookup(value.is_some());
         value
     }
 
     /// Returns the reply cached for a command that reads several keys. The reply is kept under
     /// `keys[0]` and a dependent entry under each of the other keys, and it is only served while
-    /// every one of them is still cached, so an invalidation of any of the keys is a miss.
+    /// every one of them still holds the dependent entry written along with the reply, so an
+    /// invalidation of any of the keys is a miss.
     pub(crate) fn get_multi<'a>(
         &self,
         keys: &[&'a [u8]],
@@ -148,15 +155,19 @@ impl ShardedLRU {
         epoch: usize,
     ) -> Option<Value> {
         let value = keys.split_first().and_then(|(redis_key, dependent_keys)| {
-            let dependents_cached = dependent_keys
+            let (value, insert_id) = match self.find(redis_key, redis_cmd, redis_cmd_args, epoch) {
+                Some((Some(value), insert_id)) => (value, insert_id),
+                _ => return None,
+            };
+            dependent_keys
                 .iter()
-                .all(|key| self.find(key, redis_cmd, redis_cmd_args, epoch).is_some());
-            if dependents_cached {
-                self.find(redis_key, redis_cmd, redis_cmd_args, epoch)
-                    .flatten()
-            } else {
-                None
-            }
+                .all(|key| {
+                    matches!(
+                        self.find(key, redis_cmd, redis_cmd_args, epoch),
+                        Some((None, id)) if id == insert_id
+                    )
+                })
+                .then_some(value)
         });
         self.count_lookup(value.is_some());
         value
@@ -170,15 +181,15 @@ impl ShardedLRU {
         }
     }
 
-    /// Looks `redis_cmd` up under `redis_key`: `None` when it isn't cached, `Some(None)` when
-    /// the key holds a dependent entry for it, and `Some(reply)` otherwise.
+    /// Looks `redis_cmd` up under `redis_key`: `None` when it isn't cached, and otherwise the
+    /// entry's reply (`None` for a dependent entry) and `insert_id`.
     fn find<'a>(
         &self,
         redis_key: &'a [u8],
         redis_cmd: &'a [u8],
         redis_cmd_args: CmdArgs<'a>,
         epoch: usize,
-    ) -> Option<Option<Value>> {
+    ) -> Option<(Option<Value>, usize)> {
         let mut shard = self.get_shard(redis_key);
         let lru_cache = &mut shard.lru;
         let cache_item = lru_cache.get_mut(redis_key)?;
@@ -199,7 +210,7 @@ impl ShardedLRU {
             .value_list
             .iter()
             .find(|entry| entry.cmd == redis_cmd && redis_cmd_args.matches(&entry.cmd_args))
-            .map(|entry| entry.value.clone())
+            .map(|entry| (entry.value.clone(), entry.insert_id))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -218,6 +229,7 @@ impl ShardedLRU {
             cmd_key,
             cmd_args,
             Some(value),
+            0,
             expire_time,
             epoch,
             invalidation_count,
@@ -229,8 +241,11 @@ impl ShardedLRU {
     /// stop serving the reply once any of the keys is invalidated. `invalidation_counts` holds
     /// the count read for each key before the command was sent.
     ///
-    /// The dependent entries are inserted first: a reply whose dependent entry is missing is
-    /// never served, while a dependent entry without its reply is harmless.
+    /// Each entry is only written if its own shard had no invalidation while the command was in
+    /// flight, so a call can stop partway, with an older reply still under `keys[0]` and some of
+    /// its keys already holding new dependent entries. All the entries of a call get an id that
+    /// no other call uses, and `get_multi` only serves a reply whose keys all hold a dependent
+    /// entry with the same id, so a partial insert never makes an older reply servable again.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn insert_multi(
         &self,
@@ -246,12 +261,14 @@ impl ShardedLRU {
         let Some((redis_key, invalidation_count)) = entries.next() else {
             return;
         };
+        let insert_id = self.next_insert_id.fetch_add(1, Ordering::Relaxed);
         for (key, invalidation_count) in entries {
             if !self.insert_entry(
                 key,
                 cmd_key,
                 cmd_args,
                 None,
+                insert_id,
                 expire_time,
                 epoch,
                 *invalidation_count,
@@ -264,6 +281,7 @@ impl ShardedLRU {
             cmd_key,
             cmd_args,
             Some(value),
+            insert_id,
             expire_time,
             epoch,
             *invalidation_count,
@@ -279,6 +297,7 @@ impl ShardedLRU {
         cmd_key: &[u8],
         cmd_args: CmdArgs<'_>,
         value: Option<Value>,
+        insert_id: usize,
         expire_time: Instant,
         epoch: usize,
         invalidation_count: usize,
@@ -296,6 +315,7 @@ impl ShardedLRU {
             for entry in &mut ch.value_list {
                 if entry.cmd == cmd_key && cmd_args.matches(&entry.cmd_args) {
                     entry.value = value;
+                    entry.insert_id = insert_id;
                     ch.expire_time = expire_time;
                     return true;
                 }
@@ -304,6 +324,7 @@ impl ShardedLRU {
                 cmd: cmd_key.to_vec(),
                 cmd_args: cmd_args.relative().collect(),
                 value,
+                insert_id,
             });
             ch.expire_time = expire_time;
             return true;
@@ -316,6 +337,7 @@ impl ShardedLRU {
                     cmd: cmd_key.to_vec(),
                     cmd_args: cmd_args.relative().collect(),
                     value,
+                    insert_id,
                 }],
                 epoch,
             },
@@ -341,6 +363,8 @@ impl ShardedLRU {
             let mut lru_cache = shard
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
+            // A reply in flight during the flush was read before it, so it must not be cached.
+            lru_cache.invalidations = lru_cache.invalidations.wrapping_add(1);
             let invalidated = lru_cache
                 .lru
                 .iter()
@@ -365,6 +389,19 @@ mod tests {
     static CMD_KEY_2: &[u8] = b"test_cmd_key_2".as_slice();
     static CMD_ARGS: CmdArgs<'static> = CmdArgs::new(&[], 0);
     static REDIS_KEY: &[u8] = b"test_redis_key".as_slice();
+    static OTHER_KEY: &[u8] = b"test_other_key".as_slice();
+
+    fn shard_of(sharded_lru: &ShardedLRU, key: &[u8]) -> *const LRUCacheShard {
+        &*sharded_lru.get_shard(key) as *const LRUCacheShard
+    }
+
+    /// Returns the first of `key_0`, `key_1`, ... that `matches`.
+    fn key_where(matches: impl Fn(&[u8]) -> bool) -> Vec<u8> {
+        (0..)
+            .map(|i| format!("key_{i}").into_bytes())
+            .find(|key| matches(key))
+            .unwrap()
+    }
 
     #[test]
     fn test_multi_key_reply_is_served_only_while_every_key_is_cached() {
@@ -632,6 +669,199 @@ mod tests {
             sharded_lru.get(another_key.as_bytes(), CMD_KEY, CMD_ARGS, 1),
             None,
             "Cache must be invalidated"
+        );
+    }
+
+    #[test]
+    fn test_partial_multi_key_insert_does_not_revive_an_older_reply() {
+        let sharded_lru = ShardedLRU::new(NonZeroUsize::new(64).unwrap());
+        let shard = |key: &[u8]| shard_of(&sharded_lru, key);
+        // Three keys in different shards, so that an invalidation in the shard of one of them only
+        // rejects the entry of that key.
+        let a = REDIS_KEY;
+        let b = key_where(|key| shard(key) != shard(a));
+        let c = key_where(|key| shard(key) != shard(a) && shard(key) != shard(&b));
+        let in_shard_of_a = key_where(|key| shard(key) == shard(a));
+        let in_shard_of_c = key_where(|key| key != c.as_slice() && shard(key) == shard(&c));
+        let keys = [a, b.as_slice(), c.as_slice()];
+        let counts = || keys.map(|key| sharded_lru.invalidation_count(key));
+        let insert = |value, counts: &[usize]| {
+            let expire = Instant::now().add(Duration::from_secs(10));
+            sharded_lru.insert_multi(
+                &keys,
+                CMD_KEY,
+                CMD_ARGS,
+                Value::Int(value),
+                expire,
+                0,
+                counts,
+            );
+        };
+        let get = || sharded_lru.get_multi(&keys, CMD_KEY, CMD_ARGS, 0);
+
+        insert(1, &counts());
+        assert_eq!(get(), Some(Value::Int(1)));
+
+        // b is written, then fetched again while a key in a's shard is invalidated: b gets a new
+        // dependent entry, but the new reply isn't cached under a, which still holds the old one.
+        sharded_lru.invalidate(&b);
+        let counts_before = counts();
+        sharded_lru.invalidate(&in_shard_of_a);
+        insert(2, &counts_before);
+        assert_eq!(get(), None, "The old reply must not be served again");
+
+        insert(3, &counts());
+        assert_eq!(get(), Some(Value::Int(3)));
+
+        // Same, with the insert stopping at c, which still holds the dependent entry of the old
+        // reply, after b got a new one.
+        sharded_lru.invalidate(&b);
+        let counts_before = counts();
+        sharded_lru.invalidate(&in_shard_of_c);
+        insert(4, &counts_before);
+        assert_eq!(get(), None, "The old reply must not be served again");
+    }
+
+    #[test]
+    fn test_expiry_of_other_key() {
+        let sharded_lru = ShardedLRU::new(NonZeroUsize::new(64).unwrap());
+        let keys = [REDIS_KEY, OTHER_KEY];
+
+        // OTHER_KEY expires on the server in 50ms, which caps the expire time of the reply.
+        sharded_lru.insert_multi(
+            &keys,
+            CMD_KEY_2,
+            CMD_ARGS,
+            Value::Int(2),
+            Instant::now().add(Duration::from_millis(50)),
+            0,
+            &[0, 0],
+        );
+        // Caching another command under REDIS_KEY only renews the expire time of REDIS_KEY.
+        sharded_lru.insert(
+            REDIS_KEY,
+            CMD_KEY,
+            CMD_ARGS,
+            Value::Int(1),
+            Instant::now().add(Duration::from_secs(10)),
+            0,
+            0,
+        );
+        assert_eq!(
+            sharded_lru.get_multi(&keys, CMD_KEY_2, CMD_ARGS, 0),
+            Some(Value::Int(2))
+        );
+
+        std::thread::sleep(Duration::from_millis(60));
+        assert_eq!(
+            sharded_lru.get_multi(&keys, CMD_KEY_2, CMD_ARGS, 0),
+            None,
+            "Command reading the expired key must expire"
+        );
+        assert_eq!(
+            sharded_lru.get(REDIS_KEY, CMD_KEY, CMD_ARGS, 0),
+            Some(Value::Int(1)),
+            "Command not reading the expired key must stay"
+        );
+    }
+
+    #[test]
+    fn test_invalidating_other_key() {
+        let sharded_lru = ShardedLRU::new(NonZeroUsize::new(64).unwrap());
+        let keys = [REDIS_KEY, OTHER_KEY];
+        let expire_time = Instant::now().add(Duration::from_secs(10));
+
+        sharded_lru.insert(
+            REDIS_KEY,
+            CMD_KEY,
+            CMD_ARGS,
+            Value::Int(1),
+            expire_time,
+            0,
+            0,
+        );
+        sharded_lru.insert_multi(
+            &keys,
+            CMD_KEY_2,
+            CMD_ARGS,
+            Value::Int(2),
+            expire_time,
+            0,
+            &[0, 0],
+        );
+        assert_eq!(
+            sharded_lru.get_multi(&keys, CMD_KEY_2, CMD_ARGS, 0),
+            Some(Value::Int(2))
+        );
+
+        sharded_lru.invalidate(&OTHER_KEY.to_vec());
+        assert_eq!(
+            sharded_lru.get_multi(&keys, CMD_KEY_2, CMD_ARGS, 0),
+            None,
+            "Command reading the invalidated key must be invalidated"
+        );
+        assert_eq!(
+            sharded_lru.get(REDIS_KEY, CMD_KEY, CMD_ARGS, 0),
+            Some(Value::Int(1)),
+            "Command not reading the invalidated key must stay"
+        );
+    }
+
+    #[test]
+    fn test_insert_is_ignored_after_invalidating_other_key() {
+        let sharded_lru = ShardedLRU::new(NonZeroUsize::new(64).unwrap());
+        let keys = [REDIS_KEY, OTHER_KEY];
+        let expire_time = Instant::now().add(Duration::from_secs(10));
+        let invalidation_counts = || keys.map(|key| sharded_lru.invalidation_count(key));
+
+        let counts = invalidation_counts();
+        sharded_lru.invalidate(&OTHER_KEY.to_vec());
+        sharded_lru.insert_multi(
+            &keys,
+            CMD_KEY_2,
+            CMD_ARGS,
+            Value::Int(2),
+            expire_time,
+            0,
+            &counts,
+        );
+        assert_eq!(
+            sharded_lru.get_multi(&keys, CMD_KEY_2, CMD_ARGS, 0),
+            None,
+            "Reply must not be cached"
+        );
+
+        let invalidation_count = sharded_lru.invalidation_count(REDIS_KEY);
+        let counts = invalidation_counts();
+        // FLUSHALL is received while the commands are in flight.
+        sharded_lru.invalidate_all();
+        sharded_lru.insert(
+            REDIS_KEY,
+            CMD_KEY,
+            CMD_ARGS,
+            Value::Int(1),
+            expire_time,
+            0,
+            invalidation_count,
+        );
+        sharded_lru.insert_multi(
+            &keys,
+            CMD_KEY_2,
+            CMD_ARGS,
+            Value::Int(2),
+            expire_time,
+            0,
+            &counts,
+        );
+        assert_eq!(
+            sharded_lru.get(REDIS_KEY, CMD_KEY, CMD_ARGS, 0),
+            None,
+            "Reply must not be cached"
+        );
+        assert_eq!(
+            sharded_lru.get_multi(&keys, CMD_KEY_2, CMD_ARGS, 0),
+            None,
+            "Reply must not be cached"
         );
     }
 }
