@@ -39,7 +39,7 @@ use crate::PushInfo;
     not(feature = "tls-native-tls"),
     not(feature = "tls-rustls-webpki-roots")
 ))]
-use rustls_native_certs::load_native_certs;
+use crate::tls::NativeCertBundle;
 
 #[cfg(feature = "tls-rustls")]
 use crate::tls::ClientTlsParams;
@@ -1228,6 +1228,30 @@ impl ActualConnection {
     }
 }
 
+/// Cached host cert bundle for reuse across connections.
+///
+/// Call [`invalidate_cert_bundle()`] to clear the cache and reparse the bundle
+/// on the next call to [`NativeCertBundle::load()`].
+#[cfg(all(
+    feature = "tls-rustls",
+    not(feature = "tls-native-tls"),
+    not(feature = "tls-rustls-webpki-roots")
+))]
+static NATIVE_CERTS: NativeCertBundle = NativeCertBundle::new();
+
+/// Invalidate the cached host CA certificate bundle, causing the opening of the
+/// next connection to reparse the bundle from disk.
+///
+/// Use this function to "hot reload" a change to the underlying CA bundle.
+#[cfg(all(
+    feature = "tls-rustls",
+    not(feature = "tls-native-tls"),
+    not(feature = "tls-rustls-webpki-roots")
+))]
+pub fn invalidate_cert_bundle() {
+    NATIVE_CERTS.invalidate();
+}
+
 #[cfg(feature = "tls-rustls")]
 pub(crate) fn create_rustls_config(
     insecure: bool,
@@ -1243,13 +1267,7 @@ pub(crate) fn create_rustls_config(
         not(feature = "tls-rustls-webpki-roots")
     ))]
     {
-        let mut certificate_result = load_native_certs();
-        if let Some(error) = certificate_result.errors.pop() {
-            return Err(error.into());
-        }
-        for cert in certificate_result.certs {
-            root_store.add(cert)?;
-        }
+        root_store.extend(NATIVE_CERTS.load()?.roots);
     }
 
     let config = rustls::ClientConfig::builder();
