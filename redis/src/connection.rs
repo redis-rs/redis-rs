@@ -13,6 +13,7 @@ use crate::errors::{ErrorKind, RedisError, ServerError, ServerErrorKind};
 use crate::io::tcp::{TcpSettings, stream_with_settings};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
+use crate::subscription_tracker::{SubscriptionKind, SubscriptionTracker, subscription_change};
 use crate::types::{
     FromRedisValue, HashMap, PushKind, RedisResult, SyncPushSender, ToRedisArgs, Value,
     from_redis_value_ref,
@@ -911,6 +912,10 @@ pub struct Connection {
     /// The number of messages that are expected to be returned from the server,
     /// but the user no longer waits for - answers for requests that already returned a transient error.
     messages_to_skip: usize,
+
+    /// The subscriptions the server has confirmed, used to determine how many confirmations a
+    /// zero-argument [Self::unsubscribe_resp3] or [Self::punsubscribe_resp3] is answered with.
+    subscriptions: SubscriptionTracker,
 }
 
 /// Represents a RESP2 pubsub connection.
@@ -1638,6 +1643,7 @@ fn setup_connection(
         protocol: connection_info.protocol,
         push_sender: None,
         messages_to_skip: 0,
+        subscriptions: SubscriptionTracker::default(),
     };
 
     if execute_connection_pipeline(
@@ -1953,6 +1959,13 @@ impl Connection {
                 }
             };
             self.try_send(&result);
+            // Only push values are tracked, since a regular reply may be an array that happens to
+            // look like a confirmation.
+            if let Ok(value @ Value::Push { .. }) = &result
+                && let Some(change) = subscription_change(value)
+            {
+                self.subscriptions.apply(change);
+            }
 
             let Err(err) = &result else {
                 // Push messages aren't replies, so they must not stand in for a late response.
@@ -2017,12 +2030,26 @@ impl Connection {
         if self.pubsub {
             self.exit_pubsub()?;
         }
-        self.send_bytes(&cmd.get_packed_command())?;
 
-        // A command without arguments is either rejected, or, for an unsubscribe, confirmed once
-        // for each removed subscription. Only the first confirmation is awaited in that case,
-        // since the rest are pushes that no later command takes as its reply.
-        let mut remaining = cmd.args_iter().len().saturating_sub(1).max(1);
+        // A zero-argument unsubscribe is confirmed once for each subscription of its kind, or
+        // once with a nil channel when there are none, and the confirmations don't carry that
+        // count. The connection doesn't send anything else while it waits, so the tracked
+        // subscriptions are the ones the server removes. A zero-argument subscribe is rejected
+        // with a single error.
+        let mut remaining = match cmd.args_iter().len().saturating_sub(1) {
+            0 => match expected {
+                PushKind::Unsubscribe => self
+                    .subscriptions
+                    .unsubscribe_all_target(SubscriptionKind::Channel),
+                PushKind::PUnsubscribe => self
+                    .subscriptions
+                    .unsubscribe_all_target(SubscriptionKind::Pattern),
+                _ => 1,
+            },
+            args => args,
+        };
+
+        self.send_bytes(&cmd.get_packed_command())?;
         while remaining > 0 {
             match self.read(false)? {
                 Value::Push { kind, .. } if kind == expected => remaining -= 1,
