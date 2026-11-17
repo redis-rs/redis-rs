@@ -1020,11 +1020,11 @@ where
                 .get_connection_by_addr(&mut connections, &nc.addr)
                 .and_then(|conn| conn.send_packed_command(&nc.pipe));
             if let Err(err) = result {
-                // The replies to the commands already written won't be read, so drop these
-                // connections. Otherwise the next commands sent on them would get those replies.
-                for nc in &node_cmds[..=idx] {
-                    connections.remove(&nc.addr);
-                }
+                // Read the replies to the sub-pipelines already written, otherwise the next
+                // commands sent on those connections would get them as their replies.
+                drop(connections);
+                let mut results = vec![Value::Nil; cmds.len()];
+                let _ = self.recv_all_commands(&mut results, &node_cmds[..idx]);
                 return Err(err);
             }
         }
