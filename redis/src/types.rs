@@ -2430,7 +2430,20 @@ from_vec_from_redis_value!(<T> std::sync::Arc<[T]>);
 from_vec_from_redis_value!(<T> Box<[T]>; Vec::into_boxed_slice);
 
 macro_rules! impl_from_redis_value_for_map {
-    (for <$($TypeParam:ident),+> $MapType:ty, where ($($WhereClause:tt)+)) => {
+    (@collect $iter:ident, $convert:ident, $len:expr) => {{
+        let _ = $len;
+        $iter
+            .map(|(k, v)| Ok(($convert(k)?, $convert(v)?)))
+            .collect()
+    }};
+    (@collect $iter:ident, $convert:ident, $len:expr, $with_capacity:expr) => {{
+        let mut map = ($with_capacity)($len);
+        for (k, v) in $iter {
+            map.insert($convert(k)?, $convert(v)?);
+        }
+        Ok(map)
+    }};
+    (for <$($TypeParam:ident),+> $MapType:ty, where ($($WhereClause:tt)+) $(, with_capacity: $with_capacity:expr)?) => {
         impl< $($TypeParam),+ > FromRedisValue for $MapType
         where
             $($WhereClause)+
@@ -2439,13 +2452,17 @@ macro_rules! impl_from_redis_value_for_map {
                 let v = get_inner_value(v);
                 match *v {
                     Value::Nil => Ok(Default::default()),
-                    _ => v
-                        .as_map_iter()
-                        .ok_or_else(|| crate::errors::invalid_type_error_inner!(v, "Response type not map compatible"))?
-                        .map(|(k, v)| {
-                            Ok((from_redis_value_ref(k)?, from_redis_value_ref(v)?))
-                        })
-                        .collect(),
+                    _ => {
+                        let iter = v
+                            .as_map_iter()
+                            .ok_or_else(|| crate::errors::invalid_type_error_inner!(v, "Response type not map compatible"))?;
+                        let len = match &iter {
+                            MapIter::Array(items) => items.len() / 2,
+                            MapIter::Map(items) => items.len(),
+                            MapIter::NestedPairs(items) => items.len(),
+                        };
+                        impl_from_redis_value_for_map!(@collect iter, from_redis_value_ref, len $(, $with_capacity)?)
+                    }
                 }
             }
 
@@ -2453,13 +2470,12 @@ macro_rules! impl_from_redis_value_for_map {
                 let v = get_owned_inner_value(v);
                 match v {
                     Value::Nil => Ok(Default::default()),
-                    _ => v
-                        .into_map_iter()
-                        .map_err(|v| crate::errors::invalid_type_error_inner!(v, "Response type not map compatible"))?
-                        .map(|(k, v)| {
-                            Ok((from_redis_value(k)?, from_redis_value(v)?))
-                        })
-                        .collect(),
+                    _ => {
+                        let iter = v
+                            .into_map_iter()
+                            .map_err(|v| crate::errors::invalid_type_error_inner!(v, "Response type not map compatible"))?;
+                        impl_from_redis_value_for_map!(@collect iter, from_redis_value, iter.size_hint().0 $(, $with_capacity)?)
+                    }
                 }
             }
         }
@@ -2468,7 +2484,8 @@ macro_rules! impl_from_redis_value_for_map {
 
 impl_from_redis_value_for_map!(
     for <K, V, S> std::collections::HashMap<K, V, S>,
-    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default)
+    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default),
+    with_capacity: |n| std::collections::HashMap::with_capacity_and_hasher(n, S::default())
 );
 
 impl_from_redis_value_for_map!(
@@ -2479,14 +2496,16 @@ impl_from_redis_value_for_map!(
 #[cfg(feature = "hashbrown")]
 impl_from_redis_value_for_map!(
     for <K, V, S> hashbrown::HashMap<K, V, S>,
-    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default)
+    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue, S: BuildHasher + Default),
+    with_capacity: |n| hashbrown::HashMap::with_capacity_and_hasher(n, S::default())
 );
 
 // `AHashMap::default` is not generic over `S` param so we can't be generic over it as well.
 #[cfg(feature = "ahash")]
 impl_from_redis_value_for_map!(
     for <K, V> ahash::AHashMap<K, V>,
-    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue)
+    where (K: FromRedisValue + Eq + Hash, V: FromRedisValue),
+    with_capacity: ahash::AHashMap::with_capacity
 );
 
 macro_rules! impl_from_redis_value_for_set {
