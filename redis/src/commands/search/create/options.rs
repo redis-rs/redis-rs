@@ -221,7 +221,7 @@ impl ToRedisArgs for CreateOptions {
 
         if let Some(ref filter) = self.filter {
             out.write_arg(b"FILTER");
-            format!("'{filter}'").write_redis_args(out);
+            filter.write_redis_args(out);
         }
 
         if let Some(ref language) = self.language {
@@ -339,7 +339,7 @@ mod tests {
         assert_args!(
             CreateOptions::new().filter("@field != \"\""),
             "FILTER",
-            "'@field != \"\"'"
+            "@field != \"\""
         );
     }
 
@@ -457,7 +457,7 @@ mod tests {
             "1",
             "doc:",
             "FILTER",
-            "'@field != \"\"'",
+            "@field != \"\"",
             "LANGUAGE",
             "ENGLISH",
             "LANGUAGE_FIELD",
