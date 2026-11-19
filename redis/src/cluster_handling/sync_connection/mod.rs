@@ -1015,9 +1015,22 @@ where
         let mut connections = self.connections.borrow_mut();
 
         let node_cmds = self.map_cmds_to_nodes(cmds)?;
-        for nc in &node_cmds {
-            self.get_connection_by_addr(&mut connections, &nc.addr)?
-                .send_packed_command(&nc.pipe)?;
+        for (idx, nc) in node_cmds.iter().enumerate() {
+            let result = self
+                .get_connection_by_addr(&mut connections, &nc.addr)
+                .and_then(|conn| conn.send_packed_command(&nc.pipe));
+            if let Err(err) = result {
+                // The write may have stopped partway, and not every failed write closes the
+                // connection (with native-tls, writing to a TLS stream that was shut down is
+                // retried on the same connection), so drop it to be reopened on next use.
+                connections.remove(&nc.addr);
+                // Read the replies to the sub-pipelines already written, otherwise the next
+                // commands sent on those connections would get them as their replies.
+                drop(connections);
+                let mut results = vec![Value::Nil; cmds.len()];
+                let _ = self.recv_all_commands(&mut results, &node_cmds[..idx]);
+                return Err(err);
+            }
         }
         Ok(node_cmds)
     }
