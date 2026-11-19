@@ -7,6 +7,7 @@ use redis::schema;
 use redis::search::*;
 use redis_test::server::Module;
 use redis_test::{run_test_if_version_supported, skip_if_context_does_not_support};
+use std::collections::HashMap;
 
 static TEXT_FIELD_NAME: &str = "title";
 static NUMERIC_FIELD_NAME: &str = "price";
@@ -224,7 +225,7 @@ fn test_module_search_ft_create_create_options() {
 
     // Redis-only options.
     let redis_only: Vec<(&'static str, Modifier<CreateOptions>)> = vec![
-        ("filter", |opts| opts.filter("@field: value")),
+        ("filter", |opts| opts.filter("@field == \"value\"")),
         ("language_field", |opts| {
             opts.language_field("language_field")
         }),
@@ -251,6 +252,70 @@ fn test_module_search_ft_create_create_options() {
         is_valkey,
         |_| {},
         |con, index_name, options: &CreateOptions| con.ft_create(index_name, options, &schema),
+    );
+}
+
+/// Returns the ids of the documents `FT.SEARCH <index> *` finds, under RESP2 or RESP3.
+fn search_all_ids(con: &mut redis::Connection, index_name: &str) -> Vec<String> {
+    let reply: redis::Value = redis::cmd("FT.SEARCH")
+        .arg(index_name)
+        .arg("*")
+        .arg("NOCONTENT")
+        .query(con)
+        .unwrap();
+    let mut ids: Vec<String> = match reply {
+        // RESP2: [total, id, id, ...]
+        redis::Value::Array(items) => items
+            .into_iter()
+            .skip(1)
+            .map(|id| redis::from_redis_value(id).unwrap())
+            .collect(),
+        // RESP3: {total_results, results: [{id, ...}, ...], ...}
+        reply @ redis::Value::Map(_) => {
+            let mut reply: HashMap<String, redis::Value> = redis::from_redis_value(reply).unwrap();
+            let results: Vec<HashMap<String, redis::Value>> =
+                redis::from_redis_value(reply.remove("results").unwrap()).unwrap();
+            results
+                .into_iter()
+                .map(|mut result| redis::from_redis_value(result.remove("id").unwrap()).unwrap())
+                .collect()
+        }
+        other => panic!("unexpected FT.SEARCH reply: {other:?}"),
+    };
+    ids.sort();
+    ids
+}
+
+#[test]
+fn test_module_search_ft_create_filter_excludes_documents() {
+    // valkey-search rejects FILTER, so this runs on Redis only.
+    let ctx = run_test_if_version_supported!(REDIS_SEARCH_8_0, &[Module::Search]);
+    let mut con = ctx.connection();
+    let options = CreateOptions::new()
+        .on(IndexDataType::Hash)
+        .prefix("filtered:")
+        .filter("@tenant == \"a\"");
+    let schema = schema! {
+        TEXT_FIELD_NAME => SchemaTextField::new()
+    };
+    assert_eq!(
+        con.ft_create("filtered_index", &options, &schema),
+        Ok("OK".to_string())
+    );
+
+    assert_eq!(
+        con.hset_multiple("filtered:1", &[("tenant", "a"), (TEXT_FIELD_NAME, "one")]),
+        Ok(())
+    );
+    assert_eq!(
+        con.hset_multiple("filtered:2", &[("tenant", "b"), (TEXT_FIELD_NAME, "two")]),
+        Ok(())
+    );
+
+    // Only the document matching the filter is indexed.
+    assert_eq!(
+        search_all_ids(&mut con, "filtered_index"),
+        vec!["filtered:1".to_string()]
     );
 }
 
