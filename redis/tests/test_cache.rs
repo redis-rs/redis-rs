@@ -8,7 +8,9 @@ use redis::cluster_routing::*;
 use redis::{AsyncCommands, RedisError, caching::CacheConfig};
 #[cfg(feature = "json")]
 use redis_test::server::Module;
-use redis_test::{REDIS_CE_7_2, TestContext, TestContextBuilder, run_test_if_version_supported};
+use redis_test::{
+    REDIS_CE_7_0, REDIS_CE_7_2, TestContext, TestContextBuilder, run_test_if_version_supported,
+};
 #[cfg(feature = "json")]
 use serde_json::json;
 use std::collections::HashMap;
@@ -893,6 +895,303 @@ async fn test_cache_async_cluster_mget() {
     assert_miss!(&con, 3);
 }
 
+#[async_test]
+async fn test_cache_evicts_multi_key_replies_when_any_of_their_keys_changes(test_with_optin: bool) {
+    let ctx = TestContext::default();
+    if !ctx.protocol.supports_resp3() {
+        return;
+    }
+
+    let cache_config = if test_with_optin {
+        CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn)
+    } else {
+        CacheConfig::default()
+    };
+    let mut con = ctx
+        .async_connection_with_cache_config(cache_config)
+        .await
+        .unwrap();
+    let _: () = get_pipe(true)
+        .cmd("SADD")
+        .arg("set_a")
+        .arg("1")
+        .arg("2")
+        .ignore()
+        .cmd("SADD")
+        .arg("set_b")
+        .arg("2")
+        .arg("3")
+        .ignore()
+        .cmd("ZADD")
+        .arg("zset_a")
+        .arg(1)
+        .arg("x")
+        .ignore()
+        .cmd("ZADD")
+        .arg("zset_b")
+        .arg(1)
+        .arg("x")
+        .arg(1)
+        .arg("y")
+        .ignore()
+        .query_async(&mut con)
+        .await
+        .unwrap();
+
+    // `SINTER set_a set_b` reads both keys, so a change to the second one must evict its reply.
+    let val: Vec<String> = get_cmd("SINTER", test_with_optin)
+        .arg("set_a")
+        .arg("set_b")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, vec!["2"]);
+    assert_hit!(&con, 0);
+    assert_miss!(&con, 1);
+
+    let val: Vec<String> = get_cmd("SINTER", test_with_optin)
+        .arg("set_a")
+        .arg("set_b")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, vec!["2"]);
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 1);
+
+    let _: () = redis::cmd("SADD")
+        .arg("set_b")
+        .arg("1")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    sleep(Duration::from_millis(50).into()).await; // Give time for the invalidation of set_b to be received.
+
+    let mut val: Vec<String> = get_cmd("SINTER", test_with_optin)
+        .arg("set_a")
+        .arg("set_b")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    val.sort();
+    assert_eq!(val, vec!["1", "2"]);
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 2);
+
+    // `ZINTER 2 zset_a zset_b` lists its keys after their count, which is not a key.
+    let val: Vec<String> = get_cmd("ZINTER", test_with_optin)
+        .arg(2)
+        .arg("zset_a")
+        .arg("zset_b")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, vec!["x"]);
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 3);
+
+    let val: Vec<String> = get_cmd("ZINTER", test_with_optin)
+        .arg(2)
+        .arg("zset_a")
+        .arg("zset_b")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, vec!["x"]);
+    assert_hit!(&con, 2);
+    assert_miss!(&con, 3);
+
+    let _: () = redis::cmd("ZADD")
+        .arg("zset_a")
+        .arg(1)
+        .arg("y")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    sleep(Duration::from_millis(50).into()).await; // Give time for the invalidation of zset_a to be received.
+
+    let val: Vec<String> = get_cmd("ZINTER", test_with_optin)
+        .arg(2)
+        .arg("zset_a")
+        .arg("zset_b")
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val, vec!["x", "y"]);
+    assert_hit!(&con, 2);
+    assert_miss!(&con, 4);
+}
+
+/// The shard of the client-side cache that `key` is kept in, computed the way `ShardedLRU` does
+/// for the default cache size, which is split into 32 shards.
+fn cache_shard(key: &str) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hasher.write(key.as_bytes());
+    hasher.finish() % 32
+}
+
+// A cached multi-key reply that lost one of its keys must stay unservable, even when the next
+// fetch of the same command is only partly cached because an unrelated key in the shard of its
+// first key was invalidated while it was in flight.
+#[async_test]
+async fn test_cache_stale_multi_key_reply_is_not_revived_by_a_partial_insert(
+    test_with_optin: bool,
+) {
+    let ctx = TestContext::default();
+    if !ctx.protocol.supports_resp3() {
+        return;
+    }
+
+    let cache_config = if test_with_optin {
+        CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn)
+    } else {
+        CacheConfig::default()
+    };
+    let mut con = ctx
+        .async_connection_with_cache_config(cache_config)
+        .await
+        .unwrap();
+    let mut other_con = ctx.async_connection().await.unwrap();
+
+    // `SINTER set_a <key_b>` is cached under set_a. key_b has to be in another shard, and
+    // `unrelated` in set_a's shard, so that invalidating `unrelated` only rejects the insert
+    // under set_a.
+    let key_a = "set_a";
+    let key_b = (0..)
+        .map(|i| format!("set_b_{i}"))
+        .find(|key| cache_shard(key) != cache_shard(key_a))
+        .unwrap();
+    let unrelated = (0..)
+        .map(|i| format!("unrelated_{i}"))
+        .find(|key| cache_shard(key) == cache_shard(key_a))
+        .unwrap();
+    let _: () = redis::pipe()
+        .cmd("SADD")
+        .arg(key_a)
+        .arg(&["1", "2"])
+        .ignore()
+        .cmd("SADD")
+        .arg(&key_b)
+        .arg(&["2", "3"])
+        .ignore()
+        .query_async(&mut other_con)
+        .await
+        .unwrap();
+    // Read `unrelated` through the cache, so that the server sends its invalidations.
+    let _: Option<String> = get_cmd("GET", test_with_optin)
+        .arg(&unrelated)
+        .query_async(&mut con)
+        .await
+        .unwrap();
+
+    let sinter = get_cmd("SINTER", test_with_optin)
+        .arg(key_a)
+        .arg(&key_b)
+        .take();
+    for _ in 0..2 {
+        let val: Vec<String> = sinter.query_async(&mut con).await.unwrap();
+        assert_eq!(val, ["2"]);
+    }
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 2);
+
+    let _: () = redis::cmd("SADD")
+        .arg(&key_b)
+        .arg("1")
+        .query_async(&mut other_con)
+        .await
+        .unwrap();
+    sleep(Duration::from_millis(50).into()).await; // Give time for the invalidation of key_b to be received.
+
+    // The invalidation of `unrelated` is received while SINTER is in flight, so its reply is
+    // not cached under set_a, which still holds the old reply.
+    let (_, val): ((), Vec<String>) = redis::pipe()
+        .cmd("SET")
+        .arg(&unrelated)
+        .arg("1")
+        .add_command(sinter.clone())
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    let mut val = val;
+    val.sort();
+    assert_eq!(val, ["1", "2"]);
+    assert_miss!(&con, 3);
+
+    let mut val: Vec<String> = sinter.query_async(&mut con).await.unwrap();
+    val.sort();
+    assert_eq!(val, ["1", "2"], "the stale reply must not be served");
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 4);
+}
+
+// A reply that is in flight while the server flushes the database is stale and must not be cached.
+#[async_test]
+async fn test_cache_reply_in_flight_during_flushall_is_not_cached(test_with_optin: bool) {
+    let ctx = TestContext::default();
+    if !ctx.protocol.supports_resp3() {
+        return;
+    }
+
+    let cache_config = if test_with_optin {
+        CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn)
+    } else {
+        CacheConfig::default()
+    };
+    let mut con = ctx
+        .async_connection_with_cache_config(cache_config)
+        .await
+        .unwrap();
+    let mut other_con = ctx.async_connection().await.unwrap();
+    let _: () = redis::pipe()
+        .cmd("SET")
+        .arg("key_1")
+        .arg("1")
+        .ignore()
+        .cmd("SADD")
+        .arg("set_a")
+        .arg(&["1", "2"])
+        .ignore()
+        .cmd("SADD")
+        .arg("set_b")
+        .arg(&["2", "3"])
+        .ignore()
+        .query_async(&mut other_con)
+        .await
+        .unwrap();
+
+    let get = get_cmd("GET", test_with_optin).arg("key_1").take();
+    let sinter = get_cmd("SINTER", test_with_optin)
+        .arg(&["set_a", "set_b"])
+        .take();
+    // The server sends the FLUSHALL invalidation after its reply, so the PING makes sure it is
+    // received before the replies of GET and SINTER are cached.
+    let (val, inter): (Option<String>, Vec<String>) = redis::pipe()
+        .add_command(get.clone())
+        .add_command(sinter.clone())
+        .cmd("FLUSHALL")
+        .ignore()
+        .cmd("PING")
+        .ignore()
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(val.as_deref(), Some("1"));
+    assert_eq!(inter, ["2"]);
+    assert_miss!(&con, 2);
+
+    let val: Option<String> = get.query_async(&mut con).await.unwrap();
+    assert_eq!(val, None, "GET must not be served from before FLUSHALL");
+    let inter: Vec<String> = sinter.query_async(&mut con).await.unwrap();
+    assert!(
+        inter.is_empty(),
+        "SINTER must not be served from before FLUSHALL"
+    );
+    assert_hit!(&con, 0);
+    assert_miss!(&con, 4);
+}
+
 // Support function for testing pipelines
 fn get_pipe(atomic: bool) -> redis::Pipeline {
     if atomic {
@@ -1255,4 +1554,162 @@ async fn test_cache_is_cleared_on_flush(flush_all: bool) {
     assert_eq!(val, None);
     assert_hit!(&con, 2);
     assert_miss!(&con, 4);
+}
+
+// A command that reads several keys must not be served from the cache after any of them changed,
+// including keys that follow a key count (`ZUNION 2 zset_1 zset_2`).
+#[async_test]
+async fn test_cache_evicts_reply_when_any_key_it_reads_changes(test_with_optin: bool) {
+    // LCS, SINTERCARD and ZINTERCARD were added in Redis 7.0.
+    let ctx = run_test_if_version_supported!(REDIS_CE_7_0);
+    if !ctx.protocol.supports_resp3() {
+        return;
+    }
+
+    let cache_config = if test_with_optin {
+        CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn)
+    } else {
+        CacheConfig::default()
+    };
+    let mut other_con = ctx.async_connection().await.unwrap();
+    // Each command, and a command that changes one of the keys it reads.
+    let cases: [(&[&str], &[&str]); 10] = [
+        (&["EXISTS", "str_1", "str_2"], &["DEL", "str_2"]),
+        (&["LCS", "str_1", "str_2"], &["SET", "str_2", "text"]),
+        (&["SDIFF", "set_1", "set_2"], &["SADD", "set_2", "a"]),
+        (&["SINTER", "set_1", "set_2"], &["SADD", "set_2", "a"]),
+        (&["SUNION", "set_1", "set_2"], &["SADD", "set_2", "d"]),
+        (
+            &["SINTERCARD", "2", "set_1", "set_2"],
+            &["SADD", "set_2", "a"],
+        ),
+        (
+            &["ZDIFF", "2", "zset_1", "zset_2"],
+            &["ZADD", "zset_2", "1", "a"],
+        ),
+        (
+            &["ZINTER", "2", "zset_1", "zset_2"],
+            &["ZADD", "zset_2", "1", "a"],
+        ),
+        (
+            &["ZINTERCARD", "2", "zset_1", "zset_2"],
+            &["ZADD", "zset_2", "1", "a"],
+        ),
+        (
+            &["ZUNION", "2", "zset_1", "zset_2", "WITHSCORES"],
+            &["ZADD", "zset_1", "10", "a"],
+        ),
+    ];
+
+    for (args, change) in cases {
+        let _: () = get_pipe(true)
+            .cmd("FLUSHDB")
+            .ignore()
+            .cmd("MSET")
+            .arg(&["str_1", "ohmytext", "str_2", "mynewtext"])
+            .ignore()
+            .cmd("SADD")
+            .arg(&["set_1", "a", "b"])
+            .ignore()
+            .cmd("SADD")
+            .arg(&["set_2", "b", "c"])
+            .ignore()
+            .cmd("ZADD")
+            .arg(&["zset_1", "1", "a", "2", "b"])
+            .ignore()
+            .cmd("ZADD")
+            .arg(&["zset_2", "3", "b", "4", "c"])
+            .ignore()
+            .query_async(&mut other_con)
+            .await
+            .unwrap();
+        let mut con = ctx
+            .async_connection_with_cache_config(cache_config)
+            .await
+            .unwrap();
+        let cmd = get_cmd(args[0], test_with_optin).arg(&args[1..]).take();
+        let uncached_cmd = redis::cmd(args[0]).arg(&args[1..]).take();
+
+        let reply: redis::Value = cmd.query_async(&mut con).await.unwrap();
+        let expected: redis::Value = uncached_cmd.query_async(&mut other_con).await.unwrap();
+        assert_eq!(reply, expected, "{args:?}");
+        let reply: redis::Value = cmd.query_async(&mut con).await.unwrap();
+        assert_eq!(reply, expected, "{args:?}");
+        assert_hit!(&con, 1);
+        assert_miss!(&con, 1);
+
+        let _: () = redis::cmd(change[0])
+            .arg(&change[1..])
+            .query_async(&mut other_con)
+            .await
+            .unwrap();
+        sleep(Duration::from_millis(50).into()).await; // Give time for push message to be received.
+
+        let reply: redis::Value = cmd.query_async(&mut con).await.unwrap();
+        let changed: redis::Value = uncached_cmd.query_async(&mut other_con).await.unwrap();
+        assert_ne!(
+            changed, expected,
+            "{change:?} must change the reply of {args:?}"
+        );
+        assert_eq!(reply, changed, "{args:?} after {change:?}");
+        assert_hit!(&con, 1);
+        assert_miss!(&con, 2);
+    }
+}
+
+// A command that reads several keys must not be served from the cache after any of them expired,
+// not only after its first key expired.
+#[async_test]
+async fn test_cache_reply_expires_with_any_key_it_reads(test_with_optin: bool) {
+    let ctx = TestContext::default();
+    if !ctx.protocol.supports_resp3() {
+        return;
+    }
+
+    let cache_config = if test_with_optin {
+        CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn)
+    } else {
+        CacheConfig::default()
+    };
+    let mut con = ctx
+        .async_connection_with_cache_config(cache_config)
+        .await
+        .unwrap();
+    let mut other_con = ctx.async_connection().await.unwrap();
+    // Without active expiry, the server only deletes an expired key, and sends its invalidation,
+    // once the key is accessed. So only the key's TTL can expire the cached reply.
+    let _: () = redis::cmd("DEBUG")
+        .arg(&["SET-ACTIVE-EXPIRE", "0"])
+        .query_async(&mut other_con)
+        .await
+        .unwrap();
+    let _: () = get_pipe(true)
+        .cmd("SADD")
+        .arg(&["set_1", "a", "b"])
+        .ignore()
+        .cmd("SADD")
+        .arg(&["set_2", "b", "c"])
+        .ignore()
+        .cmd("PEXPIRE")
+        .arg(&["set_2", "500"])
+        .ignore()
+        .query_async(&mut other_con)
+        .await
+        .unwrap();
+
+    let cmd = get_cmd("SINTER", test_with_optin)
+        .arg(&["set_1", "set_2"])
+        .take();
+    for _ in 0..2 {
+        let reply: Vec<String> = cmd.query_async(&mut con).await.unwrap();
+        assert_eq!(reply, ["b"]);
+    }
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 1);
+
+    sleep(Duration::from_millis(600).into()).await;
+    let reply: Vec<String> = cmd.query_async(&mut con).await.unwrap();
+    assert_eq!(reply, Vec::<String>::new());
+    assert_hit!(&con, 1);
+    assert_miss!(&con, 2);
 }

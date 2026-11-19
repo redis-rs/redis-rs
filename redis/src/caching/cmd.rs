@@ -52,6 +52,10 @@ impl CacheablePipeline<'_> {
 
 pub(crate) struct SingleCachedCommand<'a> {
     pub(crate) redis_key: &'a [u8],
+    /// The keys the command reads besides `redis_key` (`SINTER a b` reads `b` too), each with
+    /// the invalidation count of its shard. The reply is cached under `redis_key` and evicted
+    /// when any of these keys is invalidated. Empty for commands that read a single key.
+    pub(crate) dependent_keys: Vec<(&'a [u8], usize)>,
     pub(crate) cmd_key: &'a [u8],
     pub(crate) cmd_args: CmdArgs<'a>,
     pub(crate) cmd: CmdRef<'a>,
@@ -84,23 +88,51 @@ impl CacheableCommand<'_> {
         cache_manager: &CacheManager,
         mut replies: impl Iterator<Item = Value>,
     ) -> RedisResult<Value> {
-        if cache_manager.cache_config.mode == CacheMode::OptIn {
-            // Skipping response of CLIENT CACHING YES
-            let _ = get_next_reply(&mut replies)?;
-        }
+        let opt_in = cache_manager.cache_config.mode == CacheMode::OptIn;
         match self {
             CacheableCommand::Single(cached_command) => {
-                if let (Some(pttl), Some(reply)) = (replies.next(), replies.next()) {
+                // One `PTTL` reply per key the command reads, then the command's reply.
+                let pttls: Vec<Value> = replies
+                    .by_ref()
+                    .take(1 + cached_command.dependent_keys.len())
+                    .collect();
+                if opt_in {
+                    // Skipping response of CLIENT CACHING YES
+                    let _ = get_next_reply(&mut replies)?;
+                }
+                if let (true, Some(reply)) = (
+                    pttls.len() == 1 + cached_command.dependent_keys.len(),
+                    replies.next(),
+                ) {
                     if !matches!(&reply, &Value::ServerError(_)) {
-                        cache_manager.insert(
-                            cached_command.redis_key,
-                            cached_command.cmd_key,
-                            cached_command.cmd_args,
-                            reply.clone(),
-                            cached_command.client_side_expire,
-                            &pttl,
-                            cached_command.invalidation_count,
-                        );
+                        if cached_command.dependent_keys.is_empty() {
+                            cache_manager.insert(
+                                cached_command.redis_key,
+                                cached_command.cmd_key,
+                                cached_command.cmd_args,
+                                reply.clone(),
+                                cached_command.client_side_expire,
+                                &pttls[0],
+                                cached_command.invalidation_count,
+                            );
+                        } else {
+                            let (keys, invalidation_counts): (Vec<&[u8]>, Vec<usize>) =
+                                std::iter::once((
+                                    cached_command.redis_key,
+                                    cached_command.invalidation_count,
+                                ))
+                                .chain(cached_command.dependent_keys.iter().copied())
+                                .unzip();
+                            cache_manager.insert_multi(
+                                &keys,
+                                cached_command.cmd_key,
+                                cached_command.cmd_args,
+                                reply.clone(),
+                                cached_command.client_side_expire,
+                                &pttls,
+                                &invalidation_counts,
+                            );
+                        }
                     }
 
                     Ok(reply)
@@ -118,6 +150,10 @@ impl CacheableCommand<'_> {
                 client_side_expire,
                 tail_args: _,
             } => {
+                if opt_in {
+                    // Skipping response of CLIENT CACHING YES
+                    let _ = get_next_reply(&mut replies)?;
+                }
                 if let Some(Value::Array(mget_values)) = replies.next() {
                     for ((key_value, pttl_value), (key_index, cached_command)) in
                         zip(zip(mget_values, replies), commands)
@@ -147,15 +183,24 @@ impl CacheableCommand<'_> {
     }
 
     pub(crate) fn pack_command(&self, cache_manager: &CacheManager, pipeline: &mut Pipeline) {
-        if cache_manager.cache_config.mode == CacheMode::OptIn {
-            let mut cmd = Cmd::new();
-            cmd.arg("CLIENT").arg("CACHING").arg("YES");
-            pipeline.add_command(cmd);
-        }
+        // In opt-in mode the server only tracks the keys of the command that directly follows
+        // `CLIENT CACHING YES`, so it has to precede the cached command itself, not the `PTTL`
+        // probes, which don't read every key of a multi-key command.
+        let add_opt_in = |pipeline: &mut Pipeline| {
+            if cache_manager.cache_config.mode == CacheMode::OptIn {
+                let mut cmd = Cmd::new();
+                cmd.arg("CLIENT").arg("CACHING").arg("YES");
+                pipeline.add_command(cmd);
+            }
+        };
 
         match self {
             CacheableCommand::Single(scc) => {
                 pipeline.add_command(Cmd::pttl(scc.redis_key));
+                for (key, _) in &scc.dependent_keys {
+                    pipeline.add_command(Cmd::pttl(key));
+                }
+                add_opt_in(pipeline);
                 pipeline.add_command_ref(scc.cmd);
             }
             CacheableCommand::Multiple {
@@ -173,6 +218,7 @@ impl CacheableCommand<'_> {
                 for tail_arg in tail_args {
                     cmd.arg(tail_arg);
                 }
+                add_opt_in(pipeline);
                 pipeline.add_command(cmd);
                 for command in commands {
                     pipeline.add_command(Cmd::pttl(command.1.redis_key));
