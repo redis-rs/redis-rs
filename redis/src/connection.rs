@@ -1998,11 +1998,12 @@ impl Connection {
             return Err(RedisError::make_empty_command());
         }
         let result = self.con.send_bytes(bytes);
-        if self.protocol.supports_resp3()
-            && let Err(e) = &result
-            && e.is_connection_dropped()
-        {
-            self.send_disconnect();
+        if result.is_err() {
+            // A failed write, including a write timeout, may have sent part of the command, or
+            // all of it with its reply still to come, and there's no way to tell which. The
+            // server would read the next command as the rest of this one, so the connection
+            // can't be used anymore.
+            self.close_connection();
         }
         result
     }
