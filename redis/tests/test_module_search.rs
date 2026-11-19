@@ -212,6 +212,8 @@ fn test_module_search_ft_create_create_options() {
         ("multiple_prefixes", |opts| {
             opts.prefix("pref2").prefix("pref3")
         }),
+        // valkey-search accepts only these values, which are also the server defaults, so the
+        // Redis-only list repeats both options with other values.
         ("language", |opts| opts.language(SearchLanguage::English)),
         ("score", |opts| opts.score(1.0)),
         ("no_offsets", |opts| opts.no_offsets()),
@@ -224,12 +226,17 @@ fn test_module_search_ft_create_create_options() {
 
     // Redis-only options.
     let redis_only: Vec<(&'static str, Modifier<CreateOptions>)> = vec![
+        ("non_default_language", |opts| {
+            opts.language(SearchLanguage::German)
+        }),
+        ("non_default_score", |opts| opts.score(0.5)),
         ("filter", |opts| opts.filter("@field: value")),
         ("language_field", |opts| {
             opts.language_field("language_field")
         }),
         ("score_field", |opts| opts.score_field("score_field")),
-        ("temporary", |opts| opts.temporary(1)),
+        // Long enough that the index can't expire before the test reads it back.
+        ("temporary", |opts| opts.temporary(300)),
         ("no_highlight", |opts| opts.no_highlight()),
         ("no_freqs", |opts| opts.no_freqs()),
     ];
@@ -264,12 +271,15 @@ where
         ("alias", |field| field.alias("text_alias")),
         ("sortable", |field| field.sortable(Sortable::Yes)),
         ("no_stem", |field| field.no_stem(true)),
+        // valkey-search accepts only the default weight, so the Redis-only list repeats it
+        // with another value.
         ("weight", |field| field.weight(1.0)),
         ("with_suffix_trie", |field| field.with_suffix_trie(true)),
     ];
 
     // Redis-only modifiers.
     let redis_only: Vec<(&'static str, Modifier<SchemaTextField>)> = vec![
+        ("non_default_weight", |field| field.weight(2.0)),
         ("sortable_unf", |field| field.sortable(Sortable::Unf)),
         ("phonetic", |field| field.phonetic(Phonetic::DmEnglish)),
         ("index_empty", |field| field.index_empty(true)),
@@ -330,7 +340,7 @@ where
     let portable: Vec<(&'static str, Modifier<SchemaTagField>)> = vec![
         ("alias", |field| field.alias("tag_alias")),
         ("sortable", |field| field.sortable(Sortable::Yes)),
-        ("separator", |field| field.separator(',')),
+        ("separator", |field| field.separator(';')),
         ("case_sensitive", |field| field.case_sensitive(true)),
     ];
 
@@ -632,12 +642,12 @@ where
     // HNSW-specific builder modifiers (applied before .build())
     // EPSILON is Redis-only. The other options work on both servers.
     let mut builder_modifiers: Vec<(&'static str, HnswVectorFieldBuilderModifier)> = vec![
-        ("m", |builder| builder.m(16)),
-        ("ef_construction", |builder| builder.ef_construction(200)),
+        ("m", |builder| builder.m(24)),
+        ("ef_construction", |builder| builder.ef_construction(300)),
         ("ef_runtime", |builder| builder.ef_runtime(20)),
     ];
     if !is_valkey {
-        builder_modifiers.push(("epsilon", |builder| builder.epsilon(0.01)));
+        builder_modifiers.push(("epsilon", |builder| builder.epsilon(0.05)));
     }
 
     // INDEXMISSING is Redis-only. Alias works on both servers.
@@ -831,7 +841,7 @@ where
                     if is_leanvec {
                         modifiers.push((
                             "reduce",
-                            Box::new(move |builder| builder.compression(compression).reduce(64)),
+                            Box::new(move |builder| builder.compression(compression).reduce(32)),
                         ));
                     }
 
