@@ -13,6 +13,7 @@ use crate::errors::{ErrorKind, RedisError, ServerError, ServerErrorKind};
 use crate::io::tcp::{TcpSettings, stream_with_settings};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
+use crate::subscription_tracker::{SubscriptionKind, SubscriptionTracker, subscription_change};
 use crate::types::{
     FromRedisValue, HashMap, PushKind, RedisResult, SyncPushSender, ToRedisArgs, Value,
     from_redis_value_ref,
@@ -911,6 +912,10 @@ pub struct Connection {
     /// The number of messages that are expected to be returned from the server,
     /// but the user no longer waits for - answers for requests that already returned a transient error.
     messages_to_skip: usize,
+
+    /// The subscriptions the server has confirmed, used to determine how many confirmations a
+    /// zero-argument [Self::unsubscribe_resp3] or [Self::punsubscribe_resp3] is answered with.
+    subscriptions: SubscriptionTracker,
 }
 
 /// Represents a RESP2 pubsub connection.
@@ -1638,6 +1643,7 @@ fn setup_connection(
         protocol: connection_info.protocol,
         push_sender: None,
         messages_to_skip: 0,
+        subscriptions: SubscriptionTracker::default(),
     };
 
     if execute_connection_pipeline(
@@ -1953,6 +1959,13 @@ impl Connection {
                 }
             };
             self.try_send(&result);
+            // Only push values are tracked, since a regular reply may be an array that happens to
+            // look like a confirmation.
+            if let Ok(value @ Value::Push { .. }) = &result
+                && let Some(change) = subscription_change(value)
+            {
+                self.subscriptions.apply(change);
+            }
 
             let Err(err) = &result else {
                 // Push messages aren't replies, so they must not stand in for a late response.
@@ -2007,15 +2020,60 @@ impl Connection {
         result
     }
 
+    /// Sends a RESP3 subscription command and waits until the server has answered it.
+    ///
+    /// The server confirms the command with one push per argument, which is forwarded to the
+    /// push sender, or rejects it with a single error, e.g. when an ACL doesn't allow the channel.
+    /// That error is a regular reply, so if it was left unread it would be returned as the reply
+    /// to the next command, and every following command would get the previous one's reply.
+    fn send_resp3_subscription(&mut self, cmd: &Cmd, expected: PushKind) -> RedisResult<()> {
+        if self.pubsub {
+            self.exit_pubsub()?;
+        }
+
+        // A zero-argument unsubscribe is confirmed once for each subscription of its kind, or
+        // once with a nil channel when there are none, and the confirmations don't carry that
+        // count. The connection doesn't send anything else while it waits, so the tracked
+        // subscriptions are the ones the server removes. A zero-argument subscribe is rejected
+        // with a single error.
+        let mut remaining = match cmd.args_iter().len().saturating_sub(1) {
+            0 => match expected {
+                PushKind::Unsubscribe => self
+                    .subscriptions
+                    .unsubscribe_all_target(SubscriptionKind::Channel),
+                PushKind::PUnsubscribe => self
+                    .subscriptions
+                    .unsubscribe_all_target(SubscriptionKind::Pattern),
+                _ => 1,
+            },
+            args => args,
+        };
+
+        self.send_bytes(&cmd.get_packed_command())?;
+        while remaining > 0 {
+            match self.read(false)? {
+                Value::Push { kind, .. } if kind == expected => remaining -= 1,
+                Value::Push { .. } => {}
+                Value::ServerError(err) => return Err(err.into()),
+                value => {
+                    return Err((
+                        ErrorKind::Client,
+                        "Unexpected subscription response",
+                        format!("{value:?}"),
+                    )
+                        .into());
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Subscribes to a new channel(s).
     ///
     /// This only works if the connection was configured with [ProtocolVersion::RESP3] and [Self::set_push_sender].
     pub fn subscribe_resp3<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         check_resp3!(self.protocol);
-        cmd("SUBSCRIBE")
-            .arg(channel)
-            .set_no_response(true)
-            .exec(self)
+        self.send_resp3_subscription(cmd("SUBSCRIBE").arg(channel), PushKind::Subscribe)
     }
 
     /// Subscribes to new channel(s) with pattern(s).
@@ -2023,10 +2081,7 @@ impl Connection {
     /// This only works if the connection was configured with [ProtocolVersion::RESP3] and [Self::set_push_sender].
     pub fn psubscribe_resp3<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         check_resp3!(self.protocol);
-        cmd("PSUBSCRIBE")
-            .arg(pchannel)
-            .set_no_response(true)
-            .exec(self)
+        self.send_resp3_subscription(cmd("PSUBSCRIBE").arg(pchannel), PushKind::PSubscribe)
     }
 
     /// Unsubscribes from a channel(s).
@@ -2034,10 +2089,7 @@ impl Connection {
     /// This only works if the connection was configured with [ProtocolVersion::RESP3] and [Self::set_push_sender].
     pub fn unsubscribe_resp3<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         check_resp3!(self.protocol);
-        cmd("UNSUBSCRIBE")
-            .arg(channel)
-            .set_no_response(true)
-            .exec(self)
+        self.send_resp3_subscription(cmd("UNSUBSCRIBE").arg(channel), PushKind::Unsubscribe)
     }
 
     /// Unsubscribes from channel pattern(s).
@@ -2045,10 +2097,7 @@ impl Connection {
     /// This only works if the connection was configured with [ProtocolVersion::RESP3] and [Self::set_push_sender].
     pub fn punsubscribe_resp3<T: ToRedisArgs>(&mut self, pchannel: T) -> RedisResult<()> {
         check_resp3!(self.protocol);
-        cmd("PUNSUBSCRIBE")
-            .arg(pchannel)
-            .set_no_response(true)
-            .exec(self)
+        self.send_resp3_subscription(cmd("PUNSUBSCRIBE").arg(pchannel), PushKind::PUnsubscribe)
     }
 }
 
