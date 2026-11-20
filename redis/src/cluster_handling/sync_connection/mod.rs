@@ -730,8 +730,23 @@ where
             }
         };
 
+        let response_policy = response_policy.unwrap_or(ResponsePolicy::Special);
+        // A node that replied with an error failed its part of the request, like a node that
+        // couldn't be reached. Only the `Special` policy passes the nodes' errors on as values.
+        let results: Vec<_> = if response_policy == ResponsePolicy::Special {
+            results
+        } else {
+            results
+                .into_iter()
+                .map(|result| match result {
+                    Ok((_, Value::ServerError(err))) => Err(err.into()),
+                    result => result,
+                })
+                .collect()
+        };
+
         match response_policy {
-            Some(ResponsePolicy::AllSucceeded) => {
+            ResponsePolicy::AllSucceeded => {
                 let mut last_result = None;
                 for result in results {
                     last_result = Some(result?);
@@ -747,7 +762,7 @@ where
                     })
                     .map(|(_, res)| res)
             }
-            Some(ResponsePolicy::OneSucceeded) => {
+            ResponsePolicy::OneSucceeded => {
                 let mut last_failure = None;
 
                 for result in results {
@@ -760,13 +775,13 @@ where
                 Err(last_failure
                     .unwrap_or_else(|| (ErrorKind::Io, "Couldn't find a connection").into()))
             }
-            Some(ResponsePolicy::CombineMaps) => crate::cluster_routing::combine_map_results(
+            ResponsePolicy::CombineMaps => crate::cluster_routing::combine_map_results(
                 results
                     .into_iter()
                     .map(|result| result.map(|(_, value)| value))
                     .collect::<RedisResult<Vec<_>>>()?,
             ),
-            Some(ResponsePolicy::FirstSucceededNonEmptyOrAllEmpty) => {
+            ResponsePolicy::FirstSucceededNonEmptyOrAllEmpty => {
                 // Attempt to return the first result that isn't `Nil` or an error.
                 // If no such response is found and all servers returned `Nil`, it indicates that all shards are empty, so return `Nil`.
                 // If we received only errors, return the last received error.
@@ -789,28 +804,28 @@ where
                         .unwrap_or_else(|| (ErrorKind::Io, "Couldn't find a connection").into()))
                 }
             }
-            Some(ResponsePolicy::Aggregate(op)) => {
+            ResponsePolicy::Aggregate(op) => {
                 let results = results
                     .into_iter()
                     .map(|res| res.map(|(_, val)| val))
                     .collect::<RedisResult<Vec<_>>>()?;
                 crate::cluster_routing::aggregate(results, op)
             }
-            Some(ResponsePolicy::AggregateLogical(op)) => {
+            ResponsePolicy::AggregateLogical(op) => {
                 let results = results
                     .into_iter()
                     .map(|res| res.map(|(_, val)| val))
                     .collect::<RedisResult<Vec<_>>>()?;
                 crate::cluster_routing::logical_aggregate(results, op)
             }
-            Some(ResponsePolicy::AggregateArray(op)) => {
+            ResponsePolicy::AggregateArray(op) => {
                 let results = results
                     .into_iter()
                     .map(|res| res.map(|(_, val)| val))
                     .collect::<RedisResult<Vec<_>>>()?;
                 crate::cluster_routing::aggregate_array(results, op)
             }
-            Some(ResponsePolicy::CombineArrays) => {
+            ResponsePolicy::CombineArrays => {
                 let results = results
                     .into_iter()
                     .map(|res| res.map(|(_, val)| val))
@@ -824,7 +839,7 @@ where
                     _ => crate::cluster_routing::combine_array_results(results),
                 }
             }
-            Some(ResponsePolicy::Special) | None => {
+            ResponsePolicy::Special => {
                 // This is our assumption - if there's no coherent way to aggregate the responses, we just map each response to the sender, and pass it to the user.
                 // TODO - once Value::Error is merged, we can use join_all and report separate errors and also pass successes.
                 let results = results
