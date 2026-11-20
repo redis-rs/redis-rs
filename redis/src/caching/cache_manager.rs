@@ -2,6 +2,7 @@ use super::cmd::{CacheableCommand, CacheablePipeline, MultipleCachedCommandPart}
 use super::sharded_lru::*;
 use super::{CacheConfig, CacheMode, CacheStatistics};
 use crate::cmd::{Arg, CmdRef};
+use crate::known_commands::KnownCommand;
 use crate::{FromRedisValue, Pipeline, PushKind, Value};
 use std::cmp::min;
 use std::ops::Add;
@@ -150,16 +151,12 @@ impl CacheManager {
         &self,
         buffer: &mut Vec<u8>,
         args: &mut Vec<Arg<usize>>,
-        single_command_name: &[u8],
         redis_key: &[u8],
         json_path_key: Option<&[u8]>,
     ) {
         buffer.clear();
         args.clear();
-        for part in [Some(single_command_name), Some(redis_key), json_path_key]
-            .into_iter()
-            .flatten()
-        {
+        for part in [Some(redis_key), json_path_key].into_iter().flatten() {
             buffer.extend_from_slice(part);
             args.push(Arg::Simple(buffer.len()));
         }
@@ -179,7 +176,7 @@ impl CacheManager {
         &self,
         cmd: CmdRef<'a>,
         is_json_command: bool,
-        single_command_name: &[u8],
+        single_command: KnownCommand,
         commands: &mut Vec<(usize, MultipleCachedCommandPart<'a>)>,
         response: &mut Vec<Value>,
         tail_args: &mut Vec<&'a [u8]>,
@@ -195,12 +192,15 @@ impl CacheManager {
             self.prepare_key_buffer(
                 &mut key_test_buffer,
                 &mut key_test_args,
-                single_command_name,
                 redis_key,
                 json_path_key,
             );
 
-            match self.get(redis_key, &key_test_buffer, CmdArgs::new(&key_test_args, 0)) {
+            match self.get(
+                redis_key,
+                &key_test_buffer,
+                CmdArgs::with_command(&key_test_args, 0, Some(single_command)),
+            ) {
                 Some(value) => response.push(value),
                 None => {
                     response.push(Value::Nil);
@@ -208,6 +208,7 @@ impl CacheManager {
                         i,
                         MultipleCachedCommandPart {
                             redis_key,
+                            command: single_command,
                             cmd_key: key_test_buffer.clone(),
                             cmd_args: key_test_args.clone(),
                             invalidation_count: self.invalidation_count(redis_key),
@@ -221,20 +222,20 @@ impl CacheManager {
     fn handle_multi_key_command<'a>(
         &self,
         cmd: CmdRef<'a>,
-        command_name_str: &'a str,
-        single_command_name: &[u8],
+        command: KnownCommand,
+        single_command: KnownCommand,
         client_side_expire: Instant,
     ) -> PrepCacheItem<'a> {
         let mut commands = Vec::new();
         let mut tail_args: Vec<&'a [u8]> = Vec::new();
         let mut response = Vec::new();
 
-        let is_json_command = command_name_str.starts_with("JSON");
+        let is_json_command = command.is_json_command();
 
         self.process_multi_key_arguments(
             cmd,
             is_json_command,
-            single_command_name,
+            single_command,
             &mut commands,
             &mut response,
             &mut tail_args,
@@ -245,7 +246,7 @@ impl CacheManager {
         }
 
         PrepCacheItem::NotCached(CacheableCommand::Multiple {
-            command_name: command_name_str,
+            command,
             commands,
             response,
             client_side_expire,
@@ -263,11 +264,11 @@ impl CacheManager {
             None => return PrepCacheItem::NotCacheable,
         };
 
-        // The argument offsets are part of the key, otherwise commands whose arguments
-        // concatenate to the same bytes (`HMGET h a b` and `HMGET h ab`) share an entry.
-        let cmd_key = cmd.data();
-        let (offsets, base) = cmd.arg_offsets();
-        let cmd_args = CmdArgs::new(offsets, base);
+        // The command identity and argument offsets are part of the key, otherwise commands whose
+        // arguments concatenate to the same bytes (`HMGET h a b` and `HMGET h ab`) or different
+        // commands with the same arguments (`GET key` and `STRLEN key`) share an entry.
+        let (cmd_key, offsets, base) = cmd.cache_key_parts();
+        let cmd_args = CmdArgs::with_command(offsets, base, cmd.command());
 
         if let Some(value) = self.get(redis_key, cmd_key, cmd_args) {
             return PrepCacheItem::Cached(value);
@@ -295,23 +296,18 @@ impl CacheManager {
             return PrepCacheItem::NotCacheable;
         }
 
-        let command_name = match cmd.arg_idx(0) {
-            Some(name) => name,
+        let command = match cmd.command() {
+            Some(command) => command,
             None => return PrepCacheItem::NotCacheable,
         };
 
         let client_side_expire = self.calculate_expiration_time(cmd);
 
-        if let Some((command_name_str, single_command_name)) = is_multi_key(command_name) {
-            return self.handle_multi_key_command(
-                cmd,
-                command_name_str,
-                single_command_name,
-                client_side_expire,
-            );
+        if let Some((command, single_command)) = command.is_multi_key() {
+            return self.handle_multi_key_command(cmd, command, single_command, client_side_expire);
         }
 
-        if crate::commands::is_cachable_cmd(command_name) {
+        if command.is_cacheable() {
             return self.handle_single_key_command(cmd, client_side_expire);
         }
 
@@ -362,17 +358,6 @@ impl CacheManager {
     }
 }
 
-/// Checks if the given command is cacheable and supports multiple keys.
-/// If the command is cacheable, it returns a tuple containing the command name as a string
-/// and the single variant of the command (e.g., "MGET" maps to "GET").
-fn is_multi_key(command_name: &[u8]) -> Option<(&'static str, &'static [u8])> {
-    match command_name {
-        b"MGET" => Some(("MGET", b"GET")),
-        b"JSON.MGET" => Some(("JSON.MGET", b"JSON.GET")),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -389,9 +374,8 @@ mod tests {
             .arg("field")
             .clone();
         let cmd = CmdRef::from_cmd(&cmd);
-        let cmd_key = cmd.data();
-        let (offsets, base) = cmd.arg_offsets();
-        let cmd_args = CmdArgs::new(offsets, base);
+        let (cmd_key, offsets, base) = cmd.cache_key_parts();
+        let cmd_args = CmdArgs::with_command(offsets, base, cmd.command());
 
         let cache_manager = CacheManager::new(CacheConfig::new());
         let secs_10 = Instant::now().add(Duration::from_secs(10));
@@ -525,6 +509,45 @@ mod tests {
     }
 
     #[test]
+    fn test_known_command_cache_key_matches_manual_command() {
+        let cache_manager = CacheManager::new(CacheConfig::new());
+        let expire = Instant::now().add(Duration::from_secs(10));
+
+        let known_get = Cmd::get("key");
+        let PrepCacheItem::NotCached(CacheableCommand::Single(scc)) =
+            cache_manager.get_cached_cmd(CmdRef::from_cmd(&known_get))
+        else {
+            panic!("GET must be cacheable and not cached yet");
+        };
+        cache_manager.insert(
+            scc.redis_key,
+            scc.cmd_key,
+            scc.cmd_args,
+            Value::Int(2),
+            expire,
+            &Value::Nil,
+            scc.invalidation_count,
+        );
+
+        let manual_get = crate::cmd("GET").arg("key").clone();
+        assert!(matches!(
+            cache_manager.get_cached_cmd(CmdRef::from_cmd(&manual_get)),
+            PrepCacheItem::Cached(Value::Int(2))
+        ));
+        assert!(matches!(
+            cache_manager.get_cached_cmd(CmdRef::from_cmd(&known_get)),
+            PrepCacheItem::Cached(Value::Int(2))
+        ));
+
+        // The same arguments under a different command must not share the entry.
+        let strlen = Cmd::strlen("key");
+        assert!(matches!(
+            cache_manager.get_cached_cmd(CmdRef::from_cmd(&strlen)),
+            PrepCacheItem::NotCached(_)
+        ));
+    }
+
+    #[test]
     fn test_invalidate_push_messages() {
         let redis_key = b"test_redis_key".as_slice();
         let redis_key_2 = b"test_redis_key_2".as_slice();
@@ -534,9 +557,8 @@ mod tests {
             .arg("field")
             .clone();
         let cmd = CmdRef::from_cmd(&cmd);
-        let cmd_key = cmd.data();
-        let (offsets, base) = cmd.arg_offsets();
-        let cmd_args = CmdArgs::new(offsets, base);
+        let (cmd_key, offsets, base) = cmd.cache_key_parts();
+        let cmd_args = CmdArgs::with_command(offsets, base, cmd.command());
 
         let cache_manager = CacheManager::new(CacheConfig::new());
         let secs_10 = Instant::now().add(Duration::from_secs(10));
@@ -592,9 +614,8 @@ mod tests {
             .arg("field")
             .clone();
         let cmd = CmdRef::from_cmd(&cmd);
-        let cmd_key = cmd.data();
-        let (offsets, base) = cmd.arg_offsets();
-        let cmd_args = CmdArgs::new(offsets, base);
+        let (cmd_key, offsets, base) = cmd.cache_key_parts();
+        let cmd_args = CmdArgs::with_command(offsets, base, cmd.command());
 
         let shared_cache_manager = CacheManager::new(CacheConfig::new());
 

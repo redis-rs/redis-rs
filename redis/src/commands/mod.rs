@@ -2,6 +2,7 @@
 
 use crate::cmd::{Cmd, Iter, cmd};
 use crate::connection::{Connection, ConnectionLike, Msg, RedisConnectionInfo};
+use crate::known_commands::KnownCommand;
 use crate::pipeline::Pipeline;
 #[cfg(feature = "search")]
 use crate::search::{CreateOptions, SearchSchema};
@@ -56,218 +57,6 @@ pub mod conversions;
 #[cfg(feature = "json")]
 use conversions::{flattened_array, try_singleton_then_vec, try_vec_then_singleton};
 
-#[cfg(any(feature = "cluster", feature = "cache-aio"))]
-enum Properties {
-    ReadOnlyCacheable,
-    ReadOnly,
-    Neither,
-}
-
-#[cfg(any(feature = "cluster", feature = "cache-aio"))]
-fn command_properties(cmd: &[u8]) -> Properties {
-    match cmd {
-        // ReadonlyCacheable: Commands that operate on concrete keys and return cacheable values
-        b"BITCOUNT" | b"BITFIELD_RO" | b"BITPOS" | b"DUMP" | b"EXISTS" | b"GEODIST"
-        | b"GEOHASH" | b"GEOPOS" | b"GET" | b"GETBIT" | b"GETRANGE" | b"HEXISTS" | b"HGET"
-        | b"HGETALL" | b"HKEYS" | b"HLEN" | b"HMGET" | b"HSTRLEN" | b"HVALS" | b"JSON.ARRINDEX"
-        | b"JSON.ARRLEN" | b"JSON.GET" | b"JSON.OBJLEN" | b"JSON.OBJKEYS" | b"JSON.MGET"
-        | b"JSON.RESP" | b"JSON.STRLEN" | b"JSON.TYPE" | b"LCS" | b"LINDEX" | b"LLEN" | b"LPOS"
-        | b"LRANGE" | b"MGET" | b"SCARD" | b"SDIFF" | b"SINTER" | b"SINTERCARD" | b"SISMEMBER"
-        | b"SMEMBERS" | b"SMISMEMBER" | b"STRLEN" | b"SUBSTR" | b"SUNION" | b"TYPE" | b"ZCARD"
-        | b"ZCOUNT" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZLEXCOUNT" | b"ZMSCORE"
-        | b"ZRANGE" | b"ZRANGEBYLEX" | b"ZRANGEBYSCORE" | b"ZRANK" | b"ZREVRANGE"
-        | b"ZREVRANGEBYLEX" | b"ZREVRANGEBYSCORE" | b"ZREVRANK" | b"ZSCORE" | b"ZUNION" => {
-            Properties::ReadOnlyCacheable
-        }
-
-        b"ACL CAT"
-        | b"ACL DELUSER"
-        | b"ACL DRYRUN"
-        | b"ACL GENPASS"
-        | b"ACL GETUSER"
-        | b"ACL HELP"
-        | b"ACL LIST"
-        | b"ACL LOAD"
-        | b"ACL LOG"
-        | b"ACL SAVE"
-        | b"ACL SETUSER"
-        | b"ACL USERS"
-        | b"ACL WHOAMI"
-        | b"AUTH"
-        | b"BF.CARD"
-        | b"BF.EXISTS"
-        | b"BF.INFO"
-        | b"BF.MEXISTS"
-        | b"BF.SCANDUMP"
-        | b"BGREWRITEAOF"
-        | b"BGSAVE"
-        | b"PFCOUNT"
-        | b"CLIENT ID"
-        | b"CLIENT CACHING"
-        | b"CLIENT CAPA"
-        | b"CLIENT GETNAME"
-        | b"CLIENT GETREDIR"
-        | b"CLIENT HELP"
-        | b"CLIENT INFO"
-        | b"CLIENT KILL"
-        | b"CLIENT LIST"
-        | b"CLIENT NO-EVICT"
-        | b"CLIENT NO-TOUCH"
-        | b"CLIENT PAUSE"
-        | b"CLIENT REPLY"
-        | b"CLIENT SETINFO"
-        | b"CLIENT SETNAME"
-        | b"CLIENT TRACKING"
-        | b"CLIENT TRACKINGINFO"
-        | b"CLIENT UNBLOCK"
-        | b"CLIENT UNPAUSE"
-        | b"CLUSTER COUNT-FAILURE-REPORTS"
-        | b"CLUSTER COUNTKEYSINSLOT"
-        | b"CLUSTER FAILOVER"
-        | b"CLUSTER GETKEYSINSLOT"
-        | b"CLUSTER HELP"
-        | b"CLUSTER INFO"
-        | b"CLUSTER KEYSLOT"
-        | b"CLUSTER LINKS"
-        | b"CLUSTER MYID"
-        | b"CLUSTER MYSHARDID"
-        | b"CLUSTER NODES"
-        | b"CLUSTER REPLICATE"
-        | b"CLUSTER SAVECONFIG"
-        | b"CLUSTER SHARDS"
-        | b"CLUSTER SLOTS"
-        | b"COMMAND COUNT"
-        | b"COMMAND DOCS"
-        | b"COMMAND GETKEYS"
-        | b"COMMAND GETKEYSANDFLAGS"
-        | b"COMMAND HELP"
-        | b"COMMAND INFO"
-        | b"COMMAND LIST"
-        | b"CONFIG GET"
-        | b"CONFIG HELP"
-        | b"CONFIG RESETSTAT"
-        | b"CONFIG REWRITE"
-        | b"CONFIG SET"
-        | b"DBSIZE"
-        | b"ECHO"
-        | b"EVAL_RO"
-        | b"EVALSHA_RO"
-        | b"EXPIRETIME"
-        | b"FCALL_RO"
-        | b"FT.AGGREGATE"
-        | b"FT.EXPLAIN"
-        | b"FT.EXPLAINCLI"
-        | b"FT.INFO"
-        | b"FT.PROFILE"
-        | b"FT.SEARCH"
-        | b"FT._ALIASLIST"
-        | b"FT._LIST"
-        | b"FUNCTION DUMP"
-        | b"FUNCTION HELP"
-        | b"FUNCTION KILL"
-        | b"FUNCTION LIST"
-        | b"FUNCTION STATS"
-        | b"GEORADIUSBYMEMBER_RO"
-        | b"GEORADIUS_RO"
-        | b"GEOSEARCH"
-        | b"HELLO"
-        | b"HRANDFIELD"
-        | b"HSCAN"
-        | b"INFO"
-        | b"JSON.DEBUG"
-        | b"KEYS"
-        | b"LASTSAVE"
-        | b"LATENCY DOCTOR"
-        | b"LATENCY GRAPH"
-        | b"LATENCY HELP"
-        | b"LATENCY HISTOGRAM"
-        | b"LATENCY HISTORY"
-        | b"LATENCY LATEST"
-        | b"LATENCY RESET"
-        | b"LOLWUT"
-        | b"MEMORY DOCTOR"
-        | b"MEMORY HELP"
-        | b"MEMORY MALLOC-STATS"
-        | b"MEMORY PURGE"
-        | b"MEMORY STATS"
-        | b"MEMORY USAGE"
-        | b"MODULE HELP"
-        | b"MODULE LIST"
-        | b"MODULE LOAD"
-        | b"MODULE LOADEX"
-        | b"MODULE UNLOAD"
-        | b"OBJECT ENCODING"
-        | b"OBJECT FREQ"
-        | b"OBJECT HELP"
-        | b"OBJECT IDLETIME"
-        | b"OBJECT REFCOUNT"
-        | b"PEXPIRETIME"
-        | b"PING"
-        | b"PTTL"
-        | b"PUBLISH"
-        | b"PUBSUB CHANNELS"
-        | b"PUBSUB HELP"
-        | b"PUBSUB NUMPAT"
-        | b"PUBSUB NUMSUB"
-        | b"PUBSUB SHARDCHANNELS"
-        | b"PUBSUB SHARDNUMSUB"
-        | b"RANDOMKEY"
-        | b"REPLICAOF"
-        | b"RESET"
-        | b"ROLE"
-        | b"SAVE"
-        | b"SCAN"
-        | b"SCRIPT DEBUG"
-        | b"SCRIPT EXISTS"
-        | b"SCRIPT FLUSH"
-        | b"SCRIPT KILL"
-        | b"SCRIPT LOAD"
-        | b"SCRIPT SHOW"
-        | b"SELECT"
-        | b"SHUTDOWN"
-        | b"SLOWLOG GET"
-        | b"SLOWLOG HELP"
-        | b"SLOWLOG LEN"
-        | b"SLOWLOG RESET"
-        | b"SORT_RO"
-        | b"SPUBLISH"
-        | b"SRANDMEMBER"
-        | b"SSCAN"
-        | b"SSUBSCRIBE"
-        | b"SUBSCRIBE"
-        | b"SUNSUBSCRIBE"
-        | b"TIME"
-        | b"TOUCH"
-        | b"TTL"
-        | b"UNSUBSCRIBE"
-        | b"XINFO CONSUMERS"
-        | b"XINFO GROUPS"
-        | b"XINFO HELP"
-        | b"XINFO STREAM"
-        | b"XLEN"
-        | b"XPENDING"
-        | b"XRANGE"
-        | b"XREAD"
-        | b"XREVRANGE"
-        | b"ZRANDMEMBER"
-        | b"ZSCAN" => Properties::ReadOnly,
-        _ => Properties::Neither,
-    }
-}
-
-#[cfg(feature = "cluster")]
-pub(crate) fn is_readonly_cmd(cmd: &[u8]) -> bool {
-    matches!(
-        command_properties(cmd),
-        Properties::ReadOnly | Properties::ReadOnlyCacheable
-    )
-}
-
-#[cfg(feature = "cache-aio")]
-pub(crate) fn is_cachable_cmd(cmd: &[u8]) -> bool {
-    matches!(command_properties(cmd), Properties::ReadOnlyCacheable)
-}
-
 // Note - Brackets are needed around return types for purposes of macro branching.
 implement_commands! {
     // most common operations
@@ -275,94 +64,94 @@ implement_commands! {
     /// Get the value of a key.  If key is a vec this becomes an `MGET` (if using `TypedCommands`, you should specifically use `mget` to get the correct return type.
     /// [Redis Docs](https://redis.io/commands/get/)
     fn get<K: ToSingleRedisArg >(key: K) -> (Option<String>) {
-        ready_cmd!("GET", key).take()
+        ready_cmd!(KnownCommand::Get, key).take()
     }
 
     /// Get values of keys
     /// [Redis Docs](https://redis.io/commands/MGET)
     fn mget<K: ToRedisArgs>(key: K) -> (Vec<Option<String>>) {
-        ready_cmd!("MGET", key).take()
+        ready_cmd!(KnownCommand::Mget, key).take()
     }
 
     /// Gets all keys matching pattern
     /// [Redis Docs](https://redis.io/commands/KEYS)
     fn keys<K: ToSingleRedisArg>(key: K) -> (Vec<String>) {
-        ready_cmd!("KEYS", key).take()
+        ready_cmd!(KnownCommand::Keys, key).take()
     }
 
     /// Set the string value of a key.
     /// [Redis Docs](https://redis.io/commands/SET)
     fn set<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, value: V) -> (()) {
-        ready_cmd!("SET", key, value).take()
+        ready_cmd!(KnownCommand::Set, key, value).take()
     }
 
     /// Set the string value of a key with options.
     /// [Redis Docs](https://redis.io/commands/SET)
     fn set_options<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, value: V, options: SetOptions) -> (Option<String>) {
-        ready_cmd!("SET", key, value, options).take()
+        ready_cmd!(KnownCommand::Set, key, value, options).take()
     }
 
     /// Sets multiple keys to their values.
     /// [Redis Docs](https://redis.io/commands/MSET)
     fn mset<K: ToRedisArgs, V: ToRedisArgs>(items: &[(K, V)]) -> (()) {
-        ready_cmd!("MSET", items).take()
+        ready_cmd!(KnownCommand::Mset, items).take()
     }
 
     /// Set the value and expiration of a key.
     /// [Redis Docs](https://redis.io/commands/SETEX)
     fn set_ex<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, value: V, seconds: u64) -> (()) {
-        ready_cmd!("SETEX", key, seconds, value).take()
+        ready_cmd!(KnownCommand::Setex, key, seconds, value).take()
     }
 
     /// Set the value and expiration in milliseconds of a key.
     /// [Redis Docs](https://redis.io/commands/PSETEX)
     fn pset_ex<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, value: V, milliseconds: u64) -> (()) {
-        ready_cmd!("PSETEX", key, milliseconds, value).take()
+        ready_cmd!(KnownCommand::Psetex, key, milliseconds, value).take()
     }
 
     /// Set the value of a key, only if the key does not exist
     /// [Redis Docs](https://redis.io/commands/SETNX)
     fn set_nx<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, value: V) -> (bool) {
-        ready_cmd!("SETNX", key, value).take()
+        ready_cmd!(KnownCommand::Setnx, key, value).take()
     }
 
     /// Sets multiple keys to their values failing if at least one already exists.
     /// [Redis Docs](https://redis.io/commands/MSETNX)
     fn mset_nx<K: ToRedisArgs, V: ToRedisArgs>(items: &[(K, V)]) -> (bool) {
-        ready_cmd!("MSETNX", items).take()
+        ready_cmd!(KnownCommand::Msetnx, items).take()
     }
 
     /// Sets the given keys to their respective values.
     /// This command is an extension of the MSETNX that adds expiration and XX options.
     /// [Redis Docs](https://redis.io/commands/MSETEX)
     fn mset_ex<K: ToRedisArgs, V: ToRedisArgs>(items: &[(K, V)], options: MSetOptions) -> (bool) {
-        ready_cmd!("MSETEX", items.len(), items, options).take()
+        ready_cmd!(KnownCommand::Msetex, items.len(), items, options).take()
     }
 
     /// Set the string value of a key and return its old value.
     /// [Redis Docs](https://redis.io/commands/GETSET)
     fn getset<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, value: V) -> (Option<String>) {
-        ready_cmd!("GETSET", key, value).take()
+        ready_cmd!(KnownCommand::Getset, key, value).take()
     }
 
     /// Get a range of bytes/substring from the value of a key. Negative values provide an offset from the end of the value.
     /// Redis returns an empty string if the key doesn't exist, not Nil
     /// [Redis Docs](https://redis.io/commands/GETRANGE)
     fn getrange<K: ToSingleRedisArg>(key: K, from: isize, to: isize) -> (String) {
-        ready_cmd!("GETRANGE", key, from, to).take()
+        ready_cmd!(KnownCommand::Getrange, key, from, to).take()
     }
 
     /// Overwrite the part of the value stored in key at the specified offset.
     /// [Redis Docs](https://redis.io/commands/SETRANGE)
     fn setrange<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, offset: isize, value: V) -> (usize) {
-        ready_cmd!("SETRANGE", key, offset, value).take()
+        ready_cmd!(KnownCommand::Setrange, key, offset, value).take()
     }
 
     /// Delete one or more keys.
     /// Returns the number of keys deleted.
     /// [Redis Docs](https://redis.io/commands/DEL)
     fn del<K: ToRedisArgs>(key: K) -> (usize) {
-        ready_cmd!("DEL", key).take()
+        ready_cmd!(KnownCommand::Del, key).take()
     }
 
     /// Conditionally removes the specified key. A key is ignored if it does not exist.
@@ -372,101 +161,101 @@ implement_commands! {
     /// IFDNE `match-digest` - Delete the key only if the digest of its value is not equal to `match-digest`
     /// [Redis Docs](https://redis.io/commands/DELEX)
     fn del_ex<K: ToSingleRedisArg>(key: K, value_comparison: ValueComparison) -> (usize) {
-        ready_cmd!("DELEX", key, value_comparison).take()
+        ready_cmd!(KnownCommand::Delex, key, value_comparison).take()
     }
 
     /// Get the hex signature of the value stored in the specified key.
     /// For the digest, Redis will use [XXH3](https://xxhash.com)
     /// [Redis Docs](https://redis.io/commands/DIGEST)
     fn digest<K: ToSingleRedisArg>(key: K) -> (Option<String>) {
-        ready_cmd!("DIGEST", key).take()
+        ready_cmd!(KnownCommand::Digest, key).take()
     }
 
     /// Determine if a key exists.
     /// [Redis Docs](https://redis.io/commands/EXISTS)
     fn exists<K: ToRedisArgs>(key: K) -> (bool) {
-        ready_cmd!("EXISTS", key).take()
+        ready_cmd!(KnownCommand::Exists, key).take()
     }
 
     /// Determine the type of key.
     /// [Redis Docs](https://redis.io/commands/TYPE)
     fn key_type<K: ToSingleRedisArg>(key: K) -> (crate::types::ValueType) {
-        ready_cmd!("TYPE", key).take()
+        ready_cmd!(KnownCommand::Type, key).take()
     }
 
     /// Set a key's time to live in seconds.
     /// Returns whether expiration was set.
     /// [Redis Docs](https://redis.io/commands/EXPIRE)
     fn expire<K: ToSingleRedisArg>(key: K, seconds: i64) -> (bool) {
-        ready_cmd!("EXPIRE", key, seconds).take()
+        ready_cmd!(KnownCommand::Expire, key, seconds).take()
     }
 
     /// Set the expiration for a key as a UNIX timestamp.
     /// Returns whether expiration was set.
     /// [Redis Docs](https://redis.io/commands/EXPIREAT)
     fn expire_at<K: ToSingleRedisArg>(key: K, ts: i64) -> (bool) {
-        ready_cmd!("EXPIREAT", key, ts).take()
+        ready_cmd!(KnownCommand::Expireat, key, ts).take()
     }
 
     /// Set a key's time to live in milliseconds.
     /// Returns whether expiration was set.
     /// [Redis Docs](https://redis.io/commands/PEXPIRE)
     fn pexpire<K: ToSingleRedisArg>(key: K, ms: i64) -> (bool) {
-        ready_cmd!("PEXPIRE", key, ms).take()
+        ready_cmd!(KnownCommand::Pexpire, key, ms).take()
     }
 
     /// Set the expiration for a key as a UNIX timestamp in milliseconds.
     /// Returns whether expiration was set.
     /// [Redis Docs](https://redis.io/commands/PEXPIREAT)
     fn pexpire_at<K: ToSingleRedisArg>(key: K, ts: i64) -> (bool) {
-        ready_cmd!("PEXPIREAT", key, ts).take()
+        ready_cmd!(KnownCommand::Pexpireat, key, ts).take()
     }
 
     /// Get the absolute Unix expiration timestamp in seconds.
     /// Returns `ExistsButNotRelevant` if key exists but has no expiration time.
     /// [Redis Docs](https://redis.io/commands/EXPIRETIME)
     fn expire_time<K: ToSingleRedisArg>(key: K) -> (IntegerReplyOrNoOp) {
-        ready_cmd!("EXPIRETIME", key).take()
+        ready_cmd!(KnownCommand::Expiretime, key).take()
     }
 
     /// Get the absolute Unix expiration timestamp in milliseconds.
     /// Returns `ExistsButNotRelevant` if key exists but has no expiration time.
     /// [Redis Docs](https://redis.io/commands/PEXPIRETIME)
     fn pexpire_time<K: ToSingleRedisArg>(key: K) -> (IntegerReplyOrNoOp) {
-        ready_cmd!("PEXPIRETIME", key).take()
+        ready_cmd!(KnownCommand::Pexpiretime, key).take()
     }
 
     /// Remove the expiration from a key.
     /// Returns whether a timeout was removed.
     /// [Redis Docs](https://redis.io/commands/PERSIST)
     fn persist<K: ToSingleRedisArg>(key: K) -> (bool) {
-        ready_cmd!("PERSIST", key).take()
+        ready_cmd!(KnownCommand::Persist, key).take()
     }
 
     /// Get the time to live for a key in seconds.
     /// Returns `ExistsButNotRelevant` if key exists but has no expiration time.
     /// [Redis Docs](https://redis.io/commands/TTL)
     fn ttl<K: ToSingleRedisArg>(key: K) -> (IntegerReplyOrNoOp) {
-        ready_cmd!("TTL", key).take()
+        ready_cmd!(KnownCommand::Ttl, key).take()
     }
 
     /// Get the time to live for a key in milliseconds.
     /// Returns `ExistsButNotRelevant` if key exists but has no expiration time.
     /// [Redis Docs](https://redis.io/commands/PTTL)
     fn pttl<K: ToSingleRedisArg>(key: K) -> (IntegerReplyOrNoOp) {
-        ready_cmd!("PTTL", key).take()
+        ready_cmd!(KnownCommand::Pttl, key).take()
     }
 
     /// Get the value of a key and set expiration
     /// [Redis Docs](https://redis.io/commands/GETEX)
     fn get_ex<K: ToSingleRedisArg>(key: K, expire_at: Expiry) -> (Option<String>) {
-        ready_cmd!("GETEX", key, expire_at).take()
+        ready_cmd!(KnownCommand::Getex, key, expire_at).take()
     }
 
     /// Get the value of a key and delete it
     /// [Redis Docs](https://redis.io/commands/GETDEL)
     fn get_del<K: ToSingleRedisArg>(key: K) -> (Option<String>) {
-        ready_cmd!("GETDEL", key).take()
+        ready_cmd!(KnownCommand::Getdel, key).take()
     }
 
     /// Copy the value from one key to another, returning whether the copy was successful.
@@ -476,14 +265,14 @@ implement_commands! {
         destination: KDst,
         options: CopyOptions<Db>
     ) -> (bool) {
-        ready_cmd!("COPY", source, destination, options).take()
+        ready_cmd!(KnownCommand::Copy, source, destination, options).take()
     }
 
     /// Rename a key.
     /// Errors if key does not exist.
     /// [Redis Docs](https://redis.io/commands/RENAME)
     fn rename<K: ToSingleRedisArg, N: ToSingleRedisArg>(key: K, new_key: N) -> (()) {
-        ready_cmd!("RENAME", key, new_key).take()
+        ready_cmd!(KnownCommand::Rename, key, new_key).take()
     }
 
     /// Rename a key, only if the new key does not exist.
@@ -491,14 +280,14 @@ implement_commands! {
     /// Returns whether the key was renamed, or false if the new key already exists.
     /// [Redis Docs](https://redis.io/commands/RENAMENX)
     fn rename_nx<K: ToSingleRedisArg, N: ToSingleRedisArg>(key: K, new_key: N) -> (bool) {
-        ready_cmd!("RENAMENX", key, new_key).take()
+        ready_cmd!(KnownCommand::Renamenx, key, new_key).take()
     }
 
     /// Unlink one or more keys. This is a non-blocking version of `DEL`.
     /// Returns number of keys unlinked.
     /// [Redis Docs](https://redis.io/commands/UNLINK)
     fn unlink<K: ToRedisArgs>(key: K) -> (usize) {
-        ready_cmd!("UNLINK", key).take()
+        ready_cmd!(KnownCommand::Unlink, key).take()
     }
 
     // common string operations
@@ -507,7 +296,7 @@ implement_commands! {
     /// Returns length of string after operation.
     /// [Redis Docs](https://redis.io/commands/APPEND)
     fn append<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, value: V) -> (usize) {
-        ready_cmd!("APPEND", key, value).take()
+        ready_cmd!(KnownCommand::Append, key, value).take()
     }
 
     /// Increment the numeric value of a key by the given amount.  This
@@ -515,9 +304,9 @@ implement_commands! {
     /// If the key does not exist, it is set to 0 before performing the operation.
     fn incr<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, delta: V) -> (isize) {
         ready_cmd!(if delta.describe_numeric_behavior() == NumericBehavior::NumberIsFloat {
-            "INCRBYFLOAT"
+            KnownCommand::Incrbyfloat
         } else {
-            "INCRBY"
+            KnownCommand::Incrby
         }, key, delta).take()
     }
 
@@ -525,7 +314,7 @@ implement_commands! {
     /// If the key does not exist, it is set to 0 before performing the operation.
     /// [Redis Docs](https://redis.io/commands/DECRBY)
     fn decr<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, delta: V) -> (isize) {
-        ready_cmd!("DECRBY", key, delta).take()
+        ready_cmd!(KnownCommand::Decrby, key, delta).take()
     }
 
     /// Increment the numeric value of a key by the given amount and set its expiration.
@@ -549,7 +338,7 @@ implement_commands! {
     /// narrowed to `f64`, so `f64` is the full precision available there.
     /// [Redis Docs](https://redis.io/commands/INCREX)
     fn increx<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, increment: V, options: IncrexOptions<V>) -> (IncrexResult) {
-        ready_cmd!("INCREX", key, if increment.describe_numeric_behavior() == NumericBehavior::NumberIsFloat {
+        ready_cmd!(KnownCommand::Increx, key, if increment.describe_numeric_behavior() == NumericBehavior::NumberIsFloat {
                 "BYFLOAT"
             } else {
                 "BYINT"
@@ -560,27 +349,27 @@ implement_commands! {
     /// Returns the original bit value stored at offset.
     /// [Redis Docs](https://redis.io/commands/SETBIT)
     fn setbit<K: ToSingleRedisArg>(key: K, offset: usize, value: bool) -> (bool) {
-        ready_cmd!("SETBIT", key, offset, i32::from(value)).take()
+        ready_cmd!(KnownCommand::Setbit, key, offset, i32::from(value)).take()
     }
 
     /// Returns the bit value at offset in the string value stored at key.
     /// [Redis Docs](https://redis.io/commands/GETBIT)
     fn getbit<K: ToSingleRedisArg>(key: K, offset: usize) -> (bool) {
-        ready_cmd!("GETBIT", key, offset).take()
+        ready_cmd!(KnownCommand::Getbit, key, offset).take()
     }
 
     /// Count set bits in a string.
     /// Returns 0 if key does not exist.
     /// [Redis Docs](https://redis.io/commands/BITCOUNT)
     fn bitcount<K: ToSingleRedisArg>(key: K) -> (usize) {
-        ready_cmd!("BITCOUNT", key).take()
+        ready_cmd!(KnownCommand::Bitcount, key).take()
     }
 
     /// Count set bits in a string in a range.
     /// Returns 0 if key does not exist.
     /// [Redis Docs](https://redis.io/commands/BITCOUNT)
     fn bitcount_range<K: ToSingleRedisArg>(key: K, start: usize, end: usize) -> (usize) {
-        ready_cmd!("BITCOUNT", key, start, end).take()
+        ready_cmd!(KnownCommand::Bitcount, key, start, end).take()
     }
 
     /// Perform a bitwise AND between multiple keys (containing string values)
@@ -588,7 +377,7 @@ implement_commands! {
     /// Returns size of destination string after operation.
     /// [Redis Docs](https://redis.io/commands/BITOP)
     fn bit_and<D: ToSingleRedisArg, S: ToRedisArgs>(dstkey: D, srckeys: S) -> (usize) {
-        ready_cmd!("BITOP", "AND", dstkey, srckeys).take()
+        ready_cmd!(KnownCommand::Bitop, "AND", dstkey, srckeys).take()
     }
 
     /// Perform a bitwise OR between multiple keys (containing string values)
@@ -596,7 +385,7 @@ implement_commands! {
     /// Returns size of destination string after operation.
     /// [Redis Docs](https://redis.io/commands/BITOP)
     fn bit_or<D: ToSingleRedisArg, S: ToRedisArgs>(dstkey: D, srckeys: S) -> (usize) {
-        ready_cmd!("BITOP", "OR", dstkey, srckeys).take()
+        ready_cmd!(KnownCommand::Bitop, "OR", dstkey, srckeys).take()
     }
 
     /// Perform a bitwise XOR between multiple keys (containing string values)
@@ -604,7 +393,7 @@ implement_commands! {
     /// Returns size of destination string after operation.
     /// [Redis Docs](https://redis.io/commands/BITOP)
     fn bit_xor<D: ToSingleRedisArg, S: ToRedisArgs>(dstkey: D, srckeys: S) -> (usize) {
-        ready_cmd!("BITOP", "XOR", dstkey, srckeys).take()
+        ready_cmd!(KnownCommand::Bitop, "XOR", dstkey, srckeys).take()
     }
 
     /// Perform a bitwise NOT of the key (containing string values)
@@ -612,7 +401,7 @@ implement_commands! {
     /// Returns size of destination string after operation.
     /// [Redis Docs](https://redis.io/commands/BITOP)
     fn bit_not<D: ToSingleRedisArg, S: ToSingleRedisArg>(dstkey: D, srckey: S) -> (usize) {
-        ready_cmd!("BITOP", "NOT", dstkey, srckey).take()
+        ready_cmd!(KnownCommand::Bitop, "NOT", dstkey, srckey).take()
     }
 
     /// DIFF(X, Y1, Y2, …) \
@@ -620,7 +409,7 @@ implement_commands! {
     /// Logical representation: X  ∧ ¬(Y1 ∨ Y2 ∨ …) \
     /// [Redis Docs](https://redis.io/commands/BITOP)
     fn bit_diff<D: ToSingleRedisArg, S: ToRedisArgs>(dstkey: D, srckeys: S) -> (usize) {
-        ready_cmd!("BITOP", "DIFF", dstkey, srckeys).take()
+        ready_cmd!(KnownCommand::Bitop, "DIFF", dstkey, srckeys).take()
     }
 
     /// DIFF1(X, Y1, Y2, …) (Relative complement difference) \
@@ -628,7 +417,7 @@ implement_commands! {
     /// Logical representation: ¬X  ∧ (Y1 ∨ Y2 ∨ …) \
     /// [Redis Docs](https://redis.io/commands/BITOP)
     fn bit_diff1<D: ToSingleRedisArg, S: ToRedisArgs>(dstkey: D, srckeys: S) -> (usize) {
-        ready_cmd!("BITOP", "DIFF1", dstkey, srckeys).take()
+        ready_cmd!(KnownCommand::Bitop, "DIFF1", dstkey, srckeys).take()
     }
 
     /// ANDOR(X, Y1, Y2, …) \
@@ -636,7 +425,7 @@ implement_commands! {
     /// Logical representation: X ∧ (Y1 ∨ Y2 ∨ …) \
     /// [Redis Docs](https://redis.io/commands/BITOP)
     fn bit_and_or<D: ToSingleRedisArg, S: ToRedisArgs>(dstkey: D, srckeys: S) -> (usize) {
-        ready_cmd!("BITOP", "ANDOR", dstkey, srckeys).take()
+        ready_cmd!(KnownCommand::Bitop, "ANDOR", dstkey, srckeys).take()
     }
 
     /// ONE(X, Y1, Y2, …) \
@@ -644,100 +433,100 @@ implement_commands! {
     /// Logical representation: (X ∨ Y1 ∨ Y2 ∨ …) ∧ ¬((X ∧ Y1) ∨ (X ∧ Y2) ∨ (Y1 ∧ Y2) ∨ (Y1 ∧ Y3) ∨ …) \
     /// [Redis Docs](https://redis.io/commands/BITOP)
     fn bit_one<D: ToSingleRedisArg, S: ToRedisArgs>(dstkey: D, srckeys: S) -> (usize) {
-        ready_cmd!("BITOP", "ONE", dstkey, srckeys).take()
+        ready_cmd!(KnownCommand::Bitop, "ONE", dstkey, srckeys).take()
     }
 
     /// Get the length of the value stored in a key.
     /// 0 if key does not exist.
     /// [Redis Docs](https://redis.io/commands/STRLEN)
     fn strlen<K: ToSingleRedisArg>(key: K) -> (usize) {
-        ready_cmd!("STRLEN", key).take()
+        ready_cmd!(KnownCommand::Strlen, key).take()
     }
 
     // hash operations
 
     /// Gets a single (or multiple) fields from a hash.
     fn hget<K: ToSingleRedisArg, F: ToSingleRedisArg>(key: K, field: F) -> (Option<String>) {
-        ready_cmd!("HGET", key, field).take()
+        ready_cmd!(KnownCommand::Hget, key, field).take()
     }
 
     /// Gets multiple fields from a hash.
     /// [Redis Docs](https://redis.io/commands/HMGET)
     fn hmget<K: ToSingleRedisArg, F: ToRedisArgs>(key: K, fields: F) -> (Vec<Option<String>>) {
-        ready_cmd!("HMGET", key, fields).take()
+        ready_cmd!(KnownCommand::Hmget, key, fields).take()
     }
 
     /// Get the value of one or more fields of a given hash key, and optionally set their expiration
     /// [Redis Docs](https://redis.io/commands/HGETEX)
     fn hget_ex<K: ToSingleRedisArg, F: ToRedisArgs>(key: K, fields: F, expire_at: Expiry) -> (Vec<Option<String>>) {
-        ready_cmd!("HGETEX", key, expire_at, "FIELDS", fields.num_of_args(), fields).take()
+        ready_cmd!(KnownCommand::Hgetex, key, expire_at, "FIELDS", fields.num_of_args(), fields).take()
     }
 
     /// Deletes a single (or multiple) fields from a hash.
     /// Returns number of fields deleted.
     /// [Redis Docs](https://redis.io/commands/HDEL)
     fn hdel<K: ToSingleRedisArg, F: ToRedisArgs>(key: K, field: F) -> (usize) {
-        ready_cmd!("HDEL", key, field).take()
+        ready_cmd!(KnownCommand::Hdel, key, field).take()
     }
 
     /// Get and delete the value of one or more fields of a given hash key
     /// [Redis Docs](https://redis.io/commands/HGETDEL)
     fn hget_del<K: ToSingleRedisArg, F: ToRedisArgs>(key: K, fields: F) -> (Vec<Option<String>>) {
-        ready_cmd!("HGETDEL", key, "FIELDS", fields.num_of_args(), fields).take()
+        ready_cmd!(KnownCommand::Hgetdel, key, "FIELDS", fields.num_of_args(), fields).take()
     }
 
     /// Sets a single field in a hash.
     /// Returns number of fields added.
     /// [Redis Docs](https://redis.io/commands/HSET)
     fn hset<K: ToSingleRedisArg, F: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, field: F, value: V) -> (usize) {
-        ready_cmd!("HSET", key, field, value).take()
+        ready_cmd!(KnownCommand::Hset, key, field, value).take()
     }
 
     /// Set the value of one or more fields of a given hash key, and optionally set their expiration
     /// [Redis Docs](https://redis.io/commands/HSETEX)
     fn hset_ex<K: ToSingleRedisArg, F: ToRedisArgs, V: ToRedisArgs>(key: K, hash_field_expiration_options: &HashFieldExpirationOptions, fields_values: &[(F, V)]) -> (bool) {
-        ready_cmd!("HSETEX", key, hash_field_expiration_options, "FIELDS", fields_values.len(), fields_values).take()
+        ready_cmd!(KnownCommand::Hsetex, key, hash_field_expiration_options, "FIELDS", fields_values.len(), fields_values).take()
     }
 
     /// Sets a single field in a hash if it does not exist.
     /// Returns whether the field was added.
     /// [Redis Docs](https://redis.io/commands/HSETNX)
     fn hset_nx<K: ToSingleRedisArg, F: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, field: F, value: V) -> (bool) {
-        ready_cmd!("HSETNX", key, field, value).take()
+        ready_cmd!(KnownCommand::Hsetnx, key, field, value).take()
     }
 
     /// Sets multiple fields in a hash.
     /// [Redis Docs](https://redis.io/commands/HMSET)
     fn hset_multiple<K: ToSingleRedisArg, F: ToRedisArgs, V: ToRedisArgs>(key: K, items: &[(F, V)]) -> (()) {
-        ready_cmd!("HMSET", key, items).take()
+        ready_cmd!(KnownCommand::Hmset, key, items).take()
     }
 
     /// Increments a value.
     /// Returns the new value of the field after incrementation.
     fn hincr<K: ToSingleRedisArg, F: ToSingleRedisArg, D: ToSingleRedisArg>(key: K, field: F, delta: D) -> (f64) {
         ready_cmd!(if delta.describe_numeric_behavior() == NumericBehavior::NumberIsFloat {
-            "HINCRBYFLOAT"
+            KnownCommand::Hincrbyfloat
         } else {
-            "HINCRBY"
+            KnownCommand::Hincrby
         }, key, field, delta).take()
     }
 
     /// Checks if a field in a hash exists.
     /// [Redis Docs](https://redis.io/commands/HEXISTS)
     fn hexists<K: ToSingleRedisArg, F: ToSingleRedisArg>(key: K, field: F) -> (bool) {
-        ready_cmd!("HEXISTS", key, field).take()
+        ready_cmd!(KnownCommand::Hexists, key, field).take()
     }
 
     /// Get one or more fields' TTL in seconds.
     /// [Redis Docs](https://redis.io/commands/HTTL)
     fn httl<K: ToSingleRedisArg, F: ToRedisArgs>(key: K, fields: F) -> (Vec<IntegerReplyOrNoOp>) {
-        ready_cmd!("HTTL", key, "FIELDS", fields.num_of_args(), fields).take()
+        ready_cmd!(KnownCommand::Httl, key, "FIELDS", fields.num_of_args(), fields).take()
     }
 
     /// Get one or more fields' TTL in milliseconds.
     /// [Redis Docs](https://redis.io/commands/HPTTL)
     fn hpttl<K: ToSingleRedisArg, F: ToRedisArgs>(key: K, fields: F) -> (Vec<IntegerReplyOrNoOp>) {
-        ready_cmd!("HPTTL", key, "FIELDS", fields.num_of_args(), fields).take()
+        ready_cmd!(KnownCommand::Hpttl, key, "FIELDS", fields.num_of_args(), fields).take()
     }
 
     /// Set one or more fields' time to live in seconds.
@@ -749,7 +538,7 @@ implement_commands! {
     /// Errors if provided key exists but is not a hash.
     /// [Redis Docs](https://redis.io/commands/HEXPIRE)
     fn hexpire<K: ToSingleRedisArg, F: ToRedisArgs>(key: K, seconds: i64, opt: ExpireOption, fields: F) -> (Vec<IntegerReplyOrNoOp>) {
-        ready_cmd!("HEXPIRE", key, seconds, opt, "FIELDS", fields.num_of_args(), fields).take()
+        ready_cmd!(KnownCommand::Hexpire, key, seconds, opt, "FIELDS", fields.num_of_args(), fields).take()
     }
 
 
@@ -762,20 +551,20 @@ implement_commands! {
     /// Errors if provided key exists but is not a hash.
     /// [Redis Docs](https://redis.io/commands/HEXPIREAT)
     fn hexpire_at<K: ToSingleRedisArg, F: ToRedisArgs>(key: K, ts: i64, opt: ExpireOption, fields: F) -> (Vec<IntegerReplyOrNoOp>) {
-        ready_cmd!("HEXPIREAT", key, ts, opt, "FIELDS", fields.num_of_args(), fields).take()
+        ready_cmd!(KnownCommand::Hexpireat, key, ts, opt, "FIELDS", fields.num_of_args(), fields).take()
     }
 
     /// Returns the absolute Unix expiration timestamp in seconds.
     /// [Redis Docs](https://redis.io/commands/HEXPIRETIME)
     fn hexpire_time<K: ToSingleRedisArg, F: ToRedisArgs>(key: K, fields: F) -> (Vec<IntegerReplyOrNoOp>) {
-        ready_cmd!("HEXPIRETIME", key, "FIELDS", fields.num_of_args(), fields).take()
+        ready_cmd!(KnownCommand::Hexpiretime, key, "FIELDS", fields.num_of_args(), fields).take()
     }
 
     /// Remove the expiration from a key.
     /// Returns 1 if the expiration was removed.
     /// [Redis Docs](https://redis.io/commands/HPERSIST)
     fn hpersist<K: ToSingleRedisArg, F :ToRedisArgs>(key: K, fields: F) -> (Vec<IntegerReplyOrNoOp>) {
-        ready_cmd!("HPERSIST", key, "FIELDS", fields.num_of_args(), fields).take()
+        ready_cmd!(KnownCommand::Hpersist, key, "FIELDS", fields.num_of_args(), fields).take()
     }
 
     /// Set one or more fields' time to live in milliseconds.
@@ -787,7 +576,7 @@ implement_commands! {
     /// Errors if provided key exists but is not a hash.
     /// [Redis Docs](https://redis.io/commands/HPEXPIRE)
     fn hpexpire<K: ToSingleRedisArg, F: ToRedisArgs>(key: K, milliseconds: i64, opt: ExpireOption, fields: F) -> (Vec<IntegerReplyOrNoOp>) {
-        ready_cmd!("HPEXPIRE", key, milliseconds, opt, "FIELDS", fields.num_of_args(), fields).take()
+        ready_cmd!(KnownCommand::Hpexpire, key, milliseconds, opt, "FIELDS", fields.num_of_args(), fields).take()
     }
 
     /// Set the expiration for one or more fields as a UNIX timestamp in milliseconds.
@@ -799,38 +588,38 @@ implement_commands! {
     /// Errors if provided key exists but is not a hash.
     /// [Redis Docs](https://redis.io/commands/HPEXPIREAT)
     fn hpexpire_at<K: ToSingleRedisArg, F: ToRedisArgs>(key: K, ts: i64,  opt: ExpireOption, fields: F) -> (Vec<IntegerReplyOrNoOp>) {
-        ready_cmd!("HPEXPIREAT", key, ts, opt, "FIELDS", fields.num_of_args(), fields).take()
+        ready_cmd!(KnownCommand::Hpexpireat, key, ts, opt, "FIELDS", fields.num_of_args(), fields).take()
     }
 
     /// Returns the absolute Unix expiration timestamp in seconds.
     /// [Redis Docs](https://redis.io/commands/HPEXPIRETIME)
     fn hpexpire_time<K: ToSingleRedisArg, F: ToRedisArgs>(key: K, fields: F) -> (Vec<IntegerReplyOrNoOp>) {
-        ready_cmd!("HPEXPIRETIME", key, "FIELDS", fields.num_of_args(), fields).take()
+        ready_cmd!(KnownCommand::Hpexpiretime, key, "FIELDS", fields.num_of_args(), fields).take()
     }
 
     /// Gets all the keys in a hash.
     /// [Redis Docs](https://redis.io/commands/HKEYS)
     fn hkeys<K: ToSingleRedisArg>(key: K) -> (Vec<String>) {
-        ready_cmd!("HKEYS", key).take()
+        ready_cmd!(KnownCommand::Hkeys, key).take()
     }
 
     /// Gets all the values in a hash.
     /// [Redis Docs](https://redis.io/commands/HVALS)
     fn hvals<K: ToSingleRedisArg>(key: K) -> (Vec<String>) {
-        ready_cmd!("HVALS", key).take()
+        ready_cmd!(KnownCommand::Hvals, key).take()
     }
 
     /// Gets all the fields and values in a hash.
     /// [Redis Docs](https://redis.io/commands/HGETALL)
     fn hgetall<K: ToSingleRedisArg>(key: K) -> (std::collections::HashMap<String, String>) {
-        ready_cmd!("HGETALL", key).take()
+        ready_cmd!(KnownCommand::Hgetall, key).take()
     }
 
     /// Gets the length of a hash.
     /// Returns 0 if key does not exist.
     /// [Redis Docs](https://redis.io/commands/HLEN)
     fn hlen<K: ToSingleRedisArg>(key: K) -> (usize) {
-        ready_cmd!("HLEN", key).take()
+        ready_cmd!(KnownCommand::Hlen, key).take()
     }
 
     // list operations
@@ -839,72 +628,72 @@ implement_commands! {
     /// and return it; or block until one is available
     /// [Redis Docs](https://redis.io/commands/BLMOVE)
     fn blmove<S: ToSingleRedisArg, D: ToSingleRedisArg>(srckey: S, dstkey: D, src_dir: Direction, dst_dir: Direction, timeout: f64) -> (Option<String>) {
-        ready_cmd!("BLMOVE", srckey, dstkey, src_dir, dst_dir, timeout).take()
+        ready_cmd!(KnownCommand::Blmove, srckey, dstkey, src_dir, dst_dir, timeout).take()
     }
 
     /// Pops `count` elements from the first non-empty list key from the list of
     /// provided key names; or blocks until one is available.
     /// [Redis Docs](https://redis.io/commands/BLMPOP)
     fn blmpop<K: ToRedisArgs>(timeout: f64, keys: K, dir: Direction, count: usize) -> (Option<(String, Vec<String>)>) {
-        ready_cmd!("BLMPOP", timeout, keys.num_of_args(), keys, dir, "COUNT", count).take()
+        ready_cmd!(KnownCommand::Blmpop, timeout, keys.num_of_args(), keys, dir, "COUNT", count).take()
     }
 
     /// Remove and get the first element in a list, or block until one is available.
     /// [Redis Docs](https://redis.io/commands/BLPOP)
     fn blpop<K: ToRedisArgs>(key: K, timeout: f64) -> (Option<[String; 2]>) {
-        ready_cmd!("BLPOP", key, timeout).take()
+        ready_cmd!(KnownCommand::Blpop, key, timeout).take()
     }
 
     /// Remove and get the last element in a list, or block until one is available.
     /// [Redis Docs](https://redis.io/commands/BRPOP)
     fn brpop<K: ToRedisArgs>(key: K, timeout: f64) -> (Option<[String; 2]>) {
-        ready_cmd!("BRPOP", key, timeout).take()
+        ready_cmd!(KnownCommand::Brpop, key, timeout).take()
     }
 
     /// Pop a value from a list, push it to another list and return it;
     /// or block until one is available.
     /// [Redis Docs](https://redis.io/commands/BRPOPLPUSH)
     fn brpoplpush<S: ToSingleRedisArg, D: ToSingleRedisArg>(srckey: S, dstkey: D, timeout: f64) -> (Option<String>) {
-        ready_cmd!("BRPOPLPUSH", srckey, dstkey, timeout).take()
+        ready_cmd!(KnownCommand::Brpoplpush, srckey, dstkey, timeout).take()
     }
 
     /// Get an element from a list by its index.
     /// [Redis Docs](https://redis.io/commands/LINDEX)
     fn lindex<K: ToSingleRedisArg>(key: K, index: isize) -> (Option<String>) {
-        ready_cmd!("LINDEX", key, index).take()
+        ready_cmd!(KnownCommand::Lindex, key, index).take()
     }
 
     /// Insert an element before another element in a list.
     /// [Redis Docs](https://redis.io/commands/LINSERT)
     fn linsert_before<K: ToSingleRedisArg, P: ToSingleRedisArg, V: ToSingleRedisArg>(
             key: K, pivot: P, value: V) -> (isize) {
-        ready_cmd!("LINSERT", key, "BEFORE", pivot, value).take()
+        ready_cmd!(KnownCommand::Linsert, key, "BEFORE", pivot, value).take()
     }
 
     /// Insert an element after another element in a list.
     /// [Redis Docs](https://redis.io/commands/LINSERT)
     fn linsert_after<K: ToSingleRedisArg, P: ToSingleRedisArg, V: ToSingleRedisArg>(
             key: K, pivot: P, value: V) -> (isize) {
-        ready_cmd!("LINSERT", key, "AFTER", pivot, value).take()
+        ready_cmd!(KnownCommand::Linsert, key, "AFTER", pivot, value).take()
     }
 
     /// Returns the length of the list stored at key.
     /// [Redis Docs](https://redis.io/commands/LLEN)
     fn llen<K: ToSingleRedisArg>(key: K) -> (usize) {
-        ready_cmd!("LLEN", key).take()
+        ready_cmd!(KnownCommand::Llen, key).take()
     }
 
     /// Pop an element a list, push it to another list and return it
     /// [Redis Docs](https://redis.io/commands/LMOVE)
     fn lmove<S: ToSingleRedisArg, D: ToSingleRedisArg>(srckey: S, dstkey: D, src_dir: Direction, dst_dir: Direction) -> (Option<String>) {
-        ready_cmd!("LMOVE", srckey, dstkey, src_dir, dst_dir).take()
+        ready_cmd!(KnownCommand::Lmove, srckey, dstkey, src_dir, dst_dir).take()
     }
 
     /// Pops `count` elements from the first non-empty list key from the list of
     /// provided key names.
     /// [Redis Docs](https://redis.io/commands/LMPOP)
     fn lmpop<K: ToRedisArgs>(keys: K, dir: Direction, count: usize) -> (Option<(String, Vec<String>)>) {
-        ready_cmd!("LMPOP", keys.num_of_args(), keys, dir, "COUNT", count).take()
+        ready_cmd!(KnownCommand::Lmpop, keys.num_of_args(), keys, dir, "COUNT", count).take()
     }
 
     /// Removes and returns the up to `count` first elements of the list stored at key.
@@ -912,64 +701,64 @@ implement_commands! {
     /// If `count` is not specified, then defaults to first element.
     /// [Redis Docs](https://redis.io/commands/LPOP)
     fn lpop<K: ToSingleRedisArg>(key: K, count: Option<core::num::NonZeroUsize>) -> Generic {
-        ready_cmd!("LPOP", key, count).take()
+        ready_cmd!(KnownCommand::Lpop, key, count).take()
     }
 
     /// Returns the index of the first matching value of the list stored at key.
     /// [Redis Docs](https://redis.io/commands/LPOS)
     fn lpos<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, value: V, options: LposOptions) -> Generic {
-        ready_cmd!("LPOS", key, value, options).take()
+        ready_cmd!(KnownCommand::Lpos, key, value, options).take()
     }
 
     /// Insert all the specified values at the head of the list stored at key.
     /// [Redis Docs](https://redis.io/commands/LPUSH)
     fn lpush<K: ToSingleRedisArg, V: ToRedisArgs>(key: K, value: V) -> (usize) {
-        ready_cmd!("LPUSH", key, value).take()
+        ready_cmd!(KnownCommand::Lpush, key, value).take()
     }
 
     /// Inserts a value at the head of the list stored at key, only if key
     /// already exists and holds a list.
     /// [Redis Docs](https://redis.io/commands/LPUSHX)
     fn lpush_exists<K: ToSingleRedisArg, V: ToRedisArgs>(key: K, value: V) -> (usize) {
-        ready_cmd!("LPUSHX", key, value).take()
+        ready_cmd!(KnownCommand::Lpushx, key, value).take()
     }
 
     /// Returns the specified elements of the list stored at key.
     /// [Redis Docs](https://redis.io/commands/LRANGE)
     fn lrange<K: ToSingleRedisArg>(key: K, start: isize, stop: isize) -> (Vec<String>) {
-        ready_cmd!("LRANGE", key, start, stop).take()
+        ready_cmd!(KnownCommand::Lrange, key, start, stop).take()
     }
 
     /// Removes the first count occurrences of elements equal to value
     /// from the list stored at key.
     /// [Redis Docs](https://redis.io/commands/LREM)
     fn lrem<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, count: isize, value: V) -> (usize) {
-        ready_cmd!("LREM", key, count, value).take()
+        ready_cmd!(KnownCommand::Lrem, key, count, value).take()
     }
 
     /// Trim an existing list so that it will contain only the specified
     /// range of elements specified.
     /// [Redis Docs](https://redis.io/commands/LTRIM)
     fn ltrim<K: ToSingleRedisArg>(key: K, start: isize, stop: isize) -> (()) {
-        ready_cmd!("LTRIM", key, start, stop).take()
+        ready_cmd!(KnownCommand::Ltrim, key, start, stop).take()
     }
 
     /// Sets the list element at index to value
     /// [Redis Docs](https://redis.io/commands/LSET)
     fn lset<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, index: isize, value: V) -> (()) {
-        ready_cmd!("LSET", key, index, value).take()
+        ready_cmd!(KnownCommand::Lset, key, index, value).take()
     }
 
     /// Sends a ping to the server
     /// [Redis Docs](https://redis.io/commands/PING)
     fn ping<>() -> (String) {
-         ready_cmd!("PING").take()
+         ready_cmd!(KnownCommand::Ping).take()
     }
 
     /// Sends a ping with a message to the server
     /// [Redis Docs](https://redis.io/commands/PING)
     fn ping_message<K: ToSingleRedisArg>(message: K) -> (String) {
-         ready_cmd!("PING", message).take()
+         ready_cmd!(KnownCommand::Ping, message).take()
     }
 
     /// Removes and returns the up to `count` last elements of the list stored at key
@@ -977,26 +766,26 @@ implement_commands! {
     /// If `count` is not specified, then defaults to last element.
     /// [Redis Docs](https://redis.io/commands/RPOP)
     fn rpop<K: ToSingleRedisArg>(key: K, count: Option<core::num::NonZeroUsize>) -> Generic {
-        ready_cmd!("RPOP", key, count).take()
+        ready_cmd!(KnownCommand::Rpop, key, count).take()
     }
 
     /// Pop a value from a list, push it to another list and return it.
     /// [Redis Docs](https://redis.io/commands/RPOPLPUSH)
     fn rpoplpush<K: ToSingleRedisArg, D: ToSingleRedisArg>(key: K, dstkey: D) -> (Option<String>) {
-        ready_cmd!("RPOPLPUSH", key, dstkey).take()
+        ready_cmd!(KnownCommand::Rpoplpush, key, dstkey).take()
     }
 
     /// Insert all the specified values at the tail of the list stored at key.
     /// [Redis Docs](https://redis.io/commands/RPUSH)
     fn rpush<K: ToSingleRedisArg, V: ToRedisArgs>(key: K, value: V) -> (usize) {
-        ready_cmd!("RPUSH", key, value).take()
+        ready_cmd!(KnownCommand::Rpush, key, value).take()
     }
 
     /// Inserts value at the tail of the list stored at key, only if key
     /// already exists and holds a list.
     /// [Redis Docs](https://redis.io/commands/RPUSHX)
     fn rpush_exists<K: ToSingleRedisArg, V: ToRedisArgs>(key: K, value: V) -> (usize) {
-        ready_cmd!("RPUSHX", key, value).take()
+        ready_cmd!(KnownCommand::Rpushx, key, value).take()
     }
 
     // set commands
@@ -1004,97 +793,97 @@ implement_commands! {
     /// Add one or more members to a set.
     /// [Redis Docs](https://redis.io/commands/SADD)
     fn sadd<K: ToSingleRedisArg, M: ToRedisArgs>(key: K, member: M) -> (usize) {
-        ready_cmd!("SADD", key, member).take()
+        ready_cmd!(KnownCommand::Sadd, key, member).take()
     }
 
     /// Get the number of members in a set.
     /// [Redis Docs](https://redis.io/commands/SCARD)
     fn scard<K: ToSingleRedisArg>(key: K) -> (usize) {
-        ready_cmd!("SCARD", key).take()
+        ready_cmd!(KnownCommand::Scard, key).take()
     }
 
     /// Subtract multiple sets.
     /// [Redis Docs](https://redis.io/commands/SDIFF)
     fn sdiff<K: ToRedisArgs>(keys: K) -> (HashSet<String>) {
-        ready_cmd!("SDIFF", keys).take()
+        ready_cmd!(KnownCommand::Sdiff, keys).take()
     }
 
     /// Subtract multiple sets and store the resulting set in a key.
     /// [Redis Docs](https://redis.io/commands/SDIFFSTORE)
     fn sdiffstore<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K) -> (usize) {
-        ready_cmd!("SDIFFSTORE", dstkey, keys).take()
+        ready_cmd!(KnownCommand::Sdiffstore, dstkey, keys).take()
     }
 
     /// Intersect multiple sets.
     /// [Redis Docs](https://redis.io/commands/SINTER)
     fn sinter<K: ToRedisArgs>(keys: K) -> (HashSet<String>) {
-        ready_cmd!("SINTER", keys).take()
+        ready_cmd!(KnownCommand::Sinter, keys).take()
     }
 
     /// Intersect multiple sets and store the resulting set in a key.
     /// [Redis Docs](https://redis.io/commands/SINTERSTORE)
     fn sinterstore<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K) -> (usize) {
-        ready_cmd!("SINTERSTORE", dstkey, keys).take()
+        ready_cmd!(KnownCommand::Sinterstore, dstkey, keys).take()
     }
 
     /// Determine if a given value is a member of a set.
     /// [Redis Docs](https://redis.io/commands/SISMEMBER)
     fn sismember<K: ToSingleRedisArg, M: ToSingleRedisArg>(key: K, member: M) -> (bool) {
-        ready_cmd!("SISMEMBER", key, member).take()
+        ready_cmd!(KnownCommand::Sismember, key, member).take()
     }
 
     /// Determine if given values are members of a set.
     /// [Redis Docs](https://redis.io/commands/SMISMEMBER)
     fn smismember<K: ToSingleRedisArg, M: ToRedisArgs>(key: K, members: M) -> (Vec<bool>) {
-        ready_cmd!("SMISMEMBER", key, members).take()
+        ready_cmd!(KnownCommand::Smismember, key, members).take()
     }
 
     /// Get all the members in a set.
     /// [Redis Docs](https://redis.io/commands/SMEMBERS)
     fn smembers<K: ToSingleRedisArg>(key: K) -> (HashSet<String>) {
-        ready_cmd!("SMEMBERS", key).take()
+        ready_cmd!(KnownCommand::Smembers, key).take()
     }
 
     /// Move a member from one set to another.
     /// [Redis Docs](https://redis.io/commands/SMOVE)
     fn smove<S: ToSingleRedisArg, D: ToSingleRedisArg, M: ToSingleRedisArg>(srckey: S, dstkey: D, member: M) -> (bool) {
-        ready_cmd!("SMOVE", srckey, dstkey, member).take()
+        ready_cmd!(KnownCommand::Smove, srckey, dstkey, member).take()
     }
 
     /// Remove and return a random member from a set.
     /// [Redis Docs](https://redis.io/commands/SPOP)
     fn spop<K: ToSingleRedisArg>(key: K) -> Generic {
-        ready_cmd!("SPOP", key).take()
+        ready_cmd!(KnownCommand::Spop, key).take()
     }
 
     /// Get one random member from a set.
     /// [Redis Docs](https://redis.io/commands/SRANDMEMBER)
     fn srandmember<K: ToSingleRedisArg>(key: K) -> (Option<String>) {
-        ready_cmd!("SRANDMEMBER", key).take()
+        ready_cmd!(KnownCommand::Srandmember, key).take()
     }
 
     /// Get multiple random members from a set.
     /// [Redis Docs](https://redis.io/commands/SRANDMEMBER)
     fn srandmember_multiple<K: ToSingleRedisArg>(key: K, count: isize) -> (Vec<String>) {
-        ready_cmd!("SRANDMEMBER", key, count).take()
+        ready_cmd!(KnownCommand::Srandmember, key, count).take()
     }
 
     /// Remove one or more members from a set.
     /// [Redis Docs](https://redis.io/commands/SREM)
     fn srem<K: ToSingleRedisArg, M: ToRedisArgs>(key: K, member: M) -> (usize) {
-        ready_cmd!("SREM", key, member).take()
+        ready_cmd!(KnownCommand::Srem, key, member).take()
     }
 
     /// Add multiple sets.
     /// [Redis Docs](https://redis.io/commands/SUNION)
     fn sunion<K: ToRedisArgs>(keys: K) -> (HashSet<String>) {
-        ready_cmd!("SUNION", keys).take()
+        ready_cmd!(KnownCommand::Sunion, keys).take()
     }
 
     /// Add multiple sets and store the resulting set in a key.
     /// [Redis Docs](https://redis.io/commands/SUNIONSTORE)
     fn sunionstore<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K) -> (usize) {
-        ready_cmd!("SUNIONSTORE", dstkey, keys).take()
+        ready_cmd!(KnownCommand::Sunionstore, dstkey, keys).take()
     }
 
     // sorted set commands
@@ -1102,44 +891,44 @@ implement_commands! {
     /// Add one member to a sorted set, or update its score if it already exists.
     /// [Redis Docs](https://redis.io/commands/ZADD)
     fn zadd<K: ToSingleRedisArg, S: ToSingleRedisArg, M: ToSingleRedisArg>(key: K, member: M, score: S) -> usize{
-        ready_cmd!("ZADD", key, score, member).take()
+        ready_cmd!(KnownCommand::Zadd, key, score, member).take()
     }
 
     /// Add multiple members to a sorted set, or update its score if it already exists.
     /// [Redis Docs](https://redis.io/commands/ZADD)
     fn zadd_multiple<K: ToSingleRedisArg, S: ToRedisArgs, M: ToRedisArgs>(key: K, items: &[(S, M)]) -> (usize) {
-        ready_cmd!("ZADD", key, items).take()
+        ready_cmd!(KnownCommand::Zadd, key, items).take()
     }
 
      /// Add one member to a sorted set, or update its score if it already exists.
      /// [Redis Docs](https://redis.io/commands/ZADD)
     fn zadd_options<K: ToSingleRedisArg, S: ToSingleRedisArg, M: ToSingleRedisArg>(key: K, member: M, score: S, options:&SortedSetAddOptions) -> usize{
-        ready_cmd!("ZADD", key, options, score, member).take()
+        ready_cmd!(KnownCommand::Zadd, key, options, score, member).take()
     }
 
     /// Add multiple members to a sorted set, or update its score if it already exists.
     /// [Redis Docs](https://redis.io/commands/ZADD)
     fn zadd_multiple_options<K: ToSingleRedisArg, S: ToRedisArgs, M: ToRedisArgs>(key: K, items: &[(S, M)], options:&SortedSetAddOptions) -> (usize) {
-        ready_cmd!("ZADD", key, options, items).take()
+        ready_cmd!(KnownCommand::Zadd, key, options, items).take()
     }
 
     /// Get the number of members in a sorted set.
     /// [Redis Docs](https://redis.io/commands/ZCARD)
     fn zcard<K: ToSingleRedisArg>(key: K) -> (usize) {
-        ready_cmd!("ZCARD", key).take()
+        ready_cmd!(KnownCommand::Zcard, key).take()
     }
 
     /// Count the members in a sorted set with scores within the given values.
     /// [Redis Docs](https://redis.io/commands/ZCOUNT)
     fn zcount<K: ToSingleRedisArg, M: ToSingleRedisArg, MM: ToSingleRedisArg>(key: K, min: M, max: MM) -> (usize) {
-        ready_cmd!("ZCOUNT", key, min, max).take()
+        ready_cmd!(KnownCommand::Zcount, key, min, max).take()
     }
 
     /// Increments the member in a sorted set at key by delta.
     /// If the member does not exist, it is added with delta as its score.
     /// [Redis Docs](https://redis.io/commands/ZINCRBY)
     fn zincr<K: ToSingleRedisArg, M: ToSingleRedisArg, D: ToSingleRedisArg>(key: K, member: M, delta: D) -> (f64) {
-        ready_cmd!("ZINCRBY", key, delta, member).take()
+        ready_cmd!(KnownCommand::Zincrby, key, delta, member).take()
     }
 
     /// Intersect multiple sorted sets and store the resulting sorted set in
@@ -1147,7 +936,7 @@ implement_commands! {
     /// If no `AGGREGATE` modifier is provided, `SUM` is used.
     /// [Redis Docs](https://redis.io/commands/ZINTERSTORE)
     fn zinterstore<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K, options: SortedSetOperationOptions) -> (usize) {
-        ready_cmd!("ZINTERSTORE", dstkey, keys.num_of_args(), keys, options).take()
+        ready_cmd!(KnownCommand::Zinterstore, dstkey, keys.num_of_args(), keys, options).take()
     }
 
     /// Intersect multiple sorted sets and store the resulting sorted set in
@@ -1155,14 +944,14 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/ZINTERSTORE)
     fn zinterstore_with_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &[(K, W)], options: SortedSetOperationOptions) -> (usize) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
-        ready_cmd!("ZINTERSTORE", dstkey, keys.num_of_args(), keys, "WEIGHTS", weights, options).take()
+        ready_cmd!(KnownCommand::Zinterstore, dstkey, keys.num_of_args(), keys, "WEIGHTS", weights, options).take()
     }
 
     /// Intersect multiple sorted sets and return the resulting members,
     /// applying an optional `AGGREGATE` modifier (SUM by default).
     /// [Redis Docs](https://redis.io/commands/ZINTER)
     fn zinter<K: ToRedisArgs>(keys: K, options: SortedSetOperationOptions) -> (Vec<String>) {
-        ready_cmd!("ZINTER", keys.num_of_args(), keys, options).take()
+        ready_cmd!(KnownCommand::Zinter, keys.num_of_args(), keys, options).take()
     }
 
     /// [`Commands::zinter`], but with the ability to specify a weight for each
@@ -1170,52 +959,52 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/ZINTER)
     fn zinter_with_weights<K: ToRedisArgs, W: ToRedisArgs>(keys: &[(K, W)], options: SortedSetOperationOptions) -> (Vec<String>) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
-        ready_cmd!("ZINTER", keys.num_of_args(), keys, "WEIGHTS", weights, options).take()
+        ready_cmd!(KnownCommand::Zinter, keys.num_of_args(), keys, "WEIGHTS", weights, options).take()
     }
 
     /// [`Commands::zinter`], but additionally returns the score of each member.
     /// [Redis Docs](https://redis.io/commands/ZINTER)
     fn zinter_withscores<K: ToRedisArgs>(keys: K, options: SortedSetOperationOptions) -> (Vec<(String, f64)>) {
-        ready_cmd!("ZINTER", keys.num_of_args(), keys, options, "WITHSCORES").take()
+        ready_cmd!(KnownCommand::Zinter, keys.num_of_args(), keys, options, "WITHSCORES").take()
     }
 
     /// [`Commands::zinter_with_weights`], but additionally returns the score of each member.
     /// [Redis Docs](https://redis.io/commands/ZINTER)
     fn zinter_with_weights_withscores<K: ToRedisArgs, W: ToRedisArgs>(keys: &[(K, W)], options: SortedSetOperationOptions) -> (Vec<(String, f64)>) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
-        ready_cmd!("ZINTER", keys.num_of_args(), keys, "WEIGHTS", weights, options, "WITHSCORES").take()
+        ready_cmd!(KnownCommand::Zinter, keys.num_of_args(), keys, "WEIGHTS", weights, options, "WITHSCORES").take()
     }
 
     /// Count the number of members in a sorted set between a given lexicographical range.
     /// [Redis Docs](https://redis.io/commands/ZLEXCOUNT)
     fn zlexcount<K: ToSingleRedisArg, M: ToSingleRedisArg, MM: ToSingleRedisArg>(key: K, min: M, max: MM) -> (usize) {
-        ready_cmd!("ZLEXCOUNT", key, min, max).take()
+        ready_cmd!(KnownCommand::Zlexcount, key, min, max).take()
     }
 
     /// Removes and returns the member with the highest score in a sorted set.
     /// Blocks until a member is available otherwise.
     /// [Redis Docs](https://redis.io/commands/BZPOPMAX)
     fn bzpopmax<K: ToRedisArgs>(key: K, timeout: f64) -> (Option<(String, String, f64)>) {
-        ready_cmd!("BZPOPMAX", key, timeout).take()
+        ready_cmd!(KnownCommand::Bzpopmax, key, timeout).take()
     }
 
     /// Removes and returns up to count members with the highest scores in a sorted set
     /// [Redis Docs](https://redis.io/commands/ZPOPMAX)
     fn zpopmax<K: ToSingleRedisArg>(key: K, count: isize) -> (Vec<(String, f64)>) {
-        ready_cmd!("ZPOPMAX", key, count).take()
+        ready_cmd!(KnownCommand::Zpopmax, key, count).take()
     }
 
     /// Removes and returns the member with the lowest score in a sorted set.
     /// Blocks until a member is available otherwise.
     /// [Redis Docs](https://redis.io/commands/BZPOPMIN)
     fn bzpopmin<K: ToRedisArgs>(key: K, timeout: f64) -> (Option<(String, String, f64)>) {
-        ready_cmd!("BZPOPMIN", key, timeout).take()
+        ready_cmd!(KnownCommand::Bzpopmin, key, timeout).take()
     }
 
     /// Removes and returns up to count members with the lowest scores in a sorted set
     /// [Redis Docs](https://redis.io/commands/ZPOPMIN)
     fn zpopmin<K: ToSingleRedisArg>(key: K, count: isize) -> (Vec<(String, f64)>) {
-        ready_cmd!("ZPOPMIN", key, count).take()
+        ready_cmd!(KnownCommand::Zpopmin, key, count).take()
     }
 
     /// Removes and returns up to count members with the highest scores,
@@ -1223,14 +1012,14 @@ implement_commands! {
     /// Blocks until a member is available otherwise.
     /// [Redis Docs](https://redis.io/commands/BZMPOP)
     fn bzmpop_max<K: ToRedisArgs>(timeout: f64, keys: K, count: isize) -> (Option<(String, Vec<(String, f64)>)>) {
-        ready_cmd!("BZMPOP", timeout, keys.num_of_args(), keys, "MAX", "COUNT", count).take()
+        ready_cmd!(KnownCommand::Bzmpop, timeout, keys.num_of_args(), keys, "MAX", "COUNT", count).take()
     }
 
     /// Removes and returns up to count members with the highest scores,
     /// from the first non-empty sorted set in the provided list of key names.
     /// [Redis Docs](https://redis.io/commands/ZMPOP)
     fn zmpop_max<K: ToRedisArgs>(keys: K, count: isize) -> (Option<(String, Vec<(String, f64)>)>) {
-        ready_cmd!("ZMPOP", keys.num_of_args(), keys, "MAX", "COUNT", count).take()
+        ready_cmd!(KnownCommand::Zmpop, keys.num_of_args(), keys, "MAX", "COUNT", count).take()
     }
 
     /// Removes and returns up to count members with the lowest scores,
@@ -1238,44 +1027,44 @@ implement_commands! {
     /// Blocks until a member is available otherwise.
     /// [Redis Docs](https://redis.io/commands/BZMPOP)
     fn bzmpop_min<K: ToRedisArgs>(timeout: f64, keys: K, count: isize) -> (Option<(String, Vec<(String, f64)>)>) {
-        ready_cmd!("BZMPOP", timeout, keys.num_of_args(), keys, "MIN", "COUNT", count).take()
+        ready_cmd!(KnownCommand::Bzmpop, timeout, keys.num_of_args(), keys, "MIN", "COUNT", count).take()
     }
 
     /// Removes and returns up to count members with the lowest scores,
     /// from the first non-empty sorted set in the provided list of key names.
     /// [Redis Docs](https://redis.io/commands/ZMPOP)
     fn zmpop_min<K: ToRedisArgs>(keys: K, count: isize) -> (Option<(String, Vec<(String, f64)>)>) {
-        ready_cmd!("ZMPOP", keys.num_of_args(), keys, "MIN", "COUNT", count).take()
+        ready_cmd!(KnownCommand::Zmpop, keys.num_of_args(), keys, "MIN", "COUNT", count).take()
     }
 
     /// Return up to count random members in a sorted set (or 1 if `count == None`)
     /// [Redis Docs](https://redis.io/commands/ZRANDMEMBER)
     fn zrandmember<K: ToSingleRedisArg>(key: K, count: Option<isize>) -> Generic {
-        ready_cmd!("ZRANDMEMBER", key, count).take()
+        ready_cmd!(KnownCommand::Zrandmember, key, count).take()
     }
 
     /// Return up to count random members in a sorted set with scores
     /// [Redis Docs](https://redis.io/commands/ZRANDMEMBER)
     fn zrandmember_withscores<K: ToSingleRedisArg>(key: K, count: isize) -> Generic {
-        ready_cmd!("ZRANDMEMBER", key, count, "WITHSCORES").take()
+        ready_cmd!(KnownCommand::Zrandmember, key, count, "WITHSCORES").take()
     }
 
     /// Return a range of members in a sorted set, by index
     /// [Redis Docs](https://redis.io/commands/ZRANGE)
     fn zrange<K: ToSingleRedisArg>(key: K, start: isize, stop: isize) -> (Vec<String>) {
-        ready_cmd!("ZRANGE", key, start, stop).take()
+        ready_cmd!(KnownCommand::Zrange, key, start, stop).take()
     }
 
     /// Return a range of members in a sorted set, by index with scores.
     /// [Redis Docs](https://redis.io/commands/ZRANGE)
     fn zrange_withscores<K: ToSingleRedisArg>(key: K, start: isize, stop: isize) -> (Vec<(String, f64)>) {
-        ready_cmd!("ZRANGE", key, start, stop, "WITHSCORES").take()
+        ready_cmd!(KnownCommand::Zrange, key, start, stop, "WITHSCORES").take()
     }
 
     /// Return a range of members in a sorted set, by lexicographical range.
     /// [Redis Docs](https://redis.io/commands/ZRANGEBYLEX)
     fn zrangebylex<K: ToSingleRedisArg, M: ToSingleRedisArg, MM: ToSingleRedisArg>(key: K, min: M, max: MM) -> (Vec<String>) {
-        ready_cmd!("ZRANGEBYLEX", key, min, max).take()
+        ready_cmd!(KnownCommand::Zrangebylex, key, min, max).take()
     }
 
     /// Return a range of members in a sorted set, by lexicographical
@@ -1283,13 +1072,13 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/ZRANGEBYLEX)
     fn zrangebylex_limit<K: ToSingleRedisArg, M: ToSingleRedisArg, MM: ToSingleRedisArg>(
             key: K, min: M, max: MM, offset: isize, count: isize) -> (Vec<String>) {
-        ready_cmd!("ZRANGEBYLEX", key, min, max, "LIMIT", offset, count).take()
+        ready_cmd!(KnownCommand::Zrangebylex, key, min, max, "LIMIT", offset, count).take()
     }
 
     /// Return a range of members in a sorted set, by lexicographical range.
     /// [Redis Docs](https://redis.io/commands/ZREVRANGEBYLEX)
     fn zrevrangebylex<K: ToSingleRedisArg, MM: ToSingleRedisArg, M: ToSingleRedisArg>(key: K, max: MM, min: M) -> (Vec<String>) {
-        ready_cmd!("ZREVRANGEBYLEX", key, max, min).take()
+        ready_cmd!(KnownCommand::Zrevrangebylex, key, max, min).take()
     }
 
     /// Return a range of members in a sorted set, by lexicographical
@@ -1297,121 +1086,121 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/ZREVRANGEBYLEX)
     fn zrevrangebylex_limit<K: ToSingleRedisArg, MM: ToSingleRedisArg, M: ToSingleRedisArg>(
             key: K, max: MM, min: M, offset: isize, count: isize) -> (Vec<String>) {
-        ready_cmd!("ZREVRANGEBYLEX", key, max, min, "LIMIT", offset, count).take()
+        ready_cmd!(KnownCommand::Zrevrangebylex, key, max, min, "LIMIT", offset, count).take()
     }
 
     /// Return a range of members in a sorted set, by score.
     /// [Redis Docs](https://redis.io/commands/ZRANGEBYSCORE)
     fn zrangebyscore<K: ToSingleRedisArg, M: ToSingleRedisArg, MM: ToSingleRedisArg>(key: K, min: M, max: MM) -> (Vec<String>) {
-        ready_cmd!("ZRANGEBYSCORE", key, min, max).take()
+        ready_cmd!(KnownCommand::Zrangebyscore, key, min, max).take()
     }
 
     /// Return a range of members in a sorted set, by score with scores.
     /// [Redis Docs](https://redis.io/commands/ZRANGEBYSCORE)
     fn zrangebyscore_withscores<K: ToSingleRedisArg, M: ToSingleRedisArg, MM: ToSingleRedisArg>(key: K, min: M, max: MM) -> (Vec<(String, f64)>) {
-        ready_cmd!("ZRANGEBYSCORE", key, min, max, "WITHSCORES").take()
+        ready_cmd!(KnownCommand::Zrangebyscore, key, min, max, "WITHSCORES").take()
     }
 
     /// Return a range of members in a sorted set, by score with limit.
     /// [Redis Docs](https://redis.io/commands/ZRANGEBYSCORE)
     fn zrangebyscore_limit<K: ToSingleRedisArg, M: ToSingleRedisArg, MM: ToSingleRedisArg>
             (key: K, min: M, max: MM, offset: isize, count: isize) -> (Vec<String>) {
-        ready_cmd!("ZRANGEBYSCORE", key, min, max, "LIMIT", offset, count).take()
+        ready_cmd!(KnownCommand::Zrangebyscore, key, min, max, "LIMIT", offset, count).take()
     }
 
     /// Return a range of members in a sorted set, by score with limit with scores.
     /// [Redis Docs](https://redis.io/commands/ZRANGEBYSCORE)
     fn zrangebyscore_limit_withscores<K: ToSingleRedisArg, M: ToSingleRedisArg, MM: ToSingleRedisArg>
             (key: K, min: M, max: MM, offset: isize, count: isize) -> (Vec<(String, f64)>) {
-        ready_cmd!("ZRANGEBYSCORE", key, min, max, "WITHSCORES", "LIMIT", offset, count).take()
+        ready_cmd!(KnownCommand::Zrangebyscore, key, min, max, "WITHSCORES", "LIMIT", offset, count).take()
     }
 
     /// Determine the index of a member in a sorted set.
     /// [Redis Docs](https://redis.io/commands/ZRANK)
     fn zrank<K: ToSingleRedisArg, M: ToSingleRedisArg>(key: K, member: M) -> (Option<usize>) {
-        ready_cmd!("ZRANK", key, member).take()
+        ready_cmd!(KnownCommand::Zrank, key, member).take()
     }
 
     /// Remove one or more members from a sorted set.
     /// [Redis Docs](https://redis.io/commands/ZREM)
     fn zrem<K: ToSingleRedisArg, M: ToRedisArgs>(key: K, members: M) -> (usize) {
-        ready_cmd!("ZREM", key, members).take()
+        ready_cmd!(KnownCommand::Zrem, key, members).take()
     }
 
     /// Remove all members in a sorted set between the given lexicographical range.
     /// [Redis Docs](https://redis.io/commands/ZREMRANGEBYLEX)
     fn zrembylex<K: ToSingleRedisArg, M: ToSingleRedisArg, MM: ToSingleRedisArg>(key: K, min: M, max: MM) -> (usize) {
-        ready_cmd!("ZREMRANGEBYLEX", key, min, max).take()
+        ready_cmd!(KnownCommand::Zremrangebylex, key, min, max).take()
     }
 
     /// Remove all members in a sorted set within the given indexes.
     /// [Redis Docs](https://redis.io/commands/ZREMRANGEBYRANK)
     fn zremrangebyrank<K: ToSingleRedisArg>(key: K, start: isize, stop: isize) -> (usize) {
-        ready_cmd!("ZREMRANGEBYRANK", key, start, stop).take()
+        ready_cmd!(KnownCommand::Zremrangebyrank, key, start, stop).take()
     }
 
     /// Remove all members in a sorted set within the given scores.
     /// [Redis Docs](https://redis.io/commands/ZREMRANGEBYSCORE)
     fn zrembyscore<K: ToSingleRedisArg, M: ToSingleRedisArg, MM: ToSingleRedisArg>(key: K, min: M, max: MM) -> (usize) {
-        ready_cmd!("ZREMRANGEBYSCORE", key, min, max).take()
+        ready_cmd!(KnownCommand::Zremrangebyscore, key, min, max).take()
     }
 
     /// Return a range of members in a sorted set, by index,
     /// ordered from high to low.
     /// [Redis Docs](https://redis.io/commands/ZREVRANGE)
     fn zrevrange<K: ToSingleRedisArg>(key: K, start: isize, stop: isize) -> (Vec<String>) {
-        ready_cmd!("ZREVRANGE", key, start, stop).take()
+        ready_cmd!(KnownCommand::Zrevrange, key, start, stop).take()
     }
 
     /// Return a range of members in a sorted set, by index, with scores
     /// ordered from high to low.
     /// [Redis Docs](https://redis.io/commands/ZREVRANGE)
     fn zrevrange_withscores<K: ToSingleRedisArg>(key: K, start: isize, stop: isize) -> (Vec<(String, f64)>) {
-        ready_cmd!("ZREVRANGE", key, start, stop, "WITHSCORES").take()
+        ready_cmd!(KnownCommand::Zrevrange, key, start, stop, "WITHSCORES").take()
     }
 
     /// Return a range of members in a sorted set, by score.
     /// [Redis Docs](https://redis.io/commands/ZREVRANGEBYSCORE)
     fn zrevrangebyscore<K: ToSingleRedisArg, MM: ToSingleRedisArg, M: ToSingleRedisArg>(key: K, max: MM, min: M) -> (Vec<String>) {
-        ready_cmd!("ZREVRANGEBYSCORE", key, max, min).take()
+        ready_cmd!(KnownCommand::Zrevrangebyscore, key, max, min).take()
     }
 
     /// Return a range of members in a sorted set, by score with scores.
     /// [Redis Docs](https://redis.io/commands/ZREVRANGEBYSCORE)
     fn zrevrangebyscore_withscores<K: ToSingleRedisArg, MM: ToSingleRedisArg, M: ToSingleRedisArg>(key: K, max: MM, min: M) -> (Vec<(String, f64)>) {
-        ready_cmd!("ZREVRANGEBYSCORE", key, max, min, "WITHSCORES").take()
+        ready_cmd!(KnownCommand::Zrevrangebyscore, key, max, min, "WITHSCORES").take()
     }
 
     /// Return a range of members in a sorted set, by score with limit.
     /// [Redis Docs](https://redis.io/commands/ZREVRANGEBYSCORE)
     fn zrevrangebyscore_limit<K: ToSingleRedisArg, MM: ToSingleRedisArg, M: ToSingleRedisArg>
             (key: K, max: MM, min: M, offset: isize, count: isize) -> (Vec<String>) {
-        ready_cmd!("ZREVRANGEBYSCORE", key, max, min, "LIMIT", offset, count).take()
+        ready_cmd!(KnownCommand::Zrevrangebyscore, key, max, min, "LIMIT", offset, count).take()
     }
 
     /// Return a range of members in a sorted set, by score with limit with scores.
     /// [Redis Docs](https://redis.io/commands/ZREVRANGEBYSCORE)
     fn zrevrangebyscore_limit_withscores<K: ToSingleRedisArg, MM: ToSingleRedisArg, M: ToSingleRedisArg>
             (key: K, max: MM, min: M, offset: isize, count: isize) -> (Vec<(String, f64)>) {
-        ready_cmd!("ZREVRANGEBYSCORE", key, max, min, "WITHSCORES", "LIMIT", offset, count).take()
+        ready_cmd!(KnownCommand::Zrevrangebyscore, key, max, min, "WITHSCORES", "LIMIT", offset, count).take()
     }
 
     /// Determine the index of a member in a sorted set, with scores ordered from high to low.
     /// [Redis Docs](https://redis.io/commands/ZREVRANK)
     fn zrevrank<K: ToSingleRedisArg, M: ToSingleRedisArg>(key: K, member: M) -> (Option<usize>) {
-        ready_cmd!("ZREVRANK", key, member).take()
+        ready_cmd!(KnownCommand::Zrevrank, key, member).take()
     }
 
     /// Get the score associated with the given member in a sorted set.
     /// [Redis Docs](https://redis.io/commands/ZSCORE)
     fn zscore<K: ToSingleRedisArg, M: ToSingleRedisArg>(key: K, member: M) -> (Option<f64>) {
-        ready_cmd!("ZSCORE", key, member).take()
+        ready_cmd!(KnownCommand::Zscore, key, member).take()
     }
 
     /// Get the scores associated with multiple members in a sorted set.
     /// [Redis Docs](https://redis.io/commands/ZMSCORE)
     fn zscore_multiple<K: ToSingleRedisArg, M: ToRedisArgs>(key: K, members: &[M]) -> (Vec<Option<f64>>) {
-        ready_cmd!("ZMSCORE", key, members).take()
+        ready_cmd!(KnownCommand::Zmscore, key, members).take()
     }
 
     /// Union multiple sorted sets and store the resulting sorted set in
@@ -1419,7 +1208,7 @@ implement_commands! {
     /// If no `AGGREGATE` modifier is provided, `SUM` is used.
     /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
     fn zunionstore<D: ToSingleRedisArg, K: ToRedisArgs>(dstkey: D, keys: K, options: SortedSetOperationOptions) -> (usize) {
-        ready_cmd!("ZUNIONSTORE", dstkey, keys.num_of_args(), keys, options).take()
+        ready_cmd!(KnownCommand::Zunionstore, dstkey, keys.num_of_args(), keys, options).take()
     }
 
     /// Union multiple sorted sets and store the resulting sorted set in
@@ -1427,14 +1216,14 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/ZUNIONSTORE)
     fn zunionstore_with_weights<D: ToSingleRedisArg, K: ToRedisArgs, W: ToRedisArgs>(dstkey: D, keys: &[(K, W)], options: SortedSetOperationOptions) -> (usize) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
-        ready_cmd!("ZUNIONSTORE", dstkey, keys.num_of_args(), keys, "WEIGHTS", weights, options).take()
+        ready_cmd!(KnownCommand::Zunionstore, dstkey, keys.num_of_args(), keys, "WEIGHTS", weights, options).take()
     }
 
     /// Union multiple sorted sets and return the resulting members,
     /// applying an optional `AGGREGATE` modifier (SUM by default).
     /// [Redis Docs](https://redis.io/commands/ZUNION)
     fn zunion<K: ToRedisArgs>(keys: K, options: SortedSetOperationOptions) -> (Vec<String>) {
-        ready_cmd!("ZUNION", keys.num_of_args(), keys, options).take()
+        ready_cmd!(KnownCommand::Zunion, keys.num_of_args(), keys, options).take()
     }
 
     /// [`Commands::zunion`], but with the ability to specify a weight for each
@@ -1442,20 +1231,20 @@ implement_commands! {
     /// [Redis Docs](https://redis.io/commands/ZUNION)
     fn zunion_with_weights<K: ToRedisArgs, W: ToRedisArgs>(keys: &[(K, W)], options: SortedSetOperationOptions) -> (Vec<String>) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
-        ready_cmd!("ZUNION", keys.num_of_args(), keys, "WEIGHTS", weights, options).take()
+        ready_cmd!(KnownCommand::Zunion, keys.num_of_args(), keys, "WEIGHTS", weights, options).take()
     }
 
     /// [`Commands::zunion`], but additionally returns the score of each member.
     /// [Redis Docs](https://redis.io/commands/ZUNION)
     fn zunion_withscores<K: ToRedisArgs>(keys: K, options: SortedSetOperationOptions) -> (Vec<(String, f64)>) {
-        ready_cmd!("ZUNION", keys.num_of_args(), keys, options, "WITHSCORES").take()
+        ready_cmd!(KnownCommand::Zunion, keys.num_of_args(), keys, options, "WITHSCORES").take()
     }
 
     /// [`Commands::zunion_with_weights`], but additionally returns the score of each member.
     /// [Redis Docs](https://redis.io/commands/ZUNION)
     fn zunion_with_weights_withscores<K: ToRedisArgs, W: ToRedisArgs>(keys: &[(K, W)], options: SortedSetOperationOptions) -> (Vec<(String, f64)>) {
         let (keys, weights): (Vec<&K>, Vec<&W>) = keys.iter().map(|(k, w)| (k, w)).unzip();
-        ready_cmd!("ZUNION", keys.num_of_args(), keys, "WEIGHTS", weights, options, "WITHSCORES").take()
+        ready_cmd!(KnownCommand::Zunion, keys.num_of_args(), keys, "WEIGHTS", weights, options, "WITHSCORES").take()
     }
 
     // vector set commands
@@ -1465,7 +1254,7 @@ implement_commands! {
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vadd<K: ToRedisArgs, E: ToRedisArgs>(key: K, input: vector_sets::VectorAddInput, element: E) -> (bool) {
-        ready_cmd!("VADD", key, input, element).take()
+        ready_cmd!(KnownCommand::Vadd, key, input, element).take()
     }
 
     /// Add a new element into the vector set specified by key with optional parameters for fine-tuning the insertion process.
@@ -1473,7 +1262,7 @@ implement_commands! {
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vadd_options<K: ToRedisArgs, E: ToRedisArgs>(key: K, input: vector_sets::VectorAddInput, element: E, options: &vector_sets::VAddOptions) -> (bool) {
-        ready_cmd!("VADD", key, options.reduction_dimension.map(|_| "REDUCE"), options.reduction_dimension, input, element, options).take()
+        ready_cmd!(KnownCommand::Vadd, key, options.reduction_dimension.map(|_| "REDUCE"), options.reduction_dimension, input, element, options).take()
     }
 
     /// Get the number of members in a vector set.
@@ -1481,7 +1270,7 @@ implement_commands! {
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vcard<K: ToRedisArgs>(key: K) -> (usize) {
-        ready_cmd!("VCARD", key).take()
+        ready_cmd!(KnownCommand::Vcard, key).take()
     }
 
     /// Return the number of dimensions of the vectors in the specified vector set.
@@ -1489,7 +1278,7 @@ implement_commands! {
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vdim<K: ToRedisArgs>(key: K) -> (usize) {
-        ready_cmd!("VDIM", key).take()
+        ready_cmd!(KnownCommand::Vdim, key).take()
     }
 
     /// Return the approximate vector associated with a given element in the vector set.
@@ -1497,7 +1286,7 @@ implement_commands! {
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vemb<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> Generic {
-        ready_cmd!("VEMB", key, element).take()
+        ready_cmd!(KnownCommand::Vemb, key, element).take()
     }
 
     /// Return the raw internal representation of the approximate vector associated with a given element in the vector set.
@@ -1507,7 +1296,7 @@ implement_commands! {
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vemb_options<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E, options: &vector_sets::VEmbOptions) -> Generic {
-        ready_cmd!("VEMB", key, element, options).take()
+        ready_cmd!(KnownCommand::Vemb, key, element, options).take()
     }
 
     /// Remove an element from a vector set.
@@ -1515,7 +1304,7 @@ implement_commands! {
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vrem<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> (bool) {
-        ready_cmd!("VREM", key, element).take()
+        ready_cmd!(KnownCommand::Vrem, key, element).take()
     }
 
     /// Associate a JSON object with an element in a vector set.
@@ -1529,7 +1318,7 @@ implement_commands! {
             _ => serde_json::to_string(json_object).unwrap(),
         };
 
-        ready_cmd!("VSETATTR", key, element, attributes_json).take()
+        ready_cmd!(KnownCommand::Vsetattr, key, element, attributes_json).take()
     }
 
     /// Delete the JSON attributes associated with an element in a vector set.
@@ -1538,7 +1327,7 @@ implement_commands! {
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vdelattr<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> (bool) {
-        ready_cmd!("VSETATTR", key, element, "").take()
+        ready_cmd!(KnownCommand::Vsetattr, key, element, "").take()
     }
 
     /// Return the JSON attributes associated with an element in a vector set.
@@ -1546,7 +1335,7 @@ implement_commands! {
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vgetattr<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> (Option<String>) {
-        ready_cmd!("VGETATTR", key, element).take()
+        ready_cmd!(KnownCommand::Vgetattr, key, element).take()
     }
 
     /// Return metadata and internal details about a vector set, including
@@ -1555,7 +1344,7 @@ implement_commands! {
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vinfo<K: ToRedisArgs>(key: K) -> (Option<std::collections::HashMap<String, Value>>) {
-        ready_cmd!("VINFO", key).take()
+        ready_cmd!(KnownCommand::Vinfo, key).take()
     }
 
     /// Return the neighbors of a specified element in a vector set.
@@ -1564,7 +1353,7 @@ implement_commands! {
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vlinks<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> Generic {
-        ready_cmd!("VLINKS", key, element).take()
+        ready_cmd!(KnownCommand::Vlinks, key, element).take()
     }
 
     /// Return the neighbors of a specified element in a vector set.
@@ -1574,7 +1363,7 @@ implement_commands! {
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vlinks_with_scores<K: ToRedisArgs, E: ToRedisArgs>(key: K, element: E) -> Generic {
-        ready_cmd!("VLINKS", key, element, "WITHSCORES").take()
+        ready_cmd!(KnownCommand::Vlinks, key, element, "WITHSCORES").take()
     }
 
     /// Return one random elements from a vector set.
@@ -1582,7 +1371,7 @@ implement_commands! {
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vrandmember<K: ToRedisArgs>(key: K) -> (Option<String>) {
-        ready_cmd!("VRANDMEMBER", key).take()
+        ready_cmd!(KnownCommand::Vrandmember, key).take()
     }
 
     /// Return multiple random elements from a vector set.
@@ -1590,7 +1379,7 @@ implement_commands! {
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vrandmember_multiple<K: ToRedisArgs>(key: K, count: usize) -> (Vec<String>) {
-        ready_cmd!("VRANDMEMBER", key, count).take()
+        ready_cmd!(KnownCommand::Vrandmember, key, count).take()
     }
 
     /// Perform vector similarity search.
@@ -1598,7 +1387,7 @@ implement_commands! {
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vsim<K: ToRedisArgs>(key: K, input: vector_sets::VectorSimilaritySearchInput) -> Generic {
-        ready_cmd!("VSIM", key, input).take()
+        ready_cmd!(KnownCommand::Vsim, key, input).take()
     }
 
     /// Performs a vector similarity search with optional parameters for customization.
@@ -1606,7 +1395,7 @@ implement_commands! {
     #[cfg(feature = "vector-sets")]
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vsim_options<K: ToRedisArgs>(key: K, input: vector_sets::VectorSimilaritySearchInput, options: &vector_sets::VSimOptions) -> Generic {
-        ready_cmd!("VSIM", key, input, options).take()
+        ready_cmd!(KnownCommand::Vsim, key, input, options).take()
     }
 
     // hyperloglog commands
@@ -1614,32 +1403,32 @@ implement_commands! {
     /// Adds the specified elements to the specified HyperLogLog.
     /// [Redis Docs](https://redis.io/commands/PFADD)
     fn pfadd<K: ToSingleRedisArg, E: ToRedisArgs>(key: K, element: E) -> (bool) {
-        ready_cmd!("PFADD", key, element).take()
+        ready_cmd!(KnownCommand::Pfadd, key, element).take()
     }
 
     /// Return the approximated cardinality of the set(s) observed by the
     /// HyperLogLog at key(s).
     /// [Redis Docs](https://redis.io/commands/PFCOUNT)
     fn pfcount<K: ToRedisArgs>(key: K) -> (usize) {
-        ready_cmd!("PFCOUNT", key).take()
+        ready_cmd!(KnownCommand::Pfcount, key).take()
     }
 
     /// Merge N different HyperLogLogs into a single one.
     /// [Redis Docs](https://redis.io/commands/PFMERGE)
     fn pfmerge<D: ToSingleRedisArg, S: ToRedisArgs>(dstkey: D, srckeys: S) -> (()) {
-        ready_cmd!("PFMERGE", dstkey, srckeys).take()
+        ready_cmd!(KnownCommand::Pfmerge, dstkey, srckeys).take()
     }
 
     /// Posts a message to the given channel.
     /// [Redis Docs](https://redis.io/commands/PUBLISH)
     fn publish<K: ToSingleRedisArg, E: ToSingleRedisArg>(channel: K, message: E) -> (usize) {
-        ready_cmd!("PUBLISH", channel, message).take()
+        ready_cmd!(KnownCommand::Publish, channel, message).take()
     }
 
     /// Posts a message to the given sharded channel.
     /// [Redis Docs](https://redis.io/commands/SPUBLISH)
     fn spublish<K: ToSingleRedisArg, E: ToSingleRedisArg>(channel: K, message: E) -> (usize) {
-        ready_cmd!("SPUBLISH", channel, message).take()
+        ready_cmd!(KnownCommand::Spublish, channel, message).take()
     }
 
     // Object commands
@@ -1647,43 +1436,43 @@ implement_commands! {
     /// Returns the encoding of a key.
     /// [Redis Docs](https://redis.io/commands/OBJECT)
     fn object_encoding<K: ToSingleRedisArg>(key: K) -> (Option<String>) {
-        ready_cmd!("OBJECT", "ENCODING", key).take()
+        ready_cmd!(KnownCommand::ObjectEncoding, key).take()
     }
 
     /// Returns the time in seconds since the last access of a key.
     /// [Redis Docs](https://redis.io/commands/OBJECT)
     fn object_idletime<K: ToSingleRedisArg>(key: K) -> (Option<usize>) {
-        ready_cmd!("OBJECT", "IDLETIME", key).take()
+        ready_cmd!(KnownCommand::ObjectIdletime, key).take()
     }
 
     /// Returns the logarithmic access frequency counter of a key.
     /// [Redis Docs](https://redis.io/commands/OBJECT)
     fn object_freq<K: ToSingleRedisArg>(key: K) -> (Option<usize>) {
-        ready_cmd!("OBJECT", "FREQ", key).take()
+        ready_cmd!(KnownCommand::ObjectFreq, key).take()
     }
 
     /// Returns the reference count of a key.
     /// [Redis Docs](https://redis.io/commands/OBJECT)
     fn object_refcount<K: ToSingleRedisArg>(key: K) -> (Option<usize>) {
-        ready_cmd!("OBJECT", "REFCOUNT", key).take()
+        ready_cmd!(KnownCommand::ObjectRefcount, key).take()
     }
 
     /// Returns the name of the current connection as set by CLIENT SETNAME.
     /// [Redis Docs](https://redis.io/commands/CLIENT)
     fn client_getname<>() -> (Option<String>) {
-        ready_cmd!("CLIENT", "GETNAME").take()
+        ready_cmd!(KnownCommand::ClientGetname).take()
     }
 
     /// Returns the ID of the current connection.
     /// [Redis Docs](https://redis.io/commands/CLIENT)
     fn client_id<>() -> (isize) {
-        ready_cmd!("CLIENT", "ID").take()
+        ready_cmd!(KnownCommand::ClientId).take()
     }
 
     /// Command assigns a name to the current connection.
     /// [Redis Docs](https://redis.io/commands/CLIENT)
     fn client_setname<K: ToSingleRedisArg>(connection_name: K) -> (()) {
-        ready_cmd!("CLIENT", "SETNAME", connection_name).take()
+        ready_cmd!(KnownCommand::ClientSetname, connection_name).take()
     }
 
     // ACL commands
@@ -1695,7 +1484,7 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     /// [Redis Docs](https://redis.io/commands/ACL)
     fn acl_load<>() -> () {
-        ready_cmd!("ACL", "LOAD").take()
+        ready_cmd!(KnownCommand::AclLoad).take()
     }
 
     /// When Redis is configured to use an ACL file (with the aclfile
@@ -1705,7 +1494,7 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     /// [Redis Docs](https://redis.io/commands/ACL)
     fn acl_save<>() -> () {
-        ready_cmd!("ACL", "SAVE").take()
+        ready_cmd!(KnownCommand::AclSave).take()
     }
 
     /// Shows the currently active ACL rules in the Redis server.
@@ -1713,7 +1502,7 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     /// [Redis Docs](https://redis.io/commands/ACL)
     fn acl_list<>() -> (Vec<String>) {
-        ready_cmd!("ACL", "LIST").take()
+        ready_cmd!(KnownCommand::AclList).take()
     }
 
     /// Shows a list of all the usernames of the currently configured users in
@@ -1722,7 +1511,7 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     /// [Redis Docs](https://redis.io/commands/ACL)
     fn acl_users<>() -> (Vec<String>) {
-        ready_cmd!("ACL", "USERS").take()
+        ready_cmd!(KnownCommand::AclUsers).take()
     }
 
     /// Returns all the rules defined for an existing ACL user.
@@ -1730,7 +1519,7 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     /// [Redis Docs](https://redis.io/commands/ACL)
     fn acl_getuser<K: ToSingleRedisArg>(username: K) -> (Option<acl::AclInfo>) {
-        ready_cmd!("ACL", "GETUSER", username).take()
+        ready_cmd!(KnownCommand::AclGetuser, username).take()
     }
 
     /// Creates an ACL user without any privilege.
@@ -1738,7 +1527,7 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     /// [Redis Docs](https://redis.io/commands/ACL)
     fn acl_setuser<K: ToSingleRedisArg>(username: K) -> () {
-        ready_cmd!("ACL", "SETUSER", username).take()
+        ready_cmd!(KnownCommand::AclSetuser, username).take()
     }
 
     /// Creates an ACL user with the specified rules or modify the rules of
@@ -1747,7 +1536,7 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     /// [Redis Docs](https://redis.io/commands/ACL)
     fn acl_setuser_rules<K: ToSingleRedisArg>(username: K, rules: &[acl::Rule]) -> () {
-        ready_cmd!("ACL", "SETUSER", username, rules).take()
+        ready_cmd!(KnownCommand::AclSetuser, username, rules).take()
     }
 
     /// Delete all the specified ACL users and terminate all the connections
@@ -1756,7 +1545,7 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     /// [Redis Docs](https://redis.io/commands/ACL)
     fn acl_deluser<K: ToRedisArgs>(usernames: &[K]) -> (usize) {
-        ready_cmd!("ACL", "DELUSER", usernames).take()
+        ready_cmd!(KnownCommand::AclDeluser, usernames).take()
     }
 
     /// Simulate the execution of a given command by a given user.
@@ -1764,7 +1553,7 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     /// [Redis Docs](https://redis.io/commands/ACL)
     fn acl_dryrun<K: ToSingleRedisArg, C: ToSingleRedisArg, A: ToRedisArgs>(username: K, command: C, args: A) -> (String) {
-        ready_cmd!("ACL", "DRYRUN", username, command, args).take()
+        ready_cmd!(KnownCommand::AclDryrun, username, command, args).take()
     }
 
     /// Shows the available ACL categories.
@@ -1772,7 +1561,7 @@ implement_commands! {
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     fn acl_cat<>() -> (HashSet<String>) {
-        ready_cmd!("ACL", "CAT").take()
+        ready_cmd!(KnownCommand::AclCat).take()
     }
 
     /// Shows all the Redis commands in the specified category.
@@ -1780,7 +1569,7 @@ implement_commands! {
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     fn acl_cat_categoryname<K: ToSingleRedisArg>(categoryname: K) -> (HashSet<String>) {
-        ready_cmd!("ACL", "CAT", categoryname).take()
+        ready_cmd!(KnownCommand::AclCat, categoryname).take()
     }
 
     /// Generates a 256-bits password starting from /dev/urandom if available.
@@ -1788,7 +1577,7 @@ implement_commands! {
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     fn acl_genpass<>() -> (String) {
-        ready_cmd!("ACL", "GENPASS").take()
+        ready_cmd!(KnownCommand::AclGenpass).take()
     }
 
     /// Generates a 1-to-1024-bits password starting from /dev/urandom if available.
@@ -1796,7 +1585,7 @@ implement_commands! {
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     fn acl_genpass_bits<>(bits: isize) -> (String) {
-        ready_cmd!("ACL", "GENPASS", bits).take()
+        ready_cmd!(KnownCommand::AclGenpass, bits).take()
     }
 
     /// Returns the username the current connection is authenticated with.
@@ -1804,7 +1593,7 @@ implement_commands! {
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     fn acl_whoami<>() -> (String) {
-        ready_cmd!("ACL", "WHOAMI").take()
+        ready_cmd!(KnownCommand::AclWhoami).take()
     }
 
     /// Shows a list of recent ACL security events, each one as a map of its fields
@@ -1812,7 +1601,7 @@ implement_commands! {
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     fn acl_log<>(count: isize) -> (Vec<std::collections::HashMap<String, crate::Value>>) {
-        ready_cmd!("ACL", "LOG", count).take()
+        ready_cmd!(KnownCommand::AclLog, count).take()
 
     }
 
@@ -1821,7 +1610,7 @@ implement_commands! {
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     fn acl_log_reset<>() -> () {
-        ready_cmd!("ACL", "LOG", "RESET").take()
+        ready_cmd!(KnownCommand::AclLog, "RESET").take()
     }
 
     /// Returns a helpful text describing the different subcommands.
@@ -1829,7 +1618,7 @@ implement_commands! {
     #[cfg(feature = "acl")]
     #[cfg_attr(docsrs, doc(cfg(feature = "acl")))]
     fn acl_help<>() -> (Vec<String>) {
-        ready_cmd!("ACL", "HELP").take()
+        ready_cmd!(KnownCommand::AclHelp).take()
     }
 
     //
@@ -1873,7 +1662,7 @@ implement_commands! {
     #[cfg(feature = "geospatial")]
     #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
     fn geo_add<K: ToSingleRedisArg, M: ToRedisArgs>(key: K, members: M) -> (usize) {
-        ready_cmd!("GEOADD", key, members).take()
+        ready_cmd!(KnownCommand::Geoadd, key, members).take()
     }
 
     /// Return the distance between two members in the geospatial index
@@ -1916,7 +1705,7 @@ implement_commands! {
         member2: M2,
         unit: geo::Unit
     ) -> (Option<f64>) {
-        ready_cmd!("GEODIST", key, member1, member2, unit).take()
+        ready_cmd!(KnownCommand::Geodist, key, member1, member2, unit).take()
     }
 
     /// Return valid [Geohash][1] strings representing the position of one or
@@ -1942,7 +1731,7 @@ implement_commands! {
     #[cfg(feature = "geospatial")]
     #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
     fn geo_hash<K: ToSingleRedisArg, M: ToRedisArgs>(key: K, members: M) -> (Vec<Option<String>>) {
-        ready_cmd!("GEOHASH", key, members).take()
+        ready_cmd!(KnownCommand::Geohash, key, members).take()
     }
 
     /// Return the positions of all the specified members of the geospatial
@@ -1972,7 +1761,7 @@ implement_commands! {
     #[cfg(feature = "geospatial")]
     #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
     fn geo_pos<K: ToSingleRedisArg, M: ToRedisArgs>(key: K, members: M) -> (Vec<Option<geo::Coord<f64>>>) {
-        ready_cmd!("GEOPOS", key, members).take()
+        ready_cmd!(KnownCommand::Geopos, key, members).take()
     }
 
     /// Return the members of a sorted set populated with geospatial information
@@ -2005,7 +1794,7 @@ implement_commands! {
         unit: geo::Unit,
         options: geo::RadiusOptions
     ) -> (Vec<geo::RadiusSearchResult>) {
-        ready_cmd!("GEORADIUS", key, longitude, latitude, radius, unit, options).take()
+        ready_cmd!(KnownCommand::Georadius, key, longitude, latitude, radius, unit, options).take()
     }
 
     /// Retrieve members selected by distance with the center of `member`. The
@@ -2020,7 +1809,7 @@ implement_commands! {
         unit: geo::Unit,
         options: geo::RadiusOptions
     ) -> (Vec<geo::RadiusSearchResult>) {
-        ready_cmd!("GEORADIUSBYMEMBER", key, member, radius, unit, options).take()
+        ready_cmd!(KnownCommand::Georadiusbymember, key, member, radius, unit, options).take()
     }
 
     //
@@ -2039,7 +1828,7 @@ implement_commands! {
         key: K,
         group: G,
         ids: &[I]) -> (usize) {
-        ready_cmd!("XACK", key, group, ids).take()
+        ready_cmd!(KnownCommand::Xack, key, group, ids).take()
     }
 
     /// Negatively acknowledge (NACK) one or more pending stream messages.
@@ -2075,7 +1864,7 @@ implement_commands! {
         ids: &[ID],
         options: &streams::StreamNackOptions
     ) -> (usize) {
-        ready_cmd!("XNACK", key, group, options, "IDS", ids.len(), ids).take()
+        ready_cmd!(KnownCommand::Xnack, key, group, options, "IDS", ids.len(), ids).take()
     }
 
 
@@ -2092,7 +1881,7 @@ implement_commands! {
         id: ID,
         items: &[(F, V)]
     ) -> (Option<String>) {
-        ready_cmd!("XADD", key, id, items).take()
+        ready_cmd!(KnownCommand::Xadd, key, id, items).take()
     }
 
 
@@ -2110,7 +1899,7 @@ implement_commands! {
         id: ID,
         map: BTM
     ) -> (Option<String>) {
-        ready_cmd!("XADD", key, id, map).take()
+        ready_cmd!(KnownCommand::Xadd, key, id, map).take()
     }
 
 
@@ -2147,7 +1936,7 @@ implement_commands! {
         items: I,
         options: &streams::StreamAddOptions
     ) -> (Option<String>) {
-        ready_cmd!("XADD", key, options, id, items).take()
+        ready_cmd!(KnownCommand::Xadd, key, options, id, items).take()
     }
 
 
@@ -2170,7 +1959,7 @@ implement_commands! {
         id: ID,
         items: &[(F, V)]
     ) -> (Option<String>) {
-        ready_cmd!("XADD", key, maxlen, id, items).take()
+        ready_cmd!(KnownCommand::Xadd, key, maxlen, id, items).take()
     }
 
 
@@ -2188,7 +1977,7 @@ implement_commands! {
         id: ID,
         map: BTM
     ) -> (Option<String>) {
-        ready_cmd!("XADD", key, maxlen, id, map).take()
+        ready_cmd!(KnownCommand::Xadd, key, maxlen, id, map).take()
     }
 
     /// Perform a combined xpending and xclaim flow.
@@ -2223,7 +2012,7 @@ implement_commands! {
         start: S,
         options: streams::StreamAutoClaimOptions
     ) -> (streams::StreamAutoClaimReply) {
-        ready_cmd!("XAUTOCLAIM", key, group, consumer, min_idle_time, start, options).take()
+        ready_cmd!(KnownCommand::Xautoclaim, key, group, consumer, min_idle_time, start, options).take()
     }
 
     /// Claim pending, unacked messages, after some period of time,
@@ -2245,7 +2034,7 @@ implement_commands! {
         min_idle_time: MIT,
         ids: &[ID]
     ) -> (streams::StreamClaimReply) {
-        ready_cmd!("XCLAIM", key, group, consumer, min_idle_time, ids).take()
+        ready_cmd!(KnownCommand::Xclaim, key, group, consumer, min_idle_time, ids).take()
     }
 
     /// This is the optional arguments version for claiming unacked, pending messages
@@ -2298,7 +2087,7 @@ implement_commands! {
         ids: &[ID],
         options: streams::StreamClaimOptions
     ) -> Generic {
-        ready_cmd!("XCLAIM", key, group, consumer, min_idle_time, ids, options).take()
+        ready_cmd!(KnownCommand::Xclaim, key, group, consumer, min_idle_time, ids, options).take()
     }
 
 
@@ -2314,21 +2103,21 @@ implement_commands! {
         key: K,
         ids: &[ID]
     ) -> (usize) {
-        ready_cmd!("XDEL", key, ids).take()
+        ready_cmd!(KnownCommand::Xdel, key, ids).take()
     }
 
     /// An extension of the Streams `XDEL` command that provides finer control over how message entries are deleted with respect to consumer groups.
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xdel_ex<K: ToRedisArgs, ID: ToRedisArgs>(key: K, ids: &[ID], options: streams::StreamDeletionPolicy) -> (Vec<streams::XDelExStatusCode>) {
-        ready_cmd!("XDELEX", key, options, "IDS", ids.len(), ids).take()
+        ready_cmd!(KnownCommand::Xdelex, key, options, "IDS", ids.len(), ids).take()
     }
 
     /// A combination of `XACK` and `XDEL` that acknowledges and attempts to delete a list of `ids` for a given stream `key` and consumer `group`.
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xack_del<K: ToRedisArgs, G: ToRedisArgs, ID: ToRedisArgs>(key: K, group: G, ids: &[ID], options: streams::StreamDeletionPolicy) -> (Vec<streams::XAckDelStatusCode>) {
-        ready_cmd!("XACKDEL", key, group, options, "IDS", ids.len(), ids).take()
+        ready_cmd!(KnownCommand::Xackdel, key, group, options, "IDS", ids.len(), ids).take()
     }
 
     /// This command is used for creating a consumer `group`. It expects the stream key
@@ -2347,7 +2136,7 @@ implement_commands! {
         group: G,
         id: ID
     ) -> () {
-        ready_cmd!("XGROUP", "CREATE", key, group, id).take()
+        ready_cmd!(KnownCommand::XgroupCreate, key, group, id).take()
     }
 
     /// This creates a `consumer` explicitly (vs implicit via XREADGROUP)
@@ -2367,7 +2156,7 @@ implement_commands! {
         group: G,
         consumer: C
     ) -> bool {
-        ready_cmd!("XGROUP", "CREATECONSUMER", key, group, consumer).take()
+        ready_cmd!(KnownCommand::XgroupCreateconsumer, key, group, consumer).take()
     }
 
     /// This is the alternate version for creating a consumer `group`
@@ -2388,7 +2177,7 @@ implement_commands! {
         group: G,
         id: ID
     ) -> () {
-        ready_cmd!("XGROUP", "CREATE", key, group, id, "MKSTREAM").take()
+        ready_cmd!(KnownCommand::XgroupCreate, key, group, id, "MKSTREAM").take()
     }
 
 
@@ -2406,7 +2195,7 @@ implement_commands! {
         group: G,
         id: ID
     ) -> () {
-        ready_cmd!("XGROUP", "SETID", key, group, id).take()
+        ready_cmd!(KnownCommand::XgroupSetid, key, group, id).take()
     }
 
 
@@ -2422,7 +2211,7 @@ implement_commands! {
         key: K,
         group: G
     ) -> bool {
-        ready_cmd!("XGROUP", "DESTROY", key, group).take()
+        ready_cmd!(KnownCommand::XgroupDestroy, key, group).take()
     }
 
     /// This deletes a `consumer` from an existing consumer `group`
@@ -2439,7 +2228,7 @@ implement_commands! {
         group: G,
         consumer: C
     ) -> usize {
-        ready_cmd!("XGROUP", "DELCONSUMER", key, group, consumer).take()
+        ready_cmd!(KnownCommand::XgroupDelconsumer, key, group, consumer).take()
     }
 
 
@@ -2460,7 +2249,7 @@ implement_commands! {
         key: K,
         group: G
     ) -> (streams::StreamInfoConsumersReply) {
-        ready_cmd!("XINFO", "CONSUMERS", key, group).take()
+        ready_cmd!(KnownCommand::XinfoConsumers, key, group).take()
     }
 
 
@@ -2477,7 +2266,7 @@ implement_commands! {
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xinfo_groups<K: ToRedisArgs>(key: K) -> (streams::StreamInfoGroupsReply) {
-        ready_cmd!("XINFO", "GROUPS", key).take()
+        ready_cmd!(KnownCommand::XinfoGroups, key).take()
     }
 
 
@@ -2496,7 +2285,7 @@ implement_commands! {
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xinfo_stream<K: ToRedisArgs>(key: K) -> (streams::StreamInfoStreamReply) {
-        ready_cmd!("XINFO", "STREAM", key).take()
+        ready_cmd!(KnownCommand::XinfoStream, key).take()
     }
 
     /// Returns the number of messages for a given stream `key`.
@@ -2508,7 +2297,7 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     /// [Redis Docs](https://redis.io/commands/XLEN)
     fn xlen<K: ToRedisArgs>(key: K) -> usize {
-        ready_cmd!("XLEN", key).take()
+        ready_cmd!(KnownCommand::Xlen, key).take()
     }
 
 
@@ -2533,7 +2322,7 @@ implement_commands! {
         key: K,
         group: G
     ) -> (streams::StreamPendingReply) {
-        ready_cmd!("XPENDING", key, group).take()
+        ready_cmd!(KnownCommand::Xpending, key, group).take()
     }
 
 
@@ -2564,7 +2353,7 @@ implement_commands! {
         end: E,
         count: C
     ) -> (streams::StreamPendingCountReply) {
-        ready_cmd!("XPENDING", key, group, start, end, count).take()
+        ready_cmd!(KnownCommand::Xpending, key, group, start, end, count).take()
     }
 
 
@@ -2596,7 +2385,7 @@ implement_commands! {
         count: C,
         consumer: CN
     ) -> (streams::StreamPendingCountReply) {
-        ready_cmd!("XPENDING", key, group, start, end, count, consumer).take()
+        ready_cmd!(KnownCommand::Xpending, key, group, start, end, count, consumer).take()
     }
 
     /// Returns a range of messages in a given stream `key`.
@@ -2618,7 +2407,7 @@ implement_commands! {
         start: S,
         end: E
     ) -> (streams::StreamRangeReply) {
-        ready_cmd!("XRANGE", key, start, end).take()
+        ready_cmd!(KnownCommand::Xrange, key, start, end).take()
     }
 
 
@@ -2632,7 +2421,7 @@ implement_commands! {
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xrange_all<K: ToRedisArgs>(key: K) -> (streams::StreamRangeReply) {
-        ready_cmd!("XRANGE", key, "-", "+").take()
+        ready_cmd!(KnownCommand::Xrange, key, "-", "+").take()
     }
 
 
@@ -2650,7 +2439,7 @@ implement_commands! {
         end: E,
         count: C
     ) -> (streams::StreamRangeReply) {
-        ready_cmd!("XRANGE", key, start, end, "COUNT", count).take()
+        ready_cmd!(KnownCommand::Xrange, key, start, end, "COUNT", count).take()
     }
 
 
@@ -2669,7 +2458,7 @@ implement_commands! {
         keys: &[K],
         ids: &[ID]
     ) -> (Option<streams::StreamReadReply>) {
-        ready_cmd!("XREAD", "STREAMS", keys, ids).take()
+        ready_cmd!(KnownCommand::Xread, "STREAMS", keys, ids).take()
     }
 
     /// This method handles setting optional arguments for
@@ -2717,9 +2506,9 @@ implement_commands! {
         options: &streams::StreamReadOptions
     ) -> (Option<streams::StreamReadReply>) {
         ready_cmd!(if options.read_only() {
-            "XREAD"
+            KnownCommand::Xread
         } else {
-            "XREADGROUP"
+            KnownCommand::Xreadgroup
         }, options, "STREAMS", keys, ids).take()
     }
 
@@ -2737,7 +2526,7 @@ implement_commands! {
         end: E,
         start: S
     ) -> (streams::StreamRangeReply) {
-        ready_cmd!("XREVRANGE", key, end, start).take()
+        ready_cmd!(KnownCommand::Xrevrange, key, end, start).take()
     }
 
     /// This is the reverse version of `xrange_all`.
@@ -2750,7 +2539,7 @@ implement_commands! {
     #[cfg(feature = "streams")]
     #[cfg_attr(docsrs, doc(cfg(feature = "streams")))]
     fn xrevrange_all<K: ToRedisArgs>(key: K) -> (streams::StreamRangeReply) {
-        ready_cmd!("XREVRANGE", key, "+", "-").take()
+        ready_cmd!(KnownCommand::Xrevrange, key, "+", "-").take()
     }
 
     /// This is the reverse version of `xrange_count`.
@@ -2768,7 +2557,7 @@ implement_commands! {
         start: S,
         count: C
     ) -> (streams::StreamRangeReply) {
-        ready_cmd!("XREVRANGE", key, end, start, "COUNT", count).take()
+        ready_cmd!(KnownCommand::Xrevrange, key, end, start, "COUNT", count).take()
     }
 
     /// Trim a stream `key` to a MAXLEN count.
@@ -2783,7 +2572,7 @@ implement_commands! {
         key: K,
         maxlen: streams::StreamMaxlen
     ) -> usize {
-        ready_cmd!("XTRIM", key, maxlen).take()
+        ready_cmd!(KnownCommand::Xtrim, key, maxlen).take()
     }
 
      /// Trim a stream `key` with full options
@@ -2798,7 +2587,7 @@ implement_commands! {
         key: K,
         options: &streams::StreamTrimOptions
     ) -> usize {
-        ready_cmd!("XTRIM", key, options).take()
+        ready_cmd!(KnownCommand::Xtrim, key, options).take()
     }
 
     /// Configure idempotency parameters for a stream
@@ -2835,7 +2624,7 @@ implement_commands! {
         key: K,
         options: &streams::StreamConfigOptions
     ) -> String {
-        ready_cmd!("XCFGSET", key, options).take()
+        ready_cmd!(KnownCommand::Xcfgset, key, options).take()
     }
 
     // Search commands
@@ -2884,7 +2673,7 @@ implement_commands! {
         options: &CreateOptions,
         schema: &SearchSchema
     ) -> (String) {
-        ready_cmd!("FT.CREATE", index_name, options, "SCHEMA", schema).take()
+        ready_cmd!(KnownCommand::FtCreate, index_name, options, "SCHEMA", schema).take()
     }
 
     // script commands
@@ -2916,7 +2705,7 @@ assert_eq!(invok_res, 3);
     #[cfg(feature = "script")]
     #[cfg_attr(docsrs, doc(cfg(feature = "script")))]
     fn load_script<>(script: &crate::Script) -> String {
-        ready_cmd!("SCRIPT", "LOAD", script).take()
+        ready_cmd!(KnownCommand::ScriptLoad, script).take()
     }
 
     /// Invoke a prepared script.
@@ -2951,7 +2740,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "script")]
     #[cfg_attr(docsrs, doc(cfg(feature = "script")))]
     fn invoke_script<>(invocation: &crate::ScriptInvocation) -> Generic {
-        ready_cmd!("EVALSHA", invocation).take()
+        ready_cmd!(KnownCommand::Evalsha, invocation).take()
     }
 
     // cleanup commands
@@ -2968,7 +2757,7 @@ assert_eq!(invok_2_res, 5);
     /// ```
     /// [Redis Docs](https://redis.io/commands/FLUSHALL)
     fn flushall<>() -> () {
-        ready_cmd!("FLUSHALL").take()
+        ready_cmd!(KnownCommand::Flushall).take()
     }
 
     /// Deletes all the keys of all databases with options
@@ -2978,7 +2767,7 @@ assert_eq!(invok_2_res, 5);
     /// ```
     /// [Redis Docs](https://redis.io/commands/FLUSHALL)
     fn flushall_options<>(options: &FlushAllOptions) -> () {
-        ready_cmd!("FLUSHALL", options).take()
+        ready_cmd!(KnownCommand::Flushall, options).take()
     }
 
     /// Deletes all the keys of the current database
@@ -2993,7 +2782,7 @@ assert_eq!(invok_2_res, 5);
     /// ```
     /// [Redis Docs](https://redis.io/commands/FLUSHDB)
     fn flushdb<>() -> () {
-        ready_cmd!("FLUSHDB").take()
+        ready_cmd!(KnownCommand::Flushdb).take()
     }
 
     /// Deletes all the keys of the current database with options
@@ -3003,7 +2792,7 @@ assert_eq!(invok_2_res, 5);
     /// ```
     /// [Redis Docs](https://redis.io/commands/FLUSHDB)
     fn flushdb_options<>(options: &FlushDbOptions) -> () {
-        ready_cmd!("FLUSHDB", options).take()
+        ready_cmd!(KnownCommand::Flushdb, options).take()
     }
 
     // JSON commands
@@ -3018,7 +2807,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_arr_append<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &V) -> (RedisResult<Vec<Option<usize>>>) via try_vec_then_singleton {
-        ready_cmd!("JSON.ARRAPPEND", key, path, serde_json::to_string(value)?).take()
+        ready_cmd!(KnownCommand::JsonArrappend, key, path, serde_json::to_string(value)?).take()
     }
 
     /// Index array at `path`, returns first occurrence of `value`
@@ -3033,7 +2822,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_arr_index<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &V) -> (RedisResult<Vec<Option<i64>>>) via try_vec_then_singleton {
-        ready_cmd!("JSON.ARRINDEX", key, path, serde_json::to_string(value)?).take()
+        ready_cmd!(KnownCommand::JsonArrindex, key, path, serde_json::to_string(value)?).take()
     }
 
     /// Same as `json_arr_index` except takes a `start` and a `stop` value, setting these to `0` will mean
@@ -3051,7 +2840,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_arr_index_ss<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &V, start: &isize, stop: &isize) -> (RedisResult<Vec<Option<i64>>>) via try_vec_then_singleton {
-        ready_cmd!("JSON.ARRINDEX", key, path, serde_json::to_string(value)?, start, stop).take()
+        ready_cmd!(KnownCommand::JsonArrindex, key, path, serde_json::to_string(value)?, start, stop).take()
     }
 
     /// Inserts the JSON `value` in the array at `path` before the `index` (shifts to the right).
@@ -3066,7 +2855,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_arr_insert<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, index: i64, value: &V) -> (RedisResult<Vec<Option<usize>>>) via try_vec_then_singleton {
-        ready_cmd!("JSON.ARRINSERT", key, path, index, serde_json::to_string(value)?).take()
+        ready_cmd!(KnownCommand::JsonArrinsert, key, path, index, serde_json::to_string(value)?).take()
     }
 
     /// Reports the length of the JSON Array at `path` in `key`.
@@ -3079,7 +2868,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_arr_len<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (Vec<Option<usize>>) via try_vec_then_singleton {
-        ready_cmd!("JSON.ARRLEN", key, path).take()
+        ready_cmd!(KnownCommand::JsonArrlen, key, path).take()
     }
 
     /// Removes and returns an element from the `index` in the array.
@@ -3092,7 +2881,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_arr_pop<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P, index: i64) -> (Vec<Option<String>>) {
-        ready_cmd!("JSON.ARRPOP", key, path, index).take()
+        ready_cmd!(KnownCommand::JsonArrpop, key, path, index).take()
     }
 
     /// Trims an array so that it contains only the specified inclusive range of elements.
@@ -3108,7 +2897,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_arr_trim<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P, start: i64, stop: i64) -> (Vec<Option<usize>>) via try_vec_then_singleton {
-        ready_cmd!("JSON.ARRTRIM", key, path, start, stop).take()
+        ready_cmd!(KnownCommand::JsonArrtrim, key, path, start, stop).take()
     }
 
     /// Clears container values (Arrays/Objects), and sets numeric values to 0.
@@ -3121,7 +2910,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_clear<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (usize) {
-        ready_cmd!("JSON.CLEAR", key, path).take()
+        ready_cmd!(KnownCommand::JsonClear, key, path).take()
     }
 
     /// Deletes a value at `path`.
@@ -3134,7 +2923,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_del<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (usize) {
-        ready_cmd!("JSON.DEL", key, path).take()
+        ready_cmd!(KnownCommand::JsonDel, key, path).take()
     }
 
     /// Gets JSON Value at `path`.
@@ -3151,7 +2940,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_get<K: ToSingleRedisArg, P: ToRedisArgs>(key: K, path: P) -> (String) {
-        ready_cmd!("JSON.GET", key, path).take()
+        ready_cmd!(KnownCommand::JsonGet, key, path).take()
     }
 
     /// Gets JSON Values at `path`.
@@ -3168,7 +2957,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_mget<K: ToRedisArgs, P: ToSingleRedisArg>(key: K, path: P) -> (Vec<Option<String>>) {
-        ready_cmd!("JSON.MGET", key, path).take()
+        ready_cmd!(KnownCommand::JsonMget, key, path).take()
     }
 
     /// Increments the number value stored at `path` by `value`.
@@ -3181,7 +2970,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_num_incr_by<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P, value: i64) -> (Vec<Option<String>>) via try_vec_then_singleton {
-        ready_cmd!("JSON.NUMINCRBY", key, path, value).take()
+        ready_cmd!(KnownCommand::JsonNumincrby, key, path, value).take()
     }
 
     /// Returns the keys in the object that's referenced by `path`.
@@ -3194,7 +2983,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_obj_keys<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (Vec<Option<Vec<String>>>) via try_singleton_then_vec{
-        ready_cmd!("JSON.OBJKEYS", key, path).take()
+        ready_cmd!(KnownCommand::JsonObjkeys, key, path).take()
     }
 
     /// Reports the number of keys in the JSON Object at `path` in `key`.
@@ -3207,7 +2996,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_obj_len<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (Vec<Option<usize>>) via try_vec_then_singleton {
-        ready_cmd!("JSON.OBJLEN", key, path).take()
+        ready_cmd!(KnownCommand::JsonObjlen, key, path).take()
     }
 
     /// Sets the JSON Value at `path` in `key`.
@@ -3220,7 +3009,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_set<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &V) -> (RedisResult<bool>) {
-        ready_cmd!("JSON.SET", key, path, serde_json::to_string(value)?).take()
+        ready_cmd!(KnownCommand::JsonSet, key, path, serde_json::to_string(value)?).take()
     }
 
     /// Sets the JSON Value at `path` in `key` with options.
@@ -3236,7 +3025,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_set_options<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key: K, path: P, value: &V, options: &crate::json::JsonSetOptions) -> (RedisResult<bool>) {
-        ready_cmd!("JSON.SET", key, path, serde_json::to_string(value)?, options).take()
+        ready_cmd!(KnownCommand::JsonSet, key, path, serde_json::to_string(value)?, options).take()
     }
 
     /// Sets the value at the path per key, for every given tuple.
@@ -3249,7 +3038,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_mset<K: ToSingleRedisArg, P: ToSingleRedisArg, V: Serialize>(key_path_values: &[(K,P,V)]) -> (RedisResult<bool>) {
-        let mut cmd = cmd("JSON.MSET");
+        let mut cmd = Cmd::with_known_command(KnownCommand::JsonMset, 0, 0);
 
         for (key, path, value) in key_path_values {
             cmd.arg(key)
@@ -3270,7 +3059,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_str_append<K: ToSingleRedisArg, P: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, path: P, value: V) -> (Vec<Option<usize>>) via try_vec_then_singleton {
-        ready_cmd!("JSON.STRAPPEND", key, path, value).take()
+        ready_cmd!(KnownCommand::JsonStrappend, key, path, value).take()
     }
 
     /// Reports the length of the JSON String at `path` in `key`.
@@ -3283,7 +3072,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_str_len<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (Vec<Option<usize>>) via try_vec_then_singleton {
-        ready_cmd!("JSON.STRLEN", key, path).take()
+        ready_cmd!(KnownCommand::JsonStrlen, key, path).take()
     }
 
     /// Toggle a `boolean` value stored at `path`.
@@ -3296,7 +3085,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_toggle<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (Vec<Option<bool>>) via try_vec_then_singleton {
-        ready_cmd!("JSON.TOGGLE", key, path).take()
+        ready_cmd!(KnownCommand::JsonToggle, key, path).take()
     }
 
     /// Reports the type of JSON value at `path`.
@@ -3310,7 +3099,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     fn json_type<K: ToSingleRedisArg, P: ToSingleRedisArg>(key: K, path: P) -> (Vec<RedisJsonType>) via flattened_array {
-        ready_cmd!("JSON.TYPE", key, path).take()
+        ready_cmd!(KnownCommand::JsonType, key, path).take()
     }
 
     // Bloom filter commands
@@ -3325,7 +3114,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_add<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, value: V) -> (bool) {
-        ready_cmd!("BF.ADD", key, value).take()
+        ready_cmd!(KnownCommand::BfAdd, key, value).take()
     }
 
     /// Returns the number of items in a Bloom filter.
@@ -3338,7 +3127,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_card<K: ToSingleRedisArg>(key: K) -> (usize) {
-        ready_cmd!("BF.CARD", key).take()
+        ready_cmd!(KnownCommand::BfCard, key).take()
     }
 
     /// Checks if an item exists in a Bloom filter.
@@ -3357,7 +3146,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_exists<K: ToSingleRedisArg, V: ToSingleRedisArg>(key: K, value: V) -> (bool) {
-        ready_cmd!("BF.EXISTS", key, value).take()
+        ready_cmd!(KnownCommand::BfExists, key, value).take()
     }
 
     /// Returns all available information about a Bloom filter.
@@ -3370,7 +3159,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_info<K: ToSingleRedisArg>(key: K) -> (std::collections::HashMap<String, crate::bloom::BloomFilterInfoTypeResponse>) {
-        ready_cmd!("BF.INFO", key).take()
+        ready_cmd!(KnownCommand::BfInfo, key).take()
     }
 
     /// Returns specific information about a Bloom filter.
@@ -3388,7 +3177,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_info_type<K: ToSingleRedisArg>(key: K, info_type: crate::bloom::BloomFilterInfoType) -> (crate::bloom::BloomFilterInfoTypeResponse) {
-        ready_cmd!("BF.INFO", key, info_type).take()
+        ready_cmd!(KnownCommand::BfInfo, key, info_type).take()
     }
 
     /// Adds items to a Bloom filter, creating it with default options if it does not yet exist.
@@ -3403,7 +3192,7 @@ assert_eq!(invok_2_res, 5);
     fn bf_insert<K: ToSingleRedisArg,  V: ToRedisArgs>(
         key: K,
         items: V) -> (Vec<bool>){
-        ready_cmd!("BF.INSERT", key, "ITEMS", items).take()
+        ready_cmd!(KnownCommand::BfInsert, key, "ITEMS", items).take()
     }
 
     /// Adds items to a Bloom filter, creating it with custom options if it does not exist yet.
@@ -3419,7 +3208,7 @@ assert_eq!(invok_2_res, 5);
         key: K,
         items: V,
         options: crate::bloom::BloomFilterInsertOptions) -> (Vec<bool>) {
-        ready_cmd!("BF.INSERT", key, options, "ITEMS", items).take()
+        ready_cmd!(KnownCommand::BfInsert, key, options, "ITEMS", items).take()
     }
 
 
@@ -3433,7 +3222,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_loadchunk<K: ToSingleRedisArg>(key: K, chunk: crate::bloom::BloomFilterDumpChunk) -> (()) {
-        ready_cmd!("BF.LOADCHUNK", key, chunk.iterator, chunk.data).take()
+        ready_cmd!(KnownCommand::BfLoadchunk, key, chunk.iterator, chunk.data).take()
     }
 
     /// Adds multiple items to a Bloom filter.
@@ -3446,7 +3235,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_madd<K: ToSingleRedisArg, V: ToRedisArgs>(key: K, items: V) -> (Vec<bool>) {
-        ready_cmd!("BF.MADD", key, items).take()
+        ready_cmd!(KnownCommand::BfMadd, key, items).take()
     }
 
     /// Checks if an item exists in a Bloom filter.
@@ -3465,7 +3254,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_mexists<K: ToSingleRedisArg, V: ToRedisArgs>(key: K, items: &[V]) -> (Vec<bool>) {
-        ready_cmd!("BF.MEXISTS", key, items).take()
+        ready_cmd!(KnownCommand::BfMexists, key, items).take()
     }
 
     /// Creates an empty Bloom filter with default settings.
@@ -3478,7 +3267,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_reserve<K: ToSingleRedisArg>(key: K, err_rate: f64, capacity: usize) -> (()) {
-        ready_cmd!("BF.RESERVE", key, err_rate, capacity).take()
+        ready_cmd!(KnownCommand::BfReserve, key, err_rate, capacity).take()
     }
 
     /// Creates an empty Bloom filter with options.
@@ -3491,7 +3280,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_reserve_options<K: ToSingleRedisArg, E: ToSingleRedisArg, C: ToSingleRedisArg>(key: K, err_rate: E, capacity: C, options: crate::bloom::BloomFilterScalingOptions) -> (()) {
-        ready_cmd!("BF.RESERVE", key, err_rate, capacity, options).take()
+        ready_cmd!(KnownCommand::BfReserve, key, err_rate, capacity, options).take()
     }
 
     /// Begins an incremental save of the Bloom filter
@@ -3507,7 +3296,7 @@ assert_eq!(invok_2_res, 5);
     #[cfg(feature = "bloom")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bloom")))]
     fn bf_scandump<K: ToSingleRedisArg>(key: K, iterator: i64) -> (crate::bloom::BloomFilterDumpChunk) {
-        ready_cmd!("BF.SCANDUMP", key, iterator).take()
+        ready_cmd!(KnownCommand::BfScandump, key, iterator).take()
     }
 }
 

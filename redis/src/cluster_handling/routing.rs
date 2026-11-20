@@ -3,7 +3,7 @@ use rand::RngExt;
 use super::NodeAddress;
 use crate::cluster_handling::slot_map::SLOT_SIZE;
 use crate::cmd::{Arg, Cmd, CmdRef};
-use crate::commands::is_readonly_cmd;
+use crate::known_commands::KnownCommand;
 use crate::types::Value;
 use crate::{ErrorKind, RedisError, RedisResult};
 use std::borrow::Cow;
@@ -547,7 +547,7 @@ pub enum MultiSlotArgPattern {
 ///
 /// # Arguments
 /// * `routable` - The command or structure containing key-related data that can be routed.
-/// * `cmd` - A byte slice representing the command name or opcode (e.g., `b"MGET"`).
+/// * `cmd` - The known command (e.g., [`KnownCommand::Mget`]).
 /// * `first_key_index` - The starting index in the command where the first key is located.
 /// * `args_pattern` - Specifies how keys and values are patterned in the command (e.g., `OnlyKeys`, `KeyValuePairs`).
 ///
@@ -556,14 +556,14 @@ pub enum MultiSlotArgPattern {
 /// `None` if no routing info could be derived.
 fn multi_shard<R>(
     routable: &R,
-    cmd: &[u8],
+    cmd: KnownCommand,
     first_key_index: usize,
     args_pattern: MultiSlotArgPattern,
 ) -> Option<RoutingInfo>
 where
     R: Routable + ?Sized,
 {
-    let is_readonly = is_readonly_cmd(cmd);
+    let is_readonly = cmd.is_readonly();
     let mut routes = HashMap::new();
     let mut curr_arg_idx = 0;
     let incr_add_next_arg = |arg_indices: &mut Vec<usize>, mut curr_arg_idx: usize| {
@@ -619,67 +619,12 @@ where
     } else {
         RoutingInfo::MultiNode((
             MultipleNodeRoutingInfo::MultiSlot((routes, args_pattern)),
-            ResponsePolicy::for_command(cmd),
+            cmd.response_policy(),
         ))
     })
 }
 
-impl ResponsePolicy {
-    /// Parse the command for the matching response policy.
-    pub(crate) fn for_command(cmd: &[u8]) -> Option<Self> {
-        match cmd {
-            b"SCRIPT EXISTS" => Some(Self::AggregateLogical(LogicalAggregateOp::And)),
-
-            b"CLIENT KILL" | b"DBSIZE" | b"DEL" | b"EXISTS" | b"SLOWLOG LEN" | b"TOUCH"
-            | b"UNLINK" | b"LATENCY RESET" | b"PUBSUB NUMPAT" => {
-                Some(Self::Aggregate(AggregateOp::Sum))
-            }
-
-            b"WAIT" => Some(Self::Aggregate(AggregateOp::Min)),
-
-            b"WAITAOF" => Some(Self::AggregateArray(ArrayAggregateOp::Min)),
-
-            b"ACL SETUSER" | b"ACL DELUSER" | b"ACL SAVE" | b"AUTH" | b"CLIENT PAUSE"
-            | b"CLIENT REPLY" | b"CLIENT SETNAME" | b"CLIENT SETINFO" | b"CLIENT UNPAUSE"
-            | b"CONFIG SET" | b"CONFIG RESETSTAT" | b"CONFIG REWRITE" | b"FLUSHALL"
-            | b"FLUSHDB" | b"FUNCTION DELETE" | b"FUNCTION FLUSH" | b"FUNCTION LOAD"
-            | b"FUNCTION RESTORE" | b"MEMORY PURGE" | b"MSET" | b"JSON.MSET" | b"PING"
-            | b"SCRIPT FLUSH" | b"SCRIPT LOAD" | b"SELECT" | b"SLOWLOG RESET" | b"UNWATCH"
-            | b"WATCH" | b"RESET" | b"SAVE" => Some(Self::AllSucceeded),
-
-            b"KEYS"
-            | b"FT._ALIASLIST"
-            | b"FT._LIST"
-            | b"MGET"
-            | b"JSON.MGET"
-            | b"SLOWLOG GET"
-            | b"PUBSUB CHANNELS"
-            | b"PUBSUB SHARDCHANNELS" => Some(Self::CombineArrays),
-
-            b"PUBSUB NUMSUB" | b"PUBSUB SHARDNUMSUB" => Some(Self::CombineMaps),
-
-            b"FUNCTION KILL" | b"SCRIPT KILL" => Some(Self::OneSucceeded),
-
-            // This isn't based on response_tips, but on the discussion here - https://github.com/redis/redis/issues/12410
-            b"RANDOMKEY" => Some(Self::FirstSucceededNonEmptyOrAllEmpty),
-
-            b"LATENCY GRAPH"
-            | b"LATENCY HISTOGRAM"
-            | b"LATENCY HISTORY"
-            | b"LATENCY DOCTOR"
-            | b"LATENCY LATEST"
-            | b"FUNCTION STATS"
-            | b"MEMORY MALLOC-STATS"
-            | b"MEMORY DOCTOR"
-            | b"MEMORY STATS"
-            | b"INFO" => Some(Self::Special),
-
-            _ => None,
-        }
-    }
-}
-
-enum RouteBy {
+pub(crate) enum RouteBy {
     AllNodes,
     AllPrimaries,
     FirstKey,
@@ -694,185 +639,29 @@ enum RouteBy {
     Undefined,
 }
 
-fn base_routing(cmd: &[u8]) -> RouteBy {
-    match cmd {
-        b"ACL DELUSER"
-        | b"ACL SAVE"
-        | b"ACL SETUSER"
-        | b"AUTH"
-        | b"CLIENT KILL"
-        | b"CLIENT SETINFO"
-        | b"CLIENT SETNAME"
-        | b"CONFIG RESETSTAT"
-        | b"CONFIG REWRITE"
-        | b"CONFIG SET"
-        | b"FUNCTION KILL"
-        | b"FUNCTION STATS"
-        | b"PUBSUB CHANNELS"
-        | b"PUBSUB NUMPAT"
-        | b"PUBSUB NUMSUB"
-        | b"PUBSUB SHARDCHANNELS"
-        | b"PUBSUB SHARDNUMSUB"
-        | b"RESET"
-        | b"SCRIPT FLUSH"
-        | b"SCRIPT KILL"
-        | b"SCRIPT LOAD"
-        | b"SELECT"
-        | b"SLOWLOG GET"
-        | b"SLOWLOG LEN"
-        | b"SLOWLOG RESET" => RouteBy::AllNodes,
-
-        b"BGREWRITEAOF"
-        | b"BGSAVE"
-        | b"CLIENT PAUSE"
-        | b"CLIENT UNPAUSE"
-        | b"DBSIZE"
-        | b"DEBUG"
-        | b"FLUSHALL"
-        | b"FLUSHDB"
-        | b"FT._ALIASLIST"
-        | b"FT._LIST"
-        | b"FUNCTION DELETE"
-        | b"FUNCTION FLUSH"
-        | b"FUNCTION LOAD"
-        | b"FUNCTION RESTORE"
-        | b"INFO"
-        | b"KEYS"
-        | b"LATENCY DOCTOR"
-        | b"LATENCY GRAPH"
-        | b"LATENCY HISTOGRAM"
-        | b"LATENCY HISTORY"
-        | b"LATENCY LATEST"
-        | b"LATENCY RESET"
-        | b"MEMORY DOCTOR"
-        | b"MEMORY MALLOC-STATS"
-        | b"MEMORY PURGE"
-        | b"MEMORY STATS"
-        | b"PING"
-        | b"RANDOMKEY"
-        | b"SAVE"
-        | b"SCRIPT EXISTS"
-        | b"UNWATCH"
-        | b"WAIT"
-        | b"WAITAOF" => RouteBy::AllPrimaries,
-
-        b"MGET" | b"DEL" | b"EXISTS" | b"UNLINK" | b"TOUCH" | b"WATCH" => {
-            RouteBy::MultiShard(MultiSlotArgPattern::KeysOnly)
-        }
-
-        b"MSET" => RouteBy::MultiShard(MultiSlotArgPattern::KeyValuePairs),
-        b"JSON.MGET" => RouteBy::MultiShard(MultiSlotArgPattern::KeysAndLastArg),
-        b"JSON.MSET" => RouteBy::MultiShard(MultiSlotArgPattern::KeyWithTwoArgTriples),
-        // TODO - special handling - b"SCAN"
-        b"SCAN" | b"SHUTDOWN" | b"SLAVEOF" | b"REPLICAOF" => RouteBy::Undefined,
-
-        b"BLMPOP" | b"BZMPOP" | b"EVAL" | b"EVALSHA" | b"EVALSHA_RO" | b"EVAL_RO" | b"FCALL"
-        | b"FCALL_RO" => RouteBy::ThirdArgAfterKeyCount,
-
-        b"BITOP"
-        | b"MEMORY USAGE"
-        | b"PFDEBUG"
-        | b"XGROUP CREATE"
-        | b"XGROUP CREATECONSUMER"
-        | b"XGROUP DELCONSUMER"
-        | b"XGROUP DESTROY"
-        | b"XGROUP SETID"
-        | b"XINFO CONSUMERS"
-        | b"XINFO GROUPS"
-        | b"XINFO STREAM"
-        | b"OBJECT ENCODING"
-        | b"OBJECT FREQ"
-        | b"OBJECT IDLETIME"
-        | b"OBJECT REFCOUNT"
-        | b"JSON.DEBUG" => RouteBy::SecondArg,
-
-        b"MIGRATE" => RouteBy::ThirdArg,
-
-        b"LMPOP" | b"MSETEX" | b"SINTERCARD" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZMPOP"
-        | b"ZUNION" => RouteBy::SecondArgAfterKeyCount,
-
-        b"XREAD" | b"XREADGROUP" => RouteBy::StreamsIndex,
-
-        // keyless commands with more arguments, whose arguments might be wrongly taken to be keys.
-        // TODO - double check these, in order to find better ways to route some of them.
-        b"ACL DRYRUN"
-        | b"ACL GENPASS"
-        | b"ACL GETUSER"
-        | b"ACL HELP"
-        | b"ACL LIST"
-        | b"ACL LOG"
-        | b"ACL USERS"
-        | b"ACL WHOAMI"
-        | b"CLIENT GETNAME"
-        | b"CLIENT GETREDIR"
-        | b"CLIENT ID"
-        | b"CLIENT INFO"
-        | b"CLIENT LIST"
-        | b"CLIENT REPLY"
-        | b"CLIENT TRACKINGINFO"
-        | b"CLIENT UNBLOCK"
-        | b"CLUSTER COUNT-FAILURE-REPORTS"
-        | b"CLUSTER INFO"
-        | b"CLUSTER KEYSLOT"
-        | b"CLUSTER MEET"
-        | b"CLUSTER MYSHARDID"
-        | b"CLUSTER NODES"
-        | b"CLUSTER REPLICAS"
-        | b"CLUSTER RESET"
-        | b"CLUSTER SET-CONFIG-EPOCH"
-        | b"CLUSTER SHARDS"
-        | b"CLUSTER SLOTS"
-        | b"COMMAND COUNT"
-        | b"COMMAND GETKEYS"
-        | b"COMMAND LIST"
-        | b"COMMAND"
-        | b"CONFIG GET"
-        | b"ECHO"
-        | b"FT.CREATE"
-        | b"FUNCTION LIST"
-        | b"LASTSAVE"
-        | b"LOLWUT"
-        | b"MODULE LIST"
-        | b"MODULE LOAD"
-        | b"MODULE LOADEX"
-        | b"MODULE UNLOAD"
-        | b"READONLY"
-        | b"READWRITE"
-        | b"SCRIPT SHOW"
-        | b"TFCALL"
-        | b"TFCALLASYNC"
-        | b"TFUNCTION DELETE"
-        | b"TFUNCTION LIST"
-        | b"TFUNCTION LOAD"
-        | b"TIME" => RouteBy::Random,
-
-        b"CLUSTER ADDSLOTS"
-        | b"CLUSTER COUNTKEYSINSLOT"
-        | b"CLUSTER DELSLOTS"
-        | b"CLUSTER DELSLOTSRANGE"
-        | b"CLUSTER GETKEYSINSLOT"
-        | b"CLUSTER SETSLOT" => RouteBy::SecondArgSlot,
-
-        _ => RouteBy::FirstKey,
-    }
-}
-
 impl RoutingInfo {
     /// Returns the routing info for `r`.
     pub(crate) fn for_routable<R>(r: &R) -> Option<Self>
     where
         R: Routable + ?Sized,
     {
-        let cmd = &r.command()?[..];
-        match base_routing(cmd) {
+        let Some(cmd) = r.command() else {
+            // Commands unknown to this crate are routed by their first key, if any.
+            r.arg_idx(0)?;
+            return Some(match r.arg_idx(1) {
+                Some(key) => Self::for_key_without_command(key),
+                None => Self::SingleNode(SingleNodeRoutingInfo::Random),
+            });
+        };
+        match cmd.base_routing() {
             RouteBy::AllNodes => Some(Self::MultiNode((
                 MultipleNodeRoutingInfo::AllNodes,
-                ResponsePolicy::for_command(cmd),
+                cmd.response_policy(),
             ))),
 
             RouteBy::AllPrimaries => Some(Self::MultiNode((
                 MultipleNodeRoutingInfo::AllMasters,
-                ResponsePolicy::for_command(cmd),
+                cmd.response_policy(),
             ))),
 
             RouteBy::MultiShard(arg_pattern) => multi_shard(r, cmd, 1, arg_pattern),
@@ -934,41 +723,23 @@ impl RoutingInfo {
         }
     }
 
-    fn for_key(cmd: &[u8], key: &[u8]) -> Self {
+    fn for_key(cmd: KnownCommand, key: &[u8]) -> Self {
         Self::SingleNode(SingleNodeRoutingInfo::SpecificNode(get_route(
-            is_readonly_cmd(cmd),
+            cmd.is_readonly(),
             key,
         )))
+    }
+
+    fn for_key_without_command(key: &[u8]) -> Self {
+        Self::SingleNode(SingleNodeRoutingInfo::SpecificNode(get_route(false, key)))
     }
 }
 
 /// Objects that implement this trait define a request that can be routed by a cluster client to different nodes in the cluster.
 pub(crate) trait Routable {
-    /// Convenience function to return ascii uppercase version of the
-    /// the first argument (i.e., the command).
-    fn command(&self) -> Option<Vec<u8>> {
-        let primary_command = self.arg_idx(0).map(|x| x.to_ascii_uppercase())?;
-        let mut primary_command = match primary_command.as_slice() {
-            b"XGROUP" | b"OBJECT" | b"SLOWLOG" | b"FUNCTION" | b"MODULE" | b"COMMAND"
-            | b"PUBSUB" | b"CONFIG" | b"MEMORY" | b"XINFO" | b"CLIENT" | b"ACL" | b"SCRIPT"
-            | b"CLUSTER" | b"LATENCY" => primary_command,
-            _ => {
-                return Some(primary_command);
-            }
-        };
-
-        Some(match self.arg_idx(1) {
-            Some(secondary_command) => {
-                let previous_len = primary_command.len();
-                primary_command.reserve(secondary_command.len() + 1);
-                primary_command.extend(b" ");
-                primary_command.extend(secondary_command);
-                let current_len = primary_command.len();
-                primary_command[previous_len + 1..current_len].make_ascii_uppercase();
-                primary_command
-            }
-            None => primary_command,
-        })
+    /// Returns the known command represented by this routable, if any.
+    fn command(&self) -> Option<KnownCommand> {
+        KnownCommand::from_parts(self.arg_idx(0)?, self.arg_idx(1))
     }
 
     /// Returns a reference to the data for the argument at `idx`.
@@ -979,6 +750,10 @@ pub(crate) trait Routable {
 }
 
 impl Routable for Cmd {
+    fn command(&self) -> Option<KnownCommand> {
+        Self::command(self)
+    }
+
     fn arg_idx(&self, idx: usize) -> Option<&[u8]> {
         self.arg_idx(idx)
     }
@@ -992,6 +767,10 @@ impl Routable for Cmd {
 }
 
 impl Routable for CmdRef<'_> {
+    fn command(&self) -> Option<KnownCommand> {
+        CmdRef::command(self)
+    }
+
     fn arg_idx(&self, idx: usize) -> Option<&[u8]> {
         CmdRef::arg_idx(self, idx)
     }
@@ -1393,6 +1172,105 @@ mod tests_routing {
             RoutingInfo::for_routable(&cmd),
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
         );
+    }
+
+    /// Rebuilds a command with its name written as regular arguments, the way `cmd(...)` does.
+    fn manual_copy(command: &crate::Cmd) -> crate::Cmd {
+        let mut manual = crate::Cmd::new();
+        for arg in command.args_iter() {
+            match arg {
+                crate::Arg::Simple(bytes) => manual.arg(bytes),
+                crate::Arg::Cursor => manual.cursor_arg(0),
+            };
+        }
+        assert_eq!(manual.known_command(), None);
+        manual
+    }
+
+    /// Returns the routing of `command`, with multi-slot routes sorted, since they come from a
+    /// hash map.
+    fn routing_in_slot_order(command: &crate::Cmd) -> Option<RoutingInfo> {
+        let mut routing = RoutingInfo::for_routable(command);
+        if let Some(RoutingInfo::MultiNode((MultipleNodeRoutingInfo::MultiSlot((routes, _)), _))) =
+            &mut routing
+        {
+            routes.sort_by_key(|(route, _)| route.slot());
+        }
+        routing
+    }
+
+    #[test]
+    fn test_typed_and_manual_commands_route_the_same() {
+        use crate::{Cmd, Direction, MSetOptions, SetExpiry, SortedSetOperationOptions};
+
+        #[cfg_attr(not(feature = "json"), allow(unused_mut))]
+        let mut typed = vec![
+            Cmd::get("foo"),
+            Cmd::set("foo", "bar"),
+            Cmd::mget(&["foo", "{bar}1", "baz", "{bar}2"]),
+            Cmd::mset(&[("foo", "1"), ("bar", "2"), ("baz", "3")]),
+            Cmd::mset_ex(
+                &[("{user}:1", "a"), ("{user}:2", "b")],
+                MSetOptions::default().with_expiration(SetExpiry::EX(60)),
+            ),
+            Cmd::del(&["foo", "bar", "baz"]),
+            Cmd::unlink(&["foo", "bar"]),
+            Cmd::exists(&["foo", "bar"]),
+            Cmd::keys("*"),
+            Cmd::ping(),
+            Cmd::flushall(),
+            Cmd::lmpop(&["foo", "bar"], Direction::Left, 1),
+            Cmd::zinter(&["foo", "bar"], SortedSetOperationOptions::default()),
+            Cmd::zunion(&["foo", "bar"], SortedSetOperationOptions::default()),
+            Cmd::object_freq("foo"),
+            Cmd::xgroup_create("foo", "group", "$"),
+            Cmd::xinfo_stream("foo"),
+            Cmd::xread(&["foo", "bar"], &["0", "0"]),
+            Cmd::client_getname(),
+            Cmd::bit_and("dst", &["a", "b"]),
+        ];
+        #[cfg(feature = "json")]
+        typed.extend([
+            Cmd::json_mget(&["foo", "bar"], "$"),
+            Cmd::json_mset(&[("foo", "$", 1), ("bar", "$", 2)]).unwrap(),
+        ]);
+
+        for typed in &typed {
+            assert!(typed.known_command().is_some(), "{typed:?}");
+            let manual = manual_copy(typed);
+            // `Random` routes compare equal, so this also checks that random routes stay random.
+            assert_eq!(
+                routing_in_slot_order(typed),
+                routing_in_slot_order(&manual),
+                "routing differs for {typed:?}"
+            );
+            assert_eq!(typed.command(), manual.command(), "{typed:?}");
+        }
+    }
+
+    #[test]
+    fn test_unknown_commands_are_routed_by_their_first_argument() {
+        assert_eq!(
+            RoutingInfo::for_routable(cmd("NOT-A-COMMAND").arg("foo").arg("bar")),
+            Some(RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::SpecificNode(Route::with_key(b"foo", SlotAddr::Master))
+            ))
+        );
+        // An unknown sub-command of a known command is unknown, too.
+        assert_eq!(
+            RoutingInfo::for_routable(cmd("CLIENT").arg("NOT-A-COMMAND").arg("foo")),
+            Some(RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::SpecificNode(Route::with_key(
+                    b"NOT-A-COMMAND",
+                    SlotAddr::Master
+                ))
+            ))
+        );
+        assert_eq!(
+            RoutingInfo::for_routable(&cmd("NOT-A-COMMAND")),
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+        );
+        assert_eq!(RoutingInfo::for_routable(&crate::Cmd::new()), None);
     }
 
     #[test]
