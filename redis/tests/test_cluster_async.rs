@@ -1680,6 +1680,320 @@ mod cluster_async {
     }
 
     #[test]
+    fn test_async_cluster_pipeline_resends_only_the_redirected_commands() {
+        // Slot 8338 is being migrated from 6380 to 6379, and only `{tag}moved` has been moved.
+        let name = "test_async_cluster_pipeline_resends_only_the_redirected_commands";
+        let incr_count = Arc::new(AtomicI32::new(0));
+        let source_get_count = Arc::new(AtomicI32::new(0));
+        let MockEnv {
+            async_connection: mut connection,
+            handler: _handler,
+            runtime,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]),
+            name,
+            {
+                let incr_count = incr_count.clone();
+                let source_get_count = source_get_count.clone();
+                move |cmd: &[u8], port| {
+                    respond_startup_two_nodes(name, cmd)?;
+                    if contains_slice(cmd, b"INCR") {
+                        return Err(Ok(Value::Int(
+                            incr_count.fetch_add(1, Ordering::SeqCst) as i64 + 1,
+                        )));
+                    }
+                    match port {
+                        6380 => {
+                            source_get_count.fetch_add(1, Ordering::SeqCst);
+                            Err(parse_redis_value(
+                                format!("-ASK 8338 {name}:6379\r\n").as_bytes(),
+                            ))
+                        }
+                        6379 if contains_slice(cmd, b"ASKING") => Err(Ok(Value::Okay)),
+                        6379 => Err(Ok(redis_value!("hello"))),
+                        _ => panic!("Wrong node"),
+                    }
+                }
+            },
+        );
+
+        let result = runtime.block_on(
+            redis::pipe()
+                .incr("{tag}counter", 1)
+                .get("{tag}moved")
+                .query_async::<(i64, String)>(&mut connection),
+        );
+
+        assert_eq!(result, Ok((1, "hello".to_string())));
+        assert_eq!(incr_count.load(Ordering::SeqCst), 1);
+        // The GET went to the node that ASK named, not back to the source.
+        assert_eq!(source_get_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_async_cluster_pipeline_sends_a_moved_command_to_its_new_node() {
+        // `{tag}moved`'s slot, 8338, was moved from 6380 to 6379.
+        let name = "test_async_cluster_pipeline_sends_a_moved_command_to_its_new_node";
+        let source_get_count = Arc::new(AtomicI32::new(0));
+        let MockEnv {
+            async_connection: mut connection,
+            handler: _handler,
+            runtime,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]),
+            name,
+            {
+                let source_get_count = source_get_count.clone();
+                move |cmd: &[u8], port| {
+                    respond_startup_two_nodes(name, cmd)?;
+                    match port {
+                        6380 if contains_slice(cmd, b"INCR") => Err(Ok(Value::Int(1))),
+                        6380 => {
+                            source_get_count.fetch_add(1, Ordering::SeqCst);
+                            Err(parse_redis_value(
+                                format!("-MOVED 8338 {name}:6379\r\n").as_bytes(),
+                            ))
+                        }
+                        6379 => Err(Ok(redis_value!("hello"))),
+                        _ => panic!("Wrong node"),
+                    }
+                }
+            },
+        );
+
+        let result = runtime.block_on(
+            redis::pipe()
+                .incr("{tag}counter", 1)
+                .get("{tag}moved")
+                .query_async::<(i64, String)>(&mut connection),
+        );
+
+        assert_eq!(result, Ok((1, "hello".to_string())));
+        assert_eq!(source_get_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_async_cluster_pipeline_retries_rejected_commands_within_its_retries() {
+        let name = "test_async_cluster_pipeline_retries_rejected_commands_within_its_retries";
+        let incr_count = Arc::new(AtomicI32::new(0));
+        let get_count = Arc::new(AtomicI32::new(0));
+        let MockEnv {
+            async_connection: mut connection,
+            handler: _handler,
+            runtime,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .retries(2)
+                .min_retry_wait(1)
+                .max_retry_wait(2),
+            name,
+            {
+                let incr_count = incr_count.clone();
+                let get_count = get_count.clone();
+                move |cmd: &[u8], _port| {
+                    respond_startup_two_nodes(name, cmd)?;
+                    if contains_slice(cmd, b"INCR") {
+                        return Err(Ok(Value::Int(
+                            incr_count.fetch_add(1, Ordering::SeqCst) as i64 + 1,
+                        )));
+                    }
+                    get_count.fetch_add(1, Ordering::SeqCst);
+                    Err(parse_redis_value(
+                        b"-TRYAGAIN Multiple keys request during rehashing of slot\r\n",
+                    ))
+                }
+            },
+        );
+
+        let result = runtime.block_on(
+            redis::pipe()
+                .incr("{tag}counter", 1)
+                .get("{tag}key")
+                .query_async::<(i64, String)>(&mut connection),
+        );
+
+        assert_eq!(result.unwrap_err().code(), Some("TRYAGAIN"));
+        assert_eq!(incr_count.load(Ordering::SeqCst), 1);
+        // In the pipeline, and then once for each of the pipeline's 2 retries.
+        assert_eq!(get_count.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn test_async_cluster_pipeline_sends_the_rejected_commands_again_together() {
+        // `{tag}a` and `{tag}b` get MOVED to 6379, which takes a while to reply.
+        let name = "test_async_cluster_pipeline_sends_the_rejected_commands_again_together";
+        let arrivals = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let MockEnv {
+            async_connection: mut connection,
+            handler: _handler,
+            runtime,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]),
+            name,
+            {
+                let arrivals = arrivals.clone();
+                move |cmd: &[u8], port| {
+                    respond_startup_two_nodes(name, cmd)?;
+                    match port {
+                        6380 if contains_slice(cmd, b"INCR") => Err(Ok(Value::Int(1))),
+                        6380 => Err(parse_redis_value(
+                            format!("-MOVED 8338 {name}:6379\r\n").as_bytes(),
+                        )),
+                        6379 => {
+                            arrivals.lock().unwrap().push(std::time::Instant::now());
+                            if contains_slice(cmd, b"{tag}a") {
+                                Err(Ok(redis_value!("a")))
+                            } else {
+                                Err(Ok(redis_value!("b")))
+                            }
+                        }
+                        _ => panic!("Wrong node"),
+                    }
+                }
+            },
+        );
+        add_mock_delay(name, |cmd, port| {
+            if port == 6379 && contains_slice(cmd, b"GET") {
+                Duration::from_millis(500)
+            } else {
+                Duration::ZERO
+            }
+        });
+
+        let result = runtime.block_on(
+            redis::pipe()
+                .incr("{tag}counter", 1)
+                .get("{tag}a")
+                .get("{tag}b")
+                .query_async::<(i64, String, String)>(&mut connection),
+        );
+
+        assert_eq!(result, Ok((1, "a".to_string(), "b".to_string())));
+        let arrivals = arrivals.lock().unwrap();
+        assert_eq!(arrivals.len(), 2);
+        // The second GET was sent before the reply to the first one came back.
+        assert!(arrivals[1].duration_since(arrivals[0]) < Duration::from_millis(250));
+    }
+
+    #[test]
+    fn test_async_cluster_pipeline_sends_asking_with_each_command_that_was_asked() {
+        // Slot 8338 is being migrated from 6380 to 6379, and `{tag}a` and `{tag}b` have been
+        // moved. Like Redis, 6379 only serves the command right after ASKING, and it takes a
+        // while to reply to ASKING.
+        let name = "test_async_cluster_pipeline_sends_asking_with_each_command_that_was_asked";
+        let moved_count = Arc::new(AtomicI32::new(0));
+        let asking = Arc::new(AtomicBool::new(false));
+        let MockEnv {
+            async_connection: mut connection,
+            handler: _handler,
+            runtime,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]),
+            name,
+            {
+                let moved_count = moved_count.clone();
+                move |cmd: &[u8], port| {
+                    respond_startup_two_nodes(name, cmd)?;
+                    match port {
+                        6380 if contains_slice(cmd, b"INCR") => Err(Ok(Value::Int(1))),
+                        6380 => Err(parse_redis_value(
+                            format!("-ASK 8338 {name}:6379\r\n").as_bytes(),
+                        )),
+                        6379 if contains_slice(cmd, b"ASKING") => {
+                            asking.store(true, Ordering::SeqCst);
+                            Err(Ok(Value::Okay))
+                        }
+                        6379 if !asking.swap(false, Ordering::SeqCst) => {
+                            moved_count.fetch_add(1, Ordering::SeqCst);
+                            Err(parse_redis_value(
+                                format!("-MOVED 8338 {name}:6380\r\n").as_bytes(),
+                            ))
+                        }
+                        6379 if contains_slice(cmd, b"{tag}a") => Err(Ok(redis_value!("a"))),
+                        6379 => Err(Ok(redis_value!("b"))),
+                        _ => panic!("Wrong node"),
+                    }
+                }
+            },
+        );
+        add_mock_delay(name, |cmd, port| {
+            if port == 6379 && contains_slice(cmd, b"ASKING") {
+                Duration::from_millis(50)
+            } else {
+                Duration::ZERO
+            }
+        });
+
+        let result = runtime.block_on(
+            redis::pipe()
+                .incr("{tag}counter", 1)
+                .get("{tag}a")
+                .get("{tag}b")
+                .query_async::<(i64, String, String)>(&mut connection),
+        );
+
+        assert_eq!(result, Ok((1, "a".to_string(), "b".to_string())));
+        // Neither GET was sent without ASKING right before it.
+        assert_eq!(moved_count.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn test_async_cluster_pipeline_with_every_command_redirected_by_ask() {
+        // Slot 8338 is being migrated from 6380 to 6379, and both keys have been moved. Like
+        // Redis, 6379 only serves the command right after ASKING and redirects the others back.
+        let name = "test_async_cluster_pipeline_with_every_command_redirected_by_ask";
+        let incr_count = Arc::new(AtomicI32::new(0));
+        let asking = Arc::new(AtomicBool::new(false));
+        let MockEnv {
+            async_connection: mut connection,
+            handler: _handler,
+            runtime,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")]),
+            name,
+            {
+                let incr_count = incr_count.clone();
+                move |cmd: &[u8], port| {
+                    respond_startup_two_nodes(name, cmd)?;
+                    match port {
+                        6380 => Err(parse_redis_value(
+                            format!("-ASK 8338 {name}:6379\r\n").as_bytes(),
+                        )),
+                        6379 if contains_slice(cmd, b"ASKING") => {
+                            asking.store(true, Ordering::SeqCst);
+                            Err(Ok(Value::Okay))
+                        }
+                        6379 if !asking.swap(false, Ordering::SeqCst) => Err(parse_redis_value(
+                            format!("-MOVED 8338 {name}:6380\r\n").as_bytes(),
+                        )),
+                        6379 if contains_slice(cmd, b"INCR") => Err(Ok(Value::Int(
+                            incr_count.fetch_add(1, Ordering::SeqCst) as i64 + 1,
+                        ))),
+                        6379 => Err(Ok(redis_value!("hello"))),
+                        _ => panic!("Wrong node"),
+                    }
+                }
+            },
+        );
+
+        let result = runtime.block_on(
+            redis::pipe()
+                .incr("{tag}counter", 1)
+                .get("{tag}moved")
+                .query_async::<(i64, String)>(&mut connection),
+        );
+
+        assert_eq!(result, Ok((1, "hello".to_string())));
+        assert_eq!(incr_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn test_async_cluster_ask_error_when_new_node_is_added() {
         let name = "ask_with_extra_nodes";
 
