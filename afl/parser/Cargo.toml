@@ -9,12 +9,18 @@ name = "fuzz-target"
 path = "src/main.rs"
 
 [[bin]]
+name = "fuzz-codec"
+path = "src/codec.rs"
+
+[[bin]]
 name = "reproduce"
 path = "src/reproduce.rs"
 
 [dependencies]
 afl = "0.18"
-redis = { path = "../../redis" }
+bytes = "1"
+redis = { path = "../../redis", features = ["tokio-comp"] }
+tokio-util = { version = "0.7.5", features = ["codec"] }
 
 [lints]
 workspace = true

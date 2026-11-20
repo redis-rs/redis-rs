@@ -188,3 +188,11 @@ quickcheck! {
         );
     }
 }
+
+quickcheck! {
+    fn parse_redis_value_roundtrip(input: ArbitraryValue) -> () {
+        let mut encoded = Vec::new();
+        encode_value(&input.0, &mut encoded).unwrap();
+        assert_eq!(redis::parse_redis_value(&encoded).unwrap(), input.0);
+    }
+}
