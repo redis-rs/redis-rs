@@ -1,4 +1,6 @@
 use std::io::Error;
+#[cfg(feature = "tls-rustls")]
+use std::sync::Arc;
 
 #[cfg(feature = "tls-rustls")]
 use rustls::RootCertStore;
@@ -94,11 +96,46 @@ impl std::fmt::Debug for TlsCertificates {
     }
 }
 
+/// Where the TLS settings of a client come from: certificates that redis-rs turns into a
+/// connector, or a complete rustls configuration that is used as it is.
+///
+/// The rustls variant is only reachable through its own entry points, so the certificate setters
+/// cannot be applied to it.
+#[derive(Clone)]
+pub(crate) enum TlsSource {
+    Certificates(TlsCertificates),
+    #[cfg(feature = "tls-rustls")]
+    Rustls(Arc<rustls::ClientConfig>),
+}
+
+#[cfg(feature = "tls-rustls")]
+impl TlsSource {
+    /// Rejects a custom rustls configuration on a connection that skips certificate
+    /// verification, since that would silently replace the configuration's verifier.
+    pub(crate) fn check(&self, insecure: bool) -> RedisResult<()> {
+        if insecure && matches!(self, Self::Rustls(_)) {
+            return Err(RedisError::from((
+                ErrorKind::InvalidClientConfig,
+                CUSTOM_CONFIG_INSECURE,
+            )));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "tls-rustls")]
+pub(crate) const CUSTOM_CONFIG_INSECURE: &str = "A custom rustls ClientConfig cannot be combined with an insecure connection; use a custom certificate verifier instead.";
+
 pub(crate) fn inner_build_with_tls(
     mut connection_info: ConnectionInfo,
-    certificates: &TlsCertificates,
+    config: &TlsSource,
 ) -> RedisResult<Client> {
-    let tls_params = retrieve_tls_certificates(certificates)?;
+    #[cfg(feature = "tls-rustls")]
+    if let ConnectionAddr::TcpTls { insecure, .. } = &connection_info.addr {
+        config.check(*insecure)?;
+    }
+
+    let tls_params = retrieve_tls_certificates(config)?;
 
     connection_info.addr = if let ConnectionAddr::TcpTls {
         host,
@@ -124,9 +161,15 @@ pub(crate) fn inner_build_with_tls(
 }
 
 #[cfg(feature = "tls-rustls")]
-pub(crate) fn retrieve_tls_certificates(
-    certificates: &TlsCertificates,
-) -> RedisResult<TlsConnParams> {
+pub(crate) fn retrieve_tls_certificates(config: &TlsSource) -> RedisResult<TlsConnParams> {
+    match config {
+        TlsSource::Certificates(certificates) => parse_tls_certificates(certificates),
+        TlsSource::Rustls(config) => Ok(TlsConnParams::custom(Arc::clone(config))),
+    }
+}
+
+#[cfg(feature = "tls-rustls")]
+fn parse_tls_certificates(certificates: &TlsCertificates) -> RedisResult<TlsConnParams> {
     let TlsCertificates {
         client_tls,
         root_cert,
@@ -176,7 +219,7 @@ pub(crate) fn retrieve_tls_certificates(
         None
     };
 
-    Ok(TlsConnParams {
+    Ok(TlsConnParams::new(
         client_tls_params,
         root_cert_store,
         // Populated as well as the rustls fields, for a build in which another runtime selects
@@ -186,20 +229,14 @@ pub(crate) fn retrieve_tls_certificates(
             all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
             all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
         ))]
-        native_tls_params: parse_native_tls_params(certificates)?,
-        #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
-        danger_accept_invalid_hostnames: false,
-    })
+        parse_native_tls_params(certificates)?,
+    ))
 }
 
 #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
-pub(crate) fn retrieve_tls_certificates(
-    certificates: &TlsCertificates,
-) -> RedisResult<TlsConnParams> {
-    Ok(TlsConnParams {
-        native_tls_params: parse_native_tls_params(certificates)?,
-        danger_accept_invalid_hostnames: false,
-    })
+pub(crate) fn retrieve_tls_certificates(config: &TlsSource) -> RedisResult<TlsConnParams> {
+    let TlsSource::Certificates(certificates) = config;
+    Ok(TlsConnParams::new(parse_native_tls_params(certificates)?))
 }
 
 /// Certificates and keys in the form the `native-tls` backends consume them.
@@ -412,5 +449,190 @@ mod tests {
         // Invalidate the cached bundle.
         bundle.invalidate();
         assert!(bundle.parsed.lock().unwrap().is_none());
+    }
+}
+
+/// A rustls configuration for tests, recognisable by its ALPN protocol.
+#[cfg(all(test, feature = "tls-rustls"))]
+pub(crate) fn test_client_config() -> Arc<rustls::ClientConfig> {
+    let mut config = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_root_certificates(RootCertStore::empty())
+    .with_no_client_auth();
+    // Distinguishes this configuration from one built by redis-rs.
+    config.alpn_protocols = vec![b"custom-test-alpn".to_vec()];
+    Arc::new(config)
+}
+
+#[cfg(all(test, feature = "tls-rustls"))]
+mod rustls_client_config_tests {
+    use super::*;
+    use crate::connection::create_rustls_config;
+
+    #[test]
+    fn custom_config_is_used_as_is() {
+        let config = test_client_config();
+        let params = retrieve_tls_certificates(&TlsSource::Rustls(config.clone())).unwrap();
+
+        let used = create_rustls_config(false, Some(params)).unwrap();
+        assert!(Arc::ptr_eq(&used, &config));
+        assert_eq!(used.alpn_protocols, vec![b"custom-test-alpn".to_vec()]);
+    }
+
+    #[test]
+    fn custom_config_rejects_insecure() {
+        let params = retrieve_tls_certificates(&TlsSource::Rustls(test_client_config())).unwrap();
+
+        let err = create_rustls_config(true, Some(params)).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidClientConfig);
+    }
+
+    /// The custom configuration's verifier owns hostname checks, so the flag leaves it alone
+    /// rather than loosening it.
+    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+    #[test]
+    fn custom_config_ignores_invalid_hostnames_flag() {
+        let config = test_client_config();
+        let mut params = retrieve_tls_certificates(&TlsSource::Rustls(config.clone())).unwrap();
+        params.set_danger_accept_invalid_hostnames(true);
+
+        let used = create_rustls_config(false, Some(params)).unwrap();
+        assert!(Arc::ptr_eq(&used, &config));
+    }
+
+    /// Through the public setter, so that a caller who mutates the address cannot loosen the
+    /// verification of a custom configuration.
+    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+    #[test]
+    fn public_invalid_hostnames_setter_leaves_custom_config_alone() {
+        let config = test_client_config();
+        let mut addr = ConnectionAddr::TcpTls {
+            host: "127.0.0.1".to_string(),
+            port: 6379,
+            insecure: false,
+            tls_params: Some(
+                retrieve_tls_certificates(&TlsSource::Rustls(config.clone())).unwrap(),
+            ),
+        };
+        addr.set_danger_accept_invalid_hostnames(true);
+
+        let ConnectionAddr::TcpTls { tls_params, .. } = addr else {
+            panic!("expected a TLS address");
+        };
+        let used = create_rustls_config(false, tls_params).unwrap();
+        assert!(Arc::ptr_eq(&used, &config));
+    }
+
+    #[test]
+    fn build_with_rustls_config_rejects_insecure_url() {
+        let config = test_client_config();
+        let err =
+            Client::build_with_rustls_config("rediss://127.0.0.1:6379/#insecure", config.clone())
+                .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidClientConfig);
+
+        Client::build_with_rustls_config("rediss://127.0.0.1:6379", config.clone()).unwrap();
+
+        // A URL that is not TLS is rejected exactly as `build_with_tls` rejects it.
+        let err = Client::build_with_rustls_config("redis://127.0.0.1:6379", config).unwrap_err();
+        let expected =
+            Client::build_with_tls("redis://127.0.0.1:6379", TlsCertificates::new()).unwrap_err();
+        assert_eq!(err.kind(), expected.kind());
+        assert_eq!(err.to_string(), expected.to_string());
+    }
+
+    #[test]
+    fn debug_does_not_print_config() {
+        let params = retrieve_tls_certificates(&TlsSource::Rustls(test_client_config())).unwrap();
+        let debug = format!("{params:?}");
+        assert!(debug.contains("<redacted>"), "{debug}");
+        assert!(!debug.contains("custom-test-alpn"), "{debug}");
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "tls-rustls",
+    feature = "tokio-native-tls-comp",
+    not(feature = "tokio-rustls-comp")
+))]
+mod native_tls_with_rustls_config_tests {
+    use super::*;
+    use crate::connection::create_native_tls_connector_builder;
+
+    /// With both backends compiled in, a native-tls runtime must fail rather than silently ignore
+    /// the custom rustls configuration and trust the system roots.
+    #[test]
+    fn native_tls_connector_rejects_custom_rustls_config() {
+        let params = retrieve_tls_certificates(&TlsSource::Rustls(test_client_config())).unwrap();
+
+        for insecure in [false, true] {
+            let Err(err) = create_native_tls_connector_builder(insecure, Some(params.clone()))
+            else {
+                panic!("expected an error");
+            };
+            assert_eq!(err.kind(), ErrorKind::InvalidClientConfig);
+        }
+    }
+}
+
+// The native-tls runtimes in these builds take a further constructor argument.
+#[cfg(all(
+    test,
+    feature = "tls-rustls",
+    not(any(
+        all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
+        all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
+    ))
+))]
+mod debug_tests {
+    use super::*;
+    use rustls::pki_types::{Der, TrustAnchor};
+
+    fn params(client_tls: bool, root_certs: usize) -> TlsConnParams {
+        let client_tls_params = client_tls.then(|| ClientTlsParams {
+            client_cert_chain: vec![CertificateDer::from(b"secret-client-certificate".to_vec())],
+            client_key: PrivateKeyDer::Pkcs8(b"secret-client-key".to_vec().into()),
+        });
+        let root_cert_store = (root_certs > 0).then(|| RootCertStore {
+            roots: vec![
+                TrustAnchor {
+                    subject: Der::from_slice(b"secret-trust-anchor-subject"),
+                    subject_public_key_info: Der::from_slice(b"secret-trust-anchor-spki"),
+                    name_constraints: None,
+                };
+                root_certs
+            ],
+        });
+        TlsConnParams::new(client_tls_params, root_cert_store)
+    }
+
+    #[test]
+    fn debug_does_not_print_client_certificate_or_key() {
+        let debug = format!("{:?}", params(true, 0));
+
+        assert!(
+            debug.contains("client_tls_params: \"<redacted>\""),
+            "{debug}"
+        );
+        assert!(!debug.contains("client_cert_chain"), "{debug}");
+        assert!(!debug.contains("client_key"), "{debug}");
+        assert!(!debug.contains("secret"), "{debug}");
+    }
+
+    #[test]
+    fn debug_prints_only_the_number_of_root_certificates() {
+        let debug = format!("{:?}", params(false, 2));
+
+        assert!(debug.contains("root_cert_store: Some(2)"), "{debug}");
+        assert!(debug.contains("client_tls_params: \"not set\""), "{debug}");
+        assert!(!debug.contains("secret"), "{debug}");
+        assert!(!debug.contains("subject"), "{debug}");
+
+        let debug = format!("{:?}", params(false, 0));
+        assert!(debug.contains("root_cert_store: None"), "{debug}");
     }
 }

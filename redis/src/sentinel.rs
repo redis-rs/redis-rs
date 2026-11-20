@@ -129,6 +129,8 @@ use arcstr::ArcStr;
 use futures_util::StreamExt;
 use log::warn;
 use rand::RngExt;
+#[cfg(feature = "tls-rustls")]
+use std::sync::Arc;
 #[cfg(feature = "r2d2")]
 use std::sync::Mutex;
 use std::{collections::HashMap, num::NonZeroUsize};
@@ -140,7 +142,7 @@ use crate::aio::MultiplexedConnection;
 #[cfg(feature = "aio")]
 use crate::client::AsyncConnectionConfig;
 #[cfg(feature = "tls-rustls")]
-use crate::tls::retrieve_tls_certificates;
+use crate::tls::{TlsSource, retrieve_tls_certificates};
 use crate::{
     Client, Cmd, Connection, ConnectionAddr, ErrorKind, FromRedisValue, IntoConnectionInfo,
     ProtocolVersion, RedisConnectionInfo, RedisError, Role, TlsMode, cmd,
@@ -170,7 +172,7 @@ pub struct Sentinel {
     async_connections_cache: Vec<Option<AsyncConnection>>,
     replica_start_index: usize,
     #[cfg(feature = "tls-rustls")]
-    certs: Option<TlsCertificates>,
+    certs: Option<TlsSource>,
 }
 
 /// Holds the connection information that a sentinel should use when connecting to the
@@ -217,7 +219,7 @@ impl SentinelNodeConnectionInfo {
         &self,
         ip: String,
         port: u16,
-        #[cfg(feature = "tls-rustls")] certs: &Option<TlsCertificates>,
+        #[cfg(feature = "tls-rustls")] certs: &Option<TlsSource>,
     ) -> RedisResult<ConnectionInfo> {
         let addr = match self.tls_mode {
             None => crate::ConnectionAddr::Tcp(ip, port),
@@ -428,7 +430,7 @@ fn find_valid_master(
     masters: Vec<HashMap<String, String>>,
     service_name: &str,
     node_connection_info: &SentinelNodeConnectionInfo,
-    #[cfg(feature = "tls-rustls")] certs: &Option<TlsCertificates>,
+    #[cfg(feature = "tls-rustls")] certs: &Option<TlsSource>,
 ) -> RedisResult<ConnectionInfo> {
     for (ip, port) in valid_addrs(masters, |m| is_master_valid(m, service_name)) {
         #[cfg(not(feature = "tls-rustls"))]
@@ -517,7 +519,7 @@ async fn async_find_valid_master(
     masters: Vec<HashMap<String, String>>,
     service_name: &str,
     node_connection_info: &SentinelNodeConnectionInfo,
-    #[cfg(feature = "tls-rustls")] certs: &Option<TlsCertificates>,
+    #[cfg(feature = "tls-rustls")] certs: &Option<TlsSource>,
 ) -> RedisResult<ConnectionInfo> {
     for (ip, port) in valid_addrs(masters, |m| is_master_valid(m, service_name)) {
         #[cfg(not(feature = "tls-rustls"))]
@@ -556,7 +558,7 @@ fn get_valid_replicas_addresses(
 fn get_valid_replicas_addresses(
     replicas: Vec<HashMap<String, String>>,
     node_connection_info: &SentinelNodeConnectionInfo,
-    certs: &Option<TlsCertificates>,
+    certs: &Option<TlsSource>,
 ) -> RedisResult<Vec<ConnectionInfo>> {
     let addresses = valid_addrs(replicas, is_replica_valid)
         .map(|(ip, port)| node_connection_info.create_connection_info(ip, port, certs))
@@ -602,7 +604,7 @@ async fn async_get_valid_replicas_addresses(
 async fn async_get_valid_replicas_addresses(
     replicas: Vec<HashMap<String, String>>,
     node_connection_info: &SentinelNodeConnectionInfo,
-    certs: &Option<TlsCertificates>,
+    certs: &Option<TlsSource>,
 ) -> RedisResult<Vec<ConnectionInfo>> {
     async fn is_replica_role_valid(connection_info: ConnectionInfo) -> Option<ConnectionInfo> {
         match async_determine_slave_from_role_or_info_replication(&connection_info).await {
@@ -724,7 +726,7 @@ impl Sentinel {
 
     fn build_inner<T: IntoConnectionInfo>(
         params: Vec<T>,
-        #[cfg(feature = "tls-rustls")] certs: Option<TlsCertificates>,
+        #[cfg(feature = "tls-rustls")] certs: Option<TlsSource>,
     ) -> RedisResult<Self> {
         if params.is_empty() {
             fail!((
@@ -1264,7 +1266,7 @@ impl SentinelClient {
         service_name: impl AsRef<str>,
         node_connection_info: Option<SentinelNodeConnectionInfo>,
         server_type: SentinelServerType,
-        #[cfg(feature = "tls-rustls")] certs: Option<TlsCertificates>,
+        #[cfg(feature = "tls-rustls")] certs: Option<TlsSource>,
     ) -> RedisResult<Self> {
         Ok(Self {
             #[cfg(not(feature = "tls-rustls"))]
@@ -1449,7 +1451,7 @@ struct BuilderConnectionParams {
     protocol: Option<ProtocolVersion>,
     tcp_settings: TcpSettings,
     #[cfg(feature = "tls-rustls")]
-    certificates: Option<TlsCertificates>,
+    certificates: Option<TlsSource>,
 }
 
 impl std::fmt::Debug for BuilderConnectionParams {
@@ -1559,8 +1561,15 @@ impl SentinelClientBuilder {
         {
             return Err(RedisError::from((
                 ErrorKind::InvalidClientConfig,
-                "Certificates cannot be set for the Redis nodes without a TLS mode.",
+                "Certificates or a rustls config cannot be set for the Redis nodes without a TLS mode.",
             )));
+        }
+
+        // A custom rustls configuration is complete, so a TLS mode that skips verification
+        // would be silently ignored.
+        #[cfg(feature = "tls-rustls")]
+        if let Some(certs) = &self.client_to_redis_params.certificates {
+            certs.check(self.client_to_redis_params.tls_mode == Some(TlsMode::Insecure))?;
         }
 
         let mut client_to_redis_connection_info = RedisConnectionInfo::default();
@@ -1600,7 +1609,7 @@ impl SentinelClientBuilder {
                     if self.client_to_sentinel_params.certificates.is_some() {
                         return Err(RedisError::from((
                             ErrorKind::InvalidClientConfig,
-                            "Certificates cannot be set for Tcp connection.",
+                            "Certificates or a rustls config cannot be set for Tcp connection.",
                         )));
                     }
                 }
@@ -1625,6 +1634,7 @@ impl SentinelClientBuilder {
                     }
                     #[cfg(feature = "tls-rustls")]
                     if let Some(certs) = &self.client_to_sentinel_params.certificates {
+                        certs.check(*insecure)?;
                         let new_tls_params = retrieve_tls_certificates(certs)?;
                         *tls_params = Some(new_tls_params);
                     }
@@ -1640,7 +1650,7 @@ impl SentinelClientBuilder {
                     if self.client_to_sentinel_params.certificates.is_some() {
                         return Err(RedisError::from((
                             ErrorKind::InvalidClientConfig,
-                            "Certificates cannot be set for unix sockets.",
+                            "Certificates or a rustls config cannot be set for unix sockets.",
                         )));
                     }
                 }
@@ -1717,8 +1727,33 @@ impl SentinelClientBuilder {
 
     #[cfg(feature = "tls-rustls")]
     /// Set certificates for the connection to redis
+    ///
+    /// This replaces a rustls configuration set with
+    /// [`set_client_to_redis_rustls_config`](Self::set_client_to_redis_rustls_config); the last
+    /// call wins.
     pub fn set_client_to_redis_certificates(mut self, certificates: TlsCertificates) -> Self {
-        self.client_to_redis_params.certificates = Some(certificates);
+        self.client_to_redis_params.certificates = Some(TlsSource::Certificates(certificates));
+        self
+    }
+
+    #[cfg(feature = "tls-rustls")]
+    /// Set a caller-built [`rustls::ClientConfig`] for the connection to redis
+    ///
+    /// The configuration is used as it is, so the caller's certificate verifier alone decides what
+    /// is trusted. It cannot be combined with [`TlsMode::Insecure`], which would replace that
+    /// verifier: `build()` returns [`ErrorKind::InvalidClientConfig`], whatever the order of the
+    /// calls. Like certificates, it needs a TLS mode for the Redis nodes: without one `build()`
+    /// returns [`ErrorKind::InvalidClientConfig`], because the Redis nodes would be reached over
+    /// plain TCP and the configuration would be ignored.
+    ///
+    /// This replaces certificates set with
+    /// [`set_client_to_redis_certificates`](Self::set_client_to_redis_certificates); the last
+    /// call wins.
+    ///
+    /// The configuration has to be built with the same rustls version as the one this crate
+    /// depends on (currently 0.23), which redis-rs does not re-export.
+    pub fn set_client_to_redis_rustls_config(mut self, config: Arc<rustls::ClientConfig>) -> Self {
+        self.client_to_redis_params.certificates = Some(TlsSource::Rustls(config));
         self
     }
 
@@ -1760,8 +1795,65 @@ impl SentinelClientBuilder {
 
     #[cfg(feature = "tls-rustls")]
     /// Set certificate for the connection to the sentinels
+    ///
+    /// This replaces a rustls configuration set with
+    /// [`set_client_to_sentinel_rustls_config`](Self::set_client_to_sentinel_rustls_config); the
+    /// last call wins.
     pub fn set_client_to_sentinel_certificates(mut self, certificates: TlsCertificates) -> Self {
-        self.client_to_sentinel_params.certificates = Some(certificates);
+        self.client_to_sentinel_params.certificates = Some(TlsSource::Certificates(certificates));
         self
+    }
+
+    #[cfg(feature = "tls-rustls")]
+    /// Set a caller-built [`rustls::ClientConfig`] for the connection to the sentinels
+    ///
+    /// The configuration is used as it is, so the caller's certificate verifier alone decides what
+    /// is trusted. It cannot be combined with an insecure connection to a sentinel, set through
+    /// [`TlsMode::Insecure`] or `#insecure` in the sentinel's address: `build()` returns
+    /// [`ErrorKind::InvalidClientConfig`]. A TLS mode set with
+    /// [`set_client_to_sentinel_tls_mode`](Self::set_client_to_sentinel_tls_mode) takes
+    /// precedence over the address, so `TlsMode::Secure` makes an `#insecure` address acceptable.
+    ///
+    /// This replaces certificates set with
+    /// [`set_client_to_sentinel_certificates`](Self::set_client_to_sentinel_certificates); the last
+    /// call wins.
+    ///
+    /// The configuration has to be built with the same rustls version as the one this crate
+    /// depends on (currently 0.23), which redis-rs does not re-export.
+    pub fn set_client_to_sentinel_rustls_config(
+        mut self,
+        config: Arc<rustls::ClientConfig>,
+    ) -> Self {
+        self.client_to_sentinel_params.certificates = Some(TlsSource::Rustls(config));
+        self
+    }
+}
+
+#[cfg(all(test, feature = "tls-rustls"))]
+mod tests {
+    use super::*;
+    use crate::connection::create_rustls_config;
+
+    /// The configuration given for the Redis nodes ends up in the connection info that is built
+    /// for the node a sentinel reports.
+    #[test]
+    fn custom_rustls_config_reaches_the_redis_node_connection_info() {
+        let config = crate::tls::test_client_config();
+        let node_info = SentinelNodeConnectionInfo {
+            tls_mode: Some(TlsMode::Secure),
+            redis_connection_info: None,
+            tcp_settings: None,
+        };
+
+        let certs = Some(TlsSource::Rustls(config.clone()));
+        let info = node_info
+            .create_connection_info("127.0.0.1".to_string(), 6379, &certs)
+            .unwrap();
+
+        let ConnectionAddr::TcpTls { tls_params, .. } = info.addr else {
+            panic!("expected a TLS address");
+        };
+        let used = create_rustls_config(false, tls_params).unwrap();
+        assert!(Arc::ptr_eq(&used, &config));
     }
 }

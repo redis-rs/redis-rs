@@ -2197,6 +2197,61 @@ mod basic_async {
             );
         }
 
+        /// The same mTLS connection as above, but through a caller-built `rustls::ClientConfig`.
+        #[cfg(any(feature = "tokio-rustls-comp", feature = "smol-rustls-comp"))]
+        #[rstest::rstest]
+        #[cfg_attr(feature = "tokio-rustls-comp", case::tokio(RuntimeType::Tokio))]
+        #[cfg_attr(feature = "smol-rustls-comp", case::smol(RuntimeType::Smol))]
+        fn test_should_connect_mtls_with_custom_rustls_config(#[case] runtime: RuntimeType) {
+            use rustls::pki_types::pem::PemObject;
+            use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+
+            let ctx = TestContextBuilder::new().mtls(true).build();
+            // Only a TLS server has certificates to build the configuration from.
+            let Some(paths) = ctx.server.tls_paths.as_ref() else {
+                return;
+            };
+
+            let mut roots = rustls::RootCertStore::empty();
+            for cert in CertificateDer::pem_file_iter(&paths.ca_crt).unwrap() {
+                roots.add(cert.unwrap()).unwrap();
+            }
+            let chain = CertificateDer::pem_file_iter(&paths.redis_crt)
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            let key = PrivateKeyDer::from_pem_file(&paths.redis_key).unwrap();
+            let config = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+                rustls::crypto::ring::default_provider(),
+            ))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(roots)
+            .with_client_auth_cert(chain, key)
+            .unwrap();
+
+            let client = redis::Client::build_with_rustls_config(
+                ctx.server.connection_info(),
+                std::sync::Arc::new(config),
+            )
+            .unwrap();
+            let connect = client.get_multiplexed_async_connection();
+            block_on_all(
+                async move {
+                    let mut con = connect.await.unwrap();
+                    redis::cmd("SET")
+                        .arg("key1")
+                        .arg(b"foo")
+                        .exec_async(&mut con)
+                        .await
+                        .unwrap();
+                    let result = redis::cmd("GET").arg(&["key1"]).query_async(&mut con).await;
+                    assert_eq!(result, Ok("foo".to_string()));
+                },
+                runtime,
+            );
+        }
+
         #[rstest::rstest]
         #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
         #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]

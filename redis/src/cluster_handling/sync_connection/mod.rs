@@ -70,7 +70,9 @@ use std::time::Duration;
 mod pipeline;
 
 pub use super::NodeAddress;
-pub use super::client::{ClusterClient, ClusterClientBuilder};
+#[cfg(feature = "tls-rustls")]
+pub use super::client::RustlsConfig;
+pub use super::client::{ClusterClient, ClusterClientBuilder, TlsSettings};
 use super::topology::parse_slots;
 use super::{
     client::ClusterParams,
