@@ -13,6 +13,8 @@ use crate::errors::{ErrorKind, RedisError, ServerError, ServerErrorKind};
 use crate::io::tcp::{TcpSettings, stream_with_settings};
 use crate::parser::Parser;
 use crate::pipeline::Pipeline;
+#[cfg(feature = "tls-rustls")]
+use crate::types::redacted_if_set;
 use crate::types::{
     FromRedisValue, HashMap, PushKind, RedisResult, SyncPushSender, ToRedisArgs, Value,
     from_redis_value_ref,
@@ -52,7 +54,7 @@ use crate::tls::NativeTlsParams;
 #[derive(Clone, Debug)]
 pub struct TlsConnParams(TlsConnParamsInner);
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 #[cfg_attr(
     not(any(feature = "tls-rustls", feature = "tls-native-tls")),
     allow(dead_code)
@@ -72,6 +74,47 @@ enum TlsConnParamsInner {
         #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
         danger_accept_invalid_hostnames: bool,
     },
+}
+
+impl std::fmt::Debug for TlsConnParamsInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Builder {
+                #[cfg(feature = "tls-rustls")]
+                client_tls_params,
+                #[cfg(feature = "tls-rustls")]
+                root_cert_store,
+                #[cfg(any(
+                    all(feature = "tls-native-tls", not(feature = "tls-rustls")),
+                    all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
+                    all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
+                ))]
+                native_tls_params,
+                #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+                danger_accept_invalid_hostnames,
+            } => {
+                let mut f = f.debug_struct("Builder");
+                #[cfg(feature = "tls-rustls")]
+                f.field("client_tls_params", &redacted_if_set(client_tls_params))
+                    .field(
+                        "root_cert_store",
+                        &root_cert_store.as_ref().map(RootCertStore::len),
+                    );
+                #[cfg(any(
+                    all(feature = "tls-native-tls", not(feature = "tls-rustls")),
+                    all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
+                    all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
+                ))]
+                f.field("native_tls_params", native_tls_params);
+                #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+                f.field(
+                    "danger_accept_invalid_hostnames",
+                    danger_accept_invalid_hostnames,
+                );
+                f.finish()
+            }
+        }
+    }
 }
 
 #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]

@@ -409,3 +409,61 @@ mod tests {
         assert!(bundle.parsed.lock().unwrap().is_none());
     }
 }
+
+// The native-tls runtimes in these builds take a further constructor argument.
+#[cfg(all(
+    test,
+    feature = "tls-rustls",
+    not(any(
+        all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
+        all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
+    ))
+))]
+mod debug_tests {
+    use super::*;
+    use rustls::pki_types::{Der, TrustAnchor};
+
+    fn params(client_tls: bool, root_certs: usize) -> TlsConnParams {
+        let client_tls_params = client_tls.then(|| ClientTlsParams {
+            client_cert_chain: vec![CertificateDer::from(b"secret-client-certificate".to_vec())],
+            client_key: PrivateKeyDer::Pkcs8(b"secret-client-key".to_vec().into()),
+        });
+        let root_cert_store = (root_certs > 0).then(|| RootCertStore {
+            roots: vec![
+                TrustAnchor {
+                    subject: Der::from_slice(b"secret-trust-anchor-subject"),
+                    subject_public_key_info: Der::from_slice(b"secret-trust-anchor-spki"),
+                    name_constraints: None,
+                };
+                root_certs
+            ],
+        });
+        TlsConnParams::new(client_tls_params, root_cert_store)
+    }
+
+    #[test]
+    fn debug_does_not_print_client_certificate_or_key() {
+        let debug = format!("{:?}", params(true, 0));
+
+        assert!(
+            debug.contains("client_tls_params: \"<redacted>\""),
+            "{debug}"
+        );
+        assert!(!debug.contains("client_cert_chain"), "{debug}");
+        assert!(!debug.contains("client_key"), "{debug}");
+        assert!(!debug.contains("secret"), "{debug}");
+    }
+
+    #[test]
+    fn debug_prints_only_the_number_of_root_certificates() {
+        let debug = format!("{:?}", params(false, 2));
+
+        assert!(debug.contains("root_cert_store: Some(2)"), "{debug}");
+        assert!(debug.contains("client_tls_params: \"not set\""), "{debug}");
+        assert!(!debug.contains("secret"), "{debug}");
+        assert!(!debug.contains("subject"), "{debug}");
+
+        let debug = format!("{:?}", params(false, 0));
+        assert!(debug.contains("root_cert_store: None"), "{debug}");
+    }
+}
