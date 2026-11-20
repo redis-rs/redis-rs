@@ -40,7 +40,7 @@ use crate::connection::TlsConnParams;
 use crate::cluster_async;
 
 #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
-use crate::tls::{TlsCertificates, retrieve_tls_certificates};
+use crate::tls::{TlsCertificates, TlsSource, retrieve_tls_certificates};
 
 /// Parameters specific to builder, so that
 /// builder parameters may have different types
@@ -52,7 +52,7 @@ struct BuilderParams {
     read_routing_factory: Option<Arc<dyn ReadRoutingStrategyFactory>>,
     tls: Option<TlsMode>,
     #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
-    certs: Option<TlsCertificates>,
+    certs: Option<TlsSource>,
     #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
     danger_accept_invalid_hostnames: bool,
     retries_configuration: RetryParams,
@@ -626,7 +626,7 @@ impl ClusterClientBuilder {
             self.builder_params.tls = Some(TlsMode::Secure);
         }
 
-        self.builder_params.certs = Some(certificates);
+        self.builder_params.certs = Some(TlsSource::Certificates(certificates));
         self
     }
 

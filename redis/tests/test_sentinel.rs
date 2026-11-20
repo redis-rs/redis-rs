@@ -932,9 +932,139 @@ fn test_sentinel_client_builder_rejects_redis_certificates_without_tls_mode() {
         err,
         RedisError::from((
             ErrorKind::InvalidClientConfig,
-            "Certificates cannot be set for the Redis nodes without a TLS mode."
+            "Certificates or a rustls config cannot be set for the Redis nodes without a TLS mode."
         ))
     );
+}
+
+#[cfg(feature = "tls-rustls")]
+fn rustls_config() -> std::sync::Arc<rustls::ClientConfig> {
+    std::sync::Arc::new(
+        rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(rustls::RootCertStore::empty())
+        .with_no_client_auth(),
+    )
+}
+
+/// The sentinel addresses and master name of the builder tests that need no server.
+#[cfg(feature = "tls-rustls")]
+fn tls_sentinel_builder(insecure: bool) -> SentinelClientBuilder {
+    SentinelClientBuilder::new(
+        [ConnectionAddr::TcpTls {
+            host: String::from("127.0.0.1"),
+            port: 26379,
+            insecure,
+            tls_params: None,
+        }],
+        String::from("master1"),
+        redis::sentinel::SentinelServerType::Master,
+    )
+    .unwrap()
+}
+
+#[cfg(feature = "tls-rustls")]
+#[test]
+fn test_sentinel_client_builder_accepts_custom_rustls_config() {
+    let config = rustls_config();
+
+    tls_sentinel_builder(false)
+        .set_client_to_redis_tls_mode(redis::TlsMode::Secure)
+        .set_client_to_redis_rustls_config(config.clone())
+        .set_client_to_sentinel_rustls_config(config)
+        .build()
+        .unwrap();
+}
+
+#[cfg(feature = "tls-rustls")]
+#[test]
+fn test_sentinel_client_builder_rejects_custom_rustls_config_with_insecure_mode() {
+    let config = rustls_config();
+
+    let to_redis = tls_sentinel_builder(false)
+        .set_client_to_redis_tls_mode(redis::TlsMode::Insecure)
+        .set_client_to_redis_rustls_config(config.clone())
+        .build();
+    assert_eq!(
+        to_redis.err().map(|err| err.kind()),
+        Some(ErrorKind::InvalidClientConfig)
+    );
+
+    let to_sentinel = tls_sentinel_builder(false)
+        .set_client_to_sentinel_tls_mode(redis::TlsMode::Insecure)
+        .set_client_to_sentinel_rustls_config(config)
+        .build();
+    assert_eq!(
+        to_sentinel.err().map(|err| err.kind()),
+        Some(ErrorKind::InvalidClientConfig)
+    );
+}
+
+/// Like certificates, a rustls configuration for the Redis nodes needs a TLS mode.
+#[cfg(feature = "tls-rustls")]
+#[test]
+fn test_sentinel_client_builder_rejects_redis_rustls_config_without_tls_mode() {
+    let result = tls_sentinel_builder(false)
+        .set_client_to_redis_rustls_config(rustls_config())
+        .build();
+    assert_eq!(
+        result.err(),
+        Some(RedisError::from((
+            ErrorKind::InvalidClientConfig,
+            "Certificates or a rustls config cannot be set for the Redis nodes without a TLS mode."
+        )))
+    );
+}
+
+/// The rustls setter and the certificates setter for the same side replace each other.
+#[cfg(feature = "tls-rustls")]
+#[test]
+fn test_sentinel_client_builder_rustls_config_and_certificates_replace_each_other() {
+    let config = rustls_config();
+    let builder =
+        || tls_sentinel_builder(false).set_client_to_redis_tls_mode(redis::TlsMode::Insecure);
+
+    // Certificates last: the rustls configuration is replaced, so an insecure mode is fine.
+    builder()
+        .set_client_to_redis_rustls_config(config.clone())
+        .set_client_to_redis_certificates(redis::TlsCertificates::new())
+        .build()
+        .unwrap();
+
+    // Rustls configuration last: it is the one in effect, so an insecure mode is rejected.
+    let rejected = builder()
+        .set_client_to_redis_certificates(redis::TlsCertificates::new())
+        .set_client_to_redis_rustls_config(config)
+        .build();
+    assert_eq!(
+        rejected.err().map(|err| err.kind()),
+        Some(ErrorKind::InvalidClientConfig)
+    );
+}
+
+/// The TLS mode set on the builder is applied to the sentinel addresses before the custom
+/// configuration is checked, so it can fix an address whose URL asked for `#insecure`.
+#[cfg(feature = "tls-rustls")]
+#[test]
+fn test_sentinel_client_builder_checks_custom_rustls_config_after_applying_tls_mode() {
+    let config = rustls_config();
+
+    let rejected = tls_sentinel_builder(true)
+        .set_client_to_sentinel_rustls_config(config.clone())
+        .build();
+    assert_eq!(
+        rejected.err().map(|err| err.kind()),
+        Some(ErrorKind::InvalidClientConfig)
+    );
+
+    tls_sentinel_builder(true)
+        .set_client_to_sentinel_tls_mode(redis::TlsMode::Secure)
+        .set_client_to_sentinel_rustls_config(config)
+        .build()
+        .unwrap();
 }
 
 #[cfg(feature = "aio")]

@@ -60,6 +60,9 @@ pub struct TlsConnParams(TlsConnParamsInner);
     allow(dead_code)
 )]
 enum TlsConnParamsInner {
+    /// A caller-built configuration that is used as it is.
+    #[cfg(feature = "tls-rustls")]
+    Custom(Arc<rustls::ClientConfig>),
     Builder {
         #[cfg(feature = "tls-rustls")]
         client_tls_params: Option<ClientTlsParams>,
@@ -79,6 +82,10 @@ enum TlsConnParamsInner {
 impl std::fmt::Debug for TlsConnParamsInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            // The configuration may hold a client key through its certificate resolver, so it is
+            // never printed.
+            #[cfg(feature = "tls-rustls")]
+            Self::Custom(_) => f.debug_tuple("Custom").field(&"<redacted>").finish(),
             Self::Builder {
                 #[cfg(feature = "tls-rustls")]
                 client_tls_params,
@@ -162,22 +169,24 @@ impl TlsConnParams {
         )
     }
 
-    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
-    pub(crate) fn set_danger_accept_invalid_hostnames(&mut self, insecure: bool) {
-        let TlsConnParamsInner::Builder {
-            danger_accept_invalid_hostnames,
-            ..
-        } = &mut self.0;
-        *danger_accept_invalid_hostnames = insecure;
+    /// Parameters that use a caller-built configuration as it is.
+    #[cfg(feature = "tls-rustls")]
+    pub(crate) fn custom(config: Arc<rustls::ClientConfig>) -> Self {
+        Self(TlsConnParamsInner::Custom(config))
     }
 
+    /// A custom configuration has no such setting, so this leaves it as it is: its verifier alone
+    /// decides what is trusted, which can only be stricter than accepting invalid hostnames.
     #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
-    pub(crate) fn danger_accept_invalid_hostnames(&self) -> bool {
-        let TlsConnParamsInner::Builder {
-            danger_accept_invalid_hostnames,
-            ..
-        } = &self.0;
-        *danger_accept_invalid_hostnames
+    pub(crate) fn set_danger_accept_invalid_hostnames(&mut self, insecure: bool) {
+        match &mut self.0 {
+            #[cfg(feature = "tls-rustls")]
+            TlsConnParamsInner::Custom(_) => {}
+            TlsConnParamsInner::Builder {
+                danger_accept_invalid_hostnames,
+                ..
+            } => *danger_accept_invalid_hostnames = insecure,
+        }
     }
 }
 
@@ -192,7 +201,25 @@ impl TlsConnParams {
 pub(crate) fn create_native_tls_connector_builder(
     insecure: bool,
     tls_params: Option<TlsConnParams>,
-) -> native_tls::TlsConnectorBuilder {
+) -> RedisResult<native_tls::TlsConnectorBuilder> {
+    // A custom rustls configuration cannot be honoured here. Falling back to the system trust
+    // store would silently change what the caller asked to be trusted, so fail instead.
+    let (native_tls_params, danger_accept_invalid_hostnames) = match tls_params.map(|p| p.0) {
+        None => (None, false),
+        #[cfg(feature = "tls-rustls")]
+        Some(TlsConnParamsInner::Custom(_)) => {
+            fail!((
+                ErrorKind::InvalidClientConfig,
+                "A custom rustls ClientConfig cannot be used with a native-tls connection."
+            ));
+        }
+        Some(TlsConnParamsInner::Builder {
+            native_tls_params,
+            danger_accept_invalid_hostnames,
+            ..
+        }) => (native_tls_params, danger_accept_invalid_hostnames),
+    };
+
     let mut builder = native_tls::TlsConnector::builder();
 
     if insecure {
@@ -200,24 +227,17 @@ pub(crate) fn create_native_tls_connector_builder(
             .danger_accept_invalid_certs(true)
             .danger_accept_invalid_hostnames(true)
             .use_sni(false);
-        return builder;
+        return Ok(builder);
     }
 
-    let Some(tls_params) = tls_params else {
-        return builder;
-    };
+    builder.danger_accept_invalid_hostnames(danger_accept_invalid_hostnames);
 
-    builder.danger_accept_invalid_hostnames(tls_params.danger_accept_invalid_hostnames());
-
-    let TlsConnParamsInner::Builder {
-        native_tls_params, ..
-    } = tls_params.0;
     let Some(NativeTlsParams {
         identity,
         root_certs,
     }) = native_tls_params
     else {
-        return builder;
+        return Ok(builder);
     };
 
     if let Some(identity) = identity {
@@ -233,7 +253,7 @@ pub(crate) fn create_native_tls_connector_builder(
         }
     }
 
-    builder
+    Ok(builder)
 }
 
 static DEFAULT_PORT: u16 = 6379;
@@ -313,7 +333,9 @@ pub enum ConnectionAddr {
         /// vulnerability to man-in-the-middle attacks.
         insecure: bool,
 
-        /// TLS certificates and client key.
+        /// TLS settings: the certificates and client key to use, or a caller-built rustls
+        /// configuration. These cannot be constructed directly, they are created by the
+        /// TLS settings given to the client and builder APIs, such as `Client::build_with_tls`.
         tls_params: Option<TlsConnParams>,
     },
     /// Format for this is the path to the unix socket.
@@ -375,6 +397,10 @@ impl ConnectionAddr {
     /// verification is not used, any valid certificate for any site will be
     /// trusted for use from any other. This introduces a significant
     /// vulnerability to man-in-the-middle attacks.
+    ///
+    /// This has no effect when the address carries a custom rustls `ClientConfig` (see
+    /// `Client::build_with_rustls_config`): the verifier of that configuration decides what is
+    /// trusted, including hostname checks, so verification can only be stricter than requested.
     #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
     pub fn set_danger_accept_invalid_hostnames(&mut self, insecure: bool) {
         if let Self::TcpTls { tls_params, .. } = self {
@@ -1096,7 +1122,7 @@ impl ActualConnection {
                 ref tls_params,
             } => {
                 let tls_connector =
-                    create_native_tls_connector_builder(insecure, tls_params.clone()).build()?;
+                    create_native_tls_connector_builder(insecure, tls_params.clone())?.build()?;
                 let addr = (host.as_str(), port);
                 let tls = match timeout {
                     None => {
@@ -1156,7 +1182,7 @@ impl ActualConnection {
                 let host: &str = host;
                 let config = create_rustls_config(insecure, tls_params.clone())?;
                 let conn = rustls::ClientConnection::new(
-                    Arc::new(config),
+                    config,
                     rustls::pki_types::ServerName::try_from(host)?.to_owned(),
                 )?;
                 let reader = match timeout {
@@ -1353,18 +1379,45 @@ pub fn invalidate_cert_bundle() {
 pub(crate) fn create_rustls_config(
     insecure: bool,
     tls_params: Option<TlsConnParams>,
-) -> RedisResult<rustls::ClientConfig> {
+) -> RedisResult<Arc<rustls::ClientConfig>> {
+    let builder_params = match tls_params.map(|params| params.0) {
+        // A caller-built configuration is used as it is; the caller's verifier decides what is
+        // trusted, so a flag that would replace the verifier cannot apply.
+        Some(TlsConnParamsInner::Custom(custom_config)) => {
+            if insecure {
+                fail!((
+                    ErrorKind::InvalidClientConfig,
+                    crate::tls::CUSTOM_CONFIG_INSECURE
+                ));
+            }
+            return Ok(custom_config);
+        }
+        Some(TlsConnParamsInner::Builder {
+            client_tls_params,
+            root_cert_store,
+            #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+            danger_accept_invalid_hostnames,
+            ..
+        }) => {
+            #[cfg(not(any(feature = "tls-rustls-insecure", feature = "tls-native-tls")))]
+            let danger_accept_invalid_hostnames = false;
+            Some((
+                client_tls_params,
+                root_cert_store,
+                danger_accept_invalid_hostnames,
+            ))
+        }
+        None => None,
+    };
+
     // Building the default root store is expensive when the native store is enabled, since
     // `load_native_certs` rescans the system trust store (~20ms). It is only consulted when the
     // connection actually verifies certificates - with `insecure` the verifier is replaced by
     // `NoCertificateVerification` below - and when the caller didn't supply a store of its own,
     // so it is built lazily to avoid paying for it on every connection that ignores it.
-    let has_custom_root_store = tls_params.as_ref().is_some_and(|params| {
-        let TlsConnParamsInner::Builder {
-            root_cert_store, ..
-        } = &params.0;
-        root_cert_store.is_some()
-    });
+    let has_custom_root_store = builder_params
+        .as_ref()
+        .is_some_and(|(_, root_cert_store, _)| root_cert_store.is_some());
     let load_default_root_store = !insecure && !has_custom_root_store;
 
     #[allow(unused_mut)]
@@ -1379,14 +1432,16 @@ pub(crate) fn create_rustls_config(
     }
 
     let config = rustls::ClientConfig::builder();
-    let config = if let Some(tls_params) = tls_params {
-        #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
-        let danger_accept_invalid_hostnames = tls_params.danger_accept_invalid_hostnames();
-        let TlsConnParamsInner::Builder {
-            client_tls_params,
-            root_cert_store,
-            ..
-        } = tls_params.0;
+    #[cfg_attr(
+        not(any(feature = "tls-rustls-insecure", feature = "tls-native-tls")),
+        allow(unused_variables)
+    )]
+    let config = if let Some((
+        client_tls_params,
+        root_cert_store,
+        danger_accept_invalid_hostnames,
+    )) = builder_params
+    {
         let root_cert_store = root_cert_store.unwrap_or(root_store);
         let config_builder = config.with_root_certificates(root_cert_store.clone());
 
@@ -1467,7 +1522,7 @@ pub(crate) fn create_rustls_config(
                     supported: crypto_provider.signature_verification_algorithms,
                 }));
 
-            Ok(config)
+            Ok(Arc::new(config))
         }
         (true, false) => {
             fail!((
@@ -1475,7 +1530,7 @@ pub(crate) fn create_rustls_config(
                 "Cannot create insecure client without tls-rustls-insecure feature"
             ));
         }
-        _ => Ok(config),
+        _ => Ok(Arc::new(config)),
     }
 }
 
