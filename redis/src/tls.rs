@@ -176,7 +176,7 @@ pub(crate) fn retrieve_tls_certificates(
         None
     };
 
-    Ok(TlsConnParams {
+    Ok(TlsConnParams::new(
         client_tls_params,
         root_cert_store,
         // Populated as well as the rustls fields, for a build in which another runtime selects
@@ -186,20 +186,15 @@ pub(crate) fn retrieve_tls_certificates(
             all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
             all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
         ))]
-        native_tls_params: parse_native_tls_params(certificates)?,
-        #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
-        danger_accept_invalid_hostnames: false,
-    })
+        parse_native_tls_params(certificates)?,
+    ))
 }
 
 #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
 pub(crate) fn retrieve_tls_certificates(
     certificates: &TlsCertificates,
 ) -> RedisResult<TlsConnParams> {
-    Ok(TlsConnParams {
-        native_tls_params: parse_native_tls_params(certificates)?,
-        danger_accept_invalid_hostnames: false,
-    })
+    Ok(TlsConnParams::new(parse_native_tls_params(certificates)?))
 }
 
 /// Certificates and keys in the form the `native-tls` backends consume them.

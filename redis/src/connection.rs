@@ -48,21 +48,94 @@ use crate::tls::ClientTlsParams;
 ))]
 use crate::tls::NativeTlsParams;
 
-// Non-exhaustive to prevent construction outside this crate
+// Opaque to prevent construction outside this crate
 #[derive(Clone, Debug)]
-pub struct TlsConnParams {
-    #[cfg(feature = "tls-rustls")]
-    pub(crate) client_tls_params: Option<ClientTlsParams>,
-    #[cfg(feature = "tls-rustls")]
-    pub(crate) root_cert_store: Option<RootCertStore>,
-    #[cfg(any(
-        all(feature = "tls-native-tls", not(feature = "tls-rustls")),
-        all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
-        all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
-    ))]
-    pub(crate) native_tls_params: Option<NativeTlsParams>,
+pub struct TlsConnParams(TlsConnParamsInner);
+
+#[derive(Clone, Debug)]
+#[cfg_attr(
+    not(any(feature = "tls-rustls", feature = "tls-native-tls")),
+    allow(dead_code)
+)]
+enum TlsConnParamsInner {
+    Builder {
+        #[cfg(feature = "tls-rustls")]
+        client_tls_params: Option<ClientTlsParams>,
+        #[cfg(feature = "tls-rustls")]
+        root_cert_store: Option<RootCertStore>,
+        #[cfg(any(
+            all(feature = "tls-native-tls", not(feature = "tls-rustls")),
+            all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
+            all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
+        ))]
+        native_tls_params: Option<NativeTlsParams>,
+        #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+        danger_accept_invalid_hostnames: bool,
+    },
+}
+
+#[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
+impl TlsConnParams {
+    pub(crate) fn new(
+        #[cfg(feature = "tls-rustls")] client_tls_params: Option<ClientTlsParams>,
+        #[cfg(feature = "tls-rustls")] root_cert_store: Option<RootCertStore>,
+        #[cfg(any(
+            all(feature = "tls-native-tls", not(feature = "tls-rustls")),
+            all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
+            all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
+        ))]
+        native_tls_params: Option<NativeTlsParams>,
+    ) -> Self {
+        Self(TlsConnParamsInner::Builder {
+            #[cfg(feature = "tls-rustls")]
+            client_tls_params,
+            #[cfg(feature = "tls-rustls")]
+            root_cert_store,
+            #[cfg(any(
+                all(feature = "tls-native-tls", not(feature = "tls-rustls")),
+                all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
+                all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
+            ))]
+            native_tls_params,
+            #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+            danger_accept_invalid_hostnames: false,
+        })
+    }
+
+    /// Parameters that carry no certificates, so that only the defaults apply.
     #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
-    pub(crate) danger_accept_invalid_hostnames: bool,
+    pub(crate) fn without_certs() -> Self {
+        Self::new(
+            #[cfg(feature = "tls-rustls")]
+            None,
+            #[cfg(feature = "tls-rustls")]
+            None,
+            #[cfg(any(
+                all(feature = "tls-native-tls", not(feature = "tls-rustls")),
+                all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
+                all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
+            ))]
+            None,
+        )
+    }
+
+    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+    pub(crate) fn set_danger_accept_invalid_hostnames(&mut self, insecure: bool) {
+        let TlsConnParamsInner::Builder {
+            danger_accept_invalid_hostnames,
+            ..
+        } = &mut self.0;
+        *danger_accept_invalid_hostnames = insecure;
+    }
+
+    #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+    pub(crate) fn danger_accept_invalid_hostnames(&self) -> bool {
+        let TlsConnParamsInner::Builder {
+            danger_accept_invalid_hostnames,
+            ..
+        } = &self.0;
+        *danger_accept_invalid_hostnames
+    }
 }
 
 // Returns a builder rather than a connector because each backend wraps it differently:
@@ -91,12 +164,15 @@ pub(crate) fn create_native_tls_connector_builder(
         return builder;
     };
 
-    builder.danger_accept_invalid_hostnames(tls_params.danger_accept_invalid_hostnames);
+    builder.danger_accept_invalid_hostnames(tls_params.danger_accept_invalid_hostnames());
 
+    let TlsConnParamsInner::Builder {
+        native_tls_params, ..
+    } = tls_params.0;
     let Some(NativeTlsParams {
         identity,
         root_certs,
-    }) = tls_params.native_tls_params
+    }) = native_tls_params
     else {
         return builder;
     };
@@ -260,21 +336,11 @@ impl ConnectionAddr {
     pub fn set_danger_accept_invalid_hostnames(&mut self, insecure: bool) {
         if let Self::TcpTls { tls_params, .. } = self {
             if let Some(params) = tls_params {
-                params.danger_accept_invalid_hostnames = insecure;
+                params.set_danger_accept_invalid_hostnames(insecure);
             } else if insecure {
-                *tls_params = Some(TlsConnParams {
-                    #[cfg(feature = "tls-rustls")]
-                    client_tls_params: None,
-                    #[cfg(feature = "tls-rustls")]
-                    root_cert_store: None,
-                    #[cfg(any(
-                        all(feature = "tls-native-tls", not(feature = "tls-rustls")),
-                        all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
-                        all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
-                    ))]
-                    native_tls_params: None,
-                    danger_accept_invalid_hostnames: insecure,
-                });
+                let mut params = TlsConnParams::without_certs();
+                params.set_danger_accept_invalid_hostnames(true);
+                *tls_params = Some(params);
             }
         }
     }
@@ -1250,9 +1316,12 @@ pub(crate) fn create_rustls_config(
     // connection actually verifies certificates - with `insecure` the verifier is replaced by
     // `NoCertificateVerification` below - and when the caller didn't supply a store of its own,
     // so it is built lazily to avoid paying for it on every connection that ignores it.
-    let has_custom_root_store = tls_params
-        .as_ref()
-        .is_some_and(|params| params.root_cert_store.is_some());
+    let has_custom_root_store = tls_params.as_ref().is_some_and(|params| {
+        let TlsConnParamsInner::Builder {
+            root_cert_store, ..
+        } = &params.0;
+        root_cert_store.is_some()
+    });
     let load_default_root_store = !insecure && !has_custom_root_store;
 
     #[allow(unused_mut)]
@@ -1268,13 +1337,20 @@ pub(crate) fn create_rustls_config(
 
     let config = rustls::ClientConfig::builder();
     let config = if let Some(tls_params) = tls_params {
-        let root_cert_store = tls_params.root_cert_store.unwrap_or(root_store);
+        #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
+        let danger_accept_invalid_hostnames = tls_params.danger_accept_invalid_hostnames();
+        let TlsConnParamsInner::Builder {
+            client_tls_params,
+            root_cert_store,
+            ..
+        } = tls_params.0;
+        let root_cert_store = root_cert_store.unwrap_or(root_store);
         let config_builder = config.with_root_certificates(root_cert_store.clone());
 
         let config_builder = if let Some(ClientTlsParams {
             client_cert_chain: client_cert,
             client_key,
-        }) = tls_params.client_tls_params
+        }) = client_tls_params
         {
             config_builder
                 .with_client_auth_cert(client_cert, client_key)
@@ -1295,7 +1371,7 @@ pub(crate) fn create_rustls_config(
         // `tls-native-tls` and `tls-rustls` are enabled, but `tls-rustls-insecure` is not, and the
         // application tries to use the danger flag.
         #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
-        let config_builder = if !insecure && tls_params.danger_accept_invalid_hostnames {
+        let config_builder = if !insecure && danger_accept_invalid_hostnames {
             #[cfg(not(feature = "tls-rustls-insecure"))]
             {
                 // This code should not enable an insecure mode if the `insecure` feature is not
