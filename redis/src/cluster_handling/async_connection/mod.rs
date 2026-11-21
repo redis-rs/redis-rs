@@ -918,14 +918,13 @@ where
                     .and_then(ConnState::connected)
                     .map(|conn| (candidate, conn))
             });
-        drop(read_guard);
         if let Some(found) = fallback {
             return Ok(found);
         }
 
-        let read_guard = self.conn_lock.read().await;
+        // Pick the random connection under the same lock as the slot lookup: a recovery in between
+        // would have changed the connections and the slot map it was made against.
         if let Some((random_addr, random_conn)) = get_random_connection(&read_guard.0) {
-            drop(read_guard);
             return Ok((random_addr, random_conn));
         }
 
