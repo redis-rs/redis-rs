@@ -62,6 +62,15 @@ pub enum Rule {
     ResetChannels,
     /// Selector entries (returned by Redis under `(selectors)`).
     /// Only supported in Redis 7.2 and later
+    ///
+    /// Each inner rule reaches the server as exactly one rule: one that contains whitespace or a
+    /// quote is sent quoted, so for example a `Pattern` with a space in it is refused by the
+    /// server rather than read as several rules. [`Rule::Other`] is sent as written, so it can
+    /// still hold several space-separated rules.
+    ///
+    /// The server writes selectors to the ACL file without quoting them, so a selector with a
+    /// quote in one of its rules doesn't survive `ACL SAVE` followed by `ACL LOAD` or a restart:
+    /// the server either empties the selector or refuses to load the file.
     Selector(Vec<Self>),
 
     /// Performs the following actions: `resetpass`, `resetkeys`, `off`, `-@all`.
@@ -104,21 +113,54 @@ impl ToRedisArgs for Rule {
             ResetKeys => out.write_arg(b"resetkeys"),
             Channel(pat) => out.write_arg_fmt(format_args!("&{pat}")),
             ResetChannels => out.write_arg(b"resetchannels"),
-            Selector(sel) => out.write_arg_fmt(format_args!(
-                "({})",
-                sel.iter()
-                    .flat_map(|r| r
-                        .to_redis_args()
-                        .into_iter()
-                        .map(|x| String::from_utf8_lossy(&x).to_string()))
-                    .collect::<Vec<String>>()
-                    .join(" ")
-            )),
+            Selector(sel) => {
+                let rules: Vec<Vec<u8>> = sel
+                    .iter()
+                    .flat_map(|rule| match rule {
+                        // Raw rule text may hold several rules, so it goes in as written.
+                        Other(raw) => vec![raw.clone().into_bytes()],
+                        rule => rule
+                            .to_redis_args()
+                            .iter()
+                            .map(|arg| quote_selector_rule(arg))
+                            .collect(),
+                    })
+                    .collect();
+                let separators = rules.len().saturating_sub(1);
+                let len = rules.iter().map(Vec::len).sum::<usize>() + separators + 2;
+                let mut arg = Vec::with_capacity(len);
+                arg.push(b'(');
+                for (i, rule) in rules.iter().enumerate() {
+                    if i > 0 {
+                        arg.push(b' ');
+                    }
+                    arg.extend_from_slice(rule);
+                }
+                arg.push(b')');
+                out.write_arg(&arg);
+            }
             Reset => out.write_arg(b"reset"),
 
             Other(rule) => out.write_arg(rule.as_bytes()),
         }
     }
+}
+
+/// Quotes one rule of a selector so the server reads it as a single rule.
+///
+/// The server splits the text between the parentheses into rules with `sdssplitargs`, the
+/// splitter used for `redis-cli` lines and the ACL file, so a rule containing whitespace or a
+/// quote would be read as several rules. Such a rule is written as a double-quoted string with
+/// its bytes ASCII-escaped, which that splitter decodes back to exactly the bytes given.
+fn quote_selector_rule(rule: &[u8]) -> Vec<u8> {
+    let is_plain = |byte: &u8| byte.is_ascii_graphic() && *byte != b'"' && *byte != b'\'';
+    if rule.iter().all(is_plain) {
+        return rule.to_vec();
+    }
+    let mut quoted = b"\"".to_vec();
+    quoted.extend(rule.escape_ascii());
+    quoted.push(b'"');
+    quoted
 }
 
 /// An info dictionary type storing Redis ACL information as multiple `Rule`.
@@ -436,6 +478,45 @@ mod tests {
             ]),
             b"(+SET ~key2)"
         );
+    }
+
+    #[test]
+    fn test_selector_rule_stays_one_rule() {
+        use self::Rule::*;
+
+        // The server splits the selector on whitespace and quotes, so a rule containing
+        // either is quoted and ASCII-escaped, which `sdssplitargs` decodes.
+        assert_args!(
+            Selector(vec![
+                AddCommand("get".to_string()),
+                Pattern("x +@all ~*".to_string())
+            ]),
+            b"(+get \"~x +@all ~*\")"
+        );
+        assert_args!(
+            Selector(vec![Pattern("a\"b'c\\d\ne\tf".to_string())]),
+            b"(\"~a\\\"b\\'c\\\\d\\ne\\tf\")"
+        );
+        assert_args!(
+            Selector(vec![Pattern("\u{7}\u{8}\u{1}é".to_string())]),
+            b"(\"~\\x07\\x08\\x01\\xc3\\xa9\")"
+        );
+
+        // Raw rule text goes in as written, even when empty.
+        assert_args!(
+            Selector(vec![Other("+get ~foo".to_string())]),
+            b"(+get ~foo)"
+        );
+        assert_args!(Selector(vec![Other(String::new())]), b"()");
+        assert_args!(
+            Selector(vec![
+                AddCommand("get".to_string()),
+                Other(String::new()),
+                Pattern("foo".to_string())
+            ]),
+            b"(+get  ~foo)"
+        );
+        assert_args!(Selector(vec![]), b"()");
     }
 
     #[test]
