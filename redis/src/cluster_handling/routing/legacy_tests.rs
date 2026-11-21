@@ -308,6 +308,17 @@ fn sorted(info: Option<RoutingInfo>) -> Option<RoutingInfo> {
 #[test]
 fn routing_matches_the_name_keyed_tables() {
     for &command in KnownCommand::ALL {
+        // Fixed on purpose: the tables listed the sub-commands of `TFUNCTION` as keyless, but
+        // they were never looked up by their full name, so `TFUNCTION LIST` used to be routed
+        // to the slot of its sub-command, `LIST`.
+        if matches!(
+            command,
+            KnownCommand::TfunctionDelete
+                | KnownCommand::TfunctionList
+                | KnownCommand::TfunctionLoad
+        ) {
+            continue;
+        }
         let (primary, sub) = command.name_parts();
         for arguments in ARGUMENTS {
             let mut built = cmd(std::str::from_utf8(primary).unwrap());
@@ -342,5 +353,16 @@ fn key_positions_and_routing_agree() {
                 command.name()
             );
         }
+    }
+}
+
+#[test]
+fn tfunction_sub_commands_are_routed_to_a_random_node() {
+    for sub_command in ["DELETE", "LIST", "LOAD"] {
+        assert_eq!(
+            RoutingInfo::for_routable(cmd("TFUNCTION").arg(sub_command).arg("lib")),
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)),
+            "TFUNCTION {sub_command}"
+        );
     }
 }

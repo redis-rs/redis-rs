@@ -600,6 +600,9 @@ impl KnownCommand {
             | Self::ScriptShow
             | Self::Tfcall
             | Self::Tfcallasync
+            | Self::TfunctionDelete
+            | Self::TfunctionList
+            | Self::TfunctionLoad
             | Self::Time => RouteBy::Random,
             Self::Acl
             | Self::AclCat
@@ -857,9 +860,6 @@ impl KnownCommand {
             | Self::Sunsubscribe
             | Self::Swapdb
             | Self::Sync
-            | Self::TfunctionDelete
-            | Self::TfunctionList
-            | Self::TfunctionLoad
             | Self::Ttl
             | Self::Type
             | Self::Unsubscribe
