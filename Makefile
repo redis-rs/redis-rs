@@ -121,4 +121,20 @@ fuzz:
 	cargo afl build --bin fuzz-target && \
 	cargo afl fuzz -i in -o out ../../target/debug/fuzz-target
 
-.PHONY: build test bench docs upload-docs style-check lint fuzz
+# A `fuzz-codec` input is a byte choosing how to split the stream into reads (0 is one read),
+# followed by the stream. Its corpus is the parser's, with a few such bytes in front of each seed.
+fuzz-codec-corpus:
+	cd afl/parser/ && \
+	rm -rf in-codec && mkdir in-codec && \
+	for f in in/*; do \
+		for split in 000 001 005; do \
+			{ printf "\\$$split"; cat "$$f"; } > "in-codec/$$(basename "$$f")-$$split"; \
+		done; \
+	done
+
+fuzz-codec: fuzz-codec-corpus
+	cd afl/parser/ && \
+	cargo afl build --bin fuzz-codec && \
+	cargo afl fuzz -i in-codec -o out-codec ../../target/debug/fuzz-codec
+
+.PHONY: build test bench docs upload-docs style-check lint fuzz fuzz-codec-corpus fuzz-codec

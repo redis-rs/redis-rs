@@ -1063,7 +1063,9 @@ name = "fuzz-target-parser"
 version = "0.1.0"
 dependencies = [
  "afl",
+ "bytes",
  "redis",
+ "tokio-util",
 ]
 
 [[package]]
