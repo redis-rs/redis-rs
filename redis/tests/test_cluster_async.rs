@@ -1736,6 +1736,8 @@ mod cluster_async {
     #[test]
     fn test_async_cluster_refresh_completes_while_requests_hold_the_connection_lock() {
         let name = "test_async_cluster_refresh_completes_while_requests_hold_the_connection_lock";
+        let slot_refreshes = Arc::new(atomic::AtomicUsize::new(0));
+        let slot_refreshes_clone = slot_refreshes.clone();
         let MockEnv {
             async_connection: connection,
             handler: _handler,
@@ -1745,6 +1747,9 @@ mod cluster_async {
             ClusterClient::builder(vec![&*format!("redis://{name}")]).retries(3),
             name,
             move |cmd: &[u8], port| {
+                if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
+                    slot_refreshes_clone.fetch_add(1, Ordering::SeqCst);
+                }
                 respond_startup_two_nodes(name, cmd)?;
                 if port == 6379 {
                     Err(parse_redis_value(
@@ -1755,6 +1760,7 @@ mod cluster_async {
                 }
             },
         );
+        let startup_refreshes = slot_refreshes.load(Ordering::SeqCst);
 
         let results = runtime.block_on(async move {
             let requests = (0..300).map(|i| {
@@ -1774,6 +1780,11 @@ mod cluster_async {
         for result in results {
             assert_eq!(result, Ok(Value::Okay));
         }
+        // The first MOVED replies start a refresh, and the replies that are processed while it
+        // runs must not start another one. The replies of the remaining requests are processed
+        // after it completed, and start one more, since they can't be told apart from a new
+        // topology change.
+        assert_eq!(slot_refreshes.load(Ordering::SeqCst) - startup_refreshes, 2);
     }
 
     fn test_async_cluster_fan_out(
