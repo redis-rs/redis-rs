@@ -1,0 +1,98 @@
+# Fuzzes the RESP parser with the differential AFL targets in `afl/parser` when the parser, or its
+# fuzz targets, change. Each target runs for 15 minutes and fails the job on any crash or hang.
+# `fuzz-target` checks `parse_redis_value` against `combine`; `fuzz-codec` checks the async
+# `ValueCodec`, fed in random read sizes, against a `combine`-only codec.
+name: Fuzz parser
+
+on:
+  push:
+    branches: [main, 0.*.x, 1.*.x, 2.*.x]
+    paths: &paths
+      - "redis/src/parser.rs"
+      - "afl/parser/**"
+      - ".github/workflows/fuzz-parser.yml"
+  pull_request:
+    branches: [main, 0.*.x, 1.*.x, 2.*.x]
+    paths: *paths
+
+permissions:
+  contents: read
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.head_ref || github.run_id || github.ref }}"
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES: 1
+  # The runner's kernel settings aren't ours to change
+  AFL_SKIP_CPUFREQ: 1
+  # The UI is useless in CI logs.
+  AFL_NO_UI: 1
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [
+          { target: fuzz-target, corpus: in },
+          { target: fuzz-codec, corpus: in-codec },
+        ]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: ${{ matrix.config.target }}
+
+      - name: Install cargo-afl
+        # Keep the version in sync with the `afl` dependency in Cargo.lock.
+        #
+        # `--force`: rust-cache restores `cargo-afl` into `~/.cargo/bin` but not the extracted crate
+        # sources, and `cargo afl config --build` builds AFL++ from the sources bundled in them.
+        # Reinstalling extracts them again.
+        run: |
+          cargo install cargo-afl --locked --version 0.18.2 --force
+          cargo afl config --build --force
+
+      - name: Generate the codec corpus
+        if: matrix.config.target == 'fuzz-codec'
+        run: make fuzz-codec-corpus
+
+      - name: Build ${{ matrix.config.target }}
+        working-directory: afl/parser
+        run: cargo afl build --locked --bin ${{ matrix.config.target }}
+
+      - name: Fuzz ${{ matrix.config.target }} for 15 minutes
+        working-directory: afl/parser
+        # `-t 1000`: an input taking over a second is a real hang, not runner noise.
+        run: >-
+          cargo afl fuzz -V 900 -t 1000
+          -i ${{ matrix.config.corpus }} -o out
+          ../../target/debug/${{ matrix.config.target }}
+
+      - name: Check for crashes and hangs
+        working-directory: afl/parser
+        run: |
+          found=$(find out/default/crashes out/default/hangs -type f ! -name README.txt)
+          if [ -n "$found" ]; then
+            echo "::error::${{ matrix.config.target }} found crashing or hanging inputs:"
+            echo "$found"
+            echo "Replay each with: cargo run --bin reproduce -- $([ ${{ matrix.config.target }} = fuzz-codec ] && echo '--codec ')<file>"
+            exit 1
+          fi
+
+      - name: Upload findings
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: afl-${{ matrix.config.target }}
+          path: afl/parser/out/default

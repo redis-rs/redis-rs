@@ -6,6 +6,7 @@ members = [
   "afl/parser",
   "test-macros",
 ]
+default-members = ["redis", "redis-test", "test-macros"]
 resolver = "2"
 
 [workspace.dependencies]
