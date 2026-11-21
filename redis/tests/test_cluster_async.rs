@@ -1787,6 +1787,104 @@ mod cluster_async {
         assert_eq!(slot_refreshes.load(Ordering::SeqCst) - startup_refreshes, 2);
     }
 
+    // A reconnect to the initial nodes installs the initial connections with an empty slot map,
+    // releases the connection lock, and takes it again to refresh the slots. The requests polled
+    // while it runs must not route against that empty slot map.
+    #[test]
+    fn test_async_cluster_requests_wait_for_the_reconnect_to_initial_nodes() {
+        let name = "test_async_cluster_requests_wait_for_the_reconnect_to_initial_nodes";
+        // Set once 6380 reports that it lost the slot: the next CLUSTER SLOTS reply moves every
+        // slot to nodes that can't be reached, which leaves the client without connections, and
+        // makes the next request reconnect to the initial nodes.
+        let serve_unreachable_topology = atomic::AtomicBool::new(false);
+        // Set once the unreachable topology was served. From then on, the requests route by the
+        // slot map of the reconnect to the initial nodes, and must reach 6380.
+        let topology_lost = Arc::new(atomic::AtomicBool::new(false));
+        let misrouted = Arc::new(atomic::AtomicUsize::new(0));
+        let topology_lost_clone = topology_lost.clone();
+        let misrouted_clone = misrouted.clone();
+        let MockEnv {
+            async_connection: connection,
+            handler: _handler,
+            runtime,
+            ..
+        } = MockEnv::with_client_builder(
+            ClusterClient::builder(vec![&*format!("redis://{name}")])
+                .retries(5)
+                .min_retry_wait(1)
+                .max_retry_wait(2),
+            name,
+            move |cmd: &[u8], port| {
+                // The nodes of the unreachable topology.
+                if port == 6381 || port == 6382 {
+                    return Err(Err(broken_pipe_error()));
+                }
+                if contains_slice(cmd, b"CLUSTER")
+                    && contains_slice(cmd, b"SLOTS")
+                    && serve_unreachable_topology.swap(false, Ordering::SeqCst)
+                {
+                    topology_lost_clone.store(true, Ordering::SeqCst);
+                    return respond_startup_with_replica_using_config(
+                        name,
+                        cmd,
+                        Some(vec![
+                            MockSlotRange {
+                                primary_port: 6381,
+                                replica_ports: vec![],
+                                slot_range: (0..8191),
+                            },
+                            MockSlotRange {
+                                primary_port: 6382,
+                                replica_ports: vec![],
+                                slot_range: (8192..16383),
+                            },
+                        ]),
+                    );
+                }
+                respond_startup_two_nodes(name, cmd)?;
+                // The keys hash to slot 12182, owned by 6380.
+                if port == 6379 {
+                    if topology_lost_clone.load(Ordering::SeqCst) {
+                        misrouted_clone.fetch_add(1, Ordering::SeqCst);
+                    }
+                    return Err(parse_redis_value(
+                        format!("-MOVED 12182 {name}:6380\r\n").as_bytes(),
+                    ));
+                }
+                if topology_lost_clone.load(Ordering::SeqCst) {
+                    Err(Ok(Value::Okay))
+                } else {
+                    // 6380 lost the slot to a node that can't be reached.
+                    serve_unreachable_topology.store(true, Ordering::SeqCst);
+                    Err(parse_redis_value(
+                        format!("-MOVED 12182 {name}:6381\r\n").as_bytes(),
+                    ))
+                }
+            },
+        );
+
+        let results = runtime.block_on(async move {
+            let requests = (0..1000).map(|i| {
+                let mut connection = connection.clone();
+                async move {
+                    cmd("GET")
+                        .arg(format!("{{foo}}{i}"))
+                        .query_async::<Value>(&mut connection)
+                        .await
+                }
+            });
+            tokio::time::timeout(Duration::from_secs(10), future::join_all(requests)).await
+        });
+
+        let results = results.expect("the requests never completed");
+        assert_eq!(results.len(), 1000);
+        for result in results {
+            assert_eq!(result, Ok(Value::Okay));
+        }
+        assert!(topology_lost.load(Ordering::SeqCst));
+        assert_eq!(misrouted.load(Ordering::SeqCst), 0);
+    }
+
     fn test_async_cluster_fan_out(
         name: &'static str,
         command: &'static str,
