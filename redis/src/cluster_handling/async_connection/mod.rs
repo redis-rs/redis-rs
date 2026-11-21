@@ -986,8 +986,13 @@ where
     // Query a node to discover slot-> master mappings.
     async fn refresh_slots(self) -> RedisResult<()> {
         let mut write_guard = self.conn_lock.write().await;
-        let (connections, slots) = &mut *write_guard;
+        self.refresh_slots_locked(&mut write_guard).await
+    }
 
+    async fn refresh_slots_locked(
+        &self,
+        (connections, slots): &mut (ConnectionMap<C>, SlotMap),
+    ) -> RedisResult<()> {
         let mut found = false;
         let mut last_err = None;
 
@@ -1414,9 +1419,11 @@ where
                 &inner.subscription_tracker,
             )
             .await?;
-            *inner.conn_lock.write().await = (connection_map, SlotMap::new());
-            inner.refresh_slots().await?;
-            Ok(())
+            // The lock is held until the slots are refreshed, so that no request routes by the
+            // initial connections alone.
+            let mut write_guard = inner.conn_lock.write().await;
+            *write_guard = (connection_map, SlotMap::new());
+            inner.refresh_slots_locked(&mut write_guard).await
         }
     }
 
