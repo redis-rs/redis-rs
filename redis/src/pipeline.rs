@@ -2,9 +2,10 @@
 
 #[cfg(feature = "cache-aio")]
 use crate::cmd::CommandCacheConfig;
-use crate::cmd::{Arg, Cmd, CmdRef, args_len, write_command};
+use crate::cmd::{Arg, ArgIter, Cmd, CmdRef, args_len, write_command};
 use crate::connection::ConnectionLike;
 use crate::errors::ErrorKind;
+use crate::known_commands::KnownCommand;
 use crate::types::{FromRedisValue, RedisResult, ToRedisArgs, Value, from_redis_value};
 
 /// Per-command metadata in a flattened pipeline.
@@ -18,6 +19,7 @@ use crate::types::{FromRedisValue, RedisResult, ToRedisArgs, Value, from_redis_v
 pub(crate) struct CommandRecord {
     pub(crate) args_start: usize,
     pub(crate) data_start: usize,
+    pub(crate) known_command: Option<KnownCommand>,
     pub(crate) cursor: Option<u64>,
     pub(crate) ignored: bool,
     pub(crate) no_response: bool,
@@ -181,18 +183,18 @@ impl Pipeline {
         encode_pipeline(self, self.transaction_mode)
     }
 
-    /// Returns the `(args, data_start, cursor)` for the command at `idx`, used by the encoder to
-    /// walk the flat buffers directly.
-    fn command_parts(&self, idx: usize) -> (&[Arg<usize>], usize, u64) {
+    /// Returns the arguments for the command at `idx`, including a command name synthesized
+    /// from its [`KnownCommand`] when one is stored.
+    fn command_args_iter(&self, idx: usize) -> ArgIter<'_> {
         let record = &self.commands[idx];
-        let args_end = self
-            .commands
-            .get(idx + 1)
-            .map_or(self.args.len(), |r| r.args_start);
-        (
+        let next = self.commands.get(idx + 1);
+        let args_end = next.map_or(self.args.len(), |r| r.args_start);
+        let data_end = next.map_or(self.data.len(), |r| r.data_start);
+        ArgIter::new(
+            record.known_command,
+            &self.data[record.data_start..data_end],
             &self.args[record.args_start..args_end],
             record.data_start,
-            record.cursor.unwrap_or(0),
         )
     }
 
@@ -322,37 +324,18 @@ fn encode_pipeline(pipe: &Pipeline, atomic: bool) -> Vec<u8> {
 const PACKED_MULTI: &[u8] = b"*1\r\n$5\r\nMULTI\r\n";
 const PACKED_EXEC: &[u8] = b"*1\r\n$4\r\nEXEC\r\n";
 
-/// Builds an iterator over a single command's arguments, slicing directly into the pipeline's
-/// shared `data` buffer using absolute offsets. Unlike [`CmdRef::args_iter`], this needs no
-/// per-argument rebasing, which keeps the hot encode path tight.
-fn command_args_iter<'a>(
-    data: &'a [u8],
-    args: &'a [Arg<usize>],
-    data_start: usize,
-) -> impl Clone + ExactSizeIterator<Item = Arg<&'a [u8]>> {
-    let mut prev = data_start;
-    args.iter().map(move |arg| match *arg {
-        Arg::Simple(end) => {
-            let arg = Arg::Simple(&data[prev..end]);
-            prev = end;
-            arg
-        }
-        Arg::Cursor => Arg::Cursor,
-    })
-}
-
 fn write_pipeline(rv: &mut Vec<u8>, pipe: &Pipeline, atomic: bool) {
     let cmds_len: usize = (0..pipe.commands.len())
         .map(|idx| {
-            let (args, data_start, cursor) = pipe.command_parts(idx);
-            args_len(command_args_iter(&pipe.data, args, data_start), cursor)
+            let cursor = pipe.commands[idx].cursor.unwrap_or(0);
+            args_len(pipe.command_args_iter(idx), cursor)
         })
         .sum();
 
     let write_commands = |rv: &mut Vec<u8>| {
         for idx in 0..pipe.commands.len() {
-            let (args, data_start, cursor) = pipe.command_parts(idx);
-            write_command(rv, command_args_iter(&pipe.data, args, data_start), cursor);
+            let cursor = pipe.commands[idx].cursor.unwrap_or(0);
+            write_command(rv, pipe.command_args_iter(idx), cursor);
         }
     };
 
@@ -371,13 +354,11 @@ fn write_pipeline(rv: &mut Vec<u8>, pipe: &Pipeline, atomic: bool) {
 macro_rules! implement_pipeline_commands {
     ($struct_name:ident) => {
         impl $struct_name {
-            /// Pushes a new, empty command record. Subsequent arguments written through
-            /// [`RedisWrite`](crate::RedisWrite) belong to it until the next command starts.
-            #[inline]
-            pub(crate) fn start_command(&mut self) {
+            fn push_command(&mut self, known_command: Option<KnownCommand>) {
                 self.commands.push($crate::pipeline::CommandRecord {
                     args_start: self.args.len(),
                     data_start: self.data.len(),
+                    known_command,
                     cursor: None,
                     ignored: false,
                     no_response: false,
@@ -386,11 +367,27 @@ macro_rules! implement_pipeline_commands {
                 });
             }
 
+            /// Pushes a new, empty command record. Subsequent arguments written through
+            /// [`RedisWrite`](crate::RedisWrite) belong to it until the next command starts.
+            #[inline]
+            pub(crate) fn start_command(&mut self) {
+                self.push_command(None);
+            }
+
+            /// Pushes a new command record whose name is stored as a [`KnownCommand`] rather than
+            /// copied into the argument buffers.
+            #[inline]
+            pub(crate) fn start_command_with_known_command(&mut self, command: KnownCommand) {
+                self.push_command(Some(command));
+            }
+
             /// Adds a command to the pipeline.
             #[inline]
             pub fn add_command(&mut self, cmd: Cmd) -> &mut Self {
-                self.start_command();
-                for arg in cmd.args_iter() {
+                let known_command = cmd.known_command();
+                self.push_command(known_command);
+                let name_args = known_command.map_or(0, KnownCommand::name_arg_count);
+                for arg in cmd.args_iter().skip(name_args) {
                     match arg {
                         Arg::Simple(bytes) => $crate::types::RedisWrite::write_arg(self, bytes),
                         Arg::Cursor => self.args.push(Arg::Cursor),
@@ -461,6 +458,7 @@ macro_rules! implement_pipeline_commands {
                     &self.data[record.data_start..data_end],
                     &self.args[record.args_start..args_end],
                     record.data_start,
+                    record.known_command,
                     record.cursor,
                     record.no_response,
                     record.ignored,
@@ -624,8 +622,10 @@ impl Pipeline {
     /// caching layer to repack commands it inspected as `CmdRef`s.
     #[cfg(feature = "cache-aio")]
     pub(crate) fn add_command_ref(&mut self, cmd: CmdRef<'_>) -> &mut Self {
-        self.start_command();
-        for arg in cmd.args_iter() {
+        let known_command = cmd.known_command();
+        self.push_command(known_command);
+        let name_args = known_command.map_or(0, KnownCommand::name_arg_count);
+        for arg in cmd.args_iter().skip(name_args) {
             match arg {
                 Arg::Simple(bytes) => crate::types::RedisWrite::write_arg(self, bytes),
                 Arg::Cursor => self.args.push(Arg::Cursor),
@@ -657,6 +657,56 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn known_command_pipeline_storage_preserves_reported_args() {
+        let mut known = Pipeline::new();
+        known
+            .get("key")
+            .set("key", "value")
+            .object_encoding("key")
+            .client_getname()
+            .bit_and("dst", &["a", "b"]);
+
+        let mut manual = Pipeline::new();
+        manual
+            .cmd("GET")
+            .arg("key")
+            .cmd("SET")
+            .arg("key")
+            .arg("value")
+            .cmd("OBJECT")
+            .arg("ENCODING")
+            .arg("key")
+            .cmd("CLIENT")
+            .arg("GETNAME")
+            .cmd("BITOP")
+            .arg("AND")
+            .arg("dst")
+            .arg(&["a", "b"]);
+
+        assert_eq!(known.len(), manual.len());
+        assert_eq!(known.get_packed_pipeline(), manual.get_packed_pipeline());
+
+        for (known, manual) in known.cmd_iter().zip(manual.cmd_iter()) {
+            assert_eq!(
+                known.args_iter().len(),
+                manual.args_iter().len(),
+                "argument count changed for {known:?}"
+            );
+            assert_eq!(
+                args_len(known.args_iter(), known.cursor().unwrap_or(0)),
+                args_len(manual.args_iter(), manual.cursor().unwrap_or(0)),
+                "argument length changed for {known:?}"
+            );
+            assert_eq!(
+                known.args_iter().collect::<Vec<_>>(),
+                manual.args_iter().collect::<Vec<_>>(),
+                "arguments changed for {known:?}"
+            );
+            assert_eq!(known.get_packed_command(), manual.get_packed_command());
+        }
+    }
 
     fn test_pipe() -> Pipeline {
         let mut pipeline = pipe();

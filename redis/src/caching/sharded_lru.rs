@@ -1,6 +1,7 @@
 use crate::Value;
 use crate::caching::statistics::Statistics;
 use crate::cmd::Arg;
+use crate::known_commands::KnownCommand;
 use lru::LruCache;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
@@ -21,11 +22,20 @@ type RedisKey = Vec<u8>;
 pub(crate) struct CmdArgs<'a> {
     offsets: &'a [Arg<usize>],
     base: usize,
+    command: KnownCommand,
 }
 
 impl<'a> CmdArgs<'a> {
-    pub(crate) const fn new(offsets: &'a [Arg<usize>], base: usize) -> Self {
-        CmdArgs { offsets, base }
+    pub(crate) const fn new(offsets: &'a [Arg<usize>], base: usize, command: KnownCommand) -> Self {
+        CmdArgs {
+            offsets,
+            base,
+            command,
+        }
+    }
+
+    fn command(self) -> KnownCommand {
+        self.command
     }
 
     fn relative(self) -> impl Iterator<Item = Arg<usize>> + 'a {
@@ -41,6 +51,7 @@ impl<'a> CmdArgs<'a> {
 }
 
 pub(crate) struct CacheCmdEntry {
+    command: KnownCommand,
     cmd: RedisCmd,
     cmd_args: RedisCmdArgs,
     value: Value,
@@ -133,7 +144,10 @@ impl ShardedLRU {
             }
             // Found redis key in cache, but KEY,CMD combination also must be in the cache otherwise, it will be fetched from server.
             for entry in &cache_item.value_list {
-                if entry.cmd == redis_cmd && redis_cmd_args.matches(&entry.cmd_args) {
+                if entry.command == redis_cmd_args.command()
+                    && entry.cmd == redis_cmd
+                    && redis_cmd_args.matches(&entry.cmd_args)
+                {
                     self.statistics.increase_hit(1);
                     return Some(entry.value.clone());
                 }
@@ -166,13 +180,17 @@ impl ShardedLRU {
             && ch.epoch == epoch
         {
             for entry in &mut ch.value_list {
-                if entry.cmd == cmd_key && cmd_args.matches(&entry.cmd_args) {
+                if entry.command == cmd_args.command()
+                    && entry.cmd == cmd_key
+                    && cmd_args.matches(&entry.cmd_args)
+                {
                     entry.value = value;
                     ch.expire_time = expire_time;
                     return;
                 }
             }
             ch.value_list.push(CacheCmdEntry {
+                command: cmd_args.command(),
                 cmd: cmd_key.to_vec(),
                 cmd_args: cmd_args.relative().collect(),
                 value,
@@ -185,6 +203,7 @@ impl ShardedLRU {
             CacheItem {
                 expire_time,
                 value_list: vec![CacheCmdEntry {
+                    command: cmd_args.command(),
                     cmd: cmd_key.to_vec(),
                     cmd_args: cmd_args.relative().collect(),
                     value,
@@ -234,7 +253,7 @@ mod tests {
     use std::time::Duration;
     static CMD_KEY: &[u8] = b"test_cmd_key".as_slice();
     static CMD_KEY_2: &[u8] = b"test_cmd_key_2".as_slice();
-    static CMD_ARGS: CmdArgs<'static> = CmdArgs::new(&[], 0);
+    static CMD_ARGS: CmdArgs<'static> = CmdArgs::new(&[], 0, KnownCommand::Get);
     static REDIS_KEY: &[u8] = b"test_redis_key".as_slice();
 
     #[test]

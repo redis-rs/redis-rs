@@ -5,6 +5,7 @@ use crate::connection::{
     connection_setup_pipeline,
 };
 use crate::io::AsyncDNSResolver;
+use crate::known_commands::KnownCommand;
 use crate::pipeline::ExpectedConfirmations;
 use crate::types::{RedisFuture, RedisResult, Value};
 use crate::{ErrorKind, PushInfo, RedisError, ToRedisArgs, errors::closed_connection_error};
@@ -114,17 +115,17 @@ pub(crate) enum SubscribeLikeCommand {
 }
 
 impl SubscribeLikeCommand {
-    /// The name of the command as sent to the server.
-    pub(crate) fn name(self) -> &'static str {
+    /// The command as sent to the server.
+    pub(crate) fn known_command(self) -> KnownCommand {
         match self {
-            Self::Subscribe => "SUBSCRIBE",
-            Self::Unsubscribe => "UNSUBSCRIBE",
-            Self::PSubscribe => "PSUBSCRIBE",
-            Self::PUnsubscribe => "PUNSUBSCRIBE",
+            Self::Subscribe => KnownCommand::Subscribe,
+            Self::Unsubscribe => KnownCommand::Unsubscribe,
+            Self::PSubscribe => KnownCommand::Psubscribe,
+            Self::PUnsubscribe => KnownCommand::Punsubscribe,
             #[cfg(feature = "cluster-async")]
-            Self::SSubscribe => "SSUBSCRIBE",
+            Self::SSubscribe => KnownCommand::Ssubscribe,
             #[cfg(feature = "cluster-async")]
-            Self::SUnsubscribe => "SUNSUBSCRIBE",
+            Self::SUnsubscribe => KnownCommand::Sunsubscribe,
         }
     }
 
@@ -161,7 +162,8 @@ pub(crate) async fn send_subscribe_like_command(
     let arg_count = args.num_of_args();
 
     let mut pipeline = crate::Pipeline::new();
-    pipeline.cmd(command.name()).arg(args);
+    pipeline.start_command_with_known_command(command.known_command());
+    pipeline.arg(args);
     pipeline.subscription_confirmations = Some(command.expected_confirmations(arg_count));
 
     // The pipeline is a single server command, so it holds a single concurrency limit permit

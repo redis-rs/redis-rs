@@ -141,7 +141,8 @@ impl FromRedisValue for RedisJsonType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cmd::{Arg, Cmd, cmd};
+    use crate::cmd::{Arg, Cmd};
+    use crate::known_commands::KnownCommand;
     use crate::types::FromRedisValue;
     use rstest::rstest;
     use serde::ser::Serialize;
@@ -156,7 +157,7 @@ mod tests {
     }
 
     fn build<V: Serialize + ?Sized>(value: &V, opts: &JsonSetOptions) -> Vec<Vec<u8>> {
-        let mut c = cmd("JSON.SET");
+        let mut c = Cmd::known(KnownCommand::JsonSet);
         c.arg("k")
             .arg("$")
             .arg(serde_json::to_string(value).unwrap())

@@ -85,7 +85,7 @@ pub use options::*;
 pub use schema::*;
 pub use vector::*;
 
-use crate::Cmd;
+use crate::{Cmd, known_commands::KnownCommand};
 
 /// FT.CREATE command builder.
 ///
@@ -128,7 +128,7 @@ impl FtCreateCommand {
 
     /// Consume the builder and convert it into a `redis::Cmd`.
     pub fn into_cmd(self) -> Cmd {
-        let mut cmd = crate::cmd("FT.CREATE");
+        let mut cmd = Cmd::known(KnownCommand::FtCreate);
         cmd.arg(&self.index);
         cmd.arg(&self.options);
         cmd.arg("SCHEMA");
