@@ -33,6 +33,11 @@ test:
 	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp+tls RUST_BACKTRACE=1 cargo nextest run --locked -p redis --features=json,tokio-native-tls-comp,smol-native-tls-comp,connection-manager,cluster-async --profile tcp_tls
 
 	@echo "===================================================================="
+	@echo "Testing a native-TLS runtime in a build that also has rustls (unit tests only)"
+	@echo "===================================================================="
+	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run --locked -p redis --lib --no-default-features --features=tokio-native-tls-comp,tls-rustls,tls-rustls-webpki-roots
+
+	@echo "===================================================================="
 	@echo "Testing Connection Type UNIX SOCKETS"
 	@echo "===================================================================="
 	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=unix RUST_BACKTRACE=1 cargo nextest run --locked -p redis --all-features --profile unix

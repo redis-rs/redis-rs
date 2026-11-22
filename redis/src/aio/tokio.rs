@@ -18,8 +18,6 @@ use crate::connection::create_native_tls_connector_builder;
 #[cfg(feature = "tokio-rustls-comp")]
 use crate::connection::create_rustls_config;
 #[cfg(feature = "tokio-rustls-comp")]
-use std::sync::Arc;
-#[cfg(feature = "tokio-rustls-comp")]
 use tokio_rustls::{TlsConnector, client::TlsStream};
 
 #[cfg(all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")))]
@@ -125,7 +123,7 @@ impl RedisRuntime for Tokio {
         tcp_settings: &crate::io::tcp::TcpSettings,
     ) -> RedisResult<Self> {
         let tls_connector: tokio_native_tls::TlsConnector =
-            create_native_tls_connector_builder(insecure, params.clone())
+            create_native_tls_connector_builder(insecure, params.clone())?
                 .build()?
                 .into();
         Ok(tls_connector
@@ -143,7 +141,7 @@ impl RedisRuntime for Tokio {
         tcp_settings: &crate::io::tcp::TcpSettings,
     ) -> RedisResult<Self> {
         let config = create_rustls_config(insecure, tls_params.clone())?;
-        let tls_connector = TlsConnector::from(Arc::new(config));
+        let tls_connector = TlsConnector::from(config);
 
         Ok(tls_connector
             .connect(
