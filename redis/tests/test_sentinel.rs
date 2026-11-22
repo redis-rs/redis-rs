@@ -862,7 +862,7 @@ fn test_sentinel_client_builder() {
         assert_matches!(role, Role::Sentinel { .. });
     }
 
-    let mut master_client_builder = SentinelClientBuilder::new(
+    let master_client_builder = SentinelClientBuilder::new(
         context
             .sentinels_connection_info
             .iter()
@@ -872,7 +872,7 @@ fn test_sentinel_client_builder() {
     )
     .unwrap();
 
-    let mut replica_client_builder = SentinelClientBuilder::new(
+    let replica_client_builder = SentinelClientBuilder::new(
         context
             .sentinels_connection_info
             .iter()
@@ -882,15 +882,27 @@ fn test_sentinel_client_builder() {
     )
     .unwrap();
 
-    master_client_builder = master_client_builder.set_client_to_sentinel_protocol(use_protocol());
+    let master_client_builder =
+        master_client_builder.set_client_to_sentinel_protocol(use_protocol());
 
-    if let Some(tls_mode) = context.tls_mode() {
-        master_client_builder = master_client_builder.set_client_to_redis_tls_mode(tls_mode);
-        replica_client_builder = replica_client_builder.set_client_to_redis_tls_mode(tls_mode);
-    }
-
-    let mut master_client = master_client_builder.build().unwrap();
-    let mut replica_client = replica_client_builder.build().unwrap();
+    // Setting the TLS mode changes the type of the builder, so each branch builds its own clients.
+    let (mut master_client, mut replica_client) = if let Some(tls_mode) = context.tls_mode() {
+        (
+            master_client_builder
+                .set_client_to_redis_tls_mode(tls_mode)
+                .build()
+                .unwrap(),
+            replica_client_builder
+                .set_client_to_redis_tls_mode(tls_mode)
+                .build()
+                .unwrap(),
+        )
+    } else {
+        (
+            master_client_builder.build().unwrap(),
+            replica_client_builder.build().unwrap(),
+        )
+    };
 
     let mut master_con = master_client.get_connection().unwrap();
     let role: Role = redis::cmd("ROLE").query(&mut master_con).unwrap();
@@ -935,6 +947,169 @@ fn test_sentinel_client_builder_rejects_redis_certificates_without_tls_mode() {
             "Certificates cannot be set for the Redis nodes without a TLS mode."
         ))
     );
+    // Errors compare by kind, so check the message as well.
+    assert!(
+        err.to_string()
+            .contains("Certificates cannot be set for the Redis nodes without a TLS mode."),
+        "{err}"
+    );
+}
+
+#[cfg(feature = "tls-rustls")]
+fn rustls_config() -> std::sync::Arc<rustls::ClientConfig> {
+    std::sync::Arc::new(
+        rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(rustls::RootCertStore::empty())
+        .with_no_client_auth(),
+    )
+}
+
+/// The sentinel addresses and master name of the builder tests that need no server.
+#[cfg(feature = "tls-rustls")]
+fn tls_sentinel_builder(insecure: bool) -> SentinelClientBuilder {
+    SentinelClientBuilder::new(
+        [ConnectionAddr::TcpTls {
+            host: String::from("127.0.0.1"),
+            port: 26379,
+            insecure,
+            tls_params: None,
+        }],
+        String::from("master1"),
+        redis::sentinel::SentinelServerType::Master,
+    )
+    .unwrap()
+}
+
+#[cfg(feature = "tls-rustls")]
+#[test]
+fn test_sentinel_client_builder_accepts_custom_rustls_config_on_each_side() {
+    let config = rustls_config();
+
+    // Custom for the Redis nodes, built-in for the sentinels.
+    tls_sentinel_builder(false)
+        .set_client_to_redis_rustls_config(config.clone())
+        .set_client_to_sentinel_tls_mode(redis::TlsMode::Secure)
+        .build()
+        .unwrap();
+
+    // Built-in for the Redis nodes, custom for the sentinels.
+    tls_sentinel_builder(false)
+        .set_client_to_redis_tls_mode(redis::TlsMode::Secure)
+        .set_client_to_redis_certificates(redis::TlsCertificates::new())
+        .set_client_to_sentinel_rustls_config(config.clone())
+        .build()
+        .unwrap();
+
+    // Custom for both.
+    tls_sentinel_builder(false)
+        .set_client_to_redis_rustls_config(config.clone())
+        .set_client_to_sentinel_rustls_config(config.clone())
+        .build()
+        .unwrap();
+
+    // Custom for one side then the other, in the opposite order to the previous case.
+    tls_sentinel_builder(false)
+        .set_client_to_sentinel_rustls_config(config.clone())
+        .set_client_to_redis_rustls_config(config)
+        .build()
+        .unwrap();
+}
+
+/// A rustls configuration for the sentinels sets the TLS mode to secure, so an `#insecure`
+/// sentinel address is upgraded instead of rejected.
+#[cfg(feature = "tls-rustls")]
+#[test]
+fn test_sentinel_client_builder_upgrades_insecure_sentinels_for_custom_rustls_config() {
+    tls_sentinel_builder(true)
+        .set_client_to_sentinel_rustls_config(rustls_config())
+        .build()
+        .unwrap();
+}
+
+/// Only TLS sentinels can use a rustls configuration.
+#[cfg(feature = "tls-rustls")]
+#[test]
+fn test_sentinel_client_builder_rejects_custom_rustls_config_for_plain_sentinels() {
+    let builder = |addr| {
+        SentinelClientBuilder::new(
+            [addr],
+            String::from("master1"),
+            redis::sentinel::SentinelServerType::Master,
+        )
+        .unwrap()
+        .set_client_to_sentinel_rustls_config(rustls_config())
+    };
+
+    let tcp = builder(ConnectionAddr::Tcp(String::from("127.0.0.1"), 26379)).build();
+    let err = tcp.err().unwrap();
+    assert_eq!(err.kind(), ErrorKind::InvalidClientConfig);
+    assert!(
+        err.to_string()
+            .contains("A rustls ClientConfig cannot be used for a plain TCP sentinel address."),
+        "{err}"
+    );
+
+    #[cfg(unix)]
+    {
+        let unix = builder(ConnectionAddr::Unix("/tmp/sentinel.sock".into())).build();
+        let err = unix.err().unwrap();
+        assert_eq!(err.kind(), ErrorKind::InvalidClientConfig);
+        assert!(
+            err.to_string().contains(
+                "A rustls ClientConfig cannot be used for a unix socket sentinel address."
+            ),
+            "{err}"
+        );
+    }
+}
+
+/// With the built-in handling chosen up front, optional TLS settings need no branch per
+/// combination: the builder keeps one type.
+#[cfg(feature = "tls-rustls")]
+#[test]
+fn test_sentinel_client_builder_optional_tls_settings_with_promotion() {
+    for (redis_mode, sentinel_mode, certificates) in [
+        (None, None, false),
+        (Some(redis::TlsMode::Secure), None, true),
+        (None, Some(redis::TlsMode::Insecure), false),
+        (
+            Some(redis::TlsMode::Secure),
+            Some(redis::TlsMode::Secure),
+            true,
+        ),
+    ] {
+        let mut builder = tls_sentinel_builder(false)
+            .use_built_in_redis_tls()
+            .use_built_in_sentinel_tls();
+        if let Some(mode) = redis_mode {
+            builder = builder.set_client_to_redis_tls_mode(mode);
+        }
+        if let Some(mode) = sentinel_mode {
+            builder = builder.set_client_to_sentinel_tls_mode(mode);
+        }
+        if certificates {
+            builder = builder
+                .set_client_to_redis_certificates(redis::TlsCertificates::new())
+                .set_client_to_sentinel_certificates(redis::TlsCertificates::new());
+        }
+        builder.build().unwrap();
+    }
+}
+
+/// The TLS states are only markers: they do not change what the builder can be moved across.
+#[cfg(feature = "tls-rustls")]
+#[test]
+fn test_sentinel_client_builder_is_send_and_sync_in_every_state() {
+    use redis::tls_state::{BuiltIn, Custom, Unset};
+
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<SentinelClientBuilder>();
+    assert_send_sync::<SentinelClientBuilder<BuiltIn, Custom>>();
+    assert_send_sync::<SentinelClientBuilder<Custom, Unset>>();
 }
 
 #[cfg(feature = "aio")]

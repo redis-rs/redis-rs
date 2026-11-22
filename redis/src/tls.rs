@@ -96,6 +96,28 @@ impl std::fmt::Debug for TlsCertificates {
     }
 }
 
+/// Where the TLS settings of one connection come from: certificates that redis-rs turns into a
+/// connector, or a complete rustls configuration that is used as it is.
+///
+/// The rustls variant is only reachable through its own entry points, so the certificate setters
+/// cannot be applied to it.
+#[cfg(all(feature = "tls-rustls", feature = "sentinel"))]
+#[derive(Clone)]
+pub(crate) enum TlsSource {
+    Certificates(TlsCertificates),
+    Rustls(Arc<rustls::ClientConfig>),
+}
+
+#[cfg(all(feature = "tls-rustls", feature = "sentinel"))]
+impl TlsSource {
+    pub(crate) fn conn_params(&self) -> RedisResult<TlsConnParams> {
+        match self {
+            Self::Certificates(certificates) => retrieve_tls_certificates(certificates),
+            Self::Rustls(config) => Ok(TlsConnParams::custom(Arc::clone(config))),
+        }
+    }
+}
+
 #[cfg(feature = "tls-rustls")]
 pub(crate) const CUSTOM_CONFIG_INSECURE: &str = "A custom rustls ClientConfig cannot be combined with an insecure connection; use a custom certificate verifier instead.";
 

@@ -221,3 +221,36 @@ fn insecure_address_is_rejected_when_connecting() {
     assert!(err.to_string().contains("insecure connection"), "{err}");
     assert!(!called.load(Ordering::SeqCst));
 }
+
+#[cfg(feature = "sentinel")]
+mod sentinel {
+    use super::*;
+    use redis::sentinel::{SentinelClientBuilder, SentinelServerType};
+
+    /// The sentinel's address asks for `#insecure`, which the rustls configuration upgrades, so
+    /// the verifier of the configuration is consulted when the sentinel is contacted.
+    #[test]
+    fn sentinel_connection_uses_the_custom_config() {
+        let addr = start_tls_server();
+        let (config, called) = rejecting_config();
+        let mut client = SentinelClientBuilder::new(
+            [redis::ConnectionAddr::TcpTls {
+                host: "127.0.0.1".into(),
+                port: addr.port(),
+                insecure: true,
+                tls_params: None,
+            }],
+            "master1",
+            SentinelServerType::Master,
+        )
+        .unwrap()
+        .set_client_to_sentinel_rustls_config(config)
+        .build()
+        .unwrap();
+
+        let Err(err) = client.get_client() else {
+            panic!("the verifier rejects every certificate");
+        };
+        assert_rejected_by_verifier(err, &called);
+    }
+}
