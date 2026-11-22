@@ -97,7 +97,7 @@ use std::{
     io,
     ops::Deref,
     pin::{Pin, pin},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
     task::{self, Poll},
     time::Duration,
 };
@@ -146,7 +146,7 @@ use log::{debug, error, info, trace, warn};
 use rand::{rng, seq::IteratorRandom};
 use request::{CmdArg, PendingRequest, Request, RequestState, Retry};
 use routing::{InternalRoutingInfo, InternalSingleNodeRouting, route_for_pipeline};
-use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot};
 
 struct ClientSideState {
     protocol: ProtocolVersion,
@@ -461,6 +461,7 @@ type ConnectionMap<C> = HashMap<NodeAddress, ConnState<C>>;
 /// nodes are tracked in one place.
 type SharedSubscriptionTracker = Option<Arc<Mutex<SubscriptionTracker>>>;
 
+#[derive(Clone)]
 enum ConnState<C> {
     // Connection has been successfully established at some point.
     Connected(C),
@@ -560,20 +561,20 @@ where
         routing: &'a MultipleNodeRoutingInfo,
         response_policy: Option<ResponsePolicy>,
     ) -> OperationResult {
-        let read_guard = self.conn_lock.read().await;
-        if read_guard.0.is_empty() {
-            return (
-                OperationTarget::FanOut,
-                Result::Err(
-                    (
-                        ErrorKind::ClusterConnectionNotFound,
-                        "No connections found for multi-node operation",
-                    )
-                        .into(),
-                ),
-            );
-        }
         let (receivers, requests): (Vec<_>, Vec<_>) = {
+            let read_guard = self.conn_lock.read().unwrap();
+            if read_guard.0.is_empty() {
+                return (
+                    OperationTarget::FanOut,
+                    Result::Err(
+                        (
+                            ErrorKind::ClusterConnectionNotFound,
+                            "No connections found for multi-node operation",
+                        )
+                            .into(),
+                    ),
+                );
+            }
             let to_request = |(addr, cmd): (&NodeAddress, Arc<Cmd>)| {
                 read_guard
                     .0
@@ -635,7 +636,6 @@ where
                     .unzip(),
             }
         };
-        drop(read_guard);
         for request in requests {
             let _ = self.pending_requests_tx.send(request);
         }
@@ -863,7 +863,7 @@ where
     ) -> RedisResult<(NodeAddress, C)> {
         let route = match route {
             InternalSingleNodeRouting::Random => {
-                let read_guard = self.conn_lock.read().await;
+                let read_guard = self.conn_lock.read().unwrap();
                 return match get_random_connection(&read_guard.0) {
                     Some((addr, conn)) => Ok((addr, conn)),
                     None => {
@@ -880,7 +880,7 @@ where
                 return self.get_redirected_connection(redirect).await;
             }
             InternalSingleNodeRouting::ByAddress(address) => {
-                let read_guard = self.conn_lock.read().await;
+                let read_guard = self.conn_lock.read().unwrap();
                 return match read_guard.0.get(&address).and_then(ConnState::connected) {
                     Some(conn) => Ok((address, conn)),
                     None => Err((
@@ -893,7 +893,7 @@ where
             }
         };
 
-        let read_guard = self.conn_lock.read().await;
+        let read_guard = self.conn_lock.read().unwrap();
         let preferred = read_guard
             .1
             .slot_addr_for_route(route, self.routing_strategy.as_deref())
@@ -936,9 +936,13 @@ where
         let addr = match redirect {
             Redirect::Moved(addr) | Redirect::Ask(addr) => addr,
         };
-        let read_guard = self.conn_lock.read().await;
-        let conn = read_guard.0.get(&addr).and_then(ConnState::connected);
-        drop(read_guard);
+        let conn = self
+            .conn_lock
+            .read()
+            .unwrap()
+            .0
+            .get(&addr)
+            .and_then(ConnState::connected);
         let mut conn = match conn {
             Some(conn) => conn,
             None => self.connect_check_and_add(&addr).await?,
@@ -965,7 +969,7 @@ where
         .await?;
         self.conn_lock
             .write()
-            .await
+            .unwrap()
             .0
             .insert(addr.clone(), ConnState::Connected(conn.clone()));
         Ok(conn)
@@ -984,14 +988,15 @@ where
 
     // Query a node to discover slot-> master mappings.
     async fn refresh_slots(self) -> RedisResult<()> {
-        let mut write_guard = self.conn_lock.write().await;
-        self.refresh_slots_locked(&mut write_guard).await
+        let connections = self.conn_lock.read().unwrap().0.clone();
+        self.refresh_slots_from(connections).await
     }
 
-    async fn refresh_slots_locked(
-        &self,
-        (connections, slots): &mut (ConnectionMap<C>, SlotMap),
-    ) -> RedisResult<()> {
+    /// Discovers the topology through `connections`, repairs them to match it, and installs both
+    /// as the routing state. Requests keep routing by the previous state until then.
+    async fn refresh_slots_from(&self, mut connections: ConnectionMap<C>) -> RedisResult<()> {
+        let connections = &mut connections;
+        let slots = &mut SlotMap::new();
         let mut found = false;
         let mut last_err = None;
 
@@ -1056,16 +1061,18 @@ where
         // served by another node, which the resubscription below moves the subscriptions to.
         connections.retain(|addr, _| nodes.contains(addr));
 
-        self.refresh_connections_locked(connections, nodes).await;
+        self.refresh_connections(connections, nodes).await;
 
         // The slot map may have changed, so resubscribe every node only to the subscriptions whose
         // slots it now owns.
         self.resubscribe_all(connections, slots);
 
+        *self.conn_lock.write().unwrap() = (std::mem::take(connections), std::mem::take(slots));
+
         Ok(())
     }
 
-    async fn refresh_connections_locked(
+    async fn refresh_connections(
         &self,
         connections: &mut ConnectionMap<C>,
         nodes: HashSet<NodeAddress>,
@@ -1118,18 +1125,16 @@ where
     }
 
     /// Re-subscribes a reconnected connection to the tracked subscriptions whose slots it owns.
-    async fn resubscribe_node(&self, reconnected_addr: &NodeAddress) {
+    fn resubscribe_node(&self, reconnected_addr: &NodeAddress) {
         let Some(tracker) = self.subscription_tracker.as_ref() else {
             return;
         };
-        let read_guard = self.conn_lock.read().await;
         let subscription_pipe = subscriptions_for_node(
             &tracker.lock().unwrap(),
-            &read_guard.1,
+            &self.conn_lock.read().unwrap().1,
             reconnected_addr,
             self.routing_strategy.as_deref(),
         );
-        drop(read_guard);
 
         self.send_subscription_pipeline(reconnected_addr, subscription_pipe);
     }
@@ -1173,7 +1178,7 @@ where
     C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
 {
     {
-        let mut guard = core.conn_lock.write().await;
+        let mut guard = core.conn_lock.write().unwrap();
         if matches!(
             guard.0.get(&addr),
             Some(ConnState::Reconnecting(_) | ConnState::Connecting)
@@ -1192,11 +1197,11 @@ where
             .max_connection_attempts
             .is_some_and(|max| max.get() < attempts)
         {
-            core.conn_lock.write().await.0.remove(&addr);
+            core.conn_lock.write().unwrap().0.remove(&addr);
             break;
         }
         let prev = {
-            let guard = core.conn_lock.read().await;
+            let guard = core.conn_lock.read().unwrap();
             let in_topology = guard.1.addresses_for_all_nodes().contains(&addr);
             let entry = guard.0.get(&addr);
             if matches!(entry, Some(ConnState::Connected(_))) {
@@ -1206,7 +1211,7 @@ where
             drop(guard);
 
             if !in_topology {
-                core.conn_lock.write().await.0.remove(&addr);
+                core.conn_lock.write().unwrap().0.remove(&addr);
                 break;
             }
             prev_conn
@@ -1223,7 +1228,7 @@ where
         {
             Ok(conn) => {
                 let newly_installed = {
-                    let mut guard = core.conn_lock.write().await;
+                    let mut guard = core.conn_lock.write().unwrap();
 
                     if matches!(guard.0.get(&addr), Some(ConnState::Connected(_))) {
                         false
@@ -1235,7 +1240,7 @@ where
 
                 if newly_installed {
                     info!("ClusterConnInner: reconnected to {addr:?} ");
-                    core.resubscribe_node(&addr).await;
+                    core.resubscribe_node(&addr);
                 }
                 break;
             }
@@ -1418,11 +1423,9 @@ where
                 &inner.subscription_tracker,
             )
             .await?;
-            // The lock is held until the slots are refreshed, so that no request routes by the
-            // initial connections alone.
-            let mut write_guard = inner.conn_lock.write().await;
-            *write_guard = (connection_map, SlotMap::new());
-            inner.refresh_slots_locked(&mut write_guard).await
+            // The initial connections are installed together with the slots they discover, so
+            // that no request routes by them alone.
+            inner.refresh_slots_from(connection_map).await
         }
     }
 
@@ -1725,14 +1728,7 @@ where
 
             // If we have a recovery future, poll it until completion first.
             let Poll::Ready(recovered) = self.as_mut().poll_recover(cx) else {
-                // The recovery future waits for the connection lock, which an in-flight request or
-                // a reconnect future may hold while it is suspended: since tokio 1.54, a lock
-                // future acquires the lock before it checks the task's cooperative budget, and
-                // returns `Pending` while holding the lock when the budget is exhausted. They must
-                // keep being polled to release the lock, or the recovery never completes. See
-                // https://github.com/redis-rs/redis-rs/issues/2418 for the same deadlock with the
-                // lock handed over to queued requests.
-                //
+                // In-flight requests and reconnects keep making progress while the recovery runs.
                 // The action the completed requests ask for is discarded: the running recovery
                 // refreshes the topology and checks every connection anyway, and whatever it
                 // misses is reported again by the next request that hits it. New requests aren't
