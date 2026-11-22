@@ -306,21 +306,114 @@ fn sorted(info: Option<RoutingInfo>) -> Option<RoutingInfo> {
     info
 }
 
+/// Commands without keys that used to be routed by the slot of their first argument, and are now
+/// sent to a random node when they have arguments.
+const KEYLESS_ROUTED_BY_THEIR_FIRST_ARGUMENT: &[(&str, &[KnownCommand])] = &[
+    (
+        "Sentinel commands: their arguments are names, addresses and settings",
+        &[
+            KnownCommand::SentinelGetMasterAddrByName,
+            KnownCommand::SentinelMaster,
+            KnownCommand::SentinelMasters,
+            KnownCommand::SentinelMonitor,
+            KnownCommand::SentinelRemove,
+            KnownCommand::SentinelSentinels,
+            KnownCommand::SentinelSet,
+            KnownCommand::SentinelSlaves,
+        ],
+    ),
+    (
+        "Help commands, which take no arguments",
+        &[
+            KnownCommand::ClientHelp,
+            KnownCommand::ClusterHelp,
+            KnownCommand::CommandHelp,
+            KnownCommand::ConfigHelp,
+            KnownCommand::FunctionHelp,
+            KnownCommand::LatencyHelp,
+            KnownCommand::MemoryHelp,
+            KnownCommand::ModuleHelp,
+            KnownCommand::ObjectHelp,
+            KnownCommand::PubsubHelp,
+            KnownCommand::ScriptHelp,
+            KnownCommand::SlowlogHelp,
+            KnownCommand::XgroupHelp,
+            KnownCommand::XinfoHelp,
+        ],
+    ),
+    (
+        "Transactions, connection and replication commands, whose arguments are not keys",
+        &[
+            KnownCommand::Asking,
+            KnownCommand::ClientCaching,
+            KnownCommand::ClientCapa,
+            KnownCommand::ClientNoEvict,
+            KnownCommand::ClientNoTouch,
+            KnownCommand::ClientTracking,
+            KnownCommand::Discard,
+            KnownCommand::Exec,
+            KnownCommand::Failover,
+            KnownCommand::Hello,
+            KnownCommand::Monitor,
+            KnownCommand::Multi,
+            KnownCommand::Psync,
+            KnownCommand::Quit,
+            KnownCommand::Replconf,
+            KnownCommand::Role,
+            KnownCommand::Sync,
+        ],
+    ),
+    (
+        "Administration commands, whose arguments are not keys",
+        &[
+            KnownCommand::AclCat,
+            KnownCommand::AclLoad,
+            KnownCommand::ClusterAddslotsrange,
+            KnownCommand::ClusterBumpepoch,
+            KnownCommand::ClusterFailover,
+            KnownCommand::ClusterFlushslots,
+            KnownCommand::ClusterForget,
+            KnownCommand::ClusterLinks,
+            KnownCommand::ClusterMyid,
+            KnownCommand::ClusterReplicate,
+            KnownCommand::ClusterSaveconfig,
+            KnownCommand::ClusterSlaves,
+            KnownCommand::CommandDocs,
+            KnownCommand::CommandGetkeysandflags,
+            KnownCommand::CommandInfo,
+            KnownCommand::FunctionDump,
+            KnownCommand::Hotkeys,
+            KnownCommand::Pfselftest,
+            KnownCommand::ScriptDebug,
+            KnownCommand::Swapdb,
+        ],
+    ),
+];
+
+/// Commands whose routing changed for another reason.
+const OTHER_CHANGES: &[(&str, &[KnownCommand])] = &[(
+    "Fixed on purpose: the tables listed the sub-commands of `TFUNCTION` as keyless, but they \
+     were never looked up by their full name, so `TFUNCTION LIST` used to be routed to the slot \
+     of its sub-command, `LIST`",
+    &[
+        KnownCommand::TfunctionDelete,
+        KnownCommand::TfunctionList,
+        KnownCommand::TfunctionLoad,
+    ],
+)];
+
+fn is_expected_to_differ(command: KnownCommand) -> bool {
+    KEYLESS_ROUTED_BY_THEIR_FIRST_ARGUMENT
+        .iter()
+        .chain(OTHER_CHANGES)
+        .any(|(_, commands)| commands.contains(&command))
+}
+
 #[test]
-fn routing_matches_the_name_keyed_tables() {
+fn routing_matches_the_name_keyed_tables_except_for_the_listed_commands() {
     for &command in KnownCommand::ALL {
-        // Fixed on purpose: the tables listed the sub-commands of `TFUNCTION` as keyless, but
-        // they were never looked up by their full name, so `TFUNCTION LIST` used to be routed
-        // to the slot of its sub-command, `LIST`.
-        if matches!(
-            command,
-            KnownCommand::TfunctionDelete
-                | KnownCommand::TfunctionList
-                | KnownCommand::TfunctionLoad
-        ) {
-            continue;
-        }
         let (primary, sub) = command.name_parts();
+        let mut differs = false;
         for arguments in ARGUMENTS {
             let mut built = cmd(std::str::from_utf8(primary).unwrap());
             if let Some(sub) = sub {
@@ -329,12 +422,15 @@ fn routing_matches_the_name_keyed_tables() {
             for argument in *arguments {
                 built.arg(*argument);
             }
-            assert_eq!(
-                sorted(RoutingInfo::for_routable(&built)),
-                sorted(legacy_for_routable(&built)),
-                "routing of {built:?} changed"
-            );
+            differs |=
+                sorted(RoutingInfo::for_routable(&built)) != sorted(legacy_for_routable(&built));
         }
+        assert_eq!(
+            differs,
+            is_expected_to_differ(command),
+            "{}: the routing differs from the name-keyed tables only for the listed commands",
+            command.name(),
+        );
     }
 }
 
@@ -432,6 +528,7 @@ fn key_layouts_follow_the_command_specifications() {
         (KnownCommand::Mset, Pairs),
         (KnownCommand::JsonMget, AllExceptLast),
         (KnownCommand::JsonMset, Triples),
+        (KnownCommand::Hello, KeyPositions::Keyless(Keyless::Random)),
         (KnownCommand::Tfcall, KeyPositions::Keyless(Keyless::Random)),
         (
             KnownCommand::Flushall,
@@ -463,4 +560,22 @@ fn tfunction_sub_commands_are_routed_to_a_random_node() {
             "TFUNCTION {sub_command}"
         );
     }
+}
+
+#[test]
+fn shard_channel_counts_are_asked_from_every_node_and_combined() {
+    let routing = RoutingInfo::for_routable(
+        cmd("PUBSUB")
+            .arg("SHARDNUMSUB")
+            .arg("foo")
+            .arg("bar")
+            .arg("baz"),
+    );
+    assert_eq!(
+        routing,
+        Some(RoutingInfo::MultiNode((
+            MultipleNodeRoutingInfo::AllNodes,
+            Some(ResponsePolicy::CombineMaps)
+        )))
+    );
 }

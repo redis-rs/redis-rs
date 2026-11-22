@@ -672,7 +672,7 @@ impl RoutingInfo {
             KeyPositions::Keyless(Keyless::Undefined) => None,
 
             // A command without its first argument goes to a random node.
-            KeyPositions::Keyless(Keyless::PinnedByFirstArgument | Keyless::HashFirstArgument)
+            KeyPositions::Keyless(Keyless::PinnedByFirstArgument)
             | KeyPositions::First
             | KeyPositions::FirstTwo
             | KeyPositions::AllFrom(1)

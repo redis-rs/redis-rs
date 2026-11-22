@@ -93,10 +93,6 @@ pub(crate) enum Keyless {
     /// connection (`PSUBSCRIBE`, `PUNSUBSCRIBE`) have to land on one deterministic node, and the
     /// search commands (`FT.SEARCH`, ...) are sent to the node of their index name.
     PinnedByFirstArgument,
-    /// To the node of the slot of the command's first argument, if it has one, which isn't a
-    /// key. This is how the command was routed before its key layout was described.
-    // TODO: remove, the commands should go to a random node.
-    HashFirstArgument,
     /// The command can't be routed automatically.
     Undefined,
 }
@@ -185,49 +181,98 @@ impl KnownCommand {
             | Self::Unwatch
             | Self::Wait
             | Self::Waitaof => KeyPositions::Keyless(Keyless::AllPrimaries),
+            Self::FtAggregate
+            | Self::FtExplain
+            | Self::FtExplaincli
+            | Self::FtInfo
+            | Self::FtProfile
+            | Self::FtSearch
+            | Self::Psubscribe
+            | Self::Punsubscribe => KeyPositions::Keyless(Keyless::PinnedByFirstArgument),
             Self::Acl
             | Self::AclCat
+            | Self::AclDryrun
+            | Self::AclGenpass
+            | Self::AclGetuser
+            | Self::AclHelp
+            | Self::AclList
             | Self::AclLoad
+            | Self::AclLog
+            | Self::AclUsers
+            | Self::AclWhoami
             | Self::Asking
             | Self::Client
             | Self::ClientCaching
             | Self::ClientCapa
+            | Self::ClientGetname
+            | Self::ClientGetredir
             | Self::ClientHelp
+            | Self::ClientId
+            | Self::ClientInfo
+            | Self::ClientList
             | Self::ClientNoEvict
             | Self::ClientNoTouch
+            | Self::ClientReply
             | Self::ClientTracking
+            | Self::ClientTrackinginfo
+            | Self::ClientUnblock
             | Self::Cluster
             | Self::ClusterAddslotsrange
             | Self::ClusterBumpepoch
+            | Self::ClusterCountFailureReports
             | Self::ClusterFailover
             | Self::ClusterFlushslots
             | Self::ClusterForget
             | Self::ClusterHelp
+            | Self::ClusterInfo
+            | Self::ClusterKeyslot
             | Self::ClusterLinks
+            | Self::ClusterMeet
             | Self::ClusterMyid
+            | Self::ClusterMyshardid
+            | Self::ClusterNodes
+            | Self::ClusterReplicas
             | Self::ClusterReplicate
+            | Self::ClusterReset
             | Self::ClusterSaveconfig
+            | Self::ClusterSetConfigEpoch
+            | Self::ClusterShards
             | Self::ClusterSlaves
+            | Self::ClusterSlots
+            | Self::Command
+            | Self::CommandCount
             | Self::CommandDocs
+            | Self::CommandGetkeys
             | Self::CommandGetkeysandflags
             | Self::CommandHelp
             | Self::CommandInfo
+            | Self::CommandList
             | Self::Config
+            | Self::ConfigGet
             | Self::ConfigHelp
             | Self::Discard
+            | Self::Echo
             | Self::Exec
             | Self::Failover
+            | Self::FtCreate
             | Self::Function
             | Self::FunctionDump
             | Self::FunctionHelp
+            | Self::FunctionList
             | Self::Hello
             | Self::Hotkeys
+            | Self::Lastsave
             | Self::Latency
             | Self::LatencyHelp
+            | Self::Lolwut
             | Self::Memory
             | Self::MemoryHelp
             | Self::Module
             | Self::ModuleHelp
+            | Self::ModuleList
+            | Self::ModuleLoad
+            | Self::ModuleLoadex
+            | Self::ModuleUnload
             | Self::Monitor
             | Self::Multi
             | Self::Object
@@ -237,11 +282,14 @@ impl KnownCommand {
             | Self::Pubsub
             | Self::PubsubHelp
             | Self::Quit
+            | Self::Readonly
+            | Self::Readwrite
             | Self::Replconf
             | Self::Role
             | Self::Script
             | Self::ScriptDebug
             | Self::ScriptHelp
+            | Self::ScriptShow
             | Self::Sentinel
             | Self::SentinelGetMasterAddrByName
             | Self::SentinelMaster
@@ -255,68 +303,16 @@ impl KnownCommand {
             | Self::SlowlogHelp
             | Self::Swapdb
             | Self::Sync
-            | Self::Xgroup
-            | Self::XgroupHelp
-            | Self::Xinfo
-            | Self::XinfoHelp => KeyPositions::Keyless(Keyless::HashFirstArgument),
-            Self::FtAggregate
-            | Self::FtExplain
-            | Self::FtExplaincli
-            | Self::FtInfo
-            | Self::FtProfile
-            | Self::FtSearch
-            | Self::Psubscribe
-            | Self::Punsubscribe => KeyPositions::Keyless(Keyless::PinnedByFirstArgument),
-            Self::AclDryrun
-            | Self::AclGenpass
-            | Self::AclGetuser
-            | Self::AclHelp
-            | Self::AclList
-            | Self::AclLog
-            | Self::AclUsers
-            | Self::AclWhoami
-            | Self::ClientGetname
-            | Self::ClientGetredir
-            | Self::ClientId
-            | Self::ClientInfo
-            | Self::ClientList
-            | Self::ClientReply
-            | Self::ClientTrackinginfo
-            | Self::ClientUnblock
-            | Self::ClusterCountFailureReports
-            | Self::ClusterInfo
-            | Self::ClusterKeyslot
-            | Self::ClusterMeet
-            | Self::ClusterMyshardid
-            | Self::ClusterNodes
-            | Self::ClusterReplicas
-            | Self::ClusterReset
-            | Self::ClusterSetConfigEpoch
-            | Self::ClusterShards
-            | Self::ClusterSlots
-            | Self::Command
-            | Self::CommandCount
-            | Self::CommandGetkeys
-            | Self::CommandList
-            | Self::ConfigGet
-            | Self::Echo
-            | Self::FtCreate
-            | Self::FunctionList
-            | Self::Lastsave
-            | Self::Lolwut
-            | Self::ModuleList
-            | Self::ModuleLoad
-            | Self::ModuleLoadex
-            | Self::ModuleUnload
-            | Self::Readonly
-            | Self::Readwrite
-            | Self::ScriptShow
             | Self::Tfcall
             | Self::Tfcallasync
             | Self::TfunctionDelete
             | Self::TfunctionList
             | Self::TfunctionLoad
-            | Self::Time => KeyPositions::Keyless(Keyless::Random),
+            | Self::Time
+            | Self::Xgroup
+            | Self::XgroupHelp
+            | Self::Xinfo
+            | Self::XinfoHelp => KeyPositions::Keyless(Keyless::Random),
             Self::ClusterAddslots
             | Self::ClusterCountkeysinslot
             | Self::ClusterDelslots

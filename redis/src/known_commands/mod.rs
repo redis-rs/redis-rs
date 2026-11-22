@@ -71,7 +71,7 @@ macro_rules! known_commands {
                 }
             }
 
-            /// Parses an uppercase command name, as returned by [`Self::name`].
+            /// Parses an uppercase command name, as returned by `Self::name()`.
             #[cfg(any(feature = "cluster", feature = "cache-aio", test))]
             fn from_name(name: &str) -> Option<Self> {
                 match name {
