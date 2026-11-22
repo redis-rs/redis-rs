@@ -68,6 +68,329 @@ pub fn get_push_kind(kind: String) -> PushKind {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Fast path for complete replies.
+//
+// The `combine` grammar below can suspend in the middle of a value and resume
+// once more bytes arrive. That machinery has a large per-reply cost, which is
+// wasted whenever the whole reply is already buffered - the common case.
+//
+// `fast_parse_value` decodes one complete RESP value straight from a byte
+// slice. It returns `Some((value, consumed))` only when it produced exactly
+// the value `combine` would have produced. For anything else - incomplete
+// input, malformed input, or input `combine` would reject - it returns `None`
+// and the caller falls back to `combine`, which stays the only producer of
+// parse errors.
+
+/// Finds the first `\r\n` at or after `pos`, returning the index of its `\r`.
+#[inline]
+fn find_crlf(buf: &[u8], pos: usize) -> Option<usize> {
+    let mut from = pos;
+    loop {
+        let cr = from + buf.get(from..)?.iter().position(|&b| b == b'\r')?;
+        if *buf.get(cr + 1)? == b'\n' {
+            return Some(cr);
+        }
+        from = cr + 1;
+    }
+}
+
+/// Reads a `\r\n`-terminated UTF-8 line starting at `pos`. Returns the line
+/// without its terminator, and the position just after the terminator.
+#[inline]
+fn fast_line(buf: &[u8], pos: usize) -> Option<(&str, usize)> {
+    let cr = find_crlf(buf, pos)?;
+    let line = str::from_utf8(&buf[pos..cr]).ok()?;
+    Some((line, cr + 2))
+}
+
+/// Reads an integer line, with the same leniency as `combine`'s `int()`.
+#[inline]
+fn fast_int(buf: &[u8], pos: usize) -> Option<(i64, usize)> {
+    let (line, pos) = fast_line(buf, pos)?;
+    Some((line.trim().parse().ok()?, pos))
+}
+
+/// Reads a `len`-byte payload starting at `pos`, followed by `\r\n`.
+#[inline]
+fn fast_payload(buf: &[u8], pos: usize, len: usize) -> Option<(&[u8], usize)> {
+    let end = pos.checked_add(len)?;
+    let payload = buf.get(pos..end)?;
+    if buf.get(end..end.checked_add(2)?)? != b"\r\n" {
+        return None;
+    }
+    Some((payload, end + 2))
+}
+
+/// What follows the length line of a blob or aggregate header.
+enum Header {
+    /// Nothing: the header is the whole value (`Nil`, or an empty push).
+    Done,
+    /// A payload of this many bytes, then `\r\n`.
+    Payload(usize),
+    /// This many child values.
+    Children(usize),
+}
+
+/// Interprets the length `len` of a `marker` header the way `combine` does.
+/// `None` means the fast path declines, either because `combine` rejects the
+/// header or because the length doesn't fit in a `usize` (possible on 32-bit
+/// targets).
+///
+/// Negative lengths mean `Nil` for `$`, `*` and `~`, and an empty push for
+/// `>` (as does `0`). The spec only uses `-1` for null, but the two parsers
+/// must agree on every input. The decoder and the codec's scan both use this,
+/// so they can't disagree on what a header means.
+#[inline]
+fn header(marker: u8, len: i64) -> Option<Header> {
+    let header = match (marker, usize::try_from(len)) {
+        (b'$', Ok(len)) | (b'=' | b'!', Ok(len)) => Header::Payload(len),
+        // `Err` is a negative length, or one too large for a `usize`.
+        (b'$' | b'*' | b'~' | b'>', Err(_)) if len < 0 => Header::Done,
+        (b'>', Ok(0)) => Header::Done,
+        (b'*' | b'~' | b'>', Ok(len)) => Header::Children(len),
+        (b'%', Ok(len)) => Header::Children(len.checked_mul(2)?),
+        (b'|', Ok(len)) => Header::Children(len.checked_mul(2)?.checked_add(1)?),
+        _ => return None,
+    };
+    Some(header)
+}
+
+/// Reads `len` consecutive values starting at `pos`.
+///
+/// `budget` is how many more elements may be reserved up front, across the
+/// whole value being decoded.
+fn fast_values(
+    buf: &[u8],
+    pos: usize,
+    len: usize,
+    depth: usize,
+    budget: &mut usize,
+) -> Option<(Vec<Value>, usize)> {
+    // The shortest encoded value is 3 bytes (e.g. `_\r\n`), so if fewer than
+    // `3 * len` bytes are buffered the aggregate can't be complete. Checking
+    // this first avoids decoding a prefix only to throw it away.
+    if len > buf.len().saturating_sub(pos) / 3 {
+        return None;
+    }
+    // Nested aggregates each pass that check against the same bytes, so
+    // reserving `len` at every level could add up to far more than the
+    // buffer can hold: 100 levels of `*349000` in 1 MiB would reserve 1.9 GB.
+    // A complete value never has more than `buf.len() / 3` elements in total,
+    // so with that as the overall budget, valid replies still get exact
+    // capacity and the reservation stays bounded by the buffer's size.
+    //
+    // The reservation is `capacity * size_of::<Value>()` bytes, so a hostile
+    // header can transiently reserve a constant factor (the size of a `Value`
+    // per 3 buffered bytes) more than the buffer's size, never more.
+    let capacity = len.min(*budget);
+    *budget -= capacity;
+    let mut values = Vec::with_capacity(capacity);
+    let mut pos = pos;
+    for _ in 0..len {
+        let (value, next) = fast_parse_at(buf, pos, depth, budget)?;
+        values.push(value);
+        pos = next;
+    }
+    Some((values, pos))
+}
+
+fn into_pairs(values: Vec<Value>) -> Vec<(Value, Value)> {
+    let mut it = values.into_iter();
+    let mut pairs = Vec::with_capacity(it.len() / 2);
+    while let (Some(k), Some(v)) = (it.next(), it.next()) {
+        pairs.push((k, v));
+    }
+    pairs
+}
+
+fn fast_verbatim(payload: &[u8]) -> Option<Value> {
+    let text = String::from_utf8_lossy(payload);
+    let (format, text) = text.split_once(':')?;
+    let format = match format {
+        "txt" => VerbatimFormat::Text,
+        "mkd" => VerbatimFormat::Markdown,
+        x => VerbatimFormat::Unknown(x.to_string()),
+    };
+    Some(Value::VerbatimString {
+        format,
+        text: text.to_string(),
+    })
+}
+
+/// Parses one value starting at `pos`, returning it and the position after
+/// it. `depth` follows the `combine` grammar's recursion count, so values
+/// nested too deeply are left to `combine` to reject. See `fast_values` for
+/// `budget`.
+fn fast_parse_at(
+    buf: &[u8],
+    pos: usize,
+    depth: usize,
+    budget: &mut usize,
+) -> Option<(Value, usize)> {
+    if depth > MAX_RECURSE_DEPTH {
+        return None;
+    }
+    let marker = *buf.get(pos)?;
+    let pos = pos + 1;
+    // Arms are ordered roughly by how often each type shows up in replies.
+    let parsed = match marker {
+        b'$' => {
+            let (len, pos) = fast_int(buf, pos)?;
+            let Header::Payload(len) = header(b'$', len)? else {
+                return Some((Value::Nil, pos));
+            };
+            let (payload, pos) = fast_payload(buf, pos, len)?;
+            (Value::BulkString(payload.to_vec()), pos)
+        }
+        b'*' => {
+            let (len, pos) = fast_int(buf, pos)?;
+            let Header::Children(len) = header(b'*', len)? else {
+                return Some((Value::Nil, pos));
+            };
+            let (values, pos) = fast_values(buf, pos, len, depth + 1, budget)?;
+            (Value::Array(values), pos)
+        }
+        b':' => {
+            let (n, pos) = fast_int(buf, pos)?;
+            (Value::Int(n), pos)
+        }
+        b'+' => {
+            let (line, pos) = fast_line(buf, pos)?;
+            let value = if line == "OK" {
+                Value::Okay
+            } else {
+                Value::SimpleString(line.into())
+            };
+            (value, pos)
+        }
+        b'-' => {
+            let (line, pos) = fast_line(buf, pos)?;
+            (Value::ServerError(err_parser(line)), pos)
+        }
+        b'_' => {
+            let (_, pos) = fast_line(buf, pos)?;
+            (Value::Nil, pos)
+        }
+        _ => return fast_parse_resp3(buf, marker, pos, depth, budget),
+    };
+    Some(parsed)
+}
+
+/// The less common types. Kept out of `fast_parse_at`, since a smaller hot
+/// function measurably speeds up the common replies.
+#[inline(never)]
+fn fast_parse_resp3(
+    buf: &[u8],
+    marker: u8,
+    pos: usize,
+    depth: usize,
+    budget: &mut usize,
+) -> Option<(Value, usize)> {
+    let parsed = match marker {
+        b'%' | b'~' | b'>' | b'|' => {
+            let (len, pos) = fast_int(buf, pos)?;
+            let len = match header(marker, len)? {
+                Header::Children(len) => len,
+                Header::Done if marker == b'~' => return Some((Value::Nil, pos)),
+                Header::Done if marker == b'>' => {
+                    let empty = Value::Push {
+                        kind: PushKind::Other(String::new()),
+                        data: vec![],
+                    };
+                    return Some((empty, pos));
+                }
+                // Unreachable: `header` gives neither of these for `%` or `|`.
+                Header::Done | Header::Payload(_) => return None,
+            };
+            let (mut values, pos) = fast_values(buf, pos, len, depth + 1, budget)?;
+            let value = match marker {
+                b'%' => Value::Map(into_pairs(values)),
+                b'~' => Value::Set(values),
+                b'>' => {
+                    let mut values = values.into_iter();
+                    // Never `None`: a push with no elements is `Done` above.
+                    let kind = match values.next()? {
+                        Value::BulkString(kind) => String::from_utf8(kind).ok()?,
+                        Value::SimpleString(kind) => kind,
+                        _ => return None,
+                    };
+                    Value::Push {
+                        kind: get_push_kind(kind),
+                        data: values.collect(),
+                    }
+                }
+                _ => {
+                    // Never `None`: an attribute has `2 * len + 1` elements,
+                    // the last of which is the value it applies to.
+                    let data = Box::new(values.pop()?);
+                    Value::Attribute {
+                        data,
+                        attributes: into_pairs(values),
+                    }
+                }
+            };
+            (value, pos)
+        }
+        b',' => {
+            let (line, pos) = fast_line(buf, pos)?;
+            (Value::Double(line.trim().parse().ok()?), pos)
+        }
+        b'#' => {
+            let (line, pos) = fast_line(buf, pos)?;
+            let value = match line {
+                "t" => true,
+                "f" => false,
+                _ => return None,
+            };
+            (Value::Boolean(value), pos)
+        }
+        b'(' => {
+            let (line, pos) = fast_line(buf, pos)?;
+            #[cfg(feature = "num-bigint")]
+            let number = num_bigint::BigInt::parse_bytes(line.as_bytes(), 10)?;
+            #[cfg(not(feature = "num-bigint"))]
+            let number = line.as_bytes().to_vec();
+            (Value::BigNumber(number), pos)
+        }
+        b'=' | b'!' => {
+            let (len, pos) = fast_int(buf, pos)?;
+            let Header::Payload(len) = header(marker, len)? else {
+                return None;
+            };
+            let (payload, pos) = fast_payload(buf, pos, len)?;
+            let value = if marker == b'=' {
+                fast_verbatim(payload)?
+            } else {
+                Value::ServerError(err_parser(&String::from_utf8_lossy(payload)))
+            };
+            (value, pos)
+        }
+        _ => return None,
+    };
+    Some(parsed)
+}
+
+/// Decodes one complete value from the start of `buf`. See the note above.
+#[inline]
+fn fast_parse_value(buf: &[u8]) -> Option<(Value, usize)> {
+    // `combine`'s recursion count starts at 1.
+    fast_parse_at(buf, 0, 1, &mut (buf.len() / 3))
+}
+
+/// Checks that a single-line value (`+ - : _ , # (`) starting at `pos` is one
+/// the fast path accepts, returning the position after it. Unlike
+/// `fast_parse_at`, it builds no value, except for big numbers.
+#[cfg(feature = "aio")]
+fn skip_line_value(buf: &[u8], pos: usize) -> Option<usize> {
+    match *buf.get(pos)? {
+        b'+' | b'-' | b'_' => fast_line(buf, pos + 1).map(|(_, next)| next),
+        b':' => fast_int(buf, pos + 1).map(|(_, next)| next),
+        b',' | b'#' | b'(' => fast_parse_at(buf, pos, 1, &mut 0).map(|(_, next)| next),
+        _ => None,
+    }
+}
+
 fn value<'a, I>(
     count: Option<usize>,
 ) -> impl combine::Parser<I, Output = Value, PartialState = AnySendSyncPartialState>
@@ -354,15 +677,214 @@ mod aio_support {
 
     /// Decodes Redis replies out of an async byte stream.
     ///
-    /// Harness-visible through the `doc(hidden)` re-export in `lib.rs` so the
-    /// codec-level microbenchmarks can drive it directly.
+    /// Harness-visible through the `doc(hidden)` re-export in `lib.rs`, for
+    /// the codec microbenchmarks and the differential fuzz targets in
+    /// `afl/parser`, which also use `ValueCodec::combine_only`.
     #[derive(Default)]
     pub struct ValueCodec {
         state: AnySendSyncPartialState,
+        pub(super) mode: Mode,
+        // Never use the fast path. See `combine_only`.
+        combine_only: bool,
+    }
+
+    /// Which decoder the next reply goes to.
+    #[derive(Debug, Default)]
+    pub(super) enum Mode {
+        /// The buffer starts at a reply boundary: try the fast path.
+        #[default]
+        Fast,
+        /// An incomplete reply is buffered. The fast path decodes it once
+        /// the scan finds its end.
+        Scanning(Scan),
+        /// `combine` holds state from an incomplete reply, and the buffer
+        /// starts in the middle of it, so `combine` must finish it.
+        Combine,
+    }
+
+    /// The outcome of scanning a buffer for the end of a reply.
+    #[derive(Debug, PartialEq)]
+    pub(super) enum ScanResult {
+        /// The buffer holds the whole reply.
+        Complete,
+        /// The reply so far is well formed, but more bytes are needed.
+        Incomplete,
+        /// The reply is malformed, or uses something the scan doesn't
+        /// handle. It's left to `combine`.
+        Unsure,
+    }
+
+    /// Finds where an incomplete reply ends without decoding it, so it can be
+    /// decoded once, by the fast path, after all of it has arrived.
+    ///
+    /// Without this, an incomplete reply is decoded by the fast path, which
+    /// fails and throws that work away, and then by `combine`. For large
+    /// aggregates this made fragmented replies slower than with `combine`
+    /// alone. The scan resumes from where the previous read left off, so each
+    /// byte is scanned once. It builds no values, except big numbers.
+    ///
+    /// The scan only decides *when* to try the fast path. If it gets
+    /// anything wrong, the fast path declines and `combine` decodes the
+    /// reply from its start, since no bytes are consumed while scanning.
+    ///
+    /// The scan can report an error later than `combine` alone would. An
+    /// element is only checked once it's complete: for `$5\r\nhelloX`,
+    /// `combine` fails at `X`, but the scan waits for the two bytes after the
+    /// payload. The error is the same, it may just come one or more reads
+    /// later, and at EOF the codec hands over to `combine`. The fuzz tests
+    /// compare results, not when errors happen.
+    #[derive(Debug, Default)]
+    pub(super) struct Scan {
+        // Start of the first element not yet scanned.
+        pos: usize,
+        // Where to resume looking for the `\r\n` ending the line at `pos`.
+        line_searched: usize,
+        // How many more elements each open aggregate needs, innermost last.
+        pending: Vec<usize>,
+    }
+
+    impl Scan {
+        pub(super) fn resume(&mut self, buf: &[u8]) -> ScanResult {
+            loop {
+                let pos = self.pos;
+                let Some(&marker) = buf.get(pos) else {
+                    return ScanResult::Incomplete;
+                };
+                // The depth `fast_parse_at` would see for this element.
+                let depth = self.pending.len() + 1;
+                if depth > MAX_RECURSE_DEPTH {
+                    return ScanResult::Unsure;
+                }
+                // Reject an unknown type byte right away, as `combine` does,
+                // instead of buffering until a `\r\n` shows up (or forever).
+                if !b"+-:$*_%~,#!=(>|".contains(&marker) {
+                    return ScanResult::Unsure;
+                }
+                // Each element starts with a line. Search only the bytes that
+                // arrived since the last read, so a long line arriving over
+                // many reads is scanned once. The final byte is searched
+                // again, since it may be the `\r` of a split `\r\n`.
+                let Some(cr) = find_crlf(buf, self.line_searched.max(pos + 1)) else {
+                    self.line_searched = buf.len() - 1;
+                    return ScanResult::Incomplete;
+                };
+                let (next, children) = if b"$=!*~>%|".contains(&marker) {
+                    let Some(len) = str::from_utf8(&buf[pos + 1..cr])
+                        .ok()
+                        .and_then(|line| line.trim().parse().ok())
+                    else {
+                        return ScanResult::Unsure;
+                    };
+                    let start = cr + 2;
+                    match header(marker, len) {
+                        Some(Header::Done) => (start, 0),
+                        Some(Header::Children(children)) => (start, children),
+                        Some(Header::Payload(len)) => {
+                            let Some(end) = start.checked_add(len).and_then(|e| e.checked_add(2))
+                            else {
+                                return ScanResult::Unsure;
+                            };
+                            if buf.len() < end {
+                                return ScanResult::Incomplete;
+                            }
+                            if &buf[end - 2..end] != b"\r\n" {
+                                return ScanResult::Unsure;
+                            }
+                            (end, 0)
+                        }
+                        None => return ScanResult::Unsure,
+                    }
+                } else {
+                    match skip_line_value(buf, pos) {
+                        Some(next) => (next, 0),
+                        None => return ScanResult::Unsure,
+                    }
+                };
+                self.pos = next;
+                self.line_searched = 0;
+                if children > 0 {
+                    self.pending.push(children);
+                    continue;
+                }
+                // An element is complete, which may complete its parents.
+                loop {
+                    let Some(left) = self.pending.last_mut() else {
+                        return ScanResult::Complete;
+                    };
+                    *left -= 1;
+                    if *left > 0 {
+                        break;
+                    }
+                    self.pending.pop();
+                }
+            }
+        }
     }
 
     impl ValueCodec {
+        /// A codec that decodes everything with `combine`, as the reference
+        /// for differential fuzzing of the fast path.
+        #[doc(hidden)]
+        pub fn combine_only() -> Self {
+            Self {
+                combine_only: true,
+                ..Self::default()
+            }
+        }
+
         fn decode_stream(&mut self, bytes: &mut BytesMut, eof: bool) -> RedisResult<Option<Value>> {
+            match &mut self.mode {
+                Mode::Combine => {}
+                _ if self.combine_only => {}
+                Mode::Fast => {
+                    // `Framed` calls `decode` again after draining the buffer.
+                    // Don't hand an empty buffer to `combine`, which would
+                    // switch to `Mode::Combine` and push the next reply off
+                    // the fast path.
+                    if bytes.is_empty() {
+                        return Ok(None);
+                    }
+                    if let Some((value, consumed)) = fast_parse_value(&bytes[..]) {
+                        bytes.advance(consumed);
+                        return Ok(Some(value));
+                    }
+                    if !eof {
+                        let mut scan = Scan::default();
+                        if scan.resume(bytes) == ScanResult::Incomplete {
+                            self.mode = Mode::Scanning(scan);
+                            return Ok(None);
+                        }
+                    }
+                }
+                Mode::Scanning(_) if eof => {
+                    // `combine` alone would already have consumed the buffered
+                    // bytes, before seeing EOF. Do the same, so that EOF in
+                    // the middle of a reply is handled the same way.
+                    self.mode = Mode::Fast;
+                    if let Some(value) = self.decode_combine(bytes, false)? {
+                        return Ok(Some(value));
+                    }
+                }
+                Mode::Scanning(scan) => match scan.resume(bytes) {
+                    ScanResult::Incomplete => return Ok(None),
+                    ScanResult::Complete => {
+                        self.mode = Mode::Fast;
+                        if let Some((value, consumed)) = fast_parse_value(&bytes[..]) {
+                            bytes.advance(consumed);
+                            return Ok(Some(value));
+                        }
+                    }
+                    ScanResult::Unsure => self.mode = Mode::Fast,
+                },
+            }
+            self.decode_combine(bytes, eof)
+        }
+
+        fn decode_combine(
+            &mut self,
+            bytes: &mut BytesMut,
+            eof: bool,
+        ) -> RedisResult<Option<Value>> {
             let (opt, removed_len) = {
                 let buffer = &bytes[..];
                 let mut stream =
@@ -370,6 +892,9 @@ mod aio_support {
                 match combine::stream::decode_tokio(value(None), &mut stream, &mut self.state) {
                     Ok(x) => x,
                     Err(err) => {
+                        // Parse errors close the connection, so nothing will be
+                        // resumed after this.
+                        self.mode = Mode::Fast;
                         let err = err
                             .map_position(|pos| pos.translate_position(buffer))
                             .map_range(|range| format!("{range:?}"))
@@ -381,8 +906,14 @@ mod aio_support {
 
             bytes.advance(removed_len);
             match opt {
-                Some(result) => Ok(Some(result)),
-                None => Ok(None),
+                Some(result) => {
+                    self.mode = Mode::Fast;
+                    Ok(Some(result))
+                }
+                None => {
+                    self.mode = Mode::Combine;
+                    Ok(None)
+                }
             }
         }
     }
@@ -476,6 +1007,9 @@ impl Parser {
 /// This is the most straightforward way to parse something into a low
 /// level redis value instead of having to use a whole parser.
 pub fn parse_redis_value(bytes: &[u8]) -> RedisResult<Value> {
+    if let Some((value, _consumed)) = fast_parse_value(bytes) {
+        return Ok(value);
+    }
     let mut parser = Parser::new();
     parser.parse_value(bytes)
 }
@@ -485,6 +1019,550 @@ mod tests {
     use super::*;
     use crate::errors::ErrorKind;
     use std::assert_matches;
+
+    /// RESP-shaped random input for differential testing. Half of the inputs
+    /// are encodings of valid value trees of every type, possibly truncated or
+    /// with one corrupted byte. The other half are short sequences of type
+    /// markers followed by plausible or random line contents.
+    #[derive(Clone, Debug)]
+    struct RespishBytes(Vec<u8>);
+
+    fn arbitrary_frame(g: &mut quickcheck::Gen, out: &mut Vec<u8>, depth: usize) {
+        use quickcheck::Arbitrary;
+        let blob = |out: &mut Vec<u8>, marker: u8, data: &[u8]| {
+            out.push(marker);
+            out.extend_from_slice(format!("{}\r\n", data.len()).as_bytes());
+            out.extend_from_slice(data);
+            out.extend_from_slice(b"\r\n");
+        };
+        let word = |g: &mut quickcheck::Gen| -> &'static [u8] {
+            g.choose(&[
+                &b"OK"[..],
+                b"x",
+                b"",
+                b"invalidate",
+                b"message",
+                b"txt:a",
+                b"ERR e",
+            ])
+            .unwrap()
+        };
+        let kind = u8::arbitrary(g) % if depth == 0 { 10 } else { 15 };
+        match kind {
+            0 => blob(out, b'$', word(g)),
+            1 => blob(out, b'$', &Vec::<u8>::arbitrary(g)),
+            2 => out.extend_from_slice(format!(":{}\r\n", i64::arbitrary(g)).as_bytes()),
+            3 => {
+                out.push(b'+');
+                out.extend_from_slice(word(g));
+                out.extend_from_slice(b"\r\n");
+            }
+            4 => out.extend_from_slice(b"-ERR boom\r\n"),
+            5 => out.extend_from_slice(g.choose(&[&b"_\r\n"[..], b"$-1\r\n", b"*-1\r\n"]).unwrap()),
+            6 => out.extend_from_slice(format!(",{}\r\n", f64::arbitrary(g)).as_bytes()),
+            7 => out.extend_from_slice(g.choose(&[&b"#t\r\n"[..], b"#f\r\n"]).unwrap()),
+            8 => out.extend_from_slice(format!("({}\r\n", i128::arbitrary(g)).as_bytes()),
+            9 => blob(out, *g.choose(b"=!").unwrap(), word(g)),
+            _ => {
+                let marker = *g.choose(b"*%~>|").unwrap();
+                let len = usize::arbitrary(g) % 4;
+                let children = match marker {
+                    b'%' => len * 2,
+                    b'|' => len * 2 + 1,
+                    _ => len,
+                };
+                out.extend_from_slice(format!("{}{len}\r\n", marker as char).as_bytes());
+                for _ in 0..children {
+                    arbitrary_frame(g, out, depth - 1);
+                }
+            }
+        }
+    }
+
+    impl quickcheck::Arbitrary for RespishBytes {
+        fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+            const MARKERS: &[u8] = b"+-:$*_%~,#!=(>|";
+            const BODIES: &[&[u8]] = &[
+                b"-1",
+                b"0",
+                b"1",
+                b"2",
+                b"3",
+                b"5",
+                b"t",
+                b"f",
+                b"OK",
+                b"txt:a",
+                b"1.5",
+                b"invalidate",
+                b"\xff",
+            ];
+            let mut out = Vec::new();
+            if bool::arbitrary(g) {
+                arbitrary_frame(g, &mut out, 3);
+                match u8::arbitrary(g) % 4 {
+                    0 => out.truncate(usize::arbitrary(g) % (out.len() + 1)),
+                    1 => {
+                        let i = usize::arbitrary(g) % out.len();
+                        out[i] = u8::arbitrary(g);
+                    }
+                    _ => {}
+                }
+                return Self(out);
+            }
+            for _ in 0..(usize::arbitrary(g) % 8) + 1 {
+                out.push(*g.choose(MARKERS).unwrap());
+                if bool::arbitrary(g) {
+                    out.extend_from_slice(g.choose(BODIES).unwrap());
+                } else {
+                    for _ in 0..(usize::arbitrary(g) % 6) {
+                        out.push(u8::arbitrary(g));
+                    }
+                }
+                if u8::arbitrary(g) % 8 != 0 {
+                    out.extend_from_slice(b"\r\n");
+                }
+            }
+            Self(out)
+        }
+    }
+
+    fn assert_same_as_combine(input: &[u8]) {
+        let fast = parse_redis_value(input);
+        let combine = Parser::new().parse_value(input);
+        match (&fast, &combine) {
+            // Compare `Debug` output too, since `NaN != NaN`.
+            (Ok(a), Ok(b)) => assert!(
+                a == b || format!("{a:?}") == format!("{b:?}"),
+                "values differ for {input:?}: {a:?} vs {b:?}"
+            ),
+            (Err(_), Err(_)) => {}
+            _ => panic!("{input:?}: parse_redis_value {fast:?}, combine {combine:?}"),
+        }
+    }
+
+    #[test]
+    fn fast_path_never_diverges_from_combine_fuzz() {
+        fn prop(input: RespishBytes) -> bool {
+            assert_same_as_combine(&input.0);
+            true
+        }
+        quickcheck::QuickCheck::new()
+            .tests(100_000)
+            .max_tests(100_000)
+            .quickcheck(prop as fn(RespishBytes) -> bool);
+    }
+
+    #[test]
+    fn fast_path_matches_combine() {
+        let handled: &[&[u8]] = &[
+            b"+OK\r\n",
+            b"+hello world\r\n",
+            b"+\r\n",
+            b"-ERR bad\r\n",
+            b"-MOVED 1234 127.0.0.1:6379\r\n",
+            b":12345\r\n",
+            b":-9\r\n",
+            b": 7 \r\n",
+            b"$5\r\nhello\r\n",
+            b"$5\r\nhe\r\no\r\n",
+            b"$0\r\n\r\n",
+            b"$-1\r\n",
+            b"$-2\r\n",
+            b"_\r\n",
+            b"*3\r\n$3\r\nfoo\r\n:1\r\n+OK\r\n",
+            b"*-1\r\n",
+            b"*0\r\n",
+            b"*2\r\n*1\r\n:1\r\n$1\r\na\r\n",
+            b"%1\r\n+a\r\n:1\r\n",
+            b"%0\r\n",
+            b"~2\r\n:1\r\n:2\r\n",
+            b"~-1\r\n",
+            b",3.14\r\n",
+            b",inf\r\n",
+            b"#t\r\n",
+            b"#f\r\n",
+            b"(12345\r\n",
+            b">2\r\n$7\r\nmessage\r\n$1\r\nx\r\n",
+            b">2\r\n+invalidate\r\n*1\r\n$1\r\nk\r\n",
+            b">0\r\n",
+            b">-1\r\n",
+            b"=9\r\ntxt:hello\r\n",
+            b"=9\r\nmkd:hello\r\n",
+            b"=9\r\nxyz:hello\r\n",
+            b"!9\r\nERR hello\r\n",
+            b"|1\r\n+key\r\n+value\r\n:5\r\n",
+            b"+OK\r\n+trailing\r\n",
+        ];
+        for input in handled {
+            assert!(
+                fast_parse_value(input).is_some(),
+                "fast path should handle {input:?}"
+            );
+            assert_same_as_combine(input);
+        }
+
+        let declined: &[&[u8]] = &[
+            // Incomplete.
+            b"",
+            b"$5\r\nhel",
+            b"$5\r\nhello\r",
+            b"*2\r\n:1\r\n",
+            b"*1000000\r\n:1\r\n",
+            b"+OK\r",
+            b":12",
+            // Not valid UTF-8 where `combine` requires it.
+            b"_\xff\r\n",
+            b"+\xff\r\n",
+            b":\xff\r\n",
+            b"-\xff\r\n",
+            b"$\xff\r\n",
+            b"*\xff\r\n",
+            b",\xff\r\n",
+            b"(\xff\r\n",
+            // Malformed.
+            b"$3\r\nhello\r\n",
+            b":abc\r\n",
+            b"#x\r\n",
+            b",abc\r\n",
+            b"=5\r\nhello\r\n",
+            b"=-1\r\n",
+            b"!-1\r\n",
+            b"%-1\r\n",
+            b"|-1\r\n",
+            b">1\r\n:1\r\n",
+            b">1\r\n+OK\r\n",
+            b">1\r\n$1\r\n\xff\r\n",
+            b"?\r\n",
+        ];
+        for input in declined {
+            assert!(
+                fast_parse_value(input).is_none(),
+                "fast path should decline {input:?}"
+            );
+            assert_same_as_combine(input);
+        }
+    }
+
+    #[test]
+    fn fast_path_recursion_limit_matches_combine() {
+        for depth in [
+            MAX_RECURSE_DEPTH - 1,
+            MAX_RECURSE_DEPTH,
+            MAX_RECURSE_DEPTH + 1,
+        ] {
+            let mut input = b"*1\r\n".repeat(depth);
+            input.extend_from_slice(b":1\r\n");
+            assert_eq!(
+                fast_parse_value(&input).is_some(),
+                depth < MAX_RECURSE_DEPTH,
+                "depth {depth}"
+            );
+            assert_same_as_combine(&input);
+        }
+    }
+
+    /// Decodes a stream split at every possible chunk size, so that each frame
+    /// is decoded by the fast path, by `combine` resuming across reads, or by a
+    /// mix of both.
+    #[cfg(feature = "aio")]
+    #[test]
+    fn codec_fast_path_and_partial_interleave() {
+        use bytes::BytesMut;
+        use tokio_util::codec::Decoder;
+
+        let wire: &[u8] =
+            b"$5\r\nhello\r\n+OK\r\n:42\r\n*2\r\n:1\r\n:2\r\n_\r\n$-1\r\n-ERR boom\r\n\
+            %1\r\n+k\r\n,1.5\r\n>2\r\n$10\r\ninvalidate\r\n*1\r\n$1\r\nk\r\n";
+        let expected = vec![
+            Value::BulkString(b"hello".to_vec()),
+            Value::Okay,
+            Value::Int(42),
+            Value::Array(vec![Value::Int(1), Value::Int(2)]),
+            Value::Nil,
+            Value::Nil,
+            Value::ServerError(err_parser("ERR boom")),
+            Value::Map(vec![(Value::SimpleString("k".into()), Value::Double(1.5))]),
+            Value::Push {
+                kind: PushKind::Invalidate,
+                data: vec![Value::Array(vec![Value::BulkString(b"k".to_vec())])],
+            },
+        ];
+
+        for chunk in 1..=wire.len() {
+            let mut codec = ValueCodec::default();
+            let mut buf = BytesMut::new();
+            let mut got = Vec::new();
+            for piece in wire.chunks(chunk) {
+                buf.extend_from_slice(piece);
+                while let Some(v) = codec.decode(&mut buf).unwrap() {
+                    got.push(v);
+                }
+            }
+            while let Some(v) = codec.decode_eof(&mut buf).unwrap() {
+                got.push(v);
+            }
+            assert_eq!(
+                got, expected,
+                "decoded sequence mismatch at chunk size {chunk}"
+            );
+            assert!(buf.is_empty(), "stranded bytes at chunk size {chunk}");
+        }
+    }
+
+    /// `Framed` calls `decode` once more after the buffer is drained. That
+    /// call mustn't take the codec off the fast path for the next reply.
+    #[cfg(feature = "aio")]
+    #[test]
+    fn codec_stays_on_fast_path_after_draining() {
+        use bytes::BytesMut;
+        use tokio_util::codec::Decoder;
+
+        let mut codec = ValueCodec::default();
+        let mut buf = BytesMut::from(&b"+OK\r\n"[..]);
+        assert_eq!(codec.decode(&mut buf).unwrap(), Some(Value::Okay));
+        assert_eq!(codec.decode(&mut buf).unwrap(), None);
+        assert_matches!(codec.mode, Mode::Fast);
+
+        // An incomplete reply is scanned until it completes, then decoded by
+        // the fast path.
+        buf.extend_from_slice(b"$5\r\nhel");
+        assert_eq!(codec.decode(&mut buf).unwrap(), None);
+        assert_matches!(codec.mode, Mode::Scanning(_));
+        buf.extend_from_slice(b"lo\r\n");
+        assert_eq!(
+            codec.decode(&mut buf).unwrap(),
+            Some(Value::BulkString(b"hello".to_vec()))
+        );
+        assert_matches!(codec.mode, Mode::Fast);
+
+        // So is a long line arriving over many reads.
+        let long = vec![b'a'; 5000];
+        buf.extend_from_slice(b"+");
+        for piece in long.chunks(7) {
+            buf.extend_from_slice(piece);
+            assert_eq!(codec.decode(&mut buf).unwrap(), None);
+            assert_matches!(codec.mode, Mode::Scanning(_));
+        }
+        buf.extend_from_slice(b"\r");
+        assert_eq!(codec.decode(&mut buf).unwrap(), None);
+        buf.extend_from_slice(b"\n");
+        assert_eq!(
+            codec.decode(&mut buf).unwrap(),
+            Some(Value::SimpleString(String::from_utf8(long).unwrap()))
+        );
+        assert_matches!(codec.mode, Mode::Fast);
+    }
+
+    /// What one `decode` or `decode_eof` call returned.
+    #[cfg(feature = "aio")]
+    #[derive(Debug, PartialEq)]
+    enum Call {
+        Value,
+        Pending,
+        Failed,
+    }
+
+    /// The result of `decode_in_reads`.
+    #[cfg(feature = "aio")]
+    #[derive(Debug)]
+    struct Decoded {
+        values: Vec<Value>,
+        failed: bool,
+        /// The outcome of every call, in order. Parity here means a value was
+        /// returned on exactly the same read.
+        calls: Vec<Call>,
+    }
+
+    /// Decodes `wire` split into reads of the given sizes, finishing with
+    /// `decode_eof`. With `combine_only`, the fast path is never used.
+    #[cfg(feature = "aio")]
+    fn decode_in_reads(wire: &[u8], reads: &[usize], combine_only: bool) -> Decoded {
+        use bytes::BytesMut;
+        use tokio_util::codec::Decoder;
+
+        let mut codec = if combine_only {
+            ValueCodec::combine_only()
+        } else {
+            ValueCodec::default()
+        };
+        let mut buf = BytesMut::new();
+        let mut out = Decoded {
+            values: Vec::new(),
+            failed: false,
+            calls: Vec::new(),
+        };
+        let mut rest = wire;
+        let mut reads = reads.iter().cycle();
+        loop {
+            let eof = rest.is_empty();
+            if !eof {
+                let n = (*reads.next().unwrap()).clamp(1, rest.len());
+                buf.extend_from_slice(&rest[..n]);
+                rest = &rest[n..];
+            }
+            loop {
+                let result = if eof {
+                    codec.decode_eof(&mut buf)
+                } else {
+                    codec.decode(&mut buf)
+                };
+                match result {
+                    Ok(Some(value)) => {
+                        out.calls.push(Call::Value);
+                        out.values.push(value);
+                    }
+                    Ok(None) => {
+                        out.calls.push(Call::Pending);
+                        break;
+                    }
+                    Err(_) => {
+                        out.calls.push(Call::Failed);
+                        out.failed = true;
+                        return out;
+                    }
+                }
+            }
+            if eof {
+                return out;
+            }
+        }
+    }
+
+    /// Feeds random replies, some malformed, through the codec in random
+    /// read sizes, and checks it decodes what `combine` alone does.
+    ///
+    /// `combine` alone isn't consistent on malformed input: an invalid type
+    /// byte at the very end of a read is skipped, while one in the middle of
+    /// a read is an error. So the codec must match `combine` given either the
+    /// same reads or the whole input in one read. When the input decodes
+    /// without error, the codec must also return each value on the same call
+    /// as `combine` does, so no value is ever delayed.
+    #[cfg(feature = "aio")]
+    #[test]
+    fn codec_never_diverges_from_combine_fuzz() {
+        fn prop(frames: Vec<RespishBytes>, reads: Vec<u8>) -> bool {
+            let wire: Vec<u8> = frames.iter().take(4).flat_map(|f| f.0.clone()).collect();
+            let reads: Vec<usize> = reads.iter().map(|&n| usize::from(n % 32) + 1).collect();
+            let reads = if reads.is_empty() {
+                vec![wire.len()]
+            } else {
+                reads
+            };
+            let got = decode_in_reads(&wire, &reads, false);
+            let same_reads = decode_in_reads(&wire, &reads, true);
+            let one_read = decode_in_reads(&wire, &[usize::MAX], true);
+            let results = |d: &Decoded| format!("{:?}", (&d.values, d.failed));
+            assert!(
+                results(&got) == results(&same_reads) || results(&got) == results(&one_read),
+                "{wire:?} in reads of {reads:?}: codec {got:?}, combine {same_reads:?}, \
+                combine in one read {one_read:?}"
+            );
+            if !one_read.failed {
+                assert_eq!(
+                    got.calls, same_reads.calls,
+                    "{wire:?} in reads of {reads:?}: a value was delayed or early"
+                );
+            }
+            true
+        }
+        quickcheck::QuickCheck::new()
+            .tests(30_000)
+            .max_tests(30_000)
+            .quickcheck(prop as fn(Vec<RespishBytes>, Vec<u8>) -> bool);
+    }
+
+    /// Server errors, like every other value, are returned on the same read
+    /// as with `combine` alone, however the stream is split.
+    #[cfg(feature = "aio")]
+    #[test]
+    fn codec_returns_values_on_same_read_as_combine() {
+        let wires: [&[u8]; 5] = [
+            b"-ERR x\r\n",
+            b"!4\r\nab\r\n\r\n",
+            b"*2\r\n-ERR a\r\n:1\r\n",
+            b"-ERR x\r\n!4\r\nab\r\n\r\n*2\r\n-ERR a\r\n:1\r\n+OK\r\n",
+            b"*2\r\n!3\r\nabc\r\n*1\r\n-ERR b\r\n",
+        ];
+        for wire in wires {
+            let splits: Vec<Vec<usize>> = (1..=wire.len())
+                .map(|n| vec![n])
+                .chain([vec![1, 2], vec![2, 1], vec![3, 1, 4], vec![5, 2]])
+                .collect();
+            for reads in splits {
+                let got = decode_in_reads(wire, &reads, false);
+                let want = decode_in_reads(wire, &reads, true);
+                assert!(!want.failed, "{wire:?}");
+                assert_eq!(got.calls, want.calls, "{wire:?} in reads of {reads:?}");
+                assert_eq!(got.values, want.values, "{wire:?} in reads of {reads:?}");
+            }
+        }
+    }
+
+    /// An invalid type byte is an error on the first call, even if the rest
+    /// of the line hasn't arrived, as with `combine` alone.
+    #[cfg(feature = "aio")]
+    #[test]
+    fn codec_rejects_invalid_type_byte_immediately() {
+        use bytes::BytesMut;
+        use tokio_util::codec::Decoder;
+
+        for prefix in [&b"?"[..], b"*2\r\n+a\r\n?", b"*2\r\n*1\r\n:1\r\n?"] {
+            let mut codec = ValueCodec::default();
+            let mut reference = ValueCodec::combine_only();
+            let mut buf = BytesMut::from(prefix);
+            let mut ref_buf = BytesMut::from(prefix);
+            buf.extend_from_slice(&[b'a'; 1000]);
+            ref_buf.extend_from_slice(&[b'a'; 1000]);
+            assert!(
+                reference.decode(&mut ref_buf).is_err(),
+                "reference {prefix:?}"
+            );
+            assert!(codec.decode(&mut buf).is_err(), "{prefix:?}");
+        }
+    }
+
+    /// A large reply arriving over many reads is scanned, never decoded by
+    /// `combine`.
+    #[cfg(feature = "aio")]
+    #[test]
+    fn codec_scans_fragmented_aggregate() {
+        use bytes::BytesMut;
+        use tokio_util::codec::Decoder;
+
+        let mut wire = b"*3\r\n%1\r\n+k\r\n*2\r\n:1\r\n$3\r\nabc\r\n_\r\n".to_vec();
+        wire.extend_from_slice(b">2\r\n$7\r\nmessage\r\n,1.5\r\n");
+        let expected = parse_redis_value(&wire).unwrap();
+        let mut codec = ValueCodec::default();
+        let mut buf = BytesMut::new();
+        let (last, init) = wire.split_last().unwrap();
+        for &byte in init {
+            buf.extend_from_slice(&[byte]);
+            assert_eq!(codec.decode(&mut buf).unwrap(), None);
+            assert_matches!(codec.mode, Mode::Scanning(_));
+        }
+        buf.extend_from_slice(&[*last]);
+        assert_eq!(codec.decode(&mut buf).unwrap(), Some(expected));
+        assert!(buf.is_empty());
+        assert_matches!(codec.mode, Mode::Fast);
+    }
+
+    /// A malformed element inside an incomplete aggregate is still reported,
+    /// as soon as it's buffered.
+    #[cfg(feature = "aio")]
+    #[test]
+    fn codec_scan_reports_malformed_element() {
+        use bytes::BytesMut;
+        use tokio_util::codec::Decoder;
+
+        let mut codec = ValueCodec::default();
+        let mut buf = BytesMut::from(&b"*3\r\n:1\r\n"[..]);
+        assert_eq!(codec.decode(&mut buf).unwrap(), None);
+        assert_matches!(codec.mode, Mode::Scanning(_));
+        buf.extend_from_slice(b":nope\r\n");
+        codec.decode(&mut buf).unwrap_err();
+        assert_matches!(codec.mode, Mode::Fast);
+    }
 
     #[cfg(feature = "aio")]
     #[test]

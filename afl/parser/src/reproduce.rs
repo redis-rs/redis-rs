@@ -1,14 +1,23 @@
-use redis::parse_redis_value;
+//! Replays a crash found by a fuzz target. `--codec` replays one found by
+//! `fuzz-codec`; otherwise the input is from `fuzz-target`.
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() != 2 {
-        println!("Usage: {} <path-to-crash>", args[0]);
-        std::process::exit(1);
-    }
+    let (codec, path) = match args.as_slice() {
+        [_, path] => (false, path),
+        [_, flag, path] if flag == "--codec" => (true, path),
+        _ => {
+            println!("Usage: {} [--codec] <path-to-crash>", args[0]);
+            std::process::exit(1);
+        }
+    };
 
-    let data =
-        std::fs::read(&args[1]).unwrap_or_else(|_| panic!("Could not open file {}", args[1]));
-    let v = parse_redis_value(&data);
-    println!("Result: {v:?}");
+    let data = std::fs::read(path).unwrap_or_else(|_| panic!("Could not open file {path}"));
+    if codec {
+        let decoded = fuzz_target_parser::check_codec(&data);
+        println!("Decoded: {decoded:?}");
+    } else {
+        let v = fuzz_target_parser::check_parse(&data);
+        println!("Result: {v:?}");
+    }
 }
