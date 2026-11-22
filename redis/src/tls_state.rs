@@ -1,9 +1,9 @@
 //! Type-level markers for how a builder secures its connections.
 //!
 //! `SentinelClientBuilder` takes these as type parameters, one for the connection to the Redis
-//! nodes and one for the connection to the sentinels, so that the TLS options that exclude each
-//! other cannot be combined: the compiler rejects it, instead of a runtime check or a setter that
-//! silently wins.
+//! nodes and one for the connection to the sentinels, and `ClusterClientBuilder` takes one, so
+//! that the TLS options that exclude each other cannot be combined: the compiler rejects it,
+//! instead of a runtime check or a setter that silently wins.
 //!
 //! The markers are uninhabited and only exist as type parameters.
 
@@ -28,8 +28,9 @@ pub enum BuiltIn {}
 /// The caller supplied a complete [`rustls::ClientConfig`], which is used as it is.
 ///
 /// The configuration decides what is trusted, so everything that would skip or replace its
-/// verification is unavailable in this state: the TLS mode and certificates setters. Choosing a
-/// configuration again is unavailable as well.
+/// verification is unavailable in this state: the TLS mode and certificates setters and, for the
+/// cluster builder, `danger_accept_invalid_hostnames`. Choosing a configuration again is
+/// unavailable as well.
 #[cfg(feature = "tls-rustls")]
 #[non_exhaustive]
 pub enum Custom {}

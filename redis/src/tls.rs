@@ -101,18 +101,32 @@ impl std::fmt::Debug for TlsCertificates {
 ///
 /// The rustls variant is only reachable through its own entry points, so the certificate setters
 /// cannot be applied to it.
-#[cfg(all(feature = "tls-rustls", feature = "sentinel"))]
+#[cfg(any(
+    all(feature = "tls-rustls", feature = "sentinel"),
+    all(
+        any(feature = "tls-rustls", feature = "tls-native-tls"),
+        feature = "cluster"
+    )
+))]
 #[derive(Clone)]
 pub(crate) enum TlsSource {
     Certificates(TlsCertificates),
+    #[cfg(feature = "tls-rustls")]
     Rustls(Arc<rustls::ClientConfig>),
 }
 
-#[cfg(all(feature = "tls-rustls", feature = "sentinel"))]
+#[cfg(any(
+    all(feature = "tls-rustls", feature = "sentinel"),
+    all(
+        any(feature = "tls-rustls", feature = "tls-native-tls"),
+        feature = "cluster"
+    )
+))]
 impl TlsSource {
     pub(crate) fn conn_params(&self) -> RedisResult<TlsConnParams> {
         match self {
             Self::Certificates(certificates) => retrieve_tls_certificates(certificates),
+            #[cfg(feature = "tls-rustls")]
             Self::Rustls(config) => Ok(TlsConnParams::custom(Arc::clone(config))),
         }
     }

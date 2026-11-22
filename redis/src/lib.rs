@@ -834,9 +834,9 @@ pub use cluster_handling::async_connection as cluster_async;
 #[cfg_attr(docsrs, doc(cfg(feature = "sentinel")))]
 pub mod sentinel;
 
-/// Type-level markers for how the sentinel builder secures its connections.
-#[cfg(feature = "sentinel")]
-#[cfg_attr(docsrs, doc(cfg(feature = "sentinel")))]
+/// Type-level markers for how the cluster and sentinel builders secure their connections.
+#[cfg(any(feature = "cluster", feature = "sentinel"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "cluster", feature = "sentinel"))))]
 pub mod tls_state;
 
 #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
