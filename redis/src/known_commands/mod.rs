@@ -6,10 +6,10 @@
 //! property and without catch-all arms, so adding a command forces a decision for each of them:
 //!
 //! * `cache`: whether a command only reads data, and how its response is cached.
-//! * `key_positions`: where a command's keys are. Cluster routing and client-side caching both
-//!   take their keys from here.
-//! * `routing`: how a command is routed and its responses aggregated in a cluster, and whether
-//!   it can be part of a cluster pipeline.
+//! * `key_positions`: where a command's keys are, or how a command without keys is routed.
+//!   Cluster routing is derived from it, and client-side caching takes its keys from it.
+//! * `routing`: how the responses of a command are aggregated in a cluster, and whether it can
+//!   be part of a cluster pipeline.
 
 #[cfg(any(feature = "cluster", feature = "cache-aio"))]
 mod cache;
@@ -22,6 +22,8 @@ mod routing;
 pub(crate) use cache::CacheKind;
 #[cfg(any(feature = "cluster", feature = "cache-aio"))]
 pub(crate) use key_positions::KeyPositions;
+#[cfg(feature = "cluster")]
+pub(crate) use key_positions::Keyless;
 
 /// The longest command name the parser accepts, in bytes. A test checks that every known
 /// name fits.

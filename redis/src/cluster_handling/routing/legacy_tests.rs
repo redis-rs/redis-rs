@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::cmd;
+use crate::known_commands::Keyless;
 
 enum LegacyRouteBy {
     AllNodes,
@@ -338,21 +339,118 @@ fn routing_matches_the_name_keyed_tables() {
 }
 
 #[test]
-fn key_positions_and_routing_agree() {
-    for &command in KnownCommand::ALL {
-        let has_keys = !matches!(command.key_positions(), KeyPositions::None);
-        let routed_by_keys = matches!(
-            command.base_routing(),
-            RouteBy::ByKeys | RouteBy::SplitByKeys
+fn the_commands_that_are_split_across_slots_are_the_expected_ones() {
+    let split: Vec<_> = KnownCommand::ALL
+        .iter()
+        .copied()
+        .filter(|command| command.is_split_across_slots())
+        .collect();
+    assert_eq!(
+        split,
+        [
+            KnownCommand::Del,
+            KnownCommand::Exists,
+            KnownCommand::JsonMget,
+            KnownCommand::JsonMset,
+            KnownCommand::Mget,
+            KnownCommand::Mset,
+            KnownCommand::Touch,
+            KnownCommand::Unlink,
+            KnownCommand::Watch,
+        ]
+    );
+    for command in &split {
+        assert!(
+            command.key_positions().multi_slot_pattern().is_some(),
+            "{}",
+            command.name()
         );
-        assert_eq!(has_keys, routed_by_keys, "{}", command.name());
-        if matches!(command.base_routing(), RouteBy::SplitByKeys) {
-            assert!(
-                command.key_positions().multi_slot_pattern().is_some(),
+    }
+}
+
+#[test]
+fn tfcall_is_routed_to_a_random_node_and_is_not_read_only() {
+    for command in [KnownCommand::Tfcall, KnownCommand::Tfcallasync] {
+        assert!(!command.is_readonly(), "{}", command.name());
+    }
+    let routing = RoutingInfo::for_routable(cmd("TFCALL").arg("lib.fn").arg("1").arg("key"));
+    assert_eq!(
+        routing,
+        Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+    );
+}
+
+#[test]
+fn split_commands_without_keys_cant_be_routed() {
+    for &command in KnownCommand::ALL {
+        if command.is_split_across_slots() {
+            let (primary, sub) = command.name_parts();
+            let mut built = cmd(std::str::from_utf8(primary).unwrap());
+            if let Some(sub) = sub {
+                built.arg(sub);
+            }
+            assert_eq!(
+                RoutingInfo::for_routable(&built),
+                None,
                 "{}",
                 command.name()
             );
         }
+    }
+}
+
+#[test]
+fn key_layouts_follow_the_command_specifications() {
+    use KeyPositions::{
+        AfterKeyCount, AfterStreams, AllExceptLast, AllFrom, At, First, FirstAndAfterKeyCount,
+        FirstTwo, Pairs, PairsAfterKeyCount, Triples,
+    };
+    for (command, expected) in [
+        (KnownCommand::Get, First),
+        (KnownCommand::Rename, FirstTwo),
+        (KnownCommand::Lmove, FirstTwo),
+        (KnownCommand::Smove, FirstTwo),
+        (KnownCommand::Blpop, AllExceptLast),
+        (KnownCommand::Sinterstore, AllFrom(1)),
+        (KnownCommand::Pfmerge, AllFrom(1)),
+        (KnownCommand::Pfcount, AllFrom(1)),
+        (KnownCommand::Bitop, AllFrom(2)),
+        (KnownCommand::Msetnx, Pairs),
+        (KnownCommand::Zunionstore, FirstAndAfterKeyCount(2)),
+        (KnownCommand::Zunion, AfterKeyCount(1)),
+        (KnownCommand::Eval, AfterKeyCount(2)),
+        (KnownCommand::Blmpop, AfterKeyCount(2)),
+        (KnownCommand::Msetex, PairsAfterKeyCount(1)),
+        (KnownCommand::Xread, AfterStreams),
+        (KnownCommand::ObjectEncoding, At(2)),
+        (KnownCommand::Migrate, At(3)),
+        (KnownCommand::Publish, First),
+        (KnownCommand::Subscribe, AllFrom(1)),
+        (KnownCommand::Ssubscribe, AllFrom(1)),
+        (KnownCommand::Spublish, First),
+        (KnownCommand::Mget, AllFrom(1)),
+        (KnownCommand::Mset, Pairs),
+        (KnownCommand::JsonMget, AllExceptLast),
+        (KnownCommand::JsonMset, Triples),
+        (KnownCommand::Tfcall, KeyPositions::Keyless(Keyless::Random)),
+        (
+            KnownCommand::Flushall,
+            KeyPositions::Keyless(Keyless::AllPrimaries),
+        ),
+        (
+            KnownCommand::PubsubShardnumsub,
+            KeyPositions::Keyless(Keyless::AllNodes),
+        ),
+        (
+            KnownCommand::Psubscribe,
+            KeyPositions::Keyless(Keyless::PinnedByFirstArgument),
+        ),
+        (
+            KnownCommand::FtSearch,
+            KeyPositions::Keyless(Keyless::PinnedByFirstArgument),
+        ),
+    ] {
+        assert_eq!(command.key_positions(), expected, "{}", command.name());
     }
 }
 

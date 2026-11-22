@@ -232,9 +232,19 @@ impl CacheManager {
 
         // Every argument is a key, except for a trailing JSON path.
         let has_trailing_path = match command.key_positions() {
-            KeyPositions::All => false,
+            KeyPositions::AllFrom(1) => false,
             KeyPositions::AllExceptLast => true,
-            _ => return PrepCacheItem::NotCacheable,
+            KeyPositions::Keyless(_)
+            | KeyPositions::First
+            | KeyPositions::FirstTwo
+            | KeyPositions::At(_)
+            | KeyPositions::AllFrom(_)
+            | KeyPositions::Pairs
+            | KeyPositions::Triples
+            | KeyPositions::FirstAndAfterKeyCount(_)
+            | KeyPositions::AfterKeyCount(_)
+            | KeyPositions::PairsAfterKeyCount(_)
+            | KeyPositions::AfterStreams => return PrepCacheItem::NotCacheable,
         };
 
         self.process_multi_key_arguments(
@@ -272,14 +282,16 @@ impl CacheManager {
         let key_index = match command.key_positions() {
             KeyPositions::First
             | KeyPositions::FirstTwo
-            | KeyPositions::All
+            | KeyPositions::AllFrom(1)
             | KeyPositions::AfterKeyCount(_) => 1,
-            KeyPositions::None
-            | KeyPositions::Second
-            | KeyPositions::Third
+            KeyPositions::Keyless(_)
+            | KeyPositions::At(_)
+            | KeyPositions::AllFrom(_)
             | KeyPositions::AllExceptLast
             | KeyPositions::Pairs
             | KeyPositions::Triples
+            | KeyPositions::FirstAndAfterKeyCount(_)
+            | KeyPositions::PairsAfterKeyCount(_)
             | KeyPositions::AfterStreams => return PrepCacheItem::NotCacheable,
         };
         let redis_key = match cmd.arg_idx(key_index) {

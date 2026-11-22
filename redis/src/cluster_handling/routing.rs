@@ -3,7 +3,7 @@ use rand::RngExt;
 use super::NodeAddress;
 use crate::cluster_handling::slot_map::SLOT_SIZE;
 use crate::cmd::{Arg, Cmd, CmdRef};
-use crate::known_commands::{KeyPositions, KnownCommand};
+use crate::known_commands::{KeyPositions, Keyless, KnownCommand};
 use crate::types::Value;
 use crate::{ErrorKind, RedisError, RedisResult};
 use std::borrow::Cow;
@@ -624,25 +624,6 @@ where
     })
 }
 
-/// How a command is routed in a cluster.
-pub(crate) enum RouteBy {
-    /// To every node.
-    AllNodes,
-    /// To every primary.
-    AllPrimaries,
-    /// To the node of the command's key, as found by [`KnownCommand::key_positions`].
-    ByKeys,
-    /// Split between the shards of the command's keys, as found by
-    /// [`KnownCommand::key_positions`].
-    SplitByKeys,
-    /// To a random node.
-    Random,
-    /// To the primary of the slot given in the command's second argument.
-    SlotArg,
-    /// The command can't be routed automatically.
-    Undefined,
-}
-
 impl RoutingInfo {
     /// Returns the routing info for `r`.
     pub(crate) fn for_routable<R>(r: &R) -> Option<Self>
@@ -657,26 +638,26 @@ impl RoutingInfo {
                 None => Self::SingleNode(SingleNodeRoutingInfo::Random),
             });
         };
-        match cmd.base_routing() {
-            RouteBy::AllNodes => Some(Self::MultiNode((
+        let readonly = cmd.is_readonly();
+        if cmd.is_split_across_slots() {
+            return multi_shard(r, cmd, 1, cmd.key_positions().multi_slot_pattern()?);
+        }
+        match cmd.key_positions() {
+            KeyPositions::Keyless(Keyless::AllNodes) => Some(Self::MultiNode((
                 MultipleNodeRoutingInfo::AllNodes,
                 cmd.response_policy(),
             ))),
 
-            RouteBy::AllPrimaries => Some(Self::MultiNode((
+            KeyPositions::Keyless(Keyless::AllPrimaries) => Some(Self::MultiNode((
                 MultipleNodeRoutingInfo::AllMasters,
                 cmd.response_policy(),
             ))),
 
-            RouteBy::SplitByKeys => {
-                multi_shard(r, cmd, 1, cmd.key_positions().multi_slot_pattern()?)
+            KeyPositions::Keyless(Keyless::Random) => {
+                Some(Self::SingleNode(SingleNodeRoutingInfo::Random))
             }
 
-            RouteBy::Random => Some(Self::SingleNode(SingleNodeRoutingInfo::Random)),
-
-            RouteBy::ByKeys => Self::for_first_key(r, cmd),
-
-            RouteBy::SlotArg => r
+            KeyPositions::Keyless(Keyless::SlotArg) => r
                 .arg_idx(2)
                 .and_then(|arg| std::str::from_utf8(arg).ok())
                 .and_then(|slot| slot.parse::<u16>().ok())
@@ -688,33 +669,27 @@ impl RoutingInfo {
                     )))
                 }),
 
-            RouteBy::Undefined => None,
-        }
-    }
+            KeyPositions::Keyless(Keyless::Undefined) => None,
 
-    /// Routes `r` to the node of the first of its keys, as found by `cmd`'s key positions.
-    fn for_first_key<R>(r: &R, cmd: KnownCommand) -> Option<Self>
-    where
-        R: Routable + ?Sized,
-    {
-        let readonly = cmd.is_readonly();
-        match cmd.key_positions() {
-            // A command without a key is sent to a random node.
-            KeyPositions::First
+            // A command without its first argument goes to a random node.
+            KeyPositions::Keyless(Keyless::PinnedByFirstArgument | Keyless::HashFirstArgument)
+            | KeyPositions::First
             | KeyPositions::FirstTwo
-            | KeyPositions::All
+            | KeyPositions::AllFrom(1)
             | KeyPositions::AllExceptLast
             | KeyPositions::Pairs
-            | KeyPositions::Triples => Some(match r.arg_idx(1) {
+            | KeyPositions::Triples
+            | KeyPositions::FirstAndAfterKeyCount(_) => Some(match r.arg_idx(1) {
                 Some(key) => Self::for_key(readonly, key),
                 None => Self::SingleNode(SingleNodeRoutingInfo::Random),
             }),
 
-            KeyPositions::Second => r.arg_idx(2).map(|key| Self::for_key(readonly, key)),
+            KeyPositions::At(index) | KeyPositions::AllFrom(index) => {
+                r.arg_idx(index).map(|key| Self::for_key(readonly, key))
+            }
 
-            KeyPositions::Third => r.arg_idx(3).map(|key| Self::for_key(readonly, key)),
-
-            KeyPositions::AfterKeyCount(count_index) => {
+            KeyPositions::AfterKeyCount(count_index)
+            | KeyPositions::PairsAfterKeyCount(count_index) => {
                 let key_count = r
                     .arg_idx(count_index)
                     .and_then(|x| std::str::from_utf8(x).ok())
@@ -732,9 +707,6 @@ impl RoutingInfo {
                 r.arg_idx(streams_position + 1)
                     .map(|key| Self::for_key(readonly, key))
             }
-
-            // A command routed by its keys has some.
-            KeyPositions::None => None,
         }
     }
 
