@@ -918,14 +918,13 @@ where
                     .and_then(ConnState::connected)
                     .map(|conn| (candidate, conn))
             });
-        drop(read_guard);
         if let Some(found) = fallback {
             return Ok(found);
         }
 
-        let read_guard = self.conn_lock.read().await;
+        // Pick the random connection under the same lock as the slot lookup: a recovery in between
+        // would have changed the connections and the slot map it was made against.
         if let Some((random_addr, random_conn)) = get_random_connection(&read_guard.0) {
-            drop(read_guard);
             return Ok((random_addr, random_conn));
         }
 
@@ -986,8 +985,13 @@ where
     // Query a node to discover slot-> master mappings.
     async fn refresh_slots(self) -> RedisResult<()> {
         let mut write_guard = self.conn_lock.write().await;
-        let (connections, slots) = &mut *write_guard;
+        self.refresh_slots_locked(&mut write_guard).await
+    }
 
+    async fn refresh_slots_locked(
+        &self,
+        (connections, slots): &mut (ConnectionMap<C>, SlotMap),
+    ) -> RedisResult<()> {
         let mut found = false;
         let mut last_err = None;
 
@@ -1414,9 +1418,11 @@ where
                 &inner.subscription_tracker,
             )
             .await?;
-            *inner.conn_lock.write().await = (connection_map, SlotMap::new());
-            inner.refresh_slots().await?;
-            Ok(())
+            // The lock is held until the slots are refreshed, so that no request routes by the
+            // initial connections alone.
+            let mut write_guard = inner.conn_lock.write().await;
+            *write_guard = (connection_map, SlotMap::new());
+            inner.refresh_slots_locked(&mut write_guard).await
         }
     }
 
@@ -1718,7 +1724,24 @@ where
             self.send_refresh_error();
 
             // If we have a recovery future, poll it until completion first.
-            if let Err(err) = ready!(self.as_mut().poll_recover(cx)) {
+            let Poll::Ready(recovered) = self.as_mut().poll_recover(cx) else {
+                // The recovery future waits for the connection lock, which an in-flight request or
+                // a reconnect future may hold while it is suspended: since tokio 1.54, a lock
+                // future acquires the lock before it checks the task's cooperative budget, and
+                // returns `Pending` while holding the lock when the budget is exhausted. They must
+                // keep being polled to release the lock, or the recovery never completes. See
+                // https://github.com/redis-rs/redis-rs/issues/2418 for the same deadlock with the
+                // lock handed over to queued requests.
+                //
+                // The action the completed requests ask for is discarded: the running recovery
+                // refreshes the topology and checks every connection anyway, and whatever it
+                // misses is reported again by the next request that hits it. New requests aren't
+                // dispatched until the recovery completes.
+                self.poll_reconnects(cx);
+                let _ = self.poll_in_flight(cx);
+                return Poll::Pending;
+            };
+            if let Err(err) = recovered {
                 self.refresh_error = Some(err);
 
                 // Give other tasks a chance to progress before we try to recover
@@ -1727,9 +1750,6 @@ where
                 cx.waker().wake_by_ref();
                 return Poll::Pending;
             }
-            // Reconnect futures can be polled only if when the recovery future is not running.
-            // Otherwise you may end up in a deadlock.
-            // See https://github.com/redis-rs/redis-rs/issues/2418.
             self.poll_reconnects(cx);
 
             match ready!(self.poll_complete(cx)) {
