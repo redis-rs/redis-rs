@@ -915,6 +915,33 @@ fn test_sentinel_client_builder() {
     }
 }
 
+#[cfg(feature = "tls-rustls")]
+#[test]
+fn test_sentinel_client_builder_rejects_redis_certificates_without_tls_mode() {
+    let builder = SentinelClientBuilder::new(
+        [ConnectionAddr::Tcp(String::from("127.0.0.1"), 26379)],
+        String::from("master1"),
+        redis::sentinel::SentinelServerType::Master,
+    )
+    .unwrap()
+    .set_client_to_redis_password("password")
+    .set_client_to_redis_certificates(redis::TlsCertificates {
+        client_tls: None,
+        root_cert: Some(vec![]),
+    });
+
+    let Err(err) = builder.build() else {
+        panic!("Expected an error");
+    };
+    assert_eq!(
+        err,
+        RedisError::from((
+            ErrorKind::InvalidClientConfig,
+            "Certificates cannot be set for the Redis nodes without a TLS mode."
+        ))
+    );
+}
+
 #[cfg(feature = "aio")]
 pub mod async_tests {
     use super::*;
