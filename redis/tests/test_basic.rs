@@ -3865,6 +3865,69 @@ mod basic {
     }
 
     #[test]
+    fn test_write_timeout_closes_connection() {
+        use redis::IntoConnectionInfo;
+
+        let listener = get_listener_on_free_port();
+        let port = listener.local_addr().unwrap().port();
+        let (unblock_sender, unblock_receiver) = std::sync::mpsc::channel::<()>();
+        let server = thread::spawn(move || {
+            let mut stream = listener.incoming().next().unwrap().unwrap();
+            // Don't read anything until the client's writes have timed out, then take everything
+            // the client sends until it disconnects.
+            unblock_receiver.recv().unwrap();
+            let mut received = Vec::new();
+            let _ = stream.read_to_end(&mut received);
+            received
+        });
+
+        let connection_info = redis::ConnectionAddr::Tcp("127.0.0.1".to_string(), port)
+            .into_connection_info()
+            .unwrap()
+            .set_redis_settings(RedisConnectionInfo::default().set_skip_set_lib_name());
+        let mut con = redis::Client::open(connection_info)
+            .unwrap()
+            .get_connection()
+            .unwrap();
+        con.set_write_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let (push_sender, push_receiver) = std::sync::mpsc::channel();
+        con.set_push_sender(push_sender);
+
+        // The value is far larger than the socket buffers on both sides, and the server isn't
+        // reading, so the write times out after having sent only part of the command.
+        let big_value = vec![b'x'; 32 * 1024 * 1024];
+        let err = con.set("big", &big_value).unwrap_err();
+        assert!(err.is_timeout(), "{err:?}");
+        assert!(!con.is_open());
+        unblock_sender.send(()).unwrap();
+
+        // Were the connection reused, the server would read this command as the rest of the cut
+        // off SET.
+        let next = con.set("key", "value");
+        assert!(next.is_err(), "{next:?}");
+        assert!(!con.is_open());
+        // Exactly one disconnect push, after which the connection has dropped its sender.
+        assert_eq!(
+            push_receiver.try_recv().unwrap().kind,
+            redis::PushKind::Disconnection
+        );
+        assert_eq!(
+            push_receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected)
+        );
+        drop(con);
+        let received = server.join().unwrap();
+        assert!(!received.is_empty());
+        let next_cmd = cmd("SET").arg("key").arg("value").get_packed_command();
+        assert!(
+            !received
+                .windows(next_cmd.len())
+                .any(|window| window == next_cmd.as_slice())
+        );
+    }
+
+    #[test]
     fn test_push_after_timeout_does_not_desync_replies() {
         let ctx = TestContext::new();
         let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);

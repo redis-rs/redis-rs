@@ -1113,59 +1113,31 @@ impl ActualConnection {
         })
     }
 
-    pub fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
+    fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
         match *self {
-            Self::Tcp(ref mut connection) => {
-                let res = connection.reader.write_all(bytes).map_err(RedisError::from);
-                match res {
-                    Err(e) => {
-                        if e.is_unrecoverable_error() {
-                            connection.open = false;
-                        }
-                        Err(e)
-                    }
-                    Ok(_) => Ok(Value::Okay),
-                }
-            }
+            Self::Tcp(ref mut connection) => connection
+                .reader
+                .write_all(bytes)
+                .map(|_| Value::Okay)
+                .map_err(RedisError::from),
             #[cfg(all(feature = "tls-native-tls", not(feature = "tls-rustls")))]
-            ActualConnection::TcpNativeTls(ref mut connection) => {
-                let res = connection.reader.write_all(bytes).map_err(RedisError::from);
-                match res {
-                    Err(e) => {
-                        if e.is_unrecoverable_error() {
-                            connection.open = false;
-                        }
-                        Err(e)
-                    }
-                    Ok(_) => Ok(Value::Okay),
-                }
-            }
+            ActualConnection::TcpNativeTls(ref mut connection) => connection
+                .reader
+                .write_all(bytes)
+                .map(|_| Value::Okay)
+                .map_err(RedisError::from),
             #[cfg(feature = "tls-rustls")]
-            Self::TcpRustls(ref mut connection) => {
-                let res = connection.reader.write_all(bytes).map_err(RedisError::from);
-                match res {
-                    Err(e) => {
-                        if e.is_unrecoverable_error() {
-                            connection.open = false;
-                        }
-                        Err(e)
-                    }
-                    Ok(_) => Ok(Value::Okay),
-                }
-            }
+            Self::TcpRustls(ref mut connection) => connection
+                .reader
+                .write_all(bytes)
+                .map(|_| Value::Okay)
+                .map_err(RedisError::from),
             #[cfg(unix)]
-            Self::Unix(ref mut connection) => {
-                let result = connection.sock.write_all(bytes).map_err(RedisError::from);
-                match result {
-                    Err(e) => {
-                        if e.is_unrecoverable_error() {
-                            connection.open = false;
-                        }
-                        Err(e)
-                    }
-                    Ok(_) => Ok(Value::Okay),
-                }
-            }
+            Self::Unix(ref mut connection) => connection
+                .sock
+                .write_all(bytes)
+                .map(|_| Value::Okay)
+                .map_err(RedisError::from),
         }
     }
 
@@ -1724,6 +1696,10 @@ impl Connection {
     /// does not read a response.  This is useful for commands like
     /// `MONITOR` which yield multiple items.  This needs to be used with
     /// care because it changes the state of the connection.
+    ///
+    /// A failed write, including one that timed out, closes the connection, since part of the
+    /// command may have been sent. The connection can't be used afterwards, and callers must
+    /// reconnect.
     pub fn send_packed_command(&mut self, cmd: &[u8]) -> RedisResult<()> {
         self.send_bytes(cmd)?;
         Ok(())
@@ -1740,6 +1716,10 @@ impl Connection {
     /// If the provided value is `None`, then `send_packed_command` call will
     /// block indefinitely. It is an error to pass the zero `Duration` to this
     /// method.
+    ///
+    /// A failed write, including one that timed out, closes the connection, since part of the
+    /// command may have been sent. The connection can't be used afterwards, and callers must
+    /// reconnect.
     pub fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         self.con.set_write_timeout(dur)
     }
@@ -1885,8 +1865,12 @@ impl Connection {
         }
     }
 
-    fn send_disconnect(&self) {
-        self.send_push(PushInfo::disconnect());
+    fn send_disconnect(&mut self) {
+        // The connection can't be used after a disconnect, so the sender is dropped: the
+        // disconnect is the last push it sends.
+        if let Some(sender) = self.push_sender.take() {
+            let _ = sender.send(PushInfo::disconnect());
+        }
     }
 
     fn close_connection(&mut self) {
@@ -1981,14 +1965,16 @@ impl Connection {
 
     fn send_bytes(&mut self, bytes: &[u8]) -> RedisResult<Value> {
         if bytes.is_empty() {
+            // Nothing was written, so the connection is still in sync and stays open.
             return Err(RedisError::make_empty_command());
         }
         let result = self.con.send_bytes(bytes);
-        if self.protocol.supports_resp3()
-            && let Err(e) = &result
-            && e.is_connection_dropped()
-        {
-            self.send_disconnect();
+        if result.is_err() {
+            // A failed write, including a write timeout, may have sent part or all of the
+            // command, and there's no way to tell which. The connection can no longer be used
+            // safely, since the server could misparse the next command or its reply could be
+            // mismatched.
+            self.close_connection();
         }
         result
     }
