@@ -1,3 +1,19 @@
+### 2.0.0-rc.4 (2026-11-23)
+
+#### Changes & Bug fixes
+
+* Reject Redis certificates without a TLS mode in SentinelClientBuilder ([#2596](https://github.com/redis-rs/redis-rs/pull/2596) by @varun3257)
+* perf(types): presize hash maps when converting owned replies ([#2598](https://github.com/redis-rs/redis-rs/pull/2598) by @g4lb)
+* Don't wrap the FT.CREATE FILTER expression in quotes ([#2600](https://github.com/redis-rs/redis-rs/pull/2600) by @varun3257)
+* Add a fast path to async decode, bypassing combine for flat values ([#2594](https://github.com/redis-rs/redis-rs/pull/2594) by @nihohit)
+* fix(cluster-async): keep polling requests while a slot refresh runs ([#2576](https://github.com/redis-rs/redis-rs/pull/2576) by @alek6kun)
+* Close sync connections on write errors ([#2611](https://github.com/redis-rs/redis-rs/pull/2611) by @nihohit)
+
+#### CI & operational improvements
+
+* Bench cache in CI ([#2591](https://github.com/redis-rs/redis-rs/pull/2591) by @nihohit)
+* fix valkey flakiness ([#2595](https://github.com/redis-rs/redis-rs/pull/2595) by @nihohit)
+
 ### 2.0.0-rc.3 (2026-11-14)
 
 #### Changes & Bug fixes
