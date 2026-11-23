@@ -1,3 +1,12 @@
+### 1.8.3 (2026-11-23)
+
+#### Changes & Bug fixes
+
+* fix(cluster-async): keep polling requests while a slot refresh runs (#2576) ([#2609](https://github.com/redis-rs/redis-rs/pull/2609) by @alek6kun)
+* Close sync connections on write errors ([#2612](https://github.com/redis-rs/redis-rs/pull/2612) by @nihohit)
+* send the FT.CREATE FILTER expression unquoted (#2600) ([#2616](https://github.com/redis-rs/redis-rs/pull/2616) by @nihohit)
+* reject redis certificates without a tls mode in SentinelClientBuilder (#2596) ([#2615](https://github.com/redis-rs/redis-rs/pull/2615) by @nihohit)
+
 ### 1.8.2 (2026-11-14)
 
 #### Changes & Bug fixes
