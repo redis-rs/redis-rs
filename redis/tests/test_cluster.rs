@@ -528,6 +528,40 @@ mod cluster {
     }
 
     #[test]
+    fn test_cluster_reconnects_to_a_connection_closed_by_a_failed_write() {
+        let name = "closed_by_failed_write";
+
+        let connects = Arc::new(atomic::AtomicUsize::new(0));
+        let requests = Arc::new(atomic::AtomicUsize::new(0));
+        let MockEnv {
+            mut connection,
+            handler: _handler,
+            ..
+        } = MockEnv::new(name, {
+            let connects = connects.clone();
+            move |cmd: &[u8], _| {
+                if is_connection_check(cmd) {
+                    connects.fetch_add(1, atomic::Ordering::SeqCst);
+                }
+                respond_startup(name, cmd)?;
+                match requests.fetch_add(1, atomic::Ordering::SeqCst) {
+                    0 => Err(Err(
+                        std::io::Error::from(std::io::ErrorKind::TimedOut).into()
+                    )),
+                    _ => Err(Ok(redis_value!("123"))),
+                }
+            }
+        });
+        let connects_before = connects.load(atomic::Ordering::SeqCst);
+
+        let value = cmd("GET").arg("test").query::<Option<i32>>(&mut connection);
+
+        assert_eq!(value, Ok(Some(123)));
+        // The retry used a new connection, rather than the closed one.
+        assert_eq!(connects.load(atomic::Ordering::SeqCst), connects_before + 1);
+    }
+
+    #[test]
     fn test_cluster_exhaust_retries() {
         let name = "tryagain_exhaust_retries";
 

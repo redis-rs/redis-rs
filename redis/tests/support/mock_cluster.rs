@@ -1,6 +1,9 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, LazyLock, RwLock},
+    sync::{
+        Arc, LazyLock, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -44,6 +47,8 @@ pub struct MockConnection {
     pub handler: Handler,
     pub port: u16,
     pub id: String,
+    /// Set once the handler fails a request with an IO error, like a real connection does.
+    closed: Arc<AtomicBool>,
 }
 
 impl MockConnection {
@@ -55,7 +60,12 @@ impl MockConnection {
         let cmd_str = String::from_utf8_lossy(cmd);
         let port = self.port;
         println!("Cmd: `{cmd_str}` port: `{port}`");
-        (self.handler)(cmd, self.port).expect_err("Handler did not specify a response")
+        let result =
+            (self.handler)(cmd, self.port).expect_err("Handler did not specify a response");
+        if matches!(&result, Err(err) if err.is_io_error()) {
+            self.closed.store(true, Ordering::SeqCst);
+        }
+        result
     }
 }
 
@@ -83,6 +93,7 @@ impl cluster_async::Connect for MockConnection {
                 .clone(),
             port,
             id: name.clone(),
+            closed: Arc::default(),
         }))
     }
 }
@@ -107,6 +118,7 @@ impl cluster::Connect for MockConnection {
                 .clone(),
             port,
             id: name.clone(),
+            closed: Arc::default(),
         })
     }
 
@@ -321,7 +333,7 @@ impl redis::ConnectionLike for MockConnection {
     }
 
     fn is_open(&self) -> bool {
-        true
+        !self.closed.load(Ordering::SeqCst)
     }
 }
 
