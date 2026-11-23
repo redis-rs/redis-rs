@@ -189,6 +189,9 @@ pub trait Connect: Sized {
     /// If the provided value is `None`, then `send_packed_command` call will
     /// block indefinitely. It is an error to pass the zero `Duration` to this
     /// method.
+    ///
+    /// A write that fails, including by timing out, closes the connection, and callers must
+    /// reconnect.
     fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()>;
 
     /// Sets the read timeout for the connection.
@@ -375,6 +378,9 @@ where
     /// If the provided value is `None`, then `send_packed_command` call will
     /// block indefinitely. It is an error to pass the zero `Duration` to this
     /// method.
+    ///
+    /// A write that fails, including by timing out, closes the connection, and callers must
+    /// reconnect.
     pub fn set_write_timeout(&self, dur: Option<Duration>) -> RedisResult<()> {
         // Check if duration is valid before updating local value.
         if dur.is_some() && dur.unwrap().is_zero() {
@@ -589,7 +595,11 @@ where
         addr: &NodeAddress,
     ) -> RedisResult<&'a mut C> {
         match connections.entry(addr.clone()) {
-            std::collections::hash_map::Entry::Occupied(occupied_entry) => {
+            std::collections::hash_map::Entry::Occupied(mut occupied_entry) => {
+                if !occupied_entry.get().is_open() {
+                    // The connection was closed, e.g. by a failed write, so it can't be reused.
+                    occupied_entry.insert(self.connect(addr)?);
+                }
                 Ok(occupied_entry.into_mut())
             }
             std::collections::hash_map::Entry::Vacant(vacant_entry) => {
