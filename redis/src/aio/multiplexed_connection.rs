@@ -40,6 +40,11 @@ use std::task::{self, Poll};
 use std::time::Duration;
 use tokio_util::codec::Decoder;
 
+/// How many times a connection sends one set of credentials before it waits
+/// for the provider's next set.
+#[cfg(feature = "token-based-authentication")]
+const RE_AUTHENTICATION_ATTEMPTS: usize = 3;
+
 // Senders which the result of a single request are sent through
 type PipelineOutput = oneshot::Sender<RedisResult<Value>>;
 
@@ -890,13 +895,13 @@ impl MultiplexedConnection {
                                 .re_authenticate_with_credentials(&credentials)
                                 .await
                             {
-                                if err.is_connection_dropped() {
+                                if err.is_unrecoverable_error() {
                                     warn!(
                                         "Re-authentication task ended, connection is dead: {err}"
                                     );
                                     return;
                                 }
-                                // A refused AUTH leaves the connection authenticated as
+                                // The connection is still usable and authenticated as
                                 // before, so the next credentials can still succeed.
                                 error!("Failed to re-authenticate async connection: {err}.");
                             } else {
@@ -1176,10 +1181,27 @@ impl MultiplexedConnection {
         let mut auth_cmd =
             crate::connection::authenticate_cmd(Some(&credentials.username), &credentials.password);
         auth_cmd.skip_concurrency_limit = true;
-        self.send_packed_command(&auth_cmd)
-            .await?
-            .extract_error()
-            .map(|_| ())
+
+        let mut attempt = 1;
+        loop {
+            let result = self
+                .send_packed_command(&auth_cmd)
+                .await
+                .and_then(Value::extract_error);
+            match result {
+                Ok(_) => return Ok(()),
+                // AUTH is safe to send again: a repeat of an AUTH the server
+                // already applied authenticates as the same user.
+                Err(err)
+                    if attempt < RE_AUTHENTICATION_ATTEMPTS
+                        && matches!(err.retry_method(), crate::RetryMethod::RetryImmediately) =>
+                {
+                    warn!("Re-authentication attempt {attempt} failed, retrying: {err}");
+                    attempt += 1;
+                }
+                Err(err) => return Err(err),
+            }
+        }
     }
 }
 
@@ -1644,6 +1666,105 @@ mod tests {
         let err = c2.send_packed_command(&cmd("PING")).await.unwrap_err();
         assert!(err.is_io_error(), "expected IO error from timeout");
         cmd_received_rx.recv().await.unwrap();
+    }
+
+    /// Connects to a mock server that answers each command with the next of
+    /// `replies`, or never answers when the reply is `None`. Returns the
+    /// connection and a counter of the commands the server received.
+    #[cfg(feature = "token-based-authentication")]
+    async fn create_connection_with_replies(
+        replies: Vec<Option<&'static [u8]>>,
+    ) -> (MultiplexedConnection, Arc<std::sync::atomic::AtomicUsize>) {
+        use futures_util::StreamExt;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::AsyncWriteExt;
+        use tokio_util::codec::FramedRead;
+
+        let (client_half, server_half) = tokio::io::duplex(4096);
+        let (server_read, mut server_write) = tokio::io::split(server_half);
+        let received = Arc::new(AtomicUsize::new(0));
+        let counter = received.clone();
+
+        tokio::spawn(async move {
+            let mut reader = FramedRead::new(server_read, ValueCodec::default());
+            let mut replies = replies.into_iter();
+            while let Some(Ok(_)) = reader.next().await {
+                counter.fetch_add(1, Ordering::SeqCst);
+                if let Some(Some(reply)) = replies.next() {
+                    server_write.write_all(reply).await.unwrap();
+                    server_write.flush().await.unwrap();
+                }
+            }
+        });
+
+        let config = AsyncConnectionConfig::new()
+            .set_response_timeout(Some(Duration::from_millis(100)))
+            .set_connection_timeout(None);
+        let (conn, driver) =
+            MultiplexedConnection::new_with_config(&mock_conn_info(), client_half, config)
+                .await
+                .unwrap();
+        tokio::spawn(driver);
+
+        (conn, received)
+    }
+
+    #[cfg(feature = "token-based-authentication")]
+    fn credentials() -> crate::auth::BasicAuth {
+        crate::auth::BasicAuth::new("user".to_string(), "password".to_string())
+    }
+
+    #[cfg(feature = "token-based-authentication")]
+    #[tokio::test]
+    async fn test_re_authentication_retries_after_timeout() {
+        use std::sync::atomic::Ordering;
+
+        // The server stalls through two attempts, then answers all three. The
+        // connection matches replies to requests in order, so the third attempt
+        // gets the third reply.
+        let (mut conn, received) =
+            create_connection_with_replies(vec![None, None, Some(b"+OK\r\n+OK\r\n+OK\r\n")]).await;
+
+        conn.re_authenticate_with_credentials(&credentials())
+            .await
+            .unwrap();
+
+        assert_eq!(received.load(Ordering::SeqCst), 3);
+    }
+
+    #[cfg(feature = "token-based-authentication")]
+    #[tokio::test]
+    async fn test_re_authentication_stops_retrying_after_all_attempts_time_out() {
+        use std::sync::atomic::Ordering;
+
+        let (mut conn, received) = create_connection_with_replies(vec![]).await;
+
+        let err = conn
+            .re_authenticate_with_credentials(&credentials())
+            .await
+            .unwrap_err();
+
+        assert!(err.is_timeout());
+        assert_eq!(received.load(Ordering::SeqCst), RE_AUTHENTICATION_ATTEMPTS);
+    }
+
+    #[cfg(feature = "token-based-authentication")]
+    #[tokio::test]
+    async fn test_re_authentication_does_not_retry_refused_credentials() {
+        use std::sync::atomic::Ordering;
+
+        let (mut conn, received) = create_connection_with_replies(vec![Some(
+            b"-WRONGPASS invalid username-password pair or user is disabled.\r\n",
+        )])
+        .await;
+
+        let err = conn
+            .re_authenticate_with_credentials(&credentials())
+            .await
+            .unwrap_err();
+
+        assert!(!err.is_unrecoverable_error());
+        assert_eq!(received.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

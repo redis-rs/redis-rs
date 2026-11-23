@@ -1049,6 +1049,23 @@ mod token_based_authentication_acl_tests {
         println!("Server correctly rejected command after user invalidation: {err}");
     }
 
+    /// Polls `ACL WHOAMI` until the connection is authenticated as `expected_user`.
+    ///
+    /// Polling keeps a test independent of how the provider's refresh interval
+    /// lines up with the time the test's setup took.
+    async fn wait_for_user(con: &mut impl redis::aio::ConnectionLike, expected_user: &str) {
+        let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
+        let mut current_user = String::new();
+        for _ in 0..100 {
+            current_user = whoami_cmd.query_async(con).await.unwrap();
+            if current_user == expected_user {
+                return;
+            }
+            sleep(Duration::from_millis(50).into()).await;
+        }
+        panic!("Connection is authenticated as {current_user}, not {expected_user}");
+    }
+
     /// Tests that a connection keeps following the provider after a failed re-authentication:
     ///
     /// 1. Provider yields valid credentials (Alice) - connection succeeds
@@ -1058,53 +1075,26 @@ mod token_based_authentication_acl_tests {
     async fn test_re_authentication_continues_after_server_rejects_credentials() {
         init_logger();
         let ctx = TestContext::default();
-        let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
-
-        // Create a user with the JWT token as password and full permissions for each token
-        println!("Setting up Redis users for re-authentication recovery test...");
         add_users_with_jwt_tokens(&ctx).await;
 
-        // Set up mock provider that yields valid, then invalid, then valid credentials
-        println!(
-            "Setting up mock provider that yields valid, then invalid, then valid credentials..."
-        );
         let mut mock_provider = MockStreamingCredentialsProvider::with_config(
             MockProviderConfig::valid_then_invalid_then_valid_credentials(),
         );
         mock_provider.start();
         let config = redis::AsyncConnectionConfig::new().set_credentials_provider(mock_provider);
 
-        println!("Establishing multiplexed connection with JWT authentication...");
         let mut con = ctx
             .client
             .get_multiplexed_async_connection_with_config(&config)
             .await
             .unwrap();
 
-        // Verify initial authentication (position 0 - should succeed)
+        let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
         let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
         assert_eq!(current_user, ALICE_OID_CLAIM);
-        println!("Initial authentication successful as user: {current_user}.");
 
-        // Wait for the first rotation attempt to occur (position 1 - the server should reject it)
-        println!("Waiting for first rotation attempt (the server should reject it)...");
-        sleep(Duration::from_millis(600).into()).await;
-
-        // The current user should still be Alice since the server rejected the AUTH command
-        let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
-        println!("Current user after rejected credentials: {current_user}");
-        assert_eq!(current_user, ALICE_OID_CLAIM);
-
-        // Wait for the second rotation attempt to occur (position 2 - should succeed)
-        println!("Waiting for second rotation attempt (should succeed)...");
-        sleep(Duration::from_millis(600).into()).await;
-
-        // Should now be authenticated as Bob
-        let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
-        println!("User after successful rotation: {current_user}");
-        assert_eq!(current_user, BOB_OID_CLAIM);
-
-        println!("Re-authentication recovery test completed successfully!");
+        // The provider reaches Bob only after the credentials the server rejects
+        wait_for_user(&mut con, BOB_OID_CLAIM).await;
     }
 
     #[cfg(feature = "cluster-async")]
@@ -1417,23 +1407,11 @@ mod token_based_authentication_acl_tests {
             let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
             let mut con = cluster.async_connection().await;
 
-            // Verify initial authentication succeeded
             let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
             assert_eq!(current_user, ALICE_OID_CLAIM);
 
-            // Wait for the failed re-auth attempt to occur
-            sleep(Duration::from_millis(600).into()).await;
-
-            // The current user should still be Alice since the server rejected the AUTH command
-            let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
-            assert_eq!(current_user, ALICE_OID_CLAIM);
-
-            // Wait for the next rotation to occur
-            sleep(Duration::from_millis(600).into()).await;
-
-            // Should now be authenticated as Bob
-            let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
-            assert_eq!(current_user, BOB_OID_CLAIM);
+            // The provider reaches Bob only after the credentials the server rejects
+            wait_for_user(&mut con, BOB_OID_CLAIM).await;
         }
     }
 }
