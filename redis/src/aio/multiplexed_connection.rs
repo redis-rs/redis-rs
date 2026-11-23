@@ -896,8 +896,9 @@ impl MultiplexedConnection {
                                     );
                                     return;
                                 }
+                                // A refused AUTH leaves the connection authenticated as
+                                // before, so the next credentials can still succeed.
                                 error!("Failed to re-authenticate async connection: {err}.");
-                                return;
                             } else {
                                 debug!("Re-authenticated async connection");
                             }

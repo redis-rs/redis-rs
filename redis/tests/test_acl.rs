@@ -444,6 +444,23 @@ mod token_based_authentication_acl_tests {
                 error_positions: vec![],
             }
         }
+
+        /// Create config with valid credentials, then invalid credentials that the Redis server will reject, then valid credentials again.
+        /// This simulates a scenario where the provider recovers after the Redis server rejected an AUTH command.
+        pub fn valid_then_invalid_then_valid_credentials() -> Self {
+            Self {
+                credentials_sequence: vec![
+                    // Valid credentials (Alice is supposed to exist)
+                    BasicAuth::new(ALICE_OID_CLAIM.to_string(), ALICE_TOKEN.to_string()),
+                    // Invalid credentials (user is supposed to not exist)
+                    BasicAuth::new(INVALID_USER.to_string(), INVALID_TOKEN.to_string()),
+                    // Valid credentials (Bob is supposed to exist)
+                    BasicAuth::new(BOB_OID_CLAIM.to_string(), BOB_TOKEN.to_string()),
+                ],
+                refresh_interval: Duration::from_millis(500),
+                error_positions: vec![],
+            }
+        }
     }
 
     type Subscriptions = Vec<Sender<RedisResult<BasicAuth>>>;
@@ -1020,8 +1037,8 @@ mod token_based_authentication_acl_tests {
             .await;
         assert_eq!(del_result, Ok(redis::Value::Int(1)));
 
-        // The server should reject the next command since Alice no longer exists
-        // and no credential update can fix it (the re-auth task already exited)
+        // The server should reject the next command since Alice no longer exists:
+        // deleting a user closes its connections, so no credential update can fix it
         println!("Verifying server rejects commands after user invalidation...");
         let result: redis::RedisResult<String> = whoami_cmd.query_async(&mut con).await;
         let err = result.unwrap_err();
@@ -1030,6 +1047,64 @@ mod token_based_authentication_acl_tests {
             "expected the server to close the connection after user invalidation, got: {err}"
         );
         println!("Server correctly rejected command after user invalidation: {err}");
+    }
+
+    /// Tests that a connection keeps following the provider after a failed re-authentication:
+    ///
+    /// 1. Provider yields valid credentials (Alice) - connection succeeds
+    /// 2. Provider yields credentials for a non-existent user - the Redis server rejects the AUTH command
+    /// 3. Provider yields valid credentials (Bob) - the connection re-authenticates as Bob
+    #[async_test]
+    async fn test_re_authentication_continues_after_server_rejects_credentials() {
+        init_logger();
+        let ctx = TestContext::default();
+        let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
+
+        // Create a user with the JWT token as password and full permissions for each token
+        println!("Setting up Redis users for re-authentication recovery test...");
+        add_users_with_jwt_tokens(&ctx).await;
+
+        // Set up mock provider that yields valid, then invalid, then valid credentials
+        println!(
+            "Setting up mock provider that yields valid, then invalid, then valid credentials..."
+        );
+        let mut mock_provider = MockStreamingCredentialsProvider::with_config(
+            MockProviderConfig::valid_then_invalid_then_valid_credentials(),
+        );
+        mock_provider.start();
+        let config = redis::AsyncConnectionConfig::new().set_credentials_provider(mock_provider);
+
+        println!("Establishing multiplexed connection with JWT authentication...");
+        let mut con = ctx
+            .client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await
+            .unwrap();
+
+        // Verify initial authentication (position 0 - should succeed)
+        let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
+        assert_eq!(current_user, ALICE_OID_CLAIM);
+        println!("Initial authentication successful as user: {current_user}.");
+
+        // Wait for the first rotation attempt to occur (position 1 - the server should reject it)
+        println!("Waiting for first rotation attempt (the server should reject it)...");
+        sleep(Duration::from_millis(600).into()).await;
+
+        // The current user should still be Alice since the server rejected the AUTH command
+        let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
+        println!("Current user after rejected credentials: {current_user}");
+        assert_eq!(current_user, ALICE_OID_CLAIM);
+
+        // Wait for the second rotation attempt to occur (position 2 - should succeed)
+        println!("Waiting for second rotation attempt (should succeed)...");
+        sleep(Duration::from_millis(600).into()).await;
+
+        // Should now be authenticated as Bob
+        let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
+        println!("User after successful rotation: {current_user}");
+        assert_eq!(current_user, BOB_OID_CLAIM);
+
+        println!("Re-authentication recovery test completed successfully!");
     }
 
     #[cfg(feature = "cluster-async")]
@@ -1310,13 +1385,55 @@ mod token_based_authentication_acl_tests {
             // Now simulate token expiry on the server side by deleting Alice's user on all nodes
             delete_user_on_all_nodes(&cluster, ALICE_OID_CLAIM).await;
 
-            // The server should reject the next command since Alice no longer exists
-            // and no credential update can fix it (the re-auth task already exited)
+            // The server should reject the next command since Alice no longer exists:
+            // deleting a user closes its connections, so no credential update can fix it
             let result: redis::RedisResult<String> = whoami_cmd.query_async(&mut con).await;
             assert!(
                 result.is_err(),
                 "Commands should fail after the authenticated user is deleted from the server."
             );
+        }
+
+        /// Tests that a cluster connection keeps following the provider after a failed re-authentication:
+        ///
+        /// 1. Provider yields valid credentials (Alice) - connection succeeds
+        /// 2. Provider yields credentials for a non-existent user - the Redis server rejects the AUTH command
+        /// 3. Provider yields valid credentials (Bob) - the connection re-authenticates as Bob
+        #[async_test]
+        async fn test_cluster_re_authentication_continues_after_server_rejects_credentials() {
+            init_logger();
+            let cluster = TestClusterContext::new_with_cluster_client_builder(
+                |builder: ClusterClientBuilder| {
+                    let mut mock_provider = MockStreamingCredentialsProvider::with_config(
+                        MockProviderConfig::valid_then_invalid_then_valid_credentials(),
+                    );
+                    mock_provider.start();
+                    builder.set_credentials_provider(mock_provider)
+                },
+            );
+
+            add_users_with_jwt_tokens_on_all_nodes(&cluster).await;
+
+            let whoami_cmd = redis::cmd("ACL").arg("WHOAMI").clone();
+            let mut con = cluster.async_connection().await;
+
+            // Verify initial authentication succeeded
+            let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
+            assert_eq!(current_user, ALICE_OID_CLAIM);
+
+            // Wait for the failed re-auth attempt to occur
+            sleep(Duration::from_millis(600).into()).await;
+
+            // The current user should still be Alice since the server rejected the AUTH command
+            let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
+            assert_eq!(current_user, ALICE_OID_CLAIM);
+
+            // Wait for the next rotation to occur
+            sleep(Duration::from_millis(600).into()).await;
+
+            // Should now be authenticated as Bob
+            let current_user: String = whoami_cmd.query_async(&mut con).await.unwrap();
+            assert_eq!(current_user, BOB_OID_CLAIM);
         }
     }
 }
