@@ -82,7 +82,7 @@ use crate::IntoConnectionInfo;
 pub use crate::TlsMode; // Pub for backwards compatibility
 use crate::cluster_handling::{get_connection_info, redirect_address, slot_cmd};
 use crate::cluster_routing::{
-    MultipleNodeRoutingInfo, ResponsePolicy, Routable, SingleNodeRoutingInfo, Slot, SlotAddr,
+    MultipleNodeRoutingInfo, ResponsePolicy, Routable, SingleNodeRoutingInfo,
 };
 use crate::cmd::{Cmd, cmd};
 use crate::connection::{Connection, ConnectionInfo, ConnectionLike, connect};
@@ -613,11 +613,11 @@ where
         };
 
         match RoutingInfo::for_routable(cmd) {
-            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => Ok(addr_for_slot(
-                Route::with_slot(Slot::new_random(), SlotAddr::Master),
-            )?),
+            Some(RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::Random | SingleNodeRoutingInfo::RandomPrimary,
+            )) => addr_for_slot(Route::new_random_primary()),
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
-                Ok(addr_for_slot(route)?)
+                addr_for_slot(route)
             }
             _ => fail!(UNROUTABLE_ERROR),
         }

@@ -1103,4 +1103,24 @@ mod cluster {
             primaries.assert_index_propagated(name);
         });
     }
+
+    #[test]
+    fn test_module_search_ft_create_in_sync_cluster_pipeline() {
+        let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..]);
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+
+        redis::cluster::cluster_pipe()
+            .cmd("FT.CREATE")
+            .arg("pipeline_index")
+            .arg("ON")
+            .arg("HASH")
+            .arg("SCHEMA")
+            .arg("title")
+            .arg("TEXT")
+            .exec(&mut ctx.connection())
+            .unwrap();
+
+        primaries.assert_index_propagated("pipeline_index");
+    }
 }
