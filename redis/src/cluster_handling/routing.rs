@@ -685,6 +685,7 @@ enum RouteBy {
     FirstKey,
     MultiShard(MultiSlotArgPattern),
     Random,
+    RandomPrimary,
     SecondArg,
     SecondArgAfterKeyCount,
     SecondArgSlot,
@@ -828,7 +829,6 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"COMMAND"
         | b"CONFIG GET"
         | b"ECHO"
-        | b"FT.CREATE"
         | b"FUNCTION LIST"
         | b"LASTSAVE"
         | b"LOLWUT"
@@ -845,6 +845,12 @@ fn base_routing(cmd: &[u8]) -> RouteBy {
         | b"TFUNCTION LIST"
         | b"TFUNCTION LOAD"
         | b"TIME" => RouteBy::Random,
+
+        // Keyless writes. A replica rejects them with a READONLY error.
+        b"FT.ALIASADD" | b"FT.ALIASDEL" | b"FT.ALIASUPDATE" | b"FT.ALTER" | b"FT.CREATE"
+        | b"FT.DICTADD" | b"FT.DICTDEL" | b"FT.DROPINDEX" | b"FT.SYNUPDATE" => {
+            RouteBy::RandomPrimary
+        }
 
         b"CLUSTER ADDSLOTS"
         | b"CLUSTER COUNTKEYSINSLOT"
@@ -878,6 +884,8 @@ impl RoutingInfo {
             RouteBy::MultiShard(arg_pattern) => multi_shard(r, cmd, 1, arg_pattern),
 
             RouteBy::Random => Some(Self::SingleNode(SingleNodeRoutingInfo::Random)),
+
+            RouteBy::RandomPrimary => Some(Self::SingleNode(SingleNodeRoutingInfo::RandomPrimary)),
 
             RouteBy::ThirdArgAfterKeyCount => {
                 let key_count = r
@@ -1364,25 +1372,45 @@ mod tests_routing {
     }
 
     #[test]
-    fn test_ft_create_is_routed_as_a_keyless_command() {
-        // The index name is not a key, so FT.CREATE must not be routed by its first argument.
-        assert_eq!(
-            RoutingInfo::for_routable(
-                cmd("FT.CREATE")
-                    .arg("idx")
-                    .arg("ON")
-                    .arg("HASH")
-                    .arg("SCHEMA")
-                    .arg("title")
-                    .arg("TEXT")
-            ),
-            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
-        );
+    fn test_search_writes_are_routed_to_a_random_primary() {
+        // The index name is not a key, so these commands must not be routed by their first
+        // argument. They write, so they must not reach a replica.
+        for cmd in [
+            cmd("FT.CREATE")
+                .arg("idx")
+                .arg("ON")
+                .arg("HASH")
+                .arg("SCHEMA")
+                .arg("title")
+                .arg("TEXT"),
+            cmd("FT.ALTER")
+                .arg("idx")
+                .arg("SCHEMA")
+                .arg("ADD")
+                .arg("body")
+                .arg("TEXT"),
+            cmd("FT.DROPINDEX").arg("idx"),
+            cmd("FT.ALIASADD").arg("alias").arg("idx"),
+            cmd("FT.ALIASUPDATE").arg("alias").arg("idx"),
+            cmd("FT.ALIASDEL").arg("alias"),
+            cmd("FT.DICTADD").arg("dict").arg("term"),
+            cmd("FT.DICTDEL").arg("dict").arg("term"),
+            cmd("FT.SYNUPDATE").arg("idx").arg("group").arg("term"),
+        ] {
+            assert_eq!(
+                RoutingInfo::for_routable(cmd),
+                Some(RoutingInfo::SingleNode(
+                    SingleNodeRoutingInfo::RandomPrimary
+                )),
+                "{}",
+                std::str::from_utf8(cmd.arg_idx(0).unwrap()).unwrap()
+            );
+        }
     }
 
     #[cfg(feature = "search")]
     #[test]
-    fn test_ft_create_command_builder_is_routed_as_a_keyless_command() {
+    fn test_ft_create_command_builder_is_routed_to_a_random_primary() {
         use crate::schema;
         use crate::search::{FtCreateCommand, SchemaTextField};
 
@@ -1391,7 +1419,9 @@ mod tests_routing {
 
         assert_eq!(
             RoutingInfo::for_routable(&cmd),
-            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+            Some(RoutingInfo::SingleNode(
+                SingleNodeRoutingInfo::RandomPrimary
+            ))
         );
     }
 
