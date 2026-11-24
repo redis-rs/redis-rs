@@ -1,6 +1,7 @@
 //! Helpers for exercising the Search module against a cluster.
 use super::{TestClusterContext, TestContextVersioning, VALKEY_SEARCH_ANY};
 use redis::Value;
+use redis::cluster_read_routing::RandomReplicaStrategy;
 use redis_test::cluster::RedisClusterConfiguration;
 use redis_test::server::Module;
 
@@ -16,6 +17,24 @@ pub fn setup_cluster_with_search_module() -> TestClusterContext {
         RedisClusterConfiguration::default()
             .num_nodes(3)
             .modules(vec![Module::Search]),
+    );
+    ctx.wait_for_cluster_up();
+    ctx
+}
+
+/// Build a 3-primary cluster with 1 replica each and the search module loaded on every node.
+/// The client reads from replicas and doesn't retry, so a write that reaches a replica fails.
+///
+/// Check the server version before calling [`PrimaryConnections::from_cluster`],
+/// because it expects RediSearch or valkey-search to be loaded.
+pub fn setup_cluster_with_replicas_and_search_module() -> TestClusterContext {
+    let ctx = TestClusterContext::new_with_config_and_builder(
+        RedisClusterConfiguration::single_replica_config().modules(vec![Module::Search]),
+        |builder| {
+            builder
+                .read_routing_strategy(RandomReplicaStrategy::new())
+                .retries(0)
+        },
     );
     ctx.wait_for_cluster_up();
     ctx
