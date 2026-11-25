@@ -217,11 +217,8 @@ fn test_acl_selector_rule_stays_one_rule() {
         err.detail(),
         Some("Error in ACL SETUSER modifier '(+GET \"~x +@all ~*\")': Syntax error")
     );
-    assert!(
-        !con.acl_users()
-            .unwrap()
-            .contains(&"selector_user".to_string())
-    );
+    let users: Vec<String> = con.acl_users().unwrap();
+    assert!(!users.iter().any(|user| user == "selector_user"));
 
     // A rule with a byte outside printable ASCII is sent quoted and escaped, and the server
     // decodes it back to the pattern given.
