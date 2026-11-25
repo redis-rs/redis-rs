@@ -40,11 +40,6 @@ use std::task::{self, Poll};
 use std::time::Duration;
 use tokio_util::codec::Decoder;
 
-/// How many times a connection sends one set of credentials before it waits
-/// for the provider's next set.
-#[cfg(feature = "token-based-authentication")]
-const RE_AUTHENTICATION_ATTEMPTS: usize = 3;
-
 // Senders which the result of a single request are sent through
 type PipelineOutput = oneshot::Sender<RedisResult<Value>>;
 
@@ -1178,6 +1173,10 @@ impl MultiplexedConnection {
         &mut self,
         credentials: &crate::auth::BasicAuth,
     ) -> RedisResult<()> {
+        // How many times a connection sends one set of credentials before it
+        // waits for the provider's next set.
+        const RE_AUTHENTICATION_ATTEMPTS: usize = 3;
+
         let mut auth_cmd =
             crate::connection::authenticate_cmd(Some(&credentials.username), &credentials.password);
         auth_cmd.skip_concurrency_limit = true;
@@ -1197,6 +1196,7 @@ impl MultiplexedConnection {
                         && matches!(err.retry_method(), crate::RetryMethod::RetryImmediately) =>
                 {
                     warn!("Re-authentication attempt {attempt} failed, retrying: {err}");
+                    Runtime::locate().sleep(Duration::from_millis(5)).await;
                     attempt += 1;
                 }
                 Err(err) => return Err(err),
@@ -1745,7 +1745,7 @@ mod tests {
             .unwrap_err();
 
         assert!(err.is_timeout());
-        assert_eq!(received.load(Ordering::SeqCst), RE_AUTHENTICATION_ATTEMPTS);
+        assert_eq!(received.load(Ordering::SeqCst), 3);
     }
 
     #[cfg(feature = "token-based-authentication")]
