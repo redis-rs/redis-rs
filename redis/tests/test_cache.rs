@@ -14,6 +14,7 @@ use redis_test::{
 #[cfg(feature = "json")]
 use serde_json::json;
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::time::Duration;
 use test_macros::async_test;
 
@@ -1022,13 +1023,50 @@ async fn test_cache_evicts_multi_key_replies_when_any_of_their_keys_changes(test
     assert_miss!(&con, 4);
 }
 
-/// The shard of the client-side cache that `key` is kept in, computed the way `ShardedLRU` does
-/// for the default cache size, which is split into 32 shards.
-fn cache_shard(key: &str) -> u64 {
-    use std::hash::Hasher;
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    hasher.write(key.as_bytes());
-    hasher.finish() % 32
+/// `ShardedLRU` splits a cache of at least this many keys into this many shards, so a cache of
+/// exactly this size keeps one key per shard. `key_sharing_shard` relies on that, and panics
+/// instead of testing nothing if it stops holding.
+const CACHE_SHARD_COUNT: usize = 32;
+
+/// The first of `prefix_0`, `prefix_1`, ... that the client-side cache keeps in the same shard as
+/// `key` if `same`, or in another shard if not.
+///
+/// It's read off the cache's own behaviour rather than computed from a copy of its hashing, which
+/// could stop matching without anything saying so: in a cache holding one key per shard, caching
+/// a key evicts what the cache held in that key's shard and nothing else, which the hit counter
+/// shows. The cache must be configured with the same size here, so that the keys are sharded the
+/// same way as they are where the result is used.
+async fn key_sharing_shard(ctx: &TestContext, key: &str, prefix: &str, same: bool) -> String {
+    let mut con = ctx
+        .async_connection_with_cache_config(
+            CacheConfig::new().set_size(NonZeroUsize::new(CACHE_SHARD_COUNT).unwrap()),
+        )
+        .await
+        .unwrap();
+    let get = |key: &str| {
+        let mut cmd = redis::cmd("GET");
+        cmd.arg(key);
+        cmd
+    };
+
+    let _: Option<String> = get(key).query_async(&mut con).await.unwrap();
+    for i in 0..1000 {
+        let candidate = format!("{prefix}_{i}");
+        let _: Option<String> = get(&candidate).query_async(&mut con).await.unwrap();
+        let hits = con.get_cache_statistics().unwrap().hit;
+        // A miss means the entry of `key` was evicted by the one of `candidate`, so the two share
+        // a shard. It also caches `key` again, evicting `candidate`, which leaves the next round
+        // starting from the same state as this one.
+        let _: Option<String> = get(key).query_async(&mut con).await.unwrap();
+        if (con.get_cache_statistics().unwrap().hit == hits) == same {
+            return candidate;
+        }
+    }
+    panic!(
+        "no key out of 1000 {} the cache shard of {key}, so the cache is no longer sharded the \
+         way this test needs",
+        if same { "shares" } else { "stays out of" }
+    );
 }
 
 // A cached multi-key reply that lost one of its keys must stay unservable, even when the next
@@ -1043,10 +1081,13 @@ async fn test_cache_stale_multi_key_reply_is_not_revived_by_a_partial_insert(
         return;
     }
 
+    // The size `key_sharing_shard` probes with, so that the keys it picks land in the shards it
+    // found them in.
+    let cache_config = CacheConfig::new().set_size(NonZeroUsize::new(CACHE_SHARD_COUNT).unwrap());
     let cache_config = if test_with_optin {
-        CacheConfig::new().set_mode(redis::caching::CacheMode::OptIn)
+        cache_config.set_mode(redis::caching::CacheMode::OptIn)
     } else {
-        CacheConfig::default()
+        cache_config
     };
     let mut con = ctx
         .async_connection_with_cache_config(cache_config)
@@ -1056,16 +1097,10 @@ async fn test_cache_stale_multi_key_reply_is_not_revived_by_a_partial_insert(
 
     // `SINTER set_a <key_b>` is cached under set_a. key_b has to be in another shard, and
     // `unrelated` in set_a's shard, so that invalidating `unrelated` only rejects the insert
-    // under set_a.
+    // under set_a. The keys are picked before set_a is created, since they're probed with GET.
     let key_a = "set_a";
-    let key_b = (0..)
-        .map(|i| format!("set_b_{i}"))
-        .find(|key| cache_shard(key) != cache_shard(key_a))
-        .unwrap();
-    let unrelated = (0..)
-        .map(|i| format!("unrelated_{i}"))
-        .find(|key| cache_shard(key) == cache_shard(key_a))
-        .unwrap();
+    let key_b = key_sharing_shard(&ctx, key_a, "set_b", false).await;
+    let unrelated = key_sharing_shard(&ctx, key_a, "unrelated", true).await;
     let _: () = redis::pipe()
         .cmd("SADD")
         .arg(key_a)

@@ -91,19 +91,20 @@ impl CacheableCommand<'_> {
         let opt_in = cache_manager.cache_config.mode == CacheMode::OptIn;
         match self {
             CacheableCommand::Single(cached_command) => {
-                // One `PTTL` reply per key the command reads, then the command's reply.
-                let pttls: Vec<Value> = replies
-                    .by_ref()
-                    .take(1 + cached_command.dependent_keys.len())
-                    .collect();
-                if opt_in {
-                    // Skipping response of CLIENT CACHING YES
-                    let _ = get_next_reply(&mut replies)?;
+                let key_count = 1 + cached_command.dependent_keys.len();
+                // One `PTTL` reply per key the command reads, each preceded in opt-in mode by the
+                // reply of the `CLIENT CACHING YES` that makes the server track that key, then
+                // the command's reply.
+                let mut pttls = Vec::with_capacity(key_count);
+                for _ in 0..key_count {
+                    if opt_in {
+                        // Skipping response of CLIENT CACHING YES
+                        let _ = get_next_reply(&mut replies)?;
+                    }
+                    let Some(pttl) = replies.next() else { break };
+                    pttls.push(pttl);
                 }
-                if let (true, Some(reply)) = (
-                    pttls.len() == 1 + cached_command.dependent_keys.len(),
-                    replies.next(),
-                ) {
+                if let (true, Some(reply)) = (pttls.len() == key_count, replies.next()) {
                     if !matches!(&reply, &Value::ServerError(_)) {
                         if cached_command.dependent_keys.is_empty() {
                             cache_manager.insert(
@@ -139,7 +140,11 @@ impl CacheableCommand<'_> {
                 } else {
                     Err(RedisError::from((
                         ErrorKind::UnexpectedReturnType,
-                        "Expected two Value from server",
+                        "Expected a PTTL Value for every key the command reads, followed by the command's own Value, from server",
+                        format!(
+                            "got {} of the {key_count} expected PTTL values",
+                            pttls.len()
+                        ),
                     )))
                 }
             }
@@ -183,9 +188,6 @@ impl CacheableCommand<'_> {
     }
 
     pub(crate) fn pack_command(&self, cache_manager: &CacheManager, pipeline: &mut Pipeline) {
-        // In opt-in mode the server only tracks the keys of the command that directly follows
-        // `CLIENT CACHING YES`, so it has to precede the cached command itself, not the `PTTL`
-        // probes, which don't read every key of a multi-key command.
         let add_opt_in = |pipeline: &mut Pipeline| {
             if cache_manager.cache_config.mode == CacheMode::OptIn {
                 let mut cmd = Cmd::new();
@@ -196,11 +198,18 @@ impl CacheableCommand<'_> {
 
         match self {
             CacheableCommand::Single(scc) => {
-                pipeline.add_command(Cmd::pttl(scc.redis_key));
-                for (key, _) in &scc.dependent_keys {
+                // In opt-in mode the server only tracks the keys of the command that directly
+                // follows `CLIENT CACHING YES`, so every key gets one of its own, right before
+                // its `PTTL`. Tracking a key from before its TTL is read leaves no window in
+                // which another connection can expire or write it without an invalidation being
+                // sent, and a multi-key command needs one per key rather than one for the
+                // command, since a single `PTTL` doesn't read all of them.
+                let keys = std::iter::once(scc.redis_key)
+                    .chain(scc.dependent_keys.iter().map(|(key, _)| *key));
+                for key in keys {
+                    add_opt_in(pipeline);
                     pipeline.add_command(Cmd::pttl(key));
                 }
-                add_opt_in(pipeline);
                 pipeline.add_command_ref(scc.cmd);
             }
             CacheableCommand::Multiple {

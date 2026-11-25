@@ -841,8 +841,10 @@ mod tests {
     }
 
     #[test]
-    fn test_opt_in_command_follows_client_caching() {
-        // `CLIENT CACHING YES` only makes the server track the keys read by the next command.
+    fn test_opt_in_tracks_every_key_before_its_ttl_is_read() {
+        // `CLIENT CACHING YES` only makes the server track the keys read by the next command, so
+        // each `PTTL` needs its own. It has to come before the `PTTL` of its key, otherwise
+        // another connection could expire the key in between without an invalidation being sent.
         let cache_manager = CacheManager::new(CacheConfig::new().set_mode(CacheMode::OptIn));
         let mut pipeline = crate::pipe();
         pipeline
@@ -853,8 +855,44 @@ mod tests {
 
         assert_eq!(
             packed_commands(&cache_manager, &pipeline),
-            ["PTTL a", "PTTL b", "CLIENT CACHING YES", "SINTER a b"]
+            [
+                "CLIENT CACHING YES",
+                "PTTL a",
+                "CLIENT CACHING YES",
+                "PTTL b",
+                "SINTER a b"
+            ]
         );
+    }
+
+    #[test]
+    fn test_opt_in_reply_is_cached_after_the_client_caching_replies() {
+        let cache_manager = CacheManager::new(CacheConfig::new().set_mode(CacheMode::OptIn));
+        let cmd = crate::cmd("SINTER")
+            .arg("a")
+            .arg("b")
+            .set_cache_config(crate::CommandCacheConfig::new().set_enable_cache(true))
+            .clone();
+
+        let PrepCacheItem::NotCached(cacheable_command) =
+            cache_manager.get_cached_cmd(CmdRef::from_cmd(&cmd))
+        else {
+            panic!("the command must be cacheable and not cached yet");
+        };
+        // The reply of `CLIENT CACHING YES` and the `PTTL` of each key, then the command's reply.
+        let replies = [
+            Value::Okay,
+            Value::Int(-1),
+            Value::Okay,
+            Value::Int(-1),
+            Value::Int(1),
+        ];
+        let reply = cacheable_command.resolve(&cache_manager, replies.into_iter());
+        assert_eq!(reply.unwrap(), Value::Int(1));
+        assert!(matches!(
+            cache_manager.get_cached_cmd(CmdRef::from_cmd(&cmd)),
+            PrepCacheItem::Cached(Value::Int(1))
+        ));
     }
 
     #[test]
