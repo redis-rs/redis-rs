@@ -97,7 +97,7 @@ use std::{
     io,
     ops::Deref,
     pin::{Pin, pin},
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, Mutex},
     task::{self, Poll},
     time::Duration,
 };
@@ -530,7 +530,7 @@ fn mark_reconnecting<C>(connections: &mut ConnectionMap<C>, addr: NodeAddress) {
 /// underlying connections maintained for each node in the cluster, as well
 /// as common parameters for connecting to nodes and executing commands.
 struct InnerCore<C> {
-    conn_lock: RwLock<(ConnectionMap<C>, SlotMap)>,
+    conn_lock: Mutex<(ConnectionMap<C>, SlotMap)>,
     cluster_params: ClusterParams,
     pending_requests_tx: mpsc::UnboundedSender<PendingRequest<C>>,
     initial_nodes: Vec<ConnectionInfo>,
@@ -562,7 +562,7 @@ where
         response_policy: Option<ResponsePolicy>,
     ) -> OperationResult {
         let (receivers, requests): (Vec<_>, Vec<_>) = {
-            let read_guard = self.conn_lock.read().unwrap();
+            let read_guard = self.conn_lock.lock().unwrap();
             if read_guard.0.is_empty() {
                 return (
                     OperationTarget::FanOut,
@@ -863,7 +863,7 @@ where
     ) -> RedisResult<(NodeAddress, C)> {
         let route = match route {
             InternalSingleNodeRouting::Random => {
-                let read_guard = self.conn_lock.read().unwrap();
+                let read_guard = self.conn_lock.lock().unwrap();
                 return match get_random_connection(&read_guard.0) {
                     Some((addr, conn)) => Ok((addr, conn)),
                     None => {
@@ -880,7 +880,7 @@ where
                 return self.get_redirected_connection(redirect).await;
             }
             InternalSingleNodeRouting::ByAddress(address) => {
-                let read_guard = self.conn_lock.read().unwrap();
+                let read_guard = self.conn_lock.lock().unwrap();
                 return match read_guard.0.get(&address).and_then(ConnState::connected) {
                     Some(conn) => Ok((address, conn)),
                     None => Err((
@@ -893,7 +893,7 @@ where
             }
         };
 
-        let read_guard = self.conn_lock.read().unwrap();
+        let read_guard = self.conn_lock.lock().unwrap();
         let preferred = read_guard
             .1
             .slot_addr_for_route(route, self.routing_strategy.as_deref())
@@ -938,7 +938,7 @@ where
         };
         let conn = self
             .conn_lock
-            .read()
+            .lock()
             .unwrap()
             .0
             .get(&addr)
@@ -968,7 +968,7 @@ where
         )
         .await?;
         self.conn_lock
-            .write()
+            .lock()
             .unwrap()
             .0
             .insert(addr.clone(), ConnState::Connected(conn.clone()));
@@ -988,7 +988,7 @@ where
 
     // Query a node to discover slot-> master mappings.
     async fn refresh_slots(self) -> RedisResult<()> {
-        let connections = self.conn_lock.read().unwrap().0.clone();
+        let connections = self.conn_lock.lock().unwrap().0.clone();
         self.refresh_slots_from(connections).await
     }
 
@@ -1067,7 +1067,7 @@ where
         // slots it now owns.
         self.resubscribe_all(connections, slots);
 
-        *self.conn_lock.write().unwrap() = (std::mem::take(connections), std::mem::take(slots));
+        *self.conn_lock.lock().unwrap() = (std::mem::take(connections), std::mem::take(slots));
 
         Ok(())
     }
@@ -1131,7 +1131,7 @@ where
         };
         let subscription_pipe = subscriptions_for_node(
             &tracker.lock().unwrap(),
-            &self.conn_lock.read().unwrap().1,
+            &self.conn_lock.lock().unwrap().1,
             reconnected_addr,
             self.routing_strategy.as_deref(),
         );
@@ -1178,7 +1178,7 @@ where
     C: ConnectionLike + Connect + Clone + Send + Sync + 'static,
 {
     {
-        let mut guard = core.conn_lock.write().unwrap();
+        let mut guard = core.conn_lock.lock().unwrap();
         if matches!(
             guard.0.get(&addr),
             Some(ConnState::Reconnecting(_) | ConnState::Connecting)
@@ -1197,11 +1197,11 @@ where
             .max_connection_attempts
             .is_some_and(|max| max.get() < attempts)
         {
-            core.conn_lock.write().unwrap().0.remove(&addr);
+            core.conn_lock.lock().unwrap().0.remove(&addr);
             break;
         }
         let prev = {
-            let guard = core.conn_lock.read().unwrap();
+            let guard = core.conn_lock.lock().unwrap();
             let in_topology = guard.1.addresses_for_all_nodes().contains(&addr);
             let entry = guard.0.get(&addr);
             if matches!(entry, Some(ConnState::Connected(_))) {
@@ -1211,7 +1211,7 @@ where
             drop(guard);
 
             if !in_topology {
-                core.conn_lock.write().unwrap().0.remove(&addr);
+                core.conn_lock.lock().unwrap().0.remove(&addr);
                 break;
             }
             prev_conn
@@ -1228,7 +1228,7 @@ where
         {
             Ok(conn) => {
                 let newly_installed = {
-                    let mut guard = core.conn_lock.write().unwrap();
+                    let mut guard = core.conn_lock.lock().unwrap();
 
                     if matches!(guard.0.get(&addr), Some(ConnState::Connected(_))) {
                         false
@@ -1334,7 +1334,7 @@ where
 
         let (pending_requests_tx, pending_requests_rx) = mpsc::unbounded_channel();
         let inner = Arc::new(InnerCore {
-            conn_lock: RwLock::new((Default::default(), SlotMap::new())),
+            conn_lock: Mutex::new((Default::default(), SlotMap::new())),
             cluster_params,
             pending_requests_tx,
             initial_nodes: initial_nodes.to_vec(),
@@ -1435,9 +1435,9 @@ where
         // This is best-effort, non-blocking, opportunistic check to see
         // if there is already a repair in progress.
         // This is not load-bearing since the real dedupe logic lives inside reconnect_loop.
-        let opportunistic_read_guard = self.inner.conn_lock.try_read().ok();
+        let opportunistic_guard = self.inner.conn_lock.try_lock().ok();
         for addr in addrs {
-            if let Some(guard) = &opportunistic_read_guard
+            if let Some(guard) = &opportunistic_guard
                 && matches!(
                     guard.0.get(&addr),
                     Some(ConnState::Reconnecting(_) | ConnState::Connecting)
