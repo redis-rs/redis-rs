@@ -365,13 +365,23 @@ impl MockEnv {
         id: &str,
         handler: impl Fn(&[u8], u16) -> Result<(), RedisResult<Value>> + Send + Sync + 'static,
     ) -> Self {
-        #[cfg(feature = "cluster-async")]
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_io()
-            .enable_time()
-            .build()
-            .unwrap();
+        Self::with_client_builder_on(
+            client_builder,
+            id,
+            handler,
+            #[cfg(feature = "cluster-async")]
+            super::multi_thread_runtime(),
+        )
+    }
 
+    /// Like `with_client_builder`, but drives the async connection with `runtime`. Tests that
+    /// pause tokio's time need a current-thread runtime.
+    pub fn with_client_builder_on(
+        client_builder: ClusterClientBuilder,
+        id: &str,
+        handler: impl Fn(&[u8], u16) -> Result<(), RedisResult<Value>> + Send + Sync + 'static,
+        #[cfg(feature = "cluster-async")] runtime: Runtime,
+    ) -> Self {
         let id = id.to_string();
         HANDLERS
             .write()

@@ -1439,7 +1439,7 @@ mod cluster_async {
                 handler: _handler,
                 runtime,
                 ..
-            } = MockEnv::with_client_builder(
+            } = MockEnv::with_client_builder_on(
                 ClusterClient::builder(vec![&*format!("redis://{name}")]),
                 name,
                 {
@@ -1471,6 +1471,8 @@ mod cluster_async {
                         }
                     }
                 },
+                // Time can only be paused on a current-thread runtime.
+                current_thread_runtime(),
             );
 
             add_mock_delay(name, {

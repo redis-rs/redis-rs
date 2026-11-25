@@ -36,6 +36,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
 
                     #[rstest::rstest]
                     #[cfg_attr(feature = "tokio-comp", case::tokio(support::RuntimeType::Tokio))]
+                    #[cfg_attr(feature = "tokio-comp", case::tokio_multi_thread(support::RuntimeType::TokioMultiThread))]
                     #[cfg_attr(feature = "smol-comp", case::smol(support::RuntimeType::Smol))]
                     fn multiplexed_connection (#[case]runtime: support::RuntimeType) {
                         let ctx = TestContext::default();
@@ -47,6 +48,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
 
                     #[rstest::rstest]
                     #[cfg_attr(feature = "tokio-comp", case::tokio(support::RuntimeType::Tokio))]
+                    #[cfg_attr(feature = "tokio-comp", case::tokio_multi_thread(support::RuntimeType::TokioMultiThread))]
                     #[cfg_attr(feature = "smol-comp", case::smol(support::RuntimeType::Smol))]
                     #[cfg(feature = "connection-manager")]
                     fn connection_manager (#[case]runtime: support::RuntimeType) {
@@ -65,6 +67,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
 
                 #[rstest::rstest]
                 #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+                #[cfg_attr(feature = "tokio-comp", case::tokio_multi_thread(RuntimeType::TokioMultiThread))]
                 #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
                 fn #test_function_name (#[case]runtime: RuntimeType, #[values(true, false)] arg: bool) {
                     block_on_all(#function_name (arg), runtime);
@@ -84,6 +87,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
 
             #[rstest::rstest]
             #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
+            #[cfg_attr(feature = "tokio-comp", case::tokio_multi_thread(RuntimeType::TokioMultiThread))]
             #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
             fn #test_function_name (#[case]runtime: RuntimeType) {
                 block_on_all(#function_name (), runtime);
