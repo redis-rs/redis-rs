@@ -221,7 +221,9 @@ impl PrimaryConnections {
                     .arg("SHARD_CONNECTION_STATES")
                     .query(connection)
                     .unwrap();
-                let ready = states.len() == expected_peers
+                // RediSearch 8.0 also connects to replicas, so its pool can hold more entries than
+                // there are primaries.
+                let ready = states.len() >= expected_peers
                     && states.iter().all(|(_, conns)| {
                         !conns.is_empty() && conns.iter().all(|s| s == "Connected")
                     });
