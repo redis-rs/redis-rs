@@ -1499,18 +1499,7 @@ fn check_resp2_auth(result: &Value) -> RedisResult<AuthResult> {
     {
         return Ok(AuthResult::ShouldRetryWithoutUsername);
     }
-    // Keep the server's reply: `WRONGPASS` and a provider's own codes (throttling,
-    // an expired token) call for different handling.
-    let detail = match err.details() {
-        Some(details) => format!("{} {details}", err.code()),
-        None => err.code().to_string(),
-    };
-    Err((
-        ErrorKind::AuthenticationFailed,
-        "Password authentication failed",
-        detail,
-    )
-        .into())
+    Err(RedisError::authentication_failed(err.clone()))
 }
 
 fn check_db_select(value: &Value) -> RedisResult<()> {
@@ -2597,21 +2586,24 @@ mod tests {
 
     #[test]
     fn test_resp2_auth_failure_keeps_the_server_reply() {
-        for (reply, detail) in [
+        for (reply, code, detail) in [
             (
                 "-WRONGPASS invalid username-password pair or user is disabled.\r\n",
-                "WRONGPASS invalid username-password pair or user is disabled.",
+                "WRONGPASS",
+                Some("invalid username-password pair or user is disabled."),
             ),
             (
                 "-ERR (ERR_IAM_EXHAUSTED) Memorystore IAM authentication backend quota exceeded.\r\n",
-                "ERR (ERR_IAM_EXHAUSTED) Memorystore IAM authentication backend quota exceeded.",
+                "ERR",
+                Some("(ERR_IAM_EXHAUSTED) Memorystore IAM authentication backend quota exceeded."),
             ),
-            ("-WRONGPASS\r\n", "WRONGPASS"),
+            ("-WRONGPASS\r\n", "WRONGPASS", None),
         ] {
             let value = crate::parse_redis_value(reply.as_bytes()).unwrap();
             let err = check_resp2_auth(&value).err().unwrap();
             assert_eq!(err.kind(), ErrorKind::AuthenticationFailed);
-            assert_eq!(err.detail(), Some(detail));
+            assert_eq!(err.code(), Some(code));
+            assert_eq!(err.detail(), detail);
         }
     }
 

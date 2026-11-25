@@ -162,9 +162,10 @@ mod basic {
             .unwrap();
 
         assert_eq!(err.kind(), ErrorKind::AuthenticationFailed, "{err}");
+        assert_eq!(err.code(), Some("WRONGPASS"), "{err}");
         assert_eq!(
             err.detail(),
-            Some("WRONGPASS invalid username-password pair or user is disabled."),
+            Some("invalid username-password pair or user is disabled."),
             "{err}"
         );
     }
