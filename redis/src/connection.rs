@@ -2036,7 +2036,7 @@ impl Connection {
         // count. The connection doesn't send anything else while it waits, so the tracked
         // subscriptions are the ones the server removes. A zero-argument subscribe is rejected
         // with a single error.
-        let mut remaining = match cmd.args_iter().len().saturating_sub(1) {
+        let mut expected_responses = match cmd.args_iter().len().saturating_sub(1) {
             0 => match expected {
                 PushKind::Unsubscribe => self
                     .subscriptions
@@ -2050,9 +2050,9 @@ impl Connection {
         };
 
         self.send_bytes(&cmd.get_packed_command())?;
-        while remaining > 0 {
+        while expected_responses > 0 {
             match self.read(false)? {
-                Value::Push { kind, .. } if kind == expected => remaining -= 1,
+                Value::Push { kind, .. } if kind == expected => expected_responses -= 1,
                 Value::Push { .. } => {}
                 Value::ServerError(err) => return Err(err.into()),
                 value => {
