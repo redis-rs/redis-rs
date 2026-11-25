@@ -506,23 +506,10 @@ macro_rules! implement_pipeline_commands {
                 self.commands.clear();
             }
 
-            fn filter_ignored_results(&self, resp: Vec<Value>) -> Vec<Value> {
-                // Common case: nothing was `.ignore()`d, so every result is kept.
-                // Return the response as-is instead of rebuilding the whole
-                // `Vec<Value>` (which would reallocate and move every element).
-                if !self.commands.iter().any(|command| command.ignored) {
-                    return resp;
-                }
-                resp.into_iter()
-                    .enumerate()
-                    .filter_map(|(index, result)| {
-                        let ignored = self
-                            .commands
-                            .get(index)
-                            .is_some_and(|record| record.ignored);
-                        (!ignored).then_some(result)
-                    })
-                    .collect()
+            fn filter_ignored_results(&self, mut resp: Vec<Value>) -> Vec<Value> {
+                let mut cmd_iter = self.commands.iter();
+                resp.retain(|_| !cmd_iter.next().is_some_and(|record| record.ignored));
+                resp
             }
 
             fn compose_response<T: FromRedisValue>(&self, response: Vec<Value>) -> RedisResult<T> {
