@@ -1893,6 +1893,15 @@ mod cluster_async {
                 }
             },
         );
+        // A real CLUSTER SLOTS takes a round trip, during which the in-flight requests get their
+        // replies. Delay the mock to simulate the round trip.
+        add_mock_delay(name, |cmd, _| {
+            if contains_slice(cmd, b"CLUSTER") && contains_slice(cmd, b"SLOTS") {
+                Duration::from_millis(10)
+            } else {
+                Duration::ZERO
+            }
+        });
         let startup_refreshes = slot_refreshes.load(Ordering::SeqCst);
 
         let results = runtime.block_on(async move {
@@ -1913,14 +1922,9 @@ mod cluster_async {
         for result in results {
             assert_eq!(result, Ok(Value::Okay));
         }
-        // The first MOVED replies start a refresh, and the replies that are processed while it
-        // runs must not start another one. The replies processed after it completed start the
-        // next one, since they can't be told apart from a new topology change. The mock answers
-        // both the requests and CLUSTER SLOTS at once, so how many replies fall into a running
-        // refresh depends on how they interleave with the recovery, but the roughly 150 MOVED
-        // replies must still collapse into a few refreshes.
-        let refreshes = slot_refreshes.load(Ordering::SeqCst) - startup_refreshes;
-        assert!((1..10).contains(&refreshes), "{refreshes} slot refreshes");
+        // The first MOVED reply starts a refresh, and the replies that are processed while it
+        // runs must not start another one.
+        assert_eq!(slot_refreshes.load(Ordering::SeqCst) - startup_refreshes, 1);
     }
 
     // A reconnect to the initial nodes installs the initial connections with an empty slot map,
