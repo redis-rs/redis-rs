@@ -369,6 +369,54 @@ mod cluster {
     }
 
     #[test]
+    fn test_cluster_pipeline_does_not_read_replies_from_a_new_connection() {
+        use redis::cluster_routing::{Route, SlotAddr};
+        use std::time::{Duration, Instant};
+
+        // Without a response timeout, reading from a new connection would block forever.
+        let cluster = TestClusterContext::new_with_cluster_client_builder(|builder| {
+            builder.response_timeout(Duration::from_secs(5))
+        });
+        cluster.wait_for_cluster_up();
+        let mut con = cluster.connection();
+
+        // Both keys are on the same node, so the pipeline reads two replies from its connection.
+        let keys = ["{a}1", "{a}2"];
+        for key in keys {
+            con.set::<_, _, ()>(key, key).unwrap();
+        }
+        let slot: u16 = cmd("CLUSTER")
+            .arg("KEYSLOT")
+            .arg(keys[0])
+            .query(&mut con)
+            .unwrap();
+        // The server closes the connection, so the pipeline's first read hits EOF.
+        con.route_command(
+            &cmd("QUIT"),
+            RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route::new(
+                slot,
+                SlotAddr::Master,
+            ))),
+        )
+        .unwrap();
+
+        let mut pipe = cluster_pipe();
+        for key in keys {
+            pipe.get(key);
+        }
+        let start = Instant::now();
+        let err = pipe.query::<Vec<String>>(&mut con).unwrap_err();
+        assert!(!err.is_timeout(), "{err}");
+        assert!(start.elapsed() < Duration::from_secs(5));
+
+        // The connection is reopened on next use.
+        for key in keys {
+            let value: String = con.get(key).unwrap();
+            assert_eq!(value, key);
+        }
+    }
+
+    #[test]
     #[ignore] // Flaky
     fn test_cluster_pipeline_ordering_with_improper_command() {
         let cluster = TestClusterContext::new();
