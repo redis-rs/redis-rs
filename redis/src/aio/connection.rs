@@ -11,6 +11,23 @@ use crate::pipeline::Pipeline;
 use crate::{FromRedisValue, RedisError, ToRedisArgs};
 use futures_util::future::select_ok;
 use std::future::Future;
+use std::iter::Peekable;
+use std::net::SocketAddr;
+
+async fn resolve_socket_addrs<'a>(
+    dns_resolver: &'a dyn AsyncDNSResolver,
+    host: &'a str,
+    port: u16,
+) -> RedisResult<Peekable<Box<dyn Iterator<Item = SocketAddr> + Send + 'a>>> {
+    let mut socket_addrs = dns_resolver.resolve(host, port).await?.peekable();
+    if socket_addrs.peek().is_none() {
+        fail!((
+            crate::errors::ErrorKind::InvalidClientConfig,
+            "No address found for host"
+        ));
+    }
+    Ok(socket_addrs)
+}
 
 pub(crate) async fn connect_simple<T: RedisRuntime>(
     connection_info: &ConnectionInfo,
@@ -18,7 +35,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
 ) -> RedisResult<T> {
     Ok(match connection_info.addr {
         ConnectionAddr::Tcp(ref host, port) => {
-            let socket_addrs = dns_resolver.resolve(host, port).await?;
+            let socket_addrs = resolve_socket_addrs(dns_resolver, host, port).await?;
             select_ok(
                 socket_addrs
                     .map(|addr| Box::pin(<T>::connect_tcp(addr, &connection_info.tcp_settings))),
@@ -34,7 +51,7 @@ pub(crate) async fn connect_simple<T: RedisRuntime>(
             insecure,
             ref tls_params,
         } => {
-            let socket_addrs = dns_resolver.resolve(host, port).await?;
+            let socket_addrs = resolve_socket_addrs(dns_resolver, host, port).await?;
             select_ok(socket_addrs.map(|socket_addr| {
                 Box::pin(<T>::connect_tcp_tls(
                     host,
@@ -192,5 +209,48 @@ mod tests {
         assert_send::<ConnectionManager>();
         #[cfg(feature = "cluster-async")]
         assert_send::<cluster_async::ClusterConnection>();
+    }
+
+    #[cfg(feature = "tokio-comp")]
+    mod empty_dns {
+        use crate::aio::tokio::Tokio;
+        use crate::io::AsyncDNSResolver;
+        use crate::{ErrorKind, IntoConnectionInfo, RedisFuture};
+        use std::net::SocketAddr;
+
+        struct EmptyDnsResolver;
+
+        impl AsyncDNSResolver for EmptyDnsResolver {
+            fn resolve<'a, 'b: 'a>(
+                &'a self,
+                _host: &'b str,
+                _port: u16,
+            ) -> RedisFuture<'a, Box<dyn Iterator<Item = SocketAddr> + Send + 'a>> {
+                Box::pin(async {
+                    Ok(Box::new(std::iter::empty()) as Box<dyn Iterator<Item = SocketAddr> + Send>)
+                })
+            }
+        }
+
+        #[tokio::test]
+        async fn test_connect_simple_empty_dns_returns_error() {
+            let conn_info = "redis://localhost:6379".into_connection_info().unwrap();
+            let err = super::super::connect_simple::<Tokio>(&conn_info, &EmptyDnsResolver)
+                .await
+                .err()
+                .unwrap();
+            assert_eq!(err.kind(), ErrorKind::InvalidClientConfig);
+        }
+
+        #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
+        #[tokio::test]
+        async fn test_connect_simple_tls_empty_dns_returns_error() {
+            let conn_info = "rediss://localhost:6379".into_connection_info().unwrap();
+            let err = super::super::connect_simple::<Tokio>(&conn_info, &EmptyDnsResolver)
+                .await
+                .err()
+                .unwrap();
+            assert_eq!(err.kind(), ErrorKind::InvalidClientConfig);
+        }
     }
 }
