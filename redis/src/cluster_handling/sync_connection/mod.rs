@@ -1043,11 +1043,27 @@ where
         let mut first_err = None;
 
         for nc in node_cmds {
+            // The replies can only come from the connection the commands were written to, so
+            // don't reconnect here: a new connection would never receive them.
+            let Some(conn) = connections.get_mut(&nc.addr) else {
+                first_err = first_err.or(Some(RedisError::from((
+                    ErrorKind::Io,
+                    "Connection to node was lost before reading its pipeline replies",
+                    nc.addr.to_string(),
+                ))));
+                continue;
+            };
             for cmd_idx in &nc.indexes {
-                match self
-                    .get_connection_by_addr(&mut connections, &nc.addr)?
-                    .recv_response()
-                {
+                if !conn.is_open() {
+                    // The remaining replies were lost with the connection.
+                    first_err = first_err.or(Some(RedisError::from((
+                        ErrorKind::Io,
+                        "Connection to node was closed while reading its pipeline replies",
+                        nc.addr.to_string(),
+                    ))));
+                    break;
+                }
+                match conn.recv_response() {
                     Ok(item) => results[*cmd_idx] = item,
                     Err(err) if err.is_cluster_error() => to_retry.push(*cmd_idx),
                     Err(err) => first_err = first_err.or(Some(err)),
