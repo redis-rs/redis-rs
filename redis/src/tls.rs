@@ -326,8 +326,8 @@ impl Clone for ClientTlsParams {
 /// platform keychain) and it is read for every new TLS connection, including
 /// the connections made by health checks and topology refreshes.
 ///
-/// A successful read is cached forever; a failed read is not cached, so the
-/// next caller retries the load. Under concurrent calls, one caller attempts to
+/// A successful, non-empty read is cached forever; a failed or empty read is
+/// not cached, so the next caller retries the load. Under concurrent calls, one caller attempts to
 /// parse the certs and all others wait for the result.
 #[cfg(feature = "tls-rustls-native-roots")]
 pub(crate) struct NativeCertBundle {
@@ -362,6 +362,11 @@ impl NativeCertBundle {
         let mut store = RootCertStore::empty();
         for cert in certificate_result.certs {
             store.add(cert)?;
+        }
+
+        if store.is_empty() {
+            // Not cached - the next caller retries the load.
+            return Ok(store);
         }
 
         Ok(guard.insert(store).clone())
