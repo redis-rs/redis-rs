@@ -84,6 +84,17 @@ mod basic {
         let _info: ConnectionInfo = "redis://127.0.0.1:1234/0".parse().unwrap();
     }
 
+    /// Assert the cert bundle invalidation function is part of the public API.
+    #[cfg(all(
+        feature = "tls-rustls",
+        not(feature = "tls-native-tls"),
+        not(feature = "tls-rustls-webpki-roots")
+    ))]
+    #[test]
+    fn test_invalidate_cert_bundle_is_pub() {
+        redis::invalidate_cert_bundle();
+    }
+
     #[test]
     fn test_args() {
         let ctx = TestContext::new();
