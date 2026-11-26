@@ -149,7 +149,11 @@ impl Runtime {
         }
     }
 
-    #[cfg(any(feature = "connection-manager", feature = "cluster-async"))]
+    #[cfg(any(
+        feature = "connection-manager",
+        feature = "cluster-async",
+        feature = "token-based-authentication"
+    ))]
     pub(crate) async fn sleep(&self, duration: Duration) {
         match self {
             #[cfg(feature = "tokio-comp")]
