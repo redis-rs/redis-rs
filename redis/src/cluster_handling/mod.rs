@@ -150,7 +150,7 @@ pub(crate) fn redirect_address(node: &str, origin: &NodeAddress) -> Option<NodeA
     let port = u16::from_str(port).ok()?;
     match host {
         "" => Some(NodeAddress::new(origin.host.clone(), port)),
-        host => Some(NodeAddress::new(host, port)),
+        _ => NodeAddress::try_from(node).ok(),
     }
 }
 
@@ -251,7 +251,13 @@ mod tests {
                 "dead::cafe:beef:6380",
                 Some(NodeAddress::new("dead::cafe:beef", 6380)),
             ),
+            (
+                "[fe80::cafe:beef%en1]:6380",
+                Some(NodeAddress::new("fe80::cafe:beef%en1", 6380)),
+            ),
+            ("[::1]:6380", Some(NodeAddress::new("::1", 6380))),
             (":6380", Some(NodeAddress::new("10.0.0.1", 6380))),
+            ("[]:6380", None),
             (":", None),
             ("10.0.0.2", None),
         ];
