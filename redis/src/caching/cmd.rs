@@ -52,6 +52,10 @@ impl CacheablePipeline<'_> {
 
 pub(crate) struct SingleCachedCommand<'a> {
     pub(crate) redis_key: &'a [u8],
+    /// The keys the command reads besides `redis_key` (`SINTER a b` reads `b` too), each with
+    /// the invalidation count of its shard. The reply is cached under `redis_key` and evicted
+    /// when any of these keys is invalidated. Empty for commands that read a single key.
+    pub(crate) dependent_keys: Vec<(&'a [u8], usize)>,
     pub(crate) cmd_key: &'a [u8],
     pub(crate) cmd_args: CmdArgs<'a>,
     pub(crate) cmd: CmdRef<'a>,
@@ -84,30 +88,63 @@ impl CacheableCommand<'_> {
         cache_manager: &CacheManager,
         mut replies: impl Iterator<Item = Value>,
     ) -> RedisResult<Value> {
-        if cache_manager.cache_config.mode == CacheMode::OptIn {
-            // Skipping response of CLIENT CACHING YES
-            let _ = get_next_reply(&mut replies)?;
-        }
+        let opt_in = cache_manager.cache_config.mode == CacheMode::OptIn;
         match self {
             CacheableCommand::Single(cached_command) => {
-                if let (Some(pttl), Some(reply)) = (replies.next(), replies.next()) {
+                let key_count = 1 + cached_command.dependent_keys.len();
+                // One `PTTL` reply per key the command reads, each preceded in opt-in mode by the
+                // reply of the `CLIENT CACHING YES` that makes the server track that key, then
+                // the command's reply.
+                let mut pttls = Vec::with_capacity(key_count);
+                for _ in 0..key_count {
+                    if opt_in {
+                        // Skipping response of CLIENT CACHING YES
+                        let _ = get_next_reply(&mut replies)?;
+                    }
+                    let Some(pttl) = replies.next() else { break };
+                    pttls.push(pttl);
+                }
+                if let (true, Some(reply)) = (pttls.len() == key_count, replies.next()) {
                     if !matches!(&reply, &Value::ServerError(_)) {
-                        cache_manager.insert(
-                            cached_command.redis_key,
-                            cached_command.cmd_key,
-                            cached_command.cmd_args,
-                            reply.clone(),
-                            cached_command.client_side_expire,
-                            &pttl,
-                            cached_command.invalidation_count,
-                        );
+                        if cached_command.dependent_keys.is_empty() {
+                            cache_manager.insert(
+                                cached_command.redis_key,
+                                cached_command.cmd_key,
+                                cached_command.cmd_args,
+                                reply.clone(),
+                                cached_command.client_side_expire,
+                                &pttls[0],
+                                cached_command.invalidation_count,
+                            );
+                        } else {
+                            let (keys, invalidation_counts): (Vec<&[u8]>, Vec<usize>) =
+                                std::iter::once((
+                                    cached_command.redis_key,
+                                    cached_command.invalidation_count,
+                                ))
+                                .chain(cached_command.dependent_keys.iter().copied())
+                                .unzip();
+                            cache_manager.insert_multi(
+                                &keys,
+                                cached_command.cmd_key,
+                                cached_command.cmd_args,
+                                reply.clone(),
+                                cached_command.client_side_expire,
+                                &pttls,
+                                &invalidation_counts,
+                            );
+                        }
                     }
 
                     Ok(reply)
                 } else {
                     Err(RedisError::from((
                         ErrorKind::UnexpectedReturnType,
-                        "Expected two Value from server",
+                        "Expected a PTTL Value for every key the command reads, followed by the command's own Value, from server",
+                        format!(
+                            "got {} of the {key_count} expected PTTL values",
+                            pttls.len()
+                        ),
                     )))
                 }
             }
@@ -118,6 +155,10 @@ impl CacheableCommand<'_> {
                 client_side_expire,
                 tail_args: _,
             } => {
+                if opt_in {
+                    // Skipping response of CLIENT CACHING YES
+                    let _ = get_next_reply(&mut replies)?;
+                }
                 if let Some(Value::Array(mget_values)) = replies.next() {
                     for ((key_value, pttl_value), (key_index, cached_command)) in
                         zip(zip(mget_values, replies), commands)
@@ -147,15 +188,28 @@ impl CacheableCommand<'_> {
     }
 
     pub(crate) fn pack_command(&self, cache_manager: &CacheManager, pipeline: &mut Pipeline) {
-        if cache_manager.cache_config.mode == CacheMode::OptIn {
-            let mut cmd = Cmd::new();
-            cmd.arg("CLIENT").arg("CACHING").arg("YES");
-            pipeline.add_command(cmd);
-        }
+        let add_opt_in = |pipeline: &mut Pipeline| {
+            if cache_manager.cache_config.mode == CacheMode::OptIn {
+                let mut cmd = Cmd::new();
+                cmd.arg("CLIENT").arg("CACHING").arg("YES");
+                pipeline.add_command(cmd);
+            }
+        };
 
         match self {
             CacheableCommand::Single(scc) => {
-                pipeline.add_command(Cmd::pttl(scc.redis_key));
+                // In opt-in mode the server only tracks the keys of the command that directly
+                // follows `CLIENT CACHING YES`, so every key gets one of its own, right before
+                // its `PTTL`. Tracking a key from before its TTL is read leaves no window in
+                // which another connection can expire or write it without an invalidation being
+                // sent, and a multi-key command needs one per key rather than one for the
+                // command, since a single `PTTL` doesn't read all of them.
+                let keys = std::iter::once(scc.redis_key)
+                    .chain(scc.dependent_keys.iter().map(|(key, _)| *key));
+                for key in keys {
+                    add_opt_in(pipeline);
+                    pipeline.add_command(Cmd::pttl(key));
+                }
                 pipeline.add_command_ref(scc.cmd);
             }
             CacheableCommand::Multiple {
@@ -173,6 +227,7 @@ impl CacheableCommand<'_> {
                 for tail_arg in tail_args {
                     cmd.arg(tail_arg);
                 }
+                add_opt_in(pipeline);
                 pipeline.add_command(cmd);
                 for command in commands {
                     pipeline.add_command(Cmd::pttl(command.1.redis_key));
