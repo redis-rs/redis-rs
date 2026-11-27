@@ -17,6 +17,7 @@ use crate::{TlsMode, cluster};
 use arcstr::ArcStr;
 use rand::RngExt;
 use std::collections::HashMap;
+use std::marker::PhantomData;
 #[cfg(feature = "cluster-async")]
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -35,12 +36,15 @@ enum OverallResponseTimeout {
 }
 
 use crate::connection::TlsConnParams;
+use crate::tls_state::BuiltIn;
+#[cfg(feature = "tls-rustls")]
+use crate::tls_state::Custom;
 
 #[cfg(feature = "cluster-async")]
 use crate::cluster_async;
 
 #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
-use crate::tls::{TlsCertificates, retrieve_tls_certificates};
+use crate::tls::{TlsCertificates, TlsSource};
 
 /// Parameters specific to builder, so that
 /// builder parameters may have different types
@@ -52,7 +56,7 @@ struct BuilderParams {
     read_routing_factory: Option<Arc<dyn ReadRoutingStrategyFactory>>,
     tls: Option<TlsMode>,
     #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
-    certs: Option<TlsCertificates>,
+    certs: Option<TlsSource>,
     #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
     danger_accept_invalid_hostnames: bool,
     retries_configuration: RetryParams,
@@ -319,27 +323,15 @@ impl ClusterParams {
 
         #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
         let tls_params = {
-            let retrieved_tls_params = value.certs.as_ref().map(retrieve_tls_certificates);
+            let retrieved_tls_params = value.certs.as_ref().map(TlsSource::conn_params);
 
             retrieved_tls_params.transpose()?
         };
 
         #[cfg(any(feature = "tls-rustls-insecure", feature = "tls-native-tls"))]
         let tls_params = if value.danger_accept_invalid_hostnames {
-            let mut tls_params = tls_params.unwrap_or(TlsConnParams {
-                #[cfg(feature = "tls-rustls")]
-                client_tls_params: None,
-                #[cfg(feature = "tls-rustls")]
-                root_cert_store: None,
-                #[cfg(any(
-                    all(feature = "tls-native-tls", not(feature = "tls-rustls")),
-                    all(feature = "tokio-native-tls-comp", not(feature = "tokio-rustls-comp")),
-                    all(feature = "smol-native-tls-comp", not(feature = "smol-rustls-comp"))
-                ))]
-                native_tls_params: None,
-                danger_accept_invalid_hostnames: false,
-            });
-            tls_params.danger_accept_invalid_hostnames = true;
+            let mut tls_params = tls_params.unwrap_or_else(TlsConnParams::without_certs);
+            tls_params.set_danger_accept_invalid_hostnames(true);
             Some(tls_params)
         } else {
             tls_params
@@ -409,16 +401,67 @@ impl ClusterParams {
 }
 
 /// Used to configure and build a [`ClusterClient`].
-pub struct ClusterClientBuilder {
+///
+/// The `Tls` parameter tracks how the connection is secured, see [`tls_state`](crate::tls_state).
+/// It defaults to [`BuiltIn`], where redis-rs builds the connector from the TLS mode,
+/// certificates and flags, so code that names `ClusterClientBuilder` is unaffected.
+/// `with_rustls_config` returns a builder in the
+/// `tls_state::Custom` state instead. There is no `tls_state::Unset` state for this builder,
+/// because the choice is made by the constructor and the options cannot be combined afterwards:
+/// `new` is always built in, and `with_rustls_config` is always custom.
+#[cfg_attr(
+    all(
+        feature = "tls-rustls",
+        any(feature = "tls-rustls-insecure", feature = "tls-native-tls")
+    ),
+    doc = r##"
+# Unavailable methods
+
+`tls`, `certs` and `danger_accept_invalid_hostnames` are not available on a builder created by
+`with_rustls_config`, so verification cannot be relaxed or
+replaced:
+
+```compile_fail,E0599
+# use std::sync::Arc;
+# use redis::cluster::ClusterClientBuilder;
+# fn example(config: Arc<rustls::ClientConfig>) {
+let _ = ClusterClientBuilder::with_rustls_config(["rediss://127.0.0.1:7000"], config)
+    .tls(redis::TlsMode::Insecure);
+# }
+```
+
+```compile_fail,E0599
+# use std::sync::Arc;
+# use redis::cluster::ClusterClientBuilder;
+# fn example(config: Arc<rustls::ClientConfig>) {
+let _ = ClusterClientBuilder::with_rustls_config(["rediss://127.0.0.1:7000"], config)
+    .certs(redis::TlsCertificates::new());
+# }
+```
+
+```compile_fail,E0599
+# use std::sync::Arc;
+# use redis::cluster::ClusterClientBuilder;
+# fn example(config: Arc<rustls::ClientConfig>) {
+let _ = ClusterClientBuilder::with_rustls_config(["rediss://127.0.0.1:7000"], config)
+    .danger_accept_invalid_hostnames(true);
+# }
+```
+"##
+)]
+pub struct ClusterClientBuilder<Tls = BuiltIn> {
     initial_nodes: RedisResult<Vec<ConnectionInfo>>,
     builder_params: BuilderParams,
+    // A function pointer, so that the marker does not affect `Send`, `Sync` or `Unpin`.
+    _tls: PhantomData<fn() -> Tls>,
 }
 
-impl std::fmt::Debug for ClusterClientBuilder {
+impl<Tls> std::fmt::Debug for ClusterClientBuilder<Tls> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
             initial_nodes,
             builder_params,
+            _tls,
         } = self;
 
         f.debug_struct("ClusterClientBuilder")
@@ -439,9 +482,55 @@ impl ClusterClientBuilder {
                 .map(|x| x.into_connection_info())
                 .collect(),
             builder_params: Default::default(),
+            _tls: PhantomData,
         }
     }
+}
 
+#[cfg(feature = "tls-rustls")]
+impl ClusterClientBuilder<Custom> {
+    /// Creates a new `ClusterClientBuilder` with the provided initial_nodes that connects with a
+    /// caller-built [`rustls::ClientConfig`].
+    ///
+    /// The configuration is used as it is, so the caller controls the crypto provider, the
+    /// [`ServerCertVerifier`], the client certificate resolver (for example
+    /// [`ResolvesClientCert`]), ALPN and so on. The caller's verifier alone decides what is
+    /// trusted.
+    ///
+    /// Like [`certs`](ClusterClientBuilder::certs), this forces a TLS secured connection: initial
+    /// nodes with `#insecure`, and plain `redis://` initial nodes, are upgraded to TLS with
+    /// verification rather than rejected. Skipping verification cannot be requested on the
+    /// returned builder, see [`ClusterClientBuilder`]. Use a custom certificate verifier to relax
+    /// verification instead.
+    ///
+    /// The configuration has to be built with the same rustls version as the one this crate
+    /// depends on (currently 0.23), which redis-rs does not re-export.
+    ///
+    /// When a connection is made with a `native-tls` runtime, which is possible when both TLS
+    /// backends are compiled in, connecting fails rather than falling back to the system trust
+    /// store.
+    ///
+    /// [`ServerCertVerifier`]: rustls::client::danger::ServerCertVerifier
+    /// [`ResolvesClientCert`]: rustls::client::ResolvesClientCert
+    pub fn with_rustls_config<T: IntoConnectionInfo>(
+        initial_nodes: impl IntoIterator<Item = T>,
+        config: Arc<rustls::ClientConfig>,
+    ) -> Self {
+        let mut builder = Self {
+            initial_nodes: initial_nodes
+                .into_iter()
+                .map(|x| x.into_connection_info())
+                .collect(),
+            builder_params: Default::default(),
+            _tls: PhantomData,
+        };
+        builder.builder_params.tls = Some(TlsMode::Secure);
+        builder.builder_params.certs = Some(TlsSource::Rustls(config));
+        builder
+    }
+}
+
+impl<Tls> ClusterClientBuilder<Tls> {
     /// Creates a new [`ClusterClient`] from the parameters.
     ///
     /// This does not create connections to the Redis Cluster, but only performs some basic checks
@@ -587,7 +676,9 @@ impl ClusterClientBuilder {
         self.builder_params.retries_configuration.exponent_base = exponent_base;
         self
     }
+}
 
+impl ClusterClientBuilder {
     /// Sets TLS mode for the new ClusterClient.
     ///
     /// It is extracted from the first node of initial_nodes if not set.
@@ -632,16 +723,22 @@ impl ClusterClientBuilder {
     ///
     /// If `ClientTlsConfig` ( cert+key pair ) is not provided, then client-side authentication is not enabled.
     /// If `root_cert` is not provided, then system root certificates are used instead.
+    ///
+    /// This forces [`TlsMode::Secure`] unless a TLS mode was set explicitly, so initial nodes with
+    /// `#insecure`, and plain `redis://` initial nodes, are upgraded to a secure TLS connection
+    /// rather than rejected.
     #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
     pub fn certs(mut self, certificates: TlsCertificates) -> Self {
         if self.builder_params.tls.is_none() {
             self.builder_params.tls = Some(TlsMode::Secure);
         }
 
-        self.builder_params.certs = Some(certificates);
+        self.builder_params.certs = Some(TlsSource::Certificates(certificates));
         self
     }
+}
 
+impl<Tls> ClusterClientBuilder<Tls> {
     /// Enables reading from replicas for all new connections (default is disabled).
     ///
     /// Read queries will go to a random replica node and write queries will go to the

@@ -49,6 +49,45 @@ redis = { version = "2", features = ["smol-rustls-comp", "tls-rustls-webpki-root
 
 Choose `tls-rustls-native-roots` to keep the previous behavior, or `tls-rustls-webpki-roots` for a root bundle that behaves identically across all targets. Both stores may be enabled together if you want to trust the union of the platform's certificates and Mozilla's root bundle. `tls-rustls-insecure` keeps working without a store.
 
+### `SentinelClientBuilder` tracks how each side is secured
+`SentinelClientBuilder` now has two type parameters, for the connection to the Redis nodes and for the connection to the sentinels. They are the markers of the new `tls_state` module: `Unset` (no TLS option chosen yet), `BuiltIn` (redis-rs builds the connector from the TLS mode and certificates) and, with the `tls-rustls` feature, `Custom` (a complete `Arc<rustls::ClientConfig>`, set with the new `set_client_to_{redis,sentinel}_rustls_config`). The parameters make it impossible to combine TLS options that exclude each other: the rustls configuration of a side cannot be combined with its TLS mode or certificates, in either order, or be set twice. The rustls setters also set the TLS mode of their side to `Secure`.
+
+`SentinelClientBuilder::new` returns `SentinelClientBuilder<Unset, Unset>`, and the TLS mode and certificates setters return a builder in the `BuiltIn` state for their side. **This changes the type of the builder, so it is a breaking change for code that names the type, with or without the `tls-rustls` feature.** Code that builds in one chain is unaffected, and so is code that names the type right after `new`, because the parameters default to `Unset`. These forms no longer compile once a TLS mode or certificates setter was called:
+
+* a function parameter or return type, `fn tls(b: SentinelClientBuilder) -> SentinelClientBuilder`;
+* a struct field or a collection element holding such a builder;
+* `Option<SentinelClientBuilder>`, and `Box<dyn Fn(SentinelClientBuilder) -> SentinelClientBuilder>` or any other closure or trait object type;
+* an `impl` of your own trait for `SentinelClientBuilder` whose methods are called after a TLS setter;
+* a conditional reassignment, `if let Some(mode) = mode { builder = builder.set_client_to_redis_tls_mode(mode); }`, which changes the type of `builder` in one branch only. The same goes for the certificates setters.
+
+**Migration:** name the state, for example `SentinelClientBuilder<tls_state::BuiltIn, tls_state::Unset>` after the Redis side TLS mode was set, or write code that is generic over the parameters, `SentinelClientBuilder<R, S>`. For optional TLS settings, `use_built_in_redis_tls` and `use_built_in_sentinel_tls` choose the built-in handling without changing a setting, so that the builder has the same type whether or not the setters are called afterwards. That avoids one branch per combination of settings:
+
+```rust
+use redis::sentinel::{SentinelClientBuilder, SentinelServerType};
+
+// Before:
+let mut builder = SentinelClientBuilder::new(sentinels, "master", SentinelServerType::Master)?;
+if let Some(tls_mode) = redis_tls_mode {
+    builder = builder.set_client_to_redis_tls_mode(tls_mode);
+}
+if let Some(tls_mode) = sentinel_tls_mode {
+    builder = builder.set_client_to_sentinel_tls_mode(tls_mode);
+}
+let client = builder.build()?;
+
+// After:
+let mut builder = SentinelClientBuilder::new(sentinels, "master", SentinelServerType::Master)?
+    .use_built_in_redis_tls()
+    .use_built_in_sentinel_tls();
+if let Some(tls_mode) = redis_tls_mode {
+    builder = builder.set_client_to_redis_tls_mode(tls_mode);
+}
+if let Some(tls_mode) = sentinel_tls_mode {
+    builder = builder.set_client_to_sentinel_tls_mode(tls_mode);
+}
+let client = builder.build()?;
+```
+
 ### Async Commands now return impl Future
 Methods on `AsyncCommands`, `AsyncTypedCommands`, and `AsyncHotkeysCommands` now returns `impl Future<Output = RedisResult<...>>`.
 Along with this change, explicit lifetime parameters are removed and are now implicit.

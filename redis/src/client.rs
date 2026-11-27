@@ -15,6 +15,8 @@ use crate::{
 #[cfg(feature = "aio")]
 use std::pin::Pin;
 
+#[cfg(feature = "tls-rustls")]
+use crate::tls::inner_build_with_rustls_config;
 #[cfg(any(feature = "tls-rustls", feature = "tls-native-tls"))]
 use crate::tls::{TlsCertificates, inner_build_with_tls};
 
@@ -163,6 +165,58 @@ impl Client {
         let connection_info = conn_info.into_connection_info()?;
 
         inner_build_with_tls(connection_info, &tls_certs)
+    }
+
+    /// Constructs a new `Client` that connects with a caller-built [`rustls::ClientConfig`].
+    ///
+    /// The configuration is used as it is, so the caller controls the crypto provider, the
+    /// [`ServerCertVerifier`], the client certificate resolver (for example
+    /// [`ResolvesClientCert`]), ALPN and so on. This is useful, for example, to connect to
+    /// servers whose certificates the default webpki-based verifier rejects. Nothing is added to
+    /// the configuration, so unlike [`Client::build_with_tls`] there are no certificates to
+    /// supply and the caller's verifier alone decides what is trusted.
+    ///
+    /// - `conn_info` - URL using the `rediss://` scheme.
+    /// - `config` - the rustls configuration.
+    ///
+    /// The configuration has to be built with the same rustls version as the one this crate
+    /// depends on (currently 0.23), which redis-rs does not re-export.
+    ///
+    /// # Errors
+    ///
+    /// * A URL that is not `rediss://` is rejected as it is by [`Client::build_with_tls`].
+    /// * A `rediss://` URL with `#insecure` returns [`ErrorKind::InvalidClientConfig`], because
+    ///   skipping verification would replace the verifier of the supplied configuration.
+    ///   Use a custom certificate verifier instead.
+    ///
+    /// When a connection is made with a `native-tls` runtime, which is possible when both TLS
+    /// backends are compiled in, connecting fails rather than falling back to the system trust
+    /// store.
+    ///
+    /// `ConnectionAddr::set_danger_accept_invalid_hostnames` has no effect on a client built
+    /// this way, because the verifier of the configuration decides about hostnames.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::sync::Arc;
+    ///
+    /// fn connect(config: Arc<rustls::ClientConfig>) -> redis::RedisResult<redis::Client> {
+    ///     redis::Client::build_with_rustls_config("rediss://example.com", config)
+    /// }
+    /// ```
+    ///
+    /// [`ServerCertVerifier`]: rustls::client::danger::ServerCertVerifier
+    /// [`ResolvesClientCert`]: rustls::client::ResolvesClientCert
+    /// [`ErrorKind::InvalidClientConfig`]: crate::ErrorKind::InvalidClientConfig
+    #[cfg(feature = "tls-rustls")]
+    pub fn build_with_rustls_config<C: IntoConnectionInfo>(
+        conn_info: C,
+        config: std::sync::Arc<rustls::ClientConfig>,
+    ) -> RedisResult<Self> {
+        let connection_info = conn_info.into_connection_info()?;
+
+        inner_build_with_rustls_config(connection_info, config)
     }
 }
 

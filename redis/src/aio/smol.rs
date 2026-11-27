@@ -190,7 +190,7 @@ impl RedisRuntime for Smol {
         let tls_connector = TlsConnector::from(create_native_tls_connector_builder(
             insecure,
             tls_params.clone(),
-        ));
+        )?);
         Ok(tls_connector
             .connect(hostname, tcp_stream)
             .await
@@ -208,7 +208,7 @@ impl RedisRuntime for Smol {
         let tcp_stream = connect_tcp(&socket_addr, tcp_settings).await?;
 
         let config = create_rustls_config(insecure, tls_params.clone())?;
-        let tls_connector = TlsConnector::from(Arc::new(config));
+        let tls_connector = TlsConnector::from(config);
 
         Ok(tls_connector
             .connect(
