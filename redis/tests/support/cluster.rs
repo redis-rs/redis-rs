@@ -11,6 +11,7 @@ use redis::ConnectionInfo;
 use redis::ErrorKind;
 use redis::ProtocolVersion;
 use redis::RedisResult;
+use redis::Value;
 #[cfg(feature = "cluster-async")]
 use redis::aio::ConnectionLike;
 #[cfg(feature = "cluster-async")]
@@ -235,6 +236,74 @@ impl TestClusterContext {
                 }
             })
             .collect()
+    }
+
+    /// Returns connections to the primary that owns `key`'s slot and to another primary, and the
+    /// slot.
+    fn key_slot_owner_and_other_primary(&self, key: &str) -> (Connection, Connection, u16) {
+        let mut primaries: Vec<Connection> = self
+            .cluster
+            .iter_servers()
+            .map(|server| self.build_single_client_connection(server).unwrap())
+            .filter_map(|mut con| {
+                let role: Vec<Value> = redis::cmd("ROLE").query(&mut con).unwrap();
+                (role.first() == Some(&Value::BulkString(b"master".to_vec()))).then_some(con)
+            })
+            .collect();
+        let owner = primaries
+            .iter_mut()
+            .position(|con| redis::cmd("EXISTS").arg(key).query::<i64>(con).is_ok())
+            .unwrap();
+        let mut owner = primaries.swap_remove(owner);
+        let other = primaries.pop().unwrap();
+        let slot: u16 = redis::cmd("CLUSTER")
+            .arg("KEYSLOT")
+            .arg(key)
+            .query(&mut owner)
+            .unwrap();
+        (owner, other, slot)
+    }
+
+    fn node_id(con: &mut Connection) -> String {
+        redis::cmd("CLUSTER").arg("MYID").query(con).unwrap()
+    }
+
+    /// Moves `key`'s (empty) slot to another primary, without the client noticing.
+    /// Requests for the slot sent to the old owner are answered with `MOVED`.
+    pub fn move_key_slot(&self, key: &str) {
+        let (mut old_owner, mut new_owner, slot) = self.key_slot_owner_and_other_primary(key);
+        let new_owner_id = Self::node_id(&mut new_owner);
+        for con in [&mut new_owner, &mut old_owner] {
+            redis::cmd("CLUSTER")
+                .arg("SETSLOT")
+                .arg(slot)
+                .arg("NODE")
+                .arg(&new_owner_id)
+                .exec(con)
+                .unwrap();
+        }
+    }
+
+    /// Starts migrating `key`'s (empty) slot to another primary. Requests for missing keys in the
+    /// slot sent to the owner are answered with `ASK`.
+    pub fn start_key_slot_migration(&self, key: &str) {
+        let (mut owner, mut target, slot) = self.key_slot_owner_and_other_primary(key);
+        let owner_id = Self::node_id(&mut owner);
+        let target_id = Self::node_id(&mut target);
+        redis::cmd("CLUSTER")
+            .arg("SETSLOT")
+            .arg(slot)
+            .arg("IMPORTING")
+            .arg(&owner_id)
+            .exec(&mut target)
+            .unwrap();
+        redis::cmd("CLUSTER")
+            .arg("SETSLOT")
+            .arg(slot)
+            .arg("MIGRATING")
+            .arg(&target_id)
+            .exec(&mut owner)
+            .unwrap();
     }
 }
 

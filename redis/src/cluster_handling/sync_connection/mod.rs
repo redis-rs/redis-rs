@@ -79,6 +79,7 @@ use super::{
     slot_map::SlotMap,
 };
 use crate::IntoConnectionInfo;
+use crate::ServerError;
 pub use crate::TlsMode; // Pub for backwards compatibility
 use crate::cluster_handling::{get_connection_info, redirect_address, slot_cmd};
 use crate::cluster_routing::{
@@ -928,9 +929,18 @@ where
                     }
                     retries += 1;
 
-                    match err.retry_method() {
+                    // A transaction aborted on queuing ran nothing, so it's handled like a single
+                    // command that got the error its commands were rejected with. The original
+                    // error is still the one returned to the user.
+                    let actionable_in_transaction = err.actionable_error_in_aborted_transaction();
+                    let retry_method = actionable_in_transaction
+                        .map_or_else(|| err.retry_method(), ServerError::retry_method);
+                    let redirect_node = actionable_in_transaction
+                        .map_or_else(|| err.redirect_node(), ServerError::redirect_node);
+
+                    match retry_method {
                         RetryMethod::AskRedirect => {
-                            redirected = err.redirect_node().and_then(|(node, _slot)| {
+                            redirected = redirect_node.and_then(|(node, _slot)| {
                                 redirect_address(node, &addr).map(Redirect::Ask)
                             });
                         }
@@ -938,7 +948,7 @@ where
                             // Refresh slots.
                             self.refresh_slots()?;
                             // Request again.
-                            redirected = err.redirect_node().and_then(|(node, _slot)| {
+                            redirected = redirect_node.and_then(|(node, _slot)| {
                                 redirect_address(node, &addr).map(Redirect::Moved)
                             });
                         }

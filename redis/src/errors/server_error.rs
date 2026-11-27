@@ -122,15 +122,38 @@ impl ServerError {
         }
     }
 
-    #[cfg(feature = "cluster-async")]
-    pub(crate) fn requires_action(&self) -> bool {
-        !matches!(
-            self.kind()
-                .map(|kind| kind.retry_method())
-                .unwrap_or(RetryMethod::NoRetry),
-            RetryMethod::NoRetry
-        )
+    /// Specifies what method (if any) should be used to retry the request that got this error.
+    #[cfg(feature = "cluster")]
+    pub(crate) fn retry_method(&self) -> RetryMethod {
+        self.kind()
+            .map(ServerErrorKind::retry_method)
+            .unwrap_or(RetryMethod::NoRetry)
     }
+
+    #[cfg(feature = "cluster")]
+    pub(crate) fn requires_action(&self) -> bool {
+        !matches!(self.retry_method(), RetryMethod::NoRetry)
+    }
+
+    /// Returns the node an `ASK` or `MOVED` error redirects to, as `(addr, slot_id)`.
+    #[cfg(feature = "cluster")]
+    pub(crate) fn redirect_node(&self) -> Option<(&str, u16)> {
+        if !matches!(
+            self.kind(),
+            Some(ServerErrorKind::Ask | ServerErrorKind::Moved)
+        ) {
+            return None;
+        }
+        parse_redirect_node(self.details()?)
+    }
+}
+
+/// Parses the `<slot_id> <addr>` detail of an `ASK` or `MOVED` error into `(addr, slot_id)`.
+pub(crate) fn parse_redirect_node(detail: &str) -> Option<(&str, u16)> {
+    let mut iter = detail.split_ascii_whitespace();
+    let slot_id: u16 = iter.next()?.parse().ok()?;
+    let addr = iter.next()?;
+    Some((addr, slot_id))
 }
 
 impl fmt::Display for ServerError {
