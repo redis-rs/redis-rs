@@ -92,46 +92,62 @@ impl<C> From<SingleNodeRoutingInfo> for InternalSingleNodeRouting<C> {
     }
 }
 
-pub(super) fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Option<Route>> {
-    fn route_for_command(cmd: &impl Routable) -> Option<Route> {
+enum PipelineRoute {
+    AnyNode,
+    // A keyless write has no slot to pin, but a replica rejects it with READONLY.
+    AnyPrimary,
+    Slot(Route),
+}
+
+impl PipelineRoute {
+    fn for_command(cmd: &impl Routable) -> Self {
         match RoutingInfo::for_routable(cmd) {
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(route))) => {
-                Some(route)
+                Self::Slot(route)
             }
-            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::RandomPrimary)) => {
-                Some(Route::new_random_primary())
-            }
+            Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::RandomPrimary)) => Self::AnyPrimary,
             Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
             | Some(RoutingInfo::MultiNode(_))
             | Some(RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress { .. }))
-            | None => None,
+            | None => Self::AnyNode,
         }
     }
 
-    // Find first specific slot and send to it. There's no need to check If later commands
-    // should be routed to a different slot, since the server will return an error indicating this.
-    pipeline
-        .cmd_iter()
-        .map(|cmd| route_for_command(&cmd))
-        .try_fold(None, |chosen_route, next_cmd_route| {
-            match (chosen_route, next_cmd_route) {
-                (None, _) => Ok(next_cmd_route),
-                (_, None) => Ok(chosen_route),
-                (Some(chosen_route), Some(next_cmd_route)) => {
-                    if chosen_route.slot() != next_cmd_route.slot() {
-                        Err((
-                            ServerErrorKind::CrossSlot.into(),
-                            "Received crossed slots in pipeline",
-                        )
-                            .into())
-                    } else if chosen_route.slot_addr() != SlotAddr::Master {
-                        Ok(Some(next_cmd_route))
-                    } else {
-                        Ok(Some(chosen_route))
-                    }
+    fn merge(self, next: Self) -> RedisResult<Self> {
+        Ok(match (self, next) {
+            (Self::AnyNode, other) | (other, Self::AnyNode) => other,
+            (Self::AnyPrimary, Self::AnyPrimary) => Self::AnyPrimary,
+            (Self::AnyPrimary, Self::Slot(route)) | (Self::Slot(route), Self::AnyPrimary) => {
+                Self::Slot(Route::new(route.slot(), SlotAddr::Master))
+            }
+            (Self::Slot(chosen), Self::Slot(next)) => {
+                if chosen.slot() != next.slot() {
+                    return Err((
+                        ServerErrorKind::CrossSlot.into(),
+                        "Received crossed slots in pipeline",
+                    )
+                        .into());
                 }
+                Self::Slot(if chosen.slot_addr() != SlotAddr::Master {
+                    next
+                } else {
+                    chosen
+                })
             }
         })
+    }
+}
+
+pub(super) fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Option<Route>> {
+    let route = pipeline
+        .cmd_iter()
+        .map(|cmd| PipelineRoute::for_command(&cmd))
+        .try_fold(PipelineRoute::AnyNode, PipelineRoute::merge)?;
+    Ok(match route {
+        PipelineRoute::AnyNode => None,
+        PipelineRoute::AnyPrimary => Some(Route::new_random_primary()),
+        PipelineRoute::Slot(route) => Some(route),
+    })
 }
 
 #[cfg(test)]
@@ -207,6 +223,45 @@ mod pipeline_routing_tests {
             route_for_pipeline(&pipeline).unwrap_err().kind(),
             crate::ServerErrorKind::CrossSlot.into()
         );
+    }
+
+    #[test]
+    fn test_random_primary_command_takes_keyed_slot_on_primary() {
+        let mut pipeline = crate::Pipeline::new();
+
+        pipeline
+            .cmd("FT.CREATE") // route to a random primary
+            .arg("idx")
+            .arg("SCHEMA")
+            .arg("title")
+            .arg("TEXT")
+            .get("foo"); // route to replica of slot 12182
+
+        assert_eq!(
+            route_for_pipeline(&pipeline),
+            Ok(Some(Route::with_slot(
+                Slot::new(12182).unwrap(),
+                SlotAddr::Master
+            )))
+        );
+    }
+
+    #[test]
+    fn test_random_primary_commands_without_keys_go_to_a_primary() {
+        let mut pipeline = crate::Pipeline::new();
+
+        pipeline
+            .cmd("FT.CREATE") // route to a random primary
+            .arg("idx")
+            .arg("SCHEMA")
+            .arg("title")
+            .arg("TEXT")
+            .cmd("FT.ALIASADD") // route to a random primary
+            .arg("alias")
+            .arg("idx");
+
+        let route = route_for_pipeline(&pipeline).unwrap().unwrap();
+        assert_eq!(route.slot_addr(), SlotAddr::Master);
     }
 
     #[test]

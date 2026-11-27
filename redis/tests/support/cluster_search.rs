@@ -1,6 +1,7 @@
 //! Helpers for exercising the Search module against a cluster.
 use super::{TestClusterContext, TestContextVersioning, VALKEY_SEARCH_ANY};
 use redis::Value;
+use redis::cluster_read_routing::RandomReplicaStrategy;
 use redis_test::cluster::RedisClusterConfiguration;
 use redis_test::server::Module;
 
@@ -19,6 +20,29 @@ pub fn setup_cluster_with_search_module() -> TestClusterContext {
     );
     ctx.wait_for_cluster_up();
     ctx
+}
+
+/// Build a 3-primary cluster with 1 replica each and the search module loaded on every node.
+/// The client reads from replicas and doesn't retry, so a write that reaches a replica fails.
+///
+/// Check the server version before calling [`wait_for_search_ready`],
+/// because it expects RediSearch or valkey-search to be loaded.
+pub fn setup_cluster_with_replicas_and_search_module() -> TestClusterContext {
+    let ctx = TestClusterContext::new_with_config_and_builder(
+        RedisClusterConfiguration::single_replica_config().modules(vec![Module::Search]),
+        |builder| {
+            builder
+                .read_routing_strategy(RandomReplicaStrategy::new())
+                .retries(0)
+        },
+    );
+    ctx.wait_for_cluster_up();
+    ctx
+}
+
+/// Wait until the Search module on every primary can reach its peers.
+pub fn wait_for_search_ready(ctx: &TestClusterContext) {
+    PrimaryConnections::from_cluster(ctx);
 }
 
 /// Maintains one direct connection per primary, allowing each node to be polled
@@ -193,7 +217,11 @@ impl PrimaryConnections {
         const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
         const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
 
-        let expected_peers = self.connections.len();
+        let primary_addrs: Vec<String> = self
+            .connections
+            .iter()
+            .map(|(addr, _)| addr.to_string())
+            .collect();
         let deadline = std::time::Instant::now() + TIMEOUT;
         loop {
             let mut pending: Option<(redis::ConnectionAddr, ShardConnectionStates)> = None;
@@ -202,7 +230,10 @@ impl PrimaryConnections {
                     .arg("SHARD_CONNECTION_STATES")
                     .query(connection)
                     .unwrap();
-                let ready = states.len() == expected_peers
+                // Match by address, because some RediSearch versions also list replicas in the pool.
+                let ready = primary_addrs
+                    .iter()
+                    .all(|addr| states.iter().any(|(peer, _)| peer == addr))
                     && states.iter().all(|(_, conns)| {
                         !conns.is_empty() && conns.iter().all(|s| s == "Connected")
                     });

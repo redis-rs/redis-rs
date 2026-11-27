@@ -1168,4 +1168,81 @@ mod cluster {
             primaries.assert_index_propagated(name);
         });
     }
+
+    #[test]
+    fn test_module_search_ft_create_in_sync_cluster_pipeline() {
+        let ctx = setup_cluster_with_search_module();
+        skip_if_context_does_not_support!(ctx, &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..]);
+        let mut primaries = PrimaryConnections::from_cluster(&ctx);
+
+        redis::cluster::cluster_pipe()
+            .cmd("FT.CREATE")
+            .arg("pipeline_index")
+            .arg("ON")
+            .arg("HASH")
+            .arg("SCHEMA")
+            .arg("title")
+            .arg("TEXT")
+            .exec(&mut ctx.connection())
+            .unwrap();
+
+        primaries.assert_index_propagated("pipeline_index");
+    }
+
+    // Half the nodes are replicas, so the chance of a false negative is (1/2)^10, about 0.1%.
+    const SINGLE_WRITES: usize = 10;
+
+    fn ft_create(index_name: &str) -> redis::Cmd {
+        let mut cmd = redis::cmd("FT.CREATE");
+        cmd.arg(index_name)
+            .arg("ON")
+            .arg("HASH")
+            .arg("SCHEMA")
+            .arg("title")
+            .arg("TEXT");
+        cmd
+    }
+
+    #[test]
+    fn test_module_search_writes_skip_replicas_in_sync_cluster() {
+        let ctx = setup_cluster_with_replicas_and_search_module();
+        skip_if_context_does_not_support!(ctx, &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..]);
+        wait_for_search_ready(&ctx);
+        let mut con = ctx.connection();
+
+        for i in 0..SINGLE_WRITES {
+            ft_create(&format!("index_{i}")).exec(&mut con).unwrap();
+        }
+
+        redis::cluster::cluster_pipe()
+            .add_command(ft_create("pipeline_index"))
+            .get("key")
+            .exec(&mut con)
+            .unwrap();
+    }
+
+    #[cfg(feature = "cluster-async")]
+    #[test_macros::async_test]
+    async fn test_module_search_writes_skip_replicas_in_async_cluster() {
+        let ctx = setup_cluster_with_replicas_and_search_module();
+        skip_if_context_does_not_support!(ctx, &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..]);
+        wait_for_search_ready(&ctx);
+        let mut con = ctx.async_connection().await;
+
+        for i in 0..SINGLE_WRITES {
+            ft_create(&format!("index_{i}"))
+                .exec_async(&mut con)
+                .await
+                .unwrap();
+        }
+
+        // This `GET` reads from a replica, but `FT.CREATE` in the same pipeline must still reach a
+        // primary.
+        redis::pipe()
+            .add_command(ft_create("pipeline_index"))
+            .get("key")
+            .exec_async(&mut con)
+            .await
+            .unwrap();
+    }
 }
