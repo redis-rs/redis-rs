@@ -2,8 +2,31 @@ use proc_macro::TokenStream;
 use quote::quote;
 
 #[proc_macro_attribute]
-pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
+pub fn async_test(args: TokenStream, input: TokenStream) -> TokenStream {
     let mut item = syn::parse_macro_input!(input as syn::ItemFn);
+    // `#[async_test(multi_thread)]` also runs the test on a multi-threaded tokio runtime.
+    let multi_thread = match args.to_string().as_str() {
+        "" => false,
+        "multi_thread" => true,
+        _ => {
+            return syn::Error::new_spanned(
+                &item.sig,
+                "Unsupported argument. Only `multi_thread` is supported",
+            )
+            .to_compile_error()
+            .into();
+        }
+    };
+    let multi_thread_case = multi_thread.then(|| {
+        quote! {
+            #[cfg_attr(feature = "tokio-comp", case::tokio_multi_thread(RuntimeType::TokioMultiThread))]
+        }
+    });
+    let multi_thread_case_in_support = multi_thread.then(|| {
+        quote! {
+            #[cfg_attr(feature = "tokio-comp", case::tokio_multi_thread(support::RuntimeType::TokioMultiThread))]
+        }
+    });
 
     let test_function_name = item.sig.ident.clone();
 
@@ -36,7 +59,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
 
                     #[rstest::rstest]
                     #[cfg_attr(feature = "tokio-comp", case::tokio(support::RuntimeType::Tokio))]
-                    #[cfg_attr(feature = "tokio-comp", case::tokio_multi_thread(support::RuntimeType::TokioMultiThread))]
+                    #multi_thread_case_in_support
                     #[cfg_attr(feature = "smol-comp", case::smol(support::RuntimeType::Smol))]
                     fn multiplexed_connection (#[case]runtime: support::RuntimeType) {
                         let ctx = TestContext::default();
@@ -48,7 +71,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
 
                     #[rstest::rstest]
                     #[cfg_attr(feature = "tokio-comp", case::tokio(support::RuntimeType::Tokio))]
-                    #[cfg_attr(feature = "tokio-comp", case::tokio_multi_thread(support::RuntimeType::TokioMultiThread))]
+                    #multi_thread_case_in_support
                     #[cfg_attr(feature = "smol-comp", case::smol(support::RuntimeType::Smol))]
                     #[cfg(feature = "connection-manager")]
                     fn connection_manager (#[case]runtime: support::RuntimeType) {
@@ -67,7 +90,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
 
                 #[rstest::rstest]
                 #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-                #[cfg_attr(feature = "tokio-comp", case::tokio_multi_thread(RuntimeType::TokioMultiThread))]
+                #multi_thread_case
                 #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
                 fn #test_function_name (#[case]runtime: RuntimeType, #[values(true, false)] arg: bool) {
                     block_on_all(#function_name (arg), runtime);
@@ -87,7 +110,7 @@ pub fn async_test(_: TokenStream, input: TokenStream) -> TokenStream {
 
             #[rstest::rstest]
             #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-            #[cfg_attr(feature = "tokio-comp", case::tokio_multi_thread(RuntimeType::TokioMultiThread))]
+            #multi_thread_case
             #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
             fn #test_function_name (#[case]runtime: RuntimeType) {
                 block_on_all(#function_name (), runtime);

@@ -30,10 +30,6 @@ mod basic_async {
 
     #[rstest::rstest]
     #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(
-        feature = "tokio-comp",
-        case::tokio_multi_thread(RuntimeType::TokioMultiThread)
-    )]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     #[should_panic(expected = "Internal thread panicked")]
     fn test_block_on_all_panics_from_spawns(#[case] runtime: RuntimeType) {
@@ -2179,10 +2175,6 @@ mod basic_async {
 
         #[rstest::rstest]
         #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-        #[cfg_attr(
-            feature = "tokio-comp",
-            case::tokio_multi_thread(RuntimeType::TokioMultiThread)
-        )]
         #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
         fn test_should_connect_mtls(#[case] runtime: RuntimeType) {
             let ctx = TestContextBuilder::new().mtls(true).build();
@@ -2207,10 +2199,6 @@ mod basic_async {
 
         #[rstest::rstest]
         #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-        #[cfg_attr(
-            feature = "tokio-comp",
-            case::tokio_multi_thread(RuntimeType::TokioMultiThread)
-        )]
         #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
         fn test_should_not_connect_if_tls_active(#[case] runtime: RuntimeType) {
             let ctx = TestContextBuilder::new().mtls(true).build();

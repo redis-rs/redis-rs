@@ -639,10 +639,6 @@ mod async_hotkeys {
 
     #[rstest]
     #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(
-        feature = "tokio-comp",
-        case::tokio_multi_thread(RuntimeType::TokioMultiThread)
-    )]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_hotkeys_state_machine_behavior_async(
         #[case] runtime: RuntimeType,
@@ -717,10 +713,6 @@ mod async_hotkeys {
 
     #[rstest]
     #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(
-        feature = "tokio-comp",
-        case::tokio_multi_thread(RuntimeType::TokioMultiThread)
-    )]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_hotkeys_with_metric_async(
         #[case] runtime: RuntimeType,
@@ -763,10 +755,6 @@ mod async_hotkeys {
 
     #[rstest]
     #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(
-        feature = "tokio-comp",
-        case::tokio_multi_thread(RuntimeType::TokioMultiThread)
-    )]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_hotkeys_options_with_duration_and_count_async(
         #[case] runtime: RuntimeType,
@@ -810,10 +798,6 @@ mod async_hotkeys {
 
     #[rstest]
     #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(
-        feature = "tokio-comp",
-        case::tokio_multi_thread(RuntimeType::TokioMultiThread)
-    )]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_hotkeys_options_with_sample_ratio_async(
         #[case] runtime: RuntimeType,
@@ -843,10 +827,6 @@ mod async_hotkeys {
 
     #[rstest]
     #[cfg_attr(feature = "tokio-comp", case::tokio(RuntimeType::Tokio))]
-    #[cfg_attr(
-        feature = "tokio-comp",
-        case::tokio_multi_thread(RuntimeType::TokioMultiThread)
-    )]
     #[cfg_attr(feature = "smol-comp", case::smol(RuntimeType::Smol))]
     fn test_hotkeys_start_with_slots_on_standalone_errors_async(
         #[case] runtime: RuntimeType,

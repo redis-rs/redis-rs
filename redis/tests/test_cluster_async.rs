@@ -44,6 +44,7 @@ mod cluster_async {
     };
     use std::assert_matches;
 
+    use rstest::rstest;
     use test_macros::async_test;
     use tokio::{join, sync::mpsc::UnboundedReceiver};
 
@@ -574,7 +575,7 @@ mod cluster_async {
         smoke_test_connection(connection).await;
     }
 
-    #[async_test]
+    #[async_test(multi_thread)]
     async fn test_async_cluster_basic_failover() {
         test_failover(
                 &TestClusterContext::new_with_config(
@@ -1439,7 +1440,7 @@ mod cluster_async {
                 handler: _handler,
                 runtime,
                 ..
-            } = MockEnv::with_client_builder_on(
+            } = MockEnv::with_client_builder(
                 ClusterClient::builder(vec![&*format!("redis://{name}")]),
                 name,
                 {
@@ -1471,8 +1472,6 @@ mod cluster_async {
                         }
                     }
                 },
-                // Time can only be paused on a current-thread runtime.
-                current_thread_runtime(),
             );
 
             add_mock_delay(name, {
@@ -1932,9 +1931,20 @@ mod cluster_async {
     // A reconnect to the initial nodes installs the initial connections with an empty slot map,
     // releases the connection lock, and takes it again to refresh the slots. The requests polled
     // while it runs must not route against that empty slot map.
-    #[test]
-    fn test_async_cluster_requests_wait_for_the_reconnect_to_initial_nodes() {
-        let name = "test_async_cluster_requests_wait_for_the_reconnect_to_initial_nodes";
+    #[rstest]
+    // The cases run in parallel, so each needs its own mock.
+    #[case::current_thread(
+        current_thread_runtime(),
+        "test_async_cluster_requests_wait_for_the_reconnect_to_initial_nodes_current_thread"
+    )]
+    #[case::multi_thread(
+        multi_thread_runtime(),
+        "test_async_cluster_requests_wait_for_the_reconnect_to_initial_nodes_multi_thread"
+    )]
+    fn test_async_cluster_requests_wait_for_the_reconnect_to_initial_nodes(
+        #[case] runtime: tokio::runtime::Runtime,
+        #[case] name: &'static str,
+    ) {
         // Set once 6380 reports that it lost the slot: the next CLUSTER SLOTS reply moves every
         // slot to nodes that can't be reached, which leaves the client without connections, and
         // makes the next request reconnect to the initial nodes.
@@ -1946,9 +1956,8 @@ mod cluster_async {
         let topology_lost_clone = topology_lost.clone();
         let misrouted_clone = misrouted.clone();
         let MockEnv {
-            async_connection: connection,
+            client,
             handler: _handler,
-            runtime,
             ..
         } = MockEnv::with_client_builder(
             ClusterClient::builder(vec![&*format!("redis://{name}")])
@@ -2004,6 +2013,9 @@ mod cluster_async {
                 }
             },
         );
+        let connection = runtime
+            .block_on(client.get_async_generic_connection::<MockConnection>())
+            .unwrap();
 
         let results = runtime.block_on(async move {
             let requests = (0..1000).map(|i| {
@@ -3008,7 +3020,7 @@ mod cluster_async {
         assert_eq!(result, redis_value!(simple:"PONG"));
     }
 
-    #[async_test]
+    #[async_test(multi_thread)]
     async fn test_async_cluster_reconnect_after_complete_server_disconnect_route_to_many() {
         let cluster = TestClusterContext::new_insecure_with_cluster_client_builder(|builder| {
             builder.retries(3)
@@ -3658,7 +3670,7 @@ mod cluster_async {
             );
         }
 
-        #[async_test]
+        #[async_test(multi_thread)]
         async fn test_pub_sub_reconnect_after_disconnect() {
             if !use_protocol().supports_resp3() {
                 return;
