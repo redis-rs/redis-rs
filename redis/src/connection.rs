@@ -1497,18 +1497,13 @@ fn check_resp2_auth(result: &Value) -> RedisResult<AuthResult> {
         }
     };
 
-    let err_msg = err.details().ok_or((
-        ErrorKind::AuthenticationFailed,
-        "Password authentication failed",
-    ))?;
-    if !err_msg.contains("wrong number of arguments for 'auth' command") {
-        return Err((
-            ErrorKind::AuthenticationFailed,
-            "Password authentication failed",
-        )
-            .into());
+    if err
+        .details()
+        .is_some_and(|msg| msg.contains("wrong number of arguments for 'auth' command"))
+    {
+        return Ok(AuthResult::ShouldRetryWithoutUsername);
     }
-    Ok(AuthResult::ShouldRetryWithoutUsername)
+    Err(RedisError::authentication_failed(err.clone()))
 }
 
 fn check_db_select(value: &Value) -> RedisResult<()> {
@@ -2593,6 +2588,37 @@ mod tests {
 
     use super::*;
     use util::assert_lib_name_in_connection_setup_pipeline;
+
+    #[test]
+    fn test_resp2_auth_failure_keeps_the_server_reply() {
+        for (reply, code, detail) in [
+            (
+                "-WRONGPASS invalid username-password pair or user is disabled.\r\n",
+                "WRONGPASS",
+                Some("invalid username-password pair or user is disabled."),
+            ),
+            (
+                "-ERR (ERR_IAM_EXHAUSTED) Memorystore IAM authentication backend quota exceeded.\r\n",
+                "ERR",
+                Some("(ERR_IAM_EXHAUSTED) Memorystore IAM authentication backend quota exceeded."),
+            ),
+            ("-WRONGPASS\r\n", "WRONGPASS", None),
+        ] {
+            let value = crate::parse_redis_value(reply.as_bytes()).unwrap();
+            let err = check_resp2_auth(&value).err().unwrap();
+            assert_eq!(err.kind(), ErrorKind::AuthenticationFailed);
+            assert_eq!(err.code(), Some(code));
+            assert_eq!(err.detail(), detail);
+        }
+    }
+
+    #[test]
+    fn test_resp2_auth_retries_without_username_on_servers_before_acl() {
+        let value =
+            crate::parse_redis_value(b"-ERR wrong number of arguments for 'auth' command\r\n")
+                .unwrap();
+        assert!(check_resp2_auth(&value).unwrap() == AuthResult::ShouldRetryWithoutUsername);
+    }
 
     #[test]
     fn test_parse_redis_url() {

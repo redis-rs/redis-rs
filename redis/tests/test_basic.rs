@@ -148,6 +148,39 @@ mod basic {
     }
 
     #[test]
+    fn test_refused_resp2_auth_reports_the_server_reply() {
+        let ctx = TestContext::new();
+        let mut con = ctx.connection();
+
+        let mut set_user_cmd = redis::Cmd::new();
+        set_user_cmd
+            .arg("ACL")
+            .arg("SETUSER")
+            .arg("foo")
+            .arg("on")
+            .arg(">bar");
+        assert_eq!(con.req_command(&set_user_cmd), Ok(Value::Okay));
+
+        let redis = redis_settings()
+            .set_protocol(ProtocolVersion::RESP2)
+            .set_username("foo")
+            .set_password("wrong");
+        let err = redis::Client::open(ctx.server.connection_info().set_redis_settings(redis))
+            .unwrap()
+            .get_connection()
+            .err()
+            .unwrap();
+
+        assert_eq!(err.kind(), ErrorKind::AuthenticationFailed, "{err}");
+        assert_eq!(err.code(), Some("WRONGPASS"), "{err}");
+        assert_eq!(
+            err.detail(),
+            Some("invalid username-password pair or user is disabled."),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn test_getset() {
         let ctx = TestContext::new();
         let mut con = ctx.connection();

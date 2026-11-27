@@ -265,7 +265,7 @@ impl RedisError {
             ErrorRepr::General(_, _, detail) => detail.as_ref().map(|detail| detail.as_str()),
             ErrorRepr::Parsing(err) => Some(&err.description),
             ErrorRepr::Server(err) => err.details(),
-            _ => None,
+            _ => self.as_server_error().and_then(ServerError::details),
         }
     }
 
@@ -275,8 +275,25 @@ impl RedisError {
             ErrorKind::Server(kind) => Some(kind.code()),
             _ => match &self.repr {
                 ErrorRepr::Server(err) => Some(err.code()),
-                _ => None,
+                _ => self.as_server_error().map(ServerError::code),
             },
+        }
+    }
+
+    /// A refused `AUTH`, keeping the server's reply as the source.
+    pub(crate) fn authentication_failed(err: ServerError) -> Self {
+        Self {
+            repr: ErrorRepr::Internal {
+                kind: ErrorKind::AuthenticationFailed,
+                err: Arc::new(err),
+            },
+        }
+    }
+
+    fn as_server_error(&self) -> Option<&ServerError> {
+        match &self.repr {
+            ErrorRepr::Internal { err, .. } => err.downcast_ref(),
+            _ => None,
         }
     }
 
@@ -589,7 +606,69 @@ impl TryFrom<RedisError> for ServerError {
 
 #[cfg(test)]
 mod tests {
-    use crate::parse_redis_value;
+    use super::*;
+    use crate::{Value, parse_redis_value};
+
+    fn authentication_failure(reply: &[u8]) -> RedisError {
+        let Value::ServerError(err) = parse_redis_value(reply).unwrap() else {
+            unreachable!("not an error reply");
+        };
+        RedisError::authentication_failed(err)
+    }
+
+    #[test]
+    fn test_authentication_failed_keeps_the_server_error() {
+        let err = authentication_failure(
+            b"-WRONGPASS invalid username-password pair or user is disabled.\r\n",
+        );
+
+        assert_eq!(err.kind(), ErrorKind::AuthenticationFailed);
+        assert!(matches!(err.retry_method(), RetryMethod::Reconnect));
+        assert_eq!(err.code(), Some("WRONGPASS"));
+        assert_eq!(
+            err.detail(),
+            Some("invalid username-password pair or user is disabled.")
+        );
+        assert_eq!(
+            err.to_string(),
+            "\"WRONGPASS\": invalid username-password pair or user is disabled."
+        );
+    }
+
+    #[test]
+    fn test_authentication_failed_with_a_known_server_error_kind() {
+        let err = authentication_failure(
+            b"-ERR (ERR_IAM_EXHAUSTED) Memorystore IAM authentication backend quota exceeded.\r\n",
+        );
+
+        assert_eq!(err.kind(), ErrorKind::AuthenticationFailed);
+        assert_eq!(err.code(), Some("ERR"));
+        assert_eq!(
+            err.detail(),
+            Some("(ERR_IAM_EXHAUSTED) Memorystore IAM authentication backend quota exceeded.")
+        );
+        assert_eq!(
+            err.to_string(),
+            "ResponseError: (ERR_IAM_EXHAUSTED) Memorystore IAM authentication backend quota exceeded."
+        );
+    }
+
+    #[test]
+    fn test_authentication_failed_without_detail() {
+        let err = authentication_failure(b"-WRONGPASS\r\n");
+
+        assert_eq!(err.code(), Some("WRONGPASS"));
+        assert_eq!(err.detail(), None);
+        assert_eq!(err.to_string(), "\"WRONGPASS\"");
+    }
+
+    #[test]
+    fn test_other_internal_errors_have_no_code_or_detail() {
+        let err = RedisError::from(io::Error::other("boom"));
+
+        assert_eq!(err.code(), None);
+        assert_eq!(err.detail(), None);
+    }
 
     #[cfg(feature = "cluster")]
     mod actionable_error_in_aborted_transaction {
