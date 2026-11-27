@@ -608,3 +608,9 @@ Cluster routing has been updated for commands that fan out or use a non-default 
 * `XINFO HELP` is now treated as read-only, so it may be served by a replica when reading from replicas is enabled.
 
 **Migration:** Cluster clients that relied on these commands targeting a single node should expect requests to be sent to multiple nodes and, for `WAITAOF`, the aggregated reply shape described above. If you'd like to maintain the old behavior, you must use `route_command` with explicit routing behavior.
+
+### `RedisError::source()` returns the wrapped error itself
+
+For errors that wrap another error (I/O, TLS, JSON, and a refused RESP2 `AUTH`), `source()` used to return the `Arc` holding that error, so downcasting it to the real type failed (see [this issue](https://github.com/redis-rs/redis-rs/issues/2625)). It now returns the wrapped error, so `err.source().and_then(|s| s.downcast_ref::<std::io::Error>())` works. Display and the rest of the source chain are unchanged.
+
+**Migration:** If you downcast `source()` to `Arc<dyn std::error::Error + Send + Sync>`, downcast to the wrapped type instead.
