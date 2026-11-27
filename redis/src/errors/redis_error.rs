@@ -414,10 +414,7 @@ impl RedisError {
         ) {
             return None;
         }
-        let mut iter = self.detail()?.split_ascii_whitespace();
-        let slot_id: u16 = iter.next()?.parse().ok()?;
-        let addr = iter.next()?;
-        Some((addr, slot_id))
+        super::server_error::parse_redirect_node(self.detail()?)
     }
 
     /// Specifies what method (if any) should be used to retry this request.
@@ -487,6 +484,21 @@ impl RedisError {
         Self {
             repr: ErrorRepr::TransactionAborted(Arc::from(errs)),
         }
+    }
+
+    /// If this is an aborted transaction, returns the first error of its queued commands that a
+    /// cluster client should act on (e.g. `MOVED`, `ASK`, `TRYAGAIN`).
+    ///
+    /// Redis runs nothing from a transaction that was aborted on queuing, so a cluster client can
+    /// handle the transaction the way it handles that error on a single command, and resend it.
+    #[cfg(feature = "cluster")]
+    pub(crate) fn actionable_error_in_aborted_transaction(&self) -> Option<&ServerError> {
+        let ErrorRepr::TransactionAborted(errs) = &self.repr else {
+            return None;
+        };
+        errs.iter()
+            .map(|(_, err)| err)
+            .find(|err| err.requires_action())
     }
 
     pub(crate) fn make_empty_command() -> Self {
@@ -578,6 +590,132 @@ impl TryFrom<RedisError> for ServerError {
 #[cfg(test)]
 mod tests {
     use crate::parse_redis_value;
+
+    #[cfg(feature = "cluster")]
+    mod actionable_error_in_aborted_transaction {
+        use super::super::*;
+        use crate::{Value, parse_redis_value};
+
+        fn server_error(reply: &[u8]) -> ServerError {
+            let Value::ServerError(err) = parse_redis_value(reply).unwrap() else {
+                unreachable!("not an error reply");
+            };
+            err
+        }
+
+        fn aborted_transaction(replies: &[&[u8]]) -> RedisError {
+            RedisError::make_aborted_transaction(
+                replies
+                    .iter()
+                    .enumerate()
+                    .map(|(index, reply)| (index, server_error(reply)))
+                    .collect(),
+            )
+        }
+
+        #[test]
+        fn returns_moved_error() {
+            let err =
+                aborted_transaction(&[b"-MOVED 123 foo:6380\r\n", b"-MOVED 123 foo:6380\r\n"]);
+
+            let actionable = err.actionable_error_in_aborted_transaction().unwrap();
+
+            assert_eq!(actionable.kind(), Some(ServerErrorKind::Moved));
+            assert!(matches!(
+                actionable.retry_method(),
+                RetryMethod::MovedRedirect
+            ));
+            assert_eq!(actionable.redirect_node(), Some(("foo:6380", 123)));
+        }
+
+        #[test]
+        fn returns_ask_error() {
+            let err = aborted_transaction(&[b"-ASK 123 foo:6380\r\n"]);
+
+            let actionable = err.actionable_error_in_aborted_transaction().unwrap();
+
+            assert_eq!(actionable.kind(), Some(ServerErrorKind::Ask));
+            assert!(matches!(
+                actionable.retry_method(),
+                RetryMethod::AskRedirect
+            ));
+            assert_eq!(actionable.redirect_node(), Some(("foo:6380", 123)));
+        }
+
+        #[test]
+        fn returns_other_retryable_errors() {
+            let err = aborted_transaction(&[
+                b"-TRYAGAIN Multiple keys request during rehashing of slot\r\n",
+            ]);
+
+            let actionable = err.actionable_error_in_aborted_transaction().unwrap();
+
+            assert_eq!(actionable.kind(), Some(ServerErrorKind::TryAgain));
+            assert!(matches!(
+                actionable.retry_method(),
+                RetryMethod::WaitAndRetry
+            ));
+        }
+
+        #[test]
+        fn skips_errors_that_do_not_require_action() {
+            let err = aborted_transaction(&[
+                b"-ERR wrong number of arguments\r\n",
+                b"-MOVED 123 foo:6380\r\n",
+            ]);
+
+            let actionable = err.actionable_error_in_aborted_transaction().unwrap();
+
+            assert_eq!(actionable.redirect_node(), Some(("foo:6380", 123)));
+        }
+
+        #[test]
+        fn returns_the_first_error_that_requires_action() {
+            let err = aborted_transaction(&[b"-ASK 123 foo:6380\r\n", b"-MOVED 456 bar:6380\r\n"]);
+
+            let actionable = err.actionable_error_in_aborted_transaction().unwrap();
+
+            assert_eq!(actionable.kind(), Some(ServerErrorKind::Ask));
+            assert_eq!(actionable.redirect_node(), Some(("foo:6380", 123)));
+        }
+
+        #[test]
+        fn returns_none_when_no_error_requires_action() {
+            let err = aborted_transaction(&[
+                b"-ERR wrong number of arguments\r\n",
+                b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+            ]);
+
+            assert!(err.actionable_error_in_aborted_transaction().is_none());
+        }
+
+        #[test]
+        fn returns_none_for_errors_that_are_not_aborted_transactions() {
+            let moved = server_error(b"-MOVED 123 foo:6380\r\n");
+
+            assert!(
+                RedisError::from(moved.clone())
+                    .actionable_error_in_aborted_transaction()
+                    .is_none()
+            );
+            assert!(
+                RedisError::pipeline(vec![(0, moved)])
+                    .actionable_error_in_aborted_transaction()
+                    .is_none()
+            );
+        }
+
+        #[test]
+        fn leaves_the_aborted_transaction_error_unchanged() {
+            let err = aborted_transaction(&[b"-MOVED 123 foo:6380\r\n"]);
+
+            err.actionable_error_in_aborted_transaction().unwrap();
+
+            assert_eq!(err.kind(), ErrorKind::Server(ServerErrorKind::ExecAbort));
+            assert!(matches!(err.retry_method(), RetryMethod::NoRetry));
+            assert_eq!(err.redirect_node(), None);
+        }
+    }
 
     #[test]
     fn test_redirect_node() {

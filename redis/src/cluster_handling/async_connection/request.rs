@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use crate::errors::RetryMethod;
+use crate::errors::{RetryMethod, ServerError};
 use crate::{
     Cmd, RedisResult, cluster_async::OperationTarget, cluster_handling::NodeAddress,
     cluster_handling::client::RetryParams, cluster_handling::redirect_address,
@@ -217,7 +217,15 @@ pub(crate) fn choose_response<C>(
 
     let sleep_duration = retry_params.wait_time_for_retry(request.retry);
 
-    match (target, err.retry_method()) {
+    // A transaction aborted on queuing ran nothing, so it's handled like a single command that got
+    // the error its commands were rejected with. The original error is still the one returned to the user.
+    let actionable_in_transaction = err.actionable_error_in_aborted_transaction();
+    let retry_method =
+        actionable_in_transaction.map_or_else(|| err.retry_method(), ServerError::retry_method);
+    let redirect_node =
+        actionable_in_transaction.map_or_else(|| err.redirect_node(), ServerError::redirect_node);
+
+    match (target, retry_method) {
         (_, RetryMethod::ReconnectFromInitialConnections) => {
             let retry = retry_or_send!(|mut request: PendingRequest<C>| {
                 request.cmd.reset_routing();
@@ -253,7 +261,7 @@ pub(crate) fn choose_response<C>(
         (OperationTarget::Node { address }, RetryMethod::AskRedirect) => {
             let retry = retry_or_send!(|mut request: PendingRequest<C>| {
                 request.cmd.set_redirect(
-                    err.redirect_node().and_then(|(node, _slot)| {
+                    redirect_node.and_then(|(node, _slot)| {
                         redirect_address(node, &address).map(Redirect::Ask)
                     }),
                 );
@@ -266,7 +274,7 @@ pub(crate) fn choose_response<C>(
             let retry = retry_or_send!(|mut request: PendingRequest<C>| {
                 request
                     .cmd
-                    .set_redirect(err.redirect_node().and_then(|(node, _slot)| {
+                    .set_redirect(redirect_node.and_then(|(node, _slot)| {
                         redirect_address(node, &address).map(Redirect::Moved)
                     }));
                 Retry::Immediately { request }
@@ -345,7 +353,7 @@ mod tests {
     use tokio::sync::oneshot;
 
     use crate::{
-        RedisError, RedisResult,
+        RedisError, RedisResult, Value,
         cluster_async::{PollFlushAction, routing},
         cluster_handling::NodeAddress,
         cluster_handling::client::RetryParams,
@@ -485,6 +493,111 @@ mod tests {
         assert_eq!(receiver.try_recv(), Ok(Err(to_err(err_string))));
         assert!(retry.is_none());
         assert_eq!(next, PollFlushAction::RebuildSlots);
+    }
+
+    fn aborted_transaction(replies: &[String]) -> RedisError {
+        RedisError::make_aborted_transaction(
+            replies
+                .iter()
+                .enumerate()
+                .map(|(index, reply)| {
+                    let Value::ServerError(err) = parse_redis_value(reply.as_bytes()).unwrap()
+                    else {
+                        unreachable!("not an error reply");
+                    };
+                    (index, err)
+                })
+                .collect(),
+        )
+    }
+
+    fn assert_is_aborted_transaction(
+        received: Result<RedisResult<Response>, oneshot::error::TryRecvError>,
+        replies: &[String],
+    ) {
+        let err = received.unwrap().unwrap_err();
+        assert_eq!(
+            err.kind(),
+            crate::ErrorKind::Server(crate::ServerErrorKind::ExecAbort)
+        );
+        let errs = err.into_server_errors().unwrap();
+        let expected = aborted_transaction(replies).into_server_errors().unwrap();
+        assert_eq!(errs, expected);
+    }
+
+    #[test]
+    fn should_retry_and_refresh_slots_on_aborted_transaction_with_move_error() {
+        let replies = [
+            format!("-MOVED 123 {ADDRESS}\r\n"),
+            format!("-MOVED 123 {ADDRESS}\r\n"),
+        ];
+        let retry_params = RetryParams::default();
+
+        let (request, mut receiver) = request_and_receiver(0);
+        let result = (
+            OperationTarget::Node { address: ADDRESS },
+            Err(aborted_transaction(&replies)),
+        );
+        let (retry, next) = choose_response(result, request, &retry_params);
+
+        if let Some(super::Retry::Immediately { request, .. }) = retry {
+            assert_eq!(get_redirect(&request), Some(Redirect::Moved(ADDRESS)));
+        } else {
+            panic!("Expected retry");
+        }
+        assert_eq!(next, PollFlushAction::RebuildSlots);
+        assert_matches!(receiver.try_recv(), Err(_));
+
+        // Once retries are exhausted, the original aborted transaction error is surfaced.
+        let (request, mut receiver) = request_and_receiver(retry_params.number_of_retries);
+        let result = (
+            OperationTarget::Node { address: ADDRESS },
+            Err(aborted_transaction(&replies)),
+        );
+        let (retry, next) = choose_response(result, request, &retry_params);
+
+        assert_is_aborted_transaction(receiver.try_recv(), &replies);
+        assert!(retry.is_none());
+        assert_eq!(next, PollFlushAction::RebuildSlots);
+    }
+
+    #[test]
+    fn should_redirect_and_retry_on_aborted_transaction_with_ask_error() {
+        let replies = [
+            "-ERR wrong number of arguments\r\n".to_string(),
+            format!("-ASK 123 {ADDRESS}\r\n"),
+        ];
+        let retry_params = RetryParams::default();
+
+        let (request, mut receiver) = request_and_receiver(0);
+        let result = (
+            OperationTarget::Node { address: ADDRESS },
+            Err(aborted_transaction(&replies)),
+        );
+        let (retry, next) = choose_response(result, request, &retry_params);
+
+        if let Some(super::Retry::Immediately { request, .. }) = retry {
+            assert_eq!(get_redirect(&request), Some(Redirect::Ask(ADDRESS)));
+        } else {
+            panic!("Expected retry");
+        }
+        assert_eq!(next, PollFlushAction::None);
+        assert_matches!(receiver.try_recv(), Err(_));
+    }
+
+    #[test]
+    fn should_not_retry_aborted_transaction_without_actionable_error() {
+        let replies = ["-ERR wrong number of arguments\r\n".to_string()];
+        let (request, mut receiver) = request_and_receiver(0);
+        let result = (
+            OperationTarget::Node { address: ADDRESS },
+            Err(aborted_transaction(&replies)),
+        );
+        let (retry, next) = choose_response(result, request, &RetryParams::default());
+
+        assert_is_aborted_transaction(receiver.try_recv(), &replies);
+        assert!(retry.is_none());
+        assert_eq!(next, PollFlushAction::None);
     }
 
     #[test]
