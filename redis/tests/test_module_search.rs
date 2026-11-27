@@ -1142,7 +1142,7 @@ mod cluster {
     fn test_module_search_writes_skip_replicas_in_sync_cluster() {
         let ctx = setup_cluster_with_replicas_and_search_module();
         skip_if_context_does_not_support!(ctx, &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..]);
-        let _primaries = PrimaryConnections::from_cluster(&ctx);
+        wait_for_search_ready(&ctx);
         let mut con = ctx.connection();
 
         for i in 0..SINGLE_WRITES {
@@ -1161,7 +1161,7 @@ mod cluster {
     async fn test_module_search_writes_skip_replicas_in_async_cluster() {
         let ctx = setup_cluster_with_replicas_and_search_module();
         skip_if_context_does_not_support!(ctx, &[REDIS_SEARCH_8_0, VALKEY_SEARCH_ANY][..]);
-        let _primaries = PrimaryConnections::from_cluster(&ctx);
+        wait_for_search_ready(&ctx);
         let mut con = ctx.async_connection().await;
 
         for i in 0..SINGLE_WRITES {

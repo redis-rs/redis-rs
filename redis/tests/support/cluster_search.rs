@@ -25,7 +25,7 @@ pub fn setup_cluster_with_search_module() -> TestClusterContext {
 /// Build a 3-primary cluster with 1 replica each and the search module loaded on every node.
 /// The client reads from replicas and doesn't retry, so a write that reaches a replica fails.
 ///
-/// Check the server version before calling [`PrimaryConnections::from_cluster`],
+/// Check the server version before calling [`wait_for_search_ready`],
 /// because it expects RediSearch or valkey-search to be loaded.
 pub fn setup_cluster_with_replicas_and_search_module() -> TestClusterContext {
     let ctx = TestClusterContext::new_with_config_and_builder(
@@ -38,6 +38,11 @@ pub fn setup_cluster_with_replicas_and_search_module() -> TestClusterContext {
     );
     ctx.wait_for_cluster_up();
     ctx
+}
+
+/// Wait until the Search module on every primary can reach its peers.
+pub fn wait_for_search_ready(ctx: &TestClusterContext) {
+    PrimaryConnections::from_cluster(ctx);
 }
 
 /// Maintains one direct connection per primary, allowing each node to be polled
