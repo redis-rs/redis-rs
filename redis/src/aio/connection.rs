@@ -11,6 +11,7 @@ use crate::pipeline::Pipeline;
 use crate::{FromRedisValue, RedisError, ToRedisArgs};
 use futures_util::future::select_ok;
 use std::future::Future;
+use std::io;
 use std::iter::Peekable;
 use std::net::SocketAddr;
 
@@ -21,10 +22,10 @@ async fn resolve_socket_addrs<'a>(
 ) -> RedisResult<Peekable<Box<dyn Iterator<Item = SocketAddr> + Send + 'a>>> {
     let mut socket_addrs = dns_resolver.resolve(host, port).await?.peekable();
     if socket_addrs.peek().is_none() {
-        fail!((
-            crate::errors::ErrorKind::InvalidClientConfig,
-            "No address found for host"
-        ));
+        return Err(RedisError::from(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("No address found for host {host}"),
+        )));
     }
     Ok(socket_addrs)
 }
@@ -239,7 +240,12 @@ mod tests {
                 .await
                 .err()
                 .unwrap();
-            assert_eq!(err.kind(), ErrorKind::InvalidClientConfig);
+            assert_eq!(err.kind(), ErrorKind::Io);
+            assert_eq!(
+                err.as_io_error().map(|e| e.kind()),
+                Some(std::io::ErrorKind::InvalidInput)
+            );
+            assert!(err.to_string().contains("localhost"));
         }
 
         #[cfg(any(feature = "tls-native-tls", feature = "tls-rustls"))]
@@ -250,7 +256,12 @@ mod tests {
                 .await
                 .err()
                 .unwrap();
-            assert_eq!(err.kind(), ErrorKind::InvalidClientConfig);
+            assert_eq!(err.kind(), ErrorKind::Io);
+            assert_eq!(
+                err.as_io_error().map(|e| e.kind()),
+                Some(std::io::ErrorKind::InvalidInput)
+            );
+            assert!(err.to_string().contains("localhost"));
         }
     }
 }
