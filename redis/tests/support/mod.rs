@@ -31,8 +31,14 @@ use std::{
 };
 
 pub fn current_thread_runtime() -> tokio::runtime::Runtime {
-    let mut builder = tokio::runtime::Builder::new_current_thread();
+    build_runtime(tokio::runtime::Builder::new_current_thread())
+}
 
+pub fn multi_thread_runtime() -> tokio::runtime::Runtime {
+    build_runtime(tokio::runtime::Builder::new_multi_thread())
+}
+
+fn build_runtime(mut builder: tokio::runtime::Builder) -> tokio::runtime::Runtime {
     #[cfg(feature = "tokio-comp")]
     builder.enable_io();
 
@@ -47,6 +53,8 @@ pub fn current_thread_runtime() -> tokio::runtime::Runtime {
 pub enum RuntimeType {
     #[cfg(feature = "tokio-comp")]
     Tokio,
+    #[cfg(feature = "tokio-comp")]
+    TokioMultiThread,
     #[cfg(feature = "smol-comp")]
     Smol,
 }
@@ -87,7 +95,9 @@ where
 
     let res = match runtime {
         #[cfg(feature = "tokio-comp")]
-        RuntimeType::Tokio => block_on_all_using_tokio(f),
+        RuntimeType::Tokio => block_on_all_using_tokio(f, current_thread_runtime()),
+        #[cfg(feature = "tokio-comp")]
+        RuntimeType::TokioMultiThread => block_on_all_using_tokio(f, multi_thread_runtime()),
         #[cfg(feature = "smol-comp")]
         RuntimeType::Smol => block_on_all_using_smol(f),
     };
@@ -101,13 +111,13 @@ where
 }
 
 #[cfg(feature = "tokio-comp")]
-fn block_on_all_using_tokio<F>(f: F) -> F::Output
+fn block_on_all_using_tokio<F>(f: F, runtime: tokio::runtime::Runtime) -> F::Output
 where
     F: Future,
 {
     #[cfg(feature = "smol-comp")]
     redis::aio::prefer_tokio().unwrap();
-    current_thread_runtime().block_on(f)
+    runtime.block_on(f)
 }
 
 #[cfg(feature = "smol-comp")]
