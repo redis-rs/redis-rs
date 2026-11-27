@@ -562,8 +562,8 @@ where
         response_policy: Option<ResponsePolicy>,
     ) -> OperationResult {
         let (receivers, requests): (Vec<_>, Vec<_>) = {
-            let read_guard = self.conn_lock.lock().unwrap();
-            if read_guard.0.is_empty() {
+            let guard = self.conn_lock.lock().unwrap();
+            if guard.0.is_empty() {
                 return (
                     OperationTarget::FanOut,
                     Result::Err(
@@ -576,7 +576,7 @@ where
                 );
             }
             let to_request = |(addr, cmd): (&NodeAddress, Arc<Cmd>)| {
-                read_guard
+                guard
                     .0
                     .get(addr)
                     // For a fan-out, we do not want to silently return a partial response
@@ -604,7 +604,7 @@ where
                         )
                     })
             };
-            let slot_map = &read_guard.1;
+            let slot_map = &guard.1;
 
             // TODO - these filter_map calls mean that we ignore nodes that are missing. Should we report an error in such cases?
             // since some of the operators drop other requests, mapping to errors here might mean that no request is sent.
@@ -863,8 +863,8 @@ where
     ) -> RedisResult<(NodeAddress, C)> {
         let route = match route {
             InternalSingleNodeRouting::Random => {
-                let read_guard = self.conn_lock.lock().unwrap();
-                return match get_random_connection(&read_guard.0) {
+                let guard = self.conn_lock.lock().unwrap();
+                return match get_random_connection(&guard.0) {
                     Some((addr, conn)) => Ok((addr, conn)),
                     None => {
                         Err((ErrorKind::ClusterConnectionNotFound, "No connections found").into())
@@ -880,8 +880,8 @@ where
                 return self.get_redirected_connection(redirect).await;
             }
             InternalSingleNodeRouting::ByAddress(address) => {
-                let read_guard = self.conn_lock.lock().unwrap();
-                return match read_guard.0.get(&address).and_then(ConnState::connected) {
+                let guard = self.conn_lock.lock().unwrap();
+                return match guard.0.get(&address).and_then(ConnState::connected) {
                     Some(conn) => Ok((address, conn)),
                     None => Err((
                         ErrorKind::ClusterConnectionNotFound,
@@ -893,26 +893,26 @@ where
             }
         };
 
-        let read_guard = self.conn_lock.lock().unwrap();
-        let preferred = read_guard
+        let guard = self.conn_lock.lock().unwrap();
+        let preferred = guard
             .1
             .slot_addr_for_route(route, self.routing_strategy.as_deref())
             .cloned();
 
         if let Some(ref addr) = preferred
-            && let Some(conn) = read_guard.0.get(addr).and_then(ConnState::connected)
+            && let Some(conn) = guard.0.get(addr).and_then(ConnState::connected)
         {
             return Ok((addr.clone(), conn));
         }
 
         // The preferred node is not connected (e.g. it is being repaired by the `reconnect_loop` future).
         // Instead of erroring or waiting we try a fallback (within the same shard).
-        let fallback = read_guard
+        let fallback = guard
             .1
             .shard_fallback_addrs(route)
             .into_iter()
             .find_map(|candidate| {
-                read_guard
+                guard
                     .0
                     .get(&candidate)
                     .and_then(ConnState::connected)
@@ -924,7 +924,7 @@ where
 
         // Pick the random connection under the same lock as the slot lookup: a recovery in between
         // would have changed the connections and the slot map it was made against.
-        if let Some((random_addr, random_conn)) = get_random_connection(&read_guard.0) {
+        if let Some((random_addr, random_conn)) = get_random_connection(&guard.0) {
             return Ok((random_addr, random_conn));
         }
 
