@@ -151,7 +151,7 @@ impl From<(ErrorKind, &'static str, String)> for RedisError {
 impl error::Error for RedisError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match &self.repr {
-            ErrorRepr::Internal { err, .. } => Some(err),
+            ErrorRepr::Internal { err, .. } => Some(err.as_ref()),
             ErrorRepr::Server(err) => Some(err),
             ErrorRepr::Parsing(err) => Some(err),
             _ => None,
@@ -758,6 +758,11 @@ mod tests {
             err.to_string(),
             "\"WRONGPASS\": invalid username-password pair or user is disabled."
         );
+        let source = error::Error::source(&err)
+            .unwrap()
+            .downcast_ref::<ServerError>()
+            .unwrap();
+        assert_eq!(source.code(), "WRONGPASS");
     }
 
     #[test]

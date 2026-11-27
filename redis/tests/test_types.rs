@@ -29,6 +29,30 @@ mod types {
 
         assert!(source.is_some());
         assert_eq!(source.unwrap().to_string(), "I/O failure");
+        let io_source = source.unwrap().downcast_ref::<std::io::Error>().unwrap();
+        assert_eq!(io_source.kind(), std::io::ErrorKind::Other);
+    }
+
+    #[cfg(feature = "json")]
+    #[test]
+    fn test_redis_error_source_downcasts_for_json_wrapped_errors() {
+        let json_error = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+        let error = RedisError::from(json_error);
+
+        let source = error.source().unwrap();
+        assert!(source.downcast_ref::<serde_json::Error>().unwrap().is_eof());
+    }
+
+    #[cfg(feature = "tls-rustls")]
+    #[test]
+    fn test_redis_error_source_downcasts_for_rustls_wrapped_errors() {
+        let error = RedisError::from(rustls::Error::General("handshake".to_string()));
+
+        let source = error.source().unwrap();
+        assert_eq!(
+            source.downcast_ref::<rustls::Error>(),
+            Some(&rustls::Error::General("handshake".to_string()))
+        );
     }
 
     #[test]
