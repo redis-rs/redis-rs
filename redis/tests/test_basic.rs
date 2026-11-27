@@ -4359,6 +4359,377 @@ mod basic {
     }
 
     #[test]
+    fn test_rejected_resp3_subscription_does_not_desync_replies() {
+        let ctx = TestContext::default();
+        let redis = RedisConnectionInfo::default().set_protocol(ProtocolVersion::RESP3);
+        let connection_info = ctx.server.connection_info().set_redis_settings(redis);
+        let client = redis::Client::open(connection_info).unwrap();
+        let mut con = client.get_connection().unwrap();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        con.set_push_sender(tx);
+
+        let _: () = con.set("key1", "value1").unwrap();
+        let _: () = con.set("key2", "value2").unwrap();
+
+        // Only allow the user to access the `allowed` channel, so that subscribing to any other
+        // channel is rejected with a NOPERM error instead of being confirmed.
+        cmd("ACL")
+            .arg("SETUSER")
+            .arg("default")
+            .arg("resetchannels")
+            .arg("&allowed")
+            .exec(&mut con)
+            .unwrap();
+
+        con.subscribe_resp3("allowed").unwrap();
+        let err = con.subscribe_resp3("denied").unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Server(ServerErrorKind::NoPerm));
+        let err = con.psubscribe_resp3("denied*").unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Server(ServerErrorKind::NoPerm));
+
+        // The errors used to be left unread, and taken as the replies to these commands.
+        assert_eq!(con.get("key1").unwrap(), Some("value1".to_string()));
+        assert_eq!(con.get("key2").unwrap(), Some("value2".to_string()));
+    }
+
+    /// Whether a RESP3 subscription test runs the channel or the pattern commands.
+    #[derive(Clone, Copy)]
+    enum Resp3SubscriptionKind {
+        Channel,
+        Pattern,
+    }
+
+    impl Resp3SubscriptionKind {
+        /// The opposite kind, used to keep the connection subscribed to something while the tested
+        /// kind is unsubscribed.
+        fn other(self) -> Self {
+            match self {
+                Self::Channel => Self::Pattern,
+                Self::Pattern => Self::Channel,
+            }
+        }
+
+        fn subscribe(self, con: &mut Connection, names: &[&str]) -> RedisResult<()> {
+            match self {
+                Self::Channel => con.subscribe_resp3(names),
+                Self::Pattern => con.psubscribe_resp3(names),
+            }
+        }
+
+        fn unsubscribe(self, con: &mut Connection, names: &[&str]) -> RedisResult<()> {
+            match self {
+                Self::Channel => con.unsubscribe_resp3(names),
+                Self::Pattern => con.punsubscribe_resp3(names),
+            }
+        }
+
+        /// The kind of push that confirms this kind's commands.
+        fn confirmation(self, subscribed: bool) -> PushKind {
+            match (self, subscribed) {
+                (Self::Channel, true) => PushKind::Subscribe,
+                (Self::Channel, false) => PushKind::Unsubscribe,
+                (Self::Pattern, true) => PushKind::PSubscribe,
+                (Self::Pattern, false) => PushKind::PUnsubscribe,
+            }
+        }
+    }
+
+    const RESP3_SUBSCRIPTION_PROBE_KEY: &str = "resp3-subscription-probe";
+
+    /// Opens a RESP3 connection that passes its pushes to the returned receiver, and a second
+    /// connection to publish and set the probe key with, or returns `None` if the tests run over
+    /// RESP2. The read timeout makes a command that waits for more confirmations than the server
+    /// sends fail instead of blocking.
+    fn resp3_subscription_connections(
+        ctx: &TestContext,
+    ) -> Option<(Connection, Connection, std::sync::mpsc::Receiver<PushInfo>)> {
+        if !ctx.protocol.supports_resp3() {
+            return None;
+        }
+        let mut con = ctx.connection();
+        con.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        con.set_push_sender(tx);
+        let mut publish_con = ctx.connection();
+        let _: () = publish_con
+            .set(RESP3_SUBSCRIPTION_PROBE_KEY, "value")
+            .unwrap();
+        Some((con, publish_con, rx))
+    }
+
+    /// Asserts that the next push passed to `rx` confirms `name`, with `count` subscriptions left
+    /// on the connection. The sync connection only reads when it runs a command, so a confirmation
+    /// is only there if the command that caused it waited for it.
+    fn assert_resp3_confirmation(
+        rx: &std::sync::mpsc::Receiver<PushInfo>,
+        kind: PushKind,
+        name: &str,
+        count: i64,
+    ) {
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            PushInfo::new(kind).data(vec![redis_value!(name), redis_value!(count)])
+        );
+    }
+
+    /// Asserts that `rx` was passed one confirmation per name in `names`, with the remaining
+    /// subscription counts in `counts`. The server confirms a zero-argument unsubscribe in its own
+    /// order, so neither the names nor the counts are compared in order.
+    fn assert_unordered_resp3_confirmations(
+        rx: &std::sync::mpsc::Receiver<PushInfo>,
+        kind: PushKind,
+        names: &[&str],
+        counts: &[i64],
+    ) {
+        let mut received_names = Vec::new();
+        let mut received_counts = Vec::new();
+        for _ in names {
+            let push = rx.try_recv().unwrap();
+            assert_eq!(push.kind, kind);
+            received_names.push(String::from_redis_value(push.data[0].clone()).unwrap());
+            received_counts.push(i64::from_redis_value(push.data[1].clone()).unwrap());
+        }
+        received_names.sort();
+        received_counts.sort();
+        assert_eq!(received_names, names);
+        assert_eq!(received_counts, counts);
+    }
+
+    fn assert_no_more_resp3_pushes(rx: &std::sync::mpsc::Receiver<PushInfo>) {
+        assert_eq!(
+            rx.try_recv().unwrap_err(),
+            std::sync::mpsc::TryRecvError::Empty
+        );
+    }
+
+    /// Asserts that the replies to the next commands aren't confirmations or errors left unread by
+    /// an earlier command.
+    fn assert_resp3_replies_in_sync(con: &mut Connection) {
+        assert_eq!(
+            con.get(RESP3_SUBSCRIPTION_PROBE_KEY).unwrap(),
+            Some("value".to_string())
+        );
+        assert_eq!(con.ping().unwrap(), "PONG");
+    }
+
+    /// Publishes to `channel`, and asserts that `con` passes the message to `rx` as a message of a
+    /// subscription of `kind` on `pattern`. The sync connection reads the message when it runs the
+    /// next command, so a PING follows the publish.
+    fn assert_resp3_message(
+        kind: Resp3SubscriptionKind,
+        con: &mut Connection,
+        publish_con: &mut Connection,
+        rx: &std::sync::mpsc::Receiver<PushInfo>,
+        pattern: &str,
+        channel: &str,
+    ) {
+        assert_eq!(publish_con.publish(channel, "banana").unwrap(), 1);
+        assert_eq!(con.ping().unwrap(), "PONG");
+        let expected = match kind {
+            Resp3SubscriptionKind::Channel => PushInfo::new(PushKind::Message)
+                .data(vec![redis_value!(channel), redis_value!("banana")]),
+            Resp3SubscriptionKind::Pattern => PushInfo::new(PushKind::PMessage).data(vec![
+                redis_value!(pattern),
+                redis_value!(channel),
+                redis_value!("banana"),
+            ]),
+        };
+        assert_eq!(rx.try_recv().unwrap(), expected);
+    }
+
+    fn assert_resp3_subscribe_awaits_all_confirmations(kind: Resp3SubscriptionKind) {
+        let ctx = TestContext::default();
+        let Some((mut con, mut publish_con, rx)) = resp3_subscription_connections(&ctx) else {
+            return;
+        };
+
+        let names = ["resp3-sub-a", "resp3-sub-b"];
+        kind.subscribe(&mut con, &names).unwrap();
+
+        // Both confirmations were read before the command returned, each with the number of
+        // subscriptions that are left after it.
+        assert_resp3_confirmation(&rx, kind.confirmation(true), names[0], 1);
+        assert_resp3_confirmation(&rx, kind.confirmation(true), names[1], 2);
+        assert_no_more_resp3_pushes(&rx);
+        assert_resp3_replies_in_sync(&mut con);
+
+        assert_resp3_message(kind, &mut con, &mut publish_con, &rx, names[0], names[0]);
+    }
+
+    #[test]
+    fn test_resp3_subscribe_awaits_all_confirmations() {
+        assert_resp3_subscribe_awaits_all_confirmations(Resp3SubscriptionKind::Channel);
+    }
+
+    #[test]
+    fn test_resp3_psubscribe_awaits_all_confirmations() {
+        assert_resp3_subscribe_awaits_all_confirmations(Resp3SubscriptionKind::Pattern);
+    }
+
+    fn assert_resp3_unsubscribe_awaits_all_confirmations(kind: Resp3SubscriptionKind) {
+        let ctx = TestContext::default();
+        let Some((mut con, mut publish_con, rx)) = resp3_subscription_connections(&ctx) else {
+            return;
+        };
+
+        let names = ["resp3-unsub-a", "resp3-unsub-b"];
+        kind.subscribe(&mut con, &names).unwrap();
+        assert_resp3_confirmation(&rx, kind.confirmation(true), names[0], 1);
+        assert_resp3_confirmation(&rx, kind.confirmation(true), names[1], 2);
+
+        // A subscription of the other kind stays subscribed while the tested kind is unsubscribed.
+        // The wildcard makes it match itself when it's a pattern, so it can also be used as the
+        // published channel.
+        let stay = kind.other();
+        let stay_name = "resp3-unsub-stay-*";
+        stay.subscribe(&mut con, &[stay_name]).unwrap();
+        assert_resp3_confirmation(&rx, stay.confirmation(true), stay_name, 3);
+
+        kind.unsubscribe(&mut con, &names).unwrap();
+
+        // The confirmation count includes the subscription that stayed subscribed.
+        assert_resp3_confirmation(&rx, kind.confirmation(false), names[0], 2);
+        assert_resp3_confirmation(&rx, kind.confirmation(false), names[1], 1);
+        assert_no_more_resp3_pushes(&rx);
+        assert_resp3_replies_in_sync(&mut con);
+
+        assert_resp3_message(stay, &mut con, &mut publish_con, &rx, stay_name, stay_name);
+    }
+
+    #[test]
+    fn test_resp3_unsubscribe_awaits_all_confirmations() {
+        assert_resp3_unsubscribe_awaits_all_confirmations(Resp3SubscriptionKind::Channel);
+    }
+
+    #[test]
+    fn test_resp3_punsubscribe_awaits_all_confirmations() {
+        assert_resp3_unsubscribe_awaits_all_confirmations(Resp3SubscriptionKind::Pattern);
+    }
+
+    /// The server confirms every argument of an unsubscribe, including the ones that weren't
+    /// subscribed.
+    fn assert_resp3_partial_unsubscribe_awaits_all_confirmations(kind: Resp3SubscriptionKind) {
+        let ctx = TestContext::default();
+        let Some((mut con, mut publish_con, rx)) = resp3_subscription_connections(&ctx) else {
+            return;
+        };
+
+        let subscribed = "resp3-partial-a";
+        kind.subscribe(&mut con, &[subscribed]).unwrap();
+        assert_resp3_confirmation(&rx, kind.confirmation(true), subscribed, 1);
+
+        let names = [subscribed, "resp3-partial-b", "resp3-partial-c"];
+        kind.unsubscribe(&mut con, &names).unwrap();
+        for name in names {
+            assert_resp3_confirmation(&rx, kind.confirmation(false), name, 0);
+        }
+        assert_no_more_resp3_pushes(&rx);
+        assert_resp3_replies_in_sync(&mut con);
+
+        // Messages can still be received after re-subscribing.
+        kind.subscribe(&mut con, &[subscribed]).unwrap();
+        assert_resp3_confirmation(&rx, kind.confirmation(true), subscribed, 1);
+        assert_resp3_message(
+            kind,
+            &mut con,
+            &mut publish_con,
+            &rx,
+            subscribed,
+            subscribed,
+        );
+    }
+
+    #[test]
+    fn test_resp3_partial_unsubscribe_awaits_all_confirmations() {
+        assert_resp3_partial_unsubscribe_awaits_all_confirmations(Resp3SubscriptionKind::Channel);
+    }
+
+    #[test]
+    fn test_resp3_partial_punsubscribe_awaits_all_confirmations() {
+        assert_resp3_partial_unsubscribe_awaits_all_confirmations(Resp3SubscriptionKind::Pattern);
+    }
+
+    /// A zero-argument unsubscribe is confirmed once per subscription of its kind, or once with a
+    /// nil channel when there are none, so the number of confirmations comes from the
+    /// subscriptions the connection has seen confirmed.
+    fn assert_resp3_empty_unsubscribe_awaits_all_confirmations(kind: Resp3SubscriptionKind) {
+        let ctx = TestContext::default();
+        let Some((mut con, mut publish_con, rx)) = resp3_subscription_connections(&ctx) else {
+            return;
+        };
+
+        let names = ["resp3-empty-a", "resp3-empty-b"];
+        kind.subscribe(&mut con, &names).unwrap();
+        assert_resp3_confirmation(&rx, kind.confirmation(true), names[0], 1);
+        assert_resp3_confirmation(&rx, kind.confirmation(true), names[1], 2);
+
+        // A subscription of the other kind stays subscribed while the tested kind is unsubscribed.
+        // It also keeps the connection in subscribed mode, which Valkey 8.0 requires for
+        // unsubscribes.
+        let stay = kind.other();
+        let stay_name = "resp3-empty-stay-*";
+        stay.subscribe(&mut con, &[stay_name]).unwrap();
+        assert_resp3_confirmation(&rx, stay.confirmation(true), stay_name, 3);
+
+        kind.unsubscribe(&mut con, &[]).unwrap();
+
+        // One confirmation per subscription of the tested kind, and the counts include the
+        // subscription of the other kind.
+        assert_unordered_resp3_confirmations(&rx, kind.confirmation(false), &names, &[1, 2]);
+        assert_no_more_resp3_pushes(&rx);
+        assert_resp3_replies_in_sync(&mut con);
+        assert_resp3_message(stay, &mut con, &mut publish_con, &rx, stay_name, stay_name);
+
+        // With no subscriptions of the tested kind left, it's confirmed once with a nil channel.
+        kind.unsubscribe(&mut con, &[]).unwrap();
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            PushInfo::new(kind.confirmation(false)).data(vec![Value::Nil, redis_value!(1)])
+        );
+        assert_no_more_resp3_pushes(&rx);
+
+        // The other kind's zero-argument unsubscribe removes its single subscription, while a
+        // subscription of the tested kind keeps the connection subscribed.
+        let extra = "resp3-empty-extra";
+        kind.subscribe(&mut con, &[extra]).unwrap();
+        assert_resp3_confirmation(&rx, kind.confirmation(true), extra, 2);
+
+        stay.unsubscribe(&mut con, &[]).unwrap();
+        assert_resp3_confirmation(&rx, stay.confirmation(false), stay_name, 1);
+        assert_no_more_resp3_pushes(&rx);
+        assert_resp3_replies_in_sync(&mut con);
+        assert_resp3_message(kind, &mut con, &mut publish_con, &rx, extra, extra);
+    }
+
+    #[test]
+    fn test_resp3_empty_unsubscribe_awaits_all_confirmations() {
+        assert_resp3_empty_unsubscribe_awaits_all_confirmations(Resp3SubscriptionKind::Channel);
+    }
+
+    #[test]
+    fn test_resp3_empty_punsubscribe_awaits_all_confirmations() {
+        assert_resp3_empty_unsubscribe_awaits_all_confirmations(Resp3SubscriptionKind::Pattern);
+    }
+
+    /// A subscription command the server rejects is answered with a single error rather than with
+    /// confirmations.
+    #[test]
+    fn test_resp3_rejected_subscribe_fails_without_waiting() {
+        let ctx = TestContext::default();
+        let Some((mut con, _, rx)) = resp3_subscription_connections(&ctx) else {
+            return;
+        };
+
+        let err = con.subscribe_resp3(&[] as &[&str]).unwrap_err();
+        assert_eq!(
+            err.kind(),
+            ErrorKind::Server(ServerErrorKind::ResponseError)
+        );
+        assert_no_more_resp3_pushes(&rx);
+        assert_resp3_replies_in_sync(&mut con);
+    }
+
+    #[test]
     fn test_unparsable_reply_closes_connection() {
         let ctx = TestContext::default();
         let mut con = ctx.connection();
