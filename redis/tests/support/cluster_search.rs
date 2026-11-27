@@ -212,7 +212,11 @@ impl PrimaryConnections {
         const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
         const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
 
-        let expected_peers = self.connections.len();
+        let primary_addrs: Vec<String> = self
+            .connections
+            .iter()
+            .map(|(addr, _)| addr.to_string())
+            .collect();
         let deadline = std::time::Instant::now() + TIMEOUT;
         loop {
             let mut pending: Option<(redis::ConnectionAddr, ShardConnectionStates)> = None;
@@ -221,9 +225,10 @@ impl PrimaryConnections {
                     .arg("SHARD_CONNECTION_STATES")
                     .query(connection)
                     .unwrap();
-                // RediSearch 8.0 also connects to replicas, so its pool can hold more entries than
-                // there are primaries.
-                let ready = states.len() >= expected_peers
+                // Match by address, because some RediSearch versions also list replicas in the pool.
+                let ready = primary_addrs
+                    .iter()
+                    .all(|addr| states.iter().any(|(peer, _)| peer == addr))
                     && states.iter().all(|(_, conns)| {
                         !conns.is_empty() && conns.iter().all(|s| s == "Connected")
                     });
