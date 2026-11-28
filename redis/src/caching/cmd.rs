@@ -1,6 +1,7 @@
 use crate::{
     Cmd, ErrorKind, Pipeline, RedisError, RedisResult, Value,
     cmd::{Arg, CmdRef},
+    known_commands::KnownCommand,
 };
 use std::{iter::zip, time::Instant};
 
@@ -61,6 +62,7 @@ pub(crate) struct SingleCachedCommand<'a> {
 
 pub(crate) struct MultipleCachedCommandPart<'a> {
     pub(crate) redis_key: &'a [u8],
+    pub(crate) command: KnownCommand,
     pub(crate) cmd_key: Vec<u8>,
     pub(crate) cmd_args: Vec<Arg<usize>>,
     pub(crate) invalidation_count: usize,
@@ -70,7 +72,7 @@ pub(crate) struct MultipleCachedCommandPart<'a> {
 pub(crate) enum CacheableCommand<'a> {
     Single(SingleCachedCommand<'a>),
     Multiple {
-        command_name: &'a str,
+        command: KnownCommand,
         commands: Vec<(usize, MultipleCachedCommandPart<'a>)>,
         response: Vec<Value>,
         client_side_expire: Instant,
@@ -112,7 +114,7 @@ impl CacheableCommand<'_> {
                 }
             }
             CacheableCommand::Multiple {
-                command_name: _command_name,
+                command: _command,
                 commands,
                 response: mut cached_response,
                 client_side_expire,
@@ -126,7 +128,7 @@ impl CacheableCommand<'_> {
                             cache_manager.insert(
                                 cached_command.redis_key,
                                 &cached_command.cmd_key,
-                                CmdArgs::new(&cached_command.cmd_args, 0),
+                                CmdArgs::new(&cached_command.cmd_args, 0, cached_command.command),
                                 key_value.clone(),
                                 client_side_expire,
                                 &pttl_value,
@@ -148,8 +150,8 @@ impl CacheableCommand<'_> {
 
     pub(crate) fn pack_command(&self, cache_manager: &CacheManager, pipeline: &mut Pipeline) {
         if cache_manager.cache_config.mode == CacheMode::OptIn {
-            let mut cmd = Cmd::new();
-            cmd.arg("CLIENT").arg("CACHING").arg("YES");
+            let mut cmd = Cmd::known(KnownCommand::ClientCaching);
+            cmd.arg("YES");
             pipeline.add_command(cmd);
         }
 
@@ -159,14 +161,13 @@ impl CacheableCommand<'_> {
                 pipeline.add_command_ref(scc.cmd);
             }
             CacheableCommand::Multiple {
-                command_name,
+                command,
                 commands,
                 response: _response,
                 client_side_expire: _client_side_expire,
                 tail_args,
             } => {
-                let mut cmd = Cmd::new();
-                cmd.arg(command_name);
+                let mut cmd = Cmd::known(*command);
                 for command in commands {
                     cmd.arg(command.1.redis_key);
                 }

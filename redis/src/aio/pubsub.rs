@@ -1,7 +1,9 @@
+use crate::cmd::Cmd;
+use crate::known_commands::KnownCommand;
 use crate::pipeline::ExpectedConfirmations;
 use crate::types::{RedisResult, Value};
 use crate::{
-    FromRedisValue, Msg, RedisConnectionInfo, ToRedisArgs, aio::Runtime, cmd, errors::RedisError,
+    FromRedisValue, Msg, RedisConnectionInfo, ToRedisArgs, aio::Runtime, errors::RedisError,
     errors::closed_connection_error, from_redis_value, parser::ValueCodec,
 };
 use ::tokio::io::{AsyncRead, AsyncWrite};
@@ -370,7 +372,9 @@ impl PubSubSink {
         args: impl ToRedisArgs,
     ) -> RedisResult<()> {
         let arg_count = args.num_of_args();
-        let input = cmd(command.name()).arg(args).get_packed_command();
+        let input = Cmd::known(command.known_command())
+            .arg(args)
+            .get_packed_command();
         let expected = command.expected_confirmations(arg_count);
         self.send_recv(input, expected)
             .await
@@ -451,14 +455,16 @@ impl PubSubSink {
         &mut self,
         message: impl ToRedisArgs,
     ) -> RedisResult<T> {
-        let cmd = cmd("PING").arg(message).get_packed_command();
+        let cmd = Cmd::known(KnownCommand::Ping)
+            .arg(message)
+            .get_packed_command();
         let response = self.send_recv(cmd, ExpectedConfirmations::Count(1)).await?;
         Ok(from_redis_value(response)?)
     }
 
     /// Sends a ping to the server
     pub async fn ping<T: FromRedisValue>(&mut self) -> RedisResult<T> {
-        let cmd = cmd("PING").get_packed_command();
+        let cmd = Cmd::known(KnownCommand::Ping).get_packed_command();
         let response = self.send_recv(cmd, ExpectedConfirmations::Count(1)).await?;
         Ok(from_redis_value(response)?)
     }
