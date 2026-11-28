@@ -19,7 +19,9 @@ mod cluster {
         Commands, ConnectionLike, ErrorKind, RedisError, ServerErrorKind, Value,
         cluster::{ClusterClient, ClusterConnection, cluster_pipe},
         cluster_read_routing::{RandomReplicaStrategy, RoundRobinReplicaStrategy},
-        cluster_routing::{MultipleNodeRoutingInfo, RoutingInfo, SingleNodeRoutingInfo},
+        cluster_routing::{
+            MultipleNodeRoutingInfo, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr,
+        },
         cmd, from_redis_value, parse_redis_value,
     };
     use redis_test::cluster::{RedisCluster, RedisClusterConfiguration};
@@ -478,6 +480,49 @@ mod cluster {
 
         let got = pipe.query::<Vec<String>>(&mut con).unwrap();
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn test_cluster_pipeline_send_failure_does_not_shift_replies() {
+        let cluster = TestClusterContext::new();
+        cluster.wait_for_cluster_up();
+        let mut con = cluster.connection();
+
+        // Keys spread over all the shards.
+        let keys: Vec<String> = (0..12).map(|i| format!("{{{i}}}key")).collect();
+        for key in &keys {
+            con.set::<_, _, ()>(key, format!("value of {key}")).unwrap();
+        }
+        let mut pipe = cluster_pipe();
+        for key in &keys {
+            pipe.get(key);
+        }
+        let slot: u16 = cmd("CLUSTER")
+            .arg("KEYSLOT")
+            .arg(&keys[0])
+            .query(&mut con)
+            .unwrap();
+        let dropped_node = RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(
+            Route::new(slot, SlotAddr::Master),
+        ));
+
+        // The pipeline is sent to the nodes in no fixed order, so repeat until the node whose
+        // connection was dropped comes after another one.
+        for _ in 0..10 {
+            con.route_command(&cmd("QUIT"), dropped_node.clone())
+                .unwrap();
+            // The first pipeline fails when it reads from the dropped connection.
+            pipe.query::<Vec<String>>(&mut con).unwrap_err();
+            // The second fails when it writes to it, after it was written to the nodes that came
+            // before it.
+            pipe.query::<Vec<String>>(&mut con).unwrap_err();
+
+            // In reverse, so that a reply left over from the pipeline doesn't match by chance.
+            for key in keys.iter().rev() {
+                let value: String = con.get(key).unwrap();
+                assert_eq!(value, format!("value of {key}"));
+            }
+        }
     }
 
     #[test]
